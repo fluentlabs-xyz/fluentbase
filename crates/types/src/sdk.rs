@@ -187,6 +187,7 @@ pub fn env_from_context(
             // TODO(dmitry123): "we don't support blobs yet, so 2 tests from e2e testing suite fail"
             blob_hashes: vec![],        // tx_context.blob_hashes.clone(),
             max_fee_per_blob_gas: None, // tx_context.max_fee_per_blob_gas,
+            authorization_list: None,
             #[cfg(feature = "optimism")]
             optimism: Default::default(),
         },
