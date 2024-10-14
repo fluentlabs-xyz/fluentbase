@@ -17,23 +17,25 @@ use fluentbase_sdk::{
 };
 use revm_interpreter::{
     analysis::to_analysed,
-    as_usize_saturated,
+    as_u64_saturated,
     gas,
     opcode::make_instruction_table,
+    AccountLoad,
     CallOutcome,
     CallScheme,
     Contract,
     CreateOutcome,
+    Eip7702CodeLoad,
     Gas,
     Host,
     InstructionResult,
     Interpreter,
     InterpreterAction,
     InterpreterResult,
-    LoadAccountResult,
     SStoreResult,
     SelfDestructResult,
     SharedMemory,
+    StateLoad,
 };
 use revm_precompile::Log;
 use revm_primitives::{Bytecode, CancunSpec, CreateScheme, Env, BLOCK_HASH_HISTORY, MAX_CODE_SIZE};
@@ -53,17 +55,16 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
         &mut self.env
     }
 
-    fn load_account(&mut self, _address: Address) -> Option<LoadAccountResult> {
-        Some(LoadAccountResult {
-            is_cold: false,
+    fn load_account_delegated(&mut self, _address: Address) -> Option<AccountLoad> {
+        Some(AccountLoad {
+            load: Eip7702CodeLoad::new_not_delegated((), false),
             is_empty: false,
         })
     }
 
-    fn block_hash(&mut self, number: U256) -> Option<B256> {
-        let block_number = as_usize_saturated!(self.env().block.number);
-        let requested_number = as_usize_saturated!(number);
-        let Some(diff) = block_number.checked_sub(requested_number) else {
+    fn block_hash(&mut self, number: u64) -> Option<B256> {
+        let block_number = as_u64_saturated!(self.env().block.number);
+        let Some(diff) = block_number.checked_sub(number) else {
             return Some(B256::ZERO);
         };
         if diff > 0 && diff <= BLOCK_HASH_HISTORY {
@@ -73,48 +74,56 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
         }
     }
 
-    fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
+    fn balance(&mut self, address: Address) -> Option<StateLoad<U256>> {
         let balance = self.sdk.balance(&address);
-        Some((balance, false))
+        Some(StateLoad::new(balance, false))
     }
 
-    fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
+    fn code(&mut self, address: Address) -> Option<Eip7702CodeLoad<Bytes>> {
         debug_log!("code: address={} self-address={}", address, self.address);
-        let (evm_code_hash, is_cold) = self.code_hash(address)?;
-        let evm_bytecode = self.sdk.preimage(&evm_code_hash);
-        Some((evm_bytecode, is_cold))
+        let result = self.code_hash(address)?;
+        let evm_bytecode = self.sdk.preimage(&result.data);
+        Some(Eip7702CodeLoad::new_not_delegated(
+            evm_bytecode,
+            result.is_cold,
+        ))
     }
 
-    fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
+    fn code_hash(&mut self, address: Address) -> Option<Eip7702CodeLoad<B256>> {
         if address == self.address {
             let evm_code_hash = self
                 .sdk
                 .storage(&EVM_CODE_HASH_SLOT)
                 .to_le_bytes::<32>()
                 .into();
-            return Some((evm_code_hash, false));
+            return Some(Eip7702CodeLoad::new_not_delegated(evm_code_hash, false));
         }
         let evm_code_hash = self
             .sdk
             .ext_storage(&address, &EVM_CODE_HASH_SLOT)
             .to_le_bytes::<32>()
             .into();
-        Some((evm_code_hash, false))
+        Some(Eip7702CodeLoad::new_not_delegated(evm_code_hash, false))
     }
 
-    fn sload(&mut self, _address: Address, index: U256) -> Option<(U256, bool)> {
+    fn sload(&mut self, _address: Address, index: U256) -> Option<StateLoad<U256>> {
         let value = self.sdk.storage(&index);
-        Some((value, false))
+        Some(StateLoad::new(value, false))
     }
 
-    fn sstore(&mut self, _address: Address, index: U256, new_value: U256) -> Option<SStoreResult> {
+    fn sstore(
+        &mut self,
+        _address: Address,
+        index: U256,
+        new_value: U256,
+    ) -> Option<StateLoad<SStoreResult>> {
         self.sdk.write_storage(index, new_value);
-        Some(SStoreResult {
+        let result = SStoreResult {
             original_value: U256::ZERO,
             present_value: U256::ZERO,
             new_value,
-            is_cold: false,
-        })
+        };
+        Some(StateLoad::new(result, false))
     }
 
     fn tload(&mut self, _address: Address, index: U256) -> U256 {
@@ -130,9 +139,13 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
             .emit_log(take(&mut log.data.data), log.data.topics());
     }
 
-    fn selfdestruct(&mut self, _address: Address, target: Address) -> Option<SelfDestructResult> {
+    fn selfdestruct(
+        &mut self,
+        _address: Address,
+        target: Address,
+    ) -> Option<StateLoad<SelfDestructResult>> {
         self.sdk.destroy_account(target);
-        Some(SelfDestructResult::default())
+        Some(StateLoad::new(SelfDestructResult::default(), false))
     }
 }
 
@@ -214,6 +227,7 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
                             inputs.input.as_ref(),
                             inputs.gas_limit,
                         ),
+                        _ => unreachable!("unexpected call scheme"),
                     };
 
                     let result = InterpreterResult::new(
@@ -270,6 +284,7 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
             bytecode: to_analysed(evm_bytecode),
             hash: None,
             target_address: contract_context.address,
+            bytecode_address: None,
             caller: contract_context.caller,
             call_value: contract_context.value,
         };
@@ -285,6 +300,7 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
             bytecode: to_analysed(Bytecode::new_raw(init_code)),
             hash: None,
             target_address: contract_context.address,
+            bytecode_address: None,
             caller: contract_context.caller,
             call_value: contract_context.value,
         };
