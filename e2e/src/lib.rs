@@ -6,7 +6,7 @@ mod helpers;
 #[cfg(test)]
 mod revm;
 #[cfg(test)]
-mod rwasm;
+mod wasm;
 
 // #[cfg(test)]
 // mod bench;

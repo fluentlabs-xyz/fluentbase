@@ -26,7 +26,6 @@ fn test_example_keccak256() {
 }
 
 #[test]
-#[ignore]
 fn test_example_rwasm() {
     let input_data = include_bytes!("../../examples/greeting/lib.wasm");
     let (output, exit_code) = run_with_default_context(
