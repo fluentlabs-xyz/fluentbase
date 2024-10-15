@@ -31,6 +31,7 @@ phantom-type = { workspace = true }
 fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc"] }
 fuel-core-storage = { workspace = true, default-features = false, features = ["alloc"] }
 fuel-core-executor = { workspace = true, default-features = false, features = ["alloc"] }
+thiserror = "1.0.63"
 
 [dev-dependencies]
 fluentbase-runtime = { workspace = true, default-features = false }

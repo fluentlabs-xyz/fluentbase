@@ -1,5 +1,11 @@
+extern crate byteorder;
+extern crate solana_rbpf;
+use alloc::str::Utf8Error;
+use solana_rbpf::memory_region::AccessType;
 use crate::fvm::types::WasmRelayer;
 use alloc::vec::Vec;
+use core::str::from_utf8;
+use std::{fs::File, io::Read, sync::Arc, cell::RefCell, slice::from_raw_parts_mut};
 use fuel_core_executor::executor::{
     BlockExecutor,
     ExecutionData,
@@ -20,31 +26,366 @@ use fuel_core_types::{
         interpreter::{CheckedMetadata, ExecutableTransaction, MemoryInstance},
         ProgramState,
     },
-    services::executor::Result,
+    services::executor::Error
 };
-use fuel_core_types::services::executor::Error;
-use crate::helpers_fvm::FvmTransactResult;
-
-extern crate byteorder;
-extern crate solana_rbpf;
-
 use solana_rbpf::{
-    aligned_memory::AlignedMemory,
-    ebpf::HOST_ALIGN,
-    memory_region::MemoryCowCallback,
-    assembler::assemble,
-    //declare_builtin_function, // [todo:rgds]
-    ebpf,
-    elf::Executable,
-    error::{EbpfError, ProgramResult},
-    memory_region::{MemoryMapping, MemoryRegion},
-    program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
-    static_analysis::Analysis,
-    syscalls,
-    verifier::RequisiteVerifier,
-    vm::{Config, ContextObject, TestContextObject},
-};
-use std::{fs::File, io::Read, sync::Arc};
+        aligned_memory::AlignedMemory,
+        assembler::assemble,
+        declare_builtin_function,
+        ebpf,
+        ebpf::HOST_ALIGN,
+        elf::Executable,
+        error::{EbpfError, ProgramResult},
+        memory_region::{MemoryMapping, MemoryRegion},
+        memory_region::MemoryCowCallback,
+        program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
+        static_analysis::Analysis,
+        syscalls,
+        verifier::RequisiteVerifier,
+        vm::{Config, ContextObject, TestContextObject}
+    };
+use thiserror::Error as ThisError;
+use crate::helpers_svm::SyscallError::{InvalidLength, UnalignedPointer};
+// use solana_sdk::{
+    //     account_info::AccountInfo,
+    //     alt_bn128::prelude::{
+    //         alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing, AltBn128Error,
+    //         ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
+    //         ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
+    //     },
+    //     big_mod_exp::{big_mod_exp, BigModExpParams},
+    //     blake3, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
+    //     entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
+    //     feature_set::bpf_account_data_direct_mapping,
+    //     feature_set::FeatureSet,
+    //     feature_set::{
+    //         self, blake3_syscall_enabled, curve25519_syscall_enabled,
+    //         disable_deploy_of_alloc_free_syscall, disable_fees_sysvar,
+    //         enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall,
+    //         enable_big_mod_exp_syscall, enable_partitioned_epoch_reward, enable_poseidon_syscall,
+    //         error_on_syscall_bpf_function_hash_collisions, last_restart_slot_sysvar,
+    //         reject_callx_r10, remaining_compute_units_syscall_enabled, switch_to_new_elf_parser,
+    //     },
+    //     hash::{Hash, Hasher},
+    //     instruction::{AccountMeta, InstructionError, ProcessedSiblingInstruction},
+    //     keccak, native_loader, poseidon,
+    //     precompiles::is_precompile,
+    //     program::MAX_RETURN_DATA,
+    //     program_stubs::is_nonoverlapping,
+    //     pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN},
+    //     secp256k1_recover::{
+    //         Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
+    //     },
+    //     sysvar::{Sysvar, SysvarId},
+    //     transaction_context::{IndexOfAccount, InstructionAccount},
+    // };
+
+type StdResult<T, E> = core::result::Result<T, E>;
+
+pub struct SyscallContext {
+    // pub allocator: BpfAllocator,
+    // pub accounts_metadata: Vec<SerializedAccountMetadata>,
+    pub trace_log: Vec<[u64; 12]>,
+}
+
+pub struct InvokeContext<'a> {
+    // pub transaction_context: &'a mut TransactionContext,
+    // sysvar_cache: &'a SysvarCache,
+    // log_collector: Option<Rc<RefCell<LogCollector>>>,
+    // compute_budget: ComputeBudget,
+    // current_compute_budget: ComputeBudget,
+    compute_meter: RefCell<u64>,
+    // pub programs_loaded_for_tx_batch: &'a LoadedProgramsForTxBatch,
+    // pub programs_modified_by_tx: &'a mut LoadedProgramsForTxBatch,
+    // pub feature_set: Arc<FeatureSet>,
+    // pub timings: ExecuteDetailsTimings,
+    // pub blockhash: Hash,
+    // pub lamports_per_signature: u64,
+    pub syscall_context: Vec<Option<SyscallContext>>,
+    // traces: Vec<Vec<[u64; 12]>>,
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> ContextObject for InvokeContext<'a> {
+    fn trace(&mut self, state: [u64; 12]) {
+        self.syscall_context
+            .last_mut()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .trace_log
+            .push(state);
+    }
+
+    fn consume(&mut self, amount: u64) {
+        // 1 to 1 instruction to compute unit mapping
+        // ignore overflow, Ebpf will bail if exceeded
+        // let mut compute_meter = self.compute_meter.borrow_mut();
+        // *compute_meter = compute_meter.saturating_sub(amount);
+    }
+
+    fn get_remaining(&self) -> u64 {
+        *self.compute_meter.borrow()
+    }
+}
+
+fn address_is_aligned<T>(address: u64) -> bool {
+    (address as *mut T as usize)
+        .checked_rem(align_of::<T>())
+        .map(|rem| rem == 0)
+        .expect("T to be non-zero aligned")
+}
+
+fn translate(
+    memory_mapping: &MemoryMapping,
+    access_type: AccessType,
+    vm_addr: u64,
+    len: u64,
+) -> StdResult<u64, Box<dyn core::error::Error>> {
+    memory_mapping
+        .map(access_type, vm_addr, len)
+        .map_err(|err| err.into())
+        .into()
+}
+
+/// Error definitions
+#[derive(Debug, ThisError, PartialEq, Eq)]
+pub enum SyscallError {
+    #[error("{0}: {1:?}")]
+    InvalidString(Utf8Error, Vec<u8>),
+    #[error("SBF program panicked")]
+    Abort,
+    #[error("SBF program Panicked in {0} at {1}:{2}")]
+    Panic(String, u64, u64),
+    #[error("Cannot borrow invoke context")]
+    InvokeContextBorrowFailed,
+    #[error("Malformed signer seed: {0}: {1:?}")]
+    MalformedSignerSeed(Utf8Error, Vec<u8>),
+    // #[error("Could not create program address with signer seeds: {0}")]
+    // BadSeeds(PubkeyError),
+    // #[error("Program {0} not supported by inner instructions")]
+    // ProgramNotSupported(Pubkey),
+    #[error("Unaligned pointer")]
+    UnalignedPointer,
+    #[error("Too many signers")]
+    TooManySigners,
+    #[error("Instruction passed to inner instruction is too large ({0} > {1})")]
+    InstructionTooLarge(usize, usize),
+    #[error("Too many accounts passed to inner instruction")]
+    TooManyAccounts,
+    #[error("Overlapping copy")]
+    CopyOverlapping,
+    #[error("Return data too large ({0} > {1})")]
+    ReturnDataTooLarge(u64, u64),
+    #[error("Hashing too many sequences")]
+    TooManySlices,
+    #[error("InvalidLength")]
+    InvalidLength,
+    #[error("Invoked an instruction with data that is too large ({data_len} > {max_data_len})")]
+    MaxInstructionDataLenExceeded { data_len: u64, max_data_len: u64 },
+    #[error("Invoked an instruction with too many accounts ({num_accounts} > {max_accounts})")]
+    MaxInstructionAccountsExceeded {
+        num_accounts: u64,
+        max_accounts: u64,
+    },
+    #[error("Invoked an instruction with too many account info's ({num_account_infos} > {max_account_infos})")]
+    MaxInstructionAccountInfosExceeded {
+        num_account_infos: u64,
+        max_account_infos: u64,
+    },
+    #[error("InvalidAttribute")]
+    InvalidAttribute,
+    #[error("Invalid pointer")]
+    InvalidPointer,
+    #[error("Arithmetic overflow")]
+    ArithmeticOverflow,
+}
+
+
+fn translate_type_inner<'a, T>(
+    memory_mapping: &MemoryMapping,
+    access_type: AccessType,
+    vm_addr: u64,
+    check_aligned: bool,
+) -> Result<&'a mut T, Box<dyn core::error::Error>> {
+    let host_addr = translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u64)?;
+    if !check_aligned {
+        Ok(unsafe { std::mem::transmute::<u64, &mut T>(host_addr) })
+    } else if !address_is_aligned::<T>(host_addr) {
+        // Err(EbpfError::SyscallError::UnalignedPointer.into())
+        Err(EbpfError::SyscallError(UnalignedPointer.into()).into())
+    } else {
+        Ok(unsafe { &mut *(host_addr as *mut T) })
+    }
+}
+fn translate_type_mut<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    check_aligned: bool,
+) -> Result<&'a mut T, Box<dyn std::error::Error>> {
+    translate_type_inner::<T>(memory_mapping, AccessType::Store, vm_addr, check_aligned)
+}
+fn translate_type<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    check_aligned: bool,
+) -> Result<&'a T, Box<dyn std::error::Error>> {
+    translate_type_inner::<T>(memory_mapping, AccessType::Load, vm_addr, check_aligned)
+        .map(|value| &*value)
+}
+
+// fn translate_slice_inner<'a, T>(
+//     memory_mapping: &MemoryMapping,
+//     access_type: AccessType,
+//     vm_addr: u64,
+//     len: u64,
+//     check_aligned: bool,
+// ) -> Result<&'a mut [T], Error> {
+//     if len == 0 {
+//         return Ok(&mut []);
+//     }
+//
+//     let total_size = len.saturating_mul(size_of::<T>() as u64);
+//     if isize::try_from(total_size).is_err() {
+//         return Err(SyscallError::InvalidLength.into());
+//
+//     }
+//
+//     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
+//
+//     if check_aligned && !address_is_aligned::<T>(host_addr) {
+//         return Err(SyscallError::UnalignedPointer.into());
+//     }
+//     Ok(unsafe { from_raw_parts_mut(host_addr as *mut T, len as usize) })
+// }
+// fn translate_slice_mut<'a, T>(
+//     memory_mapping: &MemoryMapping,
+//     vm_addr: u64,
+//     len: u64,
+//     check_aligned: bool,
+// ) -> Result<&'a mut [T], Error> {
+//     translate_slice_inner::<T>(
+//         memory_mapping,
+//         AccessType::Store,
+//         vm_addr,
+//         len,
+//         check_aligned,
+//     )
+// }
+// fn translate_slice<'a, T>(
+//     memory_mapping: &MemoryMapping,
+//     vm_addr: u64,
+//     len: u64,
+//     check_aligned: bool,
+// ) -> Result<&'a [T], Error> {
+//     translate_slice_inner::<T>(
+//         memory_mapping,
+//         AccessType::Load,
+//         vm_addr,
+//         len,
+//         check_aligned,
+//     )
+//         .map(|value| &*value)
+// }
+
+/// Take a virtual pointer to a string (points to SBF VM memory space), translate it
+/// pass it to a user-defined work function
+// fn translate_string_and_do(
+//     memory_mapping: &MemoryMapping,
+//     addr: u64,
+//     len: u64,
+//     check_aligned: bool,
+//     work: &mut dyn FnMut(&str) -> Result<u64, Error>,
+// ) -> Result<u64, Error> {
+//     let buf = translate_slice::<u8>(memory_mapping, addr, len, check_aligned)?;
+//     match from_utf8(buf) {
+//         Ok(message) => work(message),
+//         Err(err) => Err(SyscallError::InvalidString(err, buf.to_vec()).into()),
+//     }
+// }
+
+declare_builtin_function!(
+    /// Log a user's info message
+    SyscallLog,
+    fn rust(
+        invoke_context: &mut InvokeContext,
+        addr: u64,
+        len: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> StdResult<u64, Box<dyn std::error::Error>> {
+        // let cost = invoke_context
+        //     .get_compute_budget()
+        //     .syscall_base_cost
+        //     .max(len);
+        // consume_compute_meter(invoke_context, cost)?;
+        //
+        // translate_string_and_do(
+        //     memory_mapping,
+        //     addr,
+        //     len,
+        //     invoke_context.get_check_aligned(),
+        //     &mut |string: &str| {
+        //         stable_log::program_log(&invoke_context.get_log_collector(), string);
+        //         Ok(0)
+        //     },
+        // )?;
+        Ok(0)
+    }
+);
+
+
+
+
+// declare_builtin_function!(
+//     /// Abort syscall functions, called when the SBF program calls `abort()`
+//     /// LLVM will insert calls to `abort()` if it detects an untenable situation,
+//     /// `abort()` is not intended to be called explicitly by the program.
+//     /// Causes the SBF program to be halted immediately
+//     SyscallAbort,
+//     fn rust(
+//         _invoke_context: &mut InvokeContext,
+//         _arg1: u64,
+//         _arg2: u64,
+//         _arg3: u64,
+//         _arg4: u64,
+//         _arg5: u64,
+//         _memory_mapping: &mut MemoryMapping,
+//     ) -> Result<u64, std::error::Error> {
+//         Err(SyscallError::Abort.into())
+//     }
+// );
+
+declare_builtin_function!(
+    /// Panic syscall function, called when the SBF program calls 'sol_panic_()`
+    /// Causes the SBF program to be halted immediately
+    SyscallPanic,
+    fn rust(
+        invoke_context: &mut InvokeContext,
+        file: u64,
+        len: u64,
+        line: u64,
+        column: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        // consume_compute_meter(invoke_context, len)?;
+        //
+        // translate_string_and_do(
+        //     memory_mapping,
+        //     file,
+        //     len,
+        //     invoke_context.get_check_aligned(),
+        //     &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line, column).into()),
+        // )
+        let error_message = "Dummy panic due to unimplemented syscall"; // Dummy error message
+        Err(SyscallError::Panic(error_message.to_string(), line, column).into())
+    }
+);
+
+
 
 macro_rules! create_vm {
     ($vm_name:ident, $verified_executable:expr, $context_object:expr, $stack:ident,
@@ -487,7 +828,7 @@ fn execute_generated_program(prog: &[u8], mem: &mut [u8]) -> Option<Vec<u8>> {
         None
     );
 
-    let (instruction_count_jit, result_jit) = vm.execute_program(&executable, false);
+    let (instruction_count_jit, result_jit) = vm.execute_program(&executable, true);
     let tracer_jit = &vm.context_object_pointer;
 
     if format!("{result_interpreter:?}") != format!("{result_jit:?}")
@@ -547,10 +888,15 @@ fn test_struct_func_pointer() {
     // the function pointer is relocated at load time.
     let config = Config {
         enable_instruction_tracing: true,
+        reject_broken_elfs: true,
+        // reject_callx_r10: false,
+        // enable_sbpf_v2: true,
         ..Config::default()
     };
     // let mut file = File::open("struct_func_pointer.so").unwrap();
-    let mut file = File::open("/home/rigidus/src/hello_world/target/deploy/hello_world.so").unwrap();
+    // let mut file = File::open("/home/rigidus/src/hello_world/target/deploy/hello_world.so").unwrap();
+    let mut file = File::open("/home/rigidus/src/hello_world/target/sbf-solana-solana/release/hello_world.so").unwrap();
+
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
 
@@ -562,9 +908,35 @@ fn test_struct_func_pointer() {
         let mut function_registry =
             FunctionRegistry::<BuiltinFunction<TestContextObject>>::default();
         // Регистрация системного вызова
-        function_registry
-            .register_function_hashed(*b"bpf_mem_frob", syscalls::SyscallMemFrob::vm);
+        // Abort
+        // function_registry.register_function_hashed(*b"abort", SyscallAbort::vm)?;
 
+        // Panic
+        // function_registry.register_function_hashed(*b"sol_panic_", SyscallPanic::vm)?;
+
+        // Logging
+        function_registry.register_function_hashed(*b"sol_log_", SyscallLog::vm)?;
+        // function_registry.register_function_hashed(*b"sol_log_64_", SyscallLogU64::vm)?;
+        // function_registry.register_function_hashed(*b"sol_log_compute_units_", SyscallLogBpfComputeUnits::vm)?;
+        // function_registry.register_function_hashed(*b"sol_log_pubkey", SyscallLogPubkey::vm)?;
+
+        // function_registry
+        //     .register_function_hashed(*b"abort", SyscallAbort::vm)
+        //     .expect("Registration failed");
+        // function_registry
+        //     .register_function_hashed(*b"sol_log_", SyscallLog::vm)
+        //     .expect("Registration failed");
+        // function_registry
+        //     .register_function_hashed(*b"sol_memcpy_", SyscallMemcpy::vm)
+        //     .expect("Registration failed");
+        // function_registry
+        //     .register_function_hashed(*b"sol_memset_", SyscallMemset::vm)
+        //     .expect("Registration failed");
+
+        // function_registry
+        //     .register_function_hashed(*b"bpf_mem_frob", syscalls::SyscallMemFrob::vm);
+        // function_registry
+        //     .register_function_hashed(*b"sol_log_", syscalls::SyscallMemFrob::vm);
         // function_registry
         //     .register_function_hashed(*b"log", log);
         // Constructs a loader built-in program

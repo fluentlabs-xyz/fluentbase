@@ -2606,6 +2606,7 @@ dependencies = [
  "revm-primitives 4.0.0",
  "rwasm",
  "solana_rbpf",
+ "thiserror",
 ]
 
 [[package]]
