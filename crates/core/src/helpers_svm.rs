@@ -6,28 +6,28 @@ use crate::fvm::types::WasmRelayer;
 use alloc::vec::Vec;
 use core::str::from_utf8;
 use std::{fs::File, io::Read, sync::Arc, cell::RefCell, slice::from_raw_parts_mut};
-use fuel_core_executor::executor::{
-    BlockExecutor,
-    ExecutionData,
-    ExecutionOptions,
-    TxStorageTransaction,
-};
-use fuel_core_storage::{
-    column::Column,
-    kv_store::{KeyValueInspect, KeyValueMutate, WriteOperation},
-    structured_storage::StructuredStorage,
-    transactional::{Changes, ConflictPolicy, InMemoryTransaction, IntoTransaction},
-};
-use fuel_core_types::{
-    blockchain::header::PartialBlockHeader,
-    fuel_tx::{Cacheable, ConsensusParameters, ContractId, Receipt, Word},
-    fuel_vm::{
-        checked_transaction::{Checked, IntoChecked},
-        interpreter::{CheckedMetadata, ExecutableTransaction, MemoryInstance},
-        ProgramState,
-    },
-    services::executor::Error
-};
+// use fuel_core_executor::executor::{
+//     BlockExecutor,
+//     ExecutionData,
+//     ExecutionOptions,
+//     TxStorageTransaction,
+// };
+// use fuel_core_storage::{
+//     column::Column,
+//     kv_store::{KeyValueInspect, KeyValueMutate, WriteOperation},
+//     structured_storage::StructuredStorage,
+//     transactional::{Changes, ConflictPolicy, InMemoryTransaction, IntoTransaction},
+// };
+// use fuel_core_types::{
+//     blockchain::header::PartialBlockHeader,
+//     fuel_tx::{Cacheable, ConsensusParameters, ContractId, Receipt, Word},
+//     fuel_vm::{
+//         checked_transaction::{Checked, IntoChecked},
+//         interpreter::{CheckedMetadata, ExecutableTransaction, MemoryInstance},
+//         ProgramState,
+//     },
+//     services::executor::Error
+// };
 use solana_rbpf::{
         aligned_memory::AlignedMemory,
         assembler::assemble,
@@ -149,6 +149,9 @@ fn translate(
 }
 
 /// Error definitions
+
+type Error = Box<dyn std::error::Error>;
+
 #[derive(Debug, ThisError, PartialEq, Eq)]
 pub enum SyscallError {
     #[error("{0}: {1:?}")]
@@ -315,7 +318,7 @@ declare_builtin_function!(
         _arg4: u64,
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
-    ) -> StdResult<u64, Box<dyn std::error::Error>> {
+    ) -> core::result::Result<u64, Error> {
         // let cost = invoke_context
         //     .get_compute_budget()
         //     .syscall_base_cost
@@ -600,10 +603,10 @@ macro_rules! test_interpreter_and_jit_asm {
 #[derive(Debug, Clone)]
 pub struct SvmTransactResult<Tx> {
     pub reverted: bool,
-    pub program_state: ProgramState,
+    // pub program_state: ProgramState,
     pub tx: Tx,
-    pub receipts: Vec<Receipt>,
-    pub changes: Changes,
+    // pub receipts: Vec<Receipt>,
+    // pub changes: Changes,
 }
 
 
@@ -895,7 +898,8 @@ fn test_struct_func_pointer() {
     };
     // let mut file = File::open("struct_func_pointer.so").unwrap();
     // let mut file = File::open("/home/rigidus/src/hello_world/target/deploy/hello_world.so").unwrap();
-    let mut file = File::open("/home/rigidus/src/hello_world/target/sbf-solana-solana/release/hello_world.so").unwrap();
+    // /home/rigidus/src/hello_world/target/sbf-solana-solana/release/
+    let mut file = File::open("/home/rigidus/src/fluentlabs-xyz/fluentbase/temp/hello_world.so").unwrap();
 
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
@@ -1034,48 +1038,48 @@ fn example_syscal() {
 
 pub fn svm_transact<'a, Tx, T>(
     storage: &mut T,
-    checked_tx: Checked<Tx>,
-    header: &'a PartialBlockHeader,
-    coinbase_contract_id: ContractId,
-    gas_price: Word,
-    memory: &'a mut MemoryInstance,
-    consensus_params: ConsensusParameters,
-    extra_tx_checks: bool,
-    execution_data: &mut ExecutionData,
+    // checked_tx: Checked<Tx>,
+    // header: &'a PartialBlockHeader,
+    // coinbase_contract_id: ContractId,
+    // gas_price: Word,
+    // memory: &'a mut MemoryInstance,
+    // consensus_params: ConsensusParameters,
+    // extra_tx_checks: bool,
+    // execution_data: &mut ExecutionData,
 ) -> core::result::Result<SvmTransactResult<Tx>, Error>
-where
-    Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
-    <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
-    T: KeyValueInspect<Column = Column>,
+// where
+//     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
+//     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
+//     T: KeyValueInspect<Column = Column>,
 {
-    let execution_options = ExecutionOptions {
-        extra_tx_checks,
-        backtrace: false,
-    };
-
-    let block_executor =
-        BlockExecutor::new(WasmRelayer {}, execution_options.clone(), consensus_params)
-            .expect("failed to create block executor");
-
-    let structured_storage =
-        StructuredStorage::new(storage);
-    let mut structured_storage =
-        structured_storage.into_transaction();
-    let in_memory_transaction =
-        InMemoryTransaction::new(
-        Changes::new(),
-        ConflictPolicy::Overwrite,
-        &mut structured_storage,
-    );
-    let tx_transaction =
-        &mut TxStorageTransaction::new(in_memory_transaction);
-
-    let tx_id = checked_tx.id();
-
-    let mut checked_tx = checked_tx;
-    if execution_options.extra_tx_checks {
-        checked_tx = block_executor.extra_tx_checks(checked_tx, header, tx_transaction, memory)?;
-    }
+    // let execution_options = ExecutionOptions {
+    //     extra_tx_checks,
+    //     backtrace: false,
+    // };
+    //
+    // let block_executor =
+    //     BlockExecutor::new(WasmRelayer {}, execution_options.clone(), consensus_params)
+    //         .expect("failed to create block executor");
+    //
+    // let structured_storage =
+    //     StructuredStorage::new(storage);
+    // let mut structured_storage =
+    //     structured_storage.into_transaction();
+    // let in_memory_transaction =
+    //     InMemoryTransaction::new(
+    //     Changes::new(),
+    //     ConflictPolicy::Overwrite,
+    //     &mut structured_storage,
+    // );
+    // let tx_transaction =
+    //     &mut TxStorageTransaction::new(in_memory_transaction);
+    //
+    // let tx_id = checked_tx.id();
+    //
+    // let mut checked_tx = checked_tx;
+    // if execution_options.extra_tx_checks {
+    //     checked_tx = block_executor.extra_tx_checks(checked_tx, header, tx_transaction, memory)?;
+    // }
 
     // Here we go to solana way...
 
@@ -1135,48 +1139,48 @@ where
     example_syscal();
 
     // ----------
-
-    let (reverted, program_state, tx, receipts) =
-        block_executor.attempt_tx_execution_with_vm(
-            checked_tx,
-            header,
-            coinbase_contract_id,
-            gas_price,
-            tx_transaction,
-            memory,
-        )?;
-
-    block_executor.spend_input_utxos(tx.inputs(), tx_transaction, reverted, execution_data)?;
-
-    block_executor.persist_output_utxos(
-        *header.height(),
-        execution_data,
-        &tx_id,
-        tx_transaction,
-        tx.inputs(),
-        tx.outputs(),
-    )?;
+    let reverted = false;
+    // let (reverted, program_state, tx, receipts) =
+    //     block_executor.attempt_tx_execution_with_vm(
+    //         checked_tx,
+    //         header,
+    //         coinbase_contract_id,
+    //         gas_price,
+    //         tx_transaction,
+    //         memory,
+    //     )?;
+    //
+    // block_executor.spend_input_utxos(tx.inputs(), tx_transaction, reverted, execution_data)?;
+    //
+    // block_executor.persist_output_utxos(
+    //     *header.height(),
+    //     execution_data,
+    //     &tx_id,
+    //     tx_transaction,
+    //     tx.inputs(),
+    //     tx.outputs(),
+    // )?;
 
     // tx_st_transaction
     //     .storage::<ProcessedTransactions>()
     //     .insert(&tx_id, &());
 
-    block_executor.update_execution_data(
-        &tx,
-        execution_data,
-        receipts.clone(),
-        gas_price,
-        reverted,
-        program_state,
-        tx_id,
-    )?;
+    // block_executor.update_execution_data(
+    //     &tx,
+    //     execution_data,
+    //     receipts.clone(),
+    //     gas_price,
+    //     reverted,
+    //     program_state,
+    //     tx_id,
+    // )?;
 
     Ok(crate::helpers_svm::SvmTransactResult {
         reverted,
-        program_state,
-        tx,
-        receipts,
-        changes: tx_transaction.changes().clone(),
+        // program_state,
+        // tx,
+        // receipts,
+        // changes: tx_transaction.changes().clone(),
     })
 }
 
