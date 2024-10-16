@@ -5,9 +5,10 @@ use crate::utils::{
     rust_name_to_sol,
     rust_type_to_sol,
 };
+use convert_case::Casing;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{quote, ToTokens};
+use quote::{format_ident, quote, ToTokens};
 use regex::Regex;
 use syn::{
     parse::{Parse, ParseStream},
@@ -18,6 +19,7 @@ use syn::{
     Ident,
     ImplItem,
     ImplItemFn,
+    Index,
     ItemImpl,
     ItemTrait,
     Lit,
@@ -30,7 +32,6 @@ use syn::{
     Type,
 };
 use syn_solidity::{parse2, File, Item as SolidityItem};
-
 pub fn derive_solidity_router(input: TokenStream) -> Result<TokenStream> {
     let input = TokenStream2::from(input);
     let ast: ItemImpl = syn::parse2(input)?;
@@ -63,27 +64,17 @@ pub fn derive_solidity_router(input: TokenStream) -> Result<TokenStream> {
     // Generate the main router code
     let router = generate_router(&ast, &routes_except_fallback, has_fallback);
 
-    let sol_signatures = routes_except_fallback
+    let codec_impl = routes_except_fallback
         .iter()
-        .map(|r| {
-            let sol_code = r.signature.clone();
-            let token_stream: TokenStream2 = sol_code
-                .parse()
-                .expect("Failed to convert string to TokenStream2");
-            return token_stream;
-        })
+        .map(|r| r.generate_codec_impl())
         .collect::<Vec<_>>();
 
     let output = quote! {
         #ast
 
-        use alloy_sol_types::{sol, SolCall, SolValue};
+        #(#codec_impl);*
 
-        sol! {
-            #(#sol_signatures);*;
-        }
-
-        #router
+        // #router
     };
     Ok(output.into())
 }
@@ -254,10 +245,11 @@ fn generate_router(ast: &ItemImpl, routes: &[Route], has_fallback: bool) -> Toke
                 let input_size = self.sdk.input_size();
                 #input_size_check;
 
-                let mut selector: [u8; 4] = [0; 4];
-                self.sdk.read(&mut selector, 0);
-                let input = fluentbase_sdk::alloc_slice(input_size as usize);
-                self.sdk.read(input, 0);
+                let mut full_input = fluentbase_sdk::alloc_slice(input_size as usize);
+
+                self.sdk.read(&mut full_input, 0);
+                let (selector, data_input) = full_input.split_at(4);
+
                 match selector {
                     #match_arms
                 }
@@ -272,6 +264,7 @@ struct Route {
     pub fn_name: String,
     pub signature: String,
     pub args: Vec<Arg>,
+    pub return_args: Vec<Type>,
     pub is_public: bool,
 }
 
@@ -305,6 +298,13 @@ impl Parse for Route {
         let method_sol_signature = get_full_sol_signature(&method);
 
         let args: Vec<Arg> = Arg::from(&method);
+        let return_args = match &method.sig.output {
+            ReturnType::Type(_, ty) => match &**ty {
+                Type::Tuple(tuple) => tuple.elems.iter().cloned().collect(),
+                _ => vec![(&**ty).clone()],
+            },
+            ReturnType::Default => vec![],
+        };
 
         let function_id = if let Some(id) = function_id_attr {
             id
@@ -332,6 +332,7 @@ impl Parse for Route {
             fn_name: method.sig.ident.to_string(),
             signature: method_sol_signature,
             args,
+            return_args,
             is_public,
         })
     }
@@ -397,12 +398,12 @@ impl Route {
         if self.args.is_empty() {
             quote! {}
         } else {
-            let fn_name = Ident::new(&self.fn_name, Span::call_site());
-
-            let fn_call_name = Ident::new(
-                &format!("{}Call", rust_name_to_sol(&fn_name)),
+            let fn_name = Ident::new(
+                &self.fn_name.to_case(convert_case::Case::Pascal),
                 Span::call_site(),
             );
+
+            let fn_call_name = Ident::new(&format!("{}Call", fn_name), Span::call_site());
             let decode_args: Vec<TokenStream2> =
                 self.args.iter().map(|arg| arg.to_decode_token()).collect();
 
@@ -435,6 +436,136 @@ impl Route {
     fn get_function_call_args(&self) -> TokenStream2 {
         let args = self.args.iter().map(|arg| arg.to_call_token());
         quote! { #(#args),* }
+    }
+
+    pub fn generate_codec_impl(&self) -> TokenStream2 {
+        let call_name = format_ident!("{}Call", self.fn_name.to_case(convert_case::Case::Pascal));
+        let call_name_args = format_ident!("{}Args", call_name);
+        let call_name_target = format_ident!("{}Target", call_name);
+
+        let return_name =
+            format_ident!("{}Return", self.fn_name.to_case(convert_case::Case::Pascal));
+        let return_name_args = format_ident!("{}Args", return_name);
+        let return_name_target = format_ident!("{}Target", return_name);
+
+        let input_args = self.args.iter().map(|arg| &arg.ty).collect::<Vec<_>>();
+        let call_args = quote! { (#(#input_args,)*) };
+
+        let return_args = if self.return_args.is_empty() {
+            quote! { () }
+        } else {
+            let return_types = &self.return_args;
+            quote! { (#(#return_types,)*) }
+        };
+
+        let encode_input_fields = self.args.iter().enumerate().map(|(i, _)| {
+            let index = Index::from(i);
+            quote! { self.0.clone().#index }
+        });
+
+        let function_id = &self.function_id;
+        let signature = &self.signature;
+        let fn_name = format_ident!("{}", &self.fn_name);
+
+        let input_params = self.args.iter().map(|arg| {
+            let ty = &arg.ty;
+            let ident = &arg.ident;
+            quote! { #ident: #ty }
+        });
+
+        quote! {
+            pub type #call_name_args = #call_args;
+            pub struct #call_name(#call_name_args);
+            impl #call_name {
+                pub const SELECTOR: [u8; 4] = [#(#function_id,)*];
+                pub const SIGNATURE: &'static str = #signature;
+
+                pub fn new(args: #call_name_args) -> Self {
+                    Self(args)
+                }
+
+                pub fn encode(&self) -> Bytes {
+                    let mut buf = BytesMut::new();
+                    SolidityABI::encode(&(#(#encode_input_fields,)*), &mut buf, 0).unwrap();
+                    let encoded_args = buf.freeze();
+
+                    Self::SELECTOR.iter().copied().chain(encoded_args).collect()
+                }
+
+                pub fn decode(buf: &impl Buf) -> Result<Self, CodecError> {
+                    let chunk = buf.chunk();
+                    if chunk.len() < 4 {
+                        return Err(CodecError::Decoding(
+                            codec2::error::DecodingError::BufferTooSmall {
+                                expected: 4,
+                                found: chunk.len(),
+                                msg: "buf too small to read fn selector".to_string(),
+                            },
+                        ));
+                    }
+
+                    let selector: [u8; 4] = chunk[..4].try_into().unwrap();
+                    if selector != Self::SELECTOR {
+                        return Err(CodecError::Decoding(
+                            codec2::error::DecodingError::InvalidSelector {
+                                expected: Self::SELECTOR,
+                                found: selector,
+                            },
+                        ));
+                    }
+
+                    let args = SolidityABI::<#call_name_args>::decode(&&chunk[4..], 0)?;
+                    Ok(Self(args))
+                }
+            }
+
+            impl Deref for #call_name {
+                type Target = #call_name_args;
+
+                fn deref(&self) -> &Self::Target {
+                    &self.0
+                }
+            }
+
+            pub type #call_name_target = <#call_name as Deref>::Target;
+
+            pub type #return_name_args = #return_args;
+            pub struct #return_name(#return_name_args);
+
+            impl #return_name {
+                pub fn new(args: #return_name_args) -> Self {
+                    Self(args)
+                }
+
+                pub fn encode(&self) -> Bytes {
+                    let mut buf = BytesMut::new();
+                    SolidityABI::encode(&self.0, &mut buf, 0).unwrap();
+                    buf.freeze().into()
+                }
+
+                pub fn decode(buf: &impl Buf) -> Result<Self, CodecError> {
+                    let args = SolidityABI::<#return_name_args>::decode(buf, 0)?;
+                    Ok(Self(args))
+                }
+            }
+
+            impl Deref for #return_name {
+                type Target = #return_name_args;
+
+                fn deref(&self) -> &Self::Target {
+                    &self.0
+                }
+            }
+
+            pub type #return_name_target = <#return_name as Deref>::Target;
+
+
+        }
+    }
+
+    fn generate_tuple_type(&self) -> TokenStream2 {
+        let type_tokens = self.args.iter().map(|arg| &arg.ty);
+        quote! { (#(#type_tokens,)*) }
     }
 }
 
@@ -864,6 +995,7 @@ mod tests {
                 ident: Ident::new("x", Span::call_site()),
                 ty: parse_str::<Type>("u256").unwrap(),
             }],
+            return_args: vec![],
             is_public: true,
         };
 
@@ -902,6 +1034,7 @@ mod tests {
                     ty: parse_str::<Type>("Address").unwrap(),
                 },
             ],
+            return_args: vec![],
             is_public: true,
         };
 
@@ -940,6 +1073,7 @@ mod tests {
                     ty: parse_str::<Type>("&mut Address").unwrap(),
                 },
             ],
+            return_args: vec![],
             is_public: true,
         };
 

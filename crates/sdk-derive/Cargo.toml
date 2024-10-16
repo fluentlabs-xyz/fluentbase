@@ -12,15 +12,20 @@ version = "0.1.0"
 [dependencies]
 #alloy-sol-types = {version = "0.7.4", default-features = false}
 convert_case = "0.6.0"
-crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
-proc-macro-error = { version = "1", default-features = false }
+crypto-hashes = {version = "0.10.0", default-features = false, features = ["include_weak"]}
+darling = "0.20.10"
+hex = "0.4.3"
+paste = {workspace = true}
+proc-macro-error = {version = "1", default-features = false}
 proc-macro2 = "1.0"
 quote = "1.0"
-serde = { version = "1.0", default-features = false, features = ["derive"] }
-syn = { workspace = true, features = ["full"] }
-syn-solidity = { version = "0.7", default-features = false }
-hex = "0.4.3"
 regex.workspace = true
+serde = {version = "1.0", default-features = false, features = ["derive"]}
+syn = {workspace = true, features = ["full"]}
+syn-solidity = {version = "0.7", default-features = false}
+
+[dev-dependencies]
+trybuild = "1.0"
 
 [lib]
 proc-macro = true
