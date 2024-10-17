@@ -1,29 +1,113 @@
+use crate::utils::rust_type_to_sol;
+use convert_case::{Case, Casing};
 use darling::FromMeta;
 use hex;
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, ToTokens};
+use proc_macro_error::abort;
+use quote::{format_ident, quote, ToTokens};
 use syn::{
-    parse::{Parse, ParseStream},
+    parse::{Parse, ParseStream, Parser},
     punctuated::Punctuated,
     spanned::Spanned,
+    Attribute,
+    FnArg,
+    Ident,
+    ImplItemFn,
+    Index,
+    ItemImpl,
     LitStr,
     Result,
+    ReturnType,
     Token,
+    Type,
 };
 
-#[derive(Debug, FromMeta)]
+#[derive(Debug, FromMeta, Clone)]
 pub struct FunctionIDAttribute {
     #[darling(default)]
-    validate: Option<bool>,
+    pub validate: Option<bool>,
     #[darling(skip)]
-    function_id: Option<FunctionIDType>,
+    pub function_id: Option<FunctionIDType>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum FunctionIDType {
     Signature(String),
     HexString(String),
     ByteArray([u8; 4]),
+}
+
+impl FunctionIDAttribute {
+    fn validate_signature(&self, signature: &str) -> Result<()> {
+        if !signature.ends_with(")") || !signature.contains("(") {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!("Invalid Solidity function signature: '{}'. Expected format: 'functionName(type1,type2,...)'", signature)
+            ));
+        }
+        // TODO: d1r1 Add more detailed signature validation here
+        Ok(())
+    }
+
+    pub fn function_id_hex(&self) -> Result<String> {
+        self.function_id
+            .as_ref()
+            .ok_or_else(|| syn::Error::new(Span::call_site(), "Function ID is not set"))
+            .and_then(|id| match id {
+                FunctionIDType::Signature(sig) => {
+                    use crypto_hashes::{digest::Digest, sha3::Keccak256};
+                    let mut hash = Keccak256::new();
+                    hash.update(sig.as_bytes());
+                    let mut dst = [0u8; 4];
+                    dst.copy_from_slice(&hash.finalize()[0..4]);
+                    Ok(format!("0x{}", hex::encode(&dst[..4])))
+                }
+                FunctionIDType::HexString(hex_str) => Ok(hex_str.clone()),
+                FunctionIDType::ByteArray(arr) => Ok(format!("0x{}", hex::encode(arr))),
+            })
+    }
+
+    pub fn function_id_bytes(&self) -> Result<[u8; 4]> {
+        self.function_id
+            .as_ref()
+            .ok_or_else(|| syn::Error::new(Span::call_site(), "Function ID is not set"))
+            .and_then(|id| match id {
+                FunctionIDType::Signature(sig) => {
+                    use crypto_hashes::{digest::Digest, sha3::Keccak256};
+                    let mut hash = Keccak256::new();
+                    hash.update(sig.as_bytes());
+                    let mut dst = [0u8; 4];
+                    dst.copy_from_slice(&hash.finalize()[0..4]);
+                    Ok(dst)
+                }
+                FunctionIDType::HexString(hex_str) => {
+                    let bytes = hex::decode(hex_str.trim_start_matches("0x")).map_err(|e| {
+                        syn::Error::new(Span::call_site(), format!("Invalid hex string: {}", e))
+                    })?;
+                    if bytes.len() != 4 {
+                        Err(syn::Error::new(
+                            Span::call_site(),
+                            format!(
+                                "Invalid hex string length. Expected 4 bytes, found {}",
+                                bytes.len()
+                            ),
+                        ))
+                    } else {
+                        let mut arr = [0u8; 4];
+                        arr.copy_from_slice(&bytes);
+                        Ok(arr)
+                    }
+                }
+                FunctionIDType::ByteArray(arr) => Ok(*arr),
+            })
+    }
+
+    pub fn signature(&self) -> Option<String> {
+        self.function_id.as_ref().and_then(|id| match id {
+            FunctionIDType::Signature(sig) => Some(sig.clone()),
+            _ => None,
+        })
+    }
 }
 
 impl Parse for FunctionIDAttribute {
@@ -128,79 +212,6 @@ impl Parse for FunctionIDAttribute {
     }
 }
 
-impl FunctionIDAttribute {
-    fn validate_signature(&self, signature: &str) -> Result<()> {
-        if !signature.ends_with(")") || !signature.contains("(") {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                format!("Invalid Solidity function signature: '{}'. Expected format: 'functionName(type1,type2,...)'", signature)
-            ));
-        }
-        // TODO: Add more detailed signature validation here
-        Ok(())
-    }
-
-    pub fn function_id_hex(&self) -> Result<String> {
-        self.function_id
-            .as_ref()
-            .ok_or_else(|| syn::Error::new(Span::call_site(), "Function ID is not set"))
-            .and_then(|id| match id {
-                FunctionIDType::Signature(sig) => {
-                    use crypto_hashes::{digest::Digest, sha3::Keccak256};
-                    let mut hash = Keccak256::new();
-                    hash.update(sig.as_bytes());
-                    let mut dst = [0u8; 4];
-                    dst.copy_from_slice(&hash.finalize()[0..4]);
-                    Ok(format!("0x{}", hex::encode(&dst[..4])))
-                }
-                FunctionIDType::HexString(hex_str) => Ok(hex_str.clone()),
-                FunctionIDType::ByteArray(arr) => Ok(format!("0x{}", hex::encode(arr))),
-            })
-    }
-
-    pub fn function_id_bytes(&self) -> Result<[u8; 4]> {
-        self.function_id
-            .as_ref()
-            .ok_or_else(|| syn::Error::new(Span::call_site(), "Function ID is not set"))
-            .and_then(|id| match id {
-                FunctionIDType::Signature(sig) => {
-                    use crypto_hashes::{digest::Digest, sha3::Keccak256};
-                    let mut hash = Keccak256::new();
-                    hash.update(sig.as_bytes());
-                    let mut dst = [0u8; 4];
-                    dst.copy_from_slice(&hash.finalize()[0..4]);
-                    Ok(dst)
-                }
-                FunctionIDType::HexString(hex_str) => {
-                    let bytes = hex::decode(hex_str.trim_start_matches("0x")).map_err(|e| {
-                        syn::Error::new(Span::call_site(), format!("Invalid hex string: {}", e))
-                    })?;
-                    if bytes.len() != 4 {
-                        Err(syn::Error::new(
-                            Span::call_site(),
-                            format!(
-                                "Invalid hex string length. Expected 4 bytes, found {}",
-                                bytes.len()
-                            ),
-                        ))
-                    } else {
-                        let mut arr = [0u8; 4];
-                        arr.copy_from_slice(&bytes);
-                        Ok(arr)
-                    }
-                }
-                FunctionIDType::ByteArray(arr) => Ok(*arr),
-            })
-    }
-
-    pub fn signature(&self) -> Option<String> {
-        self.function_id.as_ref().and_then(|id| match id {
-            FunctionIDType::Signature(sig) => Some(sig.clone()),
-            _ => None,
-        })
-    }
-}
-
 impl ToTokens for FunctionIDAttribute {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let validate = self.validate.unwrap_or(true);
@@ -249,4 +260,532 @@ impl ToTokens for FunctionIDAttribute {
 fn error_tokens(e: syn::Error) -> TokenStream {
     let error_msg = e.to_string();
     quote! { compile_error!(#error_msg); }
+}
+
+struct SolidityRouter {
+    ast: ItemImpl,
+    routes: Vec<Route>,
+    has_fallback: bool,
+}
+
+impl SolidityRouter {
+    fn generate_router(&self) -> TokenStream {
+        let struct_name = &self.ast.self_ty;
+        let generics = &self.ast.generics;
+
+        let routes_except_fallback: Vec<&Route> = self
+            .routes
+            .iter()
+            .filter(|r| r.fn_name != "fallback")
+            .collect();
+
+        // Generate token streams for each route
+        let routes_tokens: Vec<TokenStream> = routes_except_fallback
+            .iter()
+            .map(|route| route.to_token_stream())
+            .collect();
+
+        // Add fallback handling
+        let fallback_arm = if self.has_fallback {
+            quote! {
+                _ => {
+                    self.fallback();
+                },
+            }
+        } else {
+            quote! {
+                _ => panic!("unknown method"),
+            }
+        };
+
+        // If no routes are available, generate an error
+        let match_arms = if routes_except_fallback.is_empty() {
+            quote! {
+                _ => panic!("No methods to route"),
+            }
+        } else {
+            quote! {
+                #(#routes_tokens),*,
+                #fallback_arm
+            }
+        };
+
+        let input_size_check = if self.has_fallback {
+            quote! {
+                if input_size < 4 {
+                    self.fallback();
+                }
+            }
+        } else {
+            quote! {
+                if input_size < 4 {
+                    panic!("input too short, cannot extract selector");
+                }
+            }
+        };
+
+        // Final routing function
+        quote! {
+            impl #generics #struct_name {
+                pub fn main(&mut self) {
+                    let input_size = self.sdk.input_size();
+                    #input_size_check;
+
+                    let mut full_input = fluentbase_sdk::alloc_slice(input_size as usize);
+
+                    self.sdk.read(&mut full_input, 0);
+                    let (selector, data_input) = full_input.split_at(4);
+
+                    match [selector[0], selector[1], selector[2], selector[3]] {
+                        #match_arms
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Parse for SolidityRouter {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let ast: ItemImpl = input.parse()?;
+
+        let mut routes = Vec::new();
+        for item in &ast.items {
+            if let syn::ImplItem::Fn(method) = item {
+                if let Ok(route) = Route::parse.parse2(method.to_token_stream()) {
+                    routes.push(route);
+                }
+            }
+        }
+
+        let methods_to_route: Vec<Route> = if ast.trait_.is_some() {
+            routes.clone()
+        } else {
+            routes
+                .into_iter()
+                .filter(|r| r.is_public && r.fn_name != "deploy")
+                .collect()
+        };
+
+        let has_fallback = methods_to_route.iter().any(|m| m.fn_name == "fallback");
+
+        Ok(SolidityRouter {
+            ast,
+            routes: methods_to_route,
+            has_fallback,
+        })
+    }
+}
+
+impl ToTokens for SolidityRouter {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let ast = &self.ast;
+        let routes_except_fallback: Vec<&Route> = self
+            .routes
+            .iter()
+            .filter(|r| r.fn_name != "fallback")
+            .collect();
+
+        let codec_impl = routes_except_fallback
+            .iter()
+            .map(|r| r.generate_codec_impl())
+            .collect::<Vec<_>>();
+
+        let router = &self.generate_router();
+
+        tokens.extend(quote! {
+            #ast
+
+            #(#codec_impl)*
+
+            #router
+        });
+    }
+}
+
+pub fn derive_solidity_router(input: proc_macro::TokenStream) -> Result<proc_macro::TokenStream> {
+    let router: SolidityRouter = syn::parse2(TokenStream::from(input))?;
+    Ok(quote!(#router).into())
+}
+
+#[derive(Clone, Debug)]
+struct Route {
+    pub function_id_attr: Option<FunctionIDAttribute>,
+    // function_id calculated from method
+    pub function_id: [u8; 4],
+    // fn_name in camelCase
+    pub fn_name: String,
+    // short form of signature derived from method
+    pub signature: String,
+    pub args: Vec<Arg>,
+    pub return_args: Vec<Type>,
+    pub original_fn: syn::ImplItemFn,
+    pub is_public: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Arg {
+    pub ty: Type,
+    pub ident: Ident,
+}
+
+impl Route {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let attrs = input.call(Attribute::parse_outer)?;
+        let mut function_id_attr = None;
+
+        for attr in &attrs {
+            if attr.path().is_ident("function_id") {
+                function_id_attr = Some(attr.parse_args::<FunctionIDAttribute>()?);
+            }
+        }
+
+        let original_fn: ImplItemFn = input.parse()?;
+
+        let args: Vec<Arg> = Arg::from(&original_fn);
+        let return_args = match &original_fn.sig.output {
+            ReturnType::Type(_, ty) => match &**ty {
+                Type::Tuple(tuple) => tuple.elems.iter().cloned().collect(),
+                _ => vec![(&**ty).clone()],
+            },
+            ReturnType::Default => vec![],
+        };
+
+        let fn_name = to_camel_case(&original_fn.sig.ident);
+        let method_sol_signature = get_sol_signature(
+            &fn_name.to_string(),
+            &args
+                .iter()
+                .map(|a| {
+                    let ty = &a.ty;
+                    rust_type_to_sol(ty).to_string()
+                })
+                .collect::<Vec<String>>(),
+        );
+
+        let function_id = keccak256(&method_sol_signature);
+        if let Some(fn_id) = &function_id_attr {
+            let validate = fn_id.validate.unwrap_or(true);
+            if validate {
+                let attr_function_id = fn_id.function_id_bytes()?;
+                if attr_function_id != function_id {
+                    match &fn_id.function_id {
+                        Some(FunctionIDType::Signature(attr_signature)) => {
+                            return Err(syn::Error::new(
+                                Span::call_site(),
+                                format!(
+                                    "Signature mismatch. \
+                            Attribute signature: '{}' (function_id: 0x{:02x}{:02x}{:02x}{:02x}). \
+                            Method signature: '{}' (function_id: 0x{:02x}{:02x}{:02x}{:02x}).",
+                                    attr_signature,
+                                    attr_function_id[0],
+                                    attr_function_id[1],
+                                    attr_function_id[2],
+                                    attr_function_id[3],
+                                    method_sol_signature,
+                                    function_id[0],
+                                    function_id[1],
+                                    function_id[2],
+                                    function_id[3]
+                                ),
+                            ));
+                        }
+                        _ => {
+                            return Err(syn::Error::new(
+                                Span::call_site(),
+                                format!(
+                                    "Function ID mismatch. \
+                            Attribute function_id: 0x{:02x}{:02x}{:02x}{:02x}. \
+                            Method function_id: 0x{:02x}{:02x}{:02x}{:02x}.",
+                                    attr_function_id[0],
+                                    attr_function_id[1],
+                                    attr_function_id[2],
+                                    attr_function_id[3],
+                                    function_id[0],
+                                    function_id[1],
+                                    function_id[2],
+                                    function_id[3]
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
+        };
+
+        let is_public = match original_fn.vis {
+            syn::Visibility::Public(_) => true,
+            _ => false,
+        };
+
+        Ok(Route {
+            function_id_attr,
+            function_id,
+            fn_name: fn_name.to_string(),
+            signature: method_sol_signature,
+            args,
+            return_args,
+            original_fn,
+            is_public,
+        })
+    }
+
+    fn to_token_stream(&self) -> TokenStream {
+        let fn_name = &self.original_fn.sig.ident;
+        let fn_call = format_ident!("{}Call", &self.fn_name.to_case(Case::Pascal));
+        let fn_call_selector = quote! { #fn_call::SELECTOR };
+        let fn_call_args_ty = format_ident!("{}Args", fn_call);
+
+        let fn_return = format_ident!("{}Return", &self.fn_name.to_case(Case::Pascal));
+
+        let arg_names: Vec<TokenStream> =
+            self.args.iter().map(|arg| arg.to_decode_token()).collect();
+        let field_indices: Vec<TokenStream> = self
+            .args
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let index = Index::from(i);
+                quote! { #index }
+            })
+            .collect();
+
+        let fn_call_args = self.get_function_call_args();
+
+        quote! {
+        #fn_call_selector => {
+            let (#(#arg_names),*) = match SolidityABI::<#fn_call_args_ty>::decode(
+                &data_input, 0
+            ) {
+                Ok(decoded) => (#(decoded.#field_indices),*),
+                Err(err) => {
+                    panic!("failed to decode input: {:?}", err);
+                }
+            };
+            let output = self.#fn_name(#fn_call_args);
+            let encoded_output = #fn_return::new((output,)).encode();
+
+            self.sdk.write(&encoded_output);
+
+            }
+        }
+    }
+
+    fn get_function_call_args(&self) -> TokenStream {
+        let args = self.args.iter().map(|arg| arg.to_call_token());
+        quote! { #(#args),* }
+    }
+    pub fn generate_codec_impl(&self) -> TokenStream {
+        let call_name = format_ident!("{}Call", self.fn_name.to_case(convert_case::Case::Pascal));
+        let call_name_args = format_ident!("{}Args", call_name);
+        let call_name_target = format_ident!("{}Target", call_name);
+
+        let return_name =
+            format_ident!("{}Return", self.fn_name.to_case(convert_case::Case::Pascal));
+        let return_name_args = format_ident!("{}Args", return_name);
+        let return_name_target = format_ident!("{}Target", return_name);
+
+        let input_args = self.args.iter().map(|arg| &arg.ty).collect::<Vec<_>>();
+        let call_args = quote! { (#(#input_args,)*) };
+
+        let return_args = if self.return_args.is_empty() {
+            quote! { () }
+        } else {
+            let return_types = &self.return_args;
+            quote! { (#(#return_types,)*) }
+        };
+
+        let encode_input_fields = self.args.iter().enumerate().map(|(i, _)| {
+            let index = Index::from(i);
+            quote! { self.0.clone().#index }
+        });
+
+        let function_id = &self.function_id;
+        let signature = &self.signature;
+        let fn_name = format_ident!("{}", &self.fn_name);
+
+        let input_params = self.args.iter().map(|arg| {
+            let ty = &arg.ty;
+            let ident = &arg.ident;
+            quote! { #ident: #ty }
+        });
+
+        quote! {
+            pub type #call_name_args = #call_args;
+            pub struct #call_name(#call_name_args);
+            impl #call_name {
+                pub const SELECTOR: [u8; 4] = [#(#function_id,)*];
+                pub const SIGNATURE: &'static str = #signature;
+
+                pub fn new(args: #call_name_args) -> Self {
+                    Self(args)
+                }
+
+                pub fn encode(&self) -> Bytes {
+                    let mut buf = BytesMut::new();
+                    SolidityABI::encode(&(#(#encode_input_fields,)*), &mut buf, 0).unwrap();
+                    let encoded_args = buf.freeze();
+
+                    Self::SELECTOR.iter().copied().chain(encoded_args).collect()
+                }
+
+                pub fn decode(buf: &impl Buf) -> Result<Self, CodecError> {
+                    let chunk = buf.chunk();
+                    if chunk.len() < 4 {
+                        return Err(CodecError::Decoding(
+                            codec2::error::DecodingError::BufferTooSmall {
+                                expected: 4,
+                                found: chunk.len(),
+                                msg: "buf too small to read fn selector".to_string(),
+                            },
+                        ));
+                    }
+
+                    let selector: [u8; 4] = chunk[..4].try_into().unwrap();
+                    if selector != Self::SELECTOR {
+                        return Err(CodecError::Decoding(
+                            codec2::error::DecodingError::InvalidSelector {
+                                expected: Self::SELECTOR,
+                                found: selector,
+                            },
+                        ));
+                    }
+
+                    let args = SolidityABI::<#call_name_args>::decode(&&chunk[4..], 0)?;
+                    Ok(Self(args))
+                }
+            }
+
+            impl Deref for #call_name {
+                type Target = #call_name_args;
+
+                fn deref(&self) -> &Self::Target {
+                    &self.0
+                }
+            }
+
+            pub type #call_name_target = <#call_name as Deref>::Target;
+
+            pub type #return_name_args = #return_args;
+            pub struct #return_name(#return_name_args);
+
+            impl #return_name {
+                pub fn new(args: #return_name_args) -> Self {
+                    Self(args)
+                }
+
+                pub fn encode(&self) -> Bytes {
+                    let mut buf = BytesMut::new();
+                    SolidityABI::encode(&self.0, &mut buf, 0).unwrap();
+                    buf.freeze().into()
+                }
+
+                pub fn decode(buf: &impl Buf) -> Result<Self, CodecError> {
+                    let args = SolidityABI::<#return_name_args>::decode(buf, 0)?;
+                    Ok(Self(args))
+                }
+            }
+
+            impl Deref for #return_name {
+                type Target = #return_name_args;
+
+                fn deref(&self) -> &Self::Target {
+                    &self.0
+                }
+            }
+
+            pub type #return_name_target = <#return_name as Deref>::Target;
+
+
+        }
+    }
+
+    fn generate_tuple_type(&self) -> TokenStream {
+        let type_tokens = self.args.iter().map(|arg| &arg.ty);
+        quote! { (#(#type_tokens,)*) }
+    }
+}
+
+impl Parse for Route {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Route::parse(input)
+    }
+}
+
+impl ToTokens for Route {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let mut ts = self.to_token_stream();
+        tokens.extend(ts);
+    }
+}
+
+impl Arg {
+    fn from(method: &ImplItemFn) -> Vec<Self> {
+        method
+            .sig
+            .inputs
+            .iter()
+            .filter_map(|arg| {
+                if let FnArg::Typed(pat_type) = arg {
+                    if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                        Some(Arg {
+                            ty: (*pat_type.ty).clone(),
+                            ident: pat_ident.ident.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn to_decode_token(&self) -> TokenStream {
+        let ident = &self.ident;
+        match &self.ty {
+            Type::Reference(ty_ref) if ty_ref.mutability.is_some() => {
+                quote! { mut #ident }
+            }
+            _ => {
+                quote! { #ident }
+            }
+        }
+    }
+
+    fn to_call_token(&self) -> TokenStream {
+        let ident = &self.ident;
+        match &self.ty {
+            Type::Reference(ty_ref) if ty_ref.mutability.is_some() => {
+                quote! { &mut #ident }
+            }
+            Type::Reference(_) => {
+                quote! { &#ident }
+            }
+            _ => {
+                quote! { #ident }
+            }
+        }
+    }
+}
+
+pub fn to_camel_case(ident: &Ident) -> Ident {
+    let span = ident.span();
+    let camel_name = ident.to_string().to_case(Case::Camel);
+    Ident::new(&camel_name, span)
+}
+
+pub fn keccak256(signature: &str) -> [u8; 4] {
+    use crypto_hashes::{digest::Digest, sha3::Keccak256};
+    Keccak256::digest(signature.as_bytes())
+        .as_slice()
+        .get(..4)
+        .unwrap_or(&[0; 4])
+        .try_into()
+        .unwrap_or([0; 4])
+}
+
+pub fn get_sol_signature(fn_name: &str, args: &[String]) -> String {
+    format!("{}({})", fn_name, args.join(","))
 }

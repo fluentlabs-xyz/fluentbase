@@ -1,9 +1,8 @@
-use crate::contract::impl_derive_contract;
+use crate::{contract::impl_derive_contract, router::solidity::derive_solidity_router};
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::{quote, ToTokens};
 use router::solidity::FunctionIDAttribute;
-use solidity_router::derive_solidity_router;
 use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
@@ -26,19 +25,19 @@ mod utils;
 
 mod router;
 
-#[proc_macro_attribute]
-pub fn function_id(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let attr = parse_macro_input!(attr as FunctionIDAttribute);
-    let item = parse_macro_input!(item as ItemFn);
+// #[proc_macro_attribute]
+// pub fn function_id(attr: TokenStream, item: TokenStream) -> TokenStream {
+//     let attr = parse_macro_input!(attr as FunctionIDAttribute);
+//     let item = parse_macro_input!(item as ItemFn);
 
-    let generated = attr.to_token_stream();
+//     let generated = attr.to_token_stream();
 
-    quote! {
-        #generated
-        #item
-    }
-    .into()
-}
+//     quote! {
+//         #generated
+//         #item
+//     }
+//     .into()
+// }
 
 #[proc_macro]
 pub fn derive_keccak256_id(token: TokenStream) -> TokenStream {

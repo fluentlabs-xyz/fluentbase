@@ -172,3 +172,24 @@ let decoded_result = SolidityABI::<fooCall>::decode(&data_input, 0);
 Short answer that you can use any type that implements `SolidityType` + `Encoder` traits.
 
 The mapping is pretty straightforward:
+
+## Macro tips
+
+| To | From | Method |
+|---|---|---|
+| string of code | literal code | `std::stringify!{}` |
+| string of code | syntax tree | `!quote(#syntax_tree).to_string()` |
+| string of code | TokenStream | `.to_string()` |
+| string of syntax | literal code | `format!("{:?}",parse2::<SynType>(quote! {...}).expect(...))` |
+| string of syntax | syntax tree | `format!("{:?}",…), format!("{:#?}",…)` |
+| string of tokens | literal code | `format!("{:?}",quote! {...})` |
+| string of tokens | TokenStream | `format!("{:?}",…), format!("{:#?}",…)` |
+| syn::Error | TokenStream | `.to_compile_error()` [см. Правило #7] |
+| syntax tree | literal code | `parse_quote!(…)` |
+| syntax tree | proc_macro::TokenStream | `parse_macro_input!(…), parse` |
+| syntax tree | string of code | `parse_str(…)` |
+| syntax tree | TokenStream | `parse2::<SynType>(…), etc` |
+| TokenStream | literal code | `quote!(…)` |
+| TokenStream | string of code | `parse_str(…)` |
+| TokenStream | syntrax tree | `quote!(#syntax_tree)` или `.to_token_stream(),` |
+| TokenStream | TokenStream | `.into(), ::from(...)` [см. Правило #1] |
