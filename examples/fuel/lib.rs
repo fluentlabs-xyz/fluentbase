@@ -5,6 +5,7 @@ use fluentbase_sdk::{
     basic_entrypoint,
     derive::{router, signature, Contract},
     Address,
+    Bytes,
     SharedAPI,
 };
 
@@ -17,6 +18,7 @@ pub trait RouterAPI {
     fn fvm_deposit(&mut self, msg: &[u8], caller: Address);
     fn fvm_withdraw(&mut self, msg: &mut [u8]);
     fn fvm_example(&mut self, msg: &[u8]);
+    fn example(&mut self, msg: Bytes);
 }
 
 #[router(mode = "solidity")]
@@ -37,6 +39,10 @@ impl<SDK: SharedAPI> RouterAPI for FvmLoaderEntrypoint<SDK> {
     #[signature("0x12345678")]
     fn fvm_example(&mut self, msg: &[u8]) {
         self.sdk.write(msg);
+    }
+
+    fn example(&mut self, msg: Bytes) {
+        self.sdk.write(&msg);
     }
 }
 

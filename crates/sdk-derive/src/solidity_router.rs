@@ -32,6 +32,7 @@ use syn::{
     Type,
 };
 use syn_solidity::{parse2, File, Item as SolidityItem};
+
 pub fn derive_solidity_router(input: TokenStream) -> Result<TokenStream> {
     let input = TokenStream2::from(input);
     let ast: ItemImpl = syn::parse2(input)?;
