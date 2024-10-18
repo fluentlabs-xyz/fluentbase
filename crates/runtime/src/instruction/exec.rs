@@ -11,10 +11,7 @@ use rwasm::{
     errors::FuelError,
     Caller,
 };
-use std::{
-    fmt::{Debug, Display, Formatter},
-    mem::take,
-};
+use std::fmt::{Debug, Display, Formatter};
 
 pub struct SyscallExec;
 
@@ -114,26 +111,16 @@ impl SyscallExec {
             return (fuel_limit, ExitCode::CallDepthOverflow.into_i32());
         }
 
-        // take jzkt from the existing context (we will return it soon)
-        let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
-        let context = take(&mut ctx.context);
-
         // create a new runtime instance with the context
         let ctx2 = RuntimeContext::new_with_hash(*code_hash)
             .with_input(input.to_vec())
-            .with_context(context)
-            .with_is_shared(true)
             .with_fuel_limit(fuel_limit)
-            .with_jzkt(jzkt)
+            .with_preimage_resolver(ctx.preimage_resolver.clone())
             .with_state(state)
             .with_depth(ctx.call_depth + 1)
             .with_tracer();
         let mut runtime = Runtime::new(ctx2);
         let mut execution_result = runtime.call();
-
-        // return jzkt context back
-        ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
-        ctx.context = take(&mut runtime.store.data_mut().context);
 
         // println!("\n\nEXEC, interrupted: {}", execution_result.interrupted);
         // println!(

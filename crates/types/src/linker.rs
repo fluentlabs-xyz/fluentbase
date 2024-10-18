@@ -9,7 +9,7 @@ macro_rules! import_func {
     };
 }
 
-const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 20] = [
+const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 19] = [
     import_func!("_keccak256", KECCAK256),
     import_func!("_poseidon", KECCAK256),
     import_func!("_poseidon_hash", POSEIDON_HASH),
@@ -26,7 +26,6 @@ const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 20] = [
     import_func!("_forward_output", FORWARD_OUTPUT),
     import_func!("_charge_fuel", CHARGE_FUEL),
     import_func!("_fuel", FUEL),
-    import_func!("_read_context", READ_CONTEXT),
     import_func!("_preimage_size", PREIMAGE_SIZE),
     import_func!("_preimage_copy", PREIMAGE_COPY),
     import_func!("_debug_log", DEBUG_LOG),

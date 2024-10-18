@@ -1,5 +1,4 @@
 use crate::RuntimeContext;
-use fluentbase_poseidon::hash_with_domain;
 use fluentbase_types::{ExitCode, F254};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use rwasm::{core::Trap, Caller};
@@ -25,6 +24,7 @@ impl SyscallPoseidonHash {
     }
 
     pub fn fn_impl(fa: &F254, fb: &F254, fd: &F254) -> Result<F254, ExitCode> {
+        use fluentbase_poseidon::hash_with_domain;
         let fr_from_bytes = |fr_data: &F254| -> Result<Fr, ExitCode> {
             let fr = Fr::from_bytes(&fr_data.0);
             if fr.is_none().into() {
@@ -38,4 +38,9 @@ impl SyscallPoseidonHash {
         let h2 = hash_with_domain(&[fa, fb], &fd);
         Ok(h2.to_repr().into())
     }
+
+    // #[cfg(not(feature = "std"))]
+    // pub fn fn_impl(_fa: &F254, _fb: &F254, _fd: &F254) -> Result<F254, ExitCode> {
+    //     unreachable!("poseidon is not supported in `no_std` mode")
+    // }
 }

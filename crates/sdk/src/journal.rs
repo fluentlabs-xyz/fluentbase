@@ -11,6 +11,7 @@ use fluentbase_types::{
     AccountStatus,
     BlockContext,
     CallPrecompileResult,
+    ContextFreeNativeAPI,
     ContractContext,
     DestroyedAccountResult,
     ExitCode,
@@ -106,7 +107,7 @@ impl JournalStateBuilder {
     pub fn add_genesis(&mut self, genesis: Genesis) {
         use fluentbase_types::{KECCAK_EMPTY, POSEIDON_EMPTY};
         for (address, account) in genesis.alloc.iter() {
-            let source_code_hash = account
+            let _source_code_hash = account
                 .storage
                 .as_ref()
                 .and_then(|storage| storage.get(&GENESIS_KECCAK_HASH_SLOT))
@@ -121,23 +122,16 @@ impl JournalStateBuilder {
             let mut account2 = Account::new(*address);
             account2.balance = account.balance;
             account2.nonce = account.nonce.unwrap_or_default();
-            account2.source_code_size = account
+            account2.code_size = account
                 .code
                 .as_ref()
                 .map(|v| v.len() as u64)
                 .unwrap_or_default();
-            account2.source_code_hash = source_code_hash;
-            account2.rwasm_code_size = account
-                .code
-                .as_ref()
-                .map(|v| v.len() as u64)
-                .unwrap_or_default();
-            account2.rwasm_code_hash = rwasm_code_hash;
+            account2.code_hash = rwasm_code_hash;
             // self.write_account(&account2, AccountStatus::NewlyCreated);
             let bytecode = account.code.clone().unwrap_or_default();
             // TODO(dmitry123): "is it true that source matches rwasm in genesis file?"
-            self.add_preimage(account2.source_code_hash, bytecode.clone());
-            self.add_preimage(account2.rwasm_code_hash, bytecode);
+            self.add_preimage(account2.code_hash, bytecode.clone());
         }
     }
 
@@ -250,6 +244,32 @@ impl<API: NativeAPI> JournalState<API> {
 
     pub fn rewrite_contract_context(&mut self, contract_context: ContractContext) {
         self.contract_context = Some(contract_context);
+    }
+}
+
+impl<API: NativeAPI> ContextFreeNativeAPI for JournalState<API> {
+    fn keccak256(data: &[u8]) -> B256 {
+        API::keccak256(data)
+    }
+
+    fn sha256(data: &[u8]) -> B256 {
+        API::sha256(data)
+    }
+
+    fn poseidon(data: &[u8]) -> F254 {
+        API::poseidon(data)
+    }
+
+    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
+        API::poseidon_hash(fa, fb, fd)
+    }
+
+    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+        API::ec_recover(digest, sig, rec_id)
+    }
+
+    fn debug_log(message: &str) {
+        API::debug_log(message)
     }
 }
 
@@ -563,7 +583,7 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn write_preimage(&mut self, preimage: Bytes) -> B256 {
         let address = self.contract_context.as_ref().unwrap().address;
-        let code_hash = self.native_sdk.keccak256(preimage.as_ref());
+        let code_hash = API::keccak256(preimage.as_ref());
         SovereignAPI::write_preimage(self, address, code_hash, preimage);
         code_hash
     }
@@ -611,27 +631,11 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         let (account, _) = self.account(&address);
         let (_, exit_code) =
             self.native_sdk
-                .exec(&account.rwasm_code_hash, input, fuel_limit, STATE_MAIN);
+                .exec(&account.code_hash, input, fuel_limit, STATE_MAIN);
         (self.native_sdk.return_data(), exit_code)
     }
 
     fn destroy_account(&mut self, _address: Address) {
         todo!()
-    }
-
-    fn debug_log(&self, message: &str) {
-        self.native_sdk.debug_log(message)
-    }
-
-    fn keccak256(&self, data: &[u8]) -> B256 {
-        self.native_sdk.keccak256(data)
-    }
-
-    fn sha256(&self, data: &[u8]) -> B256 {
-        self.native_sdk.sha256(data)
-    }
-
-    fn poseidon(&self, data: &[u8]) -> F254 {
-        self.native_sdk.poseidon(data)
     }
 }

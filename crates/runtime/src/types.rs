@@ -3,6 +3,24 @@ use fluentbase_types::{Bytes, F254};
 use hashbrown::HashMap;
 use rwasm::{rwasm::BinaryFormatError, Error as RwasmError};
 
+pub trait PreimageResolver {
+    fn preimage(&self, hash: &[u8; 32]) -> Bytes;
+    fn preimage_size(&self, hash: &[u8; 32]) -> u32;
+}
+
+#[derive(Default)]
+pub struct EmptyPreimageResolver;
+
+impl PreimageResolver for EmptyPreimageResolver {
+    fn preimage(&self, _hash: &[u8; 32]) -> Bytes {
+        Bytes::default()
+    }
+
+    fn preimage_size(&self, _hash: &[u8; 32]) -> u32 {
+        0
+    }
+}
+
 pub trait TrieDb {
     fn get_node(&mut self, key: &[u8]) -> Option<Bytes>;
 

@@ -18,16 +18,18 @@ fluentbase-types = { workspace = true, default-features = false }
 clap = { workspace = true }
 serde = { workspace = true, default-features = false }
 serde_json = { version = "1.0", default-features = false }
+alloy-primitives = { workspace = true, default-features = false }
 alloy-genesis = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
-
+rwasm = { workspace = true, default-features = false }
 byteorder = { workspace = true }
 bytes = { workspace = true }
 hashbrown = { workspace = true }
 hex = "0.4.3"
 
 [features]
-default = ["std"]
+default = ["std", "fvm"]
 std = [
     "fluentbase-types/std",
 ]
+fvm = []

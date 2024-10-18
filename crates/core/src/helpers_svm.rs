@@ -1,12 +1,8 @@
 extern crate byteorder;
 extern crate solana_rbpf;
-use fuel_core_types::fuel_vm::interpreter::MemoryInstance;
-use alloc::str::Utf8Error;
-use solana_rbpf::memory_region::AccessType;
-use crate::fvm::types::WasmRelayer;
-use alloc::vec::Vec;
+use alloc::{str::Utf8Error, vec::Vec};
 use core::str::from_utf8;
-use std::{fs::File, io::Read, sync::Arc, cell::RefCell, slice::from_raw_parts_mut};
+use solana_rbpf::memory_region::AccessType;
 // use fuel_core_executor::executor::{
 //     BlockExecutor,
 //     ExecutionData,
@@ -30,56 +26,56 @@ use std::{fs::File, io::Read, sync::Arc, cell::RefCell, slice::from_raw_parts_mu
 //     services::executor::Error
 // };
 use solana_rbpf::{
-        aligned_memory::AlignedMemory,
-        assembler::assemble,
-        declare_builtin_function,
-        ebpf,
-        ebpf::HOST_ALIGN,
-        elf::Executable,
-        error::{EbpfError, ProgramResult},
-        memory_region::{MemoryMapping, MemoryRegion},
-        memory_region::MemoryCowCallback,
-        program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
-        static_analysis::Analysis,
-        syscalls,
-        verifier::RequisiteVerifier,
-        vm::{Config, ContextObject, TestContextObject}
-    };
+    aligned_memory::AlignedMemory,
+    assembler::assemble,
+    declare_builtin_function,
+    ebpf,
+    ebpf::HOST_ALIGN,
+    elf::Executable,
+    error::{EbpfError, ProgramResult},
+    memory_region::MemoryCowCallback,
+    memory_region::{MemoryMapping, MemoryRegion},
+    program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
+    static_analysis::Analysis,
+    syscalls,
+    verifier::RequisiteVerifier,
+    vm::{Config, ContextObject, TestContextObject},
+};
+use std::{cell::RefCell, fs::File, io::Read, slice::from_raw_parts_mut, sync::Arc};
 use thiserror::Error as ThisError;
-use crate::helpers_svm::SyscallError::{InvalidLength, UnalignedPointer};
 // use solana_sdk::{
-    //     account_info::AccountInfo,
-    //     alt_bn128::prelude::{
-    //         alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing, AltBn128Error,
-    //         ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
-    //         ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
-    //     },
-    //     big_mod_exp::{big_mod_exp, BigModExpParams},
-    //     blake3, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-    //     entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-    //     feature_set::bpf_account_data_direct_mapping,
-    //     feature_set::FeatureSet,
-    //     feature_set::{
-    //         self, blake3_syscall_enabled, curve25519_syscall_enabled,
-    //         disable_deploy_of_alloc_free_syscall, disable_fees_sysvar,
-    //         enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall,
-    //         enable_big_mod_exp_syscall, enable_partitioned_epoch_reward, enable_poseidon_syscall,
-    //         error_on_syscall_bpf_function_hash_collisions, last_restart_slot_sysvar,
-    //         reject_callx_r10, remaining_compute_units_syscall_enabled, switch_to_new_elf_parser,
-    //     },
-    //     hash::{Hash, Hasher},
-    //     instruction::{AccountMeta, InstructionError, ProcessedSiblingInstruction},
-    //     keccak, native_loader, poseidon,
-    //     precompiles::is_precompile,
-    //     program::MAX_RETURN_DATA,
-    //     program_stubs::is_nonoverlapping,
-    //     pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN},
-    //     secp256k1_recover::{
-    //         Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
-    //     },
-    //     sysvar::{Sysvar, SysvarId},
-    //     transaction_context::{IndexOfAccount, InstructionAccount},
-    // };
+//     account_info::AccountInfo,
+//     alt_bn128::prelude::{
+//         alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing, AltBn128Error,
+//         ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
+//         ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
+//     },
+//     big_mod_exp::{big_mod_exp, BigModExpParams},
+//     blake3, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
+//     entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
+//     feature_set::bpf_account_data_direct_mapping,
+//     feature_set::FeatureSet,
+//     feature_set::{
+//         self, blake3_syscall_enabled, curve25519_syscall_enabled,
+//         disable_deploy_of_alloc_free_syscall, disable_fees_sysvar,
+//         enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall,
+//         enable_big_mod_exp_syscall, enable_partitioned_epoch_reward, enable_poseidon_syscall,
+//         error_on_syscall_bpf_function_hash_collisions, last_restart_slot_sysvar,
+//         reject_callx_r10, remaining_compute_units_syscall_enabled, switch_to_new_elf_parser,
+//     },
+//     hash::{Hash, Hasher},
+//     instruction::{AccountMeta, InstructionError, ProcessedSiblingInstruction},
+//     keccak, native_loader, poseidon,
+//     precompiles::is_precompile,
+//     program::MAX_RETURN_DATA,
+//     program_stubs::is_nonoverlapping,
+//     pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN},
+//     secp256k1_recover::{
+//         Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
+//     },
+//     sysvar::{Sysvar, SysvarId},
+//     transaction_context::{IndexOfAccount, InstructionAccount},
+// };
 
 type StdResult<T, E> = core::result::Result<T, E>;
 
@@ -149,9 +145,10 @@ fn translate(
         .into()
 }
 
+use crate::helpers_svm::SyscallError::UnalignedPointer;
 /// Log collector
-
 use std::rc::Rc;
+
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
 
 pub struct LogCollector {
@@ -294,7 +291,8 @@ pub enum SyscallError {
         num_accounts: u64,
         max_accounts: u64,
     },
-    #[error("Invoked an instruction with too many account info's ({num_account_infos} > {max_account_infos})")]
+    #[error("Invoked an instruction with too many account info's ({num_account_infos} > {max_account_infos})"
+    )]
     MaxInstructionAccountInfosExceeded {
         num_account_infos: u64,
         max_account_infos: u64,
@@ -306,7 +304,6 @@ pub enum SyscallError {
     #[error("Arithmetic overflow")]
     ArithmeticOverflow,
 }
-
 
 fn translate_type_inner<'a, T>(
     memory_mapping: &MemoryMapping,
@@ -442,9 +439,6 @@ declare_builtin_function!(
     }
 );
 
-
-
-
 // declare_builtin_function!(
 //     /// Abort syscall functions, called when the SBF program calls `abort()`
 //     /// LLVM will insert calls to `abort()` if it detects an untenable situation,
@@ -491,17 +485,13 @@ declare_builtin_function!(
     }
 );
 
-
-
 macro_rules! create_vm {
     ($vm_name:ident, $verified_executable:expr, $context_object:expr, $stack:ident,
     $heap:ident, $additional_regions:expr, $cow_cb:expr) => {
         // here we have error r/o heap on wasm:
         //let mut $heap = solana_rbpf::aligned_memory::AlignedMemory::with_capacity(0);
         // fix (do not use with_capacity() more):
-        let mut $heap = solana_rbpf::aligned_memory::AlignedMemory::zero_filled(
-            1024*1024,
-        );
+        let mut $heap = solana_rbpf::aligned_memory::AlignedMemory::zero_filled(1024 * 1024);
         let mut $stack = solana_rbpf::aligned_memory::AlignedMemory::zero_filled(
             $verified_executable.get_config().stack_size(),
         );
@@ -523,7 +513,6 @@ macro_rules! create_vm {
         );
     };
 }
-
 
 pub fn create_memory_mapping<'a, C: ContextObject>(
     executable: &'a Executable<C>,
@@ -557,9 +546,9 @@ pub fn create_memory_mapping<'a, C: ContextObject>(
         ),
         MemoryRegion::new_writable(heap.as_slice_mut(), ebpf::MM_HEAP_START),
     ]
-        .into_iter()
-        .chain(additional_regions.into_iter())
-        .collect();
+    .into_iter()
+    .chain(additional_regions.into_iter())
+    .collect();
 
     println!("Memory regions created: {:?}", regions);
     // Program code starts at `0x100000000`
@@ -575,7 +564,7 @@ pub fn create_memory_mapping<'a, C: ContextObject>(
     })
 }
 
-const INSTRUCTION_METER_BUDGET: u64 = 1024*1024;
+const INSTRUCTION_METER_BUDGET: u64 = 1024 * 1024;
 
 macro_rules! test_interpreter_and_jit {
     (register, $function_registry:expr, $location:expr => $syscall_function:expr) => {
@@ -701,8 +690,6 @@ macro_rules! test_interpreter_and_jit_asm {
     };
 }
 
-
-
 #[derive(Debug, Clone)]
 pub struct SvmTransactResult {
     pub reverted: bool,
@@ -711,7 +698,6 @@ pub struct SvmTransactResult {
     // pub receipts: Vec<Receipt>,
     // pub changes: Changes,
 }
-
 
 // [TODO:gmm] From Solana with love
 
@@ -855,7 +841,6 @@ fn example_asm(source: &str) -> Vec<u8> {
     bytecode.to_vec()
 }
 
-
 fn example_disasm_from_bytes(program: &[u8]) {
     let loader = Arc::new(BuiltinProgram::new_mock());
     let executable = Executable::<TestContextObject>::from_text_bytes(
@@ -863,7 +848,8 @@ fn example_disasm_from_bytes(program: &[u8]) {
         loader,
         SBPFVersion::V2,
         FunctionRegistry::default(),
-    ).unwrap();
+    )
+    .unwrap();
     let analysis = Analysis::from_executable(&executable).unwrap();
     let stdout = std::io::stdout();
     analysis.disassemble(&mut stdout.lock()).unwrap();
@@ -871,19 +857,18 @@ fn example_disasm_from_bytes(program: &[u8]) {
 
 fn execute_generated_program(prog: &[u8], mem: &mut [u8]) -> Option<Vec<u8>> {
     let max_instruction_count = 1024;
-    let executable =
-        Executable::<TestContextObject>::from_text_bytes(
-            prog,
-            Arc::new(BuiltinProgram::new_loader(
-                Config {
-                    enable_instruction_tracing: true,
-                    ..Config::default()
-                },
-                FunctionRegistry::default(),
-            )),
-            SBPFVersion::V2,
+    let executable = Executable::<TestContextObject>::from_text_bytes(
+        prog,
+        Arc::new(BuiltinProgram::new_loader(
+            Config {
+                enable_instruction_tracing: true,
+                ..Config::default()
+            },
             FunctionRegistry::default(),
-        );
+        )),
+        SBPFVersion::V2,
+        FunctionRegistry::default(),
+    );
 
     let mut executable = if let Ok(executable) = executable {
         executable
@@ -988,6 +973,7 @@ fn example_add32() {
     );
 }
 
+#[test]
 fn test_struct_func_pointer() {
     // This tests checks that a struct field adjacent to another field
     // which is a relocatable function pointer is not overwritten when
@@ -1000,9 +986,10 @@ fn test_struct_func_pointer() {
         ..Config::default()
     };
     // let mut file = File::open("struct_func_pointer.so").unwrap();
-    // let mut file = File::open("/home/rigidus/src/hello_world/target/deploy/hello_world.so").unwrap();
-    // /home/rigidus/src/hello_world/target/sbf-solana-solana/release/
-    let mut file = File::open("/home/rigidus/src/fluentlabs-xyz/fluentbase/temp/hello_world.so").unwrap();
+    // let mut file =
+    let mut file =
+        File::open("../solana-hello-world/target/sbf-solana-solana/release/hello_world.so")
+            .expect("file exists");
 
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
@@ -1024,8 +1011,9 @@ fn test_struct_func_pointer() {
         // Logging
         function_registry.register_function_hashed(*b"sol_log_", SyscallLog::vm).unwrap();
         // function_registry.register_function_hashed(*b"sol_log_64_", SyscallLogU64::vm)?;
-        // function_registry.register_function_hashed(*b"sol_log_compute_units_", SyscallLogBpfComputeUnits::vm)?;
-        // function_registry.register_function_hashed(*b"sol_log_pubkey", SyscallLogPubkey::vm)?;
+        // function_registry.register_function_hashed(*b"sol_log_compute_units_",
+        // SyscallLogBpfComputeUnits::vm)?; function_registry.register_function_hashed(*b"
+        // sol_log_pubkey", SyscallLogPubkey::vm)?;
 
         // function_registry
         //     .register_function_hashed(*b"abort", SyscallAbort::vm)
@@ -1047,17 +1035,14 @@ fn test_struct_func_pointer() {
         // function_registry
         //     .register_function_hashed(*b"log", log);
         // Constructs a loader built-in program
-        let loader =
-            Arc::new(BuiltinProgram::new_loader(config, function_registry));
+        let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
         // Creates an executable from an ELF file
-        let mut executable =
-            Executable::<TestContextObject>::from_elf(&elf, loader).unwrap();
+        let mut executable = Executable::<TestContextObject>::from_elf(&elf, loader).unwrap();
 
         println!("Executable created successfully.");
 
         // Counting instructions
-        let expected_instruction_count =
-            (TestContextObject::new(3)).get_remaining();
+        let expected_instruction_count = (TestContextObject::new(3)).get_remaining();
         #[allow(unused_mut)]
         let mut context_object = TestContextObject::new(3);
         // Result
@@ -1073,8 +1058,8 @@ fn test_struct_func_pointer() {
             // let mut mem = [];
             // let mut mem = vec![0u8; 8];
             // Создаем входную память и инициализируем её
-            let mut mem = vec![0u8; 8];  // Размер памяти для input
-            mem[0..8].copy_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);  // Пример данных
+            let mut mem = vec![0u8; 8]; // Размер памяти для input
+            mem[0..8].copy_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]); // Пример данных
 
             let mem_region = MemoryRegion::new_writable(&mut mem, ebpf::MM_INPUT_START);
 
@@ -1083,15 +1068,18 @@ fn test_struct_func_pointer() {
             let mut context_object = context_object.clone();
             create_vm!(
                 vm,
-                & executable ,
-                & mut context_object ,
-                stack ,
-                heap ,
-                vec ! [ mem_region ] ,
+                &executable,
+                &mut context_object,
+                stack,
+                heap,
+                vec![mem_region],
                 None
             );
 
-            println!("Executing program with expected result: {}", expected_result);
+            println!(
+                "Executing program with expected result: {}",
+                expected_result
+            );
             // println!("Memory region for input: {:?}", mem_region);
             let (instruction_count_interpreter, result) = vm.execute_program(&executable, true);
             println!("Execution result: {:?}", result);
@@ -1116,7 +1104,6 @@ fn test_struct_func_pointer() {
     }
 }
 
-
 fn example_syscal() {
     test_interpreter_and_jit_asm!(
         "
@@ -1137,7 +1124,6 @@ fn example_syscal() {
         ProgramResult::Ok(0x102292e2f2c0708),
     );
 }
-
 
 pub fn svm_transact<T>(
     storage: &mut T,
@@ -1197,14 +1183,16 @@ pub fn svm_transact<T>(
     //     ProgramResult::Ok(0x1),
     // );
 
-    let bytecode = example_asm("
+    let bytecode = example_asm(
+        "
     entrypoint:
         ldxdw r2, [r1+0x00]
         ldxdw r3, [r1+0x08]
         add   r2, r3
         stxdw [r1+0x10], r3
     l_exit:
-        exit");
+        exit",
+    );
 
     println!("\n::Generated bytecode:");
     for (i, byte) in bytecode.iter().enumerate() {
@@ -1286,7 +1274,6 @@ pub fn svm_transact<T>(
         // changes: tx_transaction.changes().clone(),
     })
 }
-
 
 pub fn svm_transact_commit<T>(
     storage: &mut T,

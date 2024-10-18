@@ -25,3 +25,4 @@ std = [
     "dep:fluentbase-runtime",
     "dep:fluentbase-genesis",
 ]
+more-panic = []

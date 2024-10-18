@@ -28,7 +28,6 @@ extern "C" {
     pub fn _read_output(target: *mut u8, offset: u32, length: u32);
     pub fn _forward_output(offset: u32, len: u32);
     pub fn _state() -> u32;
-    pub fn _read_context(target_ptr: *mut u8, offset: u32, length: u32);
 
     /// Executes a nested call with specified bytecode poseidon hash.
     ///

@@ -2,6 +2,7 @@ use crate::contract::impl_derive_contract;
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::quote;
+use solidity_router::derive_solidity_router;
 use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
@@ -102,11 +103,15 @@ impl Parse for RouterArgs {
 pub fn router(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as RouterArgs);
 
-    let expanded = match args.mode {
-        RouterMode::Solidity => solidity_router::derive_solidity_router(TokenStream::new(), item),
-        RouterMode::Codec => codec_router::derive_codec_router(TokenStream::new(), item),
+    let result = match args.mode {
+        RouterMode::Solidity => derive_solidity_router(item),
+        RouterMode::Codec => Ok(codec_router::derive_codec_router(TokenStream::new(), item)),
     };
-    TokenStream::from(expanded)
+
+    match result {
+        Ok(expanded) => expanded.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
 }
 
 #[proc_macro_attribute]
@@ -117,7 +122,8 @@ pub fn client(attr: TokenStream, item: TokenStream) -> TokenStream {
         RouterMode::Solidity => solidity_router::derive_solidity_client(
             TokenStream::new(),
             parse_macro_input!(item as ItemTrait),
-        ),
+        )
+        .into(),
         RouterMode::Codec => codec_router::derive_codec_client(
             TokenStream::new(),
             parse_macro_input!(item as ItemTrait),

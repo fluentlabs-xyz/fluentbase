@@ -1,15 +1,11 @@
-use core::{
-    mem::take,
-    str::{from_utf8, FromStr},
-};
-use fluentbase_core::fvm::helpers::FUEL_TESTNET_BASE_ASSET_ID;
+use core::{mem::take, str::from_utf8};
 use fluentbase_genesis::{
     devnet::{devnet_genesis_from_file, GENESIS_KECCAK_HASH_SLOT, GENESIS_POSEIDON_HASH_SLOT},
     Genesis,
     EXAMPLE_GREETING_ADDRESS,
 };
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, RuntimeContext};
+use fluentbase_runtime::RuntimeContext;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian},
     runtime::TestingContext,
@@ -21,25 +17,14 @@ use fluentbase_types::{
     Account,
     Address,
     Bytes,
+    SharedAPI,
     SysFuncIdx,
-    DEVNET_CHAIN_ID,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
-    PRECOMPILE_FVM,
     STATE_MAIN,
     SYSCALL_ID_CALL,
     U256,
 };
-use fuel_core_types::{
-    fuel_asm::op,
-    fuel_crypto::{
-        rand::{rngs::StdRng, SeedableRng},
-        SecretKey,
-    },
-    fuel_types::{canonical::Serialize, AssetId, BlockHeight, ChainId},
-};
-use fuel_tx::{ConsensusParameters, Input, TransactionBuilder, TxId, TxPointer, UtxoId};
-use fuel_vm::{fuel_asm::RegId, storage::MemoryStorage};
 use hashbrown::HashMap;
 use hex_literal::hex;
 use revm::{
@@ -48,6 +33,7 @@ use revm::{
     DatabaseCommit,
     Evm,
     InMemoryDB,
+    Rwasm,
 };
 use rwasm::{
     instruction_set,
@@ -85,31 +71,27 @@ impl EvmTestingContext {
                         .map(|v| poseidon_hash(&v).into())
                         .unwrap_or(POSEIDON_EMPTY)
                 });
-            // let keccak_hash = v
-            //     .storage
-            //     .as_ref()
-            //     .and_then(|v| v.get(&GENESIS_KECCAK_HASH_SLOT).cloned())
-            //     .unwrap_or_else(|| {
-            //         v.code
-            //             .as_ref()
-            //             .map(|v| keccak256(&v))
-            //             .unwrap_or(KECCAK_EMPTY)
-            //     });
+            let _keccak_hash = v
+                .storage
+                .as_ref()
+                .and_then(|v| v.get(&GENESIS_KECCAK_HASH_SLOT).cloned())
+                .unwrap_or_else(|| {
+                    v.code
+                        .as_ref()
+                        .map(|v| keccak256(&v))
+                        .unwrap_or(KECCAK_EMPTY)
+                });
             let account = Account {
                 address: *k,
                 balance: v.balance,
                 nonce: v.nonce.unwrap_or_default(),
                 // it makes not much sense to fill these fields, but it reduces hash calculation
                 // time a bit
-                // source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                // source_code_hash: keccak_hash,
-                rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                rwasm_code_hash: poseidon_hash,
-                ..Default::default()
+                code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
+                code_hash: poseidon_hash,
             };
             let mut info: AccountInfo = account.into();
             info.code = v.code.clone().map(Bytecode::new_raw);
-            info.rwasm_code = v.code.clone().map(Bytecode::new_raw);
             db.insert_account_info(*k, info);
         }
         Self {
@@ -135,15 +117,12 @@ impl EvmTestingContext {
             balance: U256::ZERO,
             nonce: 0,
             // it makes not much sense to fill these fields, but it optimizes hash calculation a bit
-            source_code_size: 0,
-            source_code_hash: KECCAK_EMPTY,
-            rwasm_code_size: rwasm_binary.len() as u64,
-            rwasm_code_hash: poseidon_hash(&rwasm_binary).into(),
+            code_size: rwasm_binary.len() as u64,
+            code_hash: poseidon_hash(&rwasm_binary).into(),
         };
         let mut info: AccountInfo = account.into();
-        info.code = None;
         if !rwasm_binary.is_empty() {
-            info.rwasm_code = Some(Bytecode::new_raw(rwasm_binary.into()));
+            info.code = Some(Bytecode::new_raw(rwasm_binary.into()));
         }
         self.db.insert_account_info(address, info.clone());
         info
@@ -169,9 +148,7 @@ impl EvmTestingContext {
         ) -> (),
     {
         let mut evm = Evm::builder().with_db(&mut self.db).build();
-        let runtime_context = RuntimeContext::default()
-            .with_depth(0u32)
-            .with_jzkt(Box::new(DefaultEmptyRuntimeDatabase::default()));
+        let runtime_context = RuntimeContext::default().with_depth(0u32);
         let native_sdk = fluentbase_sdk::runtime::RuntimeContextWrapper::new(runtime_context);
         f(RwasmDbWrapper::new(&mut evm.context.evm, native_sdk))
     }
@@ -193,8 +170,16 @@ impl<'a> TxBuilder<'a> {
         Self { ctx, env }
     }
 
-    fn call(ctx: &'a mut EvmTestingContext, caller: Address, callee: Address) -> Self {
+    fn call(
+        ctx: &'a mut EvmTestingContext,
+        caller: Address,
+        callee: Address,
+        value: Option<U256>,
+    ) -> Self {
         let mut env = Env::default();
+        if let Some(value) = value {
+            env.tx.value = value;
+        }
         env.tx.gas_price = U256::from(1);
         env.tx.caller = caller;
         env.tx.transact_to = TransactTo::Call(callee);
@@ -223,7 +208,7 @@ impl<'a> TxBuilder<'a> {
     }
 
     fn exec(&mut self) -> ExecutionResult {
-        let mut evm = Evm::builder()
+        let mut evm = Rwasm::builder()
             .with_env(Box::new(take(&mut self.env)))
             .with_ref_db(&mut self.ctx.db)
             .build();
@@ -243,7 +228,7 @@ fn deploy_evm_tx(ctx: &mut EvmTestingContext, deployer: Address, init_bytecode: 
         );
     }
     assert!(result.is_success());
-    let contract_address = calc_create_address(&ctx.sdk, &deployer, 0);
+    let contract_address = calc_create_address::<TestingContext>(&deployer, 0);
     assert_eq!(contract_address, deployer.create(0));
     // let contract_account = ctx.db.accounts.get(&contract_address).unwrap();
     // if bytecode_type == BytecodeType::EVM {
@@ -275,20 +260,32 @@ fn deploy_evm_tx(ctx: &mut EvmTestingContext, deployer: Address, init_bytecode: 
     contract_address
 }
 
+fn call_evm_tx_simple(
+    ctx: &mut EvmTestingContext,
+    caller: Address,
+    callee: Address,
+    input: Bytes,
+    gas_limit: Option<u64>,
+    value: Option<U256>,
+) -> ExecutionResult {
+    // call greeting EVM contract
+    let mut tx_builder = TxBuilder::call(ctx, caller, callee, value).input(input);
+    if let Some(gas_limit) = gas_limit {
+        tx_builder = tx_builder.gas_limit(gas_limit);
+    }
+    tx_builder.exec()
+}
+
 fn call_evm_tx(
     ctx: &mut EvmTestingContext,
     caller: Address,
     callee: Address,
     input: Bytes,
     gas_limit: Option<u64>,
+    value: Option<U256>,
 ) -> ExecutionResult {
     ctx.add_balance(caller, U256::from(1e18));
-    // call greeting EVM contract
-    let mut tx_builder = TxBuilder::call(ctx, caller, callee).input(input);
-    if let Some(gas_limit) = gas_limit {
-        tx_builder = tx_builder.gas_limit(gas_limit);
-    }
-    tx_builder.exec()
+    call_evm_tx_simple(ctx, caller, callee, input, gas_limit, value)
 }
 
 #[test]
@@ -301,6 +298,7 @@ fn test_genesis_greeting() {
         DEPLOYER_ADDRESS,
         EXAMPLE_GREETING_ADDRESS,
         Bytes::default(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -326,6 +324,7 @@ fn test_deploy_greeting() {
         contract_address,
         Bytes::default(),
         None,
+        None,
     );
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
@@ -348,6 +347,7 @@ fn test_deploy_keccak256() {
         DEPLOYER_ADDRESS,
         contract_address,
         "Hello, World".into(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -375,13 +375,11 @@ fn test_deploy_panic() {
         contract_address,
         Bytes::default(),
         None,
+        None,
     );
     assert!(!result.is_success());
     let bytes = result.output().unwrap_or_default();
-    assert_eq!(
-        "panicked at examples/panic/lib.rs:17:9: it is panic time",
-        from_utf8(bytes.as_ref()).unwrap()
-    );
+    assert_eq!("it is panic time", from_utf8(bytes.as_ref()).unwrap());
 }
 
 #[test]
@@ -398,6 +396,7 @@ fn test_evm_greeting() {
         contract_address,
         hex!("45773e4e").into(),
         None,
+        None,
     );
     println!("{:?}", result);
     assert!(result.is_success());
@@ -407,129 +406,6 @@ fn test_evm_greeting() {
     assert_eq!(result.gas_used(), 21792);
 }
 
-#[test]
-fn test_fvm_tx() {
-    // [TODO:gmm] thinks for svm for example
-    let base_asset_id = AssetId::from_str(FUEL_TESTNET_BASE_ASSET_ID).unwrap();
-    // let chain_id = DEVNET_CHAIN_ID;
-    let chain_id = 0x1;
-
-    let secret1 = "0x99e87b0e9158531eeeb503ff15266e2b23c2a2507b138c9d1b1f2ab458df2d61";
-    let secret1_vec = revm::primitives::hex::decode(secret1).unwrap();
-    let secret1_secret_key = SecretKey::try_from(secret1_vec.as_slice()).unwrap();
-    let secret1_address = Input::owner(&secret1_secret_key.public_key());
-    println!("secret1_address: {}", secret1_address);
-    let secret1_address_as_evm = Address::from_slice(&secret1_address.as_slice()[12..]);
-
-    let secret2 = "0xde97d8624a438121b86a1956544bd72ed68cd69f2c99555b08b1e8c51ffd511c";
-    let secret2_vec = revm::primitives::hex::decode(secret2).unwrap();
-    let secret2_secret_key = SecretKey::try_from(secret2_vec.as_slice()).unwrap();
-    let secret2_address = Input::owner(&secret2_secret_key.public_key());
-    println!("secret2_address: {}", secret2_address);
-
-    let initial_balance = 0xffff;
-    let coins_sent = 0x1;
-
-    let bytecode = core::iter::once(op::ret(RegId::ZERO)).collect();
-    let mut consensus_params = ConsensusParameters::standard();
-    consensus_params.set_chain_id(chain_id.into());
-    let mut test_builder = fuel_vm::util::test_helpers::TestBuilder {
-        rng: StdRng::seed_from_u64(1234),
-        gas_price: 0,
-        max_fee_limit: 0,
-        script_gas_limit: 100,
-        builder: TransactionBuilder::script(bytecode, vec![]),
-        storage: MemoryStorage::default(),
-        block_height: Default::default(),
-        consensus_params,
-    };
-
-    let tx_in_id: TxId =
-        TxId::from_str("0x0000000000000000000000000000000000000000000000000000000000001000")
-            .unwrap();
-    let utxo_id = UtxoId::new(tx_in_id, 0);
-    test_builder
-        .with_chain_id(ChainId::new(chain_id))
-        .builder
-        .add_unsigned_coin_input(
-            secret1_secret_key.clone(),
-            utxo_id,
-            initial_balance.clone(),
-            base_asset_id,
-            TxPointer::new(BlockHeight::new(0), 0),
-        )
-        .add_output(fuel_tx::Output::change(
-            secret1_address.clone(),
-            0,
-            base_asset_id,
-        ))
-        .add_output(fuel_tx::Output::coin(
-            secret2_address.clone(),
-            coins_sent,
-            base_asset_id,
-        ));
-    let tx1 = test_builder.build().transaction().clone();
-    let tx1: fuel_tx::Transaction = fuel_tx::Transaction::Script(tx1);
-    let fuel_tx_bytes = Bytes::from(tx1.to_bytes());
-    println!(
-        "fuel_tx_bytes hex: {}",
-        revm::primitives::hex::encode(&fuel_tx_bytes)
-    );
-
-    let mut ctx = EvmTestingContext::default();
-    // ctx.add_balance(secret1_address_as_evm, U256::from(initial_balance));
-    const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = PRECOMPILE_FVM;
-    // call greeting EVM contract
-    println!("\n\n\n");
-    let result = call_evm_tx(
-        &mut ctx,
-        DEPLOYER_ADDRESS,
-        contract_address,
-        fuel_tx_bytes.into(),
-        Some(100_000_000),
-    );
-    println!("{:?}", result);
-    match &result {
-        ExecutionResult::Success { .. } => {}
-        ExecutionResult::Revert { gas_used, output } => {}
-        ExecutionResult::Halt { .. } => {}
-    }
-    let output = result.output().unwrap_or_default();
-    println!("output: {}", from_utf8(output).unwrap_or_default());
-    assert!(result.is_success());
-}
-
-///
-/// Test storage though constructor
-///
-/// ```solidity
-/// // SPDX-License-Identifier: MIT
-/// pragma solidity 0.8.24;
-///
-/// contract Storage {
-///     event Test(uint256);
-///     uint256 private value;
-///     mapping(address => uint256) private balances;
-///     mapping(address => mapping(address => uint256)) private allowances;
-///     constructor() payable {
-///         value = 100;
-///         balances[msg.sender] = 100;
-///         allowances[msg.sender][address(this)] = 100;
-///     }
-///     function setValue(uint256 newValue) public {
-///         value = newValue;
-///         balances[msg.sender] = newValue;
-///         allowances[msg.sender][address(this)] = newValue;
-///         emit Test(value);
-///     }
-///     function getValue() public view returns (uint256) {
-///         require(balances[msg.sender] == value, "value mismatch");
-///         require(allowances[msg.sender][address(this)] == value, "value mismatch");
-///         return value;
-///     }
-/// }
-/// ```
 #[test]
 fn test_evm_storage() {
     // deploy greeting EVM contract
@@ -544,6 +420,7 @@ fn test_evm_storage() {
         contract_address_1,
         hex!("20965255").into(),
         None,
+        None,
     );
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
@@ -557,6 +434,7 @@ fn test_evm_storage() {
         DEPLOYER_ADDRESS,
         contract_address_2,
         hex!("20965255").into(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -572,6 +450,7 @@ fn test_evm_storage() {
         contract_address_2,
         hex!("552410770000000000000000000000000000000000000000000000000000000000000070").into(),
         None,
+        None,
     );
     assert!(result.is_success());
     // check result is 0x70
@@ -580,6 +459,7 @@ fn test_evm_storage() {
         DEPLOYER_ADDRESS,
         contract_address_2,
         hex!("20965255").into(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -598,7 +478,7 @@ fn test_simple_send() {
     const RECIPIENT_ADDRESS: Address = address!("1092381297182319023812093812312309123132");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     let gas_price = U256::from(1e9);
-    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, RECIPIENT_ADDRESS)
+    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, RECIPIENT_ADDRESS, None)
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
@@ -623,7 +503,7 @@ fn test_create_send() {
     .gas_price(gas_price)
     .value(U256::from(1e18))
     .exec();
-    let contract_address = calc_create_address(&ctx.sdk, &SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address::<TestingContext>(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     let tx_cost = gas_price * U256::from(result.gas_used());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18) - tx_cost);
@@ -641,7 +521,7 @@ fn test_evm_revert() {
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
-    let contract_address = calc_create_address(&ctx.sdk, &SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address::<TestingContext>(&SENDER_ADDRESS, 0);
     assert!(!result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(2e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(0e18));
@@ -655,7 +535,7 @@ fn test_evm_revert() {
     .value(U256::from(1e18))
     .exec();
     // here nonce must be 1 because we increment nonce for failed txs
-    let contract_address = calc_create_address(&ctx.sdk, &SENDER_ADDRESS, 1);
+    let contract_address = calc_create_address::<TestingContext>(&SENDER_ADDRESS, 1);
     println!("{}", contract_address);
     assert!(result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
@@ -678,12 +558,12 @@ fn test_evm_self_destruct() {
     .gas_price(gas_price)
     .value(U256::from(1e18))
     .exec();
-    let contract_address = calc_create_address(&ctx.sdk, &SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address::<TestingContext>(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
-    // call self destructed contract
-    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, contract_address)
+    // call self-destructed contract
+    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, contract_address, None)
         .gas_price(gas_price)
         .exec();
     if !result.is_success() {
@@ -730,7 +610,7 @@ fn test_bridge_contract() {
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     let gas_price = U256::from(0);
     // now send success tx
-    let contract_address = calc_create_address(&ctx.sdk, &SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address::<TestingContext>(&SENDER_ADDRESS, 0);
     let mut tx_builder = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
@@ -740,8 +620,6 @@ fn test_bridge_contract() {
     let exec_result = tx_builder.exec();
     assert!(tx_builder.ctx.db.accounts.contains_key(&contract_address));
     let contract_account = tx_builder.ctx.db.accounts.get(&contract_address).unwrap();
-    assert!(contract_account.info.rwasm_code.is_some());
-    assert!(!contract_account.info.rwasm_code_hash.is_zero());
     assert_eq!(contract_account.info.nonce, 1);
     assert!(contract_account.info.code.is_some());
     assert!(!contract_account.info.code_hash.is_zero());
@@ -843,6 +721,7 @@ fn test_bridge_contract_with_call() {
         &mut ctx,
         signer_l1_wallet_owner,
         erc20gateway_contract_address,
+        None,
     )
     .input(bytes!(
         "\
@@ -905,15 +784,11 @@ fn test_bridge_contract_with_call() {
     let erc20gateway_contract_db_account_info = erc20gateway_contract_db_account.info.clone();
     assert!(erc20gateway_contract_db_account_info.code.is_some());
     assert!(!erc20gateway_contract_db_account_info.code_hash.is_zero());
-    // assert!(erc20gateway_contract_db_account_info.code.unwrap().len() > 0);
-    assert!(erc20gateway_contract_db_account_info.rwasm_code.is_some());
-    assert!(!erc20gateway_contract_db_account_info
-        .rwasm_code_hash
-        .is_zero());
     let mut erc20gateway_factory_tx_builder = TxBuilder::call(
         &mut ctx,
         signer_l1_wallet_owner,
         erc20gateway_contract_address,
+        None,
     )
     // data: 0x70616e69636b6564206174206372617465732f636f72652f7372632f636f6e7472616374732f65636c2e72733a34373a31373a2063616c6c206d6574686f64206661696c65642c206578697420636f64653a202d31303232
     .input(bytes!(
@@ -1062,7 +937,7 @@ fn test_simple_nested_call() {
             ..Default::default()
         },
     );
-    let result = TxBuilder::call(&mut ctx, Address::ZERO, ACCOUNT3_ADDRESS)
+    let result = TxBuilder::call(&mut ctx, Address::ZERO, ACCOUNT3_ADDRESS, None)
         .gas_price(U256::ZERO)
         .exec();
     println!("{:?}", result);

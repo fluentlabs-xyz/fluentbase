@@ -1,5 +1,4 @@
 use crate::{Runtime, RuntimeContext};
-use core::mem::take;
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     ExitCode,
@@ -79,13 +78,6 @@ impl SyscallResume {
             }
         }
 
-        let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
-        let context = take(&mut ctx.context);
-
-        // move jzkt and context into recovered execution state
-        recoverable_runtime.runtime.store_mut().data_mut().jzkt = Some(jzkt);
-        recoverable_runtime.runtime.store_mut().data_mut().context = context;
-
         // copy return data into return data
         let return_data_mut = recoverable_runtime
             .runtime
@@ -106,10 +98,6 @@ impl SyscallResume {
         let mut execution_result = recoverable_runtime
             .runtime
             .resume(exit_code, fuel_consumed_before_call);
-
-        // return jzkt context back
-        ctx.jzkt = take(&mut recoverable_runtime.runtime.store.data_mut().jzkt);
-        ctx.context = take(&mut recoverable_runtime.runtime.store.data_mut().context);
 
         // println!("\n\nRESUME, interrupted: {}", execution_result.interrupted);
         // println!(

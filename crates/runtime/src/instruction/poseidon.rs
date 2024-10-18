@@ -16,8 +16,14 @@ impl SyscallPoseidon {
         Ok(())
     }
 
+    #[cfg(feature = "std")]
     pub fn fn_impl(data: &[u8]) -> F254 {
         use fluentbase_poseidon::poseidon_hash;
         poseidon_hash(data).into()
+    }
+
+    #[cfg(not(feature = "std"))]
+    pub fn fn_impl(_data: &[u8]) -> F254 {
+        unreachable!("poseidon is not supported in `no_std` mode")
     }
 }

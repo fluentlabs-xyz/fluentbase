@@ -3,6 +3,7 @@ use fluentbase_types::{
     Address,
     BlockContext,
     Bytes,
+    ContextFreeNativeAPI,
     ContractContext,
     NativeAPI,
     SharedAPI,
@@ -16,26 +17,30 @@ use fluentbase_types::{
 
 pub struct SharedContextImpl<API: NativeAPI> {
     native_sdk: API,
-    input: SharedContextInputV1,
 }
 
 impl<API: NativeAPI> SharedContextImpl<API> {
     pub fn parse_from_input(native_sdk: API) -> Self {
-        let input_size = native_sdk.input_size() as usize;
-        assert!(
-            input_size >= SharedContextInputV1::HEADER_SIZE,
-            "malformed input header"
-        );
-        let mut header_input: [u8; SharedContextInputV1::HEADER_SIZE] =
-            [0u8; SharedContextInputV1::HEADER_SIZE];
-        native_sdk.read(&mut header_input, 0);
-        let mut buffer_decoder = BufferDecoder::new(&header_input);
-        let mut result = Self {
-            native_sdk,
-            input: Default::default(),
-        };
-        SharedContextInputV1::decode_header(&mut buffer_decoder, 0, &mut result.input);
-        result
+        Self { native_sdk }
+    }
+
+    unsafe fn shared_context_ref(&self) -> &SharedContextInputV1 {
+        static mut CONTEXT: Option<SharedContextInputV1> = None;
+        CONTEXT.get_or_insert_with(|| {
+            let input_size = self.native_sdk.input_size() as usize;
+            assert!(
+                input_size >= SharedContextInputV1::HEADER_SIZE,
+                "malformed input header"
+            );
+            let mut header_input: [u8; SharedContextInputV1::HEADER_SIZE] =
+                [0u8; SharedContextInputV1::HEADER_SIZE];
+            self.native_sdk.read(&mut header_input, 0);
+            let mut buffer_decoder = BufferDecoder::new(&header_input);
+            let mut result = SharedContextInputV1::default();
+            SharedContextInputV1::decode_header(&mut buffer_decoder, 0, &mut result);
+            result
+        });
+        CONTEXT.as_ref().unwrap()
     }
 
     pub fn commit_changes_and_exit(&mut self) -> ! {
@@ -43,17 +48,43 @@ impl<API: NativeAPI> SharedContextImpl<API> {
     }
 }
 
+impl<API: NativeAPI> ContextFreeNativeAPI for SharedContextImpl<API> {
+    fn keccak256(data: &[u8]) -> B256 {
+        API::keccak256(data)
+    }
+
+    fn sha256(data: &[u8]) -> B256 {
+        API::sha256(data)
+    }
+
+    fn poseidon(data: &[u8]) -> F254 {
+        API::poseidon(data)
+    }
+
+    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
+        API::poseidon_hash(fa, fb, fd)
+    }
+
+    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+        API::ec_recover(digest, sig, rec_id)
+    }
+
+    fn debug_log(message: &str) {
+        API::debug_log(message)
+    }
+}
+
 impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     fn block_context(&self) -> &BlockContext {
-        &self.input.block
+        unsafe { &self.shared_context_ref().block }
     }
 
     fn tx_context(&self) -> &TxContext {
-        &self.input.tx
+        unsafe { &self.shared_context_ref().tx }
     }
 
     fn contract_context(&self) -> &ContractContext {
-        &self.input.contract
+        unsafe { &self.shared_context_ref().contract }
     }
 
     fn write_storage(&mut self, slot: U256, value: U256) {
@@ -192,21 +223,5 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
 
     fn destroy_account(&mut self, address: Address) {
         self.native_sdk.syscall_destroy_account(&address);
-    }
-
-    fn debug_log(&self, message: &str) {
-        self.native_sdk.debug_log(message)
-    }
-
-    fn keccak256(&self, data: &[u8]) -> B256 {
-        self.native_sdk.keccak256(data)
-    }
-
-    fn sha256(&self, data: &[u8]) -> B256 {
-        self.native_sdk.sha256(data)
-    }
-
-    fn poseidon(&self, data: &[u8]) -> F254 {
-        self.native_sdk.poseidon(data)
     }
 }

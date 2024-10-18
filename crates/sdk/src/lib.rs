@@ -1,5 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(feature = "more-panic"), feature(panic_info_message))]
 #![warn(unused_crate_dependencies)]
+
 extern crate alloc;
 extern crate core;
 
@@ -22,13 +24,14 @@ pub mod types;
 #[inline(always)]
 unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
     use self::bindings::{_exit, _write};
-    #[cfg(nightly)]
-    if let Some(panic_message) = info.message().and_then(|v| v.as_str()) {
-        _write(panic_message.as_ptr(), panic_message.len() as u32);
-    }
-    #[cfg(not(nightly))]
-    {
+    if cfg!(feature = "more-panic") {
         let panic_message = alloc::format!("{}", info).replace("\n", " ");
+        _write(panic_message.as_ptr(), panic_message.len() as u32);
+    } else {
+        let panic_message = info
+            .message()
+            .as_str()
+            .unwrap_or_else(|| &"can't resolve panic message");
         _write(panic_message.as_ptr(), panic_message.len() as u32);
     }
     _exit(ExitCode::Panic.into_i32());
