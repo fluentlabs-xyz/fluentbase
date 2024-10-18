@@ -1,10 +1,11 @@
 use crate::{
     blended::{util::create_rwasm_proxy_bytecode, BlendedRuntime},
-    helpers::evm_error_from_exit_code,
+    helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
 };
 use alloc::boxed::Box;
 use core::mem::take;
 use fluentbase_sdk::{
+    Account,
     Address,
     Bytes,
     ContractContext,
@@ -17,22 +18,24 @@ use fluentbase_sdk::{
 };
 use revm_interpreter::{
     analysis::to_analysed,
-    as_usize_saturated,
+    as_u64_saturated,
     gas,
     opcode::make_instruction_table,
+    AccountLoad,
     CallOutcome,
     Contract,
     CreateInputs,
+    Eip7702CodeLoad,
     Gas,
     Host,
     InstructionResult,
     Interpreter,
     InterpreterAction,
     InterpreterResult,
-    LoadAccountResult,
     SStoreResult,
     SelfDestructResult,
     SharedMemory,
+    StateLoad,
 };
 use revm_primitives::{Bytecode, CancunSpec, Env, Log, BLOCK_HASH_HISTORY, MAX_CODE_SIZE};
 
@@ -45,18 +48,17 @@ impl<'a, SDK: SovereignAPI> Host for BlendedRuntime<'a, SDK> {
         &mut self.env
     }
 
-    fn load_account(&mut self, address: Address) -> Option<LoadAccountResult> {
+    fn load_account_delegated(&mut self, address: Address) -> Option<AccountLoad> {
         let (account, is_cold) = self.sdk.account(&address);
-        Some(LoadAccountResult {
-            is_cold,
+        Some(AccountLoad {
+            load: Eip7702CodeLoad::new_not_delegated((), is_cold),
             is_empty: account.is_empty(),
         })
     }
 
-    fn block_hash(&mut self, number: U256) -> Option<B256> {
-        let block_number = as_usize_saturated!(self.env().block.number);
-        let requested_number = as_usize_saturated!(number);
-        let Some(diff) = block_number.checked_sub(requested_number) else {
+    fn block_hash(&mut self, number: u64) -> Option<B256> {
+        let block_number = as_u64_saturated!(self.env().block.number);
+        let Some(diff) = block_number.checked_sub(number) else {
             return Some(B256::ZERO);
         };
         if diff > 0 && diff <= BLOCK_HASH_HISTORY {
@@ -66,46 +68,57 @@ impl<'a, SDK: SovereignAPI> Host for BlendedRuntime<'a, SDK> {
         }
     }
 
-    fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
+    fn balance(&mut self, address: Address) -> Option<StateLoad<U256>> {
         let (account, is_cold) = self.sdk.account(&address);
-        Some((account.balance, is_cold))
+        Some(StateLoad::new(account.balance, is_cold))
     }
 
-    fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
+    fn code(&mut self, address: Address) -> Option<Eip7702CodeLoad<Bytes>> {
         let (account, is_cold) = self.sdk.account(&address);
         if account.is_empty() {
-            return Some((Bytes::new(), is_cold));
+            return Some(Eip7702CodeLoad::new_not_delegated(
+                Bytes::default(),
+                is_cold,
+            ));
         }
         let evm_bytecode = self
             .sdk
-            .preimage(&address, &account.source_code_hash)
+            .preimage(&address, &account.code_hash)
             .unwrap_or_default();
-        Some((evm_bytecode, is_cold))
+        Some(Eip7702CodeLoad::new_not_delegated(evm_bytecode, is_cold))
     }
 
-    fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
+    fn code_hash(&mut self, address: Address) -> Option<Eip7702CodeLoad<B256>> {
         let (account, is_cold) = self.sdk.account(&address);
         if account.is_empty() {
-            return Some((B256::ZERO, is_cold));
+            return Some(Eip7702CodeLoad::new_not_delegated(B256::ZERO, is_cold));
         }
-        Some((account.source_code_hash, is_cold))
+        Some(Eip7702CodeLoad::new_not_delegated(
+            account.code_hash,
+            is_cold,
+        ))
     }
 
-    fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
+    fn sload(&mut self, address: Address, index: U256) -> Option<StateLoad<U256>> {
         let (value, is_cold) = self.sdk.storage(&address, &index);
-        Some((value, is_cold))
+        Some(StateLoad::new(value, is_cold))
     }
 
-    fn sstore(&mut self, address: Address, index: U256, new_value: U256) -> Option<SStoreResult> {
+    fn sstore(
+        &mut self,
+        address: Address,
+        index: U256,
+        new_value: U256,
+    ) -> Option<StateLoad<SStoreResult>> {
         let (original_value, _) = self.sdk.committed_storage(&address, &index);
         let (present_value, is_cold) = self.sdk.storage(&address, &index);
         self.sdk.write_storage(address, index, new_value);
-        Some(SStoreResult {
+        let result = SStoreResult {
             original_value,
             present_value,
             new_value,
-            is_cold,
-        })
+        };
+        Some(StateLoad::new(result, is_cold))
     }
 
     fn tload(&mut self, address: Address, index: U256) -> U256 {
@@ -124,17 +137,21 @@ impl<'a, SDK: SovereignAPI> Host for BlendedRuntime<'a, SDK> {
         );
     }
 
-    fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
+    fn selfdestruct(
+        &mut self,
+        address: Address,
+        target: Address,
+    ) -> Option<StateLoad<SelfDestructResult>> {
         let result = self.sdk.destroy_account(&address, &target);
         // we must remove EVM bytecode from our storage to match EVM standards,
         // because after calling SELFDESTRUCT bytecode, and it's hash must be empty
         // self.store_evm_bytecode(&address, Bytecode::new());
-        Some(SelfDestructResult {
+        let self_destruct_result = SelfDestructResult {
             had_value: result.had_value,
             target_exists: result.target_exists,
-            is_cold: result.is_cold,
             previously_destroyed: result.previously_destroyed,
-        })
+        };
+        Some(StateLoad::new(self_destruct_result, result.is_cold))
     }
 }
 
@@ -143,10 +160,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let (account, _) = self.sdk.account(address);
         let bytecode = self
             .sdk
-            .preimage(address, &account.source_code_hash)
+            .preimage(address, &account.code_hash)
             .unwrap_or_default();
         let bytecode = Bytecode::new_raw(bytecode);
-        (bytecode, account.source_code_hash)
+        (bytecode, account.code_hash)
     }
 
     pub fn store_evm_bytecode(&mut self, address: &Address, code_hash: B256, bytecode: Bytecode) {
@@ -155,6 +172,44 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
     }
 
     pub fn exec_evm_bytecode(
+        &mut self,
+        context: ContractContext,
+        _bytecode_account: &Account,
+        input: Bytes,
+        gas: &mut Gas,
+        _state: u32,
+        call_depth: u32,
+    ) -> (Bytes, i32) {
+        // take right bytecode depending on context params
+        let (evm_bytecode, code_hash) = self.load_evm_bytecode(&context.bytecode_address);
+
+        // if bytecode is empty, then commit result and return empty buffer
+        if evm_bytecode.is_empty() {
+            return (Bytes::default(), ExitCode::Ok.into_i32());
+        }
+
+        // initiate contract instance and pass it to interpreter for and EVM transition
+        let contract = Contract {
+            input,
+            hash: Some(code_hash),
+            bytecode: evm_bytecode,
+            // we don't take contract callee, because callee refers to address with bytecode
+            target_address: context.address,
+            // inside the contract context, we pass "apparent" value that can be different to
+            // transfer value (it can happen for DELEGATECALL or CALLCODE opcodes)
+            call_value: context.value,
+            caller: context.caller,
+            bytecode_address: None,
+        };
+        let result = self.exec_evm_contract(contract, take(gas), context.is_static, call_depth);
+        *gas = result.gas;
+        (
+            result.output,
+            exit_code_from_evm_error(result.result).into_i32(),
+        )
+    }
+
+    pub fn exec_evm_contract(
         &mut self,
         mut contract: Contract,
         gas: Gas,
@@ -221,11 +276,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             bytecode: to_analysed(Bytecode::new_raw(inputs.init_code)),
             hash: None,
             target_address,
+            bytecode_address: None,
             caller: inputs.caller,
             call_value: inputs.value,
         };
         // execute EVM constructor bytecode to produce new resulting EVM bytecode
-        let mut result = self.exec_evm_bytecode(contract, gas, false, call_depth);
+        let mut result = self.exec_evm_contract(contract, gas, false, call_depth);
         if !result.result.is_ok() {
             return result;
         }
@@ -248,13 +304,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let (mut contract_account, _) = self.sdk.account(&target_address);
         let evm_bytecode = Bytecode::new_raw(result.output.clone());
         let code_hash = evm_bytecode.hash_slow();
-        contract_account.update_bytecode(
-            self.sdk,
-            evm_bytecode.original_bytes(),
-            Some(code_hash),
-            Bytes::default(),
-            None,
-        );
+        contract_account.update_bytecode(self.sdk, evm_bytecode.original_bytes(), Some(code_hash));
 
         // if there is an address, then we have new EVM bytecode inside output
         self.store_evm_bytecode(&target_address, code_hash, evm_bytecode);
@@ -269,16 +319,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         mut gas: Gas,
         call_depth: u32,
     ) -> InterpreterResult {
-        // let return_error = |gas: Gas, result: InstructionResult| -> InterpreterResult {
-        //     InterpreterResult::new(result, Bytes::new(), gas)
-        // };
-
         let rwasm_bytecode = create_rwasm_proxy_bytecode();
 
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)
         let (mut contract_account, _) = self.sdk.account(&target_address);
-        contract_account.update_bytecode(self.sdk, Bytes::default(), None, rwasm_bytecode, None);
+        contract_account.update_bytecode(self.sdk, rwasm_bytecode, None);
 
         let context = ContractContext {
             address: target_address,
@@ -290,7 +336,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let (output, exit_code) = self.exec_rwasm_bytecode(
             context,
             &contract_account,
-            inputs.init_code.as_ref(),
+            inputs.init_code,
             &mut gas,
             STATE_DEPLOY,
             call_depth,

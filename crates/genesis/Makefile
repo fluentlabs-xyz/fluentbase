@@ -16,7 +16,6 @@ generate_genesis:
 
 .PHONY: generate_devnet_genesis
 generate_devnet_genesis:
-	cd ../contracts; $(MAKE)
 	mkdir -p $(OUT_DIR)
 	touch ./assets/genesis-devnet.json
 	$(MAKE) generate_genesis OPTIONS="--genesis-type=devnet --out-dir=$(OUT_DIR)"

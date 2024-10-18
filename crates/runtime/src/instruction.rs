@@ -1,15 +1,10 @@
 pub mod charge_fuel;
-pub mod checkpoint;
-pub mod commit;
-pub mod compute_root;
 pub mod debug_log;
 pub mod ecrecover;
-pub mod emit_log;
 pub mod exec;
 pub mod exit;
 pub mod forward_output;
 pub mod fuel;
-pub mod get_leaf;
 pub mod input_size;
 pub mod keccak256;
 pub mod output_size;
@@ -18,13 +13,9 @@ pub mod poseidon_hash;
 pub mod preimage_copy;
 pub mod preimage_size;
 pub mod read;
-pub mod read_context;
 pub mod read_output;
 pub mod resume;
-pub mod rollback;
 pub mod state;
-pub mod update_leaf;
-pub mod update_preimage;
 pub mod write;
 
 use crate::{
@@ -45,7 +36,6 @@ use crate::{
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
-        read_context::SyscallReadContext,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
         state::SyscallState,
@@ -80,12 +70,11 @@ impl_runtime_handler!(SyscallResume, RESUME, fn fluentbase_v1preview::_resume(ca
 impl_runtime_handler!(SyscallForwardOutput, FORWARD_OUTPUT, fn fluentbase_v1preview::_forward_output(offset: u32, len: u32) -> ());
 impl_runtime_handler!(SyscallChargeFuel, CHARGE_FUEL, fn fluentbase_v1preview::_charge_fuel(delta: u64) -> u64);
 impl_runtime_handler!(SyscallFuel, FUEL, fn fluentbase_v1preview::_fuel() -> u64);
-impl_runtime_handler!(SyscallReadContext, READ_CONTEXT, fn fluentbase_v1preview::_read_context(target_ptr: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SyscallPreimageSize, PREIMAGE_SIZE, fn fluentbase_v1preview::_preimage_size(hash32_ptr: u32) -> u32);
 impl_runtime_handler!(SyscallPreimageCopy, PREIMAGE_COPY, fn fluentbase_v1preview::_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
 impl_runtime_handler!(SyscallDebugLog, DEBUG_LOG, fn fluentbase_v1preview::_debug_log(msg_ptr: u32, msg_len: u32) -> ());
 
-fn runtime_register_handlers<const IS_SOVEREIGN: bool>(
+pub fn runtime_register_handlers(
     linker: &mut Linker<RuntimeContext>,
     store: &mut Store<RuntimeContext>,
 ) {
@@ -105,22 +94,7 @@ fn runtime_register_handlers<const IS_SOVEREIGN: bool>(
     SyscallForwardOutput::register_handler(linker, store);
     SyscallChargeFuel::register_handler(linker, store);
     SyscallFuel::register_handler(linker, store);
-    SyscallReadContext::register_handler(linker, store);
     SyscallPreimageSize::register_handler(linker, store);
     SyscallPreimageCopy::register_handler(linker, store);
     SyscallDebugLog::register_handler(linker, store);
-}
-
-pub fn runtime_register_sovereign_handlers(
-    linker: &mut Linker<RuntimeContext>,
-    store: &mut Store<RuntimeContext>,
-) {
-    runtime_register_handlers::<true>(linker, store);
-}
-
-pub fn runtime_register_shared_handlers(
-    linker: &mut Linker<RuntimeContext>,
-    store: &mut Store<RuntimeContext>,
-) {
-    runtime_register_handlers::<false>(linker, store);
 }

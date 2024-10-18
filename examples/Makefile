@@ -1,4 +1,4 @@
-FILES = greeting erc20 hashing panic router rwasm shakmaty storage
+FILES = greeting erc20 hashing panic router rwasm shakmaty storage keccak rwasm-jit
 
 all: $(FILES) $(MANUAL)
 
@@ -25,8 +25,3 @@ deploy_example_contract:
 .PHONE: send_blended_tx
 send_blended_tx:
 	node ./send-blended-tx.js --local
-
-.PHONE: send_wrapped_fuel_tx
-send_wrapped_fuel_tx:
-	clear
-	node ./send-wrapped-fuel-tx.js --local

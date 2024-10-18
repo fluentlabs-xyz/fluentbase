@@ -20,6 +20,7 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 syn = { workspace = true, features = ["full"] }
 syn-solidity = { version = "0.7", default-features = false }
 hex = "0.4.3"
+regex.workspace = true
 
 [lib]
 proc-macro = true

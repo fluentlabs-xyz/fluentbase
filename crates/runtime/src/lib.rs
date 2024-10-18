@@ -4,19 +4,11 @@
 pub mod instruction;
 mod macros;
 mod runtime;
+mod storage;
+pub mod types;
 
 pub use runtime::*;
-
-mod storage;
-
 pub use storage::*;
 
-mod journal;
-
-pub use journal::*;
-
-pub mod mptrie;
 #[cfg(test)]
 mod tests;
-pub mod types;
-pub mod zktrie;

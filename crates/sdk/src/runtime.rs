@@ -16,16 +16,14 @@ use fluentbase_runtime::{
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
-        read_context::SyscallReadContext,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
         state::SyscallState,
         write::SyscallWrite,
     },
-    DefaultEmptyRuntimeDatabase,
     RuntimeContext,
 };
-use fluentbase_types::{Bytes, NativeAPI, UnwrapExitCode, B256, F254};
+use fluentbase_types::{Bytes, ContextFreeNativeAPI, NativeAPI, UnwrapExitCode, B256, F254};
 use std::{cell::RefCell, mem::take};
 
 pub struct RuntimeContextWrapper {
@@ -48,27 +46,33 @@ impl Clone for RuntimeContextWrapper {
     }
 }
 
-impl NativeAPI for RuntimeContextWrapper {
-    fn keccak256(&self, data: &[u8]) -> B256 {
+impl ContextFreeNativeAPI for RuntimeContextWrapper {
+    fn keccak256(data: &[u8]) -> B256 {
         SyscallKeccak256::fn_impl(data)
     }
 
-    fn poseidon(&self, data: &[u8]) -> F254 {
+    fn sha256(_data: &[u8]) -> B256 {
+        todo!("not implemented")
+    }
+
+    fn poseidon(data: &[u8]) -> F254 {
         SyscallPoseidon::fn_impl(data)
     }
 
-    fn poseidon_hash(&self, fa: &F254, fb: &F254, fd: &F254) -> F254 {
+    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
         SyscallPoseidonHash::fn_impl(fa, fb, fd).unwrap_exit_code()
     }
 
-    fn ec_recover(&self, digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
         SyscallEcrecover::fn_impl(digest, sig, rec_id).unwrap_exit_code()
     }
 
-    fn debug_log(&self, message: &str) {
+    fn debug_log(message: &str) {
         SyscallDebugLog::fn_impl(message.as_bytes())
     }
+}
 
+impl NativeAPI for RuntimeContextWrapper {
     fn read(&self, target: &mut [u8], offset: u32) {
         let result = SyscallRead::fn_impl(&self.ctx.borrow(), offset, target.len() as u32)
             .unwrap_exit_code();
@@ -104,12 +108,6 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn state(&self) -> u32 {
         SyscallState::fn_impl(&self.ctx.borrow())
-    }
-
-    fn read_context(&self, target: &mut [u8], offset: u32) {
-        let result = SyscallReadContext::fn_impl(&self.ctx.borrow(), offset, target.len() as u32)
-            .unwrap_exit_code();
-        target.copy_from_slice(&result);
     }
 
     #[inline(always)]
@@ -166,8 +164,7 @@ pub type TestingContext = RuntimeContextWrapper;
 
 impl TestingContext {
     pub fn empty() -> Self {
-        let ctx =
-            RuntimeContext::default().with_jzkt(Box::new(DefaultEmptyRuntimeDatabase::default()));
+        let ctx = RuntimeContext::default();
         Self {
             ctx: Rc::new(RefCell::new(ctx)),
         }
@@ -190,12 +187,6 @@ impl TestingContext {
 
     pub fn set_fuel(&mut self, fuel: u64) {
         self.ctx.replace_with(|ctx| take(ctx).with_fuel_limit(fuel));
-    }
-
-    pub fn with_context<I: Into<Vec<u8>>>(self, context: I) -> Self {
-        let context: Vec<u8> = context.into();
-        self.ctx.replace_with(|ctx| take(ctx).with_context(context));
-        self
     }
 
     pub fn take_output(&self) -> Vec<u8> {

@@ -4,6 +4,7 @@ extern crate core;
 
 use crate::types::FileFormat;
 use clap::Parser;
+use fluentbase_core as _;
 use fluentbase_types::{create_import_linker, SysFuncIdx::STATE, STATE_DEPLOY, STATE_MAIN};
 use log::debug;
 use rwasm::{

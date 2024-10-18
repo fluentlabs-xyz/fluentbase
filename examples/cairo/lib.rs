@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use cairo_platinum_prover::air::CairoAIR;
-use fluentbase_sdk::{alloc_slice, basic_entrypoint, derive::Contract, NativeAPI, SharedAPI};
+use fluentbase_sdk::{alloc_slice, basic_entrypoint, derive::Contract, SharedAPI};
 use stark_platinum_prover::{
     proof::options::{ProofOptions, SecurityLevel},
     transcript::StoneProverTranscript,

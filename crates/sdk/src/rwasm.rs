@@ -15,7 +15,6 @@ pub use crate::{
         _preimage_copy,
         _preimage_size,
         _read,
-        _read_context,
         _read_output,
         _resume,
         _state,
@@ -23,14 +22,14 @@ pub use crate::{
     },
     B256,
 };
-use fluentbase_types::{NativeAPI, F254};
+use fluentbase_types::{ContextFreeNativeAPI, NativeAPI, F254};
 
 #[derive(Default)]
 pub struct RwasmContext;
 
-impl NativeAPI for RwasmContext {
+impl ContextFreeNativeAPI for RwasmContext {
     #[inline(always)]
-    fn keccak256(&self, data: &[u8]) -> B256 {
+    fn keccak256(data: &[u8]) -> B256 {
         unsafe {
             let mut res = B256::ZERO;
             _keccak256(
@@ -43,7 +42,12 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn poseidon(&self, data: &[u8]) -> F254 {
+    fn sha256(_data: &[u8]) -> B256 {
+        todo!("not implemented")
+    }
+
+    #[inline(always)]
+    fn poseidon(data: &[u8]) -> F254 {
         unsafe {
             let mut res = B256::ZERO;
             _poseidon(
@@ -56,7 +60,7 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn poseidon_hash(&self, fa: &F254, fb: &F254, fd: &F254) -> F254 {
+    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
         let mut res = B256::ZERO;
         unsafe {
             _poseidon_hash(
@@ -70,7 +74,7 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn ec_recover(&self, digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
         unsafe {
             let mut res: [u8; 65] = [0u8; 65];
             _ecrecover(
@@ -84,10 +88,12 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn debug_log(&self, message: &str) {
+    fn debug_log(message: &str) {
         unsafe { _debug_log(message.as_ptr(), message.len() as u32) }
     }
+}
 
+impl NativeAPI for RwasmContext {
     #[inline(always)]
     fn read(&self, target: &mut [u8], offset: u32) {
         unsafe { _read(target.as_mut_ptr(), offset, target.len() as u32) }
@@ -126,11 +132,6 @@ impl NativeAPI for RwasmContext {
     #[inline(always)]
     fn state(&self) -> u32 {
         unsafe { _state() }
-    }
-
-    #[inline(always)]
-    fn read_context(&self, target: &mut [u8], offset: u32) {
-        unsafe { _read_context(target.as_mut_ptr(), offset, target.len() as u32) }
     }
 
     #[inline(always)]

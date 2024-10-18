@@ -261,7 +261,6 @@ pub enum SysFuncIdx {
     FORWARD_OUTPUT = 0x000b,
     CHARGE_FUEL = 0x000c,
     FUEL = 0x000d,
-    READ_CONTEXT = 0x000e,
 
     // preimage
     PREIMAGE_SIZE = 0x070D,
@@ -305,36 +304,36 @@ impl Into<FuncIdx> for SysFuncIdx {
 pub enum BytecodeType {
     EVM,
     WASM,
-    FVM,
+    ELF,
 }
 
-/// Fuel asm signature (\0FASM)
-const FUEL_ASM_SIG_LEN: usize = 5;
-const FUEL_ASM_SIG: [u8; FUEL_ASM_SIG_LEN] = [0x00, 0x66, 0x61, 0x73, 0x6d];
-
 const WASM_SIG_LEN: usize = 4;
-/// WebAssembly signature (\0ASM)
+/// WebAssembly signature (\00ASM)
 const WASM_SIG: [u8; WASM_SIG_LEN] = [0x00, 0x61, 0x73, 0x6d];
 
-const RWASM_SIG_LEN: usize = 3;
+const ELF_SIG_LEN: usize = 4;
+/// ELF signature (\7fELF)
+const ELF_SIG: [u8; ELF_SIG_LEN] = [0x7f, 0x45, 0x4c, 0x46];
+
+const RWASM_SIG_LEN: usize = 2;
 /// rWASM binary format signature:
 /// - 0xef 0x00 - EIP-3540 compatible prefix
 /// - 0x52 - rWASM version number (equal to 'R')
-const RWASM_SIG: [u8; RWASM_SIG_LEN] = [0xef, 0x00, 0x52];
+const RWASM_SIG: [u8; RWASM_SIG_LEN] = [0xef, 0x52];
 
 impl BytecodeType {
     pub fn from_slice(input: &[u8]) -> Self {
-        // default WebAssembly signature (\0ASM)
-        if input.len() >= WASM_SIG.len() && input[0..WASM_SIG_LEN] == WASM_SIG {
+        // default WebAssembly signature
+        if input.len() >= WASM_SIG_LEN && input[0..WASM_SIG_LEN] == WASM_SIG {
             return Self::WASM;
+        }
+        // default ELF signature
+        if input.len() >= ELF_SIG_LEN && input[0..ELF_SIG_LEN] == ELF_SIG {
+            return Self::ELF;
         }
         // case for rWASM contracts that are inside genesis
-        if input.len() >= RWASM_SIG.len() && input[0..RWASM_SIG_LEN] == RWASM_SIG {
+        if input.len() >= RWASM_SIG_LEN && input[0..RWASM_SIG_LEN] == RWASM_SIG {
             return Self::WASM;
-        }
-        // case for Fuel contracts that are inside genesis
-        if input.len() >= FUEL_ASM_SIG.len() && input[0..FUEL_ASM_SIG_LEN] == FUEL_ASM_SIG {
-            return Self::FVM;
         }
         // all the rest are EVM bytecode
         Self::EVM
@@ -399,12 +398,12 @@ pub const fn syscall_name_by_hash(hash: &B256) -> &str {
     }
 }
 
-pub const FUEL_LIMIT_SYSCALL_STORAGE_READ: u64 = 2_100;
-pub const FUEL_LIMIT_SYSCALL_STORAGE_WRITE: u64 = 22_100;
-pub const FUEL_LIMIT_SYSCALL_EMIT_LOG: u64 = 10_000;
-pub const FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT: u64 = 32_600;
-pub const FUEL_LIMIT_SYSCALL_BALANCE: u64 = 2_600;
-pub const FUEL_LIMIT_SYSCALL_EXT_STORAGE_READ: u64 = 2_100;
-pub const FUEL_LIMIT_SYSCALL_PREIMAGE_SIZE: u64 = 2_600;
-pub const FUEL_LIMIT_SYSCALL_TRANSIENT_READ: u64 = 100;
-pub const FUEL_LIMIT_SYSCALL_TRANSIENT_WRITE: u64 = 100;
+pub const GAS_LIMIT_SYSCALL_STORAGE_READ: u64 = 2_100;
+pub const GAS_LIMIT_SYSCALL_STORAGE_WRITE: u64 = 22_100;
+pub const GAS_LIMIT_SYSCALL_EMIT_LOG: u64 = 10_000;
+pub const GAS_LIMIT_SYSCALL_DESTROY_ACCOUNT: u64 = 32_600;
+pub const GAS_LIMIT_SYSCALL_BALANCE: u64 = 2_600;
+pub const GAS_LIMIT_SYSCALL_EXT_STORAGE_READ: u64 = 2_100;
+pub const GAS_LIMIT_SYSCALL_PREIMAGE_SIZE: u64 = 2_600;
+pub const GAS_LIMIT_SYSCALL_TRANSIENT_READ: u64 = 100;
+pub const GAS_LIMIT_SYSCALL_TRANSIENT_WRITE: u64 = 100;
