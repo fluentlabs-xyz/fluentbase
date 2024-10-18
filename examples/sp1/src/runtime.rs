@@ -61,6 +61,7 @@ use alloc::{
     vec::Vec,
 };
 
+#[derive(Debug)]
 pub struct RuntimeContext {
     // context inputs
     pub(crate) bytecode: BytecodeOrHash,
@@ -220,7 +221,7 @@ impl RuntimeContext {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BytecodeOrHash {
     Bytecode(Bytes, Option<F254>),
     Hash(F254),
