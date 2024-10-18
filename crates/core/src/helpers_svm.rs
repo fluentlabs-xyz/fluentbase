@@ -414,7 +414,7 @@ declare_builtin_function!(
     /// Log a user's info message
     SyscallLog,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut TestContextObject, //InvokeContext,
         addr: u64,
         len: u64,
         _arg3: u64,
@@ -1022,7 +1022,7 @@ fn test_struct_func_pointer() {
         // function_registry.register_function_hashed(*b"sol_panic_", SyscallPanic::vm)?;
 
         // Logging
-        function_registry.register_function_hashed(*b"sol_log_", SyscallLog::vm)?;
+        function_registry.register_function_hashed(*b"sol_log_", SyscallLog::vm).unwrap();
         // function_registry.register_function_hashed(*b"sol_log_64_", SyscallLogU64::vm)?;
         // function_registry.register_function_hashed(*b"sol_log_compute_units_", SyscallLogBpfComputeUnits::vm)?;
         // function_registry.register_function_hashed(*b"sol_log_pubkey", SyscallLogPubkey::vm)?;
@@ -1139,7 +1139,7 @@ fn example_syscal() {
 }
 
 
-pub fn svm_transact<'a, Tx, T>(
+pub fn svm_transact<T>(
     storage: &mut T,
     // checked_tx: Checked<Tx>,
     // header: &'a PartialBlockHeader,
@@ -1327,7 +1327,7 @@ pub fn svm_transact_commit<T>(
         // header,
         // coinbase_contract_id,
         // gas_price,
-        &mut memory,
+        // &mut memory,
         // consensus_params,
         // extra_tx_checks,
         // execution_data,
