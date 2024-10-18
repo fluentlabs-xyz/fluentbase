@@ -1,5 +1,6 @@
 extern crate byteorder;
 extern crate solana_rbpf;
+use fuel_core_types::fuel_vm::interpreter::MemoryInstance;
 use alloc::str::Utf8Error;
 use solana_rbpf::memory_region::AccessType;
 use crate::fvm::types::WasmRelayer;
@@ -146,6 +147,108 @@ fn translate(
         .map(access_type, vm_addr, len)
         .map_err(|err| err.into())
         .into()
+}
+
+/// Log collector
+
+use std::rc::Rc;
+const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
+
+pub struct LogCollector {
+    messages: Vec<String>,
+    bytes_written: usize,
+    bytes_limit: Option<usize>,
+    limit_warning: bool,
+}
+
+impl Default for LogCollector {
+    fn default() -> Self {
+        Self {
+            messages: Vec::new(),
+            bytes_written: 0,
+            bytes_limit: Some(LOG_MESSAGES_BYTES_LIMIT),
+            limit_warning: false,
+        }
+    }
+}
+
+impl LogCollector {
+    pub fn log(&mut self, message: &str) {
+        let Some(limit) = self.bytes_limit else {
+            self.messages.push(message.to_string());
+            return;
+        };
+
+        let bytes_written = self.bytes_written.saturating_add(message.len());
+        if bytes_written >= limit {
+            if !self.limit_warning {
+                self.limit_warning = true;
+                self.messages.push(String::from("Log truncated"));
+            }
+        } else {
+            self.bytes_written = bytes_written;
+            self.messages.push(message.to_string());
+        }
+    }
+
+    pub fn get_recorded_content(&self) -> &[String] {
+        self.messages.as_slice()
+    }
+
+    pub fn new_ref() -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self::default()))
+    }
+
+    pub fn new_ref_with_limit(bytes_limit: Option<usize>) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self {
+            bytes_limit,
+            ..Self::default()
+        }))
+    }
+
+    pub fn into_messages(self) -> Vec<String> {
+        self.messages
+    }
+}
+
+/// Convenience macro to log a message with an `Option<Rc<RefCell<LogCollector>>>`
+#[macro_export]
+macro_rules! ic_logger_msg {
+    ($log_collector:expr, $message:expr) => {
+        $crate::log_collector::log::debug!(
+            target: "solana_runtime::message_processor::stable_log",
+            "{}",
+            $message
+        );
+        if let Some(log_collector) = $log_collector.as_ref() {
+            if let Ok(mut log_collector) = log_collector.try_borrow_mut() {
+                log_collector.log($message);
+            }
+        }
+    };
+    ($log_collector:expr, $fmt:expr, $($arg:tt)*) => {
+        $crate::log_collector::log::debug!(
+            target: "solana_runtime::message_processor::stable_log",
+            $fmt,
+            $($arg)*
+        );
+        if let Some(log_collector) = $log_collector.as_ref() {
+            if let Ok(mut log_collector) = log_collector.try_borrow_mut() {
+                log_collector.log(&format!($fmt, $($arg)*));
+            }
+        }
+    };
+}
+
+/// Convenience macro to log a message with an `InvokeContext`
+#[macro_export]
+macro_rules! ic_msg {
+    ($invoke_context:expr, $message:expr) => {
+        $crate::ic_logger_msg!($invoke_context.get_log_collector(), $message)
+    };
+    ($invoke_context:expr, $fmt:expr, $($arg:tt)*) => {
+        $crate::ic_logger_msg!($invoke_context.get_log_collector(), $fmt, $($arg)*)
+    };
 }
 
 /// Error definitions
@@ -601,10 +704,10 @@ macro_rules! test_interpreter_and_jit_asm {
 
 
 #[derive(Debug, Clone)]
-pub struct SvmTransactResult<Tx> {
+pub struct SvmTransactResult {
     pub reverted: bool,
     // pub program_state: ProgramState,
-    pub tx: Tx,
+    // pub tx: Tx,
     // pub receipts: Vec<Receipt>,
     // pub changes: Changes,
 }
@@ -1046,7 +1149,7 @@ pub fn svm_transact<'a, Tx, T>(
     // consensus_params: ConsensusParameters,
     // extra_tx_checks: bool,
     // execution_data: &mut ExecutionData,
-) -> core::result::Result<SvmTransactResult<Tx>, Error>
+) -> core::result::Result<SvmTransactResult, Error>
 // where
 //     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
 //     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
@@ -1185,20 +1288,20 @@ pub fn svm_transact<'a, Tx, T>(
 }
 
 
-pub fn svm_transact_commit<Tx, T>(
+pub fn svm_transact_commit<T>(
     storage: &mut T,
-    checked_tx: Checked<Tx>,
-    header: &PartialBlockHeader,
-    coinbase_contract_id: ContractId,
-    gas_price: Word,
-    consensus_params: ConsensusParameters,
-    extra_tx_checks: bool,
-    execution_data: &mut ExecutionData,
-) -> std::result::Result<SvmTransactResult<Tx>, Error>
-where
-    Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
-    <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
-    T: KeyValueMutate<Column = Column>,
+    // checked_tx: Checked<Tx>,
+    // header: &PartialBlockHeader,
+    // coinbase_contract_id: ContractId,
+    // gas_price: Word,
+    // consensus_params: ConsensusParameters,
+    // extra_tx_checks: bool,
+    // execution_data: &mut ExecutionData,
+) -> std::result::Result<SvmTransactResult, Error>
+// where
+//     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
+//     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
+//     T: KeyValueMutate<Column = Column>,
 {
     // debug_log!("ecl(svm_transact_commit): start");
 
@@ -1220,56 +1323,56 @@ where
 
     let result = svm_transact(
         storage,
-        checked_tx,
-        header,
-        coinbase_contract_id,
-        gas_price,
+        // checked_tx,
+        // header,
+        // coinbase_contract_id,
+        // gas_price,
         &mut memory,
-        consensus_params,
-        extra_tx_checks,
-        execution_data,
+        // consensus_params,
+        // extra_tx_checks,
+        // execution_data,
     )?;
 
-    for (col_num, changes) in &result.changes {
-        let column: Column = col_num.clone().try_into().expect("valid column number");
-        match column {
-            Column::Metadata
-            | Column::ContractsRawCode
-            | Column::ContractsState
-            | Column::ContractsLatestUtxo
-            | Column::ContractsAssets
-            | Column::ContractsAssetsMerkleData
-            | Column::ContractsAssetsMerkleMetadata
-            | Column::ContractsStateMerkleData
-            | Column::ContractsStateMerkleMetadata
-            | Column::Coins => {
-                for (key, op) in changes {
-                    match op {
-                        WriteOperation::Insert(v) => {
-                            storage.write(key, column, v)?;
-                        }
-                        WriteOperation::Remove => {
-                            storage.delete(key, column)?;
-                        }
-                    }
-                }
-            }
-
-            Column::Transactions
-            | Column::FuelBlocks
-            | Column::FuelBlockMerkleData
-            | Column::FuelBlockMerkleMetadata
-            | Column::Messages
-            | Column::ProcessedTransactions
-            | Column::FuelBlockConsensus
-            | Column::ConsensusParametersVersions
-            | Column::StateTransitionBytecodeVersions
-            | Column::UploadedBytecodes
-            | Column::GenesisMetadata => {
-                panic!("unsupported column {:?} operation", column)
-            }
-        }
-    }
+    // for (col_num, changes) in &result.changes {
+    //     let column: Column = col_num.clone().try_into().expect("valid column number");
+    //     match column {
+    //         Column::Metadata
+    //         | Column::ContractsRawCode
+    //         | Column::ContractsState
+    //         | Column::ContractsLatestUtxo
+    //         | Column::ContractsAssets
+    //         | Column::ContractsAssetsMerkleData
+    //         | Column::ContractsAssetsMerkleMetadata
+    //         | Column::ContractsStateMerkleData
+    //         | Column::ContractsStateMerkleMetadata
+    //         | Column::Coins => {
+    //             for (key, op) in changes {
+    //                 match op {
+    //                     WriteOperation::Insert(v) => {
+    //                         storage.write(key, column, v)?;
+    //                     }
+    //                     WriteOperation::Remove => {
+    //                         storage.delete(key, column)?;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //
+    //         Column::Transactions
+    //         | Column::FuelBlocks
+    //         | Column::FuelBlockMerkleData
+    //         | Column::FuelBlockMerkleMetadata
+    //         | Column::Messages
+    //         | Column::ProcessedTransactions
+    //         | Column::FuelBlockConsensus
+    //         | Column::ConsensusParametersVersions
+    //         | Column::StateTransitionBytecodeVersions
+    //         | Column::UploadedBytecodes
+    //         | Column::GenesisMetadata => {
+    //             panic!("unsupported column {:?} operation", column)
+    //         }
+    //     }
+    // }
 
     Ok(result)
 }

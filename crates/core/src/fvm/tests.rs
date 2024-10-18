@@ -1312,12 +1312,13 @@ mod tests {
 
 #[cfg(test)]
 mod solana_tests {
+    use std::error::Error;
     use fuel_core_storage::StorageAsRef;
     use fuel_core_storage::transactional::{Modifiable, WriteTransaction};
     use fuel_core_types::fuel_tx::field::Inputs;
     use fuel_core_types::fuel_vm::checked_transaction::IntoChecked;
     use fuel_core_types::fuel_vm::interpreter::ExecutableTransaction;
-    use crate::helpers_svm::svm_transact_commit;
+    use crate::helpers_svm::{svm_transact_commit, SvmTransactResult};
     use super::*;
     // use solana_program_test::{BanksClient, ProgramTest};
     // use solana_sdk::{
@@ -1447,17 +1448,17 @@ mod solana_tests {
         let execution_data = &mut ExecutionData::new();
         let exec_result1 = svm_transact_commit(
             &mut storage_transaction,
-            create_tx_checked,
-            &block.header,
-            coinbase_contract_id,
-            0,
-            consensus_params.clone(),
-            true,
-            execution_data,
+            // create_tx_checked,
+            // &block.header,
+            // coinbase_contract_id,
+            // 0,
+            // consensus_params.clone(),
+            // true,
+            // execution_data,
         );
         assert_eq!(true, exec_result1.is_ok());
-        let exec_result1 = exec_result1.unwrap();
-        storage.commit_changes(exec_result1.changes).unwrap();
+        // let exec_result1 = exec_result1.unwrap();
+        // storage.commit_changes(exec_result1.changes).unwrap();
 
         let tx2 = tx2.as_script().unwrap().clone();
         let tx2_checked = tx2
@@ -1467,13 +1468,13 @@ mod solana_tests {
         let execution_data = &mut ExecutionData::new();
         let exec_result2 = svm_transact_commit(
             &mut storage_transaction,
-            tx2_checked,
-            &block.header,
-            coinbase_contract_id,
-            0,
-            consensus_params.clone(),
-            true,
-            execution_data,
+            // tx2_checked,
+            // &block.header,
+            // coinbase_contract_id,
+            // 0,
+            // consensus_params.clone(),
+            // true,
+            // execution_data,
         );
         assert_eq!(true, exec_result2.is_err());
 
