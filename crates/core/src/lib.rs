@@ -7,4 +7,5 @@ extern crate core;
 pub mod blended;
 pub mod helpers;
 mod helpers_svm;
+pub mod svm;
 mod types;
