@@ -1,43 +1,44 @@
-use crate::{contract::impl_derive_contract, router::solidity::derive_solidity_router};
+use crate::contract::impl_derive_contract;
 use proc_macro::TokenStream;
-use proc_macro_error::proc_macro_error;
+use proc_macro2::TokenStream as TokenStream2;
+use proc_macro_error::{abort, proc_macro_error};
 use quote::{quote, ToTokens};
-use router::solidity::FunctionIDAttribute;
-use syn::{
-    parse::{Parse, ParseStream},
-    parse_macro_input,
-    punctuated::Punctuated,
-    Expr,
-    ExprLit,
-    ItemFn,
-    ItemTrait,
-    Lit,
-    Meta,
-    Token,
-};
 
-mod codec_router;
 mod contract;
-mod solidity_router;
 mod solidity_storage;
 
 mod utils;
 
-mod router;
+use router_core::router_core;
 
-// #[proc_macro_attribute]
-// pub fn function_id(attr: TokenStream, item: TokenStream) -> TokenStream {
-//     let attr = parse_macro_input!(attr as FunctionIDAttribute);
-//     let item = parse_macro_input!(item as ItemFn);
+#[proc_macro_error]
+#[proc_macro_attribute]
+pub fn router(args: TokenStream, input: TokenStream) -> TokenStream {
+    let router_impl = match router_core(args.into(), input.into()) {
+        Ok(expanded) => expanded,
+        Err(err) => abort!(err.span(), "{}", err),
+    };
 
-//     let generated = attr.to_token_stream();
+    let result = quote! {
+        #[allow(unused_imports)]
+        use fluentbase_sdk::derive::function_id;
 
-//     quote! {
-//         #generated
-//         #item
-//     }
-//     .into()
-// }
+        #router_impl
+    };
+
+    result.into()
+}
+
+#[proc_macro_attribute]
+pub fn function_id(attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+#[proc_macro]
+#[proc_macro_error]
+pub fn solidity_storage(token: TokenStream) -> TokenStream {
+    solidity_storage::SolidityStorage::expand(token)
+}
 
 #[proc_macro]
 pub fn derive_keccak256_id(token: TokenStream) -> TokenStream {
@@ -57,134 +58,26 @@ pub fn derive_keccak256(token: TokenStream) -> TokenStream {
     })
 }
 
-#[proc_macro]
-#[proc_macro_error]
-pub fn solidity_storage(token: TokenStream) -> TokenStream {
-    solidity_storage::SolidityStorage::expand(token)
-}
+// #[proc_macro_attribute]
+// pub fn client(attr: TokenStream, item: TokenStream) -> TokenStream {
+//     let args = parse_macro_input!(attr as RouterArgs);
 
-#[derive(Debug, PartialEq)]
-enum RouterMode {
-    Solidity,
-    Codec,
-}
-
-impl std::str::FromStr for RouterMode {
-    type Err = ();
-
-    fn from_str(input: &str) -> Result<RouterMode, Self::Err> {
-        match input {
-            "solidity" => Ok(RouterMode::Solidity),
-            "codec" => Ok(RouterMode::Codec),
-            _ => Err(()),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct RouterArgs {
-    mode: RouterMode,
-}
-
-impl Parse for RouterArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut mode = None;
-
-        let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
-
-        for meta in metas {
-            if let Meta::NameValue(m) = meta {
-                if m.path.is_ident("mode") {
-                    if let Expr::Lit(ExprLit {
-                        lit: Lit::Str(lit_str),
-                        ..
-                    }) = &m.value
-                    {
-                        mode = Some(lit_str.value().parse::<RouterMode>().map_err(|_| {
-                            syn::Error::new_spanned(&m.value, "Expected 'solidity' or 'codec'")
-                        })?);
-                    } else {
-                        return Err(syn::Error::new_spanned(&m.value, "Expected a string value"));
-                    }
-                }
-            }
-        }
-
-        let mode = mode.ok_or_else(|| syn::Error::new(input.span(), "mode is required"))?;
-
-        Ok(Self { mode })
-    }
-}
-
-#[proc_macro_attribute]
-pub fn router(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as RouterArgs);
-
-    let result = match args.mode {
-        RouterMode::Solidity => derive_solidity_router(item),
-        RouterMode::Codec => Ok(codec_router::derive_codec_router(TokenStream::new(), item)),
-    };
-
-    match result {
-        Ok(expanded) => expanded.into(),
-        Err(err) => err.to_compile_error().into(),
-    }
-}
-
-#[proc_macro_attribute]
-pub fn client(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as RouterArgs);
-
-    let expanded = match args.mode {
-        RouterMode::Solidity => solidity_router::derive_solidity_client(
-            TokenStream::new(),
-            parse_macro_input!(item as ItemTrait),
-        )
-        .into(),
-        RouterMode::Codec => codec_router::derive_codec_client(
-            TokenStream::new(),
-            parse_macro_input!(item as ItemTrait),
-        ),
-    };
-    TokenStream::from(expanded)
-}
-
-// Fake implementation of the attribute to avoid compiler and linter complaints
-#[proc_macro_attribute]
-pub fn signature(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    item
-}
+//     let expanded = match args.mode {
+//         RouterMode::Solidity => solidity_router::derive_solidity_client(
+//             TokenStream::new(),
+//             parse_macro_input!(item as ItemTrait),
+//         )
+//         .into(),
+//         RouterMode::Codec => codec_router::derive_codec_client(
+//             TokenStream::new(),
+//             parse_macro_input!(item as ItemTrait),
+//         ),
+//     };
+//     TokenStream::from(expanded)
+// }
 
 #[proc_macro_derive(Contract)]
 pub fn contract_macro_derive(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     impl_derive_contract(&ast)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proc_macro2::TokenStream;
-    use syn::parse_quote;
-
-    #[test]
-    fn test_parse_solidity_mode() {
-        let input: TokenStream = parse_quote!(mode = "solidity");
-        let args: RouterArgs = syn::parse2(input).expect("Failed to parse");
-        assert_eq!(args.mode, RouterMode::Solidity);
-    }
-
-    #[test]
-    fn test_parse_codec_mode() {
-        let input: TokenStream = parse_quote!(mode = "codec");
-        let args: RouterArgs = syn::parse2(input).expect("Failed to parse");
-        assert_eq!(args.mode, RouterMode::Codec);
-    }
-
-    #[test]
-    fn test_parse_invalid_mode() {
-        let input: TokenStream = parse_quote!(mode = "InvalidMode");
-        let result = syn::parse2::<RouterArgs>(input);
-        assert!(result.is_err());
-    }
 }

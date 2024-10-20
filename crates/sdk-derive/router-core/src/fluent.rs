@@ -1,6 +1,5 @@
 use crate::utils::{calculate_keccak256_id, get_all_methods};
-use proc_macro::TokenStream;
-use proc_macro2::Ident;
+use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
     parse_macro_input,
@@ -11,14 +10,15 @@ use syn::{
     ItemImpl,
     ItemTrait,
     LitStr,
+    Result,
     ReturnType,
     Token,
     TraitItem,
     TraitItemFn,
 };
 
-pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let ast: ItemImpl = parse_macro_input!(item as ItemImpl);
+pub fn derive_codec_router(input: TokenStream2) -> Result<TokenStream2> {
+    let ast: ItemImpl = syn::parse2(input)?;
     let struct_name = &ast.self_ty;
     let (impl_generics, _, _) = ast.generics.split_for_impl();
 
@@ -28,14 +28,14 @@ pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream
 
     let dispatch_impl: ImplItem = main_fn_impl(&methods);
 
-    TokenStream::from(quote! {
+    Ok(TokenStream2::from(quote! {
         #ast
         impl #impl_generics #struct_name {
             #decode_method_input_impl
             #deploy_imp
             #dispatch_impl
         }
-    })
+    }))
 }
 
 fn deploy_fn_impl() -> ImplItem {
@@ -82,7 +82,7 @@ fn main_fn_impl(methods: &Vec<&ImplItemFn>) -> ImplItem {
     }
 }
 
-fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
+fn selector_impl(func: &ImplItemFn) -> TokenStream2 {
     let sig: Option<LitStr> = func.attrs.iter().find_map(|attr| {
         if attr.path().is_ident("signature") {
             attr.parse_args().ok()
@@ -105,7 +105,7 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
     }
 }
 
-pub fn method_input_ty(inputs: &Punctuated<FnArg, Token![,]>) -> Option<proc_macro2::TokenStream> {
+pub fn method_input_ty(inputs: &Punctuated<FnArg, Token![,]>) -> Option<TokenStream2> {
     inputs
         .iter()
         .filter_map(|arg| {
@@ -123,7 +123,7 @@ pub fn method_input_ty(inputs: &Punctuated<FnArg, Token![,]>) -> Option<proc_mac
         .next()
 }
 
-pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
+pub fn derive_codec_client(_attr: TokenStream2, ast: ItemTrait) -> TokenStream2 {
     let items = ast
         .items
         .iter()
@@ -224,7 +224,7 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    TokenStream2::from(expanded)
 }
 
 #[cfg(test)]

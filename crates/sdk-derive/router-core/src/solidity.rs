@@ -2,7 +2,7 @@ use crate::utils::rust_type_to_sol;
 use convert_case::{Case, Casing};
 use darling::FromMeta;
 use hex;
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_error::abort;
 use quote::{format_ident, quote, ToTokens};
 use syn::{
@@ -10,8 +10,10 @@ use syn::{
     punctuated::Punctuated,
     spanned::Spanned,
     Attribute,
+    Error,
     FnArg,
     Ident,
+    ImplItem,
     ImplItemFn,
     Index,
     ItemImpl,
@@ -213,7 +215,7 @@ impl Parse for FunctionIDAttribute {
 }
 
 impl ToTokens for FunctionIDAttribute {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream2) {
         let validate = self.validate.unwrap_or(true);
 
         if let Some(function_id) = &self.function_id {
@@ -257,7 +259,7 @@ impl ToTokens for FunctionIDAttribute {
     }
 }
 
-fn error_tokens(e: syn::Error) -> TokenStream {
+fn error_tokens(e: syn::Error) -> TokenStream2 {
     let error_msg = e.to_string();
     quote! { compile_error!(#error_msg); }
 }
@@ -269,7 +271,8 @@ struct SolidityRouter {
 }
 
 impl SolidityRouter {
-    fn generate_router(&self) -> TokenStream {
+    fn generate_router(&self) -> TokenStream2 {
+        eprintln!("op SolidityRouter generate_router");
         let struct_name = &self.ast.self_ty;
         let generics = &self.ast.generics;
 
@@ -279,8 +282,14 @@ impl SolidityRouter {
             .filter(|r| r.fn_name != "fallback")
             .collect();
 
+        eprintln!("routes len: {:?}", self.routes.len());
+        eprintln!(
+            "routes_except_fallback len: {:?}",
+            routes_except_fallback.len()
+        );
+
         // Generate token streams for each route
-        let routes_tokens: Vec<TokenStream> = routes_except_fallback
+        let routes_tokens: Vec<TokenStream2> = routes_except_fallback
             .iter()
             .map(|route| route.to_token_stream())
             .collect();
@@ -301,7 +310,7 @@ impl SolidityRouter {
         // If no routes are available, generate an error
         let match_arms = if routes_except_fallback.is_empty() {
             quote! {
-                _ => panic!("No methods to route"),
+                _ => panic!("No methods to route :("),
             }
         } else {
             quote! {
@@ -349,14 +358,8 @@ impl Parse for SolidityRouter {
     fn parse(input: ParseStream) -> Result<Self> {
         let ast: ItemImpl = input.parse()?;
 
-        let mut routes = Vec::new();
-        for item in &ast.items {
-            if let syn::ImplItem::Fn(method) = item {
-                if let Ok(route) = Route::parse.parse2(method.to_token_stream()) {
-                    routes.push(route);
-                }
-            }
-        }
+        // Parse all routes from the provided implementation
+        let routes = parse_all_methods(&ast)?;
 
         let methods_to_route: Vec<Route> = if ast.trait_.is_some() {
             routes.clone()
@@ -378,13 +381,21 @@ impl Parse for SolidityRouter {
 }
 
 impl ToTokens for SolidityRouter {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream2) {
+        eprintln!("op SolidityRouter to_tokens");
         let ast = &self.ast;
+        eprintln!("routes len: {:?}", self.routes.len());
+
         let routes_except_fallback: Vec<&Route> = self
             .routes
             .iter()
             .filter(|r| r.fn_name != "fallback")
             .collect();
+
+        eprintln!(
+            "routes_except_fallback len: {:?}",
+            routes_except_fallback.len()
+        );
 
         let codec_impl = routes_except_fallback
             .iter()
@@ -403,8 +414,9 @@ impl ToTokens for SolidityRouter {
     }
 }
 
-pub fn derive_solidity_router(input: proc_macro::TokenStream) -> Result<proc_macro::TokenStream> {
-    let router: SolidityRouter = syn::parse2(TokenStream::from(input))?;
+pub fn derive_solidity_router(input: TokenStream2) -> Result<TokenStream2> {
+    eprintln!("op derive_solidity_router");
+    let router: SolidityRouter = syn::parse2(input)?;
     Ok(quote!(#router).into())
 }
 
@@ -432,13 +444,11 @@ struct Arg {
 impl Route {
     fn parse(input: ParseStream) -> Result<Self> {
         let attrs = input.call(Attribute::parse_outer)?;
-        let mut function_id_attr = None;
-
-        for attr in &attrs {
-            if attr.path().is_ident("function_id") {
-                function_id_attr = Some(attr.parse_args::<FunctionIDAttribute>()?);
-            }
-        }
+        let function_id_attr = attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("function_id"))
+            .map(|attr| attr.parse_args::<FunctionIDAttribute>())
+            .transpose()?;
 
         let original_fn: ImplItemFn = input.parse()?;
 
@@ -463,60 +473,30 @@ impl Route {
                 .collect::<Vec<String>>(),
         );
 
-        let function_id = keccak256(&method_sol_signature);
-        if let Some(fn_id) = &function_id_attr {
-            let validate = fn_id.validate.unwrap_or(true);
-            if validate {
-                let attr_function_id = fn_id.function_id_bytes()?;
-                if attr_function_id != function_id {
-                    match &fn_id.function_id {
-                        Some(FunctionIDType::Signature(attr_signature)) => {
-                            return Err(syn::Error::new(
-                                Span::call_site(),
-                                format!(
-                                    "Signature mismatch. \
-                            Attribute signature: '{}' (function_id: 0x{:02x}{:02x}{:02x}{:02x}). \
-                            Method signature: '{}' (function_id: 0x{:02x}{:02x}{:02x}{:02x}).",
-                                    attr_signature,
-                                    attr_function_id[0],
-                                    attr_function_id[1],
-                                    attr_function_id[2],
-                                    attr_function_id[3],
-                                    method_sol_signature,
-                                    function_id[0],
-                                    function_id[1],
-                                    function_id[2],
-                                    function_id[3]
-                                ),
-                            ));
-                        }
-                        _ => {
-                            return Err(syn::Error::new(
-                                Span::call_site(),
-                                format!(
-                                    "Function ID mismatch. \
-                            Attribute function_id: 0x{:02x}{:02x}{:02x}{:02x}. \
-                            Method function_id: 0x{:02x}{:02x}{:02x}{:02x}.",
-                                    attr_function_id[0],
-                                    attr_function_id[1],
-                                    attr_function_id[2],
-                                    attr_function_id[3],
-                                    function_id[0],
-                                    function_id[1],
-                                    function_id[2],
-                                    function_id[3]
-                                ),
-                            ));
-                        }
-                    }
+        let calculated_function_id = keccak256(&method_sol_signature);
+        let (function_id, signature) = match &function_id_attr {
+            Some(attr) if attr.validate.unwrap_or(true) => {
+                let attr_function_id = attr.function_id_bytes()?;
+                if attr_function_id != calculated_function_id {
+                    return Err(create_mismatch_error(
+                        attr,
+                        &method_sol_signature,
+                        calculated_function_id,
+                    ));
                 }
+                (
+                    attr_function_id,
+                    attr.signature().unwrap_or(method_sol_signature.clone()),
+                )
             }
+            Some(attr) => (
+                attr.function_id_bytes()?,
+                attr.signature().unwrap_or(method_sol_signature.clone()),
+            ),
+            None => (calculated_function_id, method_sol_signature.clone()),
         };
 
-        let is_public = match original_fn.vis {
-            syn::Visibility::Public(_) => true,
-            _ => false,
-        };
+        let is_public = matches!(original_fn.vis, syn::Visibility::Public(_));
 
         Ok(Route {
             function_id_attr,
@@ -530,7 +510,7 @@ impl Route {
         })
     }
 
-    fn to_token_stream(&self) -> TokenStream {
+    fn to_token_stream(&self) -> TokenStream2 {
         let fn_name = &self.original_fn.sig.ident;
         let fn_call = format_ident!("{}Call", &self.fn_name.to_case(Case::Pascal));
         let fn_call_selector = quote! { #fn_call::SELECTOR };
@@ -538,9 +518,9 @@ impl Route {
 
         let fn_return = format_ident!("{}Return", &self.fn_name.to_case(Case::Pascal));
 
-        let arg_names: Vec<TokenStream> =
+        let arg_names: Vec<TokenStream2> =
             self.args.iter().map(|arg| arg.to_decode_token()).collect();
-        let field_indices: Vec<TokenStream> = self
+        let field_indices: Vec<TokenStream2> = self
             .args
             .iter()
             .enumerate()
@@ -571,11 +551,11 @@ impl Route {
         }
     }
 
-    fn get_function_call_args(&self) -> TokenStream {
+    fn get_function_call_args(&self) -> TokenStream2 {
         let args = self.args.iter().map(|arg| arg.to_call_token());
         quote! { #(#args),* }
     }
-    pub fn generate_codec_impl(&self) -> TokenStream {
+    pub fn generate_codec_impl(&self) -> TokenStream2 {
         let call_name = format_ident!("{}Call", self.fn_name.to_case(convert_case::Case::Pascal));
         let call_name_args = format_ident!("{}Args", call_name);
         let call_name_target = format_ident!("{}Target", call_name);
@@ -611,10 +591,14 @@ impl Route {
         });
 
         quote! {
+            pub use codec2::encoder::Encoder;
             pub type #call_name_args = #call_args;
             pub struct #call_name(#call_name_args);
             impl #call_name {
+                // If the function id is provided, it is calculated from the rust function signature
+                // Otherwise using the given function id
                 pub const SELECTOR: [u8; 4] = [#(#function_id,)*];
+                // SIGNATURE always derives from the rust function
                 pub const SIGNATURE: &'static str = #signature;
 
                 pub fn new(args: #call_name_args) -> Self {
@@ -625,33 +609,37 @@ impl Route {
                     let mut buf = BytesMut::new();
                     SolidityABI::encode(&(#(#encode_input_fields,)*), &mut buf, 0).unwrap();
                     let encoded_args = buf.freeze();
+                    // let clean_args = if #call_name_args::IS_DYNAMIC {
+                    //     encoded_args[32..].to_vec()
+                    // } else {
+                    //     encoded_args.to_vec()
+                    // };
 
-                    Self::SELECTOR.iter().copied().chain(encoded_args).collect()
+                    // let clean_args = if codec2::encoder::is_dynamic::<SolidityABI<#call_name_args>>() {
+                    //     encoded_args[32..].to_vec()
+                    // } else {
+                    //     encoded_args.to_vec()
+                    // };
+
+                    let clean_args = if SolidityABI::<GreetingCallArgs>::is_dynamic() {
+                        encoded_args[32..].to_vec()
+                    } else {
+                        encoded_args.to_vec()
+                    };
+
+                    Self::SELECTOR.iter().copied().chain(clean_args).collect()
                 }
 
                 pub fn decode(buf: &impl Buf) -> Result<Self, CodecError> {
-                    let chunk = buf.chunk();
-                    if chunk.len() < 4 {
-                        return Err(CodecError::Decoding(
-                            codec2::error::DecodingError::BufferTooSmall {
-                                expected: 4,
-                                found: chunk.len(),
-                                msg: "buf too small to read fn selector".to_string(),
-                            },
-                        ));
-                    }
 
-                    let selector: [u8; 4] = chunk[..4].try_into().unwrap();
-                    if selector != Self::SELECTOR {
-                        return Err(CodecError::Decoding(
-                            codec2::error::DecodingError::InvalidSelector {
-                                expected: Self::SELECTOR,
-                                found: selector,
-                            },
-                        ));
-                    }
+                    let dynamic_offset = if SolidityABI::<GreetingCallArgs>::is_dynamic() {
+                        fluentbase_sdk::U256::from(32).to_be_bytes()
+                    } else {
+                        []
+                    };
+                    let chunk = dynamic_offset.chain(&buf.chunk());
 
-                    let args = SolidityABI::<#call_name_args>::decode(&&chunk[4..], 0)?;
+                    let args = SolidityABI::<#call_name_args>::decode(&&chunk, 0)?;
                     Ok(Self(args))
                 }
             }
@@ -700,7 +688,7 @@ impl Route {
         }
     }
 
-    fn generate_tuple_type(&self) -> TokenStream {
+    fn generate_tuple_type(&self) -> TokenStream2 {
         let type_tokens = self.args.iter().map(|arg| &arg.ty);
         quote! { (#(#type_tokens,)*) }
     }
@@ -713,7 +701,7 @@ impl Parse for Route {
 }
 
 impl ToTokens for Route {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream2) {
         let mut ts = self.to_token_stream();
         tokens.extend(ts);
     }
@@ -742,7 +730,7 @@ impl Arg {
             .collect()
     }
 
-    fn to_decode_token(&self) -> TokenStream {
+    fn to_decode_token(&self) -> TokenStream2 {
         let ident = &self.ident;
         match &self.ty {
             Type::Reference(ty_ref) if ty_ref.mutability.is_some() => {
@@ -754,7 +742,7 @@ impl Arg {
         }
     }
 
-    fn to_call_token(&self) -> TokenStream {
+    fn to_call_token(&self) -> TokenStream2 {
         let ident = &self.ident;
         match &self.ty {
             Type::Reference(ty_ref) if ty_ref.mutability.is_some() => {
@@ -788,4 +776,53 @@ pub fn keccak256(signature: &str) -> [u8; 4] {
 
 pub fn get_sol_signature(fn_name: &str, args: &[String]) -> String {
     format!("{}({})", fn_name, args.join(","))
+}
+
+fn parse_all_methods(ast: &ItemImpl) -> Result<Vec<Route>> {
+    let mut routes = Vec::new();
+    let mut errors = Vec::new();
+
+    for item in &ast.items {
+        if let ImplItem::Fn(method) = item {
+            match syn::parse2::<Route>(quote! { #method }) {
+                Ok(route) => routes.push(route),
+                Err(e) => errors.push(Error::new(
+                    method.span(),
+                    format!("Failed to parse method: {}; due: {}", &method.sig.ident, e),
+                )),
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        let combined_error = errors
+            .into_iter()
+            .reduce(|mut acc, e| {
+                acc.combine(e);
+                acc
+            })
+            .unwrap();
+        return Err(combined_error);
+    }
+    Ok(routes)
+}
+
+fn create_mismatch_error(
+    attr: &FunctionIDAttribute,
+    method_signature: &str,
+    calculated_id: [u8; 4],
+) -> syn::Error {
+    let error_msg = match &attr.function_id {
+        Some(FunctionIDType::Signature(attr_signature)) => format!(
+            "Signature mismatch. Attribute: '{}' (id: 0x{:02x}{:02x}{:02x}{:02x}). Method: '{}' (id: 0x{:02x}{:02x}{:02x}{:02x}).",
+            attr_signature, attr.function_id_bytes().unwrap()[0], attr.function_id_bytes().unwrap()[1], attr.function_id_bytes().unwrap()[2], attr.function_id_bytes().unwrap()[3],
+            method_signature, calculated_id[0], calculated_id[1], calculated_id[2], calculated_id[3]
+        ),
+        _ => format!(
+            "Function ID mismatch. Attribute: 0x{:02x}{:02x}{:02x}{:02x}. Calculated: 0x{:02x}{:02x}{:02x}{:02x}.",
+            attr.function_id_bytes().unwrap()[0], attr.function_id_bytes().unwrap()[1], attr.function_id_bytes().unwrap()[2], attr.function_id_bytes().unwrap()[3],
+            calculated_id[0], calculated_id[1], calculated_id[2], calculated_id[3]
+        ),
+    };
+    syn::Error::new(Span::call_site(), error_msg)
 }
