@@ -118,7 +118,7 @@ impl SyscallExec {
             .with_preimage_resolver(ctx.preimage_resolver.clone())
             .with_state(state)
             .with_depth(ctx.call_depth + 1)
-            .with_tracer();
+            .with_disable_fuel(ctx.disable_fuel);
         let mut runtime = Runtime::new(ctx2);
         let mut execution_result = runtime.call();
 

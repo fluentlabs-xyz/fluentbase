@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 
-extern crate fluentbase_sdk;
-
 use core::marker::PhantomData;
 use fluentbase_sdk::{alloc_slice, basic_entrypoint, Bytes, ExitCode, SharedAPI};
 use revm_precompile::{PrecompileError, PrecompileErrors, PrecompileResult};

@@ -1,4 +1,12 @@
-use crate::{enable_rwasm_contract, initial_balance, ChainConfig, Genesis, GenesisAccount};
+use crate::{
+    enable_rwasm_contract,
+    initial_balance,
+    ChainConfig,
+    Genesis,
+    GenesisAccount,
+    EXAMPLE_FAIRBLOCK_ADDRESS,
+    EXAMPLE_GREETING_ADDRESS,
+};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
     address,
@@ -90,41 +98,46 @@ pub fn devnet_genesis() -> Genesis {
     enable_rwasm_contract!(
         alloc,
         PRECOMPILE_EVM,
-        "../../contracts/assets/precompile_evm.rwasm"
+        "../../contracts/assets/precompile_evm.wasm"
     );
     // enable_rwasm_contract!(
     //     WCL_CONTRACT_ADDRESS,
-    //     "../../contracts/assets/wcl_contract.rwasm"
+    //     "../../contracts/assets/wcl_contract.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_BLAKE2_ADDRESS,
-    //     "../../contracts/assets/precompile_blake2.rwasm"
+    //     "../../contracts/assets/precompile_blake2.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_BN128_ADDRESS,
-    //     "../../contracts/assets/precompile_bn128.rwasm"
+    //     "../../contracts/assets/precompile_bn128.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_IDENTITY_ADDRESS,
-    //     "../../contracts/assets/precompile_identity.rwasm"
+    //     "../../contracts/assets/precompile_identity.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_KZG_POINT_EVALUATION_ADDRESS,
-    //     "../../contracts/assets/precompile_kzg_point_evaluation.rwasm"
+    //     "../../contracts/assets/precompile_kzg_point_evaluation.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_MODEXP_ADDRESS,
-    //     "../../contracts/assets/precompile_modexp.rwasm"
+    //     "../../contracts/assets/precompile_modexp.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_SECP256K1_ADDRESS,
-    //     "../../contracts/assets/precompile_secp256k1.rwasm"
+    //     "../../contracts/assets/precompile_secp256k1.wasm"
     // );
-    // enable_rwasm_contract!(
-    //     alloc,
-    //     EXAMPLE_GREETING_ADDRESS,
-    //     "../../../examples/greeting/lib.wasm"
-    // );
+    enable_rwasm_contract!(
+        alloc,
+        EXAMPLE_GREETING_ADDRESS,
+        "../../contracts/assets/precompile_greeting.wasm"
+    );
+    enable_rwasm_contract!(
+        alloc,
+        EXAMPLE_FAIRBLOCK_ADDRESS,
+        "../../contracts/assets/precompile_fairblock.wasm"
+    );
     Genesis {
         config: devnet_chain_config(),
         nonce: 0,

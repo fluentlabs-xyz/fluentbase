@@ -360,6 +360,16 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             self.sdk.rollback(checkpoint);
         }
 
+        #[cfg(feature = "std")]
+        println!(
+            "call_inner caller:{} target_address:{} bytecode_address:{} exit_code:{} output: {}",
+            &inputs.caller,
+            &inputs.target_address,
+            &inputs.bytecode_address,
+            exit_code,
+            core::str::from_utf8(&output).unwrap_or_default()
+        );
+
         (output, gas, exit_code)
     }
 

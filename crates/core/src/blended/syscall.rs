@@ -15,7 +15,6 @@ use fluentbase_sdk::{
     SovereignAPI,
     SyscallInvocationParams,
     B256,
-    PRECOMPILE_EVM,
     STATE_MAIN,
     SYSCALL_ID_BALANCE,
     SYSCALL_ID_CALL,
@@ -50,8 +49,9 @@ use revm_interpreter::{
 };
 use revm_primitives::{CreateScheme, SpecId, MAX_INITCODE_SIZE};
 
-fn is_gas_free_call(address: &Address) -> bool {
-    address == &PRECOMPILE_EVM
+fn is_gas_free_call(_address: &Address) -> bool {
+    false
+    // address == &PRECOMPILE_EVM
 }
 
 impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
