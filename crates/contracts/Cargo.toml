@@ -17,7 +17,7 @@ fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-core = { workspace = true, default-features = false }
 
 # revm
-revm-interpreter = { workspace = true, default-features = false, features = ["rwasm"] }
+revm-interpreter = { workspace = true, default-features = false, features = ["rwasm", "no-gas"] }
 revm-precompile = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
 

@@ -3,8 +3,10 @@ use alloc::{vec, vec::Vec};
 use core::mem::take;
 #[cfg(feature = "std")]
 use fluentbase_genesis::{
-    devnet::{devnet_genesis_from_file, GENESIS_KECCAK_HASH_SLOT, GENESIS_POSEIDON_HASH_SLOT},
+    devnet_genesis_from_file,
     Genesis,
+    GENESIS_KECCAK_HASH_SLOT,
+    GENESIS_POSEIDON_HASH_SLOT,
 };
 use fluentbase_types::{
     Account,
@@ -589,7 +591,7 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
     }
 
     fn create(
-        &self,
+        &mut self,
         _fuel_limit: u64,
         _salt: Option<U256>,
         _value: &U256,

@@ -13,6 +13,8 @@ exclude = [
     "crates/evm/evm-snippets",
     "revm/e2e",
     "examples/node_modules",
+    # fairblock is a Go application
+    "examples/fairblock",
     "examples/sp1",
 ]
 resolver = "2"

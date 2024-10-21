@@ -229,11 +229,13 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
                         ),
                         _ => unreachable!("unexpected call scheme"),
                     };
+                    let consumed_gas = self.sdk.last_fuel_consumed();
+                    assert!(interpreter.gas.record_cost(consumed_gas), "not enough gas");
 
                     let result = InterpreterResult::new(
                         evm_error_from_exit_code(ExitCode::from(exit_code)),
                         output,
-                        gas,
+                        interpreter.gas,
                     );
                     let call_outcome = CallOutcome::new(result, return_memory_offset);
                     interpreter.insert_call_outcome(&mut shared_memory, call_outcome);
@@ -252,16 +254,19 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
                             let result = InterpreterResult::new(
                                 InstructionResult::Stop,
                                 Bytes::default(),
-                                gas,
+                                interpreter.gas,
                             );
                             CreateOutcome::new(result, Some(created_address))
                         }
                         Err(exit_code) => {
                             let error = evm_error_from_exit_code(ExitCode::from(exit_code));
-                            let result = InterpreterResult::new(error, Bytes::default(), gas);
+                            let result =
+                                InterpreterResult::new(error, Bytes::default(), interpreter.gas);
                             CreateOutcome::new(result, None)
                         }
                     };
+                    let consumed_gas = self.sdk.last_fuel_consumed();
+                    assert!(interpreter.gas.record_cost(consumed_gas), "not enough gas");
                     debug_log!("create_outcome: {:?}", &create_outcome);
                     interpreter.insert_create_outcome(create_outcome);
                 }
@@ -289,7 +294,7 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
             call_value: contract_context.value,
         };
         let result = self.exec_evm_bytecode(contract);
-        // self.sdk.charge_fuel(result.gas.spent());
+        self.sdk.charge_fuel(result.gas.spent());
         result
     }
 
