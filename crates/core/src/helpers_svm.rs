@@ -307,6 +307,106 @@ pub enum SyscallError {
     ArithmeticOverflow,
 }
 
+use {
+    // crate::{
+    //     account_info::AccountInfo, entrypoint::ProgramResult, instruction::Instruction,
+    //     program_error::UNSUPPORTED_SYSVAR, pubkey::Pubkey,
+    // },
+    base64::{prelude::BASE64_STANDARD, Engine},
+    itertools::Itertools,
+    std::sync::{RwLock},
+};
+
+#[allow(clippy::arithmetic_side_effects)]
+pub trait SyscallStubs: Sync + Send {
+    fn sol_log(&self, message: &str) {
+        println!("{message}");
+    }
+    // fn sol_log_compute_units(&self) {
+    //     sol_log("SyscallStubs: sol_log_compute_units() not available");
+    // }
+    // fn sol_remaining_compute_units(&self) -> u64 {
+    //     sol_log("SyscallStubs: sol_remaining_compute_units() defaulting to 0");
+    //     0
+    // }
+    // fn sol_invoke_signed(
+    //     &self,
+    //     _instruction: &Instruction,
+    //     _account_infos: &[AccountInfo],
+    //     _signers_seeds: &[&[&[u8]]],
+    // ) -> ProgramResult {
+    //     sol_log("SyscallStubs: sol_invoke_signed() not available");
+    //     Ok(())
+    // }
+    // fn sol_get_clock_sysvar(&self, _var_addr: *mut u8) -> u64 {
+    //     UNSUPPORTED_SYSVAR
+    // }
+    // fn sol_get_epoch_schedule_sysvar(&self, _var_addr: *mut u8) -> u64 {
+    //     UNSUPPORTED_SYSVAR
+    // }
+    // fn sol_get_fees_sysvar(&self, _var_addr: *mut u8) -> u64 {
+    //     UNSUPPORTED_SYSVAR
+    // }
+    // fn sol_get_rent_sysvar(&self, _var_addr: *mut u8) -> u64 {
+    //     UNSUPPORTED_SYSVAR
+    // }
+    // fn sol_get_epoch_rewards_sysvar(&self, _var_addr: *mut u8) -> u64 {
+    //     UNSUPPORTED_SYSVAR
+    // }
+    // fn sol_get_last_restart_slot(&self, _var_addr: *mut u8) -> u64 {
+    //     UNSUPPORTED_SYSVAR
+    // }
+    /// # Safety
+    unsafe fn sol_memcpy(&self, dst: *mut u8, src: *const u8, n: usize) {
+        // // cannot be overlapping
+        // assert!(
+        //     is_nonoverlapping(src as usize, n, dst as usize, n),
+        //     "memcpy does not support overlapping regions"
+        // );
+        // std::ptr::copy_nonoverlapping(src, dst, n);
+    }
+    /// # Safety
+    unsafe fn sol_memmove(&self, dst: *mut u8, src: *const u8, n: usize) {
+        std::ptr::copy(src, dst, n);
+    }
+    /// # Safety
+    unsafe fn sol_memcmp(&self, s1: *const u8, s2: *const u8, n: usize, result: *mut i32) {
+        let mut i = 0;
+        while i < n {
+            let a = *s1.add(i);
+            let b = *s2.add(i);
+            if a != b {
+                *result = a as i32 - b as i32;
+                return;
+            }
+            i += 1;
+        }
+        *result = 0
+    }
+    /// # Safety
+    unsafe fn sol_memset(&self, s: *mut u8, c: u8, n: usize) {
+        let s = std::slice::from_raw_parts_mut(s, n);
+        for val in s.iter_mut().take(n) {
+            *val = c;
+        }
+    }
+    // fn sol_get_return_data(&self) -> Option<(Pubkey, Vec<u8>)> {
+    //     None
+    // }
+    fn sol_set_return_data(&self, _data: &[u8]) {}
+    fn sol_log_data(&self, fields: &[&[u8]]) {
+        println!(
+            "data: {}",
+            fields.iter().map(|v| BASE64_STANDARD.encode(v)).join(" ")
+        );
+    }
+    // fn sol_get_processed_sibling_instruction(&self, _index: usize) -> Option<Instruction> {
+    //     None
+    // }
+    fn sol_get_stack_height(&self) -> u64 {
+        0
+    }
+}
 
 fn translate_type_inner<'a, T>(
     memory_mapping: &MemoryMapping,
@@ -340,59 +440,59 @@ fn translate_type<'a, T>(
         .map(|value| &*value)
 }
 
-// fn translate_slice_inner<'a, T>(
-//     memory_mapping: &MemoryMapping,
-//     access_type: AccessType,
-//     vm_addr: u64,
-//     len: u64,
-//     check_aligned: bool,
-// ) -> Result<&'a mut [T], Error> {
-//     if len == 0 {
-//         return Ok(&mut []);
-//     }
-//
-//     let total_size = len.saturating_mul(size_of::<T>() as u64);
-//     if isize::try_from(total_size).is_err() {
-//         return Err(SyscallError::InvalidLength.into());
-//
-//     }
-//
-//     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
-//
-//     if check_aligned && !address_is_aligned::<T>(host_addr) {
-//         return Err(SyscallError::UnalignedPointer.into());
-//     }
-//     Ok(unsafe { from_raw_parts_mut(host_addr as *mut T, len as usize) })
-// }
-// fn translate_slice_mut<'a, T>(
-//     memory_mapping: &MemoryMapping,
-//     vm_addr: u64,
-//     len: u64,
-//     check_aligned: bool,
-// ) -> Result<&'a mut [T], Error> {
-//     translate_slice_inner::<T>(
-//         memory_mapping,
-//         AccessType::Store,
-//         vm_addr,
-//         len,
-//         check_aligned,
-//     )
-// }
-// fn translate_slice<'a, T>(
-//     memory_mapping: &MemoryMapping,
-//     vm_addr: u64,
-//     len: u64,
-//     check_aligned: bool,
-// ) -> Result<&'a [T], Error> {
-//     translate_slice_inner::<T>(
-//         memory_mapping,
-//         AccessType::Load,
-//         vm_addr,
-//         len,
-//         check_aligned,
-//     )
-//         .map(|value| &*value)
-// }
+fn translate_slice_inner<'a, T>(
+    memory_mapping: &MemoryMapping,
+    access_type: AccessType,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a mut [T], Error> {
+    if len == 0 {
+        return Ok(&mut []);
+    }
+
+    let total_size = len.saturating_mul(size_of::<T>() as u64);
+    if isize::try_from(total_size).is_err() {
+        return Err(SyscallError::InvalidLength.into());
+
+    }
+
+    let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
+
+    if check_aligned && !address_is_aligned::<T>(host_addr) {
+        return Err(SyscallError::UnalignedPointer.into());
+    }
+    Ok(unsafe { from_raw_parts_mut(host_addr as *mut T, len as usize) })
+}
+fn translate_slice_mut<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a mut [T], Error> {
+    translate_slice_inner::<T>(
+        memory_mapping,
+        AccessType::Store,
+        vm_addr,
+        len,
+        check_aligned,
+    )
+}
+fn translate_slice<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a [T], Error> {
+    translate_slice_inner::<T>(
+        memory_mapping,
+        AccessType::Load,
+        vm_addr,
+        len,
+        check_aligned,
+    )
+        .map(|value| &*value)
+}
 
 /// Take a virtual pointer to a string (points to SBF VM memory space), translate it
 /// pass it to a user-defined work function
@@ -442,27 +542,24 @@ declare_builtin_function!(
     }
 );
 
-
-
-
-// declare_builtin_function!(
-//     /// Abort syscall functions, called when the SBF program calls `abort()`
-//     /// LLVM will insert calls to `abort()` if it detects an untenable situation,
-//     /// `abort()` is not intended to be called explicitly by the program.
-//     /// Causes the SBF program to be halted immediately
-//     SyscallAbort,
-//     fn rust(
-//         _invoke_context: &mut InvokeContext,
-//         _arg1: u64,
-//         _arg2: u64,
-//         _arg3: u64,
-//         _arg4: u64,
-//         _arg5: u64,
-//         _memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, std::error::Error> {
-//         Err(SyscallError::Abort.into())
-//     }
-// );
+declare_builtin_function!(
+    /// Abort syscall functions, called when the SBF program calls `abort()`
+    /// LLVM will insert calls to `abort()` if it detects an untenable situation,
+    /// `abort()` is not intended to be called explicitly by the program.
+    /// Causes the SBF program to be halted immediately
+    SyscallAbort,
+    fn rust(
+        _invoke_context: &mut TestContextObject, //InvokeContext,
+        _arg1: u64,
+        _arg2: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        _memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        Err(SyscallError::Abort.into())
+    }
+);
 
 declare_builtin_function!(
     /// Panic syscall function, called when the SBF program calls 'sol_panic_()`
@@ -491,7 +588,780 @@ declare_builtin_function!(
     }
 );
 
+// pub struct InvokeContext<'a> {
+//     pub transaction_context: &'a mut TransactionContext,
+//     sysvar_cache: &'a SysvarCache,
+//     log_collector: Option<Rc<RefCell<LogCollector>>>,
+//     compute_budget: ComputeBudget,
+//     current_compute_budget: ComputeBudget,
+//     compute_meter: RefCell<u64>,
+//     pub programs_loaded_for_tx_batch: &'a LoadedProgramsForTxBatch,
+//     pub programs_modified_by_tx: &'a mut LoadedProgramsForTxBatch,
+//     pub feature_set: Arc<FeatureSet>,
+//     pub timings: ExecuteDetailsTimings,
+//     pub blockhash: Hash,
+//     pub lamports_per_signature: u64,
+//     pub syscall_context: Vec<Option<SyscallContext>>,
+//     traces: Vec<Vec<[u64; 12]>>,
+// }
+//
+// impl<'a> InvokeContext<'a> {
+//     #[allow(clippy::too_many_arguments)]
+//     pub fn new(
+//         transaction_context: &'a mut TransactionContext,
+//         sysvar_cache: &'a SysvarCache,
+//         log_collector: Option<Rc<RefCell<LogCollector>>>,
+//         compute_budget: ComputeBudget,
+//         programs_loaded_for_tx_batch: &'a LoadedProgramsForTxBatch,
+//         programs_modified_by_tx: &'a mut LoadedProgramsForTxBatch,
+//         feature_set: Arc<FeatureSet>,
+//         blockhash: Hash,
+//         lamports_per_signature: u64,
+//     ) -> Self {
+//         Self {
+//             transaction_context,
+//             sysvar_cache,
+//             log_collector,
+//             current_compute_budget: compute_budget,
+//             compute_budget,
+//             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
+//             programs_loaded_for_tx_batch,
+//             programs_modified_by_tx,
+//             feature_set,
+//             timings: ExecuteDetailsTimings::default(),
+//             blockhash,
+//             lamports_per_signature,
+//             syscall_context: Vec::new(),
+//             traces: Vec::new(),
+//         }
+//     }
+//
+//     pub fn find_program_in_cache(&self, pubkey: &Pubkey) -> Option<Arc<LoadedProgram>> {
+//         // First lookup the cache of the programs modified by the current transaction. If not found, lookup
+//         // the cache of the cache of the programs that are loaded for the transaction batch.
+//         self.programs_modified_by_tx
+//             .find(pubkey)
+//             .or_else(|| self.programs_loaded_for_tx_batch.find(pubkey))
+//     }
+//
+//     /// Push a stack frame onto the invocation stack
+//     pub fn push(&mut self) -> Result<(), InstructionError> {
+//         let instruction_context = self
+//             .transaction_context
+//             .get_instruction_context_at_index_in_trace(
+//                 self.transaction_context.get_instruction_trace_length(),
+//             )?;
+//         let program_id = instruction_context
+//             .get_last_program_key(self.transaction_context)
+//             .map_err(|_| InstructionError::UnsupportedProgramId)?;
+//         if self
+//             .transaction_context
+//             .get_instruction_context_stack_height()
+//             == 0
+//         {
+//             self.current_compute_budget = self.compute_budget;
+//         } else {
+//             let contains = (0..self
+//                 .transaction_context
+//                 .get_instruction_context_stack_height())
+//                 .any(|level| {
+//                     self.transaction_context
+//                         .get_instruction_context_at_nesting_level(level)
+//                         .and_then(|instruction_context| {
+//                             instruction_context
+//                                 .try_borrow_last_program_account(self.transaction_context)
+//                         })
+//                         .map(|program_account| program_account.get_key() == program_id)
+//                         .unwrap_or(false)
+//                 });
+//             let is_last = self
+//                 .transaction_context
+//                 .get_current_instruction_context()
+//                 .and_then(|instruction_context| {
+//                     instruction_context.try_borrow_last_program_account(self.transaction_context)
+//                 })
+//                 .map(|program_account| program_account.get_key() == program_id)
+//                 .unwrap_or(false);
+//             if contains && !is_last {
+//                 // Reentrancy not allowed unless caller is calling itself
+//                 return Err(InstructionError::ReentrancyNotAllowed);
+//             }
+//         }
+//
+//         self.syscall_context.push(None);
+//         self.transaction_context.push()
+//     }
+//
+//     /// Pop a stack frame from the invocation stack
+//     pub fn pop(&mut self) -> Result<(), InstructionError> {
+//         if let Some(Some(syscall_context)) = self.syscall_context.pop() {
+//             self.traces.push(syscall_context.trace_log);
+//         }
+//         self.transaction_context.pop()
+//     }
+//
+//     /// Current height of the invocation stack, top level instructions are height
+//     /// `solana_sdk::instruction::TRANSACTION_LEVEL_STACK_HEIGHT`
+//     pub fn get_stack_height(&self) -> usize {
+//         self.transaction_context
+//             .get_instruction_context_stack_height()
+//     }
+//
+//     /// Entrypoint for a cross-program invocation from a builtin program
+//     pub fn native_invoke(
+//         &mut self,
+//         instruction: StableInstruction,
+//         signers: &[Pubkey],
+//     ) -> Result<(), InstructionError> {
+//         let (instruction_accounts, program_indices) =
+//             self.prepare_instruction(&instruction, signers)?;
+//         let mut compute_units_consumed = 0;
+//         self.process_instruction(
+//             &instruction.data,
+//             &instruction_accounts,
+//             &program_indices,
+//             &mut compute_units_consumed,
+//             &mut ExecuteTimings::default(),
+//         )?;
+//         Ok(())
+//     }
+//
+//     /// Helper to prepare for process_instruction()
+//     #[allow(clippy::type_complexity)]
+//     pub fn prepare_instruction(
+//         &mut self,
+//         instruction: &StableInstruction,
+//         signers: &[Pubkey],
+//     ) -> Result<(Vec<InstructionAccount>, Vec<IndexOfAccount>), InstructionError> {
+//         // Finds the index of each account in the instruction by its pubkey.
+//         // Then normalizes / unifies the privileges of duplicate accounts.
+//         // Note: This is an O(n^2) algorithm,
+//         // but performed on a very small slice and requires no heap allocations.
+//         let instruction_context = self.transaction_context.get_current_instruction_context()?;
+//         let mut deduplicated_instruction_accounts: Vec<InstructionAccount> = Vec::new();
+//         let mut duplicate_indicies = Vec::with_capacity(instruction.accounts.len());
+//         for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
+//             let index_in_transaction = self
+//                 .transaction_context
+//                 .find_index_of_account(&account_meta.pubkey)
+//                 .ok_or_else(|| {
+//                     ic_msg!(
+//                         self,
+//                         "Instruction references an unknown account {}",
+//                         account_meta.pubkey,
+//                     );
+//                     InstructionError::MissingAccount
+//                 })?;
+//             if let Some(duplicate_index) =
+//                 deduplicated_instruction_accounts
+//                     .iter()
+//                     .position(|instruction_account| {
+//                         instruction_account.index_in_transaction == index_in_transaction
+//                     })
+//             {
+//                 duplicate_indicies.push(duplicate_index);
+//                 let instruction_account = deduplicated_instruction_accounts
+//                     .get_mut(duplicate_index)
+//                     .ok_or(InstructionError::NotEnoughAccountKeys)?;
+//                 instruction_account.is_signer |= account_meta.is_signer;
+//                 instruction_account.is_writable |= account_meta.is_writable;
+//             } else {
+//                 let index_in_caller = instruction_context
+//                     .find_index_of_instruction_account(
+//                         self.transaction_context,
+//                         &account_meta.pubkey,
+//                     )
+//                     .ok_or_else(|| {
+//                         ic_msg!(
+//                             self,
+//                             "Instruction references an unknown account {}",
+//                             account_meta.pubkey,
+//                         );
+//                         InstructionError::MissingAccount
+//                     })?;
+//                 duplicate_indicies.push(deduplicated_instruction_accounts.len());
+//                 deduplicated_instruction_accounts.push(InstructionAccount {
+//                     index_in_transaction,
+//                     index_in_caller,
+//                     index_in_callee: instruction_account_index as IndexOfAccount,
+//                     is_signer: account_meta.is_signer,
+//                     is_writable: account_meta.is_writable,
+//                 });
+//             }
+//         }
+//         for instruction_account in deduplicated_instruction_accounts.iter() {
+//             let borrowed_account = instruction_context.try_borrow_instruction_account(
+//                 self.transaction_context,
+//                 instruction_account.index_in_caller,
+//             )?;
+//
+//             // Readonly in caller cannot become writable in callee
+//             if instruction_account.is_writable && !borrowed_account.is_writable() {
+//                 ic_msg!(
+//                     self,
+//                     "{}'s writable privilege escalated",
+//                     borrowed_account.get_key(),
+//                 );
+//                 return Err(InstructionError::PrivilegeEscalation);
+//             }
+//
+//             // To be signed in the callee,
+//             // it must be either signed in the caller or by the program
+//             if instruction_account.is_signer
+//                 && !(borrowed_account.is_signer() || signers.contains(borrowed_account.get_key()))
+//             {
+//                 ic_msg!(
+//                     self,
+//                     "{}'s signer privilege escalated",
+//                     borrowed_account.get_key()
+//                 );
+//                 return Err(InstructionError::PrivilegeEscalation);
+//             }
+//         }
+//         let instruction_accounts = duplicate_indicies
+//             .into_iter()
+//             .map(|duplicate_index| {
+//                 Ok(deduplicated_instruction_accounts
+//                     .get(duplicate_index)
+//                     .ok_or(InstructionError::NotEnoughAccountKeys)?
+//                     .clone())
+//             })
+//             .collect::<Result<Vec<InstructionAccount>, InstructionError>>()?;
+//
+//         // Find and validate executables / program accounts
+//         let callee_program_id = instruction.program_id;
+//         let program_account_index = instruction_context
+//             .find_index_of_instruction_account(self.transaction_context, &callee_program_id)
+//             .ok_or_else(|| {
+//                 ic_msg!(self, "Unknown program {}", callee_program_id);
+//                 InstructionError::MissingAccount
+//             })?;
+//         let borrowed_program_account = instruction_context
+//             .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
+//         if !borrowed_program_account.is_executable() {
+//             ic_msg!(self, "Account {} is not executable", callee_program_id);
+//             return Err(InstructionError::AccountNotExecutable);
+//         }
+//
+//         Ok((
+//             instruction_accounts,
+//             vec![borrowed_program_account.get_index_in_transaction()],
+//         ))
+//     }
+//
+//     /// Processes an instruction and returns how many compute units were used
+//     pub fn process_instruction(
+//         &mut self,
+//         instruction_data: &[u8],
+//         instruction_accounts: &[InstructionAccount],
+//         program_indices: &[IndexOfAccount],
+//         compute_units_consumed: &mut u64,
+//         timings: &mut ExecuteTimings,
+//     ) -> Result<(), InstructionError> {
+//         *compute_units_consumed = 0;
+//         self.transaction_context
+//             .get_next_instruction_context()?
+//             .configure(program_indices, instruction_accounts, instruction_data);
+//         self.push()?;
+//         self.process_executable_chain(compute_units_consumed, timings)
+//             // MUST pop if and only if `push` succeeded, independent of `result`.
+//             // Thus, the `.and()` instead of an `.and_then()`.
+//             .and(self.pop())
+//     }
+//
+//     /// Calls the instruction's program entrypoint method
+//     fn process_executable_chain(
+//         &mut self,
+//         compute_units_consumed: &mut u64,
+//         timings: &mut ExecuteTimings,
+//     ) -> Result<(), InstructionError> {
+//         let instruction_context = self.transaction_context.get_current_instruction_context()?;
+//         let mut process_executable_chain_time = Measure::start("process_executable_chain_time");
+//
+//         let builtin_id = {
+//             let borrowed_root_account = instruction_context
+//                 .try_borrow_program_account(self.transaction_context, 0)
+//                 .map_err(|_| InstructionError::UnsupportedProgramId)?;
+//             let owner_id = borrowed_root_account.get_owner();
+//             if native_loader::check_id(owner_id) {
+//                 *borrowed_root_account.get_key()
+//             } else {
+//                 *owner_id
+//             }
+//         };
+//
+//         // The Murmur3 hash value (used by RBPF) of the string "entrypoint"
+//         const ENTRYPOINT_KEY: u32 = 0x71E3CF81;
+//         let entry = self
+//             .programs_loaded_for_tx_batch
+//             .find(&builtin_id)
+//             .ok_or(InstructionError::UnsupportedProgramId)?;
+//         let function = match &entry.program {
+//             LoadedProgramType::Builtin(program) => program
+//                 .get_function_registry()
+//                 .lookup_by_key(ENTRYPOINT_KEY)
+//                 .map(|(_name, function)| function),
+//             _ => None,
+//         }
+//             .ok_or(InstructionError::UnsupportedProgramId)?;
+//         entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
+//
+//         let program_id = *instruction_context.get_last_program_key(self.transaction_context)?;
+//         self.transaction_context
+//             .set_return_data(program_id, Vec::new())?;
+//         let logger = self.get_log_collector();
+//         stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
+//         let pre_remaining_units = self.get_remaining();
+//         // In program-runtime v2 we will create this VM instance only once per transaction.
+//         // `program_runtime_environment_v2.get_config()` will be used instead of `mock_config`.
+//         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
+//         let mock_config = Config::default();
+//         let empty_memory_mapping =
+//             MemoryMapping::new(Vec::new(), &mock_config, &SBPFVersion::V1).unwrap();
+//         let mut vm = EbpfVm::new(
+//             self.programs_loaded_for_tx_batch
+//                 .environments
+//                 .program_runtime_v2
+//                 .clone(),
+//             &SBPFVersion::V1,
+//             // Removes lifetime tracking
+//             unsafe { std::mem::transmute::<&mut InvokeContext, &mut InvokeContext>(self) },
+//             empty_memory_mapping,
+//             0,
+//         );
+//         vm.invoke_function(function);
+//         let result = match vm.program_result {
+//             ProgramResult::Ok(_) => {
+//                 stable_log::program_success(&logger, &program_id);
+//                 Ok(())
+//             }
+//             ProgramResult::Err(ref err) => {
+//                 if let EbpfError::SyscallError(syscall_error) = err {
+//                     if let Some(instruction_err) = syscall_error.downcast_ref::<InstructionError>()
+//                     {
+//                         stable_log::program_failure(&logger, &program_id, instruction_err);
+//                         Err(instruction_err.clone())
+//                     } else {
+//                         stable_log::program_failure(&logger, &program_id, syscall_error);
+//                         Err(InstructionError::ProgramFailedToComplete)
+//                     }
+//                 } else {
+//                     stable_log::program_failure(&logger, &program_id, err);
+//                     Err(InstructionError::ProgramFailedToComplete)
+//                 }
+//             }
+//         };
+//         let post_remaining_units = self.get_remaining();
+//         *compute_units_consumed = pre_remaining_units.saturating_sub(post_remaining_units);
+//
+//         if builtin_id == program_id && result.is_ok() && *compute_units_consumed == 0 {
+//             return Err(InstructionError::BuiltinProgramsMustConsumeComputeUnits);
+//         }
+//
+//         process_executable_chain_time.stop();
+//         saturating_add_assign!(
+//             timings
+//                 .execute_accessories
+//                 .process_instructions
+//                 .process_executable_chain_us,
+//             process_executable_chain_time.as_us()
+//         );
+//         result
+//     }
+//
+//     /// Get this invocation's LogCollector
+//     pub fn get_log_collector(&self) -> Option<Rc<RefCell<LogCollector>>> {
+//         self.log_collector.clone()
+//     }
+//
+//     /// Consume compute units
+//     pub fn consume_checked(&self, amount: u64) -> Result<(), Box<dyn std::error::Error>> {
+//         let mut compute_meter = self.compute_meter.borrow_mut();
+//         let exceeded = *compute_meter < amount;
+//         *compute_meter = compute_meter.saturating_sub(amount);
+//         if exceeded {
+//             return Err(Box::new(InstructionError::ComputationalBudgetExceeded));
+//         }
+//         Ok(())
+//     }
+//
+//     /// Set compute units
+//     ///
+//     /// Only use for tests and benchmarks
+//     pub fn mock_set_remaining(&self, remaining: u64) {
+//         *self.compute_meter.borrow_mut() = remaining;
+//     }
+//
+//     /// Get this invocation's compute budget
+//     pub fn get_compute_budget(&self) -> &ComputeBudget {
+//         &self.current_compute_budget
+//     }
+//
+//     /// Get cached sysvars
+//     pub fn get_sysvar_cache(&self) -> &SysvarCache {
+//         self.sysvar_cache
+//     }
+//
+//     // Should alignment be enforced during user pointer translation
+//     pub fn get_check_aligned(&self) -> bool {
+//         self.transaction_context
+//             .get_current_instruction_context()
+//             .and_then(|instruction_context| {
+//                 let program_account =
+//                     instruction_context.try_borrow_last_program_account(self.transaction_context);
+//                 debug_assert!(program_account.is_ok());
+//                 program_account
+//             })
+//             .map(|program_account| *program_account.get_owner() != bpf_loader_deprecated::id())
+//             .unwrap_or(true)
+//     }
+//
+//     // Set this instruction syscall context
+//     pub fn set_syscall_context(
+//         &mut self,
+//         syscall_context: SyscallContext,
+//     ) -> Result<(), InstructionError> {
+//         *self
+//             .syscall_context
+//             .last_mut()
+//             .ok_or(InstructionError::CallDepth)? = Some(syscall_context);
+//         Ok(())
+//     }
+//
+//     // Get this instruction's SyscallContext
+//     pub fn get_syscall_context(&self) -> Result<&SyscallContext, InstructionError> {
+//         self.syscall_context
+//             .last()
+//             .and_then(std::option::Option::as_ref)
+//             .ok_or(InstructionError::CallDepth)
+//     }
+//
+//     // Get this instruction's SyscallContext
+//     pub fn get_syscall_context_mut(&mut self) -> Result<&mut SyscallContext, InstructionError> {
+//         self.syscall_context
+//             .last_mut()
+//             .and_then(|syscall_context| syscall_context.as_mut())
+//             .ok_or(InstructionError::CallDepth)
+//     }
+//
+//     /// Return a references to traces
+//     pub fn get_traces(&self) -> &Vec<Vec<[u64; 12]>> {
+//         &self.traces
+//     }
+// }
 
+fn mem_op_consume(invoke_context: &mut TestContextObject, n: u64) -> Result<(), Error> {
+    // let compute_budget = invoke_context.get_compute_budget();
+    // let cost = compute_budget.mem_op_base_cost.max(
+    //     n.checked_div(compute_budget.cpi_bytes_per_unit)
+    //         .unwrap_or(u64::MAX),
+    // );
+    // consume_compute_meter(invoke_context, cost)
+    Ok(())
+}
+
+struct MemoryChunkIterator<'a> {
+    memory_mapping: &'a MemoryMapping<'a>,
+    access_type: AccessType,
+    initial_vm_addr: u64,
+    vm_addr_start: u64,
+    // exclusive end index (start + len, so one past the last valid address)
+    vm_addr_end: u64,
+    len: u64,
+}
+
+impl<'a> MemoryChunkIterator<'a> {
+    fn new(
+        memory_mapping: &'a MemoryMapping,
+        access_type: AccessType,
+        vm_addr: u64,
+        len: u64,
+    ) -> Result<MemoryChunkIterator<'a>, EbpfError> {
+        let vm_addr_end = vm_addr.checked_add(len).ok_or(EbpfError::AccessViolation(
+            access_type,
+            vm_addr,
+            len,
+            "unknown",
+        ))?;
+        Ok(MemoryChunkIterator {
+            memory_mapping,
+            access_type,
+            initial_vm_addr: vm_addr,
+            len,
+            vm_addr_start: vm_addr,
+            vm_addr_end,
+        })
+    }
+
+    fn region(&mut self, vm_addr: u64) -> Result<&'a MemoryRegion, Error> {
+        match self.memory_mapping.region(self.access_type, vm_addr) {
+            Ok(region) => Ok(region),
+            Err(error) => match error {
+                EbpfError::AccessViolation(access_type, _vm_addr, _len, name) => Err(Box::new(
+                    EbpfError::AccessViolation(access_type, self.initial_vm_addr, self.len, name),
+                )),
+                EbpfError::StackAccessViolation(access_type, _vm_addr, _len, frame) => {
+                    Err(Box::new(EbpfError::StackAccessViolation(
+                        access_type,
+                        self.initial_vm_addr,
+                        self.len,
+                        frame,
+                    )))
+                }
+                _ => Err(error.into()),
+            },
+        }
+    }
+}
+
+impl<'a> Iterator for MemoryChunkIterator<'a> {
+    type Item = Result<(&'a MemoryRegion, u64, usize), Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.vm_addr_start == self.vm_addr_end {
+            return None;
+        }
+
+        let region = match self.region(self.vm_addr_start) {
+            Ok(region) => region,
+            Err(e) => {
+                self.vm_addr_start = self.vm_addr_end;
+                return Some(Err(e));
+            }
+        };
+
+        let vm_addr = self.vm_addr_start;
+
+        let chunk_len = if region.vm_addr_end <= self.vm_addr_end {
+            // consume the whole region
+            let len = region.vm_addr_end.saturating_sub(self.vm_addr_start);
+            self.vm_addr_start = region.vm_addr_end;
+            len
+        } else {
+            // consume part of the region
+            let len = self.vm_addr_end.saturating_sub(self.vm_addr_start);
+            self.vm_addr_start = self.vm_addr_end;
+            len
+        };
+
+        Some(Ok((region, vm_addr, chunk_len as usize)))
+    }
+}
+
+impl<'a> DoubleEndedIterator for MemoryChunkIterator<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.vm_addr_start == self.vm_addr_end {
+            return None;
+        }
+
+        let region = match self.region(self.vm_addr_end.saturating_sub(1)) {
+            Ok(region) => region,
+            Err(e) => {
+                self.vm_addr_start = self.vm_addr_end;
+                return Some(Err(e));
+            }
+        };
+
+        let chunk_len = if region.vm_addr >= self.vm_addr_start {
+            // consume the whole region
+            let len = self.vm_addr_end.saturating_sub(region.vm_addr);
+            self.vm_addr_end = region.vm_addr;
+            len
+        } else {
+            // consume part of the region
+            let len = self.vm_addr_end.saturating_sub(self.vm_addr_start);
+            self.vm_addr_end = self.vm_addr_start;
+            len
+        };
+
+        Some(Ok((region, self.vm_addr_end, chunk_len as usize)))
+    }
+}
+
+
+fn iter_memory_pair_chunks<T, F>(
+    src_access: AccessType,
+    src_addr: u64,
+    dst_access: AccessType,
+    dst_addr: u64,
+    n_bytes: u64,
+    memory_mapping: &MemoryMapping,
+    reverse: bool,
+    mut fun: F,
+) -> Result<T, Error>
+where
+    T: Default,
+    F: FnMut(*const u8, *const u8, usize) -> Result<T, Error>,
+{
+    let mut src_chunk_iter =
+        MemoryChunkIterator::new(memory_mapping, src_access, src_addr, n_bytes)
+            .map_err(EbpfError::from)?;
+    let mut dst_chunk_iter =
+        MemoryChunkIterator::new(memory_mapping, dst_access, dst_addr, n_bytes)
+            .map_err(EbpfError::from)?;
+
+    let mut src_chunk = None;
+    let mut dst_chunk = None;
+
+    macro_rules! memory_chunk {
+        ($chunk_iter:ident, $chunk:ident) => {
+            if let Some($chunk) = &mut $chunk {
+                // Keep processing the current chunk
+                $chunk
+            } else {
+                // This is either the first call or we've processed all the bytes in the current
+                // chunk. Move to the next one.
+                let chunk = match if reverse {
+                    $chunk_iter.next_back()
+                } else {
+                    $chunk_iter.next()
+                } {
+                    Some(item) => item?,
+                    None => break,
+                };
+                $chunk.insert(chunk)
+            }
+        };
+    }
+
+    loop {
+        let (src_region, src_chunk_addr, src_remaining) =
+            memory_chunk!(src_chunk_iter, src_chunk);
+        let (dst_region, dst_chunk_addr, dst_remaining) =
+            memory_chunk!(dst_chunk_iter, dst_chunk);
+
+        // We always process same-length pairs
+        let chunk_len = *src_remaining.min(dst_remaining);
+
+        let (src_host_addr, dst_host_addr) = {
+            let (src_addr, dst_addr) = if reverse {
+                // When scanning backwards not only we want to scan regions from the end,
+                // we want to process the memory within regions backwards as well.
+                (
+                    src_chunk_addr
+                        .saturating_add(*src_remaining as u64)
+                        .saturating_sub(chunk_len as u64),
+                    dst_chunk_addr
+                        .saturating_add(*dst_remaining as u64)
+                        .saturating_sub(chunk_len as u64),
+                )
+            } else {
+                (*src_chunk_addr, *dst_chunk_addr)
+            };
+
+            (
+                Result::from(src_region.vm_to_host(src_addr, chunk_len as u64))?,
+                Result::from(dst_region.vm_to_host(dst_addr, chunk_len as u64))?,
+            )
+        };
+
+        fun(
+            src_host_addr as *const u8,
+            dst_host_addr as *const u8,
+            chunk_len,
+        )?;
+
+        // Update how many bytes we have left to scan in each chunk
+        *src_remaining = src_remaining.saturating_sub(chunk_len);
+        *dst_remaining = dst_remaining.saturating_sub(chunk_len);
+
+        if !reverse {
+            // We've scanned `chunk_len` bytes so we move the vm address forward. In reverse
+            // mode we don't do this since we make progress by decreasing src_len and
+            // dst_len.
+            *src_chunk_addr = src_chunk_addr.saturating_add(chunk_len as u64);
+            *dst_chunk_addr = dst_chunk_addr.saturating_add(chunk_len as u64);
+        }
+
+        if *src_remaining == 0 {
+            src_chunk = None;
+        }
+
+        if *dst_remaining == 0 {
+            dst_chunk = None;
+        }
+    }
+
+    Ok(T::default())
+}
+
+fn memmove_non_contiguous(
+    dst_addr: u64,
+    src_addr: u64,
+    n: u64,
+    memory_mapping: &MemoryMapping,
+) -> Result<u64, Error> {
+    let reverse = dst_addr.wrapping_sub(src_addr) < n;
+    iter_memory_pair_chunks(
+        AccessType::Load,
+        src_addr,
+        AccessType::Store,
+        dst_addr,
+        n,
+        memory_mapping,
+        reverse,
+        |src_host_addr, dst_host_addr, chunk_len| {
+            unsafe { std::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
+            Ok(0)
+        },
+    )
+}
+
+fn memmove(
+    invoke_context: &mut TestContextObject, // InvokeContext,
+    dst_addr: u64,
+    src_addr: u64,
+    n: u64,
+    memory_mapping: &MemoryMapping,
+) -> Result<u64, Error> {
+    // if invoke_context
+    //     .feature_set
+    //     .is_active(&feature_set::bpf_account_data_direct_mapping::id())
+    // {
+    //     memmove_non_contiguous(dst_addr, src_addr, n, memory_mapping)
+    // } else {
+        let dst_ptr = translate_slice_mut::<u8>(
+            memory_mapping,
+            dst_addr,
+            n,
+            false //invoke_context.get_check_aligned(),
+        )?
+            .as_mut_ptr();
+        let src_ptr = translate_slice::<u8>(
+            memory_mapping,
+            src_addr,
+            n,
+            false // invoke_context.get_check_aligned(),
+        )?
+            .as_ptr();
+
+        unsafe { std::ptr::copy(src_ptr, dst_ptr, n as usize) };
+        Ok(0)
+    // };
+}
+
+declare_builtin_function!(
+    /// memcpy
+    SyscallMemcpy,
+    fn rust(
+        invoke_context: &mut TestContextObject, //  InvokeContext,
+        dst_addr: u64,
+        src_addr: u64,
+        n: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        mem_op_consume(invoke_context, n)?;
+
+        // if !is_nonoverlapping(src_addr, n, dst_addr, n) {
+        //     return Err(SyscallError::CopyOverlapping.into());
+        // }
+
+        // host addresses can overlap so we always invoke memmove
+        memmove(invoke_context, dst_addr, src_addr, n, memory_mapping)
+    }
+);
 
 macro_rules! create_vm {
     ($vm_name:ident, $verified_executable:expr, $context_object:expr, $stack:ident,
@@ -1016,13 +1886,13 @@ fn test_struct_func_pointer() {
             FunctionRegistry::<BuiltinFunction<TestContextObject>>::default();
         // Регистрация системного вызова
         // Abort
-        // function_registry.register_function_hashed(*b"abort", SyscallAbort::vm)?;
+        function_registry.register_function_hashed(*b"abort", SyscallAbort::vm);
 
         // Panic
         // function_registry.register_function_hashed(*b"sol_panic_", SyscallPanic::vm)?;
 
         // Logging
-        function_registry.register_function_hashed(*b"sol_log_", SyscallLog::vm).unwrap();
+        function_registry.register_function_hashed(*b"sol_log_", SyscallLog::vm);
         // function_registry.register_function_hashed(*b"sol_log_64_", SyscallLogU64::vm)?;
         // function_registry.register_function_hashed(*b"sol_log_compute_units_", SyscallLogBpfComputeUnits::vm)?;
         // function_registry.register_function_hashed(*b"sol_log_pubkey", SyscallLogPubkey::vm)?;
@@ -1033,9 +1903,9 @@ fn test_struct_func_pointer() {
         // function_registry
         //     .register_function_hashed(*b"sol_log_", SyscallLog::vm)
         //     .expect("Registration failed");
-        // function_registry
-        //     .register_function_hashed(*b"sol_memcpy_", SyscallMemcpy::vm)
-        //     .expect("Registration failed");
+        function_registry
+            .register_function_hashed(*b"sol_memcpy_", SyscallMemcpy::vm)
+            .expect("Registration failed");
         // function_registry
         //     .register_function_hashed(*b"sol_memset_", SyscallMemset::vm)
         //     .expect("Registration failed");

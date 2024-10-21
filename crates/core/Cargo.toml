@@ -32,6 +32,27 @@ fuel-core-types = { workspace = true, default-features = false, features = ["ser
 fuel-core-storage = { workspace = true, default-features = false, features = ["alloc"] }
 fuel-core-executor = { workspace = true, default-features = false, features = ["alloc"] }
 thiserror = "1.0.63"
+base64 = "0.21.7"
+itertools = "0.10.5"
+#solana-sdk = "2.0.13"
+# I cannot include solana-sdk, because:
+#error: failed to select a version for `zeroize`.
+#... required by package `curve25519-dalek v3.2.1`
+#... which satisfies dependency `curve25519-dalek = "^3.2.1"` of package `solana-program v2.0.13`
+#... which satisfies dependency `solana-program = "=2.0.13"` of package `solana-sdk v2.0.13`
+#... which satisfies dependency `solana-sdk = "^2.0.13"` of package `fluentbase-core v0.1.0 (/home/rigidus/src/fluentlabs-xyz/fluentbase/crates/core)`
+#... which satisfies path dependency `fluentbase-core` (locked to 0.1.0) of package `fluentbase-bin v0.1.0 (/home/rigidus/src/fluentlabs-xyz/fluentbase/bin)`
+#versions that meet the requirements `>=1, <1.4` are: 1.3.0, 1.2.0, 1.1.1, 1.1.0, 1.0.0
+#
+#all possible versions conflict with previously selected packages.
+#
+#previously selected package `zeroize v1.7.0`
+#... which satisfies dependency `zeroize = "^1.7"` of package `elliptic-curve v0.13.8`
+#... which satisfies dependency `elliptic-curve = "^0.13.5"` of package `ethers-core v2.0.14`
+#... which satisfies dependency `ethers-core = "^2.0.14"` of package `ethers-contract v2.0.14`
+#... which satisfies dependency `ethers-contract = "^2.0.14"` of package `revm v9.0.0 (/home/rigidus/src/fluentlabs-xyz/fluentbase/revm/crates/revm)`
+#
+#failed to select a version for `zeroize` which could resolve this conflict
 
 [dev-dependencies]
 fluentbase-runtime = { workspace = true, default-features = false }
