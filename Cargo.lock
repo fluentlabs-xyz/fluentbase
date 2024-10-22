@@ -2544,6 +2544,7 @@ dependencies = [
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.15.0",
+ "router-core",
 ]
 
 [[package]]

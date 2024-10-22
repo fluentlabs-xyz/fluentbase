@@ -187,17 +187,36 @@ impl ToTokens for Route {
         let fn_call_params = self.get_function_call_params();
 
         // Generate the method dispatch code
-        let dispatch_code = quote! {
-            #fn_call_selector => {
-                let (#(#param_decoders),*) = match #fn_call::decode(&params) {
-                    Ok(decoded) => (#(decoded.0.#param_indices),*),
-                    Err(err) => panic!("Failed to decode input parameters: {:?}", err),
-                };
+        let dispatch_code = match self.return_types.len() {
+            0 => quote! {
+                #fn_call_selector => {
+                    let (#(#param_decoders),*) = match #fn_call::decode(&params) {
+                        Ok(decoded) => (#(decoded.0.#param_indices),*),
+                        Err(err) => panic!("Failed to decode input parameters: {:?}", err),
+                    };
 
-                let output = self.#fn_name(#fn_call_params);
-                let encoded_output = #fn_return::new((output,)).encode();
-                self.sdk.write(&encoded_output);
-            }
+                    let output = self.#fn_name(#fn_call_params);
+
+                    // If output is unit type (), do not wrap it in a tuple
+                    let encoded_output = [0u8; 0];
+
+                    self.sdk.write(&encoded_output);
+                }
+            },
+            _ => quote! {
+                    #fn_call_selector => {
+                        let (#(#param_decoders),*) = match #fn_call::decode(&params) {
+                            Ok(decoded) => (#(decoded.0.#param_indices),*),
+                            Err(err) => panic!("Failed to decode input parameters: {:?}", err),
+                        };
+
+                        let output = self.#fn_name(#fn_call_params);
+
+                        let encoded_output = #fn_return::new((output,)).encode();
+
+                        self.sdk.write(&encoded_output);
+                    }
+            },
         };
 
         tokens.extend(dispatch_code);

@@ -1,12 +1,7 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate alloc;
 extern crate fluentbase_sdk;
-use bytes::{Buf, BufMut, BytesMut};
-use codec2::{
-    encoder::{FluentABI, SolidityABI},
-    error::CodecError,
-};
-use core::ops::Deref;
+
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{router, Contract},

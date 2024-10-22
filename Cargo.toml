@@ -5,6 +5,7 @@ members = [
     "revm/crates/*",
     "crates/genesis/bin",
     "examples/*",
+    "crates/sdk-derive/router-core",
     "e2e",
 ]
 exclude = [
@@ -31,6 +32,7 @@ keywords = ["wasm", "webassembly", "interpreter", "vm"]
 categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
+router-core = { path = "./crates/sdk-derive/router-core", default-features = false }
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-codec = { path = "./crates/codec", default-features = false }
 fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
