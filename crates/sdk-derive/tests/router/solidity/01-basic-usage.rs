@@ -38,6 +38,10 @@ impl<SDK: SharedAPI> ROUTER<SDK> {
 
 basic_entrypoint!(ROUTER);
 
+// we need to specify main fn to avoid
+// error[E0601]: main function not found in crate $CRATE
+fn main() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,9 +82,10 @@ mod tests {
         router.main();
 
         let encoded_output = &sdk.take_output();
-        println!("output: {:?}", hex::encode(&encoded_output));
-        let output = GreetingReturn::decode(&encoded_output.as_slice()).unwrap();
-        println!("output: {:?}", &output.0);
-        assert_eq!(output.0 .0, b);
+
+        let output =
+            SolidityABI::<GreetingReturnArgs>::decode(&encoded_output.as_slice(), 0).unwrap();
+        println!("output: {:?}", &output);
+        assert_eq!(output.0, b);
     }
 }

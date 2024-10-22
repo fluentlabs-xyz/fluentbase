@@ -2406,6 +2406,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-route-wasm"
+version = "0.1.0"
+dependencies = [
+ "alloy-sol-types 0.8.8",
+ "byteorder",
+ "bytes",
+ "codec2",
+ "fluentbase-sdk",
+ "hex",
+ "hex-literal",
+]
+
+[[package]]
 name = "fluentbase-example-router"
 version = "0.1.0"
 dependencies = [
@@ -2536,9 +2549,12 @@ dependencies = [
 name = "fluentbase-sdk-derive"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "codec2",
  "convert_case 0.6.0",
  "crypto-hashes",
  "darling",
+ "fluentbase-sdk",
  "hex",
  "paste",
  "proc-macro-error",
