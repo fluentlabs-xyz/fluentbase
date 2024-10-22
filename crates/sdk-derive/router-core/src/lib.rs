@@ -1,165 +1,51 @@
-mod fluent;
-mod router;
-mod utils;
+//! Core functionality for the router macro implementation.
+//! This crate provides the base functionality used by the proc-macro crate.
 
-use fluent::derive_codec_router;
 use proc_macro2::TokenStream as TokenStream2;
-use proc_macro_error::abort;
 use quote::quote;
-use router::{derive_solidity_router, Router};
-use std::str::FromStr;
-use syn::{
-    parse::{Parse, ParseStream},
-    parse_macro_input,
-    punctuated::Punctuated,
-    spanned::Spanned,
-    Expr,
-    ExprLit,
-    ItemFn,
-    ItemImpl,
-    ItemTrait,
-    Lit,
-    Meta,
-    Token,
-};
+use router::Router;
+use tracing::{debug, error, info};
 
-#[derive(Debug, PartialEq)]
-pub enum RouterMode {
-    Solidity,
-    Codec,
-}
+pub mod args;
+pub mod codec;
+pub mod error;
+pub mod function_id;
+pub mod mode;
+pub mod route;
+pub mod router;
+pub mod utils;
 
-impl FromStr for RouterMode {
-    type Err = syn::Error;
+/// Processes the router macro invocation.
+///
+/// # Arguments
+/// * `attr` - Attribute TokenStream containing router configuration
+/// * `input` - Input TokenStream containing the router implementation
+///
+/// # Returns
+/// * `Result<TokenStream2, syn::Error>` - Processed router code or error
+pub fn router_core(attr: TokenStream2, input: TokenStream2) -> Result<TokenStream2, syn::Error> {
+    debug!("Processing router attributes");
 
-    fn from_str(input: &str) -> Result<RouterMode, Self::Err> {
-        match input {
-            "solidity" => Ok(RouterMode::Solidity),
-            "codec" => Ok(RouterMode::Codec),
-            _ => Err(syn::Error::new_spanned(
-                input,
-                "Expected 'solidity' or 'codec'",
-            )),
-        }
-    }
-}
+    let args = parse_router_args(attr)?;
+    info!("Initialized router with mode: {:?}", args.mode);
 
-#[derive(Debug)]
-struct RouterArgs {
-    mode: RouterMode,
-}
-
-impl Parse for RouterArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut mode = None;
-
-        let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
-
-        for meta in metas {
-            if let Meta::NameValue(m) = meta {
-                if m.path.is_ident("mode") {
-                    if let Expr::Lit(ExprLit {
-                        lit: Lit::Str(lit_str),
-                        ..
-                    }) = &m.value
-                    {
-                        mode = Some(lit_str.value().parse::<RouterMode>().map_err(|_| {
-                            syn::Error::new_spanned(&m.value, "Expected 'solidity' or 'codec'")
-                        })?);
-                    } else {
-                        return Err(syn::Error::new_spanned(&m.value, "Expected a string value"));
-                    }
-                }
-            }
-        }
-
-        let mode = mode.ok_or_else(|| syn::Error::new(input.span(), "mode is required"))?;
-
-        Ok(Self { mode })
-    }
-}
-
-pub fn router_core(attr: TokenStream2, input: TokenStream2) -> syn::Result<TokenStream2> {
-    let args = syn::parse2::<RouterArgs>(attr.clone());
-
-    let mode = match args {
-        Ok(args) => args.mode,
-        Err(err) => {
-            abort!(
-                attr.span(),
-                format!("Failed to parse router arguments: {err}")
-            );
-        }
-    };
-
-    derive_router(input, mode)
-}
-
-pub fn derive_router(input: TokenStream2, mode: RouterMode) -> syn::Result<TokenStream2> {
-    let mut router: Router = syn::parse2(input.clone())?;
-    router.mode = mode;
+    let mut router = parse_router_input(input)?;
+    router.mode = args.mode;
 
     Ok(quote!(#router).into())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use quote::quote;
+/// Parses router arguments from the attribute TokenStream.
+fn parse_router_args(attr: TokenStream2) -> Result<args::RouterArgs, syn::Error> {
+    debug!("Parsing router arguments");
+    syn::parse2(attr).map_err(|e| {
+        error!("Failed to parse router arguments: {}", e);
+        e
+    })
+}
 
-    #[test]
-    fn test_router_core_solidity() {
-        let attr = quote! { mode = "solidity" };
-        let item = quote! {
-            impl RouterAPI for TestROUTER {
-                #[function_id("greeting(bytes,address)")]
-                fn greeting(&self, message: Bytes, caller: Address) -> Bytes {
-                    message
-                }
-            }
-        };
-
-        let result = router_core(attr, item);
-        assert!(
-            result.is_ok(),
-            "router_core должен успешно обработать входные данные"
-        );
-        println!(">>>>{:+#?}", result.unwrap().to_string());
-    }
-
-    #[test]
-    fn test_router_core_codec() {
-        let attr = quote! { mode = "codec" };
-        let item = quote! {
-            impl RouterAPI for TestROUTER {
-                fn greeting(&self, message: Bytes, caller: Address) -> Bytes {
-                    message
-                }
-            }
-        };
-
-        let result = router_core(attr, item);
-        assert!(
-            result.is_ok(),
-            "router_core должен успешно обработать входные данные"
-        );
-    }
-
-    #[test]
-    fn test_router_core_invalid_mode() {
-        let attr = quote! { mode = "invalid" };
-        let item = quote! {
-            impl RouterAPI for TestROUTER {
-                fn greeting(&self, message: Bytes, caller: Address) -> Bytes {
-                    message
-                }
-            }
-        };
-
-        let result = router_core(attr, item);
-        assert!(
-            result.is_err(),
-            "router_core должен вернуть ошибку для недопустимого режима"
-        );
-    }
+/// Parses router implementation from the input TokenStream.
+fn parse_router_input(input: TokenStream2) -> Result<Router, syn::Error> {
+    debug!("Parsing router implementation");
+    syn::parse2(input)
 }

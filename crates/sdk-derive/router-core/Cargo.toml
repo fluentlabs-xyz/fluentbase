@@ -25,6 +25,8 @@ regex.workspace = true
 serde = {version = "1.0", default-features = false, features = ["derive"]}
 syn = {workspace = true, features = ["full"]}
 syn-solidity = {version = "0.7", default-features = false}
+thiserror = "1.0"
+tracing = {version = "0.1.40", default-features = false}
 
 [dev-dependencies]
 alloy-primitives = "0.8.8"

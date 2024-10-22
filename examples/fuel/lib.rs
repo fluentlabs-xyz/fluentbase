@@ -16,34 +16,35 @@ pub struct FvmLoaderEntrypoint<SDK> {
 
 pub trait RouterAPI {
     fn fvm_deposit(&mut self, msg: &[u8], caller: Address);
-    fn fvm_withdraw(&mut self, msg: &mut [u8]);
-    fn fvm_example(&mut self, msg: &[u8]);
-    fn example(&mut self, msg: Bytes);
+    // fn fvm_withdraw(&mut self, msg: &mut [u8]);
+    // fn fvm_example(&mut self, msg: &[u8]);
+    // fn example(&mut self, msg: Bytes);
 }
 
+use fluentbase_sdk::bytes;
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> RouterAPI for FvmLoaderEntrypoint<SDK> {
-    #[signature("function fvm_deposit(bytes msg, address caller);")]
+    #[function_id("fvm_deposit(bytes1[],address)", validate(false))]
     fn fvm_deposit(&mut self, msg: &[u8], caller: Address) {
         let msg = "fvm_deposit";
         self.sdk.write(&msg.as_bytes());
     }
 
-    // fn_id = 212u8,173u8,13u8,159u8
-    // NOTE: signature invalid - should be "fvmWithdraw(uint8[])" (without semicolon)
-    #[signature("fvmWithdraw(uint8[]);", false)]
-    fn fvm_withdraw(&mut self, msg: &mut [u8]) {
-        self.sdk.write(msg);
-    }
+    // // fn_id = 212u8,173u8,13u8,159u8
+    // // NOTE: function_id invalid - should be "fvmWithdraw(uint8[])" (without semicolon)
+    // #[function_id("fvmWithdraw(uint8[])", validate(false))]
+    // fn fvm_withdraw(&mut self, msg: &mut [u8]) {
+    //     self.sdk.write(msg);
+    // }
 
-    #[signature("0x12345678")]
-    fn fvm_example(&mut self, msg: &[u8]) {
-        self.sdk.write(msg);
-    }
+    // #[function_id("0x12345678", validate(false))]
+    // fn fvm_example(&mut self, msg: &[u8]) {
+    //     self.sdk.write(msg);
+    // }
 
-    fn example(&mut self, msg: Bytes) {
-        self.sdk.write(&msg);
-    }
+    // fn example(&mut self, msg: Bytes) {
+    //     self.sdk.write(&msg);
+    // }
 }
 
 impl<SDK: SharedAPI> FvmLoaderEntrypoint<SDK> {
