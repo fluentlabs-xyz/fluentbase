@@ -1,4 +1,4 @@
-use crate::utils::rust_type_to_sol;
+use crate::{utils::rust_type_to_sol, RouterMode};
 use convert_case::{Case, Casing};
 use darling::FromMeta;
 use hex;
@@ -264,15 +264,15 @@ fn error_tokens(e: syn::Error) -> TokenStream2 {
     quote! { compile_error!(#error_msg); }
 }
 
-struct SolidityRouter {
+pub struct Router {
+    pub mode: RouterMode,
     ast: ItemImpl,
     routes: Vec<Route>,
     has_fallback: bool,
 }
 
-impl SolidityRouter {
+impl Router {
     fn generate_router(&self) -> TokenStream2 {
-        eprintln!("op SolidityRouter generate_router");
         let struct_name = &self.ast.self_ty;
         let generics = &self.ast.generics;
 
@@ -281,12 +281,6 @@ impl SolidityRouter {
             .iter()
             .filter(|r| r.fn_name != "fallback")
             .collect();
-
-        eprintln!("routes len: {:?}", self.routes.len());
-        eprintln!(
-            "routes_except_fallback len: {:?}",
-            routes_except_fallback.len()
-        );
 
         // Generate token streams for each route
         let routes_tokens: Vec<TokenStream2> = routes_except_fallback
@@ -354,7 +348,7 @@ impl SolidityRouter {
     }
 }
 
-impl Parse for SolidityRouter {
+impl Parse for Router {
     fn parse(input: ParseStream) -> Result<Self> {
         let ast: ItemImpl = input.parse()?;
 
@@ -372,7 +366,8 @@ impl Parse for SolidityRouter {
 
         let has_fallback = methods_to_route.iter().any(|m| m.fn_name == "fallback");
 
-        Ok(SolidityRouter {
+        Ok(Router {
+            mode: RouterMode::Solidity, // default mode
             ast,
             routes: methods_to_route,
             has_fallback,
@@ -380,11 +375,9 @@ impl Parse for SolidityRouter {
     }
 }
 
-impl ToTokens for SolidityRouter {
+impl ToTokens for Router {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
-        eprintln!("op SolidityRouter to_tokens");
         let ast = &self.ast;
-        eprintln!("routes len: {:?}", self.routes.len());
 
         let routes_except_fallback: Vec<&Route> = self
             .routes
@@ -392,14 +385,9 @@ impl ToTokens for SolidityRouter {
             .filter(|r| r.fn_name != "fallback")
             .collect();
 
-        eprintln!(
-            "routes_except_fallback len: {:?}",
-            routes_except_fallback.len()
-        );
-
         let codec_impl = routes_except_fallback
             .iter()
-            .map(|r| r.generate_codec_impl())
+            .map(|r| r.generate_codec_impl(&self.mode))
             .collect::<Vec<_>>();
 
         let router = &self.generate_router();
@@ -416,7 +404,7 @@ impl ToTokens for SolidityRouter {
 
 pub fn derive_solidity_router(input: TokenStream2) -> Result<TokenStream2> {
     eprintln!("op derive_solidity_router");
-    let router: SolidityRouter = syn::parse2(input)?;
+    let router: Router = syn::parse2(input)?;
     Ok(quote!(#router).into())
 }
 
@@ -534,10 +522,10 @@ impl Route {
 
         quote! {
         #fn_call_selector => {
-            let (#(#arg_names),*) = match SolidityABI::<#fn_call_args_ty>::decode(
-                &data_input, 0
+            let (#(#arg_names),*) = match #fn_call::decode(
+                &data_input
             ) {
-                Ok(decoded) => (#(decoded.#field_indices),*),
+                Ok(decoded) => (#(decoded.0. #field_indices),*),
                 Err(err) => {
                     panic!("failed to decode input: {:?}", err);
                 }
@@ -555,7 +543,7 @@ impl Route {
         let args = self.args.iter().map(|arg| arg.to_call_token());
         quote! { #(#args),* }
     }
-    pub fn generate_codec_impl(&self) -> TokenStream2 {
+    pub fn generate_codec_impl(&self, mode: &RouterMode) -> TokenStream2 {
         let call_name = format_ident!("{}Call", self.fn_name.to_case(convert_case::Case::Pascal));
         let call_name_args = format_ident!("{}Args", call_name);
         let call_name_target = format_ident!("{}Target", call_name);
@@ -580,15 +568,64 @@ impl Route {
             quote! { self.0.clone().#index }
         });
 
+        let encode_output_fields = self.return_args.iter().enumerate().map(|(i, _)| {
+            let index = Index::from(i);
+            quote! { self.0.clone().#index }
+        });
+
         let function_id = &self.function_id;
         let signature = &self.signature;
-        let fn_name = format_ident!("{}", &self.fn_name);
 
-        let input_params = self.args.iter().map(|arg| {
-            let ty = &arg.ty;
-            let ident = &arg.ident;
-            quote! { #ident: #ty }
-        });
+        let codec = match mode {
+            RouterMode::Solidity => {
+                quote! { SolidityABI }
+            }
+            RouterMode::Codec => {
+                quote! { FluentABI }
+            }
+        };
+
+        let dynamic_offset_encode = match mode {
+            RouterMode::Solidity => {
+                quote! {
+                    if #codec::<#call_name_args>::is_dynamic() {
+                        encoded_args[32..].to_vec()
+                    } else {
+                        encoded_args.to_vec()
+                    }
+                }
+            }
+            RouterMode::Codec => {
+                quote! {
+                    if #codec::<#call_name_args>::is_dynamic() {
+                        encoded_args[4..].to_vec()
+                    } else {
+                        encoded_args.to_vec()
+                    }
+                }
+            }
+        };
+
+        let dynamic_offset_decode = match mode {
+            RouterMode::Solidity => {
+                quote! {
+                    if #codec::<#call_name_args>::is_dynamic() {
+                        fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                    } else {
+                        [].to_vec()
+                    }
+                }
+            }
+            RouterMode::Codec => {
+                quote! {
+                    if #codec::<#call_name_args>::is_dynamic() {
+                        (4 as u32).to_le_bytes().to_vec()
+                    } else {
+                        [].to_vec()
+                    }
+                }
+            }
+        };
 
         quote! {
             pub use codec2::encoder::Encoder;
@@ -607,39 +644,23 @@ impl Route {
 
                 pub fn encode(&self) -> Bytes {
                     let mut buf = BytesMut::new();
-                    SolidityABI::encode(&(#(#encode_input_fields,)*), &mut buf, 0).unwrap();
+                    #codec::encode(&(#(#encode_input_fields,)*), &mut buf, 0).unwrap();
                     let encoded_args = buf.freeze();
-                    // let clean_args = if #call_name_args::IS_DYNAMIC {
-                    //     encoded_args[32..].to_vec()
-                    // } else {
-                    //     encoded_args.to_vec()
-                    // };
-
-                    // let clean_args = if codec2::encoder::is_dynamic::<SolidityABI<#call_name_args>>() {
-                    //     encoded_args[32..].to_vec()
-                    // } else {
-                    //     encoded_args.to_vec()
-                    // };
-
-                    let clean_args = if SolidityABI::<GreetingCallArgs>::is_dynamic() {
-                        encoded_args[32..].to_vec()
-                    } else {
-                        encoded_args.to_vec()
-                    };
+                    let clean_args = #dynamic_offset_encode;
 
                     Self::SELECTOR.iter().copied().chain(clean_args).collect()
                 }
 
                 pub fn decode(buf: &impl Buf) -> Result<Self, CodecError> {
 
-                    let dynamic_offset = if SolidityABI::<GreetingCallArgs>::is_dynamic() {
-                        fluentbase_sdk::U256::from(32).to_be_bytes()
-                    } else {
-                        []
-                    };
-                    let chunk = dynamic_offset.chain(&buf.chunk());
+                    let dynamic_offset = #dynamic_offset_decode;
+                    let mut combined_buf = BytesMut::new();
+                    combined_buf.put_slice(&dynamic_offset);
+                    combined_buf.put_slice(buf.chunk());
 
-                    let args = SolidityABI::<#call_name_args>::decode(&&chunk, 0)?;
+                    let combined_bytes = combined_buf.freeze();
+
+                    let args = #codec::<#call_name_args>::decode(&combined_bytes, 0)?;
                     Ok(Self(args))
                 }
             }
@@ -655,6 +676,8 @@ impl Route {
             pub type #call_name_target = <#call_name as Deref>::Target;
 
             pub type #return_name_args = #return_args;
+
+            #[derive(Debug)]
             pub struct #return_name(#return_name_args);
 
             impl #return_name {
@@ -664,12 +687,23 @@ impl Route {
 
                 pub fn encode(&self) -> Bytes {
                     let mut buf = BytesMut::new();
-                    SolidityABI::encode(&self.0, &mut buf, 0).unwrap();
-                    buf.freeze().into()
+                    #codec::encode(&(#(#encode_output_fields,)*), &mut buf, 0).unwrap();
+                    let encoded_args = buf.freeze();
+                    let clean_args = #dynamic_offset_encode;
+
+                    clean_args.into()
                 }
 
                 pub fn decode(buf: &impl Buf) -> Result<Self, CodecError> {
-                    let args = SolidityABI::<#return_name_args>::decode(buf, 0)?;
+
+                    let dynamic_offset = #dynamic_offset_decode;
+                    let mut combined_buf = BytesMut::new();
+                    combined_buf.put_slice(&dynamic_offset);
+                    combined_buf.put_slice(buf.chunk());
+
+                    let combined_bytes = combined_buf.freeze();
+
+                    let args = #codec::<#return_name_args>::decode(&combined_bytes, 0)?;
                     Ok(Self(args))
                 }
             }
@@ -687,11 +721,6 @@ impl Route {
 
         }
     }
-
-    fn generate_tuple_type(&self) -> TokenStream2 {
-        let type_tokens = self.args.iter().map(|arg| &arg.ty);
-        quote! { (#(#type_tokens,)*) }
-    }
 }
 
 impl Parse for Route {
@@ -702,8 +731,7 @@ impl Parse for Route {
 
 impl ToTokens for Route {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
-        let mut ts = self.to_token_stream();
-        tokens.extend(ts);
+        tokens.extend(self.to_token_stream());
     }
 }
 

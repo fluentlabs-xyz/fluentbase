@@ -1,5 +1,5 @@
 use super::{BufferDecoder, BufferEncoder, Encoder};
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes};
 use hashbrown::{HashMap, HashSet};
 
 #[test]
@@ -250,12 +250,16 @@ fn test_option_non_primitive() {
 
 #[test]
 fn test_simple_tuple() {
-    type Tuple = (u32, u32);
-    let encoded_buffer = (100u32, 20u32).encode_to_vec(0);
+    type Tuple = (Bytes, Address);
+    let b = Bytes::from("Hello, World!!".as_bytes());
+    println!("b: {:?}", &b);
+    let a = Address::repeat_byte(0xAA);
+    let encoded_buffer = (b.clone(), a).encode_to_vec(0);
+    println!("encoded: {:?}", hex::encode(&encoded_buffer));
     let mut decoder = BufferDecoder::new(&encoded_buffer);
     let mut result: Tuple = Default::default();
-    Tuple::decode_header(&mut decoder, 0, &mut result);
-    assert_eq!(result, (100, 20))
+    Tuple::decode_body(&mut decoder, 0, &mut result);
+    assert_eq!(result, (b, a,));
 }
 
 #[test]

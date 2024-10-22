@@ -1,12 +1,12 @@
 mod fluent;
-mod solidity;
+mod router;
 mod utils;
 
 use fluent::derive_codec_router;
 use proc_macro2::TokenStream as TokenStream2;
 use proc_macro_error::abort;
 use quote::quote;
-use solidity::derive_solidity_router;
+use router::{derive_solidity_router, Router};
 use std::str::FromStr;
 use syn::{
     parse::{Parse, ParseStream},
@@ -24,7 +24,7 @@ use syn::{
 };
 
 #[derive(Debug, PartialEq)]
-enum RouterMode {
+pub enum RouterMode {
     Solidity,
     Codec,
 }
@@ -79,7 +79,7 @@ impl Parse for RouterArgs {
     }
 }
 
-pub fn router_core(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
+pub fn router_core(attr: TokenStream2, input: TokenStream2) -> syn::Result<TokenStream2> {
     let args = syn::parse2::<RouterArgs>(attr.clone());
 
     let mode = match args {
@@ -92,12 +92,14 @@ pub fn router_core(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenS
         }
     };
 
-    let router = match mode {
-        RouterMode::Solidity => derive_solidity_router(item),
-        RouterMode::Codec => derive_codec_router(item),
-    }?;
+    derive_router(input, mode)
+}
 
-    Ok(router)
+pub fn derive_router(input: TokenStream2, mode: RouterMode) -> syn::Result<TokenStream2> {
+    let mut router: Router = syn::parse2(input.clone())?;
+    router.mode = mode;
+
+    Ok(quote!(#router).into())
 }
 
 #[cfg(test)]
