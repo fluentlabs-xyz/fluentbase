@@ -11,6 +11,7 @@ fluentbase-runtime = { workspace = true, default-features = false, optional = tr
 fluentbase-genesis = { workspace = true, default-features = false, optional = true }
 fluentbase-sdk-derive = { workspace = true }
 hashbrown = { workspace = true }
+router-core = {workspace = true}
 
 [dev-dependencies]
 

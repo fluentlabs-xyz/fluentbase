@@ -2,8 +2,6 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use codec2::{encoder::SolidityABI, error::CodecError};
-use core::ops::Deref;
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{router, Contract},

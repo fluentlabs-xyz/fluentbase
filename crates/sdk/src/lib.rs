@@ -45,3 +45,4 @@ static ALLOCATOR: fluentbase_types::HeapBaseAllocator = fluentbase_types::HeapBa
 pub use fluentbase_codec as codec;
 pub use fluentbase_sdk_derive as derive;
 pub use fluentbase_types::*;
+pub use router_core as router;
