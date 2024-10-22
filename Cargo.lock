@@ -2364,6 +2364,7 @@ name = "fluentbase-example-fuel"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.8",
+ "codec2",
  "fluentbase-sdk",
  "hex",
  "hex-literal",
@@ -5134,6 +5135,8 @@ dependencies = [
  "serde",
  "syn 2.0.79",
  "syn-solidity 0.7.7",
+ "thiserror",
+ "tracing",
  "trybuild",
 ]
 
