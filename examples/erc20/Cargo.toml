@@ -17,6 +17,8 @@ hex-literal = { version = "0.4.1", default-features = false }
 paste = { workspace = true }
 lazy_static = "1.5.0"
 
+codec2 = {path = "../../../codec2", features = ["derive"], default-features = false}
+
 [dev-dependencies]
 hex = "0.4.3"
 serial_test = "3.0.0"

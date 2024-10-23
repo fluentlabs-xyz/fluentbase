@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate alloc;
 extern crate fluentbase_sdk;
@@ -20,7 +21,7 @@ pub trait RouterAPI {
     // fn custom_greeting(&self, message: Bytes) -> Bytes;
 }
 
-#[router(mode = "fluent")]
+#[router(mode = "solidity")]
 impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
     #[function_id("greeting(bytes,address)")] // 0xf8194e48
     fn greeting(&self, message: Bytes, caller: Address) -> Bytes {
@@ -51,6 +52,23 @@ mod tests {
 
         let input = greeting_call.encode();
 
+        // SOL INPUT
+        sol!(
+            function buying(bytes message, address caller);
+        );
+
+        let buying_call_sol = buyingCall {
+            message: b.clone(),
+            caller: a.clone(),
+        };
+
+        let byuing_call_input_sol = buying_call_sol.abi_encode();
+
+        assert_eq!(
+            hex::encode(&input[4..]),
+            hex::encode(&byuing_call_input_sol[4..])
+        );
+
         println!("Input: {:?}", hex::encode(&input));
         println!("call contract...");
         let sdk = TestingContext::empty().with_input(input);
@@ -59,10 +77,9 @@ mod tests {
         router.main();
 
         let encoded_output = &sdk.take_output();
-        println!("encoded output: {:?}", &encoded_output);
-
+        println!("output: {:?}", hex::encode(&encoded_output));
         let output = GreetingReturn::decode(&encoded_output.as_slice()).unwrap();
-        println!("output: {:?}", &output);
+        println!("output: {:?}", &output.0);
         assert_eq!(output.0 .0, b);
     }
 }

@@ -1090,11 +1090,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
-version = "1.7.2"
-version = "1.7.2"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "428d9aa8fbc0670b7b8d6030a7fadd0f86151cae55e4dbbece15f3780a3dfaf3"
-checksum = "428d9aa8fbc0670b7b8d6030a7fadd0f86151cae55e4dbbece15f3780a3dfaf3"
+checksum = "9ac0150caa2ae65ca5bd83f25c7de183dea78d4d366469f148435e2acfbad0da"
 dependencies = [
  "serde",
 ]
@@ -1322,8 +1320,6 @@ dependencies = [
  "bytes",
  "codec-derive",
  "hashbrown 0.12.3",
- "hex",
- "thiserror",
 ]
 
 [[package]]
@@ -2350,6 +2346,7 @@ name = "fluentbase-example-erc20"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.8",
+ "codec2",
  "fluentbase-sdk",
  "fluentbase-types",
  "hex",
@@ -2420,7 +2417,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-router"
+name = "fluentbase-example-router-solidity"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.8",
@@ -2538,13 +2535,16 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
+ "crypto-hashes",
  "fluentbase-codec",
  "fluentbase-genesis",
  "fluentbase-runtime",
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.15.0",
+ "k256",
  "router-core",
+ "signature",
 ]
 
 [[package]]

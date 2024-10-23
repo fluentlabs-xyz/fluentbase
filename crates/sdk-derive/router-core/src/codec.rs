@@ -214,9 +214,6 @@ impl<'a> CodecGenerator<'a> {
         } = encoders;
 
         quote! {
-            // use #codec_crate::encoder::Encoder;
-            // use #codec_crate::error::CodecError;
-
             pub type #call_args = #input;
             pub struct #call(#call_args);
 

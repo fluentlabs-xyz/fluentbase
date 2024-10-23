@@ -4,8 +4,7 @@ name = "fluentbase-example-route-wasm"
 version = "0.1.0"
 
 [dependencies]
-#fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
-alloy-sol-types = {workspace = true}
+alloy-sol-types = {workspace = true, default-features = false}
 byteorder = {version = "1.5.0", default-features = false}
 bytes = {version = "*", default-features = false}
 codec2 = {path = "../../../codec2", features = ["derive"], default-features = false}
@@ -19,11 +18,11 @@ hex-literal = "0.4.1"
 crate-type = ["cdylib", "staticlib"]
 path = "lib.rs"
 
-#[profile.release]
-#lto = true
-#opt-level = 'z'
-#panic = "abort"
-#strip = true
+[profile.release]
+lto = true
+opt-level = 'z'
+panic = "abort"
+strip = true
 
 [features]
 default = ["std"]
