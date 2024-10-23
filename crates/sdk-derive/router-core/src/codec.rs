@@ -41,25 +41,28 @@ impl<'a> CodecGenerator<'a> {
     }
 
     /// Determines crate names based on the current package
-    fn determine_crate_names(&self) -> (TokenStream2, TokenStream2, TokenStream2) {
-        let sdk_crate = if std::env::var("CARGO_PKG_NAME").unwrap() == "fluentbase-sdk" {
+    fn determine_crate_name(&self) -> TokenStream2 {
+        let crate_name = std::env::var("CARGO_PKG_NAME").unwrap();
+        let crate_name = if crate_name == "fluentbase-codec" {
             quote! { crate }
+        } else if crate_name == "fluentbase-sdk"
+            || crate_name == "fluentbase-types"
+            || crate_name == "fluentbase-runtime"
+        {
+            quote! { fluentbase_codec }
         } else {
-            quote! { ::fluentbase_sdk }
+            quote! { fluentbase_sdk::codec }
         };
 
-        let codec_crate = quote! { ::codec2 };
-        let router_crate = quote! { ::fluentbase_sdk::router };
-
-        (sdk_crate, codec_crate, router_crate)
+        crate_name
     }
 
     /// Determines the codec type based on mode.
     fn get_codec_type(&self) -> TokenStream2 {
-        let (_, codec_crate, _) = self.determine_crate_names();
+        let crate_name = self.determine_crate_name();
         match self.mode {
-            RouterMode::Solidity => quote! { #codec_crate::encoder::SolidityABI },
-            RouterMode::Fluent => quote! { #codec_crate::encoder::FluentABI },
+            RouterMode::Solidity => quote! { #crate_name::encoder::SolidityABI },
+            RouterMode::Fluent => quote! { #crate_name::encoder::FluentABI },
         }
     }
 
@@ -190,7 +193,7 @@ impl<'a> CodecGenerator<'a> {
         offset: OffsetHandling,
         encoders: FieldEncoders,
     ) -> TokenStream2 {
-        let (_sdk_crate, codec_crate, router_crate) = self.determine_crate_names();
+        let crate_name = self.determine_crate_name();
         let function_id = self.function_id;
         let signature = self.signature;
 
@@ -225,8 +228,8 @@ impl<'a> CodecGenerator<'a> {
                     Self(args)
                 }
 
-                pub fn encode(&self) -> #router_crate::Bytes {
-                    let mut buf = #router_crate::BytesMut::new();
+                pub fn encode(&self) -> #crate_name::bytes::Bytes {
+                    let mut buf = #crate_name::bytes::BytesMut::new();
                     #codec_type::encode(&(#(#encode_input_fields,)*), &mut buf, 0).unwrap();
                     let encoded_args = buf.freeze();
                     let clean_args = #encode_offset;
@@ -234,10 +237,10 @@ impl<'a> CodecGenerator<'a> {
                     Self::SELECTOR.iter().copied().chain(clean_args).collect()
                 }
 
-                pub fn decode(buf: &impl #router_crate::Buf) -> ::core::result::Result<Self, ::codec2::error::CodecError> {
-                    use #router_crate::BufMut;
+                pub fn decode(buf: &impl #crate_name::bytes::Buf) -> ::core::result::Result<Self,  #crate_name::CodecError> {
+                    use #crate_name::bytes::BufMut;
                     let dynamic_offset = #decode_offset;
-                    let mut combined_buf = #router_crate::BytesMut::new();
+                    let mut combined_buf = #crate_name::bytes::BytesMut::new();
                     combined_buf.put_slice(&dynamic_offset);
                     combined_buf.put_slice(buf.chunk());
 
@@ -263,8 +266,8 @@ impl<'a> CodecGenerator<'a> {
                     Self(args)
                 }
 
-                pub fn encode(&self) -> #router_crate::Bytes {
-                    let mut buf = #router_crate::BytesMut::new();
+                pub fn encode(&self) -> #crate_name::bytes::Bytes {
+                    let mut buf = #crate_name::bytes::BytesMut::new();
                     #codec_type::encode(&(#(#encode_output_fields,)*), &mut buf, 0).unwrap();
                     let encoded_args = buf.freeze();
                     let clean_args = #encode_offset;
@@ -272,10 +275,10 @@ impl<'a> CodecGenerator<'a> {
                     clean_args.into()
                 }
 
-                pub fn decode(buf: &impl #router_crate::Buf) -> ::core::result::Result<Self, ::codec2::error::CodecError> {
-                    use #router_crate::BufMut;
+                pub fn decode(buf: &impl #crate_name::bytes::Buf) -> ::core::result::Result<Self,  #crate_name::CodecError> {
+                    use #crate_name::bytes::BufMut;
                     let dynamic_offset = #decode_offset;
-                    let mut combined_buf = #router_crate::BytesMut::new();
+                    let mut combined_buf = #crate_name::bytes::BytesMut::new();
                     combined_buf.put_slice(&dynamic_offset);
                     combined_buf.put_slice(buf.chunk());
 

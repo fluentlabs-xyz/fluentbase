@@ -112,11 +112,9 @@ impl StorageItem {
 
         quote! {
             fn get<SDK: fluentbase_sdk::SharedAPI>(#get_args) -> #output {
-                use fluentbase_sdk::storage::StorageValue;
                 let key = Self::key(sdk, #(#arg_names),*);
-                let value = #output::default();
 
-                #output::get(sdk, key)
+                <#output as fluentbase_sdk::storage::StorageValueFluent<SDK, #output>>::get(sdk, key)
             }
         }
     }
@@ -140,9 +138,9 @@ impl StorageItem {
 
         quote! {
             fn set<SDK: fluentbase_sdk::SharedAPI>(#set_args) {
-                use fluentbase_sdk::storage::StorageValue;
+                use fluentbase_sdk::storage::StorageValueFluent;
                 let key = Self::key(sdk, #(#arg_names),*);
-                #output::set(sdk, key, value.clone());
+                <#output as fluentbase_sdk::storage::StorageValueFluent<SDK, #output>>::set(sdk, key, value.clone());
             }
         }
     }

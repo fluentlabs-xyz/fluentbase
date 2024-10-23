@@ -26,7 +26,7 @@ syn = {workspace = true, features = ["full"]}
 syn-solidity = {version = "0.7", default-features = false}
 
 [dev-dependencies]
-bytes = {workspace = true}
+bytes = {workspace = true, default-features = false}
 codec2 = {path = "../../../codec2", features = ["derive"], default-features = false}
 fluentbase-sdk = {workspace = true}
 trybuild = "1.0"

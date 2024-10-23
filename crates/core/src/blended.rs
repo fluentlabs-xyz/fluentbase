@@ -6,8 +6,9 @@ mod util;
 mod wasm;
 use crate::{debug_log, helpers::evm_error_from_exit_code, types::NextAction};
 use alloc::{boxed::Box, str::from_utf8};
+use alloy_rlp::{encode, BytesMut};
 use fluentbase_sdk::{
-    codec::Encoder,
+    codec::{Encoder, FluentABI, FluentEncoder},
     env_from_context,
     Account,
     AccountStatus,
@@ -99,9 +100,15 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             block: self.sdk.block_context().clone(),
             tx: self.sdk.tx_context().clone(),
             contract: contract_context.clone(),
-        }
-        .encode_to_vec(0);
-        context_input.extend_from_slice(params.input.as_ref());
+        };
+
+        let mut buf = BytesMut::new();
+
+        FluentABI::encode(&context_input, &mut buf, 0).unwrap();
+
+        let context_input = buf.freeze();
+
+        // <context_input as FluentABI>::encode(context_input);
 
         // #[cfg(feature = "std")]
         // if contract_context.bytecode_address == PRECOMPILE_EVM {

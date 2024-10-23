@@ -353,6 +353,7 @@ fn test_deploy_keccak256() {
     );
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default().as_ref();
+    println!("bytes: {:?}", hex::encode(&bytes));
     assert_eq!(
         "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
         hex::encode(&bytes[0..32]),
