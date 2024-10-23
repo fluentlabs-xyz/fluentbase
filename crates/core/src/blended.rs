@@ -366,7 +366,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             &inputs.target_address,
             &inputs.bytecode_address,
             exit_code,
-            from_utf8(&output).unwrap_or_default()
+            core::str::from_utf8(&output).unwrap_or_default()
         );
 
         (output, gas, exit_code)
