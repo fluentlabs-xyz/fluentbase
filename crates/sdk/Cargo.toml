@@ -12,6 +12,9 @@ fluentbase-genesis = { workspace = true, default-features = false, optional = tr
 fluentbase-sdk-derive = { workspace = true }
 hashbrown = { workspace = true }
 router-core = {workspace = true}
+crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
+signature = { version = "2.2.0", default-features = false }
+k256 = { version = "0.13.4", default-features = false }
 
 [dev-dependencies]
 

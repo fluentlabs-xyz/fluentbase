@@ -65,13 +65,24 @@ impl Route {
         let return_types = Self::extract_return_types(&method_impl.sig.output);
         let fn_name = str_to_camel_case(&method_impl.sig.ident.to_string());
 
-        let method_signature = Self::generate_signature(
-            &fn_name,
-            &parameters
-                .iter()
-                .map(|param| rust_type_to_sol(&param.ty).to_string())
-                .collect::<Vec<String>>(),
-        );
+        let parameter_types = parameters
+            .iter()
+            .map(|param| {
+                rust_type_to_sol(&param.ty)
+                    .map(|tokens| tokens.to_string())
+                    .map_err(|e| {
+                        syn::Error::new(
+                            Span::call_site(),
+                            format!(
+                                "Failed to parse parameter type in function '{}': {}",
+                                fn_name, e
+                            ),
+                        )
+                    })
+            })
+            .collect::<Result<Vec<String>>>()?;
+
+        let method_signature = Self::generate_signature(&fn_name, &parameter_types);
 
         Ok(Route {
             function_id_attr: None, // Will be set later
@@ -203,6 +214,20 @@ impl ToTokens for Route {
                     self.sdk.write(&encoded_output);
                 }
             },
+            1 => quote! {
+                #fn_call_selector => {
+                    let (#(#param_decoders),*) = match #fn_call::decode(&params) {
+                        Ok(decoded) => (#(decoded.0.#param_indices),*),
+                        Err(err) => panic!("Failed to decode input parameters: {:?}", err),
+                    };
+
+                    let output = self.#fn_name(#fn_call_params);
+
+                    let encoded_output = #fn_return::new((output,)).encode();
+
+                    self.sdk.write(&encoded_output);
+                }
+            },
             _ => quote! {
                     #fn_call_selector => {
                         let (#(#param_decoders),*) = match #fn_call::decode(&params) {
@@ -212,7 +237,7 @@ impl ToTokens for Route {
 
                         let output = self.#fn_name(#fn_call_params);
 
-                        let encoded_output = #fn_return::new((output,)).encode();
+                        let encoded_output = #fn_return::new(output).encode();
 
                         self.sdk.write(&encoded_output);
                     }

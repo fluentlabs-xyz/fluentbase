@@ -22,89 +22,15 @@ To alleviate the repetitive nature of writing such entry point logic manually, F
 
 ## Usage
 
-To use the `solidity_router` macro, you need to define a trait with the desired functions and then implement it for a struct representing the contract. The macro will generate the necessary routing logic based on the functions defined in the trait. Also for each function
+Router supports 2 modes - `solidity` and `fluent`. The main logic the same for both modes, but the way how we decode arguments is different.
 
-For example, this code:
+We are using [fluent codec](https://github.com/fluentlabs-xyz/codec2). This codec also supports 2 modes:
 
-```rust
-trait ContractA {
-    fn foo(&self, a: u32, b: u32) -> u32;
-    fn bar(&self, a: u32, b: u32) -> u32;
-}
+- `solidity` - fully compatitable with SolidityABI
+- `fluent` - compact codec, that very similar to SolidityABI, but it has some differences. For example, the word size is 4 bytes instead of 32. See [fluent codec](https://github.com/fluentlabs-xyz/codec2) for more details.
 
-#[solidity_router]
-impl ContractA for Contract {
-    fn foo(&self, a: u32, b: u32) -> u32 {
-        a + b
-    }
-
-    fn bar(&self, a: u32, b: u32) -> u32 {
-        a * b
-    }
-}
-```
-
-Will expand to the following code:
-
-```rust
-trait ContractA {
-    fn foo(&self, a: u32, b: u32) -> u32;
-}
-impl ContractA for Contract {
-    fn foo(&self, a: u32, b: u32) -> u32 {
-        a + b
-    }
-
-}
-
-type FooCall = (u32,u32,);
-type FooReturn = u32;
-
-
-impl FooCall {
-    const SELECTOR: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
-    const SIGNATURE: &str = "foo(uint32,uint32)";
-}
-
-impl Contract {
-    fn main() {
-        let input_size = self.sdk.input_size();
-        if input_size < 4 {
-            panic!("input too short");
-        }
-        let mut input_vec = fluentbase_sdk::alloc_slice(input_size as usize);
-        self.sdk.read(&mut input_vec, 0);
-        let mut full_input = fluentbase_sdk::alloc_slice(input_size as usize);
-        self.sdk.read(&mut full_input, 0);
-        let (selector, data_input) = full_input.split_at(4);
-        let selector: [u8; 4] = selector.try_into().expect("Selector should be 4 bytes");
-
-        match selector {
-            // function ID
-            fooCall::SELECTOR => {
-                // decode args
-                 let decoded_result = SolidityABI::<FooCall>::decode(&data_input, 0);
-
-                let message = match decoded_result {
-                    Ok(decoded) => decoded.0,
-                    Err(_) => {
-                        panic!("failed to decode input");
-                    }
-                };
-                // call function
-                let result = self.foo(message);
-                // encode function result
-                let buf = BytesMut::new();
-                SolidityABI::<FooReturn>::encode(&result, buf);
-                let result = buf.freeze();
-                // write result to output
-                sdk.write(&result);
-            },
-            _ => panic!("Unknown function selector"),
-        }
-    }
-}
-```
+`examples/router-solidity` - shows how to use `router` macro in `solidity` mode.
+`examples/router-wasm` - shows how to use `router` macro in `fluent` mode.
 
 ### FAQ
 

@@ -16,15 +16,15 @@ struct ROUTER<SDK> {
 }
 
 pub trait RouterAPI {
-    fn greeting(&self, message: Bytes, caller: Address) -> Bytes;
+    fn greeting(&self, message: Bytes, caller: Address) -> (Bytes, Address);
     // fn custom_greeting(&self, message: Bytes) -> Bytes;
 }
 
-#[router(mode = "solidity")]
+#[router(mode = "fluent")]
 impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
     #[function_id("greeting(bytes,address)")] // 0xf8194e48
-    fn greeting(&self, message: Bytes, caller: Address) -> Bytes {
-        message
+    fn greeting(&self, message: Bytes, caller: Address) -> (Bytes, Address) {
+        (message, caller)
     }
 }
 
@@ -51,23 +51,6 @@ mod tests {
 
         let input = greeting_call.encode();
 
-        // SOL INPUT
-        sol!(
-            function buying(bytes message, address caller);
-        );
-
-        let buying_call_sol = buyingCall {
-            message: b.clone(),
-            caller: a.clone(),
-        };
-
-        let byuing_call_input_sol = buying_call_sol.abi_encode();
-
-        assert_eq!(
-            hex::encode(&input[4..]),
-            hex::encode(&byuing_call_input_sol[4..])
-        );
-
         println!("Input: {:?}", hex::encode(&input));
         println!("call contract...");
         let sdk = TestingContext::empty().with_input(input);
@@ -76,9 +59,11 @@ mod tests {
         router.main();
 
         let encoded_output = &sdk.take_output();
-        println!("output: {:?}", hex::encode(&encoded_output));
+        println!("encoded output: {:?}", &encoded_output);
+
         let output = GreetingReturn::decode(&encoded_output.as_slice()).unwrap();
-        println!("output: {:?}", &output.0);
+        println!("output: {:?}", &output);
         assert_eq!(output.0 .0, b);
+        assert_eq!(output.0 .1, a);
     }
 }
