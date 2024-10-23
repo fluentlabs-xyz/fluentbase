@@ -106,7 +106,7 @@ pub fn devnet_genesis() -> Genesis {
     #[cfg(feature = "fvm")]
     enable_rwasm_contract!(
         alloc,
-        PRECOMPILE_FVM,devel
+        PRECOMPILE_FVM,
         "../../contracts/assets/precompile_fvm.rwasm"
     );
     // enable_rwasm_contract!(
