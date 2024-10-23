@@ -1,8 +1,10 @@
 use core::{mem::take, str::from_utf8};
 use fluentbase_genesis::{
-    devnet::{devnet_genesis_from_file, GENESIS_KECCAK_HASH_SLOT, GENESIS_POSEIDON_HASH_SLOT},
+    devnet_genesis_from_file,
     Genesis,
     EXAMPLE_GREETING_ADDRESS,
+    GENESIS_KECCAK_HASH_SLOT,
+    GENESIS_POSEIDON_HASH_SLOT,
 };
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_runtime::RuntimeContext;

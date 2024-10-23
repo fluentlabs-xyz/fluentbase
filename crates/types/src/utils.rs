@@ -1,4 +1,4 @@
-use crate::{b256, Address, ContextFreeNativeAPI, NativeAPI, SovereignAPI, B256, F254, U256};
+use crate::{b256, Address, ContextFreeNativeAPI, NativeAPI, B256, F254, U256};
 
 const POSEIDON_DOMAIN: F254 =
     b256!("0000000000000000000000000000000000000000000000010000000000000000");
@@ -37,7 +37,7 @@ pub fn calc_create_address<API: ContextFreeNativeAPI>(deployer: &Address, nonce:
 }
 
 #[inline(always)]
-pub fn calc_create2_address<API: SovereignAPI>(
+pub fn calc_create2_address<API: ContextFreeNativeAPI>(
     deployer: &Address,
     salt: &U256,
     init_code_hash: &B256,
@@ -51,53 +51,79 @@ pub fn calc_create2_address<API: SovereignAPI>(
     Address::from_word(hash)
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::GuestContextReader;
-//     use fluentbase_types::address;
-//     use revm_primitives::{b256, hex, Bytecode};
-//
-//     #[test]
-//     fn test_create_address() {
-//         for (address, nonce) in [
-//             (address!("0000000000000000000000000000000000000000"), 0),
-//             (
-//                 address!("0000000000000000000000000000000000000000"),
-//                 u32::MIN,
-//             ),
-//             (
-//                 address!("0000000000000000000000000000000000000000"),
-//                 u32::MAX,
-//             ),
-//             (address!("2340820934820934820934809238402983400000"), 0),
-//             (
-//                 address!("2340820934820934820934809238402983400000"),
-//                 u32::MIN,
-//             ),
-//             (
-//                 address!("2340820934820934820934809238402983400000"),
-//                 u32::MAX,
-//             ),
-//         ] {
-//             assert_eq!(
-//                 calc_create_address(&address, nonce as u64),
-//                 address.create(nonce as u64)
-//             );
-//         }
-//     }
-//
-//     #[test]
-//     fn test_create2_address() {
-//         let address = Address::ZERO;
-//         for (salt, hash) in [(
-//             b256!("0000000000000000000000000000000000000000000000000000000000000001"),
-//             b256!("0000000000000000000000000000000000000000000000000000000000000002"),
-//         )] {
-//             assert_eq!(
-//                 calc_create2_address(&address, &salt.into(), &hash),
-//                 address.create2(salt, hash)
-//             );
-//         }
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::{address, keccak256};
+
+    struct TestContext;
+
+    impl ContextFreeNativeAPI for TestContext {
+        fn keccak256(data: &[u8]) -> B256 {
+            keccak256(data)
+        }
+
+        fn sha256(_data: &[u8]) -> B256 {
+            todo!()
+        }
+
+        fn poseidon(_data: &[u8]) -> F254 {
+            todo!()
+        }
+
+        fn poseidon_hash(_fa: &F254, _fb: &F254, _fd: &F254) -> F254 {
+            todo!()
+        }
+
+        fn ec_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> [u8; 65] {
+            todo!()
+        }
+
+        fn debug_log(_message: &str) {
+            todo!()
+        }
+    }
+
+    #[test]
+    fn test_create_address() {
+        for (address, nonce) in [
+            (address!("0000000000000000000000000000000000000000"), 0),
+            (
+                address!("0000000000000000000000000000000000000000"),
+                u32::MIN,
+            ),
+            (
+                address!("0000000000000000000000000000000000000000"),
+                u32::MAX,
+            ),
+            (address!("2340820934820934820934809238402983400000"), 0),
+            (
+                address!("2340820934820934820934809238402983400000"),
+                u32::MIN,
+            ),
+            (
+                address!("2340820934820934820934809238402983400000"),
+                u32::MAX,
+            ),
+        ] {
+            assert_eq!(
+                calc_create_address::<TestContext>(&address, nonce as u64),
+                address.create(nonce as u64)
+            );
+        }
+    }
+
+    #[test]
+    fn test_create2_address() {
+        let address = Address::ZERO;
+        for (salt, hash) in [(
+            b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+        )] {
+            assert_eq!(
+                calc_create2_address::<TestContext>(&address, &salt.into(), &hash),
+                address.create2(salt, hash)
+            );
+        }
+    }
+}

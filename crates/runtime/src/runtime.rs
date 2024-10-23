@@ -161,8 +161,8 @@ impl RuntimeContext {
         self
     }
 
-    pub fn with_fuel(mut self) -> Self {
-        self.disable_fuel = false;
+    pub fn with_disable_fuel(mut self, disable_fuel: bool) -> Self {
+        self.disable_fuel = disable_fuel;
         self
     }
 

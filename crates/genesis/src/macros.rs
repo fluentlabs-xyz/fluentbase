@@ -27,7 +27,7 @@ macro_rules! enable_rwasm_contract {
         std::io::stdout().flush().unwrap();
         let poseidon_hash = poseidon_hash(&bytecode);
         let keccak_hash = keccak256(&bytecode);
-        println!("{}", hex::encode(poseidon_hash));
+        println!("{} bytes", bytecode.len());
         $alloc.insert(
             $addr,
             GenesisAccount {

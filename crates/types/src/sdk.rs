@@ -333,7 +333,7 @@ pub trait SharedAPI: ContextFreeNativeAPI {
     fn balance(&self, address: &Address) -> U256;
     fn write_preimage(&mut self, preimage: Bytes) -> B256;
     fn create(
-        &self,
+        &mut self,
         fuel_limit: u64,
         salt: Option<U256>,
         value: &U256,
@@ -356,4 +356,8 @@ pub trait SharedAPI: ContextFreeNativeAPI {
     fn delegate_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32);
     fn static_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32);
     fn destroy_account(&mut self, address: Address);
+
+    fn last_fuel_consumed(&self) -> u64 {
+        0
+    }
 }
