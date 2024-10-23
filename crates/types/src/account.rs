@@ -13,6 +13,7 @@ use crate::{
     POSEIDON_EMPTY,
     U256,
 };
+use alloy_rlp::bytes;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_codec::Codec;
 use revm_primitives::AccountInfo;

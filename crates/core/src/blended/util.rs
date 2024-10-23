@@ -1,6 +1,6 @@
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
-    codec::Encoder,
+    codec::{Encoder, FluentEncoder},
     Bytes,
     SharedContextInputV1,
     SysFuncIdx,
@@ -34,16 +34,16 @@ pub fn create_rwasm_proxy_bytecode() -> Bytes {
         DataDrop(0) // mark 0 segment as dropped (required to satisfy WASM standards)
         // copy input (EVM bytecode can't exceed 2*24kB, so this op is safe)
         I32Const(52) // target
-        I32Const(SharedContextInputV1::HEADER_SIZE as u32) // offset
+        I32Const(<SharedContextInputV1 as FluentEncoder>::HEADER_SIZE as u32) // offset
         Call(SysFuncIdx::INPUT_SIZE) // length=input_size-header_size
-        I32Const(SharedContextInputV1::HEADER_SIZE as u32)
+        I32Const(<SharedContextInputV1 as FluentEncoder>::HEADER_SIZE as u32)
         I32Sub
         Call(SysFuncIdx::READ)
         // delegate call
         I32Const(0) // hash32_ptr
         I32Const(32) // input_ptr
         Call(SysFuncIdx::INPUT_SIZE) // input_len=input_size-header_size+20
-        I32Const(SharedContextInputV1::HEADER_SIZE as u32)
+        I32Const(<SharedContextInputV1 as FluentEncoder>::HEADER_SIZE as u32)
         I32Sub
         I32Const(20)
         I32Add

@@ -6,10 +6,14 @@ edition = "2021"
 [dependencies]
 #fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
+digest = { version = "0.10", default-features = false }
+signature = { version = "2.2.0", default-features = false }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
 hex = "0.4.3"
+fluentbase-sdk = {workspace = true, features = ["std"]}
+
 
 [lib]
 crate-type = ["cdylib", "staticlib"]
@@ -22,7 +26,7 @@ path = "lib.rs"
 #strip = true
 
 [features]
-default = ["std"]
+default = []
 std = [
     "fluentbase-sdk/std"
 ]

@@ -1,18 +1,31 @@
-use fluentbase_codec::{Codec, Encoder};
+use core::{marker::PhantomData, usize};
+use fluentbase_codec::{
+    byteorder::{BigEndian, ByteOrder, LittleEndian, BE, LE},
+    Codec,
+    Encoder,
+};
 use fluentbase_sdk_derive::derive_keccak256_id;
 use fluentbase_types::{Address, Bytes, ExitCode, U256};
 
-#[derive(Default, Debug, Clone, Codec)]
-pub struct CoreInput<T: Encoder<T> + Default> {
+#[derive(Clone, Debug, Default, Codec)]
+pub struct CoreInput<T, B: ByteOrder, const ALIGN: usize>
+where
+    T: Encoder<B, ALIGN, true> + Encoder<B, ALIGN, false> + Default,
+{
     pub method_id: u32,
     pub method_data: T,
+    _phantom: PhantomData<B>,
 }
 
-impl<T: Encoder<T> + Default> CoreInput<T> {
+impl<T, B: ByteOrder, const ALIGN: usize> CoreInput<T, B, ALIGN>
+where
+    T: Encoder<B, ALIGN, true> + Encoder<B, ALIGN, false> + Default,
+{
     pub fn new(method_id: u32, method_data: T) -> Self {
-        CoreInput {
+        Self {
             method_id,
             method_data,
+            _phantom: PhantomData,
         }
     }
 }

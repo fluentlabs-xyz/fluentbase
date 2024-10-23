@@ -66,7 +66,7 @@ revm = { path = "revm/crates/revm", default-features = false, features = [
     "blst",
     #    "debug-print",
 ] }
-bytes = { version = "1.5" }
+bytes = { version = "1.5" , default-features = false}
 eth_trie = { version = "0.4", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 hex-literal = { version = "0.4.1" }
@@ -78,6 +78,7 @@ anyhow = { version = "1.0.86", default-features = false }
 syn = "2.0"
 clap = { version = "4.5", features = ["derive"] }
 phantom-type = { version = "0.5.0", default-features = false }
+digest = { version = "0.10", default-features = false }
 
 
 [profile.bench]
