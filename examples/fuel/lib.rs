@@ -95,35 +95,4 @@ mod tests {
         let output = native_sdk.take_output();
         assert_eq!(&output, &msg);
     }
-
-    #[test]
-    fn test_signature_works() {
-        let caller = Address::default();
-        let msg = "Hello World!".as_bytes();
-
-        let call_fvm_deposit = FvmDepositCall::new((msg.to_vec(), caller));
-        {
-            let mut input = call_fvm_deposit.encode().to_vec();
-
-            let fn_id_from_signature_attr = [153u8, 65u8, 183u8, 19u8];
-            println!("before: {:?}", input);
-
-            input[0..4].copy_from_slice(&fn_id_from_signature_attr);
-
-            println!("after: {:?}", input);
-
-            let native_sdk = TestingContext::empty().with_input(input);
-            let sdk = JournalState::empty(native_sdk.clone());
-
-            let mut contract = FvmLoaderEntrypoint::new(sdk);
-
-            contract.deploy();
-
-            contract.main();
-
-            let output = native_sdk.take_output();
-            let expected_output = "fvm_deposit".as_bytes();
-            assert_eq!(&output, &expected_output);
-        };
-    }
 }

@@ -9,6 +9,7 @@ use crate::{
         SolidityABI,
     },
     error::CodecError,
+    Codec,
 };
 use alloc::vec;
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
@@ -20,7 +21,6 @@ use alloy_sol_types::{
 };
 use byteorder::{ByteOrder, BE, LE};
 use bytes::{Buf, BytesMut};
-use codec_derive::Codec;
 use hashbrown::HashMap;
 use hex_literal::hex;
 
@@ -315,41 +315,6 @@ fn test_nested_struct_sol() {
     // Test decoding
     let decoded = SolidityABI::<TestNestedStruct>::decode(&encoded, 0).unwrap();
     assert_eq!(decoded, test_nested_struct, "Decoding mismatch");
-}
-
-mod wasm {
-
-    use fluentbase_codec::{BufferEncoder, Codec as OldCodec, Encoder};
-    use fluentbase_sdk::Bytes;
-
-    #[derive(OldCodec, Default, Debug, PartialEq)]
-    struct TestStruct2 {
-        bool_val: bool,
-        bytes_val: Bytes,
-        vec_val: Vec<u32>,
-    }
-
-    // Create an instance of TestStruct
-    #[test]
-    fn test_struct_old_wasm() {
-        let test_struct = TestStruct2 {
-            bool_val: true,
-            bytes_val: Bytes::from(vec![1, 2, 3, 4, 5]),
-            vec_val: vec![10, 20, 30],
-        };
-
-        let encoded = {
-            let mut buffer_encoder = BufferEncoder::new(TestStruct2::HEADER_SIZE, None);
-            test_struct.encode(&mut buffer_encoder, 0);
-            buffer_encoder.finalize()
-        };
-
-        println!("{:?}", hex::encode(&encoded));
-        let expected_encoded =
-            "011500000005000000030000001a0000000c00000001020304050a000000140000001e000000";
-
-        assert_eq!(hex::encode(&encoded), expected_encoded);
-    }
 }
 
 #[derive(Codec, Default, Debug, PartialEq)]

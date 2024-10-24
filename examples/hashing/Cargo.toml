@@ -10,6 +10,7 @@ fluentbase-sdk = { workspace = true, default-features = false }
 [dev-dependencies]
 hex-literal = "0.4.1"
 hex = "0.4.3"
+fluentbase-sdk = { workspace = true, features = ["std"]}
 
 [lib]
 crate-type = ["cdylib", "staticlib"]

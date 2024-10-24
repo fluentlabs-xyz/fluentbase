@@ -6,8 +6,6 @@ use alloc::string::String;
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{router, Contract},
-    Address,
-    Bytes,
     SharedAPI,
 };
 
@@ -46,7 +44,7 @@ basic_entrypoint!(ROUTER);
 mod tests {
     use super::*;
     use alloy_sol_types::{sol, SolCall};
-    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext, Bytes};
+    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext, Address, Bytes};
 
     #[test]
     fn test_contract_works() {

@@ -295,3 +295,139 @@ fn create_error_tokens(error: &syn::Error) -> TokenStream2 {
     let error_msg = error.to_string();
     quote! { compile_error!(#error_msg); }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_parse_signature() {
+        // Valid signature
+        let attr: FunctionIDAttribute = parse_quote! {
+            "transfer(address,uint256)"
+        };
+
+        assert!(matches!(
+            &attr.function_id,
+            Some(FunctionIDType::Signature(sig)) if sig == "transfer(address,uint256)"
+        ));
+
+        // Check hex representation
+        let hex = attr.function_id_hex().unwrap();
+        assert!(hex.starts_with("0x"));
+        assert_eq!(hex.len(), 10); // "0x" + 8 chars
+
+        // Check bytes
+        let bytes = attr.function_id_bytes().unwrap();
+        assert_eq!(bytes.len(), 4);
+    }
+
+    #[test]
+    fn test_parse_hex_string() {
+        // Valid hex string
+        let attr: FunctionIDAttribute = parse_quote! {
+            "0x12345678"
+        };
+
+        assert!(matches!(
+            &attr.function_id,
+            Some(FunctionIDType::HexString(hex)) if hex == "0x12345678"
+        ));
+
+        let bytes = attr.function_id_bytes().unwrap();
+        assert_eq!(bytes, [0x12, 0x34, 0x56, 0x78]);
+    }
+    #[test]
+    fn test_parse_byte_array() {
+        // Valid byte array
+        let attr: FunctionIDAttribute = parse_quote! {
+            [1, 2, 3, 4]
+        };
+
+        assert!(matches!(
+            attr.function_id,
+            Some(FunctionIDType::ByteArray(bytes)) if bytes == [1, 2, 3, 4]
+        ));
+
+        let hex = attr.function_id_hex().unwrap();
+        assert_eq!(hex, "0x01020304");
+    }
+
+    #[test]
+    fn test_validate_attribute() {
+        // With validate(true)
+        let attr: FunctionIDAttribute = parse_quote! {
+            "transfer(address,uint256)", validate(true)
+        };
+        assert_eq!(attr.validate, Some(true));
+
+        // With validate(false)
+        let attr: FunctionIDAttribute = parse_quote! {
+            "transfer(address,uint256)", validate(false)
+        };
+        assert_eq!(attr.validate, Some(false));
+    }
+
+    #[test]
+    fn test_signature_validation() {
+        let attr = FunctionIDAttribute {
+            validate: Some(true),
+            function_id: Some(FunctionIDType::Signature(
+                "transfer(address,uint256)".to_string(),
+            )),
+        };
+        assert!(attr.validate_signature("transfer(address,uint256)").is_ok());
+
+        let attr = FunctionIDAttribute {
+            validate: Some(true),
+            function_id: Some(FunctionIDType::Signature("invalid_signature".to_string())),
+        };
+        assert!(attr.validate_signature("invalid_signature").is_err());
+    }
+    #[test]
+    #[should_panic(expected = "Invalid function ID format")]
+    fn test_invalid_hex_string() {
+        let _attr: FunctionIDAttribute = parse_quote! {
+            "0x123"  // Invalid format - too short
+        };
+    }
+
+    #[test]
+    fn test_valid_hex_string() {
+        let attr: FunctionIDAttribute = parse_quote! {
+            "0x12345678"  // Correct length
+        };
+        assert!(attr.function_id_bytes().is_ok());
+    }
+
+    #[test]
+    fn test_invalid_hex_content() {
+        let attr: FunctionIDAttribute = parse_quote! {
+            "0x1234567z"  // Invalid hex character
+        };
+        assert!(attr.function_id_bytes().is_err());
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected exactly 4 bytes")]
+    fn test_invalid_byte_array() {
+        let attr: FunctionIDAttribute = parse_quote! {
+            [1, 2, 3]  // Only 3 bytes
+        };
+        attr.function_id_bytes().unwrap();
+    }
+
+    #[test]
+    fn test_to_tokens() {
+        let attr: FunctionIDAttribute = parse_quote! {
+            "transfer(address,uint256)"
+        };
+        let tokens = quote! { #attr };
+        let tokens_str = tokens.to_string();
+
+        assert!(tokens_str.contains("FUNCTION_SIGNATURE"));
+        assert!(tokens_str.contains("FUNCTION_ID_HEX"));
+        assert!(tokens_str.contains("FUNCTION_ID_BYTES"));
+    }
+}
