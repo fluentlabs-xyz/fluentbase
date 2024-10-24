@@ -4,6 +4,7 @@ use crate::{
     encoder::{align_up, get_aligned_slice, is_big_endian, write_u32_aligned, Encoder},
     error::{CodecError, DecodingError},
 };
+use alloc::string::String;
 use alloy_primitives::{Address, Bytes, FixedBytes, Uint};
 use byteorder::ByteOrder;
 use bytes::{Buf, BytesMut};
@@ -89,6 +90,59 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for Bytes {
         read_bytes_header::<B, ALIGN, false>(buf, offset)
     }
 }
+
+impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for String {
+    const HEADER_SIZE: usize = <Bytes as Encoder<B, ALIGN, true>>::HEADER_SIZE;
+    const IS_DYNAMIC: bool = true;
+
+    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+        <Bytes as Encoder<B, ALIGN, true>>::encode(
+            &Bytes::copy_from_slice(self.as_bytes()),
+            buf,
+            offset,
+        )
+    }
+
+    fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
+        let bytes = <Bytes as Encoder<B, ALIGN, true>>::decode(buf, offset)?;
+        String::from_utf8(bytes.to_vec()).map_err(|_| {
+            CodecError::Decoding(DecodingError::InvalidData(
+                "failed to decode string from utf8".to_string(),
+            ))
+        })
+    }
+
+    fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
+        <Bytes as Encoder<B, ALIGN, true>>::partial_decode(buf, offset)
+    }
+}
+
+impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for String {
+    const HEADER_SIZE: usize = <Bytes as Encoder<B, ALIGN, false>>::HEADER_SIZE;
+    const IS_DYNAMIC: bool = true;
+
+    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+        <Bytes as Encoder<B, ALIGN, false>>::encode(
+            &Bytes::copy_from_slice(self.as_bytes()),
+            buf,
+            offset,
+        )
+    }
+
+    fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
+        let bytes = <Bytes as Encoder<B, ALIGN, false>>::decode(buf, offset)?;
+        String::from_utf8(bytes.to_vec()).map_err(|_| {
+            CodecError::Decoding(DecodingError::InvalidData(
+                "failed to decode string from utf8".to_string(),
+            ))
+        })
+    }
+
+    fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
+        <Bytes as Encoder<B, ALIGN, false>>::partial_decode(buf, offset)
+    }
+}
+
 impl<const N: usize, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false>
     for FixedBytes<N>
 {
@@ -454,6 +508,24 @@ mod tests {
         assert_eq!(hex::encode(&encoded), expected_encoded);
 
         let decoded = <U256 as Encoder<BigEndian, 4, false>>::decode(&encoded, 0).unwrap();
+
+        assert_eq!(original, decoded);
+    }
+    #[test]
+    fn test_string_encoding() {
+        let original = "Hello, World!!".to_string();
+        let mut buf = BytesMut::new();
+        <String as Encoder<BigEndian, 32, true>>::encode(&original, &mut buf, 0).unwrap();
+
+        let encoded = buf.freeze();
+
+        println!("Encoded String: {}", hex::encode(&encoded));
+
+        let expected_encoded = "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e48656c6c6f2c20576f726c642121000000000000000000000000000000000000";
+
+        assert_eq!(hex::encode(&encoded), expected_encoded);
+
+        let decoded = <String as Encoder<BigEndian, 32, true>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }

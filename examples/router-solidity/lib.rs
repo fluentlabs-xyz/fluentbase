@@ -2,7 +2,7 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate alloc;
 extern crate fluentbase_sdk;
-
+use alloc::string::String;
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{router, Contract},
@@ -17,14 +17,19 @@ struct ROUTER<SDK> {
 }
 
 pub trait RouterAPI {
-    fn greeting(&self, message: Bytes, caller: Address) -> Bytes;
-    // fn custom_greeting(&self, message: Bytes) -> Bytes;
+    fn greeting(&self, message: String) -> String;
+    fn custom_greeting(&self, message: String) -> String;
 }
 
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
-    #[function_id("greeting(bytes,address)")] // 0xf8194e48
-    fn greeting(&self, message: Bytes, caller: Address) -> Bytes {
+    #[function_id("greeting(string)")]
+    fn greeting(&self, message: String) -> String {
+        message
+    }
+
+    #[function_id("customGreeting(string)")]
+    fn custom_greeting(&self, message: String) -> String {
         message
     }
 }
@@ -46,21 +51,19 @@ mod tests {
     #[test]
     fn test_contract_works() {
         let b = Bytes::from("Hello, World!!".as_bytes());
+        let s = String::from("Hello, World!!");
         let a = Address::repeat_byte(0xAA);
 
-        let greeting_call = GreetingCall::new((b.clone(), a.clone()));
+        let greeting_call = GreetingCall::new((s.clone(),));
 
         let input = greeting_call.encode();
 
         // SOL INPUT
         sol!(
-            function buying(bytes message, address caller);
+            function buying(string message);
         );
 
-        let buying_call_sol = buyingCall {
-            message: b.clone(),
-            caller: a.clone(),
-        };
+        let buying_call_sol = buyingCall { message: s.clone() };
 
         let byuing_call_input_sol = buying_call_sol.abi_encode();
 
@@ -80,6 +83,6 @@ mod tests {
         println!("output: {:?}", hex::encode(&encoded_output));
         let output = GreetingReturn::decode(&encoded_output.as_slice()).unwrap();
         println!("output: {:?}", &output.0);
-        assert_eq!(output.0 .0, b);
+        assert_eq!(output.0 .0, s);
     }
 }
