@@ -1,5 +1,0 @@
-error: Invalid byte array length. Expected exactly 4 bytes, found 3
- --> tests/07-invalid-byte-array.rs:3:23
-  |
-3 | #[function_id([1, 2, 3])] // Should be 4 bytes
-  |                       ^

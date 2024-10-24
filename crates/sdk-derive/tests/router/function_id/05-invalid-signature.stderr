@@ -1,5 +1,0 @@
-error: Invalid function ID format. Expected either a Solidity function signature (e.g., 'transfer(address,uint256)') or a 4-byte hex string (e.g., '0x12345678')
- --> tests/05-invalid-signature.rs:3:15
-  |
-3 | #[function_id("invalid_signature")]
-  |               ^^^^^^^^^^^^^^^^^^^

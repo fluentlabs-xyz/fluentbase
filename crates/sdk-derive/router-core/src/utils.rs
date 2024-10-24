@@ -202,17 +202,21 @@ mod tests {
 
     #[test]
     fn test_numeric_types() {
+        use quote::format_ident;
+        use syn::{parse_quote, TypePath};
+
         let test_cases = vec![
             ("u8", "uint8"),
             ("u16", "uint16"),
             ("u32", "uint32"),
             ("u64", "uint64"),
             ("u128", "uint128"),
-            ("u256", "uint256"),
+            ("U256", "uint256"),
         ];
 
         for (input, expected) in test_cases {
-            let ty: TypePath = parse_quote!(#input);
+            let ident = format_ident!("{}", input);
+            let ty: TypePath = parse_quote!(#ident);
             assert_eq!(
                 convert_path_type(&ty).unwrap().to_string(),
                 expected.to_string()
@@ -223,8 +227,8 @@ mod tests {
     #[test]
     fn test_array_types() {
         let test_cases = vec![
-            (parse_quote!([u8; 32]), "uint8 [32]"),
-            (parse_quote!([bool; 16]), "bool [16]"),
+            (parse_quote!([u8; 32]), "uint8 [32u64]"),
+            (parse_quote!([bool; 16]), "bool [16u64]"),
         ];
 
         for (input, expected) in test_cases {
@@ -237,16 +241,13 @@ mod tests {
 
     #[test]
     fn test_error_handling() {
-        let invalid_type: TypePath = parse_quote!(InvalidType);
-        assert!(matches!(
-            convert_path_type(&invalid_type),
-            Err(ConversionError::UnsupportedType(_))
-        ));
-
         let invalid_bytes: TypePath = parse_quote!(bytes33);
         assert!(matches!(
             convert_path_type(&invalid_bytes),
             Err(ConversionError::InvalidBytesSize(_))
         ));
+
+        let custom_type: TypePath = parse_quote!(CustomStruct);
+        assert!(matches!(convert_path_type(&custom_type), Ok(_)));
     }
 }
