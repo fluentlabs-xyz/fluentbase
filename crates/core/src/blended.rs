@@ -105,7 +105,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let mut buf = BytesMut::new();
 
         FluentABI::encode(&context_input, &mut buf, 0).unwrap();
-
+        buf.extend_from_slice(params.input.as_ref());
         let context_input = buf.freeze();
 
         // <context_input as FluentABI>::encode(context_input);
