@@ -5,7 +5,7 @@ mod syscall;
 mod util;
 mod wasm;
 use crate::{debug_log, helpers::evm_error_from_exit_code, types::NextAction};
-use alloc::{boxed::Box, str::from_utf8};
+use alloc::boxed::Box;
 use fluentbase_sdk::{
     codec::Encoder,
     env_from_context,

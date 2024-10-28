@@ -1,3 +1,0 @@
-*.wasm
-*.wat
-!greeting.wasm
