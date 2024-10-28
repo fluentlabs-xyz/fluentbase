@@ -1,5 +1,5 @@
 [package]
-name = "router-core"
+name = "derive-core"
 
 authors.workspace = true
 categories.workspace = true

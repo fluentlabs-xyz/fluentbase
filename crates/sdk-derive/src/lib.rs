@@ -9,7 +9,7 @@ mod solidity_storage;
 
 mod utils;
 
-use router_core::{client_core, router_core};
+use derive_core::{client_core, router_core};
 
 #[proc_macro_error]
 #[proc_macro_attribute]
