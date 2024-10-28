@@ -17,6 +17,7 @@ darling = "0.20.10"
 
 hex = "0.4.3"
 paste = {workspace = true}
+fluentbase-codec = {workspace = true, default-features =  false}
 
 bytes = {version = "1.0", default-features = false}
 proc-macro-error = {version = "1", default-features = false}
