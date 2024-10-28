@@ -71,26 +71,26 @@ impl ClientMethod {
                 let mut input = ::alloc::vec![0u8; 4];
                 input.copy_from_slice(&[#(#selector,)*]);
 
-                let call = #call_struct::new((#(#param_names,)*));
+                let _call = #call_struct::new((#(#param_names,)*));
                 input.extend(call.encode());
 
-                let (result, exit_code) = self.sdk.contracts.call_system_contract(
-                    &self.address,
-                    &input,
-                    self.fuel
-                );
+                // let (result, exit_code) = self.sdk.contracts.call_system_contract(
+                //     &self.address,
+                //     &input,
+                //     self.fuel
+                // );
 
-                if exit_code != 0 {
-                    panic!("call failed with exit code: {}", exit_code);
-                }
+                // if exit_code != 0 {
+                //     panic!("call failed with exit code: {}", exit_code);
+                // }
 
-                if !result.is_empty() {
-                    #return_struct::decode(&result)
-                        .expect("failed to decode result")
-                        .0
-                } else {
-                    Default::default()
-                }
+                // if !result.is_empty() {
+                //     #return_struct::decode(&result)
+                //         .expect("failed to decode result")
+                //         .0
+                // } else {
+                //     Default::default()
+                // }
             }
         };
 

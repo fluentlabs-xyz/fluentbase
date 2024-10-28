@@ -1,4 +1,3 @@
-#![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate alloc;
 extern crate fluentbase_sdk;
@@ -42,6 +41,7 @@ basic_entrypoint!(ROUTER);
 // we need to specify main fn to avoid
 // error[E0601]: main function not found in crate $CRATE
 fn main() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,7 +50,9 @@ mod tests {
 
     #[test]
     fn test_contract_works() {
+        let b = Bytes::from("Hello, World!!".as_bytes());
         let s = String::from("Hello, World!!");
+        let a = Address::repeat_byte(0xAA);
 
         let greeting_call = GreetingCall::new((s.clone(),));
 
@@ -70,13 +72,17 @@ mod tests {
             hex::encode(&byuing_call_input_sol[4..])
         );
 
+        println!("Input: {:?}", hex::encode(&input));
+        println!("call contract...");
         let sdk = TestingContext::empty().with_input(input);
         let mut router = ROUTER::new(JournalState::empty(sdk.clone()));
         router.deploy();
         router.main();
 
         let encoded_output = &sdk.take_output();
+        println!("output: {:?}", hex::encode(&encoded_output));
         let output = GreetingReturn::decode(&encoded_output.as_slice()).unwrap();
+        println!("output: {:?}", &output.0);
         assert_eq!(output.0 .0, s);
     }
 }

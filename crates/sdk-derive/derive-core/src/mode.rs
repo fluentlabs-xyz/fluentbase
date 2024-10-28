@@ -62,7 +62,7 @@ impl RouterMode {
     ///
     /// # Examples
     /// ```
-    /// use router_core::mode::RouterMode;
+    /// use derive_core::mode::RouterMode;
     /// assert!(RouterMode::try_from_str("SOLIDITY").is_ok());
     /// assert!(RouterMode::try_from_str("solidity").is_ok());
     /// assert!(RouterMode::try_from_str("invalid").is_err());
