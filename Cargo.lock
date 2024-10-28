@@ -5002,6 +5002,7 @@ dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
  "darling",
+ "fluentbase-codec",
  "hex",
  "paste",
  "prettyplease",

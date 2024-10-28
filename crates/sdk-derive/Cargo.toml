@@ -20,7 +20,7 @@ proc-macro-error = {version = "1", default-features = false}
 proc-macro2 = "1.0"
 quote = "1.0"
 regex.workspace = true
-router-core = { workspace = true, default-features = false }
+router-core = { path = "./router-core", default-features = false }
 serde = {version = "1.0", default-features = false, features = ["derive"]}
 syn = {workspace = true, features = ["full"]}
 syn-solidity = {version = "0.7", default-features = false}

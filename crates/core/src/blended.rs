@@ -96,7 +96,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             fluentbase_runtime::Runtime::warmup_bytecode(params.code_hash, bytecode);
         }
 
-        let mut context_input = SharedContextInputV1 {
+        let context_input = SharedContextInputV1 {
             block: self.sdk.block_context().clone(),
             tx: self.sdk.tx_context().clone(),
             contract: contract_context.clone(),

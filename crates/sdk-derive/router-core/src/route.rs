@@ -17,6 +17,7 @@ use syn::{
     Index,
     Result,
     ReturnType,
+    TraitItemFn,
     Type,
 };
 
@@ -36,14 +37,20 @@ pub struct Route {
     /// Return type parameters
     pub return_types: Vec<Type>,
     /// Original function implementation
-    pub original_fn: syn::ImplItemFn,
+    pub original_fn: MethodType,
     /// Indicates if the method is publicly accessible
     pub is_public: bool,
 }
 
+#[derive(Clone, Debug)]
+pub enum MethodType {
+    Impl(ImplItemFn),
+    Trait(TraitItemFn),
+}
+
 /// Represents a method parameter with its type and identifier.
 #[derive(Clone, Debug, PartialEq)]
-struct MethodParameter {
+pub(crate) struct MethodParameter {
     /// Original parameter type including references
     pub original_ty: Type,
     /// Storage parameter type (owned version)
@@ -60,7 +67,7 @@ impl Route {
     ///
     /// # Returns
     /// * `Result<Route>` - Parsed route or parsing error
-    fn new(method_impl: &ImplItemFn) -> Result<Self> {
+    pub fn new(method_impl: &ImplItemFn) -> Result<Self> {
         let parameters = MethodParameter::from_impl(method_impl);
         let return_types = Self::extract_return_types(&method_impl.sig.output);
         let fn_name = str_to_camel_case(&method_impl.sig.ident.to_string());
@@ -91,9 +98,87 @@ impl Route {
             signature: method_signature,
             args: parameters,
             return_types,
-            original_fn: method_impl.clone(),
+            original_fn: MethodType::Impl(method_impl.clone()),
             is_public: matches!(method_impl.vis, syn::Visibility::Public(_)),
         })
+    }
+
+    fn from_trait_fn(method: &TraitItemFn) -> Result<Self> {
+        let parameters = MethodParameter::from_trait_fn(method);
+        let return_types = Self::extract_return_types(&method.sig.output);
+        let fn_name = str_to_camel_case(&method.sig.ident.to_string());
+
+        let parameter_types = parameters
+            .iter()
+            .map(|param| {
+                rust_type_to_sol(&param.ty)
+                    .map(|tokens| tokens.to_string())
+                    .map_err(|e| {
+                        syn::Error::new(
+                            Span::call_site(),
+                            format!(
+                                "Failed to parse parameter type in function '{}': {}",
+                                fn_name, e
+                            ),
+                        )
+                    })
+            })
+            .collect::<Result<Vec<String>>>()?;
+
+        let method_signature = Self::generate_signature(&fn_name, &parameter_types);
+
+        // Find function_id attribute if present
+        let function_id_attr = method
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("function_id"))
+            .map(|attr| attr.parse_args::<FunctionIDAttribute>())
+            .transpose()?;
+
+        // Calculate function ID based on attribute or signature
+
+        let (function_id, signature) = match &function_id_attr {
+            Some(attr) if attr.validate.unwrap_or(true) => {
+                let attr_function_id = attr.function_id_bytes()?;
+                let calculated_id = keccak256(&method_signature);
+
+                if attr_function_id != calculated_id {
+                    return Err(create_mismatch_error(
+                        attr,
+                        &method_signature,
+                        calculated_id,
+                    ));
+                }
+                (
+                    attr_function_id,
+                    attr.signature().unwrap_or(method_signature),
+                )
+            }
+            Some(attr) => (
+                attr.function_id_bytes()?,
+                attr.signature().unwrap_or(method_signature),
+            ),
+            None => (keccak256(&method_signature), method_signature),
+        };
+
+        Ok(Route {
+            function_id_attr,
+            function_id,
+            fn_name,
+            signature,
+            args: parameters,
+            return_types,
+            original_fn: MethodType::Trait(method.clone()),
+            is_public: true, // trait methods are always public
+        })
+    }
+
+    /// Returns the signature of the method
+    pub fn sig(&self) -> &syn::Signature {
+        match &self.original_fn {
+            MethodType::Impl(m) => &m.sig,
+            MethodType::Trait(m) => &m.sig,
+        }
     }
 
     /// Extracts return types from the method signature.
@@ -186,7 +271,10 @@ impl Parse for Route {
 impl ToTokens for Route {
     /// Converts the route to a token stream.
     fn to_tokens(&self, tokens: &mut TokenStream2) {
-        let fn_name = &self.original_fn.sig.ident;
+        let fn_name = match &self.original_fn {
+            MethodType::Impl(m) => &m.sig.ident,
+            MethodType::Trait(m) => &m.sig.ident,
+        };
         let fn_call = format_ident!("{}Call", &self.fn_name.to_case(Case::Pascal));
         let fn_call_selector = quote! { #fn_call::SELECTOR };
         let fn_call_args = format_ident!("{}Args", fn_call);
@@ -259,6 +347,31 @@ impl Route {
 impl MethodParameter {
     /// Creates method parameters from a function implementation.
     fn from_impl(method: &ImplItemFn) -> Vec<Self> {
+        method
+            .sig
+            .inputs
+            .iter()
+            .filter_map(|arg| {
+                if let FnArg::Typed(pat_type) = arg {
+                    if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                        let original_ty = (*pat_type.ty).clone();
+                        let ty = Self::to_storage_type(&original_ty);
+                        Some(MethodParameter {
+                            original_ty,
+                            ty,
+                            ident: pat_ident.ident.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn from_trait_fn(method: &TraitItemFn) -> Vec<Self> {
         method
             .sig
             .inputs
