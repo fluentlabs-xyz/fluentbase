@@ -1,4 +1,7 @@
+use client_solidity_api::{greeting_input, RouterAPIClient};
 use core::{mem::take, str::from_utf8};
+use fluentbase_codec::FluentABI;
+use fluentbase_core::helpers::wasm2rwasm;
 use fluentbase_genesis::{
     devnet_genesis_from_file,
     Genesis,
@@ -11,6 +14,8 @@ use fluentbase_runtime::RuntimeContext;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian},
     runtime::TestingContext,
+    shared::SharedContextImpl,
+    SharedContextInputV1,
 };
 use fluentbase_types::{
     address,
@@ -44,7 +49,7 @@ use rwasm::{
 
 #[allow(dead_code)]
 struct EvmTestingContext {
-    sdk: TestingContext,
+    pub sdk: TestingContext,
     genesis: Genesis,
     db: InMemoryDB,
 }
@@ -330,6 +335,57 @@ fn test_deploy_greeting() {
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!("Hello, World", from_utf8(bytes.as_ref()).unwrap());
+}
+
+#[test]
+fn test_client() {
+    let mut ctx = EvmTestingContext::default();
+    // const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(2e18));
+
+    // let bytecode: Bytes = include_bytes!("../../examples/client-solidity/lib.wasm").into();
+
+    // let greeting_bytecode: Bytes = include_bytes!("../../examples/greeting/lib.wasm").into();
+
+    // println!("bytecode: {:?}", hex::encode(&greeting_bytecode));
+
+    let contract_address = deploy_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/client-solidity/lib.wasm").into(),
+    );
+
+    println!("contract_address: {:?}", contract_address);
+
+    let sdk = SharedContextImpl::new(ctx.sdk.clone());
+
+    let mut client = RouterAPIClient::new(sdk, contract_address);
+
+    let msg = "Hello, World".to_string();
+    let value = U256::from(1e6);
+    let gas_limit = 10_000_000_000;
+    let input = greeting_input(msg.clone());
+    println!("input: {:?}", input);
+
+    // let ctx_input = {
+    //     let shared_ctx = SharedContextInputV1 {
+    //         block: Default::default(),
+    //         tx: Default::default(),
+    //         contract: Default::default(),
+    //     };
+    //     let mut buf = bytes::BytesMut::new();
+    //     FluentABI::encode(&shared_ctx, &mut buf, 0).unwrap();
+
+    //     buf.extend_from_slice(&input);
+    //     buf.freeze().to_vec()
+    // };
+    // let result = client.greeting(ctx_input, value, gas_limit);
+
+    let result = client.greeting(input, value, gas_limit);
+
+    println!("result: {:?}", result);
+    assert_eq!(result, Bytes::from(msg));
 }
 
 #[test]

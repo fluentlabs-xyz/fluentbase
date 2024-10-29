@@ -1,0 +1,30 @@
+[package]
+edition = "2021"
+name = "client-solidity"
+version = "0.1.0"
+
+[dependencies]
+alloy-sol-types = { workspace = true, default-features = false}
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-codec = {workspace = true, default-features = false}
+client-solidity-api = { path = "./client-solidity-api", default-features = false }
+
+[dev-dependencies]
+hex = "0.4.3"
+hex-literal = "0.4.1"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+[profile.release]
+lto = true
+opt-level = 'z'
+panic = "abort"
+strip = true
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std",
+]
