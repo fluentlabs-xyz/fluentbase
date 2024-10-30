@@ -1,6 +1,6 @@
-# Research Project: Compiling Functions from the FairBlock DistributedIBE to WebAssembly (WASM)
+# Research Project: Compiling Functions from the Fairblock DistributedIBE to WebAssembly (WASM)
 
-This document outlines the steps to compile functions from the [FairBlock DistributedIBE GitHub Repository](https://github.com/Fairblock/DistributedIBE) using **TinyGo** to WebAssembly (WASM). The goal is to convert Fairblock's cryptography functions into WASM modules. It's needed for integration fairblock with fluent network.
+This document outlines the steps to compile functions from the [Fairblock DistributedIBE GitHub Repository](https://github.com/Fairblock/DistributedIBE) using **TinyGo** to WebAssembly (WASM). The goal is to convert Fairblock's cryptographic functions into WASM modules. It's needed for integration of Fairblock with Fluent Network.
 
 ## Prerequisites
 
@@ -13,10 +13,10 @@ Follow the installation instructions provided in the [official TinyGo documentat
 
 ### Compiling to WASM
 
-To compile a Golang function from the FairBlock DistributedIBE repository into a `.wasm` file, you need to use the `wasm-unknown` target in TinyGo. Here is the example command that can be used for this purpose:
+To compile a Golang function from the Fairblock DistributedIBE repository into a `.wasm` file, you need to use the `wasm-unknown` target in TinyGo. Here is the example command that can be used for this purpose:
 
 ```bash
-tinygo build -o wasm1.wasm -target=wasm-unknown github.com/FairBlock/DistributedIBE
+tinygo build -o wasm1.wasm -target=wasm-unknown github.com/Fairblock/DistributedIBE
 ```
 
 This command will generate a `wasm1.wasm` file of approximately **1 MB** in size. The file size may vary slightly depending on the content of the functions you are compiling and any additional dependencies.
@@ -37,7 +37,7 @@ To compile specific Golang functions to WASM using TinyGo, you need to mark the 
 
 ### Example Golang Function with Export Comment
 
-Below is an example of a Golang function from the FairBlock DistributedIBE repository that includes the necessary export comment for TinyGo compilation:
+Below is an example of a Golang function from the Fairblock DistributedIBE repository that includes the necessary export comment for TinyGo compilation:
 
 ```go
 //export decrypt

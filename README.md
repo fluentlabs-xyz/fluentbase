@@ -1,8 +1,8 @@
 # Introduction to Fluentbase
 
-Fluentbase is a framework that introduces an SDK and a proving system for Fluent State Transition Functions (STF). The
+Fluentbase is a framework that introduces an SDK and a proving system for Fluent State Transition Functions (STFs). The
 framework can be used by developers to create shared applications (aka smart contracts), dedicated applications, system
-precompile contracts or just for custom STFs.
+precompiled contracts or just for custom STFs.
 
 ## Don't use on production
 
@@ -28,9 +28,9 @@ that can cause potential vulnerabilities or crashes.
     * `evm` (outdated) - repository with EVM AOT compiler.
     * `genesis` - a program for creating genesis files for Fluent L2 network with precompiled system and compatibility
       contracts.
-    * `poseidon` - library for poseidon hashing.
+    * `poseidon` - library for Poseidon hashing.
     * `revm` (migrating) - a fork of revm crate, but optimized and adapted for Fluentbase SDK methods and maps original
-      revm’s database objects into Fluentbase’s structures. It’s needed to execute evm transactions inside reth.
+      revm’s database objects into Fluentbase’s structures. It’s needed to execute EVM transactions inside Reth.
     * `runtime` - a basic execution runtime of rWASM that enables Fluentbase’s host functions.
     * `sdk` - a basic repository for developers where they can include all required types and methods to develop their
       applications. It also includes all macros, definition of entrypoint, allocator, etc.
@@ -46,12 +46,12 @@ You can run `make` command to build all contracts, examples and genesis files.
 
 Resulting files can be found in the following directories:
 
-* `crates/contracts/assets` - wasm and rwasm binaries for all precompiles, system contracts and compatability contracts.
-* `crates/genesis/assets` - reth/geth compatible genesis files with injected rwasm binaries (is used by reth).
-* `examples/*` - each folder contains `lib.wasm` and `lib.wat` files that matches compiled example bytecode.
+* `crates/contracts/assets` - WASM and rWASM binaries for all precompiles, system contracts and compatability contracts.
+* `crates/genesis/assets` - Reth/Geth compatible genesis files with injected rWASM binaries (is used by Reth).
+* `examples/*` - each folder contains `lib.wasm` and `lib.wat` files that match the compiled example bytecode.
 
-Testing includes all EVM official testing suite. This test consumes a lot of resources. We also suggest to increase Rust
-stack size to 20 mB.
+Testing includes all EVM official testing suite. This test consumes a lot of resources. We also suggest increasing the 
+Rust stack size to 20 mB.
 
 ```bash=
 RUST_MIN_STACK=20000000 cargo test --no-fail-fast
@@ -61,8 +61,8 @@ P.S: Some tests are still failing (like zktrie), but 99% of them pass.
 
 ## Examples
 
-Fluentbase can be used to develop different types of applications, in most of the cases the same interface is used. Here
-is the simplest application can be developed using Fluentbase.
+Fluentbase can be used to develop different types of applications, in most cases, the same interface is used. Here
+is the simplest application that can be developed using Fluentbase.
 
 ```rust=
 #![cfg_attr(target_arch = "wasm32", no_std)]

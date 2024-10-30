@@ -1,10 +1,10 @@
 Examples
 ========
 
-In this repository we provide examples for running apps in Fluent network.
+In this repository, we provide examples for running apps in the Fluent network.  
 All these apps are developed using Fluentbase SDK and can be proven using our circuits (coming soon).
 
-In the make file you can find commands for building apps.
+In the `Makefile` you can find commands for building apps.
 We require to install `wasm32-unknown-unknown` compilation target, WASI support is coming later.
 
 ```bash
@@ -24,13 +24,13 @@ make storage
 ```
 
 For the simplicity we store all apps inside one crate and manage its compilation using features.
-If you want to add new example into repo then don't forget to modify `Cargo.toml` and `Makefile` with you new feature.
+If you want to add a new example into repo, then don't forget to modify `Cargo.toml` and `Makefile` with you new feature.
 
 But we suggest to create new crate.
 
 ## Creating new app
 
-To create your own repository with example just create an empty crate and add fluentbase SDK dependency.
+To create your own repository with example just create an empty crate and add Fluentbase SDK dependency.
 
 ```bash
 cargo new hello_world --lib
@@ -56,12 +56,12 @@ extern "C" fn main() {
 }
 ```
 
-As you can see there two functions that must be exported with exact names:
+As you can see there are two functions that must be exported with exact names:
 
 - `deploy` - this function is called before creating app (similar to Solidity's constructor)
 - `main` - this one is getting called on each contract interaction
 
-To add Fluentbase SDK dependency add the following dep in your `Cargo.toml` file:
+To add Fluentbase SDK dependency add the following dependency in your `Cargo.toml` file:
 
 ```toml
 [dependencies]
@@ -94,7 +94,7 @@ wasm2wat target/wasm32-unknown-unknown/release/hello_world.wasm
 ## Deploy your app to the Fluent
 
 We provide a JS script for deploying apps, so before running it you must install required dependencies.
-Also make sure you have NodeJS installed.
+Also make sure you have Node.js installed.
 
 ```bash
 yarn
@@ -121,7 +121,7 @@ For example, we can also call one of existing apps, lets say `keccak256` using t
 node deploy-contract.js --dev ./bin/keccak256.wasm
 ```
 
-It returns next message `0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470` that is equal to empty
+It returns next message `0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470` which is equal to empty
 Keccak256 hash.
 
 ## Codecs and contexts

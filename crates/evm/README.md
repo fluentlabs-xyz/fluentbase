@@ -1,3 +1,3 @@
-This is an EVM -> rWASM compiler.
+This is an EVM to rWASM compiler.
 
-> The project is orphaned and not finished.
+> The project is orphaned and unfinished.
