@@ -1,6 +1,5 @@
-use client_solidity_api::{greeting_input, RouterAPIClient};
 use core::{mem::take, str::from_utf8};
-use fluentbase_codec::FluentABI;
+use fluentbase_codec::{FluentABI, SolidityABI};
 use fluentbase_core::helpers::wasm2rwasm;
 use fluentbase_genesis::{
     devnet_genesis_from_file,
@@ -46,6 +45,7 @@ use rwasm::{
     instruction_set,
     rwasm::{BinaryFormat, RwasmModule},
 };
+use std::u64;
 
 #[allow(dead_code)]
 struct EvmTestingContext {
@@ -189,7 +189,7 @@ impl<'a> TxBuilder<'a> {
         env.tx.gas_price = U256::from(1);
         env.tx.caller = caller;
         env.tx.transact_to = TransactTo::Call(callee);
-        env.tx.gas_limit = 10_000_000;
+        env.tx.gas_limit = 300_000_000;
         Self { ctx, env }
     }
 
@@ -263,6 +263,27 @@ fn deploy_evm_tx(ctx: &mut EvmTestingContext, deployer: Address, init_bytecode: 
     //     let is_rwasm = rwasm_bytecode.get(0).cloned().unwrap() == 0xef;
     //     assert!(is_rwasm);
     // }
+    contract_address
+}
+
+fn deploy_evm_tx_with_nonce(
+    ctx: &mut EvmTestingContext,
+    deployer: Address,
+    init_bytecode: Bytes,
+    nonce: u64,
+) -> Address {
+    let result = TxBuilder::create(ctx, deployer, init_bytecode.clone().into()).exec();
+    if !result.is_success() {
+        println!("{:?}", result);
+        println!(
+            "{}",
+            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
+        );
+    }
+    assert!(result.is_success());
+    let contract_address = calc_create_address::<TestingContext>(&deployer, nonce);
+    assert_eq!(contract_address, deployer.create(nonce));
+
     contract_address
 }
 
@@ -342,50 +363,59 @@ fn test_client() {
     let mut ctx = EvmTestingContext::default();
     // const DEPLOYER_ADDRESS: Address = Address::ZERO;
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
-    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(2e18));
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
 
-    // let bytecode: Bytes = include_bytes!("../../examples/client-solidity/lib.wasm").into();
+    let contract_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/router-solidity/lib.wasm").into(),
+        0,
+    );
+    println!("contract_address: {:?}", contract_address);
 
-    // let greeting_bytecode: Bytes = include_bytes!("../../examples/greeting/lib.wasm").into();
-
-    // println!("bytecode: {:?}", hex::encode(&greeting_bytecode));
-
-    let contract_address = deploy_evm_tx(
+    let client_address = deploy_evm_tx_with_nonce(
         &mut ctx,
         DEPLOYER_ADDRESS,
         include_bytes!("../../examples/client-solidity/lib.wasm").into(),
+        1,
     );
+    println!("client_address: {:?}", client_address);
 
-    println!("contract_address: {:?}", contract_address);
+    ctx.add_balance(contract_address, U256::from(10e18));
+    ctx.add_balance(client_address, U256::from(10e18));
 
-    let sdk = SharedContextImpl::new(ctx.sdk.clone());
+    println!("balances before call:");
+    println!("deployer balance: {:?}", ctx.get_balance(DEPLOYER_ADDRESS));
+    println!("contract balance: {:?}", ctx.get_balance(contract_address));
+    println!("client balance: {:?}", ctx.get_balance(client_address));
+    let client_input = hex!("f8194e48000000000000000000000000f91c20c0cafbfdc150adff51bbfc5808edde7cb5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000052080000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000b48656c6c6f20576f726c64000000000000000000000000000000000000000000");
 
-    let mut client = RouterAPIClient::new(sdk, contract_address);
+    println!("calling client...");
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        client_address,
+        client_input.into(),
+        None,
+        None,
+    );
+    println!("---------------------------------------------------------");
+    println!("balances after call:");
+    println!("deployer balance: {:?}", ctx.get_balance(DEPLOYER_ADDRESS));
+    println!("contract balance: {:?}", ctx.get_balance(contract_address));
+    println!("client balance: {:?}", ctx.get_balance(client_address));
+    println!("---------------------------------------------------------");
+    println!("{:?}", result);
 
-    let msg = "Hello, World".to_string();
-    let value = U256::from(1e6);
-    let gas_limit = 10_000_000_000;
-    let input = greeting_input(msg.clone());
-    println!("input: {:?}", input);
+    let output = result.output();
+    println!("output: {:?}", output);
+    let msg_b = result.output().unwrap();
 
-    // let ctx_input = {
-    //     let shared_ctx = SharedContextInputV1 {
-    //         block: Default::default(),
-    //         tx: Default::default(),
-    //         contract: Default::default(),
-    //     };
-    //     let mut buf = bytes::BytesMut::new();
-    //     FluentABI::encode(&shared_ctx, &mut buf, 0).unwrap();
+    let msg: String = SolidityABI::decode(msg_b, 0).unwrap();
 
-    //     buf.extend_from_slice(&input);
-    //     buf.freeze().to_vec()
-    // };
-    // let result = client.greeting(ctx_input, value, gas_limit);
+    println!("msg: {:?}", msg);
 
-    let result = client.greeting(input, value, gas_limit);
-
-    println!("result: {:?}", result);
-    assert_eq!(result, Bytes::from(msg));
+    assert_eq!(msg, "Hello World from RouterAPIClient");
 }
 
 #[test]
@@ -407,6 +437,8 @@ fn test_deploy_keccak256() {
         None,
         None,
     );
+
+    println!("{:?}", result);
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default().as_ref();
     println!("bytes: {:?}", hex::encode(&bytes));

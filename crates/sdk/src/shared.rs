@@ -51,7 +51,7 @@ pub struct SharedContextImpl<API: NativeAPI> {
 }
 
 impl<API: NativeAPI> SharedContextImpl<API> {
-    pub fn parse_from_input(native_sdk: API) -> Self {
+    pub fn new(native_sdk: API) -> Self {
         Self {
             native_sdk,
             last_fuel_consumed: Cell::new(0),
@@ -108,6 +108,7 @@ impl<API: NativeAPI> ContextFreeNativeAPI for SharedContextImpl<API> {
     }
 }
 
+/// SharedContextImpl always created from input
 impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     fn block_context(&self) -> &BlockContext {
         unsafe { &self.shared_context_ref().block }
