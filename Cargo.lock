@@ -1250,6 +1250,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1462739cb27611015575c0c11df5df7601141071f07518d56fcc1be504cbec97"
 
 [[package]]
+name = "client-solidity"
+version = "0.1.0"
+dependencies = [
+ "alloy-sol-types 0.8.9",
+ "fluentbase-codec",
+ "fluentbase-sdk",
+ "hex",
+ "hex-literal",
+]
+
+[[package]]
 name = "cobs"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

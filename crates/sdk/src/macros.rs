@@ -5,7 +5,7 @@ macro_rules! basic_entrypoint {
         #[no_mangle]
         extern "C" fn deploy() {
             use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
-            let mut sdk = SharedContextImpl::parse_from_input(RwasmContext {});
+            let mut sdk = SharedContextImpl::new(RwasmContext {});
             let mut app = $struct_typ::new(sdk);
             app.deploy();
             app.sdk.commit_changes_and_exit();
@@ -14,7 +14,7 @@ macro_rules! basic_entrypoint {
         #[no_mangle]
         extern "C" fn main() {
             use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
-            let mut sdk = SharedContextImpl::parse_from_input(RwasmContext {});
+            let mut sdk = SharedContextImpl::new(RwasmContext {});
             let mut app = $struct_typ::new(sdk);
             app.main();
             app.sdk.commit_changes_and_exit();

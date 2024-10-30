@@ -1,8 +1,7 @@
 use crate::contract::impl_derive_contract;
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
 use proc_macro_error::{abort, proc_macro_error};
-use quote::{quote, ToTokens};
+use quote::quote;
 
 mod contract;
 mod solidity_storage;
