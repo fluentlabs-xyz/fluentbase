@@ -86,7 +86,6 @@ const fn is_power_of_two(n: usize) -> bool {
     n != 0 && (n & (n - 1)) == 0
 }
 
-#[allow(unused_assignments)]
 macro_rules! impl_encoder_for_tuple {
     ($($T:ident),+; $($idx:tt),+; $is_solidity:expr) => {
         impl<B: ByteOrder, const ALIGN: usize, $($T,)+> Encoder<B, {ALIGN}, $is_solidity> for ($($T,)+)
@@ -157,6 +156,8 @@ macro_rules! impl_encoder_for_tuple {
                     )+
                 }
 
+                let _ = current_offset;
+
                 Ok(())
             }
 
@@ -185,12 +186,12 @@ macro_rules! impl_encoder_for_tuple {
                     &buf.chunk()[offset..]
                 };
 
-                let mut current_offset = 0;
+                let mut _current_offset = 0;
 
                 Ok(($(
                     {
-                        let value = $T::decode(&tmp, current_offset)?;
-                        current_offset += if $T::IS_DYNAMIC && $is_solidity {
+                        let value = $T::decode(&tmp, _current_offset)?;
+                        _current_offset += if $T::IS_DYNAMIC && $is_solidity {
                            word_size
                         } else {
                             align_up::<ALIGN>($T::HEADER_SIZE)
@@ -200,7 +201,7 @@ macro_rules! impl_encoder_for_tuple {
                 )+))
             }
 
-            fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
+            fn partial_decode(_buf: &impl Buf, _offset: usize) -> Result<(usize, usize), CodecError> {
                Ok((0,0))
             }
         }
