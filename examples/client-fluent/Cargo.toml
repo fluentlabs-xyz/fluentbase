@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "fluentbase-example-client-solidity"
+name = "fluentbase-example-client-fluent"
 version = "0.1.0"
 
 [dependencies]

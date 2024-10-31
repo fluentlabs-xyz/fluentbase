@@ -103,7 +103,7 @@ impl Route {
         })
     }
 
-    fn from_trait_fn(method: &TraitItemFn) -> Result<Self> {
+    pub fn from_trait_fn(method: &TraitItemFn) -> Result<Self> {
         let parameters = MethodParameter::from_trait_fn(method);
         let return_types = Self::extract_return_types(&method.sig.output);
         let fn_name = str_to_camel_case(&method.sig.ident.to_string());
@@ -371,7 +371,7 @@ impl MethodParameter {
             .collect()
     }
 
-    fn from_trait_fn(method: &TraitItemFn) -> Vec<Self> {
+    pub fn from_trait_fn(method: &TraitItemFn) -> Vec<Self> {
         method
             .sig
             .inputs

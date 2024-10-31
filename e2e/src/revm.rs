@@ -359,9 +359,8 @@ fn test_deploy_greeting() {
 }
 
 #[test]
-fn test_client() {
+fn test_client_solidity() {
     let mut ctx = EvmTestingContext::default();
-    // const DEPLOYER_ADDRESS: Address = Address::ZERO;
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
 
@@ -384,11 +383,7 @@ fn test_client() {
     ctx.add_balance(contract_address, U256::from(10e18));
     ctx.add_balance(client_address, U256::from(10e18));
 
-    println!("balances before call:");
-    println!("deployer balance: {:?}", ctx.get_balance(DEPLOYER_ADDRESS));
-    println!("contract balance: {:?}", ctx.get_balance(contract_address));
-    println!("client balance: {:?}", ctx.get_balance(client_address));
-    let client_input = hex!("f8194e48000000000000000000000000f91c20c0cafbfdc150adff51bbfc5808edde7cb5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000052080000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000b48656c6c6f20576f726c64000000000000000000000000000000000000000000");
+    let client_input = hex!("f60ea708000000000000000000000000f91c20c0cafbfdc150adff51bbfc5808edde7cb5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000052080000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000b48656c6c6f20576f726c64000000000000000000000000000000000000000000");
 
     println!("calling client...");
     let result = call_evm_tx(
@@ -399,13 +394,8 @@ fn test_client() {
         None,
         None,
     );
-    println!("---------------------------------------------------------");
-    println!("balances after call:");
-    println!("deployer balance: {:?}", ctx.get_balance(DEPLOYER_ADDRESS));
-    println!("contract balance: {:?}", ctx.get_balance(contract_address));
-    println!("client balance: {:?}", ctx.get_balance(client_address));
-    println!("---------------------------------------------------------");
-    println!("{:?}", result);
+
+    assert_eq!(result.is_success(), true);
 
     let output = result.output();
     println!("output: {:?}", output);
@@ -413,9 +403,53 @@ fn test_client() {
 
     let msg: String = SolidityABI::decode(msg_b, 0).unwrap();
 
-    println!("msg: {:?}", msg);
+    assert_eq!(msg, "Hello World");
+}
+#[test]
+fn test_client_fluent() {
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
 
-    assert_eq!(msg, "Hello World from RouterAPIClient");
+    let contract_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/router-fluent/lib.wasm").into(),
+        0,
+    );
+    println!("contract_address: {:?}", contract_address);
+
+    let client_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/client-fluent/lib.wasm").into(),
+        1,
+    );
+    println!("client_address: {:?}", client_address);
+
+    ctx.add_balance(contract_address, U256::from(10e18));
+    ctx.add_balance(client_address, U256::from(10e18));
+
+    let client_input = hex!("f60ea708f91c20c0cafbfdc150adff51bbfc5808edde7cb500000000000000000000000000000000000000000000000000000000000000000852000000000000440000000b00000048656c6c6f20576f726c6400");
+
+    println!("calling client...");
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        client_address,
+        client_input.into(),
+        None,
+        None,
+    );
+
+    assert_eq!(result.is_success(), true);
+
+    let output = result.output();
+    let msg_b = result.output().unwrap();
+
+    let msg: String = FluentABI::decode(msg_b, 0).unwrap();
+
+    assert_eq!(msg, "Hello World");
 }
 
 #[test]

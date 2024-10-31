@@ -512,7 +512,7 @@ mod tests {
         assert_eq!(original, decoded);
     }
     #[test]
-    fn test_string_encoding() {
+    fn test_string_encoding_solidity() {
         let original = "Hello, World!!".to_string();
         let mut buf = BytesMut::new();
         <String as Encoder<BigEndian, 32, true>>::encode(&original, &mut buf, 0).unwrap();
@@ -526,6 +526,24 @@ mod tests {
         assert_eq!(hex::encode(&encoded), expected_encoded);
 
         let decoded = <String as Encoder<BigEndian, 32, true>>::decode(&encoded, 0).unwrap();
+
+        assert_eq!(original, decoded);
+    }
+    #[test]
+    fn test_string_encoding_fluent() {
+        let original = "Hello, World!!".to_string();
+        let mut buf = BytesMut::new();
+        <String as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+
+        let encoded = buf.freeze();
+
+        println!("Encoded String: {}", hex::encode(&encoded));
+
+        let expected_encoded = "080000000e00000048656c6c6f2c20576f726c6421210000";
+
+        assert_eq!(hex::encode(&encoded), expected_encoded);
+
+        let decoded = <String as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }

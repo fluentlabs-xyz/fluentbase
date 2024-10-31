@@ -1,23 +1,13 @@
-use crate::{
-    args::RouterArgs,
-    codec::CodecGenerator,
-    function_id::FunctionIDAttribute,
-    mode::RouterMode,
-    route::{MethodParameter, Route},
-};
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use crate::{args::RouterArgs, function_id::FunctionIDAttribute, mode::RouterMode, route::Route};
+use convert_case::{Case, Casing};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
-    parse_quote,
     Attribute,
-    FnArg,
-    Ident,
     Result,
-    ReturnType,
     TraitItem,
     TraitItemFn,
-    Type,
 };
 
 pub struct ClientMethod {
@@ -27,76 +17,122 @@ pub struct ClientMethod {
 
 impl ClientMethod {
     fn new(method: &TraitItemFn, mode: RouterMode) -> Result<Self> {
-        // Convert TraitItemFn to ImplItemFn for Route compatibility
-        let impl_method: syn::ImplItemFn = parse_quote! {
-            #[doc(hidden)]
-            pub #method
-        };
+        let attrs = &method.attrs;
 
-        let mut route = Route::new(&impl_method)?;
+        let mut route = Route::from_trait_fn(method)?;
 
-        // Process function_id attributes if present
-        for attr in &method.attrs {
+        for attr in attrs {
             if attr.path().is_ident("function_id") {
-                let function_id_attr = attr.parse_args::<FunctionIDAttribute>()?;
-                route.function_id_attr = Some(function_id_attr);
-                break;
+                route.function_id_attr = Some(attr.parse_args::<FunctionIDAttribute>()?);
             }
         }
 
         Ok(ClientMethod { route, mode })
     }
 
-    fn generate_method_impl(&self) -> TokenStream2 {
-        let sdk_crate_name = if std::env::var("CARGO_PKG_NAME").unwrap() == "fluentbase-sdk" {
-            quote! { crate }
-        } else {
-            quote! { fluentbase_sdk }
-        };
+    fn generate_codecs(&self) -> TokenStream2 {
+        self.route.generate_codec_impl(&self.mode)
+    }
 
-        let sig = self.route.sig();
-        let fn_name = &sig.ident;
-        let selector = &self.route.function_id;
+    fn generate_helpers(&self) -> TokenStream2 {
+        let fn_name = &self.route.sig().ident;
 
-        // Generate codec implementation
-        let codec = self.route.generate_codec_impl(&self.mode);
+        let param_names = self
+            .route
+            .args
+            .iter()
+            .map(|arg| &arg.ident)
+            .collect::<Vec<_>>();
+        let param_types = self
+            .route
+            .args
+            .iter()
+            .map(|arg| &arg.ty)
+            .collect::<Vec<_>>();
 
-        let param_names = self.route.args.iter().map(|arg| &arg.ident);
-        let call_struct = format_ident!("{}Call", self.route.fn_name);
-        let return_struct = format_ident!("{}Return", self.route.fn_name);
+        let return_types = &param_types;
 
-        // Generate the actual method implementation
-        let method_impl = quote! {
-            #sig {
-                let mut input = ::alloc::vec![0u8; 4];
-                input.copy_from_slice(&[#(#selector,)*]);
+        let fn_name_str = fn_name.to_string();
+        let encode_name = format_ident!("encode_{}", fn_name_str);
+        let decode_name = format_ident!("decode_{}", fn_name_str);
 
-                let _call = #call_struct::new((#(#param_names,)*));
-                input.extend(call.encode());
+        let pascal_name = self.route.fn_name.to_case(Case::Pascal);
+        let call_struct = format_ident!("{}Call", pascal_name);
 
-                // let (result, exit_code) = self.sdk.contracts.call_system_contract(
-                //     &self.address,
-                //     &input,
-                //     self.fuel
-                // );
-
-                // if exit_code != 0 {
-                //     panic!("call failed with exit code: {}", exit_code);
-                // }
-
-                // if !result.is_empty() {
-                //     #return_struct::decode(&result)
-                //         .expect("failed to decode result")
-                //         .0
-                // } else {
-                //     Default::default()
-                // }
-            }
-        };
+        // TODO: d1r1 - add return struct
+        let return_struct = format_ident!("{}Return", pascal_name);
 
         quote! {
-            #codec
-            #method_impl
+            pub fn #encode_name(
+                &self,
+                #(#param_names: #param_types,)*
+            ) -> fluentbase_sdk::Bytes {
+                 #call_struct::new((#(#param_names,)*)).encode().into()
+            }
+
+            pub fn #decode_name(
+                &self,
+                output: fluentbase_sdk::Bytes
+            ) -> (#(#return_types,)*) {
+                #call_struct::decode(&output)
+                    .expect("failed to decode result")
+                    .0
+            }
+        }
+    }
+
+    fn generate_implementation(&self) -> TokenStream2 {
+        let fn_name = &self.route.sig().ident;
+        let param_names = self
+            .route
+            .args
+            .iter()
+            .map(|arg| &arg.ident)
+            .collect::<Vec<_>>();
+
+        let param_types = self
+            .route
+            .args
+            .iter()
+            .map(|arg| &arg.ty)
+            .collect::<Vec<_>>();
+        let return_types = &param_types;
+
+        let fn_name_str = fn_name.to_string();
+        let encode_name = format_ident!("encode_{}", fn_name_str);
+        let decode_name = format_ident!("decode_{}", fn_name_str);
+
+        quote! {
+            pub fn #fn_name(
+                &mut self,
+                contract_address: fluentbase_sdk::Address,
+                value: fluentbase_sdk::U256,
+                gas_limit: u64,
+                #(#param_names: #param_types,)*
+            ) -> (#(#return_types,)*) {
+                let input = self.#encode_name(#(#param_names,)*);
+
+                let tx_context = self.sdk.tx_context();
+                if tx_context.value < value {
+                    ::core::panic!("insufficient funds");
+                }
+                if tx_context.gas_limit < gas_limit {
+                    ::core::panic!("insufficient gas");
+                }
+
+                let (output, exit_code) = self.sdk.call(
+                    contract_address,
+                    value,
+                    &input,
+                    gas_limit
+                );
+
+                if exit_code != 0 {
+                    ::core::panic!("call failed");
+                }
+
+                self.#decode_name(output)
+            }
         }
     }
 }
@@ -122,14 +158,8 @@ impl Parse for ClientGenerator {
 
 impl ClientGenerator {
     fn generate_client(&self) -> TokenStream2 {
-        let sdk_crate_name = if std::env::var("CARGO_PKG_NAME").unwrap() == "fluentbase-sdk" {
-            quote! { crate }
-        } else {
-            quote! { fluentbase_sdk }
-        };
-
         let trait_name = &self.trait_ast.ident;
-        let client_name = self.get_client_name();
+        let client_name = format_ident!("{}Client", trait_name);
 
         let methods = self
             .trait_ast
@@ -145,64 +175,41 @@ impl ClientGenerator {
             .collect::<Result<Vec<_>>>()
             .unwrap_or_default();
 
-        let method_impls = methods.iter().map(|method| method.generate_method_impl());
+        let codecs = methods.iter().map(|method| method.generate_codecs());
+        let helpers = methods.iter().map(|method| method.generate_helpers());
+        let implementations = methods
+            .iter()
+            .map(|method| method.generate_implementation());
 
         quote! {
-            #[derive(Debug)]
-            pub struct #client_name {
-                pub address: #sdk_crate_name::Address,
-                pub sdk: #sdk_crate_name::SDK,
-                pub fuel: u32,
+            // Client structure
+            pub struct #client_name<SDK> {
+                pub sdk: SDK,
             }
 
-            impl #client_name {
-                pub fn new(
-                    address: #sdk_crate_name::Address,
-                    sdk: #sdk_crate_name::SDK
-                ) -> impl #trait_name {
-                    Self {
-                        address,
-                        sdk,
-                        fuel: u32::MAX,
-                    }
+            // Codec implementations
+            #(#codecs)*
+
+            // Helper functions
+            impl<SDK: fluentbase_sdk::SharedAPI> #client_name<SDK> {
+                pub fn new(sdk: SDK) -> Self {
+                    Self { sdk }
                 }
 
-                pub fn with_fuel(
-                    address: #sdk_crate_name::Address,
-                    sdk: #sdk_crate_name::SDK,
-                    fuel: u32
-                ) -> impl #trait_name {
-                    Self {
-                        address,
-                        sdk,
-                        fuel,
-                    }
-                }
+                #(#helpers)*
             }
 
-            impl #trait_name for #client_name {
-                #(#method_impls)*
+            // Main interface implementation
+            impl<SDK: fluentbase_sdk::SharedAPI> #client_name<SDK> {
+                #(#implementations)*
             }
         }
-    }
-
-    fn get_client_name(&self) -> Ident {
-        let mut ident_name = self.trait_ast.ident.to_string();
-        if ident_name.ends_with("API") {
-            ident_name = ident_name.trim_end_matches("API").to_string();
-        }
-        Ident::new(&format!("{}Client", ident_name), Span::call_site())
     }
 }
 
 impl ToTokens for ClientGenerator {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
-        let trait_ast = &self.trait_ast;
         let client_impl = self.generate_client();
-
-        tokens.extend(quote! {
-            #trait_ast
-            #client_impl
-        });
+        tokens.extend(client_impl);
     }
 }
