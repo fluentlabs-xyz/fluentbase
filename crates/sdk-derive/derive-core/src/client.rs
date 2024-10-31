@@ -19,7 +19,7 @@ impl ClientMethod {
     fn new(method: &TraitItemFn, mode: RouterMode) -> Result<Self> {
         let attrs = &method.attrs;
 
-        let mut route = Route::from_trait_fn(method)?;
+        let mut route = Route::try_from(method)?;
 
         for attr in attrs {
             if attr.path().is_ident("function_id") {
@@ -58,9 +58,6 @@ impl ClientMethod {
 
         let pascal_name = self.route.fn_name.to_case(Case::Pascal);
         let call_struct = format_ident!("{}Call", pascal_name);
-
-        // TODO: d1r1 - add return struct
-        let return_struct = format_ident!("{}Return", pascal_name);
 
         quote! {
             pub fn #encode_name(

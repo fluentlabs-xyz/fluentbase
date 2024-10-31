@@ -5,10 +5,10 @@ mod syscall;
 mod util;
 mod wasm;
 use crate::{debug_log, helpers::evm_error_from_exit_code, types::NextAction};
-use alloc::{boxed::Box, str::from_utf8};
-use alloy_rlp::{encode, BytesMut};
+use alloc::boxed::Box;
+use alloy_rlp::BytesMut;
 use fluentbase_sdk::{
-    codec::{Encoder, FluentABI, FluentEncoder},
+    codec::FluentABI,
     env_from_context,
     Account,
     AccountStatus,

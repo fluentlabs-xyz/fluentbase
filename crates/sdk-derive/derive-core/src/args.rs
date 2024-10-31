@@ -1,9 +1,7 @@
 use crate::{error::RouterError, mode::RouterMode};
-use proc_macro2::TokenStream as TokenStream2;
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
-    spanned::Spanned,
     Expr,
     ExprLit,
     Lit,

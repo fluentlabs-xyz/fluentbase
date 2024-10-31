@@ -44,7 +44,7 @@ pub fn client(args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn function_id(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn function_id(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 

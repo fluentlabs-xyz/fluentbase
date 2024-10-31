@@ -1,90 +1,293 @@
-# Solidity router example
+# SDK Derive Macros
 
-This example shows how to use solidity_router macro.
+This documentation covers two main macros for building Solidity-compatible smart contracts in Rust: `router` and `client`. These macros enable seamless interaction with Solidity-style contracts in a no_std environment.
 
-## Solidity Router  macro
+- [SDK Derive Macros](#sdk-derive-macros)
+  - [Router Macro](#router-macro)
+    - [Key Features](#key-features)
+    - [Encoding Modes](#encoding-modes)
+    - [Function ID Definition and Validation](#function-id-definition-and-validation)
+      - [Specifying Function IDs](#specifying-function-ids)
+      - [Validation System](#validation-system)
+        - [How Validation Works](#how-validation-works)
+        - [Disabling Validation](#disabling-validation)
+        - [Error Messages](#error-messages)
+    - [Method Visibility](#method-visibility)
+      - [Trait Implementation](#trait-implementation)
+      - [Direct Implementation](#direct-implementation)
+    - [Special Methods](#special-methods)
+    - [Testing](#testing)
+    - [Arguments and Types](#arguments-and-types)
+      - [Type Mappings](#type-mappings)
+      - [Basic Usage](#basic-usage)
+      - [Using Structures](#using-structures)
+  - [Client Macro](#client-macro)
+    - [Key Features](#key-features-1)
+    - [Encoding Modes](#encoding-modes-1)
+    - [Example](#example)
+    - [Common Features for Both Macros](#common-features-for-both-macros)
 
-In Fluentbase, interfacing with a contract is streamlined through the use of the `main` function, which acts as the
-primary entry point for all contract interactions. To communicate with a contract, transactions must include input data,
-comprised of a function selector and its corresponding arguments. The function selector is derived as the first 4 bytes
-of the keccak256 hash of the function's signature, while arguments are formatted according to the Solidity ABI standard.
+## Router Macro
 
-Upon receiving a transaction, the `main` function is triggered. It carries the responsibilities of decoding the input
-data, routing the call to the appropriate function within the contract, and encoding the result before sending it back.
+The `router` macro provides a streamlined way to handle Solidity-compatible contract interactions. In Fluentbase, all contract interactions go through a `main` function that serves as the primary entry point. Each transaction includes:
 
-To alleviate the repetitive nature of writing such entry point logic manually, Fluentbase provides a macro
-called `solidity_router`. This macro automates the generation of boilerplate code needed for the dispatch mechanism. By
-supplying a list of functions, the `solidity_router` macro not only creates the necessary routing logic but also handles
-argument decoding, function invocation, and result encoding seamlessly. For instance, the following implementation will
-result in automatic generation of the essential code structure for function calls. This setup significantly reduces
-manual overhead and potential for error, allowing developers to focus more on the core logic of their smart contracts.
+- A function selector (first 4 bytes of the keccak256 hash of the function signature)
+- Function arguments (formatted according to the Solidity ABI standard)
 
-## Key Features
+When a transaction is received:
 
-- **Automatic function routing**: The `solidity_router` macro generates the necessary code to route function calls based
-  on the function selector.
-- **Argument decoding**: The macro automatically decodes function arguments according to the Solidity ABI standard.
-- **Result encoding**: The macro encodes the result of a function call before sending it back to the caller.
-- **Function ID calculation**: The function ID can be passed as an attribute to the function, allowing for custom
-  function IDs.
-- **Solidity signature support**: The function ID can also be passed as a Solidity signature, enabling the use of
-  function signatures for routing.
-- **Fallback function support**: If original trait has a function with the name `fallback`, it will be used as a
-  fallback function.
-- **Error handling**: The macro includes basic error handling for unknown function selectors.
+1. The `main` function is triggered
+2. Input data is decoded
+3. Call is routed to the appropriate function
+4. Result is encoded and returned
 
-## Usage
-
-Router supports 2 modes - `solidity` and `fluent`. The main logic the same for both modes, but the way how we decode
-arguments is different.
-
-We are using [fluent codec](https://github.com/fluentlabs-xyz/codec2). This codec also supports 2 modes:
-
-- `solidity` - fully compatitable with SolidityABI
-- `fluent` - compact codec, that very similar to SolidityABI, but it has some differences. For example, the word size is
-  4 bytes instead of 32. See [fluent codec](https://github.com/fluentlabs-xyz/codec2) for more details.
-
-`examples/router-solidity` - shows how to use `router` macro in `solidity` mode.
-`examples/router-wasm` - shows how to use `router` macro in `fluent` mode.
-
-### FAQ
-
-#### How function_id is calculated?
-
-The function ID can be passed as an attribute `function_id`:
+The `router` macro automates this entire process, generating all necessary boilerplate code for the dispatch mechanism.
 
 ```rust
-#[function_id = "0x12345678"]
-fn foo(&self, a: u32, b: u32) -> u32 {
-    a + b
+#[derive(Contract)]
+struct ROUTER<SDK> {
+    sdk: SDK,
+}
+
+pub trait RouterAPI {
+    fn greeting(&self, message: String) -> String;
+}
+
+#[router(mode = "solidity")]
+impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
+    #[function_id("greeting(string)")]
+    fn greeting(&self, message: String) -> String {
+        message
+    }
+}
+
+basic_entrypoint!(ROUTER);
+```
+
+### Key Features
+
+- **Automatic Function Routing**: Generates code to route function calls based on function selectors
+- **Argument Handling**: Automatic decoding of function arguments and encoding of results
+- **Function ID Support**:
+  - Custom function IDs via attributes
+  - Solidity signature-based function IDs
+- **Fallback Support**: Optional fallback function for unmatched selectors
+- **Error Handling**: Built-in handling for unknown function selectors
+
+### Encoding Modes
+
+The router supports two modes of operation:
+
+1. **Solidity Mode**:
+
+```rust
+#[router(mode = "solidity")]
+```
+
+- Full Solidity ABI compatibility
+- Standard 32-byte word size
+- Complete Ethereum compatibility
+
+2. **Fluent Mode**:
+
+```rust
+#[router(mode = "fluent")]
+```
+
+- Compact encoding format
+- 4-byte word size
+- Optimized for space efficiency
+
+### Function ID Definition and Validation
+
+The router macro supports function identification through custom attributes with built-in validation. The function ID is a 4-byte selector that identifies the function in the contract.
+
+#### Specifying Function IDs
+
+Function IDs can be specified in three ways:
+
+1. **Solidity Signature**:
+
+```rust
+#[function_id = "transfer(address,uint256)"]
+fn transfer(&self, to: Address, amount: U256) -> bool {
+    // implementation
 }
 ```
 
-You can pass function ID as a solidity signature as well. Keep in mind that the function signature should be in the
-short format `function_name(type1,type2,...)`. For example:
+2. **Direct Hex Value**:
 
 ```rust
-#[function_id = "foo(uint32,uint32)"]
-fn foo(&self, a: u32, b: u32) -> u32 {
-    a + b
+#[function_id = "0xa9059cbb"]
+fn transfer(&self, to: Address, amount: U256) -> bool {
+    // implementation
 }
 ```
 
-> **NOTE:** Function ID used only for routing. So the amount of the arguments in the signature and actual method may
-> differ. To figure out of how we decode method arguments see section below.
-
-#### How arguments are decoded?
-
-For most cases it's pretty simple. We can use as arguments any type that implements `SolidityType` + `Encoder` traits.
-For example, if we have a function with the following signature:
+3. **Raw Byte Array**:
 
 ```rust
-fn foo(&self, a: Address, b: Bytes) -> U256 {
-    // some code
+#[function_id = [169, 5, 156, 187]] // Equivalent to 0xa9059cbb
+fn transfer(&self, to: Address, amount: U256) -> bool {
+    // implementation
 }
 ```
 
-The function ID is calculated as `foo(address,bytes)`. So to decode arguments we need to make a simple mapping:
+#### Validation System
+
+The validation system ensures that the specified function ID matches the one calculated from the function signature. This helps prevent routing errors and maintains consistency between your Rust implementation and Solidity interface.
+
+```rust
+// With validation (default)
+#[function_id("transfer(address,uint256)", validate(true))]
+
+// Without validation
+#[function_id("transfer(address,uint256)", validate(false))]
+```
+
+##### How Validation Works
+
+1. When validation is enabled (default behavior), the macro:
+   - Takes the specified function ID from the attribute
+   - Calculates the expected function ID by:
+     - Taking the Solidity-style signature of the function
+     - Computing the Keccak256 hash of the signature
+     - Using the first 4 bytes as the function selector
+   - Compares the specified ID with the calculated one
+   - Generates a compile-time error if they don't match
+
+For example:
+
+```rust
+// This will compile because the ID matches the signature
+#[function_id("transfer(address,uint256)")] // ID: 0xa9059cbb
+fn transfer(&self, to: Address, amount: U256) -> bool { ... }
+
+// This will also compile because the hex value matches the calculated ID
+#[function_id("0xa9059cbb")] // Manually specified ID matching transfer(address,uint256)
+fn transfer(&self, to: Address, amount: U256) -> bool { ... }
+
+// This will fail compilation because the ID doesn't match the signature
+#[function_id("0x12345678")] // Wrong ID for transfer function
+fn transfer(&self, to: Address, amount: U256) -> bool { ... }
+```
+
+##### Disabling Validation
+
+You might want to disable validation when:
+
+- Implementing custom routing logic
+- Matching an existing contract with different function signatures
+- Testing different selector scenarios
+
+```rust
+ #[function_id("transfer(string)", validate(false))]
+fn greeting(&self, message: String) -> String {
+    message
+}
+```
+
+##### Error Messages
+
+When validation fails:
+
+```rust
+ #[function_id("transfer(string)")]
+fn greeting(&self, message: String) -> String {
+    message
+}
+```
+
+You'll see compile-time errors like:
+
+```md
+Failed to parse method 'greeting': Function ID mismatch for signature 'greeting(string)'. Expected [160, 37, 141, 11], calculated [248, 25, 78, 72]
+```
+
+This helps catch potential routing issues early in the development process.
+
+### Method Visibility
+
+The router macro handles methods differently depending on whether you're implementing a trait or writing standalone implementation:
+
+#### Trait Implementation
+
+When implementing a trait, all trait methods are included in routing:
+
+```rust
+pub trait RouterAPI {
+    fn transfer(&self, params: TransferParams) -> TransferParams;
+}
+
+#[router(mode = "solidity")]
+impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
+    #[function_id("transfer((address,uint256,bytes))")]
+    fn transfer(&self, params: TransferParams) -> TransferParams {
+        params
+    }
+}
+```
+
+#### Direct Implementation
+
+When using direct implementation (without a trait), only public methods are included in routing:
+
+```rust
+#[router(mode = "solidity")]
+impl<SDK: SharedAPI> ROUTER<SDK> {
+    // ✅ Will be included in routing (public)
+    #[function_id("transfer((address,uint256,bytes))")]
+    pub fn transfer(&self, params: TransferParams) -> TransferParams {
+        params
+    }
+
+    // ❌ Won't be included (not public)
+    #[function_id("private_method()")]
+    fn private_method(&self) -> bool {
+        true
+    }
+
+    // ❌ Won't be included (special method)
+    fn deploy(&self) {
+        // deployment logic
+    }
+}
+```
+
+### Special Methods
+
+Regardless of implementation type:
+
+- `deploy` method is excluded from routing (used for deployment logic)
+- `fallback` method is used as fallback handler if present
+
+### Testing
+
+You can find examples of the `router` macro in the `examples/router-solidity` and `examples/router-fluent` directories.
+
+```rust
+#[test]
+fn test_contract_works() {
+    let message = "Hello World".to_string();
+    let greeting_call = GreetingCall::new((message.clone(),));
+    let input = greeting_call.encode();
+
+    let sdk = TestingContext::empty().with_input(input);
+    let mut router = ROUTER::new(JournalState::empty(sdk.clone()));
+    router.deploy();
+    router.main();
+
+    let encoded_output = &sdk.take_output();
+    let output = GreetingReturn::decode(&encoded_output.as_slice()).unwrap();
+    assert_eq!(output.0.0, message);
+}
+```
+
+### Arguments and Types
+
+The router macro supports automatic type conversion between Solidity and Rust types. Any type that implements both `SolidityType` and `Encoder` traits can be used as an argument.
+
+#### Type Mappings
 
 | Solidity Type | Rust Type        | Notes                                                       |
 |---------------|------------------|-------------------------------------------------------------|
@@ -100,40 +303,92 @@ The function ID is calculated as `foo(address,bytes)`. So to decode arguments we
 | enum          | Enum             | Custom type                                                 |
 | mapping       | HashMap<K, V>    | Not directly translatable, use an equivalent data structure |
 
-you can access fooCall::SELECTOR and fooCall:Signature to ensure that it looks like what you expect.
-
-Sometimes it's can be a bit tricky. For example, if we have a function with the following signature:
-
-TODO:
+#### Basic Usage
 
 ```rust
-type fooCall = (u32,u32,);
-let decoded_result = SolidityABI::<fooCall>::decode(&data_input, 0);
+#[router(mode = "solidity")]
+impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
+    // Basic types
+    fn transfer(&self, to: Address, amount: U256) -> bool;
+
+    // Strings and bytes
+    fn message(&self, text: String, data: Bytes) -> String;
+
+    // Arrays
+    fn batch_transfer(&self, recipients: Vec<Address>, amounts: Vec<U256>) -> bool;
+}
 ```
 
-#### How to map Solidity Type to Rust or what should I use as arguments for contract methods?
+#### Using Structures
 
-Short answer that you can use any type that implements `SolidityType` + `Encoder` traits.
+!NOT SUPPORTED YET!
+<!-- You can use custom structures as param inputs. But, right now we don't support correct function_id derivation for structures. So, you need to manually specify the function_id and set validate to false.
 
-The mapping is pretty straightforward:
+```rust
+#[derive(Clone, Debug, Codec)]
+pub struct TransferParams {
+    pub to: Address,
+    pub amount: U256,
+    pub data: Vec<u8>,
+}
 
-## Macro tips
+#[router(mode = "solidity")]
+impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
+    #[function_id("transfer((address,uint256,bytes))", validate(false))]
+    fn transfer(&self, params: TransferParams) -> bool {
+        // Implementation
+    }
+}
+``` -->
 
-| To               | From                    | Method                                                        |
-|------------------|-------------------------|---------------------------------------------------------------|
-| string of code   | literal code            | `std::stringify!{}`                                           |
-| string of code   | syntax tree             | `!quote(#syntax_tree).to_string()`                            |
-| string of code   | TokenStream             | `.to_string()`                                                |
-| string of syntax | literal code            | `format!("{:?}",parse2::<SynType>(quote! {...}).expect(...))` |
-| string of syntax | syntax tree             | `format!("{:?}",…), format!("{:#?}",…)`                       |
-| string of tokens | literal code            | `format!("{:?}",quote! {...})`                                |
-| string of tokens | TokenStream             | `format!("{:?}",…), format!("{:#?}",…)`                       |
-| syn::Error       | TokenStream             | `.to_compile_error()` [см. Правило #7]                        |
-| syntax tree      | literal code            | `parse_quote!(…)`                                             |
-| syntax tree      | proc_macro::TokenStream | `parse_macro_input!(…), parse`                                |
-| syntax tree      | string of code          | `parse_str(…)`                                                |
-| syntax tree      | TokenStream             | `parse2::<SynType>(…), etc`                                   |
-| TokenStream      | literal code            | `quote!(…)`                                                   |
-| TokenStream      | string of code          | `parse_str(…)`                                                |
-| TokenStream      | syntrax tree            | `quote!(#syntax_tree)` или `.to_token_stream(),`              |
-| TokenStream      | TokenStream             | `.into(), ::from(...)` [см. Правило #1]                       |
+## Client Macro
+
+The `client` macro generates type-safe client code for interacting with Solidity-compatible smart contracts. It handles both contract interface and implementation requirements, simplifying encoding and decoding of function calls and supporting no_std environments.
+
+### Key Features
+
+- **Seamless ABI Encoding/Decoding**: Automatically formats data for Solidity ABI.
+- **Gas and Value Management**: Provides options for managing gas limits and value transfers.
+- **Function ID Support**:
+  - Allows both custom function IDs and Solidity signature-based selectors.
+- **Deployment Handling**: Optional support for deployment logic.
+
+### Encoding Modes
+
+The client macro supports two encoding modes:
+
+1. **Solidity Mode**: Ensures full Solidity ABI compatibility for Ethereum.
+2. **Fluent Mode**: Offers a compact encoding format optimized for space efficiency.
+
+### Example
+
+```rust
+#[client(mode = "solidity")]
+trait ContractAPI {
+    #[function_id("greeting(string)", validate(false))]
+    fn greeting(&mut self, message: String) -> String;
+}
+
+impl<SDK: SharedAPI> ContractAPIClient<SDK> {
+    pub fn greeting_client(
+        &mut self,
+        contract_address: Address,
+        value: U256,
+        gas_limit: u64,
+        message: String,
+    ) -> String {
+        self.greeting(contract_address, value, gas_limit, message).0
+    }
+
+    pub fn deploy(&self) {
+        // deployment logic
+    }
+}
+
+basic_entrypoint!(ContractAPIClient);
+```
+
+### Common Features for Both Macros
+
+- **Encoding Modes**: Both macros support Solidity and Fluent modes for ABI handling.
+- **Function ID Options**: Enable custom function IDs with optional validation.

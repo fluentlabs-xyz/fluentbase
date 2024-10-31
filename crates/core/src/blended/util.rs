@@ -1,6 +1,6 @@
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
-    codec::{Encoder, FluentEncoder},
+    codec::FluentEncoder,
     Bytes,
     SharedContextInputV1,
     SysFuncIdx,

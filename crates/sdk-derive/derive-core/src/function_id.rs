@@ -25,7 +25,7 @@ pub struct FunctionIDAttribute {
 
 /// Represents different ways to specify a function identifier.
 #[derive(Debug, Clone)]
-enum FunctionIDType {
+pub enum FunctionIDType {
     /// Function signature (e.g., "transfer(address,uint256)")
     Signature(String),
     /// Hexadecimal representation (e.g., "0x12345678")

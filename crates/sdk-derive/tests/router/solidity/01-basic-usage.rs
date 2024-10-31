@@ -4,7 +4,7 @@ extern crate fluentbase_sdk;
 use alloc::string::String;
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{router, Contract},
+    derive::{function_id, router, Contract},
     SharedAPI,
 };
 
