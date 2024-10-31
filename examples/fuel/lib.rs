@@ -3,7 +3,7 @@
 
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{router, Contract},
+    derive::{function_id, router, Contract},
     Address,
     SharedAPI,
 };

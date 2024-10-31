@@ -19,8 +19,6 @@ pub fn router(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     let result = quote! {
-        #[allow(unused_imports)]
-        use fluentbase_sdk::derive::function_id;
 
         #router_impl
     };
@@ -37,8 +35,7 @@ pub fn client(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     let result = quote! {
-        #[allow(unused_imports)]
-        use fluentbase_sdk::derive::function_id;
+
 
         #client_impl
     };

@@ -79,14 +79,14 @@ where
         T::partial_decode(buf, offset)
     }
 }
-
-const WORD_SIZE: usize = 32;
-const U32_SIZE: usize = 4;
+const WORD_SIZE_SOL: usize = 32;
+const WORD_SIZE_DEFAULT: usize = 4;
 
 const fn is_power_of_two(n: usize) -> bool {
     n != 0 && (n & (n - 1)) == 0
 }
 
+#[allow(unused_assignments)]
 macro_rules! impl_encoder_for_tuple {
     ($($T:ident),+; $($idx:tt),+; $is_solidity:expr) => {
         impl<B: ByteOrder, const ALIGN: usize, $($T,)+> Encoder<B, {ALIGN}, $is_solidity> for ($($T,)+)
@@ -114,18 +114,18 @@ macro_rules! impl_encoder_for_tuple {
                 assert!(is_power_of_two(ALIGN), "ALIGN must be a power of two");
 
                 let mut current_offset = offset;
+                let word_size = if $is_solidity { WORD_SIZE_SOL } else { WORD_SIZE_DEFAULT };
 
                 if Self::IS_DYNAMIC {
                     let buf_len = buf.len();
 
                     let dynamic_offset = if buf_len == 0 {
-                        if $is_solidity { WORD_SIZE } else { U32_SIZE }
+                        word_size
                     } else {
                         buf_len
                     };
                     write_u32_aligned::<B, ALIGN>(buf, current_offset, dynamic_offset as u32);
-                    current_offset += if $is_solidity { WORD_SIZE } else { U32_SIZE };
-
+                    current_offset += word_size;
 
                     let aligned_header_size = {
                         let mut size = 0;
@@ -135,20 +135,16 @@ macro_rules! impl_encoder_for_tuple {
                         size
                     };
 
-
-
                     if buf_len < current_offset + aligned_header_size {
                         buf.resize(current_offset + aligned_header_size, 0);
                     }
 
-
                     let mut tmp = buf.split_off(current_offset);
                     current_offset = 0;
                     $(
-
                         self.$idx.encode(&mut tmp, current_offset)?;
                         current_offset += if $T::IS_DYNAMIC && $is_solidity {
-                           WORD_SIZE
+                            word_size
                         } else {
                             align_up::<ALIGN>($T::HEADER_SIZE)
                         };
@@ -173,6 +169,8 @@ macro_rules! impl_encoder_for_tuple {
                     }));
                 }
 
+                let word_size = if $is_solidity { WORD_SIZE_SOL } else { WORD_SIZE_DEFAULT };
+
                 let tmp = if Self::IS_DYNAMIC {
                     let dynamic_offset = read_u32_aligned::<B, ALIGN>(&buf.chunk(), offset)? as usize;
                     if buf.remaining() < dynamic_offset {
@@ -192,8 +190,8 @@ macro_rules! impl_encoder_for_tuple {
                 Ok(($(
                     {
                         let value = $T::decode(&tmp, current_offset)?;
-                        current_offset += if $T::IS_DYNAMIC && $is_solidity{
-                            WORD_SIZE
+                        current_offset += if $T::IS_DYNAMIC && $is_solidity {
+                           word_size
                         } else {
                             align_up::<ALIGN>($T::HEADER_SIZE)
                         };
@@ -205,7 +203,6 @@ macro_rules! impl_encoder_for_tuple {
             fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
                Ok((0,0))
             }
-
         }
     };
 }
@@ -228,7 +225,9 @@ impl_encoder_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8; 0, 1, 2, 3, 4, 5, 6, 7; 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byteorder::LittleEndian;
+    use crate::FluentABI;
+    use alloy_primitives::{address, Address, U256};
+    use byteorder::{LittleEndian, LE};
     use bytes::BytesMut;
 
     #[test]
@@ -286,6 +285,28 @@ mod tests {
         );
 
         let decoded = <Tuple as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_complex_tuple_fluent() {
+        let msg = "Hello World".to_string();
+        let contract_address = address!("f91c20c0cafbfdc150adff51bbfc5808edde7cb5");
+        let value = U256::from(0);
+        let gas_limit = 21_000;
+
+        type TestTuple = (Address, U256, u64, String);
+        let original: TestTuple = (contract_address, value, gas_limit, msg);
+
+        let mut buf = BytesMut::new();
+        <TestTuple as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+
+        let encoded = buf.freeze();
+        println!("Encoded: {}", hex::encode(&encoded));
+        let expected_encoded = "04000000f91c20c0cafbfdc150adff51bbfc5808edde7cb500000000000000000000000000000000000000000000000000000000000000000852000000000000440000000b00000048656c6c6f20576f726c6400";
+
+        assert_eq!(hex::encode(&encoded), expected_encoded);
+        let decoded = <TestTuple as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
         assert_eq!(decoded, original);
     }
 }

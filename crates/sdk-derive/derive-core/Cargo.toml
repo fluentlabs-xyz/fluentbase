@@ -16,22 +16,23 @@ crypto-hashes = { version = "0.10.0", default-features = false, features = ["inc
 darling = "0.20.10"
 
 hex = "0.4.3"
-paste = {workspace = true}
-fluentbase-codec = {workspace = true, default-features =  false}
+paste = { workspace = true }
+fluentbase-codec = { workspace = true, default-features = false }
 
-bytes = {version = "1.0", default-features = false}
-proc-macro-error = {version = "1", default-features = false}
+bytes = { version = "1.0", default-features = false }
+proc-macro-error = { version = "1", default-features = false }
 proc-macro2 = "1.0"
 quote = "1.0"
 regex.workspace = true
-serde = {version = "1.0", default-features = false, features = ["derive"]}
-syn = {workspace = true, features = ["full"]}
-syn-solidity = {version = "0.7", default-features = false}
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+syn = { workspace = true, features = ["full"] }
+syn-solidity = { version = "0.7", default-features = false }
 thiserror = "1.0"
-tracing = {version = "0.1.40", default-features = false}
+tracing = { version = "0.1.40", default-features = false }
 
 [dev-dependencies]
 alloy-primitives = "0.8.8"
 bytes = "1.0"
 prettyplease = "0.2"
 trybuild = "1.0"
+pretty_assertions = "1.4"

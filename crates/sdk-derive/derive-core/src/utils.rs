@@ -1,24 +1,6 @@
-use convert_case::{Case, Casing};
-use proc_macro2::{Ident, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
-use syn::{
-    punctuated::Punctuated,
-    Attribute,
-    Expr,
-    FnArg,
-    ImplItem,
-    ImplItemFn,
-    ItemImpl,
-    Lit,
-    LitStr,
-    ReturnType,
-    Signature,
-    Token,
-    TraitItemFn,
-    Type,
-    TypePath,
-    Visibility,
-};
+use syn::{Expr, Lit, Type, TypePath};
 
 // Constants
 const MAX_BYTES_SIZE: usize = 32;

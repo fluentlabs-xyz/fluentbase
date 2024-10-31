@@ -1,12 +1,10 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate alloc;
 extern crate fluentbase_sdk;
-
+use alloc::string::String;
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{router, Contract},
-    Address,
-    Bytes,
+    derive::{function_id, router, Contract},
     SharedAPI,
 };
 
@@ -16,15 +14,15 @@ struct ROUTER<SDK> {
 }
 
 pub trait RouterAPI {
-    fn greeting(&self, message: Bytes, caller: Address) -> (Bytes, Address);
+    fn greeting(&self, message: String) -> String;
     // fn custom_greeting(&self, message: Bytes) -> Bytes;
 }
 
 #[router(mode = "fluent")]
 impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
-    #[function_id("greeting(bytes,address)")] // 0xf8194e48
-    fn greeting(&self, message: Bytes, caller: Address) -> (Bytes, Address) {
-        (message, caller)
+    #[function_id("greeting(string)")] // 0xf8194e48
+    fn greeting(&self, message: String) -> String {
+        message
     }
 }
 
@@ -44,10 +42,9 @@ mod tests {
 
     #[test]
     fn test_contract_works() {
-        let b = Bytes::from("Hello, World!!".as_bytes());
-        let a = Address::repeat_byte(0xAA);
+        let m = "Hello World".to_string();
 
-        let greeting_call = GreetingCall::new((b.clone(), a.clone()));
+        let greeting_call = GreetingCall::new((m.clone(),));
 
         let input = greeting_call.encode();
 
@@ -63,7 +60,6 @@ mod tests {
 
         let output = GreetingReturn::decode(&encoded_output.as_slice()).unwrap();
         println!("output: {:?}", &output);
-        assert_eq!(output.0 .0, b);
-        assert_eq!(output.0 .1, a);
+        assert_eq!(output.0 .0, m);
     }
 }
