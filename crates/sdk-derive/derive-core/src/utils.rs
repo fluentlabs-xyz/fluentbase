@@ -177,6 +177,38 @@ fn convert_bytes_type(s: &str) -> Result<TokenStream, ConversionError> {
     }
 }
 
+// TODO: d1r1 - Add structs support for router and client
+/// Checks if type is a struct by examining its path
+pub fn is_struct_type(ty: &Type) -> bool {
+    if let Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            !matches!(
+                segment.ident.to_string().as_str(),
+                "u8" | "u16"
+                    | "u32"
+                    | "u64"
+                    | "u128"
+                    | "U256"
+                    | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "i128"
+                    | "I256"
+                    | "bool"
+                    | "String"
+                    | "Address"
+                    | "Bytes"
+                    | "Vec"
+            )
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

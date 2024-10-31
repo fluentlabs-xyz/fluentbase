@@ -50,7 +50,7 @@ pub enum MethodType {
 
 /// Represents a method parameter with its type and identifier.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct MethodParameter {
+pub struct MethodParameter {
     /// Original parameter type including references
     pub original_ty: Type,
     /// Storage parameter type (owned version)
@@ -72,23 +72,7 @@ impl Route {
         let return_types = Self::extract_return_types(&method_impl.sig.output);
         let fn_name = str_to_camel_case(&method_impl.sig.ident.to_string());
 
-        let parameter_types = parameters
-            .iter()
-            .map(|param| {
-                rust_type_to_sol(&param.ty)
-                    .map(|tokens| tokens.to_string())
-                    .map_err(|e| {
-                        syn::Error::new(
-                            Span::call_site(),
-                            format!(
-                                "Failed to parse parameter type in function '{}': {}",
-                                fn_name, e
-                            ),
-                        )
-                    })
-            })
-            .collect::<Result<Vec<String>>>()?;
-
+        let parameter_types = Self::get_param_types(&parameters, &fn_name)?;
         let method_signature = Self::generate_signature(&fn_name, &parameter_types);
 
         Ok(Route {
@@ -103,12 +87,33 @@ impl Route {
         })
     }
 
-    pub fn from_trait_fn(method: &TraitItemFn) -> Result<Self> {
-        let parameters = MethodParameter::from_trait_fn(method);
-        let return_types = Self::extract_return_types(&method.sig.output);
-        let fn_name = str_to_camel_case(&method.sig.ident.to_string());
+    pub fn process_function_id(
+        method_signature: &str,
+        function_id_attr: Option<FunctionIDAttribute>,
+    ) -> Result<([u8; 4], String)> {
+        let function_id = if let Some(attr) = &function_id_attr {
+            let attr_function_id = attr.function_id_bytes()?;
+            if attr.validate.unwrap_or(true) && attr_function_id != keccak256(method_signature) {
+                return Err(create_mismatch_error(
+                    attr,
+                    method_signature,
+                    keccak256(method_signature),
+                ));
+            }
+            attr_function_id
+        } else {
+            keccak256(method_signature)
+        };
 
-        let parameter_types = parameters
+        let signature = function_id_attr
+            .and_then(|attr| attr.signature())
+            .unwrap_or_else(|| method_signature.to_string());
+
+        Ok((function_id, signature))
+    }
+
+    fn get_param_types(params: &[MethodParameter], fn_name: &str) -> Result<Vec<String>> {
+        params
             .iter()
             .map(|param| {
                 rust_type_to_sol(&param.ty)
@@ -123,54 +128,7 @@ impl Route {
                         )
                     })
             })
-            .collect::<Result<Vec<String>>>()?;
-
-        let method_signature = Self::generate_signature(&fn_name, &parameter_types);
-
-        // Find function_id attribute if present
-        let function_id_attr = method
-            .attrs
-            .iter()
-            .find(|attr| attr.path().is_ident("function_id"))
-            .map(|attr| attr.parse_args::<FunctionIDAttribute>())
-            .transpose()?;
-
-        // Calculate function ID based on attribute or signature
-
-        let (function_id, signature) = match &function_id_attr {
-            Some(attr) if attr.validate.unwrap_or(true) => {
-                let attr_function_id = attr.function_id_bytes()?;
-                let calculated_id = keccak256(&method_signature);
-
-                if attr_function_id != calculated_id {
-                    return Err(create_mismatch_error(
-                        attr,
-                        &method_signature,
-                        calculated_id,
-                    ));
-                }
-                (
-                    attr_function_id,
-                    attr.signature().unwrap_or(method_signature),
-                )
-            }
-            Some(attr) => (
-                attr.function_id_bytes()?,
-                attr.signature().unwrap_or(method_signature),
-            ),
-            None => (keccak256(&method_signature), method_signature),
-        };
-
-        Ok(Route {
-            function_id_attr,
-            function_id,
-            fn_name,
-            signature,
-            args: parameters,
-            return_types,
-            original_fn: MethodType::Trait(method.clone()),
-            is_public: true, // trait methods are always public
-        })
+            .collect::<Result<Vec<String>>>()
     }
 
     /// Returns the signature of the method
@@ -213,6 +171,40 @@ impl Route {
     }
 }
 
+impl TryFrom<&TraitItemFn> for Route {
+    type Error = syn::Error;
+
+    fn try_from(method: &TraitItemFn) -> Result<Self> {
+        let parameters = MethodParameter::from_trait_fn(method);
+        let return_types = Self::extract_return_types(&method.sig.output);
+        let fn_name = str_to_camel_case(&method.sig.ident.to_string());
+
+        let parameter_types = Self::get_param_types(&parameters, &fn_name)?;
+        let method_signature = Self::generate_signature(&fn_name, &parameter_types);
+
+        let function_id_attr = method
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("function_id"))
+            .map(|attr| attr.parse_args::<FunctionIDAttribute>())
+            .transpose()?;
+
+        let (function_id, signature) =
+            Self::process_function_id(&method_signature, function_id_attr.clone())?;
+
+        Ok(Self {
+            function_id_attr,
+            function_id,
+            fn_name,
+            signature,
+            args: parameters,
+            return_types,
+            original_fn: MethodType::Trait(method.clone()),
+            is_public: true,
+        })
+    }
+}
+
 impl Parse for Route {
     /// Parses a Route from the input stream.
     ///
@@ -236,29 +228,8 @@ impl Parse for Route {
 
         // Calculate function ID based on attribute or signature
         let method_signature = route.signature.clone();
-        let (function_id, signature) = match &function_id_attr {
-            Some(attr) if attr.validate.unwrap_or(true) => {
-                let attr_function_id = attr.function_id_bytes()?;
-                let calculated_id = keccak256(&method_signature);
-
-                if attr_function_id != calculated_id {
-                    return Err(create_mismatch_error(
-                        attr,
-                        &method_signature,
-                        calculated_id,
-                    ));
-                }
-                (
-                    attr_function_id,
-                    attr.signature().unwrap_or(method_signature),
-                )
-            }
-            Some(attr) => (
-                attr.function_id_bytes()?,
-                attr.signature().unwrap_or(method_signature),
-            ),
-            None => (keccak256(&method_signature), method_signature),
-        };
+        let (function_id, signature) =
+            Self::process_function_id(&method_signature, function_id_attr.clone())?;
 
         route.function_id_attr = function_id_attr;
         route.function_id = function_id;
@@ -277,7 +248,6 @@ impl ToTokens for Route {
         };
         let fn_call = format_ident!("{}Call", &self.fn_name.to_case(Case::Pascal));
         let fn_call_selector = quote! { #fn_call::SELECTOR };
-        let fn_call_args = format_ident!("{}Args", fn_call);
         let fn_return = format_ident!("{}Return", &self.fn_name.to_case(Case::Pascal));
 
         // Generate parameter decoding tokens
@@ -461,19 +431,24 @@ fn is_str_type(path: &syn::TypePath) -> bool {
 /// Creates an error for function ID mismatch.
 fn create_mismatch_error(
     attr: &FunctionIDAttribute,
-    signature: &str,
-    calculated_id: [u8; 4],
+    method_signature: &str,
+    method_fn_id: [u8; 4],
 ) -> syn::Error {
-    syn::Error::new(
-        Span::call_site(),
-        format!(
-            "Function ID mismatch for signature '{}'. \
-             Expected {:?}, calculated {:?}",
-            signature,
-            attr.function_id_bytes().unwrap_or([0; 4]),
-            calculated_id
-        ),
-    )
+    let mut message = format!(
+        "Function ID mismatch.\nMethod signature: '{}'\n",
+        method_signature
+    );
+
+    let attr_fn_id = attr.function_id_bytes().unwrap_or([0; 4]);
+
+    message.push_str(&format!(
+        "Expected function ID: 0x{} {:?}\nCalculated function ID: 0x{} {:?}",
+        hex::encode(attr_fn_id),
+        attr_fn_id,
+        hex::encode(method_fn_id),
+        method_fn_id,
+    ));
+    syn::Error::new(Span::call_site(), message)
 }
 
 pub fn ident_to_camel_case(ident: &Ident) -> Ident {

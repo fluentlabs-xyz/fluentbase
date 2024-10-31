@@ -1,9 +1,8 @@
 use crate::{mode::RouterMode, route::Route};
-use hex;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens};
 use syn::{
-    parse::{Parse, ParseStream, Parser},
+    parse::{Parse, ParseStream},
     spanned::Spanned,
     Error,
     ImplItem,

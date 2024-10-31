@@ -1,7 +1,7 @@
 use crate::byteorder::{ByteOrder, LittleEndian};
 use alloc::vec;
 use core::cell::Cell;
-use fluentbase_codec::{Encoder, FluentABI, FluentEncoder};
+use fluentbase_codec::{FluentABI, FluentEncoder};
 use fluentbase_types::{
     alloc_slice,
     Address,
