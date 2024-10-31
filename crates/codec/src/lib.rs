@@ -14,7 +14,10 @@ mod tuple;
 mod vec;
 
 #[cfg(test)]
+mod test_utils;
+#[cfg(test)]
 mod tests;
+
 pub use ::byteorder;
 pub use ::bytes;
 pub use encoder::*;

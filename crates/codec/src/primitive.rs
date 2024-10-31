@@ -310,7 +310,7 @@ where
         Ok(result)
     }
 
-    fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
+    fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
         let item_size = align_up::<ALIGN>(T::HEADER_SIZE);
         let total_size = item_size * N;
 
