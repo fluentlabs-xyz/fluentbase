@@ -17,7 +17,6 @@ use fluentbase_types::{
     B256,
     DEVNET_CHAIN_ID,
     PRECOMPILE_EVM,
-    PRECOMPILE_FVM,
     U256,
 };
 use revm_primitives::keccak256;
@@ -102,12 +101,6 @@ pub fn devnet_genesis() -> Genesis {
         alloc,
         PRECOMPILE_EVM,
         "../../contracts/assets/precompile_evm.wasm"
-    );
-    #[cfg(feature = "fvm")]
-    enable_rwasm_contract!(
-        alloc,
-        PRECOMPILE_FVM,
-        "../../contracts/assets/precompile_fvm.rwasm"
     );
     // enable_rwasm_contract!(
     //     WCL_CONTRACT_ADDRESS,
