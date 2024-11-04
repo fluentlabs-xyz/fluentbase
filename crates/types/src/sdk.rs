@@ -11,8 +11,7 @@ use crate::{
     U256,
 };
 use alloc::{vec, vec::Vec};
-use alloy_rlp::{RlpDecodable, RlpEncodable};
-use fluentbase_codec::Codec;
+use fluentbase_codec::{Codec, CodecError, FluentABI};
 
 pub trait ContextFreeNativeAPI {
     fn keccak256(data: &[u8]) -> B256;
@@ -223,7 +222,7 @@ pub struct DestroyedAccountResult {
     pub previously_destroyed: bool,
 }
 
-#[derive(Clone, Default, Debug, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Default, Debug, Codec)]
 pub struct SyscallInvocationParams {
     pub code_hash: B256,
     pub input: Bytes,
@@ -232,17 +231,8 @@ pub struct SyscallInvocationParams {
 }
 
 impl SyscallInvocationParams {
-    pub fn to_vec(&self) -> Vec<u8> {
-        // TODO(dmitry123): "replace RLP encoding/decoding with better serializer"
-        use alloy_rlp::Encodable;
-        let mut result = Vec::with_capacity(32 + 20 + 8 + 4 + self.input.len());
-        self.encode(&mut result);
-        result
-    }
-
-    pub fn from_slice(mut buffer: &[u8]) -> Option<Self> {
-        use alloy_rlp::Decodable;
-        Self::decode(&mut buffer).ok()
+    pub fn from_slice(buffer: &[u8]) -> Result<Self, CodecError> {
+        FluentABI::decode(&buffer, 0)
     }
 }
 

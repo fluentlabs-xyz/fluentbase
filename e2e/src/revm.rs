@@ -1,6 +1,5 @@
 use core::{mem::take, str::from_utf8};
 use fluentbase_codec::{FluentABI, SolidityABI};
-use fluentbase_core::helpers::wasm2rwasm;
 use fluentbase_genesis::{
     devnet_genesis_from_file,
     Genesis,
@@ -13,8 +12,6 @@ use fluentbase_runtime::RuntimeContext;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian},
     runtime::TestingContext,
-    shared::SharedContextImpl,
-    SharedContextInputV1,
 };
 use fluentbase_types::{
     address,
@@ -23,7 +20,6 @@ use fluentbase_types::{
     Account,
     Address,
     Bytes,
-    SharedAPI,
     SysFuncIdx,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
@@ -444,7 +440,7 @@ fn test_client_fluent() {
 
     assert_eq!(result.is_success(), true);
 
-    let output = result.output();
+    let _output = result.output();
     let msg_b = result.output().unwrap();
 
     let msg: String = FluentABI::decode(msg_b, 0).unwrap();

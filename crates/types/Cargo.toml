@@ -22,8 +22,8 @@ alloy-rlp = { workspace = true }
 strum_macros = { workspace = true }
 revm-primitives = { workspace = true, default-features = false }
 hashbrown = { workspace = true }
-fluentbase-codec = { workspace = true, default-features = false }
-bytes = {workspace = true, default-features = false}
+fluentbase-codec = { workspace = true }
+bytes = { workspace = true, default-features = false }
 
 [features]
 default = ["std", "rwasm"]

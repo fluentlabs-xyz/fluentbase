@@ -1,6 +1,6 @@
 use alloy_rlp::BytesMut;
 use core::str::from_utf8;
-use fluentbase_codec::{Encoder, FluentABI};
+use fluentbase_codec::FluentABI;
 use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
 use fluentbase_types::{
     create_import_linker,
