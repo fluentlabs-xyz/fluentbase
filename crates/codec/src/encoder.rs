@@ -100,13 +100,13 @@ define_encoder_mode!(SolidityABI, BE, 32, true);
 define_encoder_mode!(FluentABI, LE, 4, false);
 
 pub trait SolidityEncoder: Encoder<BE, 32, true> {
-    const HEADER_SIZE: usize = <Self as Encoder<BE, 32, true>>::HEADER_SIZE;
+    const SOLIDITY_HEADER_SIZE: usize = <Self as Encoder<BE, 32, true>>::HEADER_SIZE;
 }
 
 impl<T> SolidityEncoder for T where T: Encoder<BE, 32, true> {}
 
 pub trait FluentEncoder: Encoder<LE, 4, false> {
-    const HEADER_SIZE: usize = <Self as Encoder<LE, 4, false>>::HEADER_SIZE;
+    const FLUENT_HEADER_SIZE: usize = <Self as Encoder<LE, 4, false>>::HEADER_SIZE;
 }
 
 impl<T> FluentEncoder for T where T: Encoder<LE, 4, false> {}
