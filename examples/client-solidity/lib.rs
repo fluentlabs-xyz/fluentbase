@@ -5,12 +5,11 @@ extern crate fluentbase_sdk;
 
 use alloc::string::{String, ToString};
 use core::{str::FromStr, u64};
-use fluentbase_codec::{Encoder, SolidityABI};
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{client, router, Contract},
+    codec::SolidityABI,
+    derive::{client, router},
     Address,
-    Bytes,
     SharedAPI,
     U256,
 };

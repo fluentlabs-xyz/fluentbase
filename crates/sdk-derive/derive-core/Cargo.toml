@@ -14,12 +14,9 @@ repository.workspace = true
 convert_case = "0.6.0"
 crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
 darling = "0.20.10"
-
 hex = "0.4.3"
 paste = { workspace = true }
-fluentbase-codec = { workspace = true, default-features = false }
-
-bytes = { version = "1.0", default-features = false }
+fluentbase-codec = { workspace = true }
 proc-macro-error = { version = "1", default-features = false }
 proc-macro2 = "1.0"
 quote = "1.0"

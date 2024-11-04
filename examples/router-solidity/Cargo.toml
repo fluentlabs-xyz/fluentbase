@@ -4,12 +4,8 @@ name = "fluentbase-example-router-solidity"
 version = "0.1.0"
 
 [dependencies]
-alloy-sol-types = { workspace = true, default-features = false}
+alloy-sol-types = { workspace = true, default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
-
-fluentbase-codec = {workspace = true, default-features = false}
-# byteorder = {version = "1.5.0", default-features = false}
-# bytes = {version = "*", default-features = false}
 
 [dev-dependencies]
 hex = "0.4.3"

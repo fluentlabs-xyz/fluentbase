@@ -2216,7 +2216,6 @@ dependencies = [
  "clap",
  "ctor",
  "env_logger",
- "fluentbase-core",
  "fluentbase-types",
  "log",
  "rwasm",
@@ -2340,7 +2339,6 @@ name = "fluentbase-example-client-fluent"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.9",
- "fluentbase-codec",
  "fluentbase-sdk",
  "hex",
  "hex-literal",
@@ -2351,7 +2349,6 @@ name = "fluentbase-example-client-solidity"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.9",
- "fluentbase-codec",
  "fluentbase-sdk",
  "hex",
  "hex-literal",
@@ -2362,7 +2359,6 @@ name = "fluentbase-example-erc20"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.9",
- "codec2",
  "fluentbase-sdk",
  "fluentbase-types",
  "hex",
@@ -2376,8 +2372,6 @@ dependencies = [
 name = "fluentbase-example-fuel"
 version = "0.1.0"
 dependencies = [
- "alloy-sol-types 0.8.9",
- "codec2",
  "fluentbase-sdk",
  "hex",
  "hex-literal",
@@ -2426,9 +2420,6 @@ name = "fluentbase-example-route-wasm"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.9",
- "byteorder",
- "bytes",
- "codec2",
  "fluentbase-sdk",
  "hex",
  "hex-literal",
@@ -2439,7 +2430,6 @@ name = "fluentbase-example-router-solidity"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.9",
- "fluentbase-codec",
  "fluentbase-sdk",
  "hex",
  "hex-literal",
