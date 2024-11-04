@@ -3,14 +3,7 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{
-    codec::{Codec, FluentEncoder},
-    derive::solidity_storage,
-    storage::StorageValueFluent,
-    Address,
-    Bytes,
-    U256,
-};
+use fluentbase_sdk::{codec::Codec, derive::solidity_storage, Address, Bytes, U256};
 
 #[derive(Codec, Debug, Default, Clone, PartialEq)]
 pub struct MyStruct {

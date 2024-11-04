@@ -22,5 +22,5 @@ pub use ::byteorder;
 pub use ::bytes;
 pub use encoder::*;
 pub use error::*;
-// #[cfg(feature = "derive")]
+#[cfg(feature = "derive")]
 pub use fluentbase_codec_derive::Codec;

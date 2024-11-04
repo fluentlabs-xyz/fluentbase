@@ -5,6 +5,7 @@ use crate::{
     },
     types::{EmptyPreimageResolver, PreimageResolver, RuntimeError},
 };
+use fluentbase_codec::{bytes::BytesMut, FluentABI};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
     create_import_linker,
@@ -592,8 +593,10 @@ impl Runtime {
         // but we don't serialize registers and stack state,
         // instead we remember it inside the internal structure
         // and assign a special identifier for recovery
-        let encoded_state = delayed_state.params.to_vec();
-        output.extend(&encoded_state);
+        let mut encoded_state = BytesMut::new();
+        FluentABI::encode(&delayed_state.params, &mut encoded_state, 0)
+            .map_err(Into::<RuntimeError>::into)?;
+        output.extend(encoded_state.freeze().to_vec());
         // save resumable invocation inside store
         self.store_mut().data_mut().resumable_invocation = Some(resumable_invocation);
         // interruption is a special exit code that indicates to the root what happened inside

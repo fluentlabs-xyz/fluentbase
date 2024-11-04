@@ -6,8 +6,8 @@ mod util;
 mod wasm;
 use crate::{debug_log, helpers::evm_error_from_exit_code, types::NextAction};
 use alloc::boxed::Box;
-use alloy_rlp::BytesMut;
 use fluentbase_sdk::{
+    bytes::BytesMut,
     codec::FluentABI,
     env_from_context,
     Account,
@@ -68,7 +68,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         // try to parse execution params, if it's not possible then return an error
         let exec_params = self.sdk.native_sdk().return_data();
-        let Some(params) = SyscallInvocationParams::from_slice(exec_params.as_ref()) else {
+        let Ok(params) = FluentABI::<SyscallInvocationParams>::decode(&exec_params, 0) else {
             unreachable!("can't decode invocation params");
         };
 

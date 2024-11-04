@@ -1,10 +1,10 @@
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
     codec::FluentEncoder,
+    Address,
     Bytes,
     SharedContextInputV1,
     SysFuncIdx,
-    PRECOMPILE_EVM,
     SYSCALL_ID_DELEGATE_CALL,
 };
 use rwasm::{
@@ -14,19 +14,19 @@ use rwasm::{
 
 pub const ENABLE_EVM_PROXY_CONTRACT: bool = false; //cfg!(feature = "evm-proxy");
 
-pub fn create_rwasm_proxy_bytecode() -> Bytes {
+pub fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
     let mut memory_section = vec![0u8; 32 + 20];
     //  0..32: code hash
     // 32..52: precompile address
     memory_section[0..32].copy_from_slice(SYSCALL_ID_DELEGATE_CALL.as_slice()); // 32 bytes
-    memory_section[32..52].copy_from_slice(PRECOMPILE_EVM.as_slice()); // 20 bytes
+    memory_section[32..52].copy_from_slice(impl_address.as_slice()); // 20 bytes
     debug_assert_eq!(memory_section.len(), 52);
     let code_section = instruction_set! {
         // alloc default memory
         I32Const(1) // number of pages (64kB memory in total)
         MemoryGrow // grow memory
         Drop // drop exit code (it can't fail here)
-        // initialize memory segment
+        // initializes a memory segment
         I32Const(0) // destination
         I32Const(0) // source
         I32Const(memory_section.len() as u32) // length
