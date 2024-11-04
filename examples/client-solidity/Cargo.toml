@@ -4,9 +4,8 @@ name = "fluentbase-example-client-solidity"
 version = "0.1.0"
 
 [dependencies]
-alloy-sol-types = { workspace = true, default-features = false}
+alloy-sol-types = { workspace = true, default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-codec = {workspace = true, default-features = false}
 
 [dev-dependencies]
 hex = "0.4.3"

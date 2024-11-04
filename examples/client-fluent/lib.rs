@@ -1,5 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(target_arch = "wasm32", no_std)]
+
 extern crate alloc;
 extern crate fluentbase_sdk;
 
@@ -43,8 +43,7 @@ basic_entrypoint!(RouterAPIClient);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_codec::FluentABI;
-    use fluentbase_sdk::{address, bytes::BytesMut, Address};
+    use fluentbase_sdk::{address, bytes::BytesMut, codec::FluentABI, Address};
 
     #[test]
     fn generate_target_contract_input() {

@@ -7,8 +7,6 @@ use alloc::vec::Vec;
 use alloy_sol_types::{sol, SolEvent};
 use fluentbase_sdk::{
     basic_entrypoint,
-    byteorder::BE,
-    codec::FluentEncoder,
     derive::{router, solidity_storage},
     Address,
     Bytes,

@@ -15,7 +15,7 @@ use bytes::{Buf, BytesMut};
 use hashbrown::HashMap;
 use hex_literal::hex;
 
-pub fn print_bytes<B: ByteOrder, const ALIGN: usize>(buf: &[u8]) {
+pub(crate) fn print_bytes<B: ByteOrder, const ALIGN: usize>(buf: &[u8]) {
     for (i, chunk) in buf.chunks(ALIGN).enumerate() {
         let offset = i * ALIGN;
         print!("{:04x}: ", offset);

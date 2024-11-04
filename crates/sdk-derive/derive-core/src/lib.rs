@@ -1,7 +1,7 @@
 //! Core functionality for the router macro implementation.
 //! This crate provides the base functionality used by the proc-macro crate.
 
-pub use bytes::{Buf, BufMut, Bytes, BytesMut};
+pub use fluentbase_codec::bytes::{Buf, BufMut, Bytes, BytesMut};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use router::Router;

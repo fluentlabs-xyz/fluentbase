@@ -37,8 +37,7 @@ basic_entrypoint!(ROUTER);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_sol_types::{sol, SolCall};
-    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext, Bytes};
+    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
 
     #[test]
     fn test_contract_works() {

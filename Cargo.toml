@@ -32,7 +32,7 @@ categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
 fluentbase-types = { path = "./crates/types", default-features = false }
-fluentbase-codec = { path = "./crates/codec" }
+fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"] }
 fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
