@@ -272,7 +272,7 @@ impl<T, B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const N: usize>
 where
     T: Sized + Encoder<B, { ALIGN }, { SOL_MODE }> + Default + Copy,
 {
-    const HEADER_SIZE: usize = T::HEADER_SIZE * N;
+    const HEADER_SIZE: usize = align_up::<ALIGN>(T::HEADER_SIZE) * N;
     const IS_DYNAMIC: bool = false;
 
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
