@@ -63,11 +63,11 @@ impl<API: NativeAPI> SharedContextImpl<API> {
         CONTEXT.get_or_insert_with(|| {
             let input_size = self.native_sdk.input_size() as usize;
             assert!(
-                input_size >= <SharedContextInputV1 as FluentEncoder>::HEADER_SIZE,
+                input_size >= SharedContextInputV1::FLUENT_HEADER_SIZE,
                 "malformed input header"
             );
-            let mut header_input: [u8; <SharedContextInputV1 as FluentEncoder>::HEADER_SIZE] =
-                [0u8; <SharedContextInputV1 as FluentEncoder>::HEADER_SIZE];
+            let mut header_input: [u8; SharedContextInputV1::FLUENT_HEADER_SIZE] =
+                [0u8; SharedContextInputV1::FLUENT_HEADER_SIZE];
             self.native_sdk.read(&mut header_input, 0);
 
             let result = FluentABI::<SharedContextInputV1>::decode(&&header_input[..], 0).unwrap();
@@ -206,17 +206,17 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     fn read(&self, target: &mut [u8], offset: u32) {
         self.native_sdk.read(
             target,
-            <SharedContextInputV1 as FluentEncoder>::HEADER_SIZE as u32 + offset,
+            SharedContextInputV1::FLUENT_HEADER_SIZE as u32 + offset,
         )
     }
 
     fn input_size(&self) -> u32 {
         let input_size = self.native_sdk.input_size();
         assert!(
-            input_size >= <SharedContextInputV1 as FluentEncoder>::HEADER_SIZE as u32,
+            input_size >= SharedContextInputV1::FLUENT_HEADER_SIZE as u32,
             "input less than context header"
         );
-        input_size - <SharedContextInputV1 as FluentEncoder>::HEADER_SIZE as u32
+        input_size - SharedContextInputV1::FLUENT_HEADER_SIZE as u32
     }
 
     fn charge_fuel(&self, value: u64) {

@@ -25,7 +25,7 @@ where
     T: SolidityEncoder + Default,
 {
     fn get(sdk: &SDK, key: U256) -> T {
-        let header_size = <T as SolidityEncoder>::HEADER_SIZE;
+        let header_size = T::SOLIDITY_HEADER_SIZE;
         let mut buf = BytesMut::new();
 
         for i in 0.. {
@@ -69,7 +69,7 @@ where
     T: FluentEncoder + Default,
 {
     fn get(sdk: &SDK, key: U256) -> T {
-        let header_size = <T as FluentEncoder>::HEADER_SIZE;
+        let header_size = T::HEADER_SIZE;
         let mut buf = BytesMut::new();
 
         for i in 0.. {
