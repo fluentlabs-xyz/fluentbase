@@ -2,10 +2,22 @@ use crate::{
     alloc::string::ToString,
     encoder::{align_up, get_aligned_indices, get_aligned_slice, is_big_endian, Encoder},
     error::{CodecError, DecodingError},
+    IsStatic,
 };
-use byteorder::ByteOrder;
+use byteorder::{ByteOrder, BE};
 use bytes::{Buf, BytesMut};
 use core::{marker::PhantomData, mem::size_of};
+
+impl IsStatic for u8 {}
+impl IsStatic for u16 {}
+impl IsStatic for u32 {}
+impl IsStatic for u64 {}
+impl IsStatic for i8 {}
+impl IsStatic for i16 {}
+impl IsStatic for i32 {}
+impl IsStatic for i64 {}
+impl IsStatic for bool {}
+impl<T: IsStatic, const N: usize> IsStatic for [T; N] {}
 
 impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, SOL_MODE>
     for PhantomData<B>
@@ -321,6 +333,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SolidityPackedABI;
     use byteorder::{BigEndian, LittleEndian};
     use bytes::{Bytes, BytesMut};
 
@@ -601,5 +614,33 @@ mod tests {
         println!("Decoded: {:?}", decoded);
 
         assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn test_packed_encoding() {
+        let value1: u32 = 0x12345678;
+        let value2: u16 = 0x9ABC;
+        let value3: u8 = 0xDE;
+        let mut buf = BytesMut::new();
+
+        SolidityPackedABI::<u32>::encode(&value1, &mut buf, 0).unwrap();
+        SolidityPackedABI::<u16>::encode(&value2, &mut buf, 4).unwrap();
+        SolidityPackedABI::<u8>::encode(&value3, &mut buf, 6).unwrap();
+
+        assert_eq!(buf.to_vec(), vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE]);
+    }
+
+    #[test]
+    fn test_packed_array() {
+        let arr: [u16; 3] = [0x1234, 0x5678, 0x9ABC];
+        let mut buf = BytesMut::new();
+
+        // Using the existing implementation with packed parameters
+        SolidityPackedABI::<[u16; 3]>::encode(&arr, &mut buf, 0).unwrap();
+
+        assert_eq!(buf.to_vec(), vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]);
+
+        let decoded = SolidityPackedABI::<[u16; 3]>::decode(&buf, 0).unwrap();
+        assert_eq!(arr, decoded);
     }
 }
