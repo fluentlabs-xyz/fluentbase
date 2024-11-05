@@ -4,11 +4,10 @@ use proc_macro_error::{abort, proc_macro_error};
 use quote::quote;
 
 mod contract;
-mod solidity_storage;
 
 mod utils;
 
-use derive_core::{client_core, router_core};
+use derive_core::{client_core, router_core, storage_core};
 
 #[proc_macro_error]
 #[proc_macro_attribute]
@@ -18,12 +17,7 @@ pub fn router(args: TokenStream, input: TokenStream) -> TokenStream {
         Err(err) => abort!(err.span(), "{}", err),
     };
 
-    let result = quote! {
-
-        #router_impl
-    };
-
-    result.into()
+    router_impl.into()
 }
 
 #[proc_macro_error]
@@ -34,13 +28,7 @@ pub fn client(args: TokenStream, input: TokenStream) -> TokenStream {
         Err(err) => abort!(err.span(), "{}", err),
     };
 
-    let result = quote! {
-
-
-        #client_impl
-    };
-
-    result.into()
+    client_impl.into()
 }
 
 #[proc_macro_attribute]
@@ -51,7 +39,12 @@ pub fn function_id(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro]
 #[proc_macro_error]
 pub fn solidity_storage(token: TokenStream) -> TokenStream {
-    solidity_storage::SolidityStorage::expand(token)
+    let storage_impl = match storage_core(token.into()) {
+        Ok(expanded) => expanded,
+        Err(err) => abort!(err.span(), "{}", err),
+    };
+
+    storage_impl.into()
 }
 
 #[proc_macro]
