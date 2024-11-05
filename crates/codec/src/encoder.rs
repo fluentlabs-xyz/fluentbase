@@ -93,10 +93,43 @@ macro_rules! define_encoder_mode {
             }
         }
     };
-}
+    // Add variant with extra trait bound
+    ($name:ident, $byte_order:ty, $align:expr, $sol_mode:expr, $extra_bound:tt) => {
+        pub struct $name<T>(PhantomData<T>);
 
-// Define encoder modes for Solidity and Wasm ABI
+        impl<T> $name<T>
+        where
+            T: Encoder<$byte_order, $align, $sol_mode> + $extra_bound,
+        {
+            pub fn is_dynamic() -> bool {
+                <T as Encoder<$byte_order, $align, $sol_mode>>::IS_DYNAMIC
+            }
+
+            pub fn encode(value: &T, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+                value.encode(buf, offset)
+            }
+
+            pub fn decode(buf: &impl Buf, offset: usize) -> Result<T, CodecError> {
+                T::decode(buf, offset)
+            }
+
+            pub fn partial_decode(
+                buf: &impl Buf,
+                offset: usize,
+            ) -> Result<(usize, usize), CodecError> {
+                T::partial_decode(buf, offset)
+            }
+
+            pub fn size_hint(value: &T) -> usize {
+                value.size_hint()
+            }
+        }
+    };
+}
+pub trait IsStatic {}
+
 define_encoder_mode!(SolidityABI, BE, 32, true);
+define_encoder_mode!(SolidityPackedABI, BE, 1, false, IsStatic);
 define_encoder_mode!(FluentABI, LE, 4, false);
 
 pub trait SolidityEncoder: Encoder<BE, 32, true> {
@@ -104,6 +137,12 @@ pub trait SolidityEncoder: Encoder<BE, 32, true> {
 }
 
 impl<T> SolidityEncoder for T where T: Encoder<BE, 32, true> {}
+
+pub trait SolidityPackedEncoder: Encoder<BE, 1, false> {
+    const SOLIDITY_PACKED_HEADER_SIZE: usize = <Self as Encoder<BE, 1, false>>::HEADER_SIZE;
+}
+
+impl<T> SolidityPackedEncoder for T where T: Encoder<BE, 1, false> {}
 
 pub trait FluentEncoder: Encoder<LE, 4, false> {
     const FLUENT_HEADER_SIZE: usize = <Self as Encoder<LE, 4, false>>::HEADER_SIZE;
