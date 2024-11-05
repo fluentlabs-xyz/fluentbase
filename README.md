@@ -64,7 +64,7 @@ P.S: Some tests are still failing (like zktrie), but 99% of them pass.
 Fluentbase can be used to develop different types of applications, in most of the cases the same interface is used. Here
 is the simplest application can be developed using Fluentbase.
 
-```rust=
+```rust
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate fluentbase_sdk;
 
@@ -72,17 +72,17 @@ use fluentbase_sdk::{basic_entrypoint, derive::Contract, SharedAPI};
 
 #[derive(Contract)]
 struct GREETING<SDK> {
-  sdk: SDK,
+    sdk: SDK,
 }
 
 impl<SDK: SharedAPI> GREETING<SDK> {
-  fn deploy(&mut self) {
-    // any custom deployment logic here
-  }
-  fn main(&mut self) {
-    // write "Hello, World" message into output
-    self.sdk.write("Hello, World".as_bytes());
-  }
+    fn deploy(&mut self) {
+        // any custom deployment logic here
+    }
+    fn main(&mut self) {
+        // write "Hello, World" message into output
+        self.sdk.write("Hello, World".as_bytes());
+    }
 }
 
 basic_entrypoint!(GREETING);
