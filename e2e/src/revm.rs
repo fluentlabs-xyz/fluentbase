@@ -19,7 +19,6 @@ use fluentbase_types::{
     Account,
     Address,
     Bytes,
-    SharedAPI,
     SysFuncIdx,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,

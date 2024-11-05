@@ -68,19 +68,21 @@ is the simplest application can be developed using Fluentbase.
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{basic_entrypoint, SharedAPI};
+use fluentbase_sdk::{basic_entrypoint, derive::Contract, SharedAPI};
 
-#[derive(Default)]
-struct GREETING;
+#[derive(Contract)]
+struct GREETING<SDK> {
+  sdk: SDK,
+}
 
-impl GREETING {
-    fn deploy<SDK: SharedAPI>(&self) {
-        // any custom deployment logic here
-    }
-    fn main<SDK: SharedAPI>(&self) {
-        // write "Hello, World" message into output
-        SDK::write("Hello, World".as_bytes());
-    }
+impl<SDK: SharedAPI> GREETING<SDK> {
+  fn deploy(&mut self) {
+    // any custom deployment logic here
+  }
+  fn main(&mut self) {
+    // write "Hello, World" message into output
+    self.sdk.write("Hello, World".as_bytes());
+  }
 }
 
 basic_entrypoint!(GREETING);
