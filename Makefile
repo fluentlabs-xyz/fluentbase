@@ -5,11 +5,9 @@ SKIP_EXAMPLES=n
 SKIP_GENESIS=n
 .PHONY: build
 build:
-	clear
-	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE); fi
+	#if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE); fi
 	if [ "$(SKIP_CONTRACTS)" = "n" ]; then cd crates/contracts && $(MAKE); fi
-	if [ "$(SKIP_GENESIS)" = "n" ]; then cd crates/genesis && $(MAKE); fi
-	if [ -f /usr/bin/notify-send ]; then notify-send "fluentbase" "build finished"; fi || true
+	#if [ "$(SKIP_GENESIS)" = "n" ]; then cd crates/genesis && $(MAKE); fi
 
 .PHONY: test
 test:
@@ -33,7 +31,7 @@ run_fluent_node:
 build_contracts_and_run_fluent_node:
 	clear
 	$(MAKE)
-	cd ../fluent/; $(MAKE) fluent_clean_datadir; $(MAKE) fluent_build
+	cd ../fluent/; $(MAKE) fluent_clear_datadir; $(MAKE) fluent_build
 	(sleep 1; notify-send "fluent" "ready to process requests" || true)&
 	mkdir -p tmp
 	$(MAKE) run_fluent_node

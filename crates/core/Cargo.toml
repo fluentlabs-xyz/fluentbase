@@ -16,6 +16,8 @@ rwasm = { workspace = true, default-features = false }
 revm-interpreter = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
 
+solana-ee-core = { workspace = true, default-features = false }
+
 byteorder = { workspace = true, default-features = false }
 alloy-rlp = { workspace = true }
 paste = { workspace = true }

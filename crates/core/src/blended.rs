@@ -1,9 +1,11 @@
 #[cfg(feature = "elf")]
 mod elf;
 mod evm;
+mod svm;
 mod syscall;
 mod util;
 mod wasm;
+
 use crate::{debug_log, helpers::evm_error_from_exit_code, types::NextAction};
 use alloc::boxed::Box;
 use fluentbase_sdk::{

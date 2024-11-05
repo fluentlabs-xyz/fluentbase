@@ -14,3 +14,5 @@ mod evm;
     feature = "ecrecover",
 ))]
 mod precompile;
+#[cfg(feature = "svm")]
+mod svm;

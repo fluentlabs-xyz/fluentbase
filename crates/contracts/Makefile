@@ -1,4 +1,4 @@
-PRECOMPILES=evm blake2 sha256 ripemd160 identity modexp ecrecover
+PRECOMPILES=evm #blake2 sha256 ripemd160 identity modexp ecrecover # svm
 EXAMPLES=greeting fairblock
 CUR_DIR="$(shell pwd)"
 OUT_DIR="${CUR_DIR}/assets"
@@ -16,4 +16,4 @@ $(PRECOMPILES):
 .PHONY: $(EXAMPLES)
 $(EXAMPLES):
 	cp ../../examples/$@/lib.wasm ./assets/precompile_$@.wasm
-	cp ../../examples/$@/lib.wat ./assets/precompile_$@.wat
+	#cp ../../examples/$@/lib.wat ./assets/precompile_$@.wat

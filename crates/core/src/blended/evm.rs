@@ -12,6 +12,7 @@ use fluentbase_sdk::{
     ExitCode,
     SovereignAPI,
     B256,
+    PRECOMPILE_EVM,
     STATE_DEPLOY,
     STATE_MAIN,
     U256,
@@ -319,7 +320,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         mut gas: Gas,
         call_depth: u32,
     ) -> InterpreterResult {
-        let rwasm_bytecode = create_rwasm_proxy_bytecode();
+        let rwasm_bytecode = create_rwasm_proxy_bytecode(PRECOMPILE_EVM);
 
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)
