@@ -5,6 +5,7 @@ pub use fluentbase_codec::bytes::{Buf, BufMut, Bytes, BytesMut};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use router::Router;
+use storage::Storage;
 use tracing::{debug, error, info};
 
 pub mod args;
@@ -15,6 +16,7 @@ pub mod function_id;
 pub mod mode;
 pub mod route;
 pub mod router;
+pub mod storage;
 pub mod utils;
 
 /// Processes the router macro invocation.
@@ -84,5 +86,28 @@ fn parse_client_args(attr: TokenStream2) -> Result<args::RouterArgs, syn::Error>
 /// Parses trait definition from the input TokenStream.
 fn parse_client_input(input: TokenStream2) -> Result<client::ClientGenerator, syn::Error> {
     debug!("Parsing trait definition");
+    syn::parse2(input)
+}
+
+/// Processes the storage macro invocation.
+///
+/// # Arguments
+/// * `attr` - Attribute TokenStream containing storage configuration
+/// * `input` - Input TokenStream containing the storage implementation
+///
+/// # Returns
+/// * `Result<TokenStream2, syn::Error>` - Processed storage code or error
+
+pub fn storage_core(input: TokenStream2) -> Result<TokenStream2, syn::Error> {
+    debug!("Processing storage attributes");
+
+    let storage: Storage = parse_storage_input(input)?;
+
+    Ok(quote!(#storage).into())
+}
+
+/// Parses storage implementation from the input TokenStream.
+fn parse_storage_input(input: TokenStream2) -> Result<storage::Storage, syn::Error> {
+    debug!("Parsing storage implementation");
     syn::parse2(input)
 }
