@@ -26,6 +26,16 @@ This documentation covers two main macros for building Solidity-compatible smart
     - [Encoding Modes](#encoding-modes-1)
     - [Example](#example)
     - [Common Features for Both Macros](#common-features-for-both-macros)
+  - [Storage Macro](#storage-macro)
+    - [Understanding Solidity Storage](#understanding-solidity-storage)
+    - [Storage Macro Key Features](#storage-macro-key-features)
+    - [Supported Storage Types](#supported-storage-types)
+    - [Type Requirements](#type-requirements)
+    - [Complete Example](#complete-example)
+    - [Testing Storage Layout](#testing-storage-layout)
+    - [Generated Methods](#generated-methods)
+    - [Type Mappings](#type-mappings-1)
+    - [Notes](#notes)
 
 ## Router Macro
 
@@ -148,13 +158,13 @@ The validation system ensures that the specified function ID matches the one cal
 ##### How Validation Works
 
 1. When validation is enabled (default behavior), the macro:
-   - Takes the specified function ID from the attribute
-   - Calculates the expected function ID by:
-     - Taking the Solidity-style signature of the function
-     - Computing the Keccak256 hash of the signature
-     - Using the first 4 bytes as the function selector
-   - Compares the specified ID with the calculated one
-   - Generates a compile-time error if they don't match
+    - Takes the specified function ID from the attribute
+    - Calculates the expected function ID by:
+        - Taking the Solidity-style signature of the function
+        - Computing the Keccak256 hash of the signature
+        - Using the first 4 bytes as the function selector
+    - Compares the specified ID with the calculated one
+    - Generates a compile-time error if they don't match
 
 For example:
 
@@ -290,9 +300,9 @@ The router macro supports automatic type conversion between Solidity and Rust ty
 #### Type Mappings
 
 | Solidity Type | Rust Type        | Notes                                                       |
-|---------------|------------------|-------------------------------------------------------------|
-| uint          | u*               | uint8 to uint256 maps to u8 to U256                         |
-| int           | i*               | int8 to int256 maps to i8 to I256                           |
+| ------------- | ---------------- | ----------------------------------------------------------- |
+| uint          | u\*              | uint8 to uint256 maps to u8 to U256                         |
+| int           | i\*              | int8 to int256 maps to i8 to I256                           |
 | bool          | bool             |                                                             |
 | address       | Address          |                                                             |
 | bytes<M>      | [u8; M]          | Fixed-size byte arrays                                      |
@@ -322,6 +332,7 @@ impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
 #### Using Structures
 
 !NOT SUPPORTED YET!
+
 <!-- You can use custom structures as param inputs. But, right now we don't support correct function_id derivation for structures. So, you need to manually specify the function_id and set validate to false.
 
 ```rust
@@ -392,3 +403,195 @@ basic_entrypoint!(ContractAPIClient);
 
 - **Encoding Modes**: Both macros support Solidity and Fluent modes for ABI handling.
 - **Function ID Options**: Enable custom function IDs with optional validation.
+
+## Storage Macro
+
+The `solidity_storage` macro simplifies the implementation of Solidity's storage patterns in Fluentbase contracts.
+
+### Understanding Solidity Storage
+
+In Solidity, contract storage is organized as a persistent key-value store where each slot is 32 bytes (256 bits):
+
+- For simple types (uint, address, etc.), values are stored sequentially starting from slot 0
+- For mappings, the slot contains no value itself, but is used as part of computing storage location for values
+- For dynamic arrays, the slot stores the array length, with array data starting at `keccak256(slot)`
+- For nested structures, data is stored contiguously starting at a given slot
+
+The `solidity_storage` macro implements these patterns, handling all the complexity of slot management and key calculations.
+
+### Storage Macro Key Features
+
+- **Automatic Slot Management**: Sequential slot assignment starting from 0
+- **Type Safety**: Full Solidity type compatibility with Rust type system
+- **Key Calculation**: Implements standard Solidity storage layout algorithms
+- **Access Methods**: Generates optimized getter and setter methods
+- **Support for Complex Types**: Handles mappings, arrays, and custom structures
+
+### Supported Storage Types
+
+1. **Simple Values**:
+
+```rust
+solidity_storage! {
+    Address Owner; // Slot 0
+    U256 Counter; // Slot 1
+    Bytes Data;  // Slot 2
+}
+```
+
+2. **Mappings**:
+
+```rust
+solidity_storage! {
+    mapping(Address => U256) Balance;                           // Single mapping
+    mapping(Address => mapping(Address => U256)) Allowance;     // Nested mapping
+}
+```
+
+3. **Arrays**:
+
+```rust
+solidity_storage! {
+    U256[] Array;                  // Single dimension
+    Address[][][] NestedArray;     // Multi-dimensional
+}
+```
+
+4. **Custom Structures**:
+
+```rust
+#[derive(Codec, Debug, Default, Clone, PartialEq)]
+pub struct MyStruct {
+    pub a: U256,
+    pub b: U256,
+    pub c: Bytes,
+    pub d: Bytes,
+}
+
+solidity_storage! {
+    MyStruct Data;                             // Direct storage
+    mapping(Address => MyStruct) StructMap;    // In mapping
+}
+```
+
+### Type Requirements
+
+All custom types used in storage must implement the `Codec` trait for serialization:
+
+```rust
+#[derive(Codec)]  // Required for storage
+pub struct MyStruct {
+    // fields...
+}
+```
+
+### Complete Example
+
+> **Note:** You can find a complete example in the `examples/storage` directory.
+
+```rust
+use fluentbase_sdk::{codec::Codec, derive::solidity_storage, Address, Bytes, U256};
+
+#[derive(Codec, Debug, Default, Clone, PartialEq)]
+pub struct MyStruct {
+    pub a: U256,
+    pub b: U256,
+    pub c: Bytes,
+    pub d: Bytes,
+}
+
+solidity_storage! {
+    mapping(Address => U256) Balance;
+    mapping(Address => mapping(Address => U256)) Allowance;
+    U256[] Arr;
+    Address[][][] NestedArr;
+    Address Owner;
+    Bytes Data;
+    MyStruct SomeStruct;
+    mapping(Address => MyStruct) MyStructMap;
+}
+```
+
+### Testing Storage Layout
+
+```rust
+#[test]
+pub fn test_storage_mapping_struct() {
+    let mut sdk = with_test_input(vec![], None);
+    let addr = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+
+    let my_struct = MyStruct {
+        a: U256::from(1),
+        b: U256::from(2),
+        c: Bytes::from("this is a really long string..."),
+        d: Bytes::from("short"),
+    };
+
+    MyStructMap::set(&mut sdk, addr, my_struct.clone());
+    let result = MyStructMap::get(&sdk, addr);
+    assert_eq!(result, my_struct);
+}
+
+#[test]
+pub fn test_nested_arr() {
+    let mut sdk = with_test_input(vec![], None);
+    let idx1 = U256::from(0);
+    let idx2 = U256::from(0);
+    let idx3 = U256::from(0);
+    let value = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+
+    NestedArr::set(&mut sdk, idx1, idx2, idx3, value);
+    let result = NestedArr::get(&sdk, idx1, idx2, idx3);
+    assert_eq!(result, value);
+}
+```
+
+### Generated Methods
+
+For each storage variable, the macro generates:
+
+- **Storage Slot**:
+
+```rust
+const SLOT: U256 = U256::from_limbs([slot_index, 0, 0, 0]);
+```
+
+- **Key Calculation**:
+
+```rust
+fn key<SDK: SharedAPI>(sdk: &SDK, ...args) -> U256;
+```
+
+- **Getter Method**:
+
+```rust
+fn get<SDK: SharedAPI>(sdk: &SDK, ...args) -> T;
+```
+
+- **Setter Method**:
+
+```rust
+fn set<SDK: SharedAPI>(sdk: &mut SDK, ...args, value: T);
+```
+
+### Type Mappings
+
+| Solidity Type | Rust Type     | Storage Layout |
+| ------------- | ------------- | -------------- |
+| uint256       | U256          | Single slot    |
+| address       | Address       | Single slot    |
+| bytes         | Bytes         | Single slot    |
+| mapping       | -             | Hashed slots   |
+| array         | -             | Sequential     |
+| struct        | Custom type\* | Multiple slots |
+
+\* Custom types must implement `Codec` trait
+
+### Notes
+
+1. **Custom Types**: All user-defined types must implement `Codec` trait
+2. **Slot Assignment**: Automated and sequential for all storage variables
+3. **Key Calculation**: Follows Solidity's standard algorithm for compatibility
+4. **Gas Optimization**: Generated code is optimized for minimal gas usage
+
+The macro handles all the low-level storage management, allowing you to focus on your contract's business logic while maintaining full compatibility with Solidity's storage layout.
