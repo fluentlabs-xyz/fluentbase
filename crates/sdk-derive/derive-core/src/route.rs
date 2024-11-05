@@ -153,6 +153,9 @@ impl Route {
     /// Generates a Solidity-compatible function signature.
     fn generate_signature(name: &str, param_types: &[String]) -> String {
         format!("{}({})", name, param_types.join(","))
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
     }
 
     pub fn generate_codec_impl(&self, mode: &RouterMode) -> TokenStream2 {
