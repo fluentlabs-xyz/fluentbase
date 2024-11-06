@@ -5,8 +5,9 @@ use crate::{
 };
 use byteorder::ByteOrder;
 use bytes::{Buf, BytesMut};
-impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, { ALIGN }, { SOL_MODE }>
-    for ()
+
+impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bool>
+    Encoder<B, ALIGN, SOL_MODE, IS_STATIC> for ()
 {
     const HEADER_SIZE: usize = 0;
     const IS_DYNAMIC: bool = false;
@@ -24,10 +25,10 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, { ALIGN 
     }
 }
 
-impl<T, B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, { ALIGN }, { SOL_MODE }>
-    for (T,)
+impl<T, B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bool>
+    Encoder<B, ALIGN, SOL_MODE, IS_STATIC> for (T,)
 where
-    T: Encoder<B, { ALIGN }, { SOL_MODE }>,
+    T: Encoder<B, ALIGN, SOL_MODE, IS_STATIC>,
 {
     const HEADER_SIZE: usize = align_up::<ALIGN>(T::HEADER_SIZE);
     const IS_DYNAMIC: bool = T::IS_DYNAMIC;
@@ -88,9 +89,10 @@ const fn is_power_of_two(n: usize) -> bool {
 
 macro_rules! impl_encoder_for_tuple {
     ($($T:ident),+; $($idx:tt),+; $is_solidity:expr) => {
-        impl<B: ByteOrder, const ALIGN: usize, $($T,)+> Encoder<B, {ALIGN}, $is_solidity> for ($($T,)+)
+        impl<B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool, $($T,)+>
+        Encoder<B, ALIGN, $is_solidity, IS_STATIC> for ($($T,)+)
         where
-            $($T: Encoder<B, {ALIGN}, $is_solidity>,)+
+            $($T: Encoder<B, ALIGN, $is_solidity, IS_STATIC>,)+
         {
             const HEADER_SIZE: usize = {
                 let mut size = 0;
@@ -228,7 +230,6 @@ mod tests {
     use super::*;
     use crate::FluentABI;
     use alloy_primitives::{address, Address, U256};
-    use byteorder::{LittleEndian, LE};
     use bytes::BytesMut;
 
     #[test]
@@ -236,10 +237,10 @@ mod tests {
         let t = ();
         let mut buf = BytesMut::new();
 
-        <() as Encoder<LittleEndian, 4, false>>::encode(&t, &mut buf, 0).unwrap();
+        FluentABI::encode(&t, &mut buf, 0).unwrap();
         let encoded = buf.freeze();
         assert_eq!(hex::encode(&encoded), "");
-        let decoded = <() as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded: () = FluentABI::decode(&encoded, 0).unwrap();
         assert_eq!(decoded, ());
     }
 
@@ -247,12 +248,12 @@ mod tests {
     fn test_single_element_tuple() {
         let original: (u32,) = (100u32,);
         let mut buf = BytesMut::new();
-        <(u32,) as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        FluentABI::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         assert_eq!(hex::encode(&encoded), "64000000");
 
-        let decoded = <(u32,) as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded: (u32,) = FluentABI::decode(&encoded, 0).unwrap();
         assert_eq!(decoded, original);
     }
 
@@ -261,13 +262,13 @@ mod tests {
         type Tuple = (u32, u16);
         let original: Tuple = (100u32, 20u16);
         let mut buf = BytesMut::new();
-        <Tuple as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        FluentABI::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         println!("{:?}", encoded);
         assert_eq!(hex::encode(&encoded), "6400000014000000");
 
-        let decoded = <Tuple as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded: Tuple = FluentABI::decode(&encoded, 0).unwrap();
         assert_eq!(decoded, original);
     }
 
@@ -276,7 +277,7 @@ mod tests {
         type Tuple = (u32, u16, u8, u64, u32, u16, u8, u64);
         let original: Tuple = (100u32, 20u16, 30u8, 40u64, 50u32, 60u16, 70u8, 80u64);
         let mut buf = BytesMut::new();
-        <Tuple as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        FluentABI::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         println!("{:?}", hex::encode(&encoded));
@@ -285,7 +286,7 @@ mod tests {
             "64000000140000001e0000002800000000000000320000003c000000460000005000000000000000"
         );
 
-        let decoded = <Tuple as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded: Tuple = FluentABI::decode(&encoded, 0).unwrap();
         assert_eq!(decoded, original);
     }
 
@@ -300,14 +301,14 @@ mod tests {
         let original: TestTuple = (contract_address, value, gas_limit, msg);
 
         let mut buf = BytesMut::new();
-        <TestTuple as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        FluentABI::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         println!("Encoded: {}", hex::encode(&encoded));
         let expected_encoded = "04000000f91c20c0cafbfdc150adff51bbfc5808edde7cb500000000000000000000000000000000000000000000000000000000000000000852000000000000440000000b00000048656c6c6f20576f726c6400";
 
         assert_eq!(hex::encode(&encoded), expected_encoded);
-        let decoded = <TestTuple as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded: TestTuple = FluentABI::decode(&encoded, 0).unwrap();
         assert_eq!(decoded, original);
     }
 }

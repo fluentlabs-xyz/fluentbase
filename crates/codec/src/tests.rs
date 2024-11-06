@@ -1,11 +1,11 @@
 use crate::{
-    encoder::{is_big_endian, read_u32_aligned, Encoder, FluentABI, SolidityABI},
+    encoder::{Encoder, FluentABI, SolidityABI, SolidityPackedABI},
     test_utils::print_bytes,
     Codec,
 };
 use alloc::vec;
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
-use byteorder::{ByteOrder, BE, LE};
+use byteorder::BE;
 use bytes::{Buf, BytesMut};
 use hashbrown::HashMap;
 use hex_literal::hex;
@@ -972,4 +972,60 @@ fn test_map_wasm_nested() {
     // Verify round-trip encoding/decoding
     let decoded = FluentABI::<HashMap<u32, HashMap<u32, u32>>>::decode(&encoded, 0).unwrap();
     assert_eq!(decoded, test_value, "Round-trip encoding/decoding failed");
+}
+
+#[test]
+fn test_complex_struct_solidity_packed() {
+    #[derive(Debug, PartialEq, Codec)]
+    struct TestStructFluent {
+        u_8: u8,
+        u_16: u16,
+        u_32: u32,
+        u_64: u64,
+        boolean: bool,
+        bytes_1: [u8; 1],
+        bytes_32: [u8; 32],
+        tuple: (u16, bool, [u8; 2], u32),
+    }
+
+    let original = TestStructFluent {
+        u_8: 255,
+        u_16: 65535,
+        u_32: 4294967295,
+        u_64: 18446744073709551615,
+        boolean: true,
+        bytes_1: [0xFF],
+        bytes_32: [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27, 28, 29, 30, 31, 32,
+        ],
+        tuple: (43981, true, [0xAA, 0xBB], 0xCCDDEEFF),
+    };
+
+    let expected_encoded = concat!(
+        "ff",               // u8 (1 byte)
+        "ffff",             // u16 (2 bytes)
+        "ffffffff",         // u32 (4 bytes)
+        "ffffffffffffffff", // u64 (8 bytes)
+        "01",               // bool (1 byte)
+        "ff",               // bytes_1 (1 byte)
+        // bytes_32 (32 bytes)
+        "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        // tuple:
+        "abcd",     // u16 (2 bytes)
+        "01",       // bool (1 byte)
+        "aabb",     // [u8; 2] (2 bytes)
+        "ccddeeff"  // u32 (4 bytes)
+    );
+
+    let mut buf = BytesMut::new();
+
+    SolidityPackedABI::encode(&original, &mut buf, 0).unwrap();
+    let encoded = buf.freeze();
+
+    assert_eq!(expected_encoded, hex::encode(&encoded));
+
+    let decoded: TestStructFluent = SolidityPackedABI::decode(&encoded, 0).unwrap();
+
+    assert_eq!(decoded, original);
 }

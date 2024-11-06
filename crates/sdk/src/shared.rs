@@ -66,6 +66,7 @@ impl<API: NativeAPI> SharedContextImpl<API> {
                 input_size >= SharedContextInputV1::FLUENT_HEADER_SIZE,
                 "malformed input header"
             );
+
             let mut header_input: [u8; SharedContextInputV1::FLUENT_HEADER_SIZE] =
                 [0u8; SharedContextInputV1::FLUENT_HEADER_SIZE];
             self.native_sdk.read(&mut header_input, 0);

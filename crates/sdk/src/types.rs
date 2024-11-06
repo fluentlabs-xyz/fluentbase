@@ -4,18 +4,18 @@ use fluentbase_sdk_derive::derive_keccak256_id;
 use fluentbase_types::{Address, Bytes, ExitCode, U256};
 
 #[derive(Clone, Debug, Default, Codec)]
-pub struct CoreInput<T, B: ByteOrder, const ALIGN: usize>
+pub struct CoreInput<T, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
 where
-    T: Encoder<B, ALIGN, true> + Encoder<B, ALIGN, false> + Default,
+    T: Encoder<B, ALIGN, true, IS_STATIC> + Encoder<B, ALIGN, false, IS_STATIC> + Default,
 {
     pub method_id: u32,
     pub method_data: T,
     _phantom: PhantomData<B>,
 }
 
-impl<T, B: ByteOrder, const ALIGN: usize> CoreInput<T, B, ALIGN>
+impl<T, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool> CoreInput<T, B, ALIGN, IS_STATIC>
 where
-    T: Encoder<B, ALIGN, true> + Encoder<B, ALIGN, false> + Default,
+    T: Encoder<B, ALIGN, true, IS_STATIC> + Encoder<B, ALIGN, false, IS_STATIC> + Default,
 {
     pub fn new(method_id: u32, method_data: T) -> Self {
         Self {

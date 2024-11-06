@@ -9,7 +9,7 @@ use bytes::{Buf, BytesMut};
 pub struct EmptyVec;
 
 // Implementation for WASM mode (SOL_MODE = false)
-impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for EmptyVec {
+impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for EmptyVec {
     const HEADER_SIZE: usize = size_of::<u32>() * 3; // 12 bytes
     const IS_DYNAMIC: bool = true;
 
@@ -33,9 +33,9 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for EmptyVec
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let aligned_elem_size = align_up::<ALIGN>(4);
 
-        if buf.remaining() < offset + <Self as Encoder<B, ALIGN, false>>::HEADER_SIZE {
+        if buf.remaining() < offset + <Self as Encoder<B, ALIGN, false, false>>::HEADER_SIZE {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + <Self as Encoder<B, ALIGN, false>>::HEADER_SIZE,
+                expected: offset + <Self as Encoder<B, ALIGN, false, false>>::HEADER_SIZE,
                 found: buf.remaining(),
                 msg: "failed to decode EmptyVec".to_string(),
             }));
@@ -53,7 +53,8 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for EmptyVec
         let data_length =
             read_u32_aligned::<B, ALIGN>(buf, offset + aligned_elem_size * 2)? as usize;
 
-        if data_offset != <Self as Encoder<B, ALIGN, false>>::HEADER_SIZE || data_length != 0 {
+        if data_offset != <Self as Encoder<B, ALIGN, false, false>>::HEADER_SIZE || data_length != 0
+        {
             return Err(CodecError::Decoding(DecodingError::InvalidData(
                 "Invalid offset or length for EmptyVec".to_string(),
             )));
@@ -65,9 +66,9 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for EmptyVec
     fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
         let aligned_elem_size = align_up::<ALIGN>(4);
 
-        if buf.remaining() < offset + <Self as Encoder<B, ALIGN, false>>::HEADER_SIZE {
+        if buf.remaining() < offset + <Self as Encoder<B, ALIGN, false, false>>::HEADER_SIZE {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + <Self as Encoder<B, ALIGN, false>>::HEADER_SIZE,
+                expected: offset + <Self as Encoder<B, ALIGN, false, false>>::HEADER_SIZE,
                 found: buf.remaining(),
                 msg: "failed to partially decode EmptyVec".to_string(),
             }));
@@ -89,7 +90,7 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for EmptyVec
 }
 
 // Implementation for Solidity mode (SOL_MODE = true)
-impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, true> for EmptyVec {
+impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for EmptyVec {
     const HEADER_SIZE: usize = 32; // Solidity uses 32 bytes for dynamic array header
     const IS_DYNAMIC: bool = true;
 
@@ -143,22 +144,22 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, true> for EmptyVec 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byteorder::{BigEndian, LittleEndian};
+    use crate::{FluentABI, SolidityABI};
+    use byteorder::BigEndian;
 
     #[test]
     fn test_empty_vec_wasm_little_endian() {
         let empty_vec = EmptyVec;
         let mut buf = BytesMut::new();
-        <EmptyVec as Encoder<LittleEndian, 4, false>>::encode(&empty_vec, &mut buf, 0).unwrap();
+        FluentABI::encode(&empty_vec, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         assert_eq!(hex::encode(&encoded), "000000000c00000000000000");
 
-        let decoded = <EmptyVec as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded = FluentABI::decode(&encoded, 0).unwrap();
         assert_eq!(empty_vec, decoded);
 
-        let (offset, length) =
-            <EmptyVec as Encoder<LittleEndian, 4, false>>::partial_decode(&encoded, 0).unwrap();
+        let (offset, length) = FluentABI::<EmptyVec>::partial_decode(&encoded, 0).unwrap();
         assert_eq!(offset, 12);
         assert_eq!(length, 0);
     }
@@ -167,16 +168,17 @@ mod tests {
     fn test_empty_vec_wasm_big_endian() {
         let empty_vec = EmptyVec;
         let mut buf = BytesMut::new();
-        <EmptyVec as Encoder<BigEndian, 4, false>>::encode(&empty_vec, &mut buf, 0).unwrap();
+        <EmptyVec as Encoder<BigEndian, 4, false, false>>::encode(&empty_vec, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         assert_eq!(hex::encode(&encoded), "000000000000000c00000000");
 
-        let decoded = <EmptyVec as Encoder<BigEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded =
+            <EmptyVec as Encoder<BigEndian, 4, false, false>>::decode(&encoded, 0).unwrap();
         assert_eq!(empty_vec, decoded);
 
         let (offset, length) =
-            <EmptyVec as Encoder<BigEndian, 4, false>>::partial_decode(&encoded, 0).unwrap();
+            <EmptyVec as Encoder<BigEndian, 4, false, false>>::partial_decode(&encoded, 0).unwrap();
         assert_eq!(offset, 12);
         assert_eq!(length, 0);
     }
@@ -185,17 +187,16 @@ mod tests {
     fn test_empty_vec_solidity() {
         let empty_vec = EmptyVec;
         let mut buf = BytesMut::new();
-        <EmptyVec as Encoder<BigEndian, 32, true>>::encode(&empty_vec, &mut buf, 0).unwrap();
+        SolidityABI::encode(&empty_vec, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
 
         assert_eq!(hex::encode(&encoded), "00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000");
 
-        let decoded = <EmptyVec as Encoder<BigEndian, 32, true>>::decode(&encoded, 0).unwrap();
+        let decoded = SolidityABI::decode(&encoded, 0).unwrap();
         assert_eq!(empty_vec, decoded);
 
-        let (offset, length) =
-            <EmptyVec as Encoder<BigEndian, 32, true>>::partial_decode(&encoded, 0).unwrap();
+        let (offset, length) = SolidityABI::<EmptyVec>::partial_decode(&encoded, 0).unwrap();
         assert_eq!(offset, 32);
         assert_eq!(length, 0);
     }
@@ -204,17 +205,16 @@ mod tests {
     fn test_empty_vec_wasm_with_offset() {
         let empty_vec = EmptyVec;
         let mut buf = BytesMut::from(&[0xFF, 0xFF, 0xFF][..]);
-        <EmptyVec as Encoder<LittleEndian, 4, false>>::encode(&empty_vec, &mut buf, 3).unwrap();
+        FluentABI::encode(&empty_vec, &mut buf, 3).unwrap();
 
         let encoded = buf.freeze();
         println!("{}", hex::encode(&encoded));
         assert_eq!(hex::encode(&encoded), "ffffff000000000c00000000000000");
 
-        let decoded = <EmptyVec as Encoder<LittleEndian, 4, false>>::decode(&encoded, 3).unwrap();
+        let decoded = FluentABI::decode(&encoded, 3).unwrap();
         assert_eq!(empty_vec, decoded);
 
-        let (offset, length) =
-            <EmptyVec as Encoder<LittleEndian, 4, false>>::partial_decode(&encoded, 3).unwrap();
+        let (offset, length) = FluentABI::<EmptyVec>::partial_decode(&encoded, 3).unwrap();
         assert_eq!(offset, 12);
         assert_eq!(length, 0);
     }

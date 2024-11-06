@@ -43,7 +43,7 @@ impl CodecStruct {
         }
     }
 
-    fn generate_impl(&self, sol_mode: bool) -> TokenStream2 {
+    fn generate_impl(&self, sol_mode: bool, is_static: bool) -> TokenStream2 {
         let struct_name = &self.struct_name;
         let mut generics = self.generics.clone();
 
@@ -79,7 +79,24 @@ impl CodecStruct {
             generics.params.push(parse_quote!(const ALIGN: usize));
         }
 
-        let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+        // Add bounds for each field type requiring Encoder implementation
+        let encoder_bounds: Vec<syn::WherePredicate> = self
+            .fields
+            .iter()
+            .map(|field| {
+                let ty = &field.ty;
+                parse_quote!(#ty: #crate_name::Encoder<B, ALIGN, {#sol_mode}, {#is_static}>)
+            })
+            .collect();
+
+        let where_clause = if let Some(mut where_clause) = generics.where_clause.clone() {
+            where_clause.predicates.extend(encoder_bounds);
+            where_clause
+        } else {
+            parse_quote!(where #(#encoder_bounds),*)
+        };
+
+        let (impl_generics, ty_generics, _) = generics.split_for_impl();
 
         let struct_name_with_ty = if has_custom_generics {
             quote! { #struct_name #ty_generics }
@@ -91,11 +108,11 @@ impl CodecStruct {
             let ty = &field.ty;
             if sol_mode {
                 quote! {
-                    <#ty as #crate_name::Encoder<B, ALIGN, {true}>>::HEADER_SIZE
+                    <#ty as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>::HEADER_SIZE
                 }
             } else {
                 quote! {
-                    #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {false}>>::HEADER_SIZE)
+                    #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE)
                 }
             }
         });
@@ -103,7 +120,7 @@ impl CodecStruct {
         let is_dynamic_expr = self.fields.iter().map(|field| {
             let ty = &field.ty;
             quote! {
-                <#ty as #crate_name::Encoder<B, ALIGN, {#sol_mode}>>::IS_DYNAMIC
+                <#ty as #crate_name::Encoder<B, ALIGN, {#sol_mode}, {#is_static}>>::IS_DYNAMIC
             }
         });
 
@@ -117,18 +134,18 @@ impl CodecStruct {
 
             if sol_mode {
                 quote! {
-                    if <#ty as #crate_name::Encoder<B, ALIGN, {true}>>::IS_DYNAMIC {
-                        <#ty as #crate_name::Encoder<B, ALIGN, {true}>>::encode(&self.#ident, &mut tmp, current_offset)?;
+                    if <#ty as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC {
+                        <#ty as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>::encode(&self.#ident, &mut tmp, current_offset)?;
                         current_offset += #crate_name::align_up::<ALIGN>(4);
                     } else {
-                        <#ty as #crate_name::Encoder<B, ALIGN, {true}>>::encode(&self.#ident, &mut tmp, current_offset)?;
-                        current_offset += #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {true}>>::HEADER_SIZE);
+                        <#ty as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>::encode(&self.#ident, &mut tmp, current_offset)?;
+                        current_offset += #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>::HEADER_SIZE);
                     }
                 }
             } else {
                 quote! {
-                    <#ty as #crate_name::Encoder<B, ALIGN, {false}>>::encode(&self.#ident, buf, current_offset)?;
-                    current_offset += #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {false}>>::HEADER_SIZE);
+                    <#ty as #crate_name::Encoder<B, ALIGN, {false}, {#is_static}>>::encode(&self.#ident, buf, current_offset)?;
+                    current_offset += #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE);
                 }
             }
         });
@@ -139,17 +156,17 @@ impl CodecStruct {
 
             if sol_mode {
                 quote! {
-                    let #ident = <#ty as #crate_name::Encoder<B, ALIGN, {true}>>::decode(&mut tmp, current_offset)?;
-                    current_offset += if <#ty as #crate_name::Encoder<B, ALIGN, {true}>>::IS_DYNAMIC {
+                    let #ident = <#ty as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>::decode(&mut tmp, current_offset)?;
+                    current_offset += if <#ty as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC {
                         32
                     } else {
-                        #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {true}>>::HEADER_SIZE)
+                        #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>::HEADER_SIZE)
                     };
                 }
             } else {
                 quote! {
-                    let #ident = <#ty as #crate_name::Encoder<B, ALIGN, {false}>>::decode(buf, current_offset)?;
-                    current_offset += #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {false}>>::HEADER_SIZE);
+                    let #ident = <#ty as #crate_name::Encoder<B, ALIGN, {false}, {#is_static}>>::decode(buf, current_offset)?;
+                    current_offset += #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE);
                 }
             }
         });
@@ -158,19 +175,19 @@ impl CodecStruct {
             let sizes = self.fields.iter().map(|field| {
                 let ty = &field.ty;
                 let ts = quote! {
-                    <#ty as #crate_name::Encoder<B, ALIGN, {true}>>
+                    <#ty as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>
                 };
                 quote! {
                     if #ts ::IS_DYNAMIC {
                         32
                     } else {
-                        #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {true}>>::HEADER_SIZE)
+                        #crate_name::align_up::<ALIGN>(<#ty as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>::HEADER_SIZE)
                     }
                 }
             });
             quote! { 0 #( + #sizes)* }
         } else {
-            quote! { <Self as #crate_name::Encoder<B, ALIGN, {false}>>::HEADER_SIZE }
+            quote! { <Self as #crate_name::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE }
         };
 
         let struct_initialization = self.fields.iter().map(|field| {
@@ -181,7 +198,7 @@ impl CodecStruct {
         let encode_impl = if sol_mode {
             quote! {
                 let aligned_offset = #crate_name::align_up::<ALIGN>(offset);
-                let is_dynamic = <Self as #crate_name::Encoder<B, ALIGN, {true}>>::IS_DYNAMIC;
+                let is_dynamic = <Self as #crate_name::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC;
                 let aligned_header_size = #aligned_header_size;
 
                 if is_dynamic {
@@ -200,7 +217,7 @@ impl CodecStruct {
         } else {
             quote! {
                 let mut current_offset = #crate_name::align_up::<ALIGN>(offset);
-                let header_size = <Self as #crate_name::Encoder<B, ALIGN, {false}>>::HEADER_SIZE;
+                let header_size = <Self as #crate_name::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE;
 
                 if buf.len() < current_offset + header_size {
                     buf.resize(current_offset + header_size, 0);
@@ -233,7 +250,7 @@ impl CodecStruct {
         };
 
         quote! {
-            impl #impl_generics #crate_name::Encoder<B, ALIGN, {#sol_mode}>
+            impl #impl_generics #crate_name::Encoder<B, ALIGN, {#sol_mode}, {#is_static}>
                 for #struct_name_with_ty
                 #where_clause
             {
@@ -263,11 +280,17 @@ impl CodecStruct {
 
 impl ToTokens for CodecStruct {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
-        let sol_impl = self.generate_impl(true);
-        let wasm_impl = self.generate_impl(false);
+        // Generate implementations for both true and false IS_STATIC
+        let sol_impl_static = self.generate_impl(true, true);
+        let sol_impl_dynamic = self.generate_impl(true, false);
+        let wasm_impl_static = self.generate_impl(false, true);
+        let wasm_impl_dynamic = self.generate_impl(false, false);
+
         tokens.extend(quote! {
-            #sol_impl
-            #wasm_impl
+            #sol_impl_static
+            #sol_impl_dynamic
+            #wasm_impl_static
+            #wasm_impl_dynamic
         });
     }
 }

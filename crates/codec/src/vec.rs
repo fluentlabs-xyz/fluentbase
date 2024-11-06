@@ -24,9 +24,9 @@ use bytes::{Buf, BytesMut};
 ///   - raw bytes of the vector
 ///
 /// Implementation for non-Solidity mode
-impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for Vec<T>
+impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for Vec<T>
 where
-    T: Default + Sized + Encoder<B, { ALIGN }, false> + alloc::fmt::Debug,
+    T: Default + Sized + Encoder<B, ALIGN, false, false> + alloc::fmt::Debug,
 {
     const HEADER_SIZE: usize = core::mem::size_of::<u32>() * 3;
     const IS_DYNAMIC: bool = true;
@@ -101,9 +101,9 @@ where
 }
 
 // Implementation for Solidity mode
-impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, true> for Vec<T>
+impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for Vec<T>
 where
-    T: Default + Sized + Encoder<B, { ALIGN }, true> + alloc::fmt::Debug,
+    T: Default + Sized + Encoder<B, ALIGN, true, false> + alloc::fmt::Debug,
 {
     const HEADER_SIZE: usize = 32;
     const IS_DYNAMIC: bool = true;
@@ -172,12 +172,14 @@ mod tests {
         let original: Vec<u32> = Vec::new();
         let mut buf = BytesMut::new();
 
-        <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        <Vec<u32> as Encoder<LittleEndian, 4, false, false>>::encode(&original, &mut buf, 0)
+            .unwrap();
         let encoded = buf.freeze();
         let expected = hex::decode("000000000c00000000000000").expect("Failed to decode hex");
         assert_eq!(encoded, Bytes::from(expected));
 
-        let decoded = <Vec<u32> as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded =
+            <Vec<u32> as Encoder<LittleEndian, 4, false, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -187,13 +189,14 @@ mod tests {
         let original: Vec<u32> = vec![1, 2, 3, 4, 5];
         let mut buf = BytesMut::new();
 
-        <Vec<u32> as Encoder<BigEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        <Vec<u32> as Encoder<BigEndian, 4, false, false>>::encode(&original, &mut buf, 0).unwrap();
         let encoded = buf.freeze();
 
         let expected_encoded = "000000050000000c000000140000000100000002000000030000000400000005";
         assert_eq!(hex::encode(&encoded), expected_encoded);
 
-        let decoded = <Vec<u32> as Encoder<BigEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded =
+            <Vec<u32> as Encoder<BigEndian, 4, false, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -204,10 +207,12 @@ mod tests {
         let mut buf = BytesMut::new();
         buf.extend_from_slice(&[0xFF, 0xFF, 0xFF]); // Add some initial data
 
-        <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 3).unwrap();
+        <Vec<u32> as Encoder<LittleEndian, 4, false, false>>::encode(&original, &mut buf, 3)
+            .unwrap();
         let encoded = buf.freeze();
 
-        let decoded = <Vec<u32> as Encoder<LittleEndian, 4, false>>::decode(&encoded, 3).unwrap();
+        let decoded =
+            <Vec<u32> as Encoder<LittleEndian, 4, false, false>>::decode(&encoded, 3).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -218,10 +223,12 @@ mod tests {
         let mut buf = BytesMut::new();
         buf.extend_from_slice(&[0xFF, 0xFF, 0xFF]); // Add some initial data
 
-        <Vec<u8> as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 3).unwrap();
+        <Vec<u8> as Encoder<LittleEndian, 4, false, false>>::encode(&original, &mut buf, 3)
+            .unwrap();
         let encoded = buf.freeze();
 
-        let decoded = <Vec<u8> as Encoder<LittleEndian, 4, false>>::decode(&encoded, 3).unwrap();
+        let decoded =
+            <Vec<u8> as Encoder<LittleEndian, 4, false, false>>::decode(&encoded, 3).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -231,7 +238,8 @@ mod tests {
         let original: Vec<Vec<u16>> = vec![vec![3, 4], vec![5, 6, 7]];
 
         let mut buf = BytesMut::new();
-        <Vec<Vec<u16>> as Encoder<LittleEndian, 2, false>>::encode(&original, &mut buf, 0).unwrap();
+        <Vec<Vec<u16>> as Encoder<LittleEndian, 2, false, false>>::encode(&original, &mut buf, 0)
+            .unwrap();
         let encoded = buf.freeze();
 
         let expected_encoded = "020000000c00000022000000020000001800000004000000030000001c0000000600000003000400050006000700";
@@ -239,7 +247,7 @@ mod tests {
         assert_eq!(hex::encode(&encoded), expected_encoded);
 
         let decoded =
-            <Vec<Vec<u16>> as Encoder<LittleEndian, 2, false>>::decode(&encoded, 0).unwrap();
+            <Vec<Vec<u16>> as Encoder<LittleEndian, 2, false, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -249,10 +257,11 @@ mod tests {
         let original: Vec<Vec<u16>> = vec![vec![3, 4], vec![5, 6, 7]];
 
         let mut buf = BytesMut::new();
-        <Vec<Vec<u16>> as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        <Vec<Vec<u16>> as Encoder<LittleEndian, 4, false, false>>::encode(&original, &mut buf, 0)
+            .unwrap();
         let encoded = buf.freeze();
         let decoded =
-            <Vec<Vec<u16>> as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+            <Vec<Vec<u16>> as Encoder<LittleEndian, 4, false, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -262,10 +271,12 @@ mod tests {
         let original: Vec<Vec<u16>> = vec![vec![3, 4], vec![5, 6, 7]];
 
         let mut buf = BytesMut::new();
-        <Vec<Vec<u16>> as Encoder<BigEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        <Vec<Vec<u16>> as Encoder<BigEndian, 4, false, false>>::encode(&original, &mut buf, 0)
+            .unwrap();
         let encoded = buf.freeze();
 
-        let decoded = <Vec<Vec<u16>> as Encoder<BigEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded =
+            <Vec<Vec<u16>> as Encoder<BigEndian, 4, false, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -275,10 +286,11 @@ mod tests {
         let original: Vec<u64> = (0..1000).collect();
         let mut buf = BytesMut::new();
 
-        <Vec<u64> as Encoder<BigEndian, 8, false>>::encode(&original, &mut buf, 0).unwrap();
+        <Vec<u64> as Encoder<BigEndian, 8, false, false>>::encode(&original, &mut buf, 0).unwrap();
         let encoded = buf.freeze();
 
-        let decoded = <Vec<u64> as Encoder<BigEndian, 8, false>>::decode(&encoded, 0).unwrap();
+        let decoded =
+            <Vec<u64> as Encoder<BigEndian, 8, false, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -289,10 +301,11 @@ mod tests {
         let original: Vec<u32> = vec![1, 2, 3, 4, 5];
         let mut buf = BytesMut::new();
 
-        <Vec<u32> as Encoder<BigEndian, 32, true>>::encode(&original, &mut buf, 0).unwrap();
+        <Vec<u32> as Encoder<BigEndian, 32, true, false>>::encode(&original, &mut buf, 0).unwrap();
         let encoded = buf.freeze();
 
-        let decoded = <Vec<u32> as Encoder<BigEndian, 32, true>>::decode(&encoded, 0).unwrap();
+        let decoded =
+            <Vec<u32> as Encoder<BigEndian, 32, true, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }

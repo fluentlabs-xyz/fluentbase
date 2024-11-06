@@ -152,7 +152,7 @@ impl StorageKind {
     pub fn key_calculation(&self, args: &[StorageParam]) -> TokenStream2 {
         match self {
             Self::Mapping(ty) => Self::mapping_key_calculation(ty, args),
-            Self::Array(ty) => Self::array_key_calculation(ty, args),
+            Self::Array(_) => Self::array_key_calculation(args),
             Self::Primitive(_) => Self::primitive_key_calculation(),
         }
     }
@@ -218,7 +218,7 @@ impl StorageKind {
         }
     }
 
-    fn array_key_calculation(ty: &TypeArray, args: &[StorageParam]) -> TokenStream2 {
+    fn array_key_calculation(args: &[StorageParam]) -> TokenStream2 {
         let arguments: Vec<TokenStream2> = args.iter().map(|arg| arg.to_token_stream()).collect();
         let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();
 

@@ -1,19 +1,5 @@
-use crate::{
-    encoder::{is_big_endian, read_u32_aligned, Encoder, FluentABI, SolidityABI},
-    Codec,
-};
-use alloc::vec;
-use alloy_primitives::{Address, Bytes, FixedBytes, U256};
-use alloy_sol_types::{
-    sol,
-    sol_data::{self},
-    SolType,
-    SolValue,
-};
-use byteorder::{ByteOrder, BE, LE};
-use bytes::{Buf, BytesMut};
-use hashbrown::HashMap;
-use hex_literal::hex;
+use crate::encoder::{is_big_endian, read_u32_aligned};
+use byteorder::ByteOrder;
 
 pub(crate) fn print_bytes<B: ByteOrder, const ALIGN: usize>(buf: &[u8]) {
     for (i, chunk) in buf.chunks(ALIGN).enumerate() {
