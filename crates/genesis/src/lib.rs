@@ -16,6 +16,8 @@ pub use devnet::{
     devnet_genesis,
     devnet_genesis_from_file,
     devnet_genesis_v0_1_0_dev1_from_file,
+    devnet_genesis_v0_1_0_dev4_from_file,
+    devnet_genesis_v0_1_0_dev5_from_file,
     GENESIS_KECCAK_HASH_SLOT,
     GENESIS_POSEIDON_HASH_SLOT,
 };
