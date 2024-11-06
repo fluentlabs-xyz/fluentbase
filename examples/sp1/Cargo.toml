@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 alloy-sol-types = { workspace = true }
-#sp1-zkvm = "2.0.0"
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false }
 rwasm = { workspace = true, default-features = false }
