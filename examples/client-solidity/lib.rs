@@ -4,10 +4,9 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use alloc::string::{String, ToString};
-use core::{str::FromStr, u64};
+use core::u64;
 use fluentbase_sdk::{
     basic_entrypoint,
-    codec::SolidityABI,
     derive::{client, router},
     Address,
     SharedAPI,
@@ -45,7 +44,7 @@ basic_entrypoint!(RouterAPIClient);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{address, bytes::BytesMut, Address};
+    use fluentbase_sdk::{address, bytes::BytesMut, codec::SolidityABI, Address};
 
     #[test]
     fn generate_target_contract_input() {

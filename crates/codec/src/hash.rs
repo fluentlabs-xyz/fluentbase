@@ -10,10 +10,10 @@ use core::{fmt::Debug, hash::Hash};
 use hashbrown::{HashMap, HashSet};
 
 /// Implement encoding for HashMap, SOL_MODE = false
-impl<K, V, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for HashMap<K, V>
+impl<K, V, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for HashMap<K, V>
 where
-    K: Default + Sized + Encoder<B, { ALIGN }, false> + Eq + Hash + Ord,
-    V: Default + Sized + Encoder<B, { ALIGN }, false>,
+    K: Default + Sized + Encoder<B, ALIGN, false, false> + Eq + Hash + Ord,
+    V: Default + Sized + Encoder<B, ALIGN, false, false>,
 {
     const HEADER_SIZE: usize = 4 + 8 + 8; // length + keys_header + values_header
     const IS_DYNAMIC: bool = true;
@@ -64,7 +64,7 @@ where
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let aligned_header_el_size = align_up::<ALIGN>(4);
-        let aligned_header_size = align_up::<{ ALIGN }>(Self::HEADER_SIZE);
+        let aligned_header_size = align_up::<ALIGN>(Self::HEADER_SIZE);
 
         if buf.remaining() < offset + aligned_header_size {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
@@ -74,24 +74,24 @@ where
             }));
         }
 
-        let length = read_u32_aligned::<B, { ALIGN }>(buf, offset)? as usize;
+        let length = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
 
         let (keys_offset, keys_length) =
-            read_bytes_header::<B, { ALIGN }, false>(buf, offset + aligned_header_el_size)?;
+            read_bytes_header::<B, ALIGN, false>(buf, offset + aligned_header_el_size)?;
 
         let (values_offset, values_length) =
-            read_bytes_header::<B, { ALIGN }, false>(buf, offset + aligned_header_el_size * 3)?;
+            read_bytes_header::<B, ALIGN, false>(buf, offset + aligned_header_el_size * 3)?;
 
         let key_bytes = &buf.chunk()[keys_offset..keys_offset + keys_length];
         let value_bytes = &buf.chunk()[values_offset..values_offset + values_length];
 
         let keys = (0..length).map(|i| {
-            let key_offset = align_up::<{ ALIGN }>(K::HEADER_SIZE) * i;
+            let key_offset = align_up::<ALIGN>(K::HEADER_SIZE) * i;
             K::decode(&key_bytes, key_offset).unwrap_or_default()
         });
 
         let values = (0..length).map(|i| {
-            let value_offset = align_up::<{ ALIGN }>(V::HEADER_SIZE) * i;
+            let value_offset = align_up::<ALIGN>(V::HEADER_SIZE) * i;
             V::decode(&value_bytes, value_offset).unwrap_or_default()
         });
 
@@ -128,10 +128,10 @@ where
     }
 }
 /// Implement encoding for HashMap, SOL_MODE = true
-impl<K, V, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, true> for HashMap<K, V>
+impl<K, V, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for HashMap<K, V>
 where
-    K: Debug + Default + Sized + Encoder<B, { ALIGN }, true> + Eq + Hash + Ord,
-    V: Debug + Default + Sized + Encoder<B, { ALIGN }, true>,
+    K: Debug + Default + Sized + Encoder<B, ALIGN, true, false> + Eq + Hash + Ord,
+    V: Debug + Default + Sized + Encoder<B, ALIGN, true, false>,
 {
     const HEADER_SIZE: usize = 32 + 32 + 32 + 32; // offset + length + keys_header + values_header
 
@@ -205,7 +205,7 @@ where
         }
 
         // Read data offset
-        let data_offset = read_u32_aligned::<B, { ALIGN }>(buf, offset)? as usize;
+        let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
 
         // Calculate start offset
         let start_offset = offset
@@ -213,16 +213,15 @@ where
             .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
 
         // Read length
-        let length = read_u32_aligned::<B, { ALIGN }>(buf, start_offset)? as usize;
+        let length = read_u32_aligned::<B, ALIGN>(buf, start_offset)? as usize;
         if length == 0 {
             return Ok(HashMap::new());
         }
 
         // Read relative keys and values offsets (relative to the current offset)
-        let keys_offset =
-            read_u32_aligned::<B, { ALIGN }>(buf, start_offset + KEYS_OFFSET)? as usize;
+        let keys_offset = read_u32_aligned::<B, ALIGN>(buf, start_offset + KEYS_OFFSET)? as usize;
         let values_offset =
-            read_u32_aligned::<B, { ALIGN }>(buf, start_offset + VALUES_OFFSET)? as usize;
+            read_u32_aligned::<B, ALIGN>(buf, start_offset + VALUES_OFFSET)? as usize;
 
         // Calculate absolute offsets
         let keys_start = keys_offset
@@ -240,10 +239,10 @@ where
         let values_data = &buf.chunk()[values_start + 32..];
 
         for i in 0..length {
-            let key_offset = align_up::<{ ALIGN }>(K::HEADER_SIZE)
+            let key_offset = align_up::<ALIGN>(K::HEADER_SIZE)
                 .checked_mul(i)
                 .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
-            let value_offset = align_up::<{ ALIGN }>(V::HEADER_SIZE)
+            let value_offset = align_up::<ALIGN>(V::HEADER_SIZE)
                 .checked_mul(i)
                 .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
 
@@ -277,9 +276,9 @@ where
 }
 
 /// Implement encoding for HashSet, SOL_MODE = false
-impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for HashSet<T>
+impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for HashSet<T>
 where
-    T: Default + Sized + Encoder<B, { ALIGN }, false> + Eq + Hash + Ord,
+    T: Default + Sized + Encoder<B, ALIGN, false, false> + Eq + Hash + Ord,
 {
     const HEADER_SIZE: usize = 4 + 8; // length + data_header
     const IS_DYNAMIC: bool = true;
@@ -377,9 +376,9 @@ where
 }
 
 /// Implement encoding for HashSet, SOL_MODE = true
-impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, true> for HashSet<T>
+impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for HashSet<T>
 where
-    T: Debug + Default + Sized + Encoder<B, { ALIGN }, true> + Eq + Hash + Ord,
+    T: Debug + Default + Sized + Encoder<B, ALIGN, true, false> + Eq + Hash + Ord,
 {
     const HEADER_SIZE: usize = 32 + 32 + 32; // offset + length + data_header
     const IS_DYNAMIC: bool = true;
@@ -421,7 +420,7 @@ where
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         const DATA_OFFSET: usize = 32;
 
-        let aligned_offset = align_up::<{ ALIGN }>(offset);
+        let aligned_offset = align_up::<ALIGN>(offset);
 
         // Check if there's enough data to read the header
         let header_end = aligned_offset
@@ -440,7 +439,7 @@ where
         }
 
         // Read data offset
-        let data_offset = read_u32_aligned::<B, { ALIGN }>(buf, aligned_offset)? as usize;
+        let data_offset = read_u32_aligned::<B, ALIGN>(buf, aligned_offset)? as usize;
 
         // Calculate start offset
         let start_offset = aligned_offset
@@ -448,14 +447,13 @@ where
             .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
 
         // Read length
-        let length = read_u32_aligned::<B, { ALIGN }>(buf, start_offset)? as usize;
+        let length = read_u32_aligned::<B, ALIGN>(buf, start_offset)? as usize;
         if length == 0 {
             return Ok(HashSet::new());
         }
 
         // Read relative data offset (relative to the current offset)
-        let values_offset =
-            read_u32_aligned::<B, { ALIGN }>(buf, start_offset + DATA_OFFSET)? as usize;
+        let values_offset = read_u32_aligned::<B, ALIGN>(buf, start_offset + DATA_OFFSET)? as usize;
 
         // Calculate absolute offset
         let values_start = values_offset
@@ -468,7 +466,7 @@ where
         let values_data = &buf.chunk()[values_start + 32..];
 
         for i in 0..length {
-            let value_offset = align_up::<{ ALIGN }>(T::HEADER_SIZE)
+            let value_offset = align_up::<ALIGN>(T::HEADER_SIZE)
                 .checked_mul(i)
                 .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
 
@@ -491,13 +489,13 @@ where
             }));
         }
 
-        let data_offset = read_u32_aligned::<B, { ALIGN }>(buf, aligned_offset)? as usize;
+        let data_offset = read_u32_aligned::<B, ALIGN>(buf, aligned_offset)? as usize;
         let start_offset = aligned_offset + data_offset;
-        let length = read_u32_aligned::<B, { ALIGN }>(buf, start_offset)? as usize;
-        let values_offset = read_u32_aligned::<B, { ALIGN }>(buf, start_offset + 64)? as usize;
+        let length = read_u32_aligned::<B, ALIGN>(buf, start_offset)? as usize;
+        let values_offset = read_u32_aligned::<B, ALIGN>(buf, start_offset + 64)? as usize;
         let values_start = start_offset + 64 + values_offset;
 
-        let data_length = length * align_up::<{ ALIGN }>(T::HEADER_SIZE);
+        let data_length = length * align_up::<ALIGN>(T::HEADER_SIZE);
 
         Ok((values_start + 32, data_length))
     }
@@ -507,7 +505,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        encoder::{is_big_endian, FluentABI, SolidityABI},
+        encoder::{FluentABI, SolidityABI},
         test_utils::print_bytes,
     };
     use alloc::vec::Vec;

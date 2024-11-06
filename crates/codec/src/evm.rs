@@ -9,7 +9,7 @@ use alloy_primitives::{Address, Bytes, FixedBytes, Uint};
 use byteorder::ByteOrder;
 use bytes::{Buf, BytesMut};
 
-impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, true> for Bytes {
+impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for Bytes {
     const HEADER_SIZE: usize = 32;
     const IS_DYNAMIC: bool = true;
 
@@ -17,7 +17,8 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, true> for Bytes {
     /// First, we encode the header and write it to the given offset.
     /// After that, we encode the actual data and write it to the end of the buffer.
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let aligned_header_size = align_up::<32>(<Self as Encoder<B, ALIGN, true>>::HEADER_SIZE);
+        let aligned_header_size =
+            align_up::<32>(<Self as Encoder<B, ALIGN, true, false>>::HEADER_SIZE);
 
         // Ensure the buffer has enough space for the offset + header size
         if buf.len() < offset + aligned_header_size {
@@ -52,7 +53,7 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, true> for Bytes {
     }
 }
 
-impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for Bytes {
+impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for Bytes {
     const HEADER_SIZE: usize = size_of::<u32>() * 2;
     const IS_DYNAMIC: bool = true;
 
@@ -91,12 +92,12 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for Bytes {
     }
 }
 
-impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for String {
-    const HEADER_SIZE: usize = <Bytes as Encoder<B, ALIGN, true>>::HEADER_SIZE;
+impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for String {
+    const HEADER_SIZE: usize = <Bytes as Encoder<B, ALIGN, true, false>>::HEADER_SIZE;
     const IS_DYNAMIC: bool = true;
 
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        <Bytes as Encoder<B, ALIGN, true>>::encode(
+        <Bytes as Encoder<B, ALIGN, true, false>>::encode(
             &Bytes::copy_from_slice(self.as_bytes()),
             buf,
             offset,
@@ -104,7 +105,7 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for String {
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        let bytes = <Bytes as Encoder<B, ALIGN, true>>::decode(buf, offset)?;
+        let bytes = <Bytes as Encoder<B, ALIGN, true, false>>::decode(buf, offset)?;
         String::from_utf8(bytes.to_vec()).map_err(|_| {
             CodecError::Decoding(DecodingError::InvalidData(
                 "failed to decode string from utf8".to_string(),
@@ -113,16 +114,16 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for String {
     }
 
     fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        <Bytes as Encoder<B, ALIGN, true>>::partial_decode(buf, offset)
+        <Bytes as Encoder<B, ALIGN, true, false>>::partial_decode(buf, offset)
     }
 }
 
-impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for String {
-    const HEADER_SIZE: usize = <Bytes as Encoder<B, ALIGN, false>>::HEADER_SIZE;
+impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for String {
+    const HEADER_SIZE: usize = <Bytes as Encoder<B, ALIGN, false, false>>::HEADER_SIZE;
     const IS_DYNAMIC: bool = true;
 
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        <Bytes as Encoder<B, ALIGN, false>>::encode(
+        <Bytes as Encoder<B, ALIGN, false, false>>::encode(
             &Bytes::copy_from_slice(self.as_bytes()),
             buf,
             offset,
@@ -130,7 +131,7 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for String {
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        let bytes = <Bytes as Encoder<B, ALIGN, false>>::decode(buf, offset)?;
+        let bytes = <Bytes as Encoder<B, ALIGN, false, false>>::decode(buf, offset)?;
         String::from_utf8(bytes.to_vec()).map_err(|_| {
             CodecError::Decoding(DecodingError::InvalidData(
                 "failed to decode string from utf8".to_string(),
@@ -139,12 +140,12 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for String {
     }
 
     fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        <Bytes as Encoder<B, ALIGN, false>>::partial_decode(buf, offset)
+        <Bytes as Encoder<B, ALIGN, false, false>>::partial_decode(buf, offset)
     }
 }
 
-impl<const N: usize, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false>
-    for FixedBytes<N>
+impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
+    Encoder<B, ALIGN, false, IS_STATIC> for FixedBytes<N>
 {
     const HEADER_SIZE: usize = N;
     const IS_DYNAMIC: bool = false;
@@ -179,8 +180,8 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, fal
     }
 }
 
-impl<const N: usize, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, true>
-    for FixedBytes<N>
+impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
+    Encoder<B, ALIGN, true, IS_STATIC> for FixedBytes<N>
 {
     const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
     const IS_DYNAMIC: bool = false;
@@ -220,7 +221,9 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, tru
 
 macro_rules! impl_evm_fixed {
     ($type:ty) => {
-        impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, false> for $type {
+        impl<B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
+            Encoder<B, ALIGN, false, IS_STATIC> for $type
+        {
             const HEADER_SIZE: usize = <$type>::len_bytes();
             const IS_DYNAMIC: bool = false;
 
@@ -257,7 +260,9 @@ macro_rules! impl_evm_fixed {
             }
         }
 
-        impl<B: ByteOrder, const ALIGN: usize> Encoder<B, { ALIGN }, true> for $type {
+        impl<B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
+            Encoder<B, ALIGN, true, IS_STATIC> for $type
+        {
             const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
             const IS_DYNAMIC: bool = false;
 
@@ -304,8 +309,13 @@ macro_rules! impl_evm_fixed {
 
 impl_evm_fixed!(Address);
 
-impl<const BITS: usize, const LIMBS: usize, B: ByteOrder, const ALIGN: usize>
-    Encoder<B, { ALIGN }, false> for Uint<BITS, LIMBS>
+impl<
+        const BITS: usize,
+        const LIMBS: usize,
+        B: ByteOrder,
+        const ALIGN: usize,
+        const IS_STATIC: bool,
+    > Encoder<B, ALIGN, false, IS_STATIC> for Uint<BITS, LIMBS>
 {
     const HEADER_SIZE: usize = Self::BYTES;
     const IS_DYNAMIC: bool = false;
@@ -313,7 +323,7 @@ impl<const BITS: usize, const LIMBS: usize, B: ByteOrder, const ALIGN: usize>
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
         let word_size = align_up::<ALIGN>(Self::BYTES);
 
-        let slice = get_aligned_slice::<B, { ALIGN }>(buf, offset, word_size);
+        let slice = get_aligned_slice::<B, ALIGN>(buf, offset, word_size);
 
         let bytes = if is_big_endian::<B>() {
             self.to_be_bytes_vec()
@@ -355,8 +365,13 @@ impl<const BITS: usize, const LIMBS: usize, B: ByteOrder, const ALIGN: usize>
     }
 }
 
-impl<const BITS: usize, const LIMBS: usize, B: ByteOrder, const ALIGN: usize>
-    Encoder<B, { ALIGN }, true> for Uint<BITS, LIMBS>
+impl<
+        const BITS: usize,
+        const LIMBS: usize,
+        B: ByteOrder,
+        const ALIGN: usize,
+        const IS_STATIC: bool,
+    > Encoder<B, ALIGN, true, IS_STATIC> for Uint<BITS, LIMBS>
 {
     const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
     const IS_DYNAMIC: bool = false;
@@ -405,7 +420,6 @@ impl<const BITS: usize, const LIMBS: usize, B: ByteOrder, const ALIGN: usize>
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     #[cfg(test)]
     use alloy_primitives::{Address, U256};
@@ -454,12 +468,13 @@ mod tests {
         let original = Address::from([0x42; 20]);
         let mut buf = BytesMut::new();
 
-        <Address as Encoder<LittleEndian, 1, false>>::encode(&original, &mut buf, 0).unwrap();
+        <Address as Encoder<LittleEndian, 1, false, true>>::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         println!("Encoded Address: {}", hex::encode(&encoded));
 
-        let decoded = <Address as Encoder<LittleEndian, 1, false>>::decode(&encoded, 0).unwrap();
+        let decoded =
+            <Address as Encoder<LittleEndian, 1, false, true>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -468,12 +483,13 @@ mod tests {
         let original = Address::from([0x42; 20]);
         let mut buf = BytesMut::new();
 
-        <Address as Encoder<LittleEndian, 32, true>>::encode(&original, &mut buf, 0).unwrap();
+        <Address as Encoder<LittleEndian, 32, true, true>>::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         println!("Encoded Address: {}", hex::encode(&encoded));
 
-        let decoded = <Address as Encoder<LittleEndian, 32, true>>::decode(&encoded, 0).unwrap();
+        let decoded =
+            <Address as Encoder<LittleEndian, 32, true, true>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -483,14 +499,14 @@ mod tests {
         let original = U256::from(0x1234567890abcdef_u64);
         let mut buf = BytesMut::new();
 
-        <U256 as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        <U256 as Encoder<LittleEndian, 4, false, true>>::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         println!("Encoded U256 (LE): {}", hex::encode(&encoded));
         let expected_encoded = "efcdab9078563412000000000000000000000000000000000000000000000000";
         assert_eq!(hex::encode(&encoded), expected_encoded);
 
-        let decoded = <U256 as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded = <U256 as Encoder<LittleEndian, 4, false, true>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -500,14 +516,14 @@ mod tests {
         let original = U256::from(0x1234567890abcdef_u64);
         let mut buf = BytesMut::new();
 
-        <U256 as Encoder<BigEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        <U256 as Encoder<BigEndian, 4, false, true>>::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         println!("Encoded U256 (BE): {}", hex::encode(&encoded));
         let expected_encoded = "0000000000000000000000000000000000000000000000001234567890abcdef";
         assert_eq!(hex::encode(&encoded), expected_encoded);
 
-        let decoded = <U256 as Encoder<BigEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded = <U256 as Encoder<BigEndian, 4, false, true>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -515,7 +531,7 @@ mod tests {
     fn test_string_encoding_solidity() {
         let original = "Hello, World!!".to_string();
         let mut buf = BytesMut::new();
-        <String as Encoder<BigEndian, 32, true>>::encode(&original, &mut buf, 0).unwrap();
+        <String as Encoder<BigEndian, 32, true, false>>::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
 
@@ -525,7 +541,7 @@ mod tests {
 
         assert_eq!(hex::encode(&encoded), expected_encoded);
 
-        let decoded = <String as Encoder<BigEndian, 32, true>>::decode(&encoded, 0).unwrap();
+        let decoded = <String as Encoder<BigEndian, 32, true, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -533,7 +549,7 @@ mod tests {
     fn test_string_encoding_fluent() {
         let original = "Hello, World!!".to_string();
         let mut buf = BytesMut::new();
-        <String as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, 0).unwrap();
+        <String as Encoder<LittleEndian, 4, false, false>>::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
 
@@ -543,7 +559,8 @@ mod tests {
 
         assert_eq!(hex::encode(&encoded), expected_encoded);
 
-        let decoded = <String as Encoder<LittleEndian, 4, false>>::decode(&encoded, 0).unwrap();
+        let decoded =
+            <String as Encoder<LittleEndian, 4, false, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
     }

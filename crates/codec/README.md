@@ -1,6 +1,7 @@
 # Fluentbase Codec
 
-A lightweight, no-std compatible codec library optimized for random reads. While similar to Solidity ABI encoding, it introduces several optimizations and additional features for efficient data access and nested structures.
+A lightweight, no-std compatible codec library optimized for random reads. While similar to Solidity ABI encoding, it
+introduces several optimizations and additional features for efficient data access and nested structures.
 
 ## Key Features
 
@@ -120,11 +121,14 @@ SolidityABI::encode(&numbers, &mut solidity_buf, 0).unwrap();
 
 ### Determinism
 
-The encoded binary is not deterministic and should only be used for parameter passing. The encoding order of non-primitive fields affects the data layout after the header, though decoding will produce the same result regardless of encoding order.
+The encoded binary is not deterministic and should only be used for parameter passing. The encoding order of
+non-primitive fields affects the data layout after the header, though decoding will produce the same result regardless
+of encoding order.
 
 ### Order Sensitivity
 
-The order of encoding operations is significant, especially for non-primitive types, as it affects the final binary layout.
+The order of encoding operations is significant, especially for non-primitive types, as it affects the final binary
+layout.
 
 ## Installation
 

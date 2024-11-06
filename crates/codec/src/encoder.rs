@@ -1,9 +1,6 @@
-use crate::{
-    alloc::{string::ToString, vec::Vec},
-    error::CodecError,
-};
+use crate::{alloc::string::ToString, error::CodecError};
 use byteorder::{ByteOrder, BE, LE};
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, BytesMut};
 use core::marker::PhantomData;
 
 // TODO: @d1r1 Investigate whether decoding the result into an uninitialized memory (e.g., using
@@ -11,13 +8,18 @@ use core::marker::PhantomData;
 // This could potentially reduce unnecessary memory initialization overhead in cases where
 // the default value is not required before the actual decoding takes place.
 // Consider benchmarking both approaches to measure performance differences.
+
 /// Trait for encoding and decoding values with specific byte order, alignment, and mode.
 ///
 /// # Type Parameters
 /// - `B`: The byte order used for encoding/decoding.
 /// - `ALIGN`: The alignment requirement for the encoded data.
 /// - `SOL_MODE`: A boolean flag indicating whether Solidity-compatible mode is enabled.
-pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized {
+/// - `IS_STATIC`: A boolean flag indicating whether the encoded data is static (used for
+///   SolidityPackedABI).
+pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bool>:
+    Sized
+{
     /// Returns the header size for this encoder.
     const HEADER_SIZE: usize;
     const IS_DYNAMIC: bool;
@@ -60,17 +62,16 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
         align_up::<ALIGN>(Self::HEADER_SIZE)
     }
 }
-
 macro_rules! define_encoder_mode {
     ($name:ident, $byte_order:ty, $align:expr, $sol_mode:expr) => {
         pub struct $name<T>(PhantomData<T>);
 
         impl<T> $name<T>
         where
-            T: Encoder<$byte_order, $align, $sol_mode>,
+            T: Encoder<$byte_order, $align, $sol_mode, false>,
         {
             pub fn is_dynamic() -> bool {
-                <T as Encoder<$byte_order, $align, $sol_mode>>::IS_DYNAMIC
+                <T as Encoder<$byte_order, $align, $sol_mode, false>>::IS_DYNAMIC
             }
 
             pub fn encode(value: &T, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
@@ -93,16 +94,15 @@ macro_rules! define_encoder_mode {
             }
         }
     };
-    // Add variant with extra trait bound
-    ($name:ident, $byte_order:ty, $align:expr, $sol_mode:expr, $extra_bound:tt) => {
+    ($name:ident, $byte_order:ty, $align:expr, $sol_mode:expr, static_only) => {
         pub struct $name<T>(PhantomData<T>);
 
         impl<T> $name<T>
         where
-            T: Encoder<$byte_order, $align, $sol_mode> + $extra_bound,
+            T: Encoder<$byte_order, $align, $sol_mode, true>,
         {
             pub fn is_dynamic() -> bool {
-                <T as Encoder<$byte_order, $align, $sol_mode>>::IS_DYNAMIC
+                T::IS_DYNAMIC
             }
 
             pub fn encode(value: &T, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
@@ -126,33 +126,32 @@ macro_rules! define_encoder_mode {
         }
     };
 }
-pub trait IsStatic {}
 
 define_encoder_mode!(SolidityABI, BE, 32, true);
-define_encoder_mode!(SolidityPackedABI, BE, 1, false, IsStatic);
 define_encoder_mode!(FluentABI, LE, 4, false);
 
-pub trait SolidityEncoder: Encoder<BE, 32, true> {
-    const SOLIDITY_HEADER_SIZE: usize = <Self as Encoder<BE, 32, true>>::HEADER_SIZE;
+// SolidityPackedABI works only for static types
+define_encoder_mode!(SolidityPackedABI, BE, 1, true, static_only);
+
+pub trait SolidityEncoder: Encoder<BE, 32, true, false> {
+    const SOLIDITY_HEADER_SIZE: usize = <Self as Encoder<BE, 32, true, false>>::HEADER_SIZE;
 }
 
-impl<T> SolidityEncoder for T where T: Encoder<BE, 32, true> {}
+impl<T> SolidityEncoder for T where T: Encoder<BE, 32, true, false> {}
 
-pub trait SolidityPackedEncoder: Encoder<BE, 1, false> {
-    const SOLIDITY_PACKED_HEADER_SIZE: usize = <Self as Encoder<BE, 1, false>>::HEADER_SIZE;
+pub trait SolidityPackedEncoder: Encoder<BE, 1, true, true> {
+    const SOLIDITY_PACKED_HEADER_SIZE: usize = <Self as Encoder<BE, 1, true, true>>::HEADER_SIZE;
 }
 
-impl<T> SolidityPackedEncoder for T where T: Encoder<BE, 1, false> {}
+impl<T> SolidityPackedEncoder for T where T: Encoder<BE, 1, true, true> {}
 
-pub trait FluentEncoder: Encoder<LE, 4, false> {
-    const FLUENT_HEADER_SIZE: usize = <Self as Encoder<LE, 4, false>>::HEADER_SIZE;
+pub trait FluentEncoder: Encoder<LE, 4, false, false> {
+    const FLUENT_HEADER_SIZE: usize = <Self as Encoder<LE, 4, false, false>>::HEADER_SIZE;
 }
 
-impl<T> FluentEncoder for T where T: Encoder<LE, 4, false> {}
+impl<T> FluentEncoder for T where T: Encoder<LE, 4, false, false> {}
 
-// TODO: move functions bellow to the utils module
-
-// TODO: d1r1 is it possible to make this fn const?
+/// Checks if the given byte order is big-endian.
 pub fn is_big_endian<B: ByteOrder>() -> bool {
     B::read_u16(&[0x12, 0x34]) == 0x1234
 }
@@ -164,22 +163,15 @@ pub const fn align_up<const ALIGN: usize>(offset: usize) -> usize {
     (offset + ALIGN - 1) & !(ALIGN - 1)
 }
 
-/// Aligns the source bytes to the specified alignment.
-pub fn align<B: ByteOrder, const ALIGN: usize, const SOLIDITY_COMP: bool>(src: &[u8]) -> Bytes {
-    let aligned_src_len = align_up::<ALIGN>(src.len());
-    let aligned_total_size = aligned_src_len.max(ALIGN);
-    let mut aligned = BytesMut::zeroed(aligned_total_size);
-
-    if is_big_endian::<B>() {
-        // For big-endian, copy to the end of the aligned array
-        let start = aligned_total_size - src.len();
-        aligned[start..].copy_from_slice(src);
-    } else {
-        // For little-endian, copy to the start of the aligned array
-        aligned[..src.len()].copy_from_slice(src);
-    }
-
-    aligned.freeze()
+/// Checks if the given type is dynamic.
+pub fn is_dynamic<
+    T: Encoder<B, ALIGN, SOL_MODE, IS_STATIC>,
+    B: ByteOrder,
+    const ALIGN: usize,
+    const SOL_MODE: bool,
+    const IS_STATIC: bool,
+>() -> bool {
+    T::IS_DYNAMIC
 }
 
 pub fn write_u32_aligned<B: ByteOrder, const ALIGN: usize>(
@@ -232,40 +224,9 @@ pub fn read_u32_aligned<B: ByteOrder, const ALIGN: usize>(
     }
 }
 
-pub fn read_u32_aligned1<B: ByteOrder, const ALIGN: usize>(
-    buf: &impl Buf,
-    offset: usize,
-) -> Result<u32, CodecError> {
-    let aligned_value_size = align_up::<ALIGN>(4);
-
-    // Check for overflow
-    let end_offset = offset.checked_add(aligned_value_size).ok_or_else(|| {
-        CodecError::Decoding(crate::error::DecodingError::BufferOverflow {
-            msg: "Overflow occurred when calculating end offset while reading aligned u32"
-                .to_string(),
-        })
-    })?;
-
-    if buf.remaining() < end_offset {
-        return Err(CodecError::Decoding(
-            crate::error::DecodingError::BufferTooSmall {
-                expected: end_offset,
-                found: buf.remaining(),
-                msg: "Buffer underflow occurred while reading aligned u32".to_string(),
-            },
-        ));
-    }
-
-    if is_big_endian::<B>() {
-        Ok(B::read_u32(&buf.chunk()[end_offset - 4..end_offset]))
-    } else {
-        Ok(B::read_u32(&buf.chunk()[offset..offset + 4]))
-    }
-}
-
 /// Returns a mutable slice of the buffer at the specified offset, aligned to the specified
 /// alignment. This slice is guaranteed to be large enough to hold the value of value_size.
-pub fn get_aligned_slice<B: ByteOrder, const ALIGN: usize>(
+pub(crate) fn get_aligned_slice<B: ByteOrder, const ALIGN: usize>(
     buf: &mut BytesMut,
     offset: usize,
     value_size: usize,
@@ -287,7 +248,7 @@ pub fn get_aligned_slice<B: ByteOrder, const ALIGN: usize>(
     &mut buf[write_offset..write_offset + value_size]
 }
 
-pub fn get_aligned_indices<B: ByteOrder, const ALIGN: usize>(
+pub(crate) fn get_aligned_indices<B: ByteOrder, const ALIGN: usize>(
     offset: usize,
     value_size: usize,
 ) -> (usize, usize) {
@@ -310,13 +271,4 @@ pub fn ensure_buf_size(buf: &mut BytesMut, required_size: usize) {
     if buf.len() < required_size {
         buf.resize(required_size, 0);
     }
-}
-
-pub fn is_dynamic<
-    T: Encoder<B, ALIGN, SOL_MODE>,
-    B: ByteOrder,
-    const ALIGN: usize,
-    const SOL_MODE: bool,
->() -> bool {
-    T::IS_DYNAMIC
 }
