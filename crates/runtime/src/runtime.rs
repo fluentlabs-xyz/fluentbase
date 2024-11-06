@@ -87,6 +87,7 @@ pub struct RuntimeContext {
     // context outputs
     pub(crate) execution_result: ExecutionResult,
     pub(crate) resumable_invocation: Option<ResumableInvocation>,
+    pub(crate) instance: Option<Instance>,
     pub(crate) preimage_resolver: Rc<dyn PreimageResolver>,
 }
 
@@ -107,6 +108,7 @@ impl Default for RuntimeContext {
             trace: false,
             execution_result: ExecutionResult::default(),
             resumable_invocation: None,
+            instance: None,
             preimage_resolver: Rc::new(EmptyPreimageResolver::default()),
             disable_fuel: false,
         }
@@ -422,7 +424,7 @@ impl Runtime {
         });
     }
 
-    fn resolve_instance(&mut self) -> Result<Instance, RuntimeError> {
+    fn instantiate_module(&mut self) -> Result<Instance, RuntimeError> {
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             let bytecode_repr = take(&mut self.store.data_mut().bytecode);
 
@@ -490,13 +492,13 @@ impl Runtime {
         &mut self,
         fuel_consumed_before_call: u64,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let next_result = self
-            .resolve_instance()?
+        let instance = self.instantiate_module()?;
+        let next_result = instance
             .get_func(&mut self.store, "main")
             .ok_or(RuntimeError::MissingEntrypoint)?
             .call_resumable(&mut self.store, &[], &mut [])
             .map_err(Into::<RuntimeError>::into);
-        self.handle_resumable_call_result(next_result, fuel_consumed_before_call)
+        self.handle_resumable_call_result(next_result, fuel_consumed_before_call, instance)
     }
 
     pub fn resume(&mut self, exit_code: i32, fuel_consumed_before_call: u64) -> ExecutionResult {
@@ -505,8 +507,19 @@ impl Runtime {
             .data_mut()
             .resumable_invocation
             .take()
-            .expect("can't resolve resumable invocation state");
-        match self.resume_internal(resumable_invocation, exit_code, fuel_consumed_before_call) {
+            .expect("can't resolve resumable invocation");
+        let instance = self
+            .store_mut()
+            .data_mut()
+            .instance
+            .take()
+            .expect("can't resolve instance");
+        match self.resume_internal(
+            resumable_invocation,
+            instance,
+            exit_code,
+            fuel_consumed_before_call,
+        ) {
             Ok(result) => result,
             Err(err) => self.handle_execution_result(Some(err), fuel_consumed_before_call),
         }
@@ -515,6 +528,7 @@ impl Runtime {
     fn resume_internal(
         &mut self,
         resumable_invocation: ResumableInvocation,
+        instance: Instance,
         exit_code: i32,
         fuel_consumed_before_call: u64,
     ) -> Result<ExecutionResult, RuntimeError> {
@@ -522,13 +536,14 @@ impl Runtime {
         let next_result = resumable_invocation
             .resume(self.store.as_context_mut(), &[exit_code], &mut [])
             .map_err(Into::<RuntimeError>::into);
-        self.handle_resumable_call_result(next_result, fuel_consumed_before_call)
+        self.handle_resumable_call_result(next_result, fuel_consumed_before_call, instance)
     }
 
     fn handle_resumable_call_result(
         &mut self,
         mut next_result: Result<ResumableCall, RuntimeError>,
         fuel_consumed_before_call: u64,
+        instance: Instance,
     ) -> Result<ExecutionResult, RuntimeError> {
         loop {
             let resumable_invocation = match next_result? {
@@ -552,17 +567,19 @@ impl Runtime {
                 .downcast_ref::<SysExecResumable>()
             {
                 if !delayed_state.is_root {
-                    return self.handle_resumable_state(resumable_invocation);
+                    return self.handle_resumable_state(resumable_invocation, instance.clone());
                 }
                 // if we're at zero depth level, then we can safely execute function
                 // since this call is initiated on the root level and it is trusted
-                let exit_code =
-                    SyscallExec::fn_continue(Caller::new(&mut self.store, None), delayed_state)
-                        .unwrap_or_else(|exit_code| {
-                            exit_code
-                                .i32_exit_status()
-                                .unwrap_or(ExitCode::UnknownError.into_i32())
-                        });
+                let exit_code = SyscallExec::fn_continue(
+                    Caller::new(&mut self.store, Some(&instance)),
+                    delayed_state,
+                )
+                .unwrap_or_else(|exit_code| {
+                    exit_code
+                        .i32_exit_status()
+                        .unwrap_or(ExitCode::UnknownError.into_i32())
+                });
                 let exit_code = Value::I32(exit_code);
                 next_result = resumable_invocation
                     .resume(self.store.as_context_mut(), &[exit_code], &mut [])
@@ -577,6 +594,7 @@ impl Runtime {
     fn handle_resumable_state(
         &mut self,
         resumable_invocation: ResumableInvocation,
+        instance: Instance,
     ) -> Result<ExecutionResult, RuntimeError> {
         let delayed_state = resumable_invocation
             .host_error()
@@ -599,6 +617,7 @@ impl Runtime {
         output.extend(encoded_state.freeze().to_vec());
         // save resumable invocation inside store
         self.store_mut().data_mut().resumable_invocation = Some(resumable_invocation);
+        self.store_mut().data_mut().instance = Some(instance);
         // interruption is a special exit code that indicates to the root what happened inside
         // the call
         Err(RuntimeError::ExecutionInterrupted)
