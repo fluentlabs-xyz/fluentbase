@@ -359,7 +359,7 @@ fn test_deploy_duntsane() {
         &mut ctx,
         DEPLOYER_ADDRESS,
         contract_address,
-        Bytes::from([136u8, 17u8, 141u8, 8u8]),
+        Bytes::from([94u8, 192u8, 30u8, 77u8]),
         None,
         None,
     );
@@ -370,7 +370,7 @@ fn test_deploy_duntsane() {
         &mut ctx,
         DEPLOYER_ADDRESS,
         contract_address,
-        Bytes::from([171u8, 4u8, 190u8, 180u8]),
+        Bytes::from([114u8, 67u8, 8u8, 122u8]),
         None,
         None,
     );
@@ -381,7 +381,7 @@ fn test_deploy_duntsane() {
         &mut ctx,
         DEPLOYER_ADDRESS,
         contract_address,
-        Bytes::from([194u8, 91u8, 158u8, 124u8]),
+        Bytes::from([166u8, 180u8, 107u8, 200u8]),
         None,
         None,
     );
