@@ -10,10 +10,11 @@ use fluentbase_sdk::{
     derive::{router, solidity_storage},
     Address,
     Bytes,
+    ContractContextReader,
+    SharedAPI,
     B256,
     U256,
 };
-use fluentbase_types::SharedAPI;
 
 pub trait ERC20API {
     fn symbol(&self) -> Bytes;
@@ -135,7 +136,7 @@ impl<SDK: SharedAPI> ERC20API for ERC20<SDK> {
     }
 
     fn transfer(&mut self, to: Address, value: U256) -> U256 {
-        let from = self.sdk.contract_context().caller;
+        let from = self.sdk.context().contract_caller();
 
         // check if the sender and receiver are valid
         if from.is_zero() {
@@ -156,7 +157,7 @@ impl<SDK: SharedAPI> ERC20API for ERC20<SDK> {
     }
 
     fn approve(&mut self, spender: Address, value: U256) -> U256 {
-        let owner = self.sdk.contract_context().caller;
+        let owner = self.sdk.context().contract_caller();
         Allowance::set(&mut self.sdk, owner, spender, value);
         emit_event(
             &mut self.sdk,
@@ -170,7 +171,7 @@ impl<SDK: SharedAPI> ERC20API for ERC20<SDK> {
     }
 
     fn transfer_from(&mut self, from: Address, to: Address, value: U256) -> U256 {
-        let spender = self.sdk.contract_context().caller;
+        let spender = self.sdk.context().contract_caller();
 
         let current_allowance = Allowance::get(&self.sdk, from, spender);
         if current_allowance < value {
@@ -189,7 +190,7 @@ impl<SDK: SharedAPI> ERC20API for ERC20<SDK> {
 
 impl<SDK: SharedAPI> ERC20<SDK> {
     pub fn deploy(&mut self) {
-        let owner_address = self.sdk.contract_context().caller;
+        let owner_address = self.sdk.context().contract_caller();
         let owner_balance: U256 = U256::from_str_radix("1000000000000000000000000", 10).unwrap();
 
         let _ = Balance::add(&mut self.sdk, owner_address, owner_balance);
@@ -202,10 +203,11 @@ basic_entrypoint!(ERC20);
 mod test {
     use super::*;
     use fluentbase_sdk::{
+        address,
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
+        ContractContext,
     };
-    use fluentbase_types::{address, ContractContext};
     use hex_literal::hex;
     use serial_test::serial;
 
@@ -214,8 +216,8 @@ mod test {
         input: T,
         caller: Option<Address>,
     ) {
-        sdk.native_sdk_mut().take_output();
-        sdk.native_sdk_mut().set_input(input);
+        sdk.inner.borrow_mut().native_sdk.take_output();
+        sdk.inner.borrow_mut().native_sdk.set_input(input);
         sdk.rewrite_contract_context(ContractContext {
             caller: caller.unwrap_or_default(),
             ..Default::default()
@@ -264,7 +266,7 @@ mod test {
         erc20.deploy();
         erc20.main();
 
-        let result = erc20.sdk.native_sdk_mut().take_output();
+        let result = erc20.sdk.inner.borrow_mut().native_sdk.take_output();
 
         let val = SymbolReturn::decode(&result.as_slice()).unwrap();
         let symbol = String::from_utf8_lossy(&val.0 .0);
@@ -282,7 +284,7 @@ mod test {
         erc20.deploy();
         erc20.main();
 
-        let result = erc20.sdk.native_sdk_mut().take_output();
+        let result = erc20.sdk.inner.borrow_mut().native_sdk.take_output();
 
         let val = SymbolReturn::decode(&result.as_slice()).unwrap();
         let symbol = String::from_utf8_lossy(&val.0 .0);
@@ -306,7 +308,7 @@ mod test {
             hex!("70a08231000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         rewrite_input(&mut erc20.sdk, call_balance_of, Some(owner_address));
         erc20.main();
-        let result = erc20.sdk.native_sdk_mut().take_output();
+        let result = erc20.sdk.inner.borrow_mut().native_sdk.take_output();
         let output_balance = U256::from_be_slice(&result);
         assert_eq!(output_balance.to_string(), expected_balance);
     }
@@ -364,7 +366,7 @@ mod test {
         let allowance_call = AllowanceCall::new((owner, spender)).encode();
         rewrite_input(&mut erc20.sdk, allowance_call, None);
         erc20.main();
-        let result = erc20.sdk.native_sdk_mut().take_output();
+        let result = erc20.sdk.inner.borrow_mut().native_sdk.take_output();
         let allowance = U256::from_be_slice(&result);
         assert_eq!(allowance, U256::from(1000));
     }

@@ -31,9 +31,7 @@ use hashbrown::HashMap;
 use hex_literal::hex;
 use revm::{
     primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, Output, TransactTo},
-    rwasm::RwasmDbWrapper,
     DatabaseCommit,
-    Evm,
     InMemoryDB,
     Rwasm,
 };
@@ -142,18 +140,6 @@ impl EvmTestingContext {
         revm_account.mark_touch();
         self.db.commit(HashMap::from([(address, revm_account)]));
     }
-
-    pub(crate) fn with_sdk<F>(&mut self, f: F)
-    where
-        F: Fn(
-            RwasmDbWrapper<'_, fluentbase_sdk::runtime::RuntimeContextWrapper, &mut InMemoryDB>,
-        ) -> (),
-    {
-        let mut evm = Evm::builder().with_db(&mut self.db).build();
-        let runtime_context = RuntimeContext::default().with_depth(0u32);
-        let native_sdk = fluentbase_sdk::runtime::RuntimeContextWrapper::new(runtime_context);
-        f(RwasmDbWrapper::new(&mut evm.context.evm, native_sdk))
-    }
 }
 
 struct TxBuilder<'a> {
@@ -210,11 +196,14 @@ impl<'a> TxBuilder<'a> {
     }
 
     fn exec(&mut self) -> ExecutionResult {
+        let db = take(&mut self.ctx.db);
         let mut evm = Rwasm::builder()
             .with_env(Box::new(take(&mut self.env)))
-            .with_ref_db(&mut self.ctx.db)
+            .with_db(db)
             .build();
-        evm.transact_commit().unwrap()
+        let result = evm.transact_commit().unwrap();
+        self.ctx.db = evm.into_db();
+        result
     }
 }
 
@@ -352,6 +341,51 @@ fn test_deploy_greeting() {
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!("Hello, World", from_utf8(bytes.as_ref()).unwrap());
+}
+
+#[test]
+fn test_deploy_duntsane() {
+    // deploy duntsane WASM contract
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = deploy_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/duntsane/lib.wasm").into(),
+    );
+
+    // call random function
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::from([136u8, 17u8, 141u8, 8u8]),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+
+    // call reset_deck function
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::from([171u8, 4u8, 190u8, 180u8]),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+
+    // call play_baccarat function
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::from([194u8, 91u8, 158u8, 124u8]),
+        None,
+        None,
+    );
+    assert!(result.is_success());
 }
 
 #[test]

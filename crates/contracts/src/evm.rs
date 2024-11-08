@@ -9,7 +9,7 @@ use fluentbase_sdk::{
     env_from_context,
     Address,
     Bytes,
-    ContractContext,
+    ContractContextReader,
     ExitCode,
     SharedAPI,
     B256,
@@ -153,9 +153,9 @@ const EVM_CODE_HASH_SLOT: U256 = U256::from_le_bytes(derive_keccak256!("_evm_byt
 
 impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
     pub fn new(sdk: &'a mut SDK) -> Self {
-        let address = sdk.contract_context().address;
+        let address = sdk.context().contract_address();
         Self {
-            env: env_from_context(sdk.block_context(), sdk.tx_context()),
+            env: env_from_context(sdk.context()),
             sdk,
             address,
         }
@@ -281,33 +281,33 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
         }
     }
 
-    pub fn call(&mut self, contract_context: ContractContext) -> InterpreterResult {
+    pub fn call(&mut self) -> InterpreterResult {
         let input = self.sdk.input();
         let (evm_bytecode, _code_hash) = self.load_evm_bytecode();
         let contract = Contract {
             input,
             bytecode: to_analysed(evm_bytecode),
             hash: None,
-            target_address: contract_context.address,
+            target_address: self.sdk.context().contract_address(),
             bytecode_address: None,
-            caller: contract_context.caller,
-            call_value: contract_context.value,
+            caller: self.sdk.context().contract_caller(),
+            call_value: self.sdk.context().contract_value(),
         };
         let result = self.exec_evm_bytecode(contract);
         self.sdk.charge_fuel(result.gas.spent());
         result
     }
 
-    pub fn deploy(&mut self, contract_context: ContractContext) -> ExitCode {
+    pub fn deploy(&mut self) -> ExitCode {
         let init_code = self.sdk.input();
         let contract = Contract {
             input: Bytes::default(),
             bytecode: to_analysed(Bytecode::new_raw(init_code)),
             hash: None,
-            target_address: contract_context.address,
+            target_address: self.sdk.context().contract_address(),
             bytecode_address: None,
-            caller: contract_context.caller,
-            call_value: contract_context.value,
+            caller: self.sdk.context().contract_caller(),
+            call_value: self.sdk.context().contract_value(),
         };
         let mut result = self.exec_evm_bytecode(contract);
 
@@ -350,8 +350,7 @@ impl<SDK: SharedAPI> EvmLoaderEntrypoint<SDK> {
     }
 
     pub fn deploy_inner(&mut self) -> ExitCode {
-        let contract_context = self.sdk.contract_context().clone();
-        EvmLoader::new(&mut self.sdk).deploy(contract_context)
+        EvmLoader::new(&mut self.sdk).deploy()
     }
 
     pub fn main(&mut self) {
@@ -360,8 +359,7 @@ impl<SDK: SharedAPI> EvmLoaderEntrypoint<SDK> {
     }
 
     pub fn main_inner(&mut self) -> ExitCode {
-        let contract_context = self.sdk.contract_context().clone();
-        let result = EvmLoader::new(&mut self.sdk).call(contract_context);
+        let result = EvmLoader::new(&mut self.sdk).call();
         self.sdk.write(result.output.as_ref());
         exit_code_from_evm_error(result.result)
     }

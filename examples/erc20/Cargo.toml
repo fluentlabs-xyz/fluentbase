@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-types = { workspace = true, default-features = false }
 
 # for Solidity ABI
 alloy-sol-types = { workspace = true }
