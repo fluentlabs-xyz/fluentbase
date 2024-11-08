@@ -11,10 +11,10 @@ use fluentbase_sdk::{
     Address,
     Bytes,
     ContractContextReader,
+    SharedAPI,
     B256,
     U256,
 };
-use fluentbase_types::SharedAPI;
 
 pub trait ERC20API {
     fn symbol(&self) -> Bytes;
@@ -203,10 +203,11 @@ basic_entrypoint!(ERC20);
 mod test {
     use super::*;
     use fluentbase_sdk::{
+        address,
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
+        ContractContext,
     };
-    use fluentbase_types::{address, ContractContext};
     use hex_literal::hex;
     use serial_test::serial;
 

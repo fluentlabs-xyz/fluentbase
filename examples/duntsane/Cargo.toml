@@ -1,24 +1,24 @@
 [package]
 edition = "2021"
-name = "rustsimplesc"
+name = "fluentbase-example-duntsane"
 version = "0.1.0"
 
 [dependencies]
 alloy-sol-types = { version = "0.7.4", default-features = false }
-
-fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false, branch = "devel" }
+fluentbase-sdk = { workspace = true, default-features = false }
 rand = { version = "0.8.3", features = ["small_rng"], default-features = false }
-serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0.100", default-features = false, features = ["alloc"] }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+
 [lib]
 crate-type = ["cdylib", "staticlib"]
-path = "src/lib.rs"
+path = "lib.rs"
 
-[profile.release]
-lto = true
-opt-level = 'z'
-panic = "abort"
-strip = true
+#[profile.release]
+#lto = true
+#opt-level = 'z'
+#panic = "abort"
+#strip = true
 
 [features]
 default = []

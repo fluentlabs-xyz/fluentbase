@@ -2265,12 +2265,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-duntsane"
+version = "0.1.0"
+dependencies = [
+ "alloy-sol-types 0.7.7",
+ "fluentbase-sdk",
+ "rand",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fluentbase-example-erc20"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.7",
  "fluentbase-sdk",
- "fluentbase-types",
  "hex",
  "hex-literal",
  "lazy_static",
@@ -4775,7 +4785,6 @@ dependencies = [
  "ethers-providers",
  "fluentbase-core",
  "fluentbase-genesis",
- "fluentbase-runtime",
  "fluentbase-sdk",
  "indicatif",
  "reqwest 0.12.8",

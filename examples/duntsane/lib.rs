@@ -1,6 +1,5 @@
-// lib.rs
-
 #![cfg_attr(target_arch = "wasm32", no_std)]
+
 extern crate alloc;
 extern crate fluentbase_sdk;
 
@@ -13,6 +12,7 @@ use alloy_sol_types::private::Uint as U256;
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{router, signature, Contract},
+    BlockContextReader,
     SharedAPI,
 };
 use rand::{rngs::SmallRng, Rng, SeedableRng};
@@ -106,7 +106,7 @@ pub trait RouterAPI {
 impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
     #[signature("function random() external view returns (uint256)")]
     fn random(&self) -> u64 {
-        let seed = self.sdk.block_context().timestamp;
+        let seed = self.sdk.context().block_timestamp();
         let mut small_rng = SmallRng::seed_from_u64(seed);
         small_rng.gen()
     }
@@ -121,7 +121,7 @@ impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
 
     #[signature("function playBaccarat() external view returns (string,string,string,string,string,string,string,uint256)")]
     fn play_baccarat(&mut self) -> (String, String, String, String, String, String, String, u64) {
-        let current_seed = self.sdk.block_context().timestamp;
+        let current_seed = self.sdk.context().block_timestamp();
         let last_seed_key = U256::from(2);
         let deck_count_key = U256::from(1);
 
