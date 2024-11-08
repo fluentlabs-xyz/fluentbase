@@ -107,14 +107,18 @@ impl ClientMethod {
                 gas_limit: u64,
                 #(#param_names: #param_types,)*
             ) -> (#(#return_types,)*) {
+                use fluentbase_sdk::TxContextReader;
+
                 let input = self.#encode_name(#(#param_names,)*);
 
-                let tx_context = self.sdk.tx_context();
-                if tx_context.value < value {
-                    ::core::panic!("insufficient funds");
-                }
-                if tx_context.gas_limit < gas_limit {
-                    ::core::panic!("insufficient gas");
+                {
+                    let context = self.sdk.context();
+                    if context.tx_value() < value {
+                        ::core::panic!("insufficient funds");
+                    }
+                    if context.tx_gas_limit() < gas_limit {
+                        ::core::panic!("insufficient gas");
+                    }
                 }
 
                 let (output, exit_code) = self.sdk.call(

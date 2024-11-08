@@ -6,13 +6,17 @@ use fluentbase_types::{
     alloc_slice,
     Address,
     BlockContext,
+    BlockContextReader,
     Bytes,
     ContextFreeNativeAPI,
     ContractContext,
+    ContractContextReader,
     NativeAPI,
     SharedAPI,
     SharedContextInputV1,
+    SharedContextReader,
     TxContext,
+    TxContextReader,
     B256,
     F254,
     GAS_LIMIT_SYSCALL_BALANCE,
@@ -58,7 +62,7 @@ impl<API: NativeAPI> SharedContextImpl<API> {
         }
     }
 
-    unsafe fn shared_context_ref(&self) -> &SharedContextInputV1 {
+    unsafe fn shared_context_ref(&self) -> &'static SharedContextInputV1 {
         static mut CONTEXT: Option<SharedContextInputV1> = None;
         CONTEXT.get_or_insert_with(|| {
             let input_size = self.native_sdk.input_size() as usize;
@@ -109,18 +113,105 @@ impl<API: NativeAPI> ContextFreeNativeAPI for SharedContextImpl<API> {
     }
 }
 
+struct SharedContextReaderImpl<'a>(&'a SharedContextInputV1);
+
+impl<'a> BlockContextReader for SharedContextReaderImpl<'a> {
+    fn block_chain_id(&self) -> u64 {
+        self.0.block.chain_id
+    }
+
+    fn block_coinbase(&self) -> Address {
+        self.0.block.coinbase
+    }
+
+    fn block_timestamp(&self) -> u64 {
+        self.0.block.timestamp
+    }
+
+    fn block_number(&self) -> u64 {
+        self.0.block.number
+    }
+
+    fn block_difficulty(&self) -> U256 {
+        self.0.block.difficulty
+    }
+
+    fn block_prev_randao(&self) -> B256 {
+        self.0.block.prev_randao
+    }
+
+    fn block_gas_limit(&self) -> u64 {
+        self.0.block.gas_limit
+    }
+
+    fn block_base_fee(&self) -> U256 {
+        self.0.block.base_fee
+    }
+}
+impl<'a> TxContextReader for SharedContextReaderImpl<'a> {
+    fn tx_gas_limit(&self) -> u64 {
+        self.0.tx.gas_limit
+    }
+
+    fn tx_nonce(&self) -> u64 {
+        self.0.tx.nonce
+    }
+
+    fn tx_gas_price(&self) -> U256 {
+        self.0.tx.gas_price
+    }
+
+    fn tx_gas_priority_fee(&self) -> Option<U256> {
+        self.0.tx.gas_priority_fee
+    }
+
+    fn tx_origin(&self) -> Address {
+        self.0.tx.origin
+    }
+
+    fn tx_value(&self) -> U256 {
+        self.0.tx.value
+    }
+}
+impl<'a> ContractContextReader for SharedContextReaderImpl<'a> {
+    fn contract_address(&self) -> Address {
+        self.0.contract.address
+    }
+
+    fn contract_bytecode_address(&self) -> Address {
+        self.0.contract.bytecode_address
+    }
+
+    fn contract_caller(&self) -> Address {
+        self.0.contract.caller
+    }
+
+    fn contract_is_static(&self) -> bool {
+        self.0.contract.is_static
+    }
+
+    fn contract_value(&self) -> U256 {
+        self.0.contract.value
+    }
+}
+impl<'a> SharedContextReader for SharedContextReaderImpl<'a> {
+    fn clone_block_context(&self) -> BlockContext {
+        self.0.block.clone()
+    }
+
+    fn clone_tx_context(&self) -> TxContext {
+        self.0.tx.clone()
+    }
+
+    fn clone_contract_context(&self) -> ContractContext {
+        self.0.contract.clone()
+    }
+}
+
 /// SharedContextImpl always created from input
 impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
-    fn block_context(&self) -> &BlockContext {
-        unsafe { &self.shared_context_ref().block }
-    }
-
-    fn tx_context(&self) -> &TxContext {
-        unsafe { &self.shared_context_ref().tx }
-    }
-
-    fn contract_context(&self) -> &ContractContext {
-        unsafe { &self.shared_context_ref().contract }
+    fn context(&self) -> impl SharedContextReader {
+        SharedContextReaderImpl(unsafe { self.shared_context_ref() })
     }
 
     fn write_storage(&mut self, slot: U256, value: U256) {

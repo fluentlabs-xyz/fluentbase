@@ -11,6 +11,7 @@ use crate::{
     U256,
 };
 use alloc::{vec, vec::Vec};
+use auto_impl::auto_impl;
 use fluentbase_codec::{Codec, CodecError, FluentABI};
 
 pub trait ContextFreeNativeAPI {
@@ -144,36 +145,33 @@ pub struct ContractContext {
     pub value: U256,
 }
 
-pub fn env_from_context(
-    block_context: &BlockContext,
-    tx_context: &TxContext,
-) -> revm_primitives::Env {
+pub fn env_from_context<CR: BlockContextReader + TxContextReader>(cr: CR) -> revm_primitives::Env {
     use revm_primitives::{AnalysisKind, BlockEnv, CfgEnv, Env, TransactTo, TxEnv};
     Env {
         cfg: {
             let mut cfg_env = CfgEnv::default();
-            cfg_env.chain_id = block_context.chain_id;
+            cfg_env.chain_id = cr.block_chain_id();
             cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
             cfg_env
         },
         block: BlockEnv {
-            number: U256::from(block_context.number),
-            coinbase: block_context.coinbase,
-            timestamp: U256::from(block_context.timestamp),
-            gas_limit: U256::from(block_context.gas_limit),
-            basefee: block_context.base_fee,
-            difficulty: block_context.difficulty,
-            prevrandao: Some(block_context.prev_randao),
+            number: U256::from(cr.block_number()),
+            coinbase: cr.block_coinbase(),
+            timestamp: U256::from(cr.block_timestamp()),
+            gas_limit: U256::from(cr.block_gas_limit()),
+            basefee: cr.block_base_fee(),
+            difficulty: cr.block_difficulty(),
+            prevrandao: Some(cr.block_prev_randao()),
             blob_excess_gas_and_price: None,
         },
         tx: TxEnv {
-            caller: tx_context.origin,
-            gas_limit: tx_context.gas_limit,
-            gas_price: tx_context.gas_price,
+            caller: cr.tx_origin(),
+            gas_limit: cr.tx_gas_limit(),
+            gas_price: cr.tx_gas_price(),
             // we don't check this field, and we don't know what type of "transact"
             // we execute right now, so can safely skip the field
             transact_to: TransactTo::Call(Address::ZERO),
-            value: tx_context.value,
+            value: cr.tx_value(),
             // we don't use this field, so there is no need to do redundant copy operation
             data: Bytes::default(),
             // we do nonce and chain id checks before executing transaction
@@ -182,7 +180,7 @@ pub fn env_from_context(
             // we check access lists in advance before executing a smart contract, it
             // doesn't affect gas price or something else, can skip
             access_list: Default::default(),
-            gas_priority_fee: tx_context.gas_priority_fee,
+            gas_priority_fee: cr.tx_gas_priority_fee(),
             // TODO(dmitry123): "we don't support blobs yet, so 2 tests from e2e testing suite fail"
             blob_hashes: vec![],        // tx_context.blob_hashes.clone(),
             max_fee_per_blob_gas: None, // tx_context.max_fee_per_blob_gas,
@@ -198,14 +196,6 @@ pub struct SharedContextInputV1 {
     pub block: BlockContext,
     pub tx: TxContext,
     pub contract: ContractContext,
-}
-
-#[derive(Default)]
-pub struct SovereignStateResult {
-    pub accounts: Vec<Account>,
-    pub storages: Vec<(Address, U256, U256)>,
-    pub preimages: Vec<(B256, Bytes)>,
-    pub logs: Vec<(Address, Bytes, Vec<B256>)>,
 }
 
 pub struct CallPrecompileResult {
@@ -236,34 +226,76 @@ impl SyscallInvocationParams {
     }
 }
 
-pub trait SovereignAPI: ContextFreeNativeAPI {
-    fn native_sdk(&self) -> &impl NativeAPI;
+#[auto_impl(&)]
+pub trait BlockContextReader {
+    fn block_chain_id(&self) -> u64;
+    fn block_coinbase(&self) -> Address;
+    fn block_timestamp(&self) -> u64;
+    fn block_number(&self) -> u64;
+    fn block_difficulty(&self) -> U256;
+    fn block_prev_randao(&self) -> B256;
+    fn block_gas_limit(&self) -> u64;
+    fn block_base_fee(&self) -> U256;
+}
 
-    fn block_context(&self) -> &BlockContext;
-    fn tx_context(&self) -> &TxContext;
-    fn contract_context(&self) -> Option<&ContractContext>;
+#[auto_impl(&)]
+pub trait TxContextReader {
+    fn tx_gas_limit(&self) -> u64;
+    fn tx_nonce(&self) -> u64;
+    fn tx_gas_price(&self) -> U256;
+    fn tx_gas_priority_fee(&self) -> Option<U256>;
+    fn tx_origin(&self) -> Address;
+    fn tx_value(&self) -> U256;
+}
+
+#[auto_impl(&)]
+pub trait ContractContextReader {
+    fn contract_address(&self) -> Address;
+    fn contract_bytecode_address(&self) -> Address;
+    fn contract_caller(&self) -> Address;
+    fn contract_is_static(&self) -> bool;
+    fn contract_value(&self) -> U256;
+}
+
+#[auto_impl(&)]
+pub trait SovereignContextReader: BlockContextReader + TxContextReader {
+    fn clone_block_context(&self) -> BlockContext;
+    fn clone_tx_context(&self) -> TxContext;
+}
+#[auto_impl(&)]
+pub trait SharedContextReader:
+    BlockContextReader + TxContextReader + ContractContextReader
+{
+    fn clone_block_context(&self) -> BlockContext;
+    fn clone_tx_context(&self) -> TxContext;
+    fn clone_contract_context(&self) -> ContractContext;
+}
+
+#[auto_impl::auto_impl(Rc)]
+pub trait SovereignAPI: ContextFreeNativeAPI {
+    fn context(&self) -> impl SovereignContextReader;
 
     fn checkpoint(&self) -> JournalCheckpoint;
-    fn commit(&mut self) -> SovereignStateResult;
-    fn rollback(&mut self, checkpoint: JournalCheckpoint);
+    fn commit(&self);
+    fn rollback(&self, checkpoint: JournalCheckpoint);
 
-    fn write_account(&mut self, account: Account, status: AccountStatus);
-    fn destroy_account(&mut self, address: &Address, target: &Address) -> DestroyedAccountResult;
+    fn write_account(&self, account: Account, status: AccountStatus);
+    fn destroy_account(&self, address: &Address, target: &Address) -> DestroyedAccountResult;
     fn account(&self, address: &Address) -> (Account, IsColdAccess);
     fn account_committed(&self, address: &Address) -> (Account, IsColdAccess);
 
-    fn write_preimage(&mut self, address: Address, hash: B256, preimage: Bytes);
+    fn write_preimage(&self, address: Address, hash: B256, preimage: Bytes);
     fn preimage(&self, address: &Address, hash: &B256) -> Option<Bytes>;
-    fn preimage_size(&self, address: &Address, hash: &B256) -> u32;
+    fn preimage_size(&self, address: &Address, hash: &B256) -> Option<u32>;
 
-    fn write_storage(&mut self, address: Address, slot: U256, value: U256) -> IsColdAccess;
+    fn write_storage(&self, address: Address, slot: U256, value: U256) -> IsColdAccess;
     fn storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess);
     fn committed_storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess);
 
-    fn write_transient_storage(&mut self, address: Address, index: U256, value: U256);
+    fn write_transient_storage(&self, address: Address, index: U256, value: U256);
     fn transient_storage(&self, address: &Address, index: &U256) -> U256;
 
-    fn write_log(&mut self, address: Address, data: Bytes, topics: Vec<B256>);
+    fn write_log(&self, address: Address, data: Bytes, topics: Vec<B256>);
 
     fn precompile(
         &self,
@@ -273,18 +305,11 @@ pub trait SovereignAPI: ContextFreeNativeAPI {
     ) -> Option<CallPrecompileResult>;
     fn is_precompile(&self, address: &Address) -> bool;
 
-    fn transfer(
-        &mut self,
-        from: &mut Account,
-        to: &mut Account,
-        value: U256,
-    ) -> Result<(), ExitCode>;
+    fn transfer(&self, from: &mut Account, to: &mut Account, value: U256) -> Result<(), ExitCode>;
 }
 
 pub trait SharedAPI: ContextFreeNativeAPI {
-    fn block_context(&self) -> &BlockContext;
-    fn tx_context(&self) -> &TxContext;
-    fn contract_context(&self) -> &ContractContext;
+    fn context(&self) -> impl SharedContextReader;
 
     fn write_storage(&mut self, slot: U256, value: U256);
     fn storage(&self, slot: &U256) -> U256;

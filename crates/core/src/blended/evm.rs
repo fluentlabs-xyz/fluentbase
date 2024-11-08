@@ -40,7 +40,7 @@ use revm_interpreter::{
 };
 use revm_primitives::{Bytecode, CancunSpec, Env, Log, BLOCK_HASH_HISTORY, MAX_CODE_SIZE};
 
-impl<'a, SDK: SovereignAPI> Host for BlendedRuntime<'a, SDK> {
+impl<SDK: SovereignAPI> Host for BlendedRuntime<SDK> {
     fn env(&self) -> &Env {
         &self.env
     }
@@ -156,7 +156,7 @@ impl<'a, SDK: SovereignAPI> Host for BlendedRuntime<'a, SDK> {
     }
 }
 
-impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
+impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     pub fn load_evm_bytecode(&self, address: &Address) -> (Bytecode, B256) {
         let (account, _) = self.sdk.account(address);
         let bytecode = self
@@ -305,7 +305,11 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let (mut contract_account, _) = self.sdk.account(&target_address);
         let evm_bytecode = Bytecode::new_raw(result.output.clone());
         let code_hash = evm_bytecode.hash_slow();
-        contract_account.update_bytecode(self.sdk, evm_bytecode.original_bytes(), Some(code_hash));
+        contract_account.update_bytecode(
+            &mut self.sdk,
+            evm_bytecode.original_bytes(),
+            Some(code_hash),
+        );
 
         // if there is an address, then we have new EVM bytecode inside output
         self.store_evm_bytecode(&target_address, code_hash, evm_bytecode);
@@ -325,7 +329,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)
         let (mut contract_account, _) = self.sdk.account(&target_address);
-        contract_account.update_bytecode(self.sdk, rwasm_bytecode, None);
+        contract_account.update_bytecode(&mut self.sdk, rwasm_bytecode, None);
 
         let context = ContractContext {
             address: target_address,
