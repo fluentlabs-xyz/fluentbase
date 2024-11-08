@@ -321,14 +321,14 @@ fn test_deploy_greeting() {
 }
 
 #[test]
-fn test_deploy_dunksane() {
-    // deploy dunksane WASM contract
+fn test_deploy_duntsane() {
+    // deploy duntsane WASM contract
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = deploy_evm_tx(
         &mut ctx,
         DEPLOYER_ADDRESS,
-        include_bytes!("../../examples/duntsane-new-sdk/bin/rustsimplesc.wasm").into(),
+        include_bytes!("../../examples/duntsane/lib.wasm").into(),
     );
 
     // call random function
