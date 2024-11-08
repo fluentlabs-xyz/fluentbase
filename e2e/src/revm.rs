@@ -332,6 +332,51 @@ fn test_deploy_greeting() {
 }
 
 #[test]
+fn test_deploy_dunksane() {
+    // deploy dunksane WASM contract
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = deploy_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/duntsane-new-sdk/bin/rustsimplesc.wasm").into(),
+    );
+
+    // call random function
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::from([136u8, 17u8, 141u8, 8u8]),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+
+    // call reset_deck function
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::from([171u8, 4u8, 190u8, 180u8]),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+
+    // call play_baccarat function
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::from([194u8, 91u8, 158u8, 124u8]),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+}
+
+#[test]
 fn test_deploy_keccak256() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
