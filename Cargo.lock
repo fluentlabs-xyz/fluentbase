@@ -2470,6 +2470,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives 0.8.7",
  "alloy-rlp",
+ "auto_impl",
  "byteorder",
  "fluentbase-codec",
  "hashbrown 0.15.0",

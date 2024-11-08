@@ -30,9 +30,7 @@ use hashbrown::HashMap;
 use hex_literal::hex;
 use revm::{
     primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, Output, TransactTo},
-    rwasm::RwasmDbWrapper,
     DatabaseCommit,
-    Evm,
     InMemoryDB,
     Rwasm,
 };
@@ -140,18 +138,6 @@ impl EvmTestingContext {
         revm_account.mark_touch();
         self.db.commit(HashMap::from([(address, revm_account)]));
     }
-
-    pub(crate) fn with_sdk<F>(&mut self, f: F)
-    where
-        F: Fn(
-            RwasmDbWrapper<'_, fluentbase_sdk::runtime::RuntimeContextWrapper, &mut InMemoryDB>,
-        ) -> (),
-    {
-        let mut evm = Evm::builder().with_db(&mut self.db).build();
-        let runtime_context = RuntimeContext::default().with_depth(0u32);
-        let native_sdk = fluentbase_sdk::runtime::RuntimeContextWrapper::new(runtime_context);
-        f(RwasmDbWrapper::new(&mut evm.context.evm, native_sdk))
-    }
 }
 
 struct TxBuilder<'a> {
@@ -208,11 +194,14 @@ impl<'a> TxBuilder<'a> {
     }
 
     fn exec(&mut self) -> ExecutionResult {
+        let db = take(&mut self.ctx.db);
         let mut evm = Rwasm::builder()
             .with_env(Box::new(take(&mut self.env)))
-            .with_ref_db(&mut self.ctx.db)
+            .with_db(db)
             .build();
-        evm.transact_commit().unwrap()
+        let result = evm.transact_commit().unwrap();
+        self.ctx.db = evm.into_db();
+        result
     }
 }
 

@@ -23,6 +23,7 @@ strum_macros = { workspace = true }
 revm-primitives = { workspace = true, default-features = false }
 hashbrown = { workspace = true }
 fluentbase-codec = { workspace = true, default-features = false }
+auto_impl = { workspace = true }
 
 [features]
 default = ["std", "rwasm"]

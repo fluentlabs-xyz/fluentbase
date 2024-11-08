@@ -21,32 +21,47 @@ use fluentbase_runtime::{
         state::SyscallState,
         write::SyscallWrite,
     },
+    types::{NonePreimageResolver, PreimageResolver},
     RuntimeContext,
 };
 use fluentbase_types::{Bytes, ContextFreeNativeAPI, NativeAPI, UnwrapExitCode, B256, F254};
 use std::{cell::RefCell, mem::take};
 
-pub struct RuntimeContextWrapper {
+pub struct RuntimeContextWrapper<'a, PR: PreimageResolver> {
     pub ctx: Rc<RefCell<RuntimeContext>>,
+    pub preimage_resolver: &'a PR,
 }
 
-impl RuntimeContextWrapper {
+impl RuntimeContextWrapper<'static, NonePreimageResolver> {
     pub fn new(ctx: RuntimeContext) -> Self {
+        static EMPTY_PREIMAGE_RESOLVER: NonePreimageResolver = NonePreimageResolver;
         Self {
             ctx: Rc::new(RefCell::new(ctx)),
+            preimage_resolver: &EMPTY_PREIMAGE_RESOLVER,
+        }
+    }
+
+    pub fn with_preimage_resolver<'a, PR: PreimageResolver>(
+        self,
+        preimage_resolver: &'a PR,
+    ) -> RuntimeContextWrapper<'a, PR> {
+        RuntimeContextWrapper::<'a, PR> {
+            ctx: self.ctx,
+            preimage_resolver,
         }
     }
 }
 
-impl Clone for RuntimeContextWrapper {
+impl Clone for RuntimeContextWrapper<'static, NonePreimageResolver> {
     fn clone(&self) -> Self {
         Self {
             ctx: self.ctx.clone(),
+            preimage_resolver: self.preimage_resolver,
         }
     }
 }
 
-impl ContextFreeNativeAPI for RuntimeContextWrapper {
+impl<'a, PR: PreimageResolver> ContextFreeNativeAPI for RuntimeContextWrapper<'a, PR> {
     fn keccak256(data: &[u8]) -> B256 {
         SyscallKeccak256::fn_impl(data)
     }
@@ -72,7 +87,7 @@ impl ContextFreeNativeAPI for RuntimeContextWrapper {
     }
 }
 
-impl NativeAPI for RuntimeContextWrapper {
+impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
     fn read(&self, target: &mut [u8], offset: u32) {
         let result = SyscallRead::fn_impl(&self.ctx.borrow(), offset, target.len() as u32)
             .unwrap_exit_code();
@@ -123,8 +138,14 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> (u64, i32) {
         let mut ctx = self.ctx.borrow_mut();
-        let (fuel_consumed, exit_code) =
-            SyscallExec::fn_impl(&mut ctx, &code_hash, input, fuel_limit, state);
+        let (fuel_consumed, exit_code) = SyscallExec::fn_impl_ex(
+            &mut ctx,
+            &code_hash,
+            input,
+            fuel_limit,
+            state,
+            self.preimage_resolver,
+        );
         (fuel_consumed, exit_code)
     }
 
@@ -146,10 +167,17 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn preimage_size(&self, hash: &B256) -> u32 {
+        if let Some(preimage_size) = self.preimage_resolver.preimage_size(&hash.0) {
+            return preimage_size;
+        }
         SyscallPreimageSize::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap_exit_code()
     }
 
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
+        if let Some(preimage) = self.preimage_resolver.preimage(&hash.0) {
+            target.copy_from_slice(&preimage);
+            return;
+        }
         let preimage =
             SyscallPreimageCopy::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap_exit_code();
         target.copy_from_slice(&preimage);
@@ -160,14 +188,11 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 }
 
-pub type TestingContext = RuntimeContextWrapper;
+pub type TestingContext = RuntimeContextWrapper<'static, NonePreimageResolver>;
 
 impl TestingContext {
     pub fn empty() -> Self {
-        let ctx = RuntimeContext::default();
-        Self {
-            ctx: Rc::new(RefCell::new(ctx)),
-        }
+        Self::new(RuntimeContext::default())
     }
 
     pub fn with_input<I: Into<Vec<u8>>>(mut self, input: I) -> Self {
