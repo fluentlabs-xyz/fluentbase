@@ -1,0 +1,27 @@
+[package]
+edition = "2021"
+name = "rustsimplesc"
+version = "0.1.0"
+
+[dependencies]
+alloy-sol-types = { version = "0.7.4", default-features = false }
+
+fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false, branch = "devel" }
+rand = { version = "0.8.3", features = ["small_rng"], default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.100", default-features = false, features = ["alloc"] }
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "src/lib.rs"
+
+[profile.release]
+lto = true
+opt-level = 'z'
+panic = "abort"
+strip = true
+
+[features]
+default = []
+std = [
+    "fluentbase-sdk/std",
+]
