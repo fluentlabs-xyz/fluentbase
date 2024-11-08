@@ -23,12 +23,6 @@ serial_test = "3.0.0"
 crate-type = ["cdylib", "staticlib"]
 path = "lib.rs"
 
-#[profile.release]
-#lto = true
-#opt-level = 'z'
-#panic = "abort"
-#strip = true
-
 [features]
 default = ["std"]
 std = [

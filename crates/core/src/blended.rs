@@ -8,7 +8,8 @@ mod wasm;
 use crate::{debug_log, helpers::evm_error_from_exit_code, types::NextAction};
 use alloc::boxed::Box;
 use fluentbase_sdk::{
-    codec::Encoder,
+    bytes::BytesMut,
+    codec::FluentABI,
     env_from_context,
     Account,
     AccountStatus,
@@ -72,7 +73,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         let call_id = exit_code as u32;
 
         // try to parse execution params, if it's not possible then return an error
-        let Some(params) = SyscallInvocationParams::from_slice(return_data.as_ref()) else {
+        let Ok(params) = FluentABI::<SyscallInvocationParams>::decode(&return_data, 0) else {
             unreachable!("can't decode invocation params");
         };
 
@@ -88,13 +89,19 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         contract_context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
-        let mut context_input = SharedContextInputV1 {
+        let context_input = SharedContextInputV1 {
             block: self.sdk.context().clone_block_context(),
             tx: self.sdk.context().clone_tx_context(),
             contract: contract_context.clone(),
-        }
-        .encode_to_vec(0);
-        context_input.extend_from_slice(params.input.as_ref());
+        };
+
+        let mut buf = BytesMut::new();
+
+        FluentABI::encode(&context_input, &mut buf, 0).unwrap();
+        buf.extend_from_slice(params.input.as_ref());
+        let context_input = buf.freeze();
+
+        // <context_input as FluentABI>::encode(context_input);
 
         // execute smart contract
         #[cfg(feature = "std")]
