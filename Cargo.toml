@@ -32,7 +32,7 @@ categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
 fluentbase-types = { path = "./crates/types", default-features = false }
-fluentbase-codec = { path = "./crates/codec", default-features = false }
+fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"] }
 fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
@@ -65,7 +65,7 @@ revm = { path = "revm/crates/revm", default-features = false, features = [
     #    "debug-print",
 ] }
 auto_impl = { version = "1.2", default-features = false }
-bytes = { version = "1.5" }
+bytes = { version = "1.5", default-features = false }
 eth_trie = { version = "0.4", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 hex-literal = { version = "0.4.1" }
@@ -77,6 +77,8 @@ anyhow = { version = "1.0.86", default-features = false }
 syn = "2.0"
 clap = { version = "4.5", features = ["derive"] }
 phantom-type = { version = "0.5.0", default-features = false }
+digest = { version = "0.10", default-features = false }
+
 
 [profile.bench]
 lto = "fat"

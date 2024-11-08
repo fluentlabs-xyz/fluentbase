@@ -1,4 +1,5 @@
 use core::{mem::take, str::from_utf8};
+use fluentbase_codec::{FluentABI, SolidityABI};
 use fluentbase_genesis::{
     devnet_genesis_from_file,
     Genesis,
@@ -38,10 +39,11 @@ use rwasm::{
     instruction_set,
     rwasm::{BinaryFormat, RwasmModule},
 };
+use std::u64;
 
 #[allow(dead_code)]
 struct EvmTestingContext {
-    sdk: TestingContext,
+    pub sdk: TestingContext,
     genesis: Genesis,
     db: InMemoryDB,
 }
@@ -169,7 +171,7 @@ impl<'a> TxBuilder<'a> {
         env.tx.gas_price = U256::from(1);
         env.tx.caller = caller;
         env.tx.transact_to = TransactTo::Call(callee);
-        env.tx.gas_limit = 10_000_000;
+        env.tx.gas_limit = 300_000_000;
         Self { ctx, env }
     }
 
@@ -246,6 +248,27 @@ fn deploy_evm_tx(ctx: &mut EvmTestingContext, deployer: Address, init_bytecode: 
     //     let is_rwasm = rwasm_bytecode.get(0).cloned().unwrap() == 0xef;
     //     assert!(is_rwasm);
     // }
+    contract_address
+}
+
+fn deploy_evm_tx_with_nonce(
+    ctx: &mut EvmTestingContext,
+    deployer: Address,
+    init_bytecode: Bytes,
+    nonce: u64,
+) -> Address {
+    let result = TxBuilder::create(ctx, deployer, init_bytecode.clone().into()).exec();
+    if !result.is_success() {
+        println!("{:?}", result);
+        println!(
+            "{}",
+            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
+        );
+    }
+    assert!(result.is_success());
+    let contract_address = calc_create_address::<TestingContext>(&deployer, nonce);
+    assert_eq!(contract_address, deployer.create(nonce));
+
     contract_address
 }
 
@@ -366,6 +389,100 @@ fn test_deploy_duntsane() {
 }
 
 #[test]
+fn test_client_solidity() {
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
+
+    let contract_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/router-solidity/lib.wasm").into(),
+        0,
+    );
+    println!("contract_address: {:?}", contract_address);
+
+    let client_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/client-solidity/lib.wasm").into(),
+        1,
+    );
+    println!("client_address: {:?}", client_address);
+
+    ctx.add_balance(contract_address, U256::from(10e18));
+    ctx.add_balance(client_address, U256::from(10e18));
+
+    let client_input = hex!("f60ea708000000000000000000000000f91c20c0cafbfdc150adff51bbfc5808edde7cb5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000052080000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000b48656c6c6f20576f726c64000000000000000000000000000000000000000000");
+
+    println!("calling client...");
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        client_address,
+        client_input.into(),
+        None,
+        None,
+    );
+
+    assert_eq!(result.is_success(), true);
+
+    let output = result.output();
+    println!("output: {:?}", output);
+    let msg_b = result.output().unwrap();
+
+    let msg: String = SolidityABI::decode(msg_b, 0).unwrap();
+
+    assert_eq!(msg, "Hello World");
+}
+#[test]
+fn test_client_fluent() {
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
+
+    let contract_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/router-fluent/lib.wasm").into(),
+        0,
+    );
+    println!("contract_address: {:?}", contract_address);
+
+    let client_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/client-fluent/lib.wasm").into(),
+        1,
+    );
+    println!("client_address: {:?}", client_address);
+
+    ctx.add_balance(contract_address, U256::from(10e18));
+    ctx.add_balance(client_address, U256::from(10e18));
+
+    let client_input = hex!("f60ea708f91c20c0cafbfdc150adff51bbfc5808edde7cb500000000000000000000000000000000000000000000000000000000000000000852000000000000440000000b00000048656c6c6f20576f726c6400");
+
+    println!("calling client...");
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        client_address,
+        client_input.into(),
+        None,
+        None,
+    );
+
+    assert_eq!(result.is_success(), true);
+
+    let _output = result.output();
+    let msg_b = result.output().unwrap();
+
+    let msg: String = FluentABI::decode(msg_b, 0).unwrap();
+
+    assert_eq!(msg, "Hello World");
+}
+
+#[test]
 fn test_deploy_keccak256() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
@@ -384,8 +501,11 @@ fn test_deploy_keccak256() {
         None,
         None,
     );
+
+    println!("{:?}", result);
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default().as_ref();
+    println!("bytes: {:?}", hex::encode(&bytes));
     assert_eq!(
         "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
         hex::encode(&bytes[0..32]),

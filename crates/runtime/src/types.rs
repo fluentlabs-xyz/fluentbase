@@ -1,4 +1,5 @@
 use eth_trie::DB;
+use fluentbase_codec::CodecError;
 use fluentbase_types::{Bytes, F254};
 use hashbrown::HashMap;
 use rwasm::{rwasm::BinaryFormatError, Error as RwasmError};
@@ -87,6 +88,7 @@ pub enum RuntimeError {
     UnloadedModule(F254),
     ExitCode(i32),
     ExecutionInterrupted,
+    CodecError(CodecError),
 }
 
 impl From<BinaryFormatError> for RuntimeError {
@@ -98,6 +100,12 @@ impl From<BinaryFormatError> for RuntimeError {
 impl From<RwasmError> for RuntimeError {
     fn from(value: RwasmError) -> Self {
         Self::Rwasm(value)
+    }
+}
+
+impl From<CodecError> for RuntimeError {
+    fn from(value: CodecError) -> Self {
+        Self::CodecError(value)
     }
 }
 

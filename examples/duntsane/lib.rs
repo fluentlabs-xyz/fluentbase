@@ -11,7 +11,7 @@ use alloc::{
 use alloy_sol_types::private::Uint as U256;
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{router, signature, Contract},
+    derive::{function_id, router, Contract},
     BlockContextReader,
     SharedAPI,
 };
@@ -104,14 +104,14 @@ pub trait RouterAPI {
 /// Implementation of the `RouterAPI` trait for `ROUTER`.
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
-    #[signature("function random() external view returns (uint256)")]
+    #[function_id("random()")]
     fn random(&self) -> u64 {
         let seed = self.sdk.context().block_timestamp();
         let mut small_rng = SmallRng::seed_from_u64(seed);
         small_rng.gen()
     }
 
-    #[signature("function resetDeck() external returns (uint256)")]
+    #[function_id("resetDeck()")]
     fn reset_deck(&mut self) -> u64 {
         let deck_count_key = U256::from(2);
         let value = U256::from(104);
@@ -119,7 +119,7 @@ impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
         104
     }
 
-    #[signature("function playBaccarat() external view returns (string,string,string,string,string,string,string,uint256)")]
+    #[function_id("playBaccarat()")]
     fn play_baccarat(&mut self) -> (String, String, String, String, String, String, String, u64) {
         let current_seed = self.sdk.context().block_timestamp();
         let last_seed_key = U256::from(2);
