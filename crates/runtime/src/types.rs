@@ -4,20 +4,26 @@ use hashbrown::HashMap;
 use rwasm::{rwasm::BinaryFormatError, Error as RwasmError};
 
 pub trait PreimageResolver {
-    fn preimage(&self, hash: &[u8; 32]) -> Bytes;
-    fn preimage_size(&self, hash: &[u8; 32]) -> u32;
+    fn preimage(&self, hash: &[u8; 32]) -> Option<Bytes>;
+    fn preimage_size(&self, hash: &[u8; 32]) -> Option<u32>;
 }
 
 #[derive(Default)]
-pub struct EmptyPreimageResolver;
+pub struct NonePreimageResolver;
 
-impl PreimageResolver for EmptyPreimageResolver {
-    fn preimage(&self, _hash: &[u8; 32]) -> Bytes {
-        Bytes::default()
+impl PreimageResolver for NonePreimageResolver {
+    fn preimage(&self, _hash: &[u8; 32]) -> Option<Bytes> {
+        None
     }
 
-    fn preimage_size(&self, _hash: &[u8; 32]) -> u32 {
-        0
+    fn preimage_size(&self, _hash: &[u8; 32]) -> Option<u32> {
+        None
+    }
+}
+
+impl Default for Box<dyn PreimageResolver> {
+    fn default() -> Self {
+        Box::new(NonePreimageResolver::default())
     }
 }
 

@@ -17,7 +17,7 @@ use fluentbase_sdk::{
 };
 use revm_interpreter::{gas, CreateInputs, Gas, InterpreterResult};
 
-impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
+impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     pub fn deploy_wasm_contract(
         &mut self,
         target_address: Address,
@@ -46,7 +46,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)
         let (mut contract_account, _) = self.sdk.account(&target_address);
-        contract_account.update_bytecode(self.sdk, rwasm_bytecode.into(), None);
+        contract_account.update_bytecode(&mut self.sdk, rwasm_bytecode.into(), None);
 
         // execute rWASM deploy function
         let context = ContractContext {

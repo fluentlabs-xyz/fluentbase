@@ -3,7 +3,7 @@ use crate::{
         exec::{SysExecResumable, SyscallExec},
         runtime_register_handlers,
     },
-    types::{EmptyPreimageResolver, PreimageResolver, RuntimeError},
+    types::{NonePreimageResolver, PreimageResolver, RuntimeError},
 };
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
@@ -38,7 +38,6 @@ use std::{
     cell::RefCell,
     fmt::{Debug, Formatter},
     mem::take,
-    rc::Rc,
     sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -87,8 +86,10 @@ pub struct RuntimeContext {
     pub(crate) execution_result: ExecutionResult,
     pub(crate) resumable_invocation: Option<ResumableInvocation>,
     pub(crate) instance: Option<Instance>,
-    pub(crate) preimage_resolver: Rc<dyn PreimageResolver>,
+    pub(crate) preimage_resolver: Box<dyn PreimageResolver>,
 }
+
+// pub type RuntimeContext = RuntimeContextFull<'static, ()>;
 
 impl Debug for RuntimeContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -108,13 +109,17 @@ impl Default for RuntimeContext {
             execution_result: ExecutionResult::default(),
             resumable_invocation: None,
             instance: None,
-            preimage_resolver: Rc::new(EmptyPreimageResolver::default()),
             disable_fuel: false,
+            preimage_resolver: Default::default(),
         }
     }
 }
 
 impl RuntimeContext {
+    pub fn root(fuel_limit: u64) -> Self {
+        Self::default().with_fuel_limit(fuel_limit).with_depth(0)
+    }
+
     pub fn new<I: Into<Bytes>>(bytecode: I) -> Self {
         Self {
             bytecode: BytecodeOrHash::Bytecode(bytecode.into(), None),
@@ -148,9 +153,13 @@ impl RuntimeContext {
         self
     }
 
-    pub fn with_preimage_resolver(mut self, preimage_resolver: Rc<dyn PreimageResolver>) -> Self {
+    pub fn with_preimage_resolver(mut self, preimage_resolver: Box<dyn PreimageResolver>) -> Self {
         self.preimage_resolver = preimage_resolver;
         self
+    }
+
+    pub fn set_preimage_resolver(&mut self, preimage_resolver: Box<dyn PreimageResolver>) {
+        self.preimage_resolver = preimage_resolver;
     }
 
     pub fn with_depth(mut self, depth: u32) -> Self {
@@ -423,7 +432,10 @@ impl Runtime {
         });
     }
 
-    fn instantiate_module(&mut self) -> Result<Instance, RuntimeError> {
+    fn instantiate_module<PR: PreimageResolver>(
+        &mut self,
+        preimage_resolver: &PR,
+    ) -> Result<Instance, RuntimeError> {
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             let bytecode_repr = take(&mut self.store.data_mut().bytecode);
 
@@ -448,12 +460,7 @@ impl Runtime {
                         None => {
                             let cached_bytecode = caching_runtime.cached_bytecode.get(hash);
                             if cached_bytecode.is_none() {
-                                let bytecode = self
-                                    .store
-                                    .data_mut()
-                                    .preimage_resolver
-                                    .as_ref()
-                                    .preimage(hash);
+                                let bytecode = preimage_resolver.preimage(hash).unwrap_or_default();
                                 caching_runtime
                                     .cached_bytecode
                                     .insert(*hash, bytecode.into());
@@ -481,17 +488,29 @@ impl Runtime {
 
     pub fn call(&mut self) -> ExecutionResult {
         let fuel_consumed_before_call = self.store.fuel_consumed().unwrap_or_default();
-        match self.call_internal(fuel_consumed_before_call) {
+        match self.call_internal(fuel_consumed_before_call, &NonePreimageResolver) {
             Ok(result) => result,
             Err(err) => self.handle_execution_result(Some(err), fuel_consumed_before_call),
         }
     }
 
-    fn call_internal(
+    pub fn call_with_preimage_resolver<PR: PreimageResolver>(
+        &mut self,
+        preimage_resolver: &PR,
+    ) -> ExecutionResult {
+        let fuel_consumed_before_call = self.store.fuel_consumed().unwrap_or_default();
+        match self.call_internal(fuel_consumed_before_call, preimage_resolver) {
+            Ok(result) => result,
+            Err(err) => self.handle_execution_result(Some(err), fuel_consumed_before_call),
+        }
+    }
+
+    fn call_internal<PR: PreimageResolver>(
         &mut self,
         fuel_consumed_before_call: u64,
+        preimage_resolver: &PR,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let instance = self.instantiate_module()?;
+        let instance = self.instantiate_module(preimage_resolver)?;
         let next_result = instance
             .get_func(&mut self.store, "main")
             .ok_or(RuntimeError::MissingEntrypoint)?

@@ -64,6 +64,7 @@ revm = { path = "revm/crates/revm", default-features = false, features = [
     "blst",
     #    "debug-print",
 ] }
+auto_impl = { version = "1.2", default-features = false }
 bytes = { version = "1.5" }
 eth_trie = { version = "0.4", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }

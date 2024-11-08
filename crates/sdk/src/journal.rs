@@ -1,6 +1,6 @@
 use crate::{Address, Bytes, B256, U256};
-use alloc::{vec, vec::Vec};
-use core::mem::take;
+use alloc::{rc::Rc, vec, vec::Vec};
+use core::{cell::RefCell, mem::take};
 #[cfg(feature = "std")]
 use fluentbase_genesis::{
     devnet_genesis_from_file,
@@ -12,18 +12,22 @@ use fluentbase_types::{
     Account,
     AccountStatus,
     BlockContext,
+    BlockContextReader,
     CallPrecompileResult,
     ContextFreeNativeAPI,
     ContractContext,
+    ContractContextReader,
     DestroyedAccountResult,
     ExitCode,
     IsColdAccess,
     JournalCheckpoint,
     NativeAPI,
     SharedAPI,
+    SharedContextReader,
     SovereignAPI,
-    SovereignStateResult,
+    SovereignContextReader,
     TxContext,
+    TxContextReader,
     F254,
     STATE_MAIN,
 };
@@ -35,6 +39,7 @@ pub struct JournalStateLog {
     pub data: Bytes,
 }
 
+#[derive(Clone)]
 pub enum JournalStateEvent {
     AccountChanged {
         address: Address,
@@ -73,7 +78,7 @@ pub struct JournalStateBuilder {
 
 impl JournalStateBuilder {
     pub fn build<API: NativeAPI>(self, native_sdk: API) -> JournalState<API> {
-        JournalState::<API> {
+        let inner = JournalStateInner::<API> {
             storage: self.storage.unwrap_or_default(),
             accounts: self.accounts.unwrap_or_default(),
             dirty_state: Default::default(),
@@ -85,6 +90,9 @@ impl JournalStateBuilder {
             block_context: self.block_context,
             tx_context: self.tx_context,
             contract_context: self.contract_context,
+        };
+        JournalState::<API> {
+            inner: Rc::new(RefCell::new(inner)),
         }
     }
 
@@ -198,7 +206,7 @@ impl JournalStateBuilder {
     }
 }
 
-pub struct JournalState<API: NativeAPI> {
+pub struct JournalStateInner<API: NativeAPI> {
     // committed state
     storage: HashMap<(Address, U256), U256>,
     preimages: HashMap<B256, (Bytes, u32)>,
@@ -207,7 +215,7 @@ pub struct JournalState<API: NativeAPI> {
     dirty_state: HashMap<Address, usize>,
     logs: Vec<JournalStateLog>,
     journal: Vec<JournalStateEvent>,
-    native_sdk: API,
+    pub native_sdk: API,
     transient_storage: HashMap<(Address, U256), U256>,
     // block/tx/contract contexts
     block_context: BlockContext,
@@ -215,7 +223,7 @@ pub struct JournalState<API: NativeAPI> {
     contract_context: Option<ContractContext>,
 }
 
-impl<API: NativeAPI> JournalState<API> {
+impl<API: NativeAPI> JournalStateInner<API> {
     pub fn empty(native_sdk: API) -> Self {
         Self {
             storage: Default::default(),
@@ -231,21 +239,29 @@ impl<API: NativeAPI> JournalState<API> {
             contract_context: Default::default(),
         }
     }
+}
+
+pub struct JournalState<API: NativeAPI> {
+    pub inner: Rc<RefCell<JournalStateInner<API>>>,
+}
+
+impl<API: NativeAPI> JournalState<API> {
+    pub fn empty(native_sdk: API) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(JournalStateInner::empty(native_sdk))),
+        }
+    }
 
     pub fn builder(native_sdk: API, builder: JournalStateBuilder) -> Self {
         builder.build(native_sdk)
     }
 
-    pub fn native_sdk_mut(&mut self) -> &mut API {
-        &mut self.native_sdk
-    }
-
     pub fn rewrite_tx_context(&mut self, tx_context: TxContext) {
-        self.tx_context = tx_context;
+        self.inner.borrow_mut().tx_context = tx_context;
     }
 
     pub fn rewrite_contract_context(&mut self, contract_context: ContractContext) {
-        self.contract_context = Some(contract_context);
+        self.inner.borrow_mut().contract_context = Some(contract_context);
     }
 }
 
@@ -275,100 +291,199 @@ impl<API: NativeAPI> ContextFreeNativeAPI for JournalState<API> {
     }
 }
 
+struct JournalContextReader<API: NativeAPI>(Rc<RefCell<JournalStateInner<API>>>);
+
+impl<API: NativeAPI> BlockContextReader for JournalContextReader<API> {
+    fn block_chain_id(&self) -> u64 {
+        self.0.borrow().block_context.chain_id
+    }
+
+    fn block_coinbase(&self) -> Address {
+        self.0.borrow().block_context.coinbase
+    }
+
+    fn block_timestamp(&self) -> u64 {
+        self.0.borrow().block_context.timestamp
+    }
+
+    fn block_number(&self) -> u64 {
+        self.0.borrow().block_context.number
+    }
+
+    fn block_difficulty(&self) -> U256 {
+        self.0.borrow().block_context.difficulty
+    }
+
+    fn block_prev_randao(&self) -> B256 {
+        self.0.borrow().block_context.prev_randao
+    }
+
+    fn block_gas_limit(&self) -> u64 {
+        self.0.borrow().block_context.gas_limit
+    }
+
+    fn block_base_fee(&self) -> U256 {
+        self.0.borrow().block_context.base_fee
+    }
+}
+impl<API: NativeAPI> TxContextReader for JournalContextReader<API> {
+    fn tx_gas_limit(&self) -> u64 {
+        self.0.borrow().tx_context.gas_limit
+    }
+
+    fn tx_nonce(&self) -> u64 {
+        self.0.borrow().tx_context.nonce
+    }
+
+    fn tx_gas_price(&self) -> U256 {
+        self.0.borrow().tx_context.gas_price
+    }
+
+    fn tx_gas_priority_fee(&self) -> Option<U256> {
+        self.0.borrow().tx_context.gas_priority_fee
+    }
+
+    fn tx_origin(&self) -> Address {
+        self.0.borrow().tx_context.origin
+    }
+
+    fn tx_value(&self) -> U256 {
+        self.0.borrow().tx_context.value
+    }
+}
+impl<API: NativeAPI> ContractContextReader for JournalContextReader<API> {
+    fn contract_address(&self) -> Address {
+        self.0.borrow().contract_context.as_ref().unwrap().address
+    }
+
+    fn contract_bytecode_address(&self) -> Address {
+        self.0
+            .borrow()
+            .contract_context
+            .as_ref()
+            .unwrap()
+            .bytecode_address
+    }
+
+    fn contract_caller(&self) -> Address {
+        self.0.borrow().contract_context.as_ref().unwrap().caller
+    }
+
+    fn contract_is_static(&self) -> bool {
+        self.0.borrow().contract_context.as_ref().unwrap().is_static
+    }
+
+    fn contract_value(&self) -> U256 {
+        self.0.borrow().contract_context.as_ref().unwrap().value
+    }
+}
+impl<API: NativeAPI> SovereignContextReader for JournalContextReader<API> {
+    fn clone_block_context(&self) -> BlockContext {
+        self.0.borrow().block_context.clone()
+    }
+
+    fn clone_tx_context(&self) -> TxContext {
+        self.0.borrow().tx_context.clone()
+    }
+}
+impl<API: NativeAPI> SharedContextReader for JournalContextReader<API> {
+    fn clone_block_context(&self) -> BlockContext {
+        self.0.borrow().block_context.clone()
+    }
+
+    fn clone_tx_context(&self) -> TxContext {
+        self.0.borrow().tx_context.clone()
+    }
+
+    fn clone_contract_context(&self) -> ContractContext {
+        self.0.borrow().contract_context.as_ref().unwrap().clone()
+    }
+}
+
 impl<API: NativeAPI> SovereignAPI for JournalState<API> {
-    fn native_sdk(&self) -> &impl NativeAPI {
-        &self.native_sdk
-    }
-
-    fn block_context(&self) -> &BlockContext {
-        &self.block_context
-    }
-
-    fn tx_context(&self) -> &TxContext {
-        &self.tx_context
-    }
-
-    fn contract_context(&self) -> Option<&ContractContext> {
-        self.contract_context.as_ref()
+    fn context(&self) -> impl SovereignContextReader {
+        let ctx = self.inner.clone();
+        JournalContextReader(ctx)
     }
 
     fn checkpoint(&self) -> JournalCheckpoint {
-        JournalCheckpoint(self.journal.len() as u32, self.logs.len() as u32)
+        let ctx = self.inner.borrow();
+        JournalCheckpoint(ctx.journal.len() as u32, ctx.logs.len() as u32)
     }
 
-    fn commit(&mut self) -> SovereignStateResult {
-        let mut result = SovereignStateResult::default();
-        for event in take(&mut self.journal).into_iter() {
+    fn commit(&self) {
+        let mut ctx = self.inner.borrow_mut();
+        for event in take(&mut ctx.journal).into_iter() {
             match event {
-                JournalStateEvent::AccountChanged { account, .. } => {
-                    result.accounts.push(account);
+                JournalStateEvent::AccountChanged { .. } => {
+                    // result.accounts.push(account);
                 }
-                JournalStateEvent::StorageChanged {
-                    address,
-                    slot,
-                    had_value,
-                } => {
-                    result.storages.push((address, slot, had_value));
+                JournalStateEvent::StorageChanged { .. } => {
+                    // result.storages.push((address, slot, had_value));
                 }
                 JournalStateEvent::PreimageChanged { hash } => {
-                    let preimage = self.preimages.get(&hash).cloned().map(|v| v.0).unwrap();
-                    result.preimages.push((hash, preimage));
+                    let _preimage = ctx.preimages.get(&hash).cloned().map(|v| v.0).unwrap();
+                    // result.preimages.push((hash, preimage));
                 }
             }
         }
-        self.journal.clear();
-        self.dirty_state.clear();
-        result
+        ctx.journal.clear();
+        ctx.dirty_state.clear();
     }
 
-    fn rollback(&mut self, checkpoint: JournalCheckpoint) {
-        if checkpoint.state() > self.journal.len() {
-            panic!(
-                "checkpoint overflow during rollback ({} > {})",
-                checkpoint.state(),
-                self.journal.len()
-            )
-        }
-        self.journal
-            .iter()
-            .rev()
-            .take(self.journal.len() - checkpoint.state())
-            .for_each(|v| match v {
-                JournalStateEvent::AccountChanged {
-                    address,
-                    prev_state,
-                    ..
-                } => match prev_state {
-                    Some(prev_state) => {
-                        self.dirty_state.insert(*address, *prev_state);
-                    }
-                    None => {
-                        self.dirty_state.remove(address);
-                    }
-                },
-                JournalStateEvent::StorageChanged {
-                    address,
-                    slot,
-                    had_value,
-                } => {
-                    self.storage.insert((*address, *slot), *had_value);
-                }
-                JournalStateEvent::PreimageChanged { hash } => {
-                    let entry = self.preimages.get_mut(hash).unwrap();
-                    entry.1 -= 1;
-                    if entry.1 == 0 {
-                        self.preimages.remove(hash);
-                    }
-                }
-            });
-        self.journal.truncate(checkpoint.state());
-        self.logs.truncate(checkpoint.logs());
+    fn rollback(&self, _checkpoint: JournalCheckpoint) {
+        // let mut ctx = self.inner.borrow_mut();
+        // if checkpoint.state() > ctx.journal.len() {
+        //     panic!(
+        //         "checkpoint overflow during rollback ({} > {})",
+        //         checkpoint.state(),
+        //         ctx.journal.len()
+        //     )
+        // }
+        // ctx.journal
+        //     .iter()
+        //     .rev()
+        //     .take(ctx.journal.len() - checkpoint.state())
+        //     .cloned()
+        //     .for_each(|v| match v {
+        //         JournalStateEvent::AccountChanged {
+        //             address,
+        //             prev_state,
+        //             ..
+        //         } => match prev_state {
+        //             Some(prev_state) => {
+        //                 ctx.dirty_state.insert(address, prev_state);
+        //             }
+        //             None => {
+        //                 ctx.dirty_state.remove(&address);
+        //             }
+        //         },
+        //         JournalStateEvent::StorageChanged {
+        //             address,
+        //             slot,
+        //             had_value,
+        //         } => {
+        //             ctx.storage.insert((address, slot), had_value);
+        //         }
+        //         JournalStateEvent::PreimageChanged { hash } => {
+        //             let entry = ctx.preimages.get_mut(&hash).unwrap();
+        //             entry.1 -= 1;
+        //             if entry.1 == 0 {
+        //                 ctx.preimages.remove(&hash);
+        //             }
+        //         }
+        //     });
+        // ctx.journal.truncate(checkpoint.state());
+        // ctx.logs.truncate(checkpoint.logs());
+        todo!()
     }
 
-    fn write_account(&mut self, account: Account, status: AccountStatus) {
-        let prev_state = self.dirty_state.get(&account.address).copied();
-        self.dirty_state.insert(account.address, self.journal.len());
-        self.journal.push(JournalStateEvent::AccountChanged {
+    fn write_account(&self, account: Account, status: AccountStatus) {
+        let mut ctx = self.inner.borrow_mut();
+        let prev_state = ctx.dirty_state.get(&account.address).copied();
+        let journal_len = ctx.journal.len();
+        ctx.dirty_state.insert(account.address, journal_len);
+        ctx.journal.push(JournalStateEvent::AccountChanged {
             address: account.address,
             account_status: status,
             account,
@@ -376,14 +491,15 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         });
     }
 
-    fn destroy_account(&mut self, _address: &Address, _target: &Address) -> DestroyedAccountResult {
+    fn destroy_account(&self, _address: &Address, _target: &Address) -> DestroyedAccountResult {
         todo!()
     }
 
     fn account(&self, address: &Address) -> (Account, IsColdAccess) {
-        match self.dirty_state.get(address) {
+        let ctx = self.inner.borrow();
+        match ctx.dirty_state.get(address) {
             Some(index) => (
-                self.journal.get(*index).unwrap().unwrap_account().clone(),
+                ctx.journal.get(*index).unwrap().unwrap_account().clone(),
                 false,
             ),
             None => self.account_committed(address),
@@ -391,14 +507,16 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
     }
 
     fn account_committed(&self, address: &Address) -> (Account, IsColdAccess) {
+        let ctx = self.inner.borrow();
         (
-            self.accounts.get(address).cloned().unwrap_or_default(),
+            ctx.accounts.get(address).cloned().unwrap_or_default(),
             false,
         )
     }
 
-    fn write_preimage(&mut self, _address: Address, hash: B256, preimage: Bytes) {
-        match self.preimages.entry(hash) {
+    fn write_preimage(&self, _address: Address, hash: B256, preimage: Bytes) {
+        let mut ctx = self.inner.borrow_mut();
+        match ctx.preimages.entry(hash) {
             Entry::Occupied(mut entry) => {
                 // increment ref count
                 entry.get_mut().1 += 1;
@@ -407,30 +525,30 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
                 entry.insert((preimage, 1u32));
             }
         }
-        self.journal
+        ctx.journal
             .push(JournalStateEvent::PreimageChanged { hash })
     }
 
     fn preimage(&self, _address: &Address, hash: &B256) -> Option<Bytes> {
-        self.preimages.get(hash).map(|v| v.0.clone())
+        let ctx = self.inner.borrow();
+        ctx.preimages.get(hash).map(|v| v.0.clone())
     }
 
-    fn preimage_size(&self, _address: &Address, hash: &B256) -> u32 {
-        self.preimages
-            .get(hash)
-            .map(|v| v.0.len() as u32)
-            .unwrap_or(0)
+    fn preimage_size(&self, _address: &Address, hash: &B256) -> Option<u32> {
+        let ctx = self.inner.borrow();
+        ctx.preimages.get(hash).map(|v| v.0.len() as u32)
     }
 
-    fn write_storage(&mut self, address: Address, slot: U256, value: U256) -> IsColdAccess {
-        let had_value = match self.storage.entry((address, slot)) {
+    fn write_storage(&self, address: Address, slot: U256, value: U256) -> IsColdAccess {
+        let mut ctx = self.inner.borrow_mut();
+        let had_value = match ctx.storage.entry((address, slot)) {
             Entry::Occupied(mut entry) => entry.insert(value),
             Entry::Vacant(entry) => {
                 entry.insert(value);
                 U256::ZERO
             }
         };
-        self.journal.push(JournalStateEvent::StorageChanged {
+        ctx.journal.push(JournalStateEvent::StorageChanged {
             address,
             slot,
             had_value,
@@ -440,7 +558,8 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
     }
 
     fn storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess) {
-        let value = self
+        let ctx = self.inner.borrow();
+        let value = ctx
             .storage
             .get(&(*address, *slot))
             .copied()
@@ -453,19 +572,22 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         (U256::ZERO, false)
     }
 
-    fn write_transient_storage(&mut self, address: Address, index: U256, value: U256) {
-        self.transient_storage.insert((address, index), value);
+    fn write_transient_storage(&self, address: Address, index: U256, value: U256) {
+        let mut ctx = self.inner.borrow_mut();
+        ctx.transient_storage.insert((address, index), value);
     }
 
     fn transient_storage(&self, address: &Address, index: &U256) -> U256 {
-        self.transient_storage
+        let ctx = self.inner.borrow();
+        ctx.transient_storage
             .get(&(*address, *index))
             .cloned()
             .unwrap_or_default()
     }
 
-    fn write_log(&mut self, address: Address, data: Bytes, topics: Vec<B256>) {
-        self.logs.push(JournalStateLog {
+    fn write_log(&self, address: Address, data: Bytes, topics: Vec<B256>) {
+        let mut ctx = self.inner.borrow_mut();
+        ctx.logs.push(JournalStateLog {
             address,
             topics,
             data,
@@ -486,7 +608,7 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
     }
 
     fn transfer(
-        &mut self,
+        &self,
         _from: &mut Account,
         _to: &mut Account,
         _value: U256,
@@ -496,36 +618,41 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
 }
 
 impl<API: NativeAPI> SharedAPI for JournalState<API> {
-    fn block_context(&self) -> &BlockContext {
-        &self.block_context
-    }
-
-    fn tx_context(&self) -> &TxContext {
-        &self.tx_context
-    }
-
-    fn contract_context(&self) -> &ContractContext {
-        self.contract_context.as_ref().unwrap()
+    fn context(&self) -> impl SharedContextReader {
+        let ctx = self.inner.clone();
+        JournalContextReader(ctx)
     }
 
     fn write_storage(&mut self, slot: U256, value: U256) {
-        let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
+        let caller = {
+            let ctx = self.inner.borrow_mut();
+            ctx.contract_context.as_ref().map(|v| v.address).unwrap()
+        };
         SovereignAPI::write_storage(self, caller, slot, value);
     }
 
     fn storage(&self, slot: &U256) -> U256 {
-        let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
+        let caller = {
+            let ctx = self.inner.borrow_mut();
+            ctx.contract_context.as_ref().map(|v| v.address).unwrap()
+        };
         let (value, _) = SovereignAPI::storage(self, &caller, slot);
         value
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) {
-        let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
+        let caller = {
+            let ctx = self.inner.borrow_mut();
+            ctx.contract_context.as_ref().map(|v| v.address).unwrap()
+        };
         SovereignAPI::write_transient_storage(self, caller, slot, value);
     }
 
     fn transient_storage(&self, slot: &U256) -> U256 {
-        let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
+        let caller = {
+            let ctx = self.inner.borrow_mut();
+            ctx.contract_context.as_ref().map(|v| v.address).unwrap()
+        };
         SovereignAPI::transient_storage(self, &caller, slot)
     }
 
@@ -535,31 +662,38 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
-        self.native_sdk.read(target, offset)
+        let ctx = self.inner.borrow();
+        ctx.native_sdk.read(target, offset)
     }
 
     fn input_size(&self) -> u32 {
-        self.native_sdk.input_size()
+        let ctx = self.inner.borrow();
+        ctx.native_sdk.input_size()
     }
 
     fn charge_fuel(&self, value: u64) {
-        self.native_sdk.charge_fuel(value);
+        let ctx = self.inner.borrow();
+        ctx.native_sdk.charge_fuel(value);
     }
 
     fn fuel(&self) -> u64 {
-        self.native_sdk.fuel()
+        let ctx = self.inner.borrow();
+        ctx.native_sdk.fuel()
     }
 
     fn write(&mut self, output: &[u8]) {
-        self.native_sdk.write(output)
+        let ctx = self.inner.borrow_mut();
+        ctx.native_sdk.write(output)
     }
 
     fn exit(&self, exit_code: i32) -> ! {
-        self.native_sdk.exit(exit_code)
+        let ctx = self.inner.borrow();
+        ctx.native_sdk.exit(exit_code)
     }
 
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
-        let preimage = self
+        let ctx = self.inner.borrow();
+        let preimage = ctx
             .preimages
             .get(hash)
             .map(|v| v.0.clone())
@@ -568,15 +702,19 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
     }
 
     fn preimage_size(&self, hash: &B256) -> u32 {
-        self.preimages
+        let ctx = self.inner.borrow();
+        ctx.preimages
             .get(hash)
             .map(|v| v.0.len() as u32)
             .unwrap_or(0)
     }
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]) {
-        let address = self.contract_context.as_ref().unwrap().address;
-        SovereignAPI::write_log(self, address, data, topics.to_vec());
+        let caller = {
+            let ctx = self.inner.borrow_mut();
+            ctx.contract_context.as_ref().map(|v| v.address).unwrap()
+        };
+        SovereignAPI::write_log(self, caller, data, topics.to_vec());
     }
 
     fn balance(&self, _address: &Address) -> U256 {
@@ -584,9 +722,12 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
     }
 
     fn write_preimage(&mut self, preimage: Bytes) -> B256 {
-        let address = self.contract_context.as_ref().unwrap().address;
+        let caller = {
+            let ctx = self.inner.borrow_mut();
+            ctx.contract_context.as_ref().map(|v| v.address).unwrap()
+        };
         let code_hash = API::keccak256(preimage.as_ref());
-        SovereignAPI::write_preimage(self, address, code_hash, preimage);
+        SovereignAPI::write_preimage(self, caller, code_hash, preimage);
         code_hash
     }
 
@@ -631,10 +772,11 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn static_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32) {
         let (account, _) = self.account(&address);
-        let (_, exit_code) =
-            self.native_sdk
-                .exec(&account.code_hash, input, fuel_limit, STATE_MAIN);
-        (self.native_sdk.return_data(), exit_code)
+        let ctx = self.inner.borrow();
+        let (_, exit_code) = ctx
+            .native_sdk
+            .exec(&account.code_hash, input, fuel_limit, STATE_MAIN);
+        (ctx.native_sdk.return_data(), exit_code)
     }
 
     fn destroy_account(&mut self, _address: Address) {
