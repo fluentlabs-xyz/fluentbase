@@ -12,7 +12,7 @@ use fluentbase_sdk::{
     STATE_DEPLOY,
     STATE_MAIN,
 };
-use revm_interpreter::InstructionResult;
+use revm_interpreter::{Gas, InstructionResult};
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
@@ -149,5 +149,21 @@ pub fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
         InstructionResult::CreateContractStartingWithEF => ExitCode::CreateContractStartingWithEF,
         InstructionResult::FatalExternalError => ExitCode::FatalExternalError,
         _ => ExitCode::UnknownError,
+    }
+}
+
+pub trait DenominateGas {
+    const DENOMINATE_COEFFICIENT: u64;
+    fn denominate_gas(&mut self, inner_gas_spent: u64);
+}
+
+impl DenominateGas for Gas {
+    const DENOMINATE_COEFFICIENT: u64 = 1000;
+    fn denominate_gas(&mut self, inner_gas_spent: u64) {
+        let gas_used = self.limit() - self.remaining() - inner_gas_spent;
+        self.spend_all();
+        self.erase_cost(
+            self.limit() - (gas_used / Self::DENOMINATE_COEFFICIENT + 1) - inner_gas_spent,
+        );
     }
 }

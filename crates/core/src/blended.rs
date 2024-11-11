@@ -5,7 +5,11 @@ mod syscall;
 mod util;
 mod wasm;
 
-use crate::{debug_log, helpers::evm_error_from_exit_code, types::NextAction};
+use crate::{
+    debug_log,
+    helpers::{evm_error_from_exit_code, DenominateGas},
+    types::NextAction,
+};
 use alloc::boxed::Box;
 use fluentbase_sdk::{
     bytes::BytesMut,
@@ -44,6 +48,7 @@ pub use util::{create_rwasm_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
 pub struct BlendedRuntime<SDK> {
     sdk: SDK,
     env: Env,
+    pub inner_gas_spend: Option<u64>,
 }
 
 impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
@@ -51,6 +56,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         Self {
             env: env_from_context(sdk.context()),
             sdk,
+            inner_gas_spend: None,
         }
     }
 
@@ -172,7 +178,16 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 self.exec_evm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
             BytecodeType::WASM => {
-                self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
+                let result = self.exec_rwasm_bytecode(
+                    context,
+                    bytecode_account,
+                    input,
+                    gas,
+                    state,
+                    call_depth,
+                );
+                gas.denominate_gas(self.inner_gas_spend.unwrap_or_default());
+                result
             }
             #[cfg(feature = "elf")]
             BytecodeType::ELF => {
@@ -344,6 +359,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             is_static: inputs.is_static,
             value: inputs.value.get(),
         };
+
+        let inner_gas_spend = self.inner_gas_spend.take();
+
         let (output, exit_code) = self.exec_bytecode(
             contract_context,
             &bytecode_account,
@@ -352,6 +370,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             state,
             call_depth,
         );
+
+        self.inner_gas_spend =
+            Some(inner_gas_spend.unwrap_or_default() + inputs.gas_limit - gas.remaining());
 
         if ExitCode::from(exit_code).is_ok() {
             self.sdk.commit();
