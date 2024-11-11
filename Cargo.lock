@@ -2299,6 +2299,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-chess-validator"
+version = "0.1.0"
+dependencies = [
+ "alloy-sol-types 0.8.7",
+ "fluentbase-sdk",
+ "hex",
+ "hex-literal",
+ "shakmaty",
+]
+
+[[package]]
 name = "fluentbase-example-client-fluent"
 version = "0.1.0"
 dependencies = [
