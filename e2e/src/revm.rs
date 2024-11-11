@@ -1099,6 +1099,10 @@ fn test_simple_nested_call() {
     let value = LittleEndian::read_i32(result.output().unwrap_or_default().as_ref());
     assert_eq!(value, -120);
     assert!(result.is_success());
-    // 21k is tx cost + 2600 (x2) is nested calls + 4126 is opcode cost
-    assert_eq!(result.gas_used(), 21000 + 2600 * 2 + 4126);
+    // 21k is tx cost
+    // + 2 (denominate 1000 from account1 call-> 2)
+    // + 3 (denominate 2000 from account1 call-> 3)
+    // + 7 (denominate 6326 from account1 call-> 2)
+    // Result: denominate from 30326 -> 21012
+    assert_eq!(result.gas_used(), 21000 + 2 + 3 + 7);
 }
