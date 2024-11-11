@@ -71,14 +71,18 @@ impl<'a> CodecGenerator<'a> {
         let struct_names = self.generate_struct_names();
         let codec_type = self.get_codec_type();
         let args_types = self.generate_args_types(&struct_names);
-        let offset_handling = self.generate_offset_handling(&codec_type, &struct_names.call_args);
+        let (call_offset_handling, return_offset_handling) = self.generate_offset_handling(
+            &codec_type,
+            &struct_names.call_args,
+            &struct_names.return_args,
+        );
         let field_encoders = self.generate_field_encoders();
 
         self.generate_implementation(
             struct_names,
             codec_type,
             args_types,
-            offset_handling,
+            (call_offset_handling, return_offset_handling),
             field_encoders,
         )
     }
@@ -142,8 +146,9 @@ impl<'a> CodecGenerator<'a> {
         &self,
         codec_type: &TokenStream2,
         call_args: &syn::Ident,
-    ) -> OffsetHandling {
-        let (encode_offset, decode_offset) = match self.mode {
+        return_args: &syn::Ident,
+    ) -> (OffsetHandling, OffsetHandling) {
+        let (call_encode_offset, call_decode_offset) = match self.mode {
             RouterMode::Solidity => (
                 quote! {
                     if #codec_type::<#call_args>::is_dynamic() {
@@ -178,10 +183,51 @@ impl<'a> CodecGenerator<'a> {
             ),
         };
 
-        OffsetHandling {
-            encode_offset,
-            decode_offset,
-        }
+        let (return_encode_offset, return_decode_offset) = match self.mode {
+            RouterMode::Solidity => (
+                quote! {
+                    if #codec_type::<#return_args>::is_dynamic() {
+                        encoded_args[32..].to_vec()
+                    } else {
+                        encoded_args.to_vec()
+                    }
+                },
+                quote! {
+                    if #codec_type::<#return_args>::is_dynamic() {
+                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                    } else {
+                        ::alloc::vec::Vec::new()
+                    }
+                },
+            ),
+            RouterMode::Fluent => (
+                quote! {
+                    if #codec_type::<#return_args>::is_dynamic() {
+                        encoded_args[4..].to_vec()
+                    } else {
+                        encoded_args.to_vec()
+                    }
+                },
+                quote! {
+                    if #codec_type::<#return_args>::is_dynamic() {
+                        (4_u32).to_le_bytes().to_vec()
+                    } else {
+                        ::alloc::vec::Vec::new()
+                    }
+                },
+            ),
+        };
+
+        (
+            OffsetHandling {
+                encode_offset: call_encode_offset,
+                decode_offset: call_decode_offset,
+            },
+            OffsetHandling {
+                encode_offset: return_encode_offset,
+                decode_offset: return_decode_offset,
+            },
+        )
     }
 
     /// Generates the final implementation code.
@@ -190,7 +236,7 @@ impl<'a> CodecGenerator<'a> {
         names: StructNames,
         codec_type: TokenStream2,
         args_types: ArgsTypes,
-        offset: OffsetHandling,
+        offset: (OffsetHandling, OffsetHandling),
         encoders: FieldEncoders,
     ) -> TokenStream2 {
         let crate_name = self.determine_crate_name();
@@ -207,10 +253,16 @@ impl<'a> CodecGenerator<'a> {
         } = names;
 
         let ArgsTypes { input, output } = args_types;
-        let OffsetHandling {
-            encode_offset,
-            decode_offset,
-        } = offset;
+        let (
+            OffsetHandling {
+                encode_offset: call_encode_offset,
+                decode_offset: call_decode_offset,
+            },
+            OffsetHandling {
+                encode_offset: return_encode_offset,
+                decode_offset: return_decode_offset,
+            },
+        ) = offset;
         let FieldEncoders {
             encode_input_fields,
             encode_output_fields,
@@ -232,14 +284,14 @@ impl<'a> CodecGenerator<'a> {
                     let mut buf = #crate_name::bytes::BytesMut::new();
                     #codec_type::encode(&(#(#encode_input_fields,)*), &mut buf, 0).unwrap();
                     let encoded_args = buf.freeze();
-                    let clean_args = #encode_offset;
+                    let clean_args = #call_encode_offset;
 
                     Self::SELECTOR.iter().copied().chain(clean_args).collect()
                 }
 
                 pub fn decode(buf: &impl #crate_name::bytes::Buf) -> ::core::result::Result<Self,  #crate_name::CodecError> {
                     use #crate_name::bytes::BufMut;
-                    let dynamic_offset = #decode_offset;
+                    let dynamic_offset = #call_decode_offset;
                     let mut combined_buf = #crate_name::bytes::BytesMut::new();
                     combined_buf.put_slice(&dynamic_offset);
                     combined_buf.put_slice(buf.chunk());
@@ -270,14 +322,14 @@ impl<'a> CodecGenerator<'a> {
                     let mut buf = #crate_name::bytes::BytesMut::new();
                     #codec_type::encode(&(#(#encode_output_fields,)*), &mut buf, 0).unwrap();
                     let encoded_args = buf.freeze();
-                    let clean_args = #encode_offset;
+                    let clean_args = #return_encode_offset;
 
                     clean_args.into()
                 }
 
                 pub fn decode(buf: &impl #crate_name::bytes::Buf) -> ::core::result::Result<Self,  #crate_name::CodecError> {
                     use #crate_name::bytes::BufMut;
-                    let dynamic_offset = #decode_offset;
+                    let dynamic_offset = #return_decode_offset;
                     let mut combined_buf = #crate_name::bytes::BytesMut::new();
                     combined_buf.put_slice(&dynamic_offset);
                     combined_buf.put_slice(buf.chunk());
