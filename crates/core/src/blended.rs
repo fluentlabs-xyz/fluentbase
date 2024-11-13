@@ -360,7 +360,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             value: inputs.value.get(),
         };
 
-        let inner_gas_spend = self.inner_gas_spend.take();
+        self.inner_gas_spend = None;
 
         let (output, exit_code) = self.exec_bytecode(
             contract_context,
@@ -370,9 +370,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             state,
             call_depth,
         );
-
-        self.inner_gas_spend =
-            Some(inner_gas_spend.unwrap_or_default() + inputs.gas_limit - gas.remaining());
 
         if ExitCode::from(exit_code).is_ok() {
             self.sdk.commit();
