@@ -1,7 +1,7 @@
 use crate::{
     blended::BlendedRuntime,
     debug_log,
-    helpers::exit_code_from_evm_error,
+    helpers::{exit_code_from_evm_error, DenominateGas},
     types::NextAction,
 };
 use alloc::{boxed::Box, vec::Vec};
@@ -43,6 +43,7 @@ use revm_interpreter::{
     CallValue,
     CreateInputs,
     Eip7702CodeLoad,
+    Gas,
     SStoreResult,
     SelfDestructResult,
     StateLoad,
@@ -70,6 +71,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         );
         // only main state can be forwarded to the other contract as a nested call,
         // other states can be only used by root
+        let inner_gas_used = self.inner_gas_spend.take();
         let next_action = match params.code_hash {
             SYSCALL_ID_STORAGE_READ => self.syscall_storage_read(contract_context, params),
             SYSCALL_ID_STORAGE_WRITE => self.syscall_storage_write(contract_context, params),
@@ -95,8 +97,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             _ => NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams),
         };
         match next_action {
-            NextAction::ExecutionResult { gas_used, .. } | NextAction::NestedCall { gas_used, .. } => {
-                self.inner_gas_spend = Some(self.inner_gas_spend.unwrap_or_default() + gas_used);
+            NextAction::ExecutionResult { gas_used, .. }
+            | NextAction::NestedCall { gas_used, .. } => {
+                self.inner_gas_spend = Some(inner_gas_used.unwrap_or_default() + gas_used);
                 next_action
             }
         }
@@ -129,7 +132,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if gas_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            gas_cost
+            gas_cost * Gas::DENOMINATE_COEFFICIENT
         } else {
             0
         };
@@ -187,7 +190,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 Some(gas_cost) => gas_cost,
                 None => return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas),
             };
-            gas_cost
+            gas_cost * Gas::DENOMINATE_COEFFICIENT
         } else {
             0
         };
@@ -260,7 +263,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if has_transfer {
                 gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
             }
-            (call_cost, gas_limit)
+            (call_cost * Gas::DENOMINATE_COEFFICIENT, gas_limit)
         } else {
             (0, params.fuel_limit)
         };
@@ -328,7 +331,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if gas_limit + call_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            (call_cost, gas_limit)
+            (call_cost * Gas::DENOMINATE_COEFFICIENT, gas_limit)
         } else {
             (0, params.fuel_limit)
         };
@@ -396,7 +399,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if gas_limit + call_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            (call_cost, gas_limit)
+            (call_cost * Gas::DENOMINATE_COEFFICIENT, gas_limit)
         } else {
             (0, params.fuel_limit)
         };
@@ -478,7 +481,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if !value.is_zero() {
                 gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
             }
-            (call_cost, gas_limit)
+            (call_cost * Gas::DENOMINATE_COEFFICIENT, gas_limit)
         } else {
             (0, params.fuel_limit)
         };
@@ -581,7 +584,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if gas_limit + init_cost + create_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            (init_cost + create_cost, gas_limit)
+            (
+                init_cost * Gas::DENOMINATE_COEFFICIENT + create_cost * Gas::DENOMINATE_COEFFICIENT,
+                gas_limit,
+            )
         } else {
             (0, params.fuel_limit)
         };
@@ -652,7 +658,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if gas_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            gas_cost
+            gas_cost * Gas::DENOMINATE_COEFFICIENT
         } else {
             0
         };
@@ -701,7 +707,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if gas_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            gas_cost
+            gas_cost * Gas::DENOMINATE_COEFFICIENT
         } else {
             0
         };
@@ -743,7 +749,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if gas_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            gas_cost
+            gas_cost * Gas::DENOMINATE_COEFFICIENT
         } else {
             0
         };
@@ -832,7 +838,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if gas_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            gas_cost
+            gas_cost * Gas::DENOMINATE_COEFFICIENT
         } else {
             0
         };
@@ -888,7 +894,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if params.fuel_limit < gas_cost {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            gas_cost
+            gas_cost * Gas::DENOMINATE_COEFFICIENT
         } else {
             0
         };
@@ -924,7 +930,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if gas_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            gas_cost
+            gas_cost * Gas::DENOMINATE_COEFFICIENT
         } else {
             0
         };
@@ -966,7 +972,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if gas_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            gas_cost
+            gas_cost * Gas::DENOMINATE_COEFFICIENT
         } else {
             0
         };

@@ -175,10 +175,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         let bytecode_type = BytecodeType::from_slice(bytecode.as_ref());
         match bytecode_type {
             BytecodeType::EVM => {
-                self.exec_evm_bytecode(context, bytecode_account, input, gas, state, call_depth)
-            }
-            BytecodeType::WASM => {
-                let result = self.exec_rwasm_bytecode(
+                let result = self.exec_evm_bytecode(
                     context,
                     bytecode_account,
                     input,
@@ -186,8 +183,18 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                     state,
                     call_depth,
                 );
-                gas.denominate_gas(self.inner_gas_spend.unwrap_or_default());
+                gas.nominate_gas(self.inner_gas_spend.unwrap_or_default());
                 result
+            }
+            BytecodeType::WASM => {
+                self.exec_rwasm_bytecode(
+                    context,
+                    bytecode_account,
+                    input,
+                    gas,
+                    state,
+                    call_depth,
+                )
             }
             #[cfg(feature = "elf")]
             BytecodeType::ELF => {
@@ -204,7 +211,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 None,
             )
         };
-        let gas = Gas::new(inputs.gas_limit);
+        let mut gas = Gas::new(inputs.gas_limit);
 
         // determine bytecode type
         let bytecode_type = BytecodeType::from_slice(&inputs.init_code);
@@ -360,8 +367,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             value: inputs.value.get(),
         };
 
-        self.inner_gas_spend = None;
-
         let (output, exit_code) = self.exec_bytecode(
             contract_context,
             &bytecode_account,
@@ -383,8 +388,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         self.create_inner(create_inputs, 0)
     }
 
-    pub fn call(&mut self, inputs: Box<CallInputs>) -> CallOutcome {
-        let (output, gas, exit_code) = self.call_inner(inputs, STATE_MAIN, 0);
+    pub fn call(&mut self, mut inputs: Box<CallInputs>) -> CallOutcome {
+        inputs.gas_limit *= 1000;
+        let (output, mut gas, exit_code) = self.call_inner(inputs, STATE_MAIN, 0);
+        gas.denominate_gas();
         let result = InterpreterResult {
             result: evm_error_from_exit_code(ExitCode::from(exit_code)),
             output,
