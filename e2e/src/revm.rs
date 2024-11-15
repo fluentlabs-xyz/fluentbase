@@ -1100,9 +1100,8 @@ fn test_simple_nested_call() {
     assert_eq!(value, -120);
     assert!(result.is_success());
     // 21k is tx cost
-    // + 2 (denominate 1000 from account1 call-> 2)
-    // + 3 (denominate 2000 from account1 call-> 3)
-    // + 7 (denominate 6326 from account1 call-> 2)
-    // Result: denominate from 30326 -> 21012
-    assert_eq!(result.gas_used(), 21000 + 2 + 3 + 7);
+    // + 2600 * 2 nested calls
+    // + 5 wasm opcode (denominate 1000 + 2000 + 1126 -> 5)
+    // Result: denominate from 30326 -> 26205
+    assert_eq!(result.gas_used(), 21000 + 2600 * 2 + 5);
 }
