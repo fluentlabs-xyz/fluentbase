@@ -211,7 +211,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 None,
             )
         };
-        let mut gas = Gas::new(inputs.gas_limit);
+        let gas = Gas::new(inputs.gas_limit);
 
         // determine bytecode type
         let bytecode_type = BytecodeType::from_slice(&inputs.init_code);
@@ -384,8 +384,12 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         (output, gas, exit_code)
     }
 
-    pub fn create(&mut self, create_inputs: Box<CreateInputs>) -> CreateOutcome {
-        self.create_inner(create_inputs, 0)
+    pub fn create(&mut self, mut create_inputs: Box<CreateInputs>) -> CreateOutcome {
+        create_inputs.gas_limit *= 1000;
+        let mut result = self.create_inner(create_inputs, 0);
+        result.result.gas.denominate_gas();
+
+        result
     }
 
     pub fn call(&mut self, mut inputs: Box<CallInputs>) -> CallOutcome {
