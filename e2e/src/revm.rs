@@ -1103,5 +1103,25 @@ fn test_simple_nested_call() {
     // + 2600 * 2 nested calls
     // + 5 wasm opcode (denominate 1000 + 2000 + 1126 -> 5)
     // Result: denominate from 30326 -> 26205
-    assert_eq!(result.gas_used(), 21000 + 2600 * 2 + 5);
+    assert_eq!(result.gas_used(), 21000 + 2600 * 2 + (1000 + 2000 + 1126) / 1000 + 1 );
+}
+
+#[test]
+fn test_deploy_gas_spend() {
+    // deploy greeting WASM contract
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+
+    let result = TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, include_bytes!("../../examples/greeting/lib.wasm").into()).exec();
+    if !result.is_success() {
+        println!("{:?}", result);
+        println!(
+            "{}",
+            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
+        );
+    }
+    // 62030 - init contract cost
+    // 67400 - store space cost in fuel
+    // 5126  - opcode cost in fuel
+    assert_eq!(result.gas_used(), 62030 + (67400 + 5126) / 1000 + 1);
 }
