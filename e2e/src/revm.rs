@@ -1152,7 +1152,7 @@ fn test_blended_gas_spend() {
         },
     );
 
-    let result = TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, hex!("608060405260b580600f5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806365becaf314602a575b5f5ffd5b60306032565b005b5f73111111111111111111111111111111111111111190505f60405180602001604052805f81525090505f5f9050604051825160208401818184375f5f83855f8a5af1935050505050505056fea264697066735822122068a3b38723d37bd5d26958c3fff9e4d2a8043fe58b159aedbcea0580ccba0b3b64736f6c634300081c0033").into()).exec();
+    let result = TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, hex!("608060405260b780600f5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806365becaf314602a575b5f5ffd5b60306032565b005b5f73111111111111111111111111111111111111111190505f60405180602001604052805f81525090505f5f9050604051825160208401818184375f5f83855f8a6107d0f1935050505050505056fea26469706673582212207eef72b1ab13ead60c06c9a0f00f0a2c74c2438d873e963f3b2bf9a2e092874564736f6c634300081c0033").into()).exec();
     if !result.is_success() {
         println!("Result: {:?}", result);
         println!(
@@ -1160,7 +1160,6 @@ fn test_blended_gas_spend() {
             from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
         );
     }
-    println!("Res: {:?}", result);
     let address = match result {
         ExecutionResult::Success { output, .. } => match output {
             Output::Create(_, address) => {
@@ -1182,5 +1181,8 @@ fn test_blended_gas_spend() {
 
     assert!(result.is_success());
     println!("Result: {:?}", result);
-
+    // 21k is tx cost
+    // + 2000 call wasm code but should spend 1000
+    // + 2919 ?
+    assert_eq!(result.gas_used(), 21000 + 2000 + 2919);
 }

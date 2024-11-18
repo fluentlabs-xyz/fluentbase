@@ -9,23 +9,21 @@ contract CallWasm {
         bytes memory data = "";
         bool success = false;
         assembly {
-        // Load the free memory pointer
             let freeMemoryPointer := mload(0x40)
 
-        // Copy calldata into memory starting at the free memory pointer
             let dataLength := mload(data)
             let dataPointer := add(data, 0x20)
             calldatacopy(freeMemoryPointer, dataPointer, dataLength)
 
-        // Perform the low-level call
+
             success := call(
-                gas(),           // Forward all available gas
-                target,          // Address of the target contract
-                0,               // No ETH value to send
-                freeMemoryPointer, // Input memory location
-                dataLength,      // Input data size
-                0,               // Output memory location (none for now)
-                0                // Output size (none for now)
+                2000,
+                target,
+                0,
+                freeMemoryPointer,
+                dataLength,
+                0,
+                0
             )
         }
     }
