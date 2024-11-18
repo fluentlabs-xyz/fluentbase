@@ -1125,3 +1125,62 @@ fn test_deploy_gas_spend() {
     // 5126  - opcode cost in fuel
     assert_eq!(result.gas_used(), 62030 + (67400 + 5126) / 1000 + 1);
 }
+
+
+#[test]
+fn test_blended_gas_spend() {
+    let mut ctx = EvmTestingContext::default();
+    const ACCOUNT1_ADDRESS: Address = address!("1111111111111111111111111111111111111111");
+    const ACCOUNT2_ADDRESS: Address = address!("1111111111111111111111111111111111111112");
+    const ACCOUNT3_ADDRESS: Address = address!("1111111111111111111111111111111111111113");
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+
+    let _account1 = ctx.add_wasm_contract(
+        ACCOUNT1_ADDRESS,
+        instruction_set! {
+            ConsumeFuel(1000)
+            I32Const(-100)
+            Call(SysFuncIdx::EXIT)
+        },
+    );
+    let _account2 = ctx.add_wasm_contract(
+        ACCOUNT2_ADDRESS,
+        instruction_set! {
+            ConsumeFuel(2000)
+            I32Const(-20)
+            Call(SysFuncIdx::EXIT)
+        },
+    );
+
+    let result = TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, hex!("608060405260b580600f5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806365becaf314602a575b5f5ffd5b60306032565b005b5f73111111111111111111111111111111111111111190505f60405180602001604052805f81525090505f5f9050604051825160208401818184375f5f83855f8a5af1935050505050505056fea264697066735822122068a3b38723d37bd5d26958c3fff9e4d2a8043fe58b159aedbcea0580ccba0b3b64736f6c634300081c0033").into()).exec();
+    if !result.is_success() {
+        println!("Result: {:?}", result);
+        println!(
+            "{}",
+            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
+        );
+    }
+    println!("Res: {:?}", result);
+    let address = match result {
+        ExecutionResult::Success { output, .. } => match output {
+            Output::Create(_, address) => {
+                address.unwrap()
+            }
+            _ => panic!("expected 'create'"),
+        },
+        _ => panic!("expected 'success'"),
+    };
+    println!("Contract address: {:?}", address);
+    let result = TxBuilder::call(
+        &mut ctx,
+        address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+        address,
+        None,
+    ).input(
+        bytes!("65becaf3")
+    ).exec();
+
+    assert!(result.is_success());
+    println!("Result: {:?}", result);
+
+}
