@@ -24,7 +24,7 @@ func _input_size() C.uint
 
 //go:wasm-module fluentbase_v1preview
 //export _exit
-func _exit(C.uint)
+func _exit(C.int)
 
 //export deploy
 func deploy() {
@@ -86,5 +86,5 @@ func print_err(err error) {
 	resultPtr := (*C.char)(unsafe.Pointer(&errBytes[0]))
 
 	_write(resultPtr, resultLen)
-	_exit(1)
+	_exit(-71)
 }
