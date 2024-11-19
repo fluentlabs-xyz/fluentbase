@@ -1139,7 +1139,7 @@ fn test_blended_gas_spend() {
         ACCOUNT1_ADDRESS,
         instruction_set! {
             ConsumeFuel(1000)
-            I32Const(-100)
+            I32Const(-71)
             Call(SysFuncIdx::EXIT)
         },
     );
@@ -1181,8 +1181,9 @@ fn test_blended_gas_spend() {
 
     assert!(result.is_success());
     println!("Result: {:?}", result);
-    // 21k is tx cost
-    // + 2000 call wasm code but should spend 1000
-    // + 2919 ?
-    assert_eq!(result.gas_used(), 21000 + 2000 + 2919);
+    // 21064 is tx cost
+    // + 2600 call cost
+    // + 1 call wasm code
+    // + 255 evm opcodes cost
+    assert_eq!(result.gas_used(), 21064 + 1 + 2600 + 255);
 }
