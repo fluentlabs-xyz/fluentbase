@@ -187,14 +187,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 result
             }
             BytecodeType::WASM => {
-                self.exec_rwasm_bytecode(
-                    context,
-                    bytecode_account,
-                    input,
-                    gas,
-                    state,
-                    call_depth,
-                )
+                self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
             #[cfg(feature = "elf")]
             BytecodeType::ELF => {
