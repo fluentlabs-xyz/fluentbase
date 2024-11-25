@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
-rwasm = { workspace = true, default-features = false }
+rwasm = { workspace = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"

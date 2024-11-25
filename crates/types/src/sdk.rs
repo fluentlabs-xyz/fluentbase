@@ -271,7 +271,6 @@ pub trait SharedContextReader:
     fn clone_contract_context(&self) -> ContractContext;
 }
 
-#[auto_impl::auto_impl(Rc)]
 pub trait SovereignAPI: ContextFreeNativeAPI {
     fn context(&self) -> impl SovereignContextReader;
 
