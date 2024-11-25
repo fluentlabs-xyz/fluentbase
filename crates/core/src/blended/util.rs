@@ -12,7 +12,7 @@ use rwasm::{
     rwasm::{BinaryFormat, RwasmModule},
 };
 
-pub const ENABLE_EVM_PROXY_CONTRACT: bool = false; //cfg!(feature = "evm-proxy");
+pub const ENABLE_EVM_PROXY_CONTRACT: bool = true; //cfg!(feature = "evm-proxy");
 
 pub fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
     let mut memory_section = vec![0u8; 32 + 20];

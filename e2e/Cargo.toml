@@ -17,7 +17,7 @@ fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
 fluentbase-core = { workspace = true }
 fluentbase-types = { workspace = true }
-rwasm = { workspace = true, default-features = false }
+rwasm = { workspace = true }
 revm-interpreter = { workspace = true, default-features = false, features = ["std"] }
 revm = { workspace = true, default-features = false, features = ["std"] }
 

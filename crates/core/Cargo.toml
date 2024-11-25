@@ -12,7 +12,7 @@ categories.workspace = true
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
-rwasm = { workspace = true, default-features = false }
+rwasm = { workspace = true }
 revm-interpreter = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
 

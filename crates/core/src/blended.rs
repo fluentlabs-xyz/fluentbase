@@ -96,12 +96,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         };
 
         let mut buf = BytesMut::new();
-
         FluentABI::encode(&context_input, &mut buf, 0).unwrap();
         buf.extend_from_slice(params.input.as_ref());
         let context_input = buf.freeze();
-
-        // <context_input as FluentABI>::encode(context_input);
 
         // execute smart contract
         #[cfg(feature = "std")]
@@ -110,7 +107,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
             let runtime_context = RuntimeContext::root(params.fuel_limit);
             let preimage_adapter =
-                crate::helpers::SdkPreimageAdapter(contract_context.address, &self.sdk);
+                crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
                 .with_preimage_resolver(&preimage_adapter);
             let (fuel_consumed, exit_code) = native_sdk.exec(

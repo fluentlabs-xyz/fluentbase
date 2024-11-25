@@ -90,8 +90,6 @@ pub struct RuntimeContext {
     pub(crate) preimage_resolver: Box<dyn PreimageResolver>,
 }
 
-// pub type RuntimeContext = RuntimeContextFull<'static, ()>;
-
 impl Debug for RuntimeContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "runtime context")

@@ -163,7 +163,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             .sdk
             .preimage(address, &account.code_hash)
             .unwrap_or_default();
-        let bytecode = Bytecode::new_raw(bytecode);
+        let bytecode = Bytecode::new_legacy(bytecode);
         (bytecode, account.code_hash)
     }
 
