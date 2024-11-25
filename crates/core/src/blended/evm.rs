@@ -39,6 +39,7 @@ use revm_interpreter::{
     StateLoad,
 };
 use revm_primitives::{Bytecode, CancunSpec, Env, Log, BLOCK_HASH_HISTORY, MAX_CODE_SIZE};
+use crate::helpers::DenominateGas;
 
 impl<SDK: SovereignAPI> Host for BlendedRuntime<SDK> {
     fn env(&self) -> &Env {
@@ -231,13 +232,15 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             shared_memory = interpreter.take_memory();
 
             match next_action {
-                InterpreterAction::Call { inputs } => {
+                InterpreterAction::Call { mut inputs } => {
                     let return_memory_offset = inputs.return_memory_offset.clone();
                     let inner_gas = self.inner_gas_spend.take();
-                    let (output, gas, exit_code) = self.call_inner(inputs, STATE_MAIN, depth + 1);
+                    inputs.gas_limit *= Gas::DENOMINATE_COEFFICIENT;
+
+                    let (output, mut gas, exit_code) = self.call_inner(inputs, STATE_MAIN, depth + 1);
 
                     self.inner_gas_spend = Some(inner_gas.unwrap_or_default() + gas.spent());
-
+                    gas.denominate_gas();
                     let result = InterpreterResult::new(
                         evm_error_from_exit_code(ExitCode::from(exit_code)),
                         output,
