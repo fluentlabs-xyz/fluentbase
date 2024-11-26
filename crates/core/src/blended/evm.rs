@@ -235,11 +235,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 InterpreterAction::Call { mut inputs } => {
                     let return_memory_offset = inputs.return_memory_offset.clone();
                     let inner_gas = self.inner_gas_spend.take();
-                    inputs.gas_limit *= Gas::DENOMINATE_COEFFICIENT;
 
                     let (output, mut gas, exit_code) = self.call_inner(inputs, STATE_MAIN, depth + 1);
 
-                    self.inner_gas_spend = Some(inner_gas.unwrap_or_default() + gas.spent());
+                    self.inner_gas_spend = Some(inner_gas.unwrap_or_default() + gas.spent() / Gas::DENOMINATE_COEFFICIENT);
                     gas.denominate_gas();
                     let result = InterpreterResult::new(
                         evm_error_from_exit_code(ExitCode::from(exit_code)),

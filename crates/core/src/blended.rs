@@ -378,7 +378,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     }
 
     pub fn create(&mut self, mut create_inputs: Box<CreateInputs>) -> CreateOutcome {
-        create_inputs.gas_limit *= Gas::DENOMINATE_COEFFICIENT;
         let mut result = self.create_inner(create_inputs, 0);
         result.result.gas.denominate_gas();
 
@@ -386,7 +385,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     }
 
     pub fn call(&mut self, mut inputs: Box<CallInputs>) -> CallOutcome {
-        inputs.gas_limit *= Gas::DENOMINATE_COEFFICIENT;
         let (output, mut gas, exit_code) = self.call_inner(inputs, STATE_MAIN, 0);
         gas.denominate_gas();
         let result = InterpreterResult {

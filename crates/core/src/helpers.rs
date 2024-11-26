@@ -17,6 +17,7 @@ use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
 };
+use revm_interpreter::instructions::system::gas;
 
 #[cfg(feature = "std")]
 pub(crate) struct SdkPreimageAdapter<'a, SDK: SovereignAPI>(pub Address, pub &'a SDK);
@@ -163,6 +164,7 @@ impl DenominateGas for Gas {
     const DENOMINATE_COEFFICIENT: u64 = 1000;
     fn nominate_gas(&mut self, inner_gas_spent: u64) {
         let gas_used = self.limit() - self.remaining() - inner_gas_spent;
+        *self = Gas::new(self.limit() * 1000);
         self.spend_all();
         self.erase_cost(self.limit() - (gas_used * Self::DENOMINATE_COEFFICIENT) - inner_gas_spent);
     }
