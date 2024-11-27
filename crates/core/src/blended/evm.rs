@@ -111,12 +111,10 @@ impl<SDK: SovereignAPI> Host for BlendedRuntime<SDK> {
         index: U256,
         new_value: U256,
     ) -> Option<StateLoad<SStoreResult>> {
-        let (original_value, _) = self.sdk.committed_storage(&address, &index);
-        let (present_value, is_cold) = self.sdk.storage(&address, &index);
-        self.sdk.write_storage(address, index, new_value);
+        let (result, is_cold) = self.sdk.write_storage(address, index, new_value);
         let result = SStoreResult {
-            original_value,
-            present_value,
+            original_value: result.original_value,
+            present_value: result.present_value,
             new_value,
         };
         Some(StateLoad::new(result, is_cold))
