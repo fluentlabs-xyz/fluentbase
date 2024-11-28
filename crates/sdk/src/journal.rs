@@ -28,6 +28,7 @@ use fluentbase_types::{
     SovereignContextReader,
     TxContext,
     TxContextReader,
+    WriteStorageResult,
     F254,
     STATE_MAIN,
 };
@@ -539,7 +540,12 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         ctx.preimages.get(hash).map(|v| v.0.len() as u32)
     }
 
-    fn write_storage(&self, address: Address, slot: U256, value: U256) -> IsColdAccess {
+    fn write_storage(
+        &self,
+        address: Address,
+        slot: U256,
+        value: U256,
+    ) -> (WriteStorageResult, IsColdAccess) {
         let mut ctx = self.inner.borrow_mut();
         let had_value = match ctx.storage.entry((address, slot)) {
             Entry::Occupied(mut entry) => entry.insert(value),
@@ -554,7 +560,13 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
             had_value,
         });
         // we don't support cold storage right now
-        false
+        (
+            WriteStorageResult {
+                original_value: had_value,
+                present_value: had_value,
+            },
+            false,
+        )
     }
 
     fn storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess) {
