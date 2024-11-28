@@ -205,6 +205,11 @@ pub struct CallPrecompileResult {
     pub gas_refund: i64,
 }
 
+pub struct WriteStorageResult {
+    pub original_value: U256,
+    pub present_value: U256,
+}
+
 pub struct DestroyedAccountResult {
     pub had_value: bool,
     pub target_exists: bool,
@@ -287,7 +292,12 @@ pub trait SovereignAPI: ContextFreeNativeAPI {
     fn preimage(&self, address: &Address, hash: &B256) -> Option<Bytes>;
     fn preimage_size(&self, address: &Address, hash: &B256) -> Option<u32>;
 
-    fn write_storage(&self, address: Address, slot: U256, value: U256) -> IsColdAccess;
+    fn write_storage(
+        &self,
+        address: Address,
+        slot: U256,
+        value: U256,
+    ) -> (WriteStorageResult, IsColdAccess);
     fn storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess);
     fn committed_storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess);
 
