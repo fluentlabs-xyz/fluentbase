@@ -39,7 +39,7 @@ use revm_primitives::{
     MAX_INITCODE_SIZE,
     WASM_MAX_CODE_SIZE,
 };
-pub use util::{create_rwasm_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
+pub use util::{create_delegate_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
 
 pub struct BlendedRuntime<SDK> {
     sdk: SDK,
@@ -105,7 +105,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         {
             use fluentbase_runtime::RuntimeContext;
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
-            let runtime_context = RuntimeContext::root(params.fuel_limit);
+            let runtime_context = RuntimeContext::root(params.fuel_limit).without_fuel();
             let preimage_adapter =
                 crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
@@ -168,12 +168,11 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             BytecodeType::EVM => {
                 self.exec_evm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
+            BytecodeType::EIP7702 => {
+                self.exec_eip7702_bytecode(context, bytecode_account, input, gas, state, call_depth)
+            }
             BytecodeType::WASM => {
                 self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
-            }
-            #[cfg(feature = "elf")]
-            BytecodeType::ELF => {
-                self.exec_elf_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
             _ => unreachable!("not supported bytecode type"),
         }

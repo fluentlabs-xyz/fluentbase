@@ -1,5 +1,5 @@
 use crate::{
-    blended::{util::create_rwasm_proxy_bytecode, BlendedRuntime},
+    blended::{util::create_delegate_proxy_bytecode, BlendedRuntime},
     helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
 };
 use alloc::boxed::Box;
@@ -161,7 +161,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             .sdk
             .preimage(address, &account.code_hash)
             .unwrap_or_default();
-        let bytecode = Bytecode::new_legacy(bytecode);
+        let bytecode = Bytecode::new_raw(bytecode);
         (bytecode, account.code_hash)
     }
 
@@ -180,7 +180,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         call_depth: u32,
     ) -> (Bytes, i32) {
         // take right bytecode depending on context params
-        let (evm_bytecode, code_hash) = self.load_evm_bytecode(&context.bytecode_address);
+        let (mut evm_bytecode, code_hash) = self.load_evm_bytecode(&context.bytecode_address);
 
         // if bytecode is empty, then commit result and return empty buffer
         if evm_bytecode.is_empty() {
@@ -206,6 +206,32 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             result.output,
             exit_code_from_evm_error(result.result).into_i32(),
         )
+    }
+
+    pub fn exec_eip7702_bytecode(
+        &mut self,
+        mut context: ContractContext,
+        _bytecode_account: &Account,
+        input: Bytes,
+        gas: &mut Gas,
+        state: u32,
+        call_depth: u32,
+    ) -> (Bytes, i32) {
+        let (mut eip7702_bytecode, _code_hash) = self.load_evm_bytecode(&context.bytecode_address);
+        let Bytecode::Eip7702(eip7702_bytecode) = eip7702_bytecode else {
+            unreachable!("only EIP7702 bytecode allowed here")
+        };
+        let (delegated_account, _) = self.sdk.account(&eip7702_bytecode.delegated_address);
+        // let delegated_bytecode = self
+        //     .sdk
+        //     .preimage(
+        //         &eip7702_bytecode.delegated_address,
+        //         &delegated_account.code_hash,
+        //     )
+        //     .unwrap_or_default();
+        // let delegated_bytecode = Bytecode::new_raw(delegated_bytecode);
+        context.bytecode_address = eip7702_bytecode.delegated_address;
+        self.exec_bytecode(context, &delegated_account, input, gas, state, call_depth)
     }
 
     pub fn exec_evm_contract(
@@ -322,7 +348,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         mut gas: Gas,
         call_depth: u32,
     ) -> InterpreterResult {
-        let rwasm_bytecode = create_rwasm_proxy_bytecode(PRECOMPILE_EVM);
+        let rwasm_bytecode = create_delegate_proxy_bytecode(PRECOMPILE_EVM);
 
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)
@@ -336,7 +362,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             is_static: false,
             value: inputs.value,
         };
-        let (output, exit_code) = self.exec_rwasm_bytecode(
+        let (output, exit_code) = self.exec_bytecode(
             context,
             &contract_account,
             inputs.init_code,

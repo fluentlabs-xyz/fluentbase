@@ -25,9 +25,6 @@ postcard = { workspace = true, default-features = false, features = ["alloc"] }
 keccak-hash = { version = "0.11.0", default-features = false }
 phantom-type = { workspace = true }
 
-# sp1 executor for ELF binaries
-sp1-core-executor = { version = "2.0.0", optional = true }
-
 [dev-dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
 
@@ -35,7 +32,7 @@ fluentbase-sdk = { workspace = true, default-features = false }
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["std", "evm-proxy"]
+default = ["std", "evm-proxy", "e2e"]
 std = [
     "fluentbase-sdk/std",
     "revm-interpreter/std",
@@ -43,7 +40,5 @@ std = [
     "fluentbase-runtime/std",
 ]
 debug-print = []
-elf = [
-    "dep:sp1-core-executor"
-]
+e2e = []
 evm-proxy = []
