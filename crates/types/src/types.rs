@@ -303,17 +303,19 @@ impl Into<FuncIdx> for SysFuncIdx {
 #[allow(non_camel_case_types)]
 pub enum BytecodeType {
     EVM,
+    EIP7702,
     WASM,
-    ELF,
 }
+
+const EIP7702_SIG_LEN: usize = 2;
+/// rWASM binary format signature:
+/// - 0xef 0x00 - EIP-3540 compatible prefix
+/// - 0x52 - rWASM version number (equal to 'R')
+const EIP7702_SIG: [u8; EIP7702_SIG_LEN] = [0xef, 0x01];
 
 const WASM_SIG_LEN: usize = 4;
 /// WebAssembly signature (\00ASM)
 const WASM_SIG: [u8; WASM_SIG_LEN] = [0x00, 0x61, 0x73, 0x6d];
-
-const ELF_SIG_LEN: usize = 4;
-/// ELF signature (\7fELF)
-const ELF_SIG: [u8; ELF_SIG_LEN] = [0x7f, 0x45, 0x4c, 0x46];
 
 const RWASM_SIG_LEN: usize = 2;
 /// rWASM binary format signature:
@@ -327,13 +329,13 @@ impl BytecodeType {
         if input.len() >= WASM_SIG_LEN && input[0..WASM_SIG_LEN] == WASM_SIG {
             return Self::WASM;
         }
-        // default ELF signature
-        if input.len() >= ELF_SIG_LEN && input[0..ELF_SIG_LEN] == ELF_SIG {
-            return Self::ELF;
-        }
         // case for rWASM contracts that are inside genesis
         if input.len() >= RWASM_SIG_LEN && input[0..RWASM_SIG_LEN] == RWASM_SIG {
             return Self::WASM;
+        }
+        // case for rWASM contracts that are inside genesis
+        if input.len() >= EIP7702_SIG_LEN && input[0..EIP7702_SIG_LEN] == EIP7702_SIG {
+            return Self::EIP7702;
         }
         // all the rest are EVM bytecode
         Self::EVM

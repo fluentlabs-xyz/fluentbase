@@ -7,6 +7,7 @@ use fluentbase_sdk::{
     SysFuncIdx,
     SYSCALL_ID_DELEGATE_CALL,
 };
+use revm_primitives::Eip7702Bytecode;
 use rwasm::{
     instruction_set,
     rwasm::{BinaryFormat, RwasmModule},
@@ -14,7 +15,12 @@ use rwasm::{
 
 pub const ENABLE_EVM_PROXY_CONTRACT: bool = true; //cfg!(feature = "evm-proxy");
 
-pub fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
+fn create_eip7702_proxy_bytecode(impl_address: Address) -> Bytes {
+    let eip7702_bytecode = Eip7702Bytecode::new(impl_address);
+    eip7702_bytecode.raw
+}
+
+fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
     let mut memory_section = vec![0u8; 32 + 20];
     //  0..32: code hash
     // 32..52: precompile address
@@ -69,4 +75,8 @@ pub fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
         .write_binary_to_vec(&mut rwasm_bytecode)
         .unwrap();
     rwasm_bytecode.into()
+}
+
+pub fn create_delegate_proxy_bytecode(impl_address: Address) -> Bytes {
+    create_eip7702_proxy_bytecode(impl_address)
 }
