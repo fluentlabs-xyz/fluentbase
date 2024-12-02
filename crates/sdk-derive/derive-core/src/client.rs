@@ -1,4 +1,4 @@
-use crate::{args::RouterArgs, function_id::FunctionIDAttribute, mode::RouterMode, route::Route};
+use crate::{function_id::FunctionIDAttribute, mode::RouterMode, route::Route};
 use convert_case::{Case, Casing};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens};
@@ -139,21 +139,21 @@ impl ClientMethod {
 }
 
 pub struct ClientGenerator {
-    pub args: RouterArgs,
+    pub mode: RouterMode,
     trait_ast: syn::ItemTrait,
 }
 
 impl Parse for ClientGenerator {
     fn parse(input: ParseStream) -> Result<Self> {
         let attrs = input.call(Attribute::parse_outer)?;
-        let args = if let Some(attr) = attrs.iter().find(|a| a.path().is_ident("client")) {
-            attr.parse_args::<RouterArgs>()?
+        let mode = if let Some(attr) = attrs.iter().find(|a| a.path().is_ident("client")) {
+            attr.parse_args()?
         } else {
-            RouterArgs::new(RouterMode::default())
+            RouterMode::default()
         };
 
         let trait_ast = input.parse()?;
-        Ok(ClientGenerator { args, trait_ast })
+        Ok(ClientGenerator { mode, trait_ast })
     }
 }
 
@@ -168,7 +168,7 @@ impl ClientGenerator {
             .iter()
             .filter_map(|item| {
                 if let TraitItem::Fn(method) = item {
-                    Some(ClientMethod::new(method, self.args.mode()))
+                    Some(ClientMethod::new(method, self.mode))
                 } else {
                     None
                 }

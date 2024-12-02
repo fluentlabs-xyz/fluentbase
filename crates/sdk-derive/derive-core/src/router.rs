@@ -1,10 +1,9 @@
 use crate::{mode::RouterMode, route::Route};
 use proc_macro2::TokenStream as TokenStream2;
+use proc_macro_error::emit_error;
 use quote::{quote, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
-    spanned::Spanned,
-    Error,
     ImplItem,
     ItemImpl,
     Result,
@@ -138,27 +137,25 @@ impl Router {
 
 impl Parse for Router {
     fn parse(input: ParseStream) -> Result<Self> {
-        let implementation: ItemImpl = input.parse()?;
-        let all_routes = parse_implementation_methods(&implementation)?;
+        let ast: ItemImpl = input.parse()?;
+        let mut routes = Vec::new();
 
-        let available_routes = if implementation.trait_.is_some() {
-            all_routes.clone()
-        } else {
-            all_routes
-                .into_iter()
-                .filter(|route| route.is_public && route.fn_name != "deploy")
-                .collect()
-        };
-
-        let has_fallback_handler = available_routes
-            .iter()
-            .any(|method| method.fn_name == "fallback");
+        for item in &ast.items {
+            if let ImplItem::Fn(method) = item {
+                match syn::parse2::<Route>(quote! { #method }) {
+                    Ok(route) => routes.push(route),
+                    Err(error) => {
+                        emit_error!(error.span(), "{}", error.to_string());
+                    }
+                }
+            }
+        }
 
         Ok(Router {
-            mode: RouterMode::Solidity, // default mode
-            implementation,
-            method_routes: available_routes,
-            has_fallback_handler,
+            mode: RouterMode::Solidity,
+            implementation: ast,
+            method_routes: routes,
+            has_fallback_handler: false,
         })
     }
 }
@@ -180,41 +177,5 @@ impl ToTokens for Router {
             #(#method_codecs)*
             #router
         });
-    }
-}
-
-/// Parses methods from an implementation and converts them to Routes.
-///
-/// # Arguments
-/// * `implementation` - The implementation AST to parse
-///
-/// # Returns
-/// * `Result<Vec<Route>>` - Collection of parsed routes or error
-fn parse_implementation_methods(implementation: &ItemImpl) -> Result<Vec<Route>> {
-    let mut routes = Vec::new();
-    let mut parse_errors = Vec::new();
-
-    for item in &implementation.items {
-        if let ImplItem::Fn(method) = item {
-            match syn::parse2::<Route>(quote! { #method }) {
-                Ok(route) => routes.push(route),
-                Err(error) => parse_errors.push(Error::new(
-                    method.span(),
-                    format!("Failed to parse method '{}': {}", &method.sig.ident, error),
-                )),
-            }
-        }
-    }
-
-    if parse_errors.is_empty() {
-        Ok(routes)
-    } else {
-        Err(parse_errors
-            .into_iter()
-            .reduce(|mut combined, error| {
-                combined.combine(error);
-                combined
-            })
-            .unwrap())
     }
 }

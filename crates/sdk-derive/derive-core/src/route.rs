@@ -1,16 +1,20 @@
 use crate::{
     codec::CodecGenerator,
+    error::RouterError,
     function_id::FunctionIDAttribute,
     mode::RouterMode,
     utils::rust_type_to_sol,
 };
 use convert_case::{Case, Casing};
 use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro_error::emit_error;
 use quote::{format_ident, quote, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
     parse_quote,
+    spanned::Spanned,
     Attribute,
+    Error,
     FnArg,
     Ident,
     ImplItemFn,
@@ -88,21 +92,31 @@ impl Route {
     }
 
     pub fn process_function_id(
+        span: Span,
         method_signature: &str,
         function_id_attr: Option<FunctionIDAttribute>,
-    ) -> Result<([u8; 4], String)> {
-        let function_id = if let Some(attr) = &function_id_attr {
-            let attr_function_id = attr.function_id_bytes()?;
-            if attr.validate.unwrap_or(true) && attr_function_id != keccak256(method_signature) {
-                return Err(create_mismatch_error(
-                    attr,
-                    method_signature,
-                    keccak256(method_signature),
-                ));
+    ) -> core::result::Result<([u8; 4], String), RouterError> {
+        let calculated_function_id = keccak256(method_signature);
+
+        let function_id = match function_id_attr.clone() {
+            None => calculated_function_id,
+            Some(attr) => {
+                let attr_function_id = attr.function_id_bytes()?;
+
+                if attr.validate.unwrap_or(true) && attr_function_id != calculated_function_id {
+                    emit_error!(
+                        attr.span().unwrap_or(span),
+                        "Function ID mismatch: expected 0x{}, but got 0x{}",
+                        hex::encode(calculated_function_id),
+                        hex::encode(attr_function_id);
+                        help = "Ensure the given function ID matches the keccak256 hash of the method signature, or set the 'validate' flag to false."
+                    );
+
+                    calculated_function_id
+                } else {
+                    attr_function_id
+                }
             }
-            attr_function_id
-        } else {
-            keccak256(method_signature)
         };
 
         let signature = function_id_attr
@@ -193,7 +207,7 @@ impl TryFrom<&TraitItemFn> for Route {
             .transpose()?;
 
         let (function_id, signature) =
-            Self::process_function_id(&method_signature, function_id_attr.clone())?;
+            Self::process_function_id(method.span(), &method_signature, function_id_attr.clone())?;
 
         Ok(Self {
             function_id_attr,
@@ -209,30 +223,31 @@ impl TryFrom<&TraitItemFn> for Route {
 }
 
 impl Parse for Route {
-    /// Parses a Route from the input stream.
-    ///
-    /// # Arguments
-    /// * `input` - Input token stream
-    ///
-    /// # Returns
-    /// * `Result<Route>` - Parsed route or parsing error
     fn parse(input: ParseStream) -> Result<Self> {
-        // Parse attributes to find function_id
-        let attrs = input.call(Attribute::parse_outer)?;
+        let attrs = Attribute::parse_outer(input)?;
+
         let function_id_attr = attrs
             .iter()
             .find(|attr| attr.path().is_ident("function_id"))
-            .map(|attr| attr.parse_args::<FunctionIDAttribute>())
+            .map(|attr| {
+                attr.parse_args::<FunctionIDAttribute>().map_err(|error| {
+                    Error::new(
+                        attr.span(),
+                        format!("Failed to parse `function_id`: {}", error),
+                    )
+                })
+            })
             .transpose()?;
 
-        // Parse the function implementation
         let method_impl: ImplItemFn = input.parse()?;
         let mut route = Self::new(&method_impl)?;
 
-        // Calculate function ID based on attribute or signature
-        let method_signature = route.signature.clone();
+        let span = function_id_attr
+            .as_ref()
+            .map_or(method_impl.span(), |attr| attr.span().unwrap());
+
         let (function_id, signature) =
-            Self::process_function_id(&method_signature, function_id_attr.clone())?;
+            Self::process_function_id(span, &route.signature, function_id_attr.clone())?;
 
         route.function_id_attr = function_id_attr;
         route.function_id = function_id;
@@ -429,29 +444,6 @@ fn is_str_type(path: &syn::TypePath) -> bool {
         .last()
         .map(|seg| seg.ident == "str")
         .unwrap_or(false)
-}
-
-/// Creates an error for function ID mismatch.
-fn create_mismatch_error(
-    attr: &FunctionIDAttribute,
-    method_signature: &str,
-    method_fn_id: [u8; 4],
-) -> syn::Error {
-    let mut message = format!(
-        "Function ID mismatch.\nMethod signature: '{}'\n",
-        method_signature
-    );
-
-    let attr_fn_id = attr.function_id_bytes().unwrap_or([0; 4]);
-
-    message.push_str(&format!(
-        "Expected function ID: 0x{} {:?}\nCalculated function ID: 0x{} {:?}",
-        hex::encode(attr_fn_id),
-        attr_fn_id,
-        hex::encode(method_fn_id),
-        method_fn_id,
-    ));
-    syn::Error::new(Span::call_site(), message)
 }
 
 pub fn ident_to_camel_case(ident: &Ident) -> Ident {
