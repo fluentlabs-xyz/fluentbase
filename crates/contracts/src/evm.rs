@@ -293,6 +293,7 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
             caller: self.sdk.context().contract_caller(),
             call_value: self.sdk.context().contract_value(),
         };
+        println!("Exec call");
         let result = self.exec_evm_bytecode(contract);
         self.sdk.charge_fuel(result.gas.spent());
         result

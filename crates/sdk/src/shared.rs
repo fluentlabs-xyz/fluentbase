@@ -141,6 +141,7 @@ impl<'a> BlockContextReader for SharedContextReaderImpl<'a> {
     }
 
     fn block_gas_limit(&self) -> u64 {
+
         self.0.block.gas_limit
     }
 
