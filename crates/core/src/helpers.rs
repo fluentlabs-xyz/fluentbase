@@ -12,12 +12,11 @@ use fluentbase_sdk::{
     STATE_DEPLOY,
     STATE_MAIN,
 };
-use revm_interpreter::{Gas, InstructionResult};
+use revm_interpreter::{instructions::system::gas, Gas, InstructionResult};
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
 };
-use revm_interpreter::instructions::system::gas;
 
 #[cfg(feature = "std")]
 pub(crate) struct SdkPreimageAdapter<'a, SDK: SovereignAPI>(pub Address, pub &'a SDK);
@@ -163,13 +162,15 @@ pub trait DenominateGas {
 impl DenominateGas for Gas {
     const DENOMINATE_COEFFICIENT: u64 = 1000;
     fn nominate_gas(&mut self, inner_gas_spent: u64) {
+        println!("Nominate gas: {:?} {:?}", self, inner_gas_spent);
         let gas_used = self.limit() - self.remaining() - inner_gas_spent;
-        *self = Gas::new(self.limit() * 1000);
+        // *self = Gas::new(self.limit() * 1000);
         self.spend_all();
         self.erase_cost(self.limit() - (gas_used * Self::DENOMINATE_COEFFICIENT) - inner_gas_spent);
     }
 
     fn denominate_gas(&mut self) {
+        println!("deNominate gas, {:?}", self);
         let remaining = self.remaining();
         self.spend_all();
         self.erase_cost(remaining / Self::DENOMINATE_COEFFICIENT);

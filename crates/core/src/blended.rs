@@ -168,6 +168,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         state: u32,
         call_depth: u32,
     ) -> (Bytes, i32) {
+        println!("Exec bytecode: {:?}", gas);
         let bytecode = self
             .sdk
             .preimage(&bytecode_account.address, &bytecode_account.code_hash)
@@ -204,7 +205,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 None,
             )
         };
-        let gas = Gas::new(inputs.gas_limit);
+        let gas = Gas::new(inputs.gas_limit * 1000);
 
         // determine bytecode type
         let bytecode_type = BytecodeType::from_slice(&inputs.init_code);
@@ -248,7 +249,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             Err(exit_code) => return return_error(gas, exit_code),
         };
 
-        let result = match bytecode_type {
+        let mut result = match bytecode_type {
             BytecodeType::EVM => {
                 if ENABLE_EVM_PROXY_CONTRACT {
                     self.deploy_evm_contract_proxy(
@@ -272,6 +273,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             _ => unreachable!("not supported bytecode type"),
         };
 
+        if call_depth == 0 {
+            result.gas.denominate_gas();
+        }
+
         // commit all changes made
         if result.result.is_ok() {
             self.sdk.commit();
@@ -291,8 +296,8 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         let return_error = |gas: Gas, exit_code: ExitCode| -> (Bytes, Gas, i32) {
             (Bytes::default(), gas, exit_code.into_i32())
         };
-        let mut gas = Gas::new(inputs.gas_limit);
-
+        let mut gas = Gas::new(inputs.gas_limit * 1000);
+        println!("Call inner: {:?}", gas);
         // call depth check
         if call_depth > MAX_CALL_STACK_LIMIT {
             return return_error(gas, ExitCode::CallDepthOverflow);
@@ -369,6 +374,15 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             call_depth,
         );
 
+        println!(
+            "Gas after inner call: {:?} {} {:?}",
+            gas,
+            gas.spent(),
+            self.inner_gas_spend
+        );
+        if call_depth == 0 {
+            gas.denominate_gas();
+        }
         if ExitCode::from(exit_code).is_ok() {
             self.sdk.commit();
         } else {
@@ -379,14 +393,13 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub fn create(&mut self, mut create_inputs: Box<CreateInputs>) -> CreateOutcome {
         let mut result = self.create_inner(create_inputs, 0);
-        result.result.gas.denominate_gas();
+        // result.result.gas.denominate_gas();
 
         result
     }
 
     pub fn call(&mut self, mut inputs: Box<CallInputs>) -> CallOutcome {
         let (output, mut gas, exit_code) = self.call_inner(inputs, STATE_MAIN, 0);
-        gas.denominate_gas();
         let result = InterpreterResult {
             result: evm_error_from_exit_code(ExitCode::from(exit_code)),
             output,
