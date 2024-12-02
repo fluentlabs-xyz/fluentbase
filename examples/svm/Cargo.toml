@@ -1,0 +1,32 @@
+[package]
+name = "fluentbase-example-svm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+#fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-core = { workspace = true, default-features = false, features = ["debug-print"] }
+solana-ee-core = { workspace = true, default-features = false }
+solana_rbpf = { workspace = true }
+solana-program = { workspace = true, default-features = false }
+hex-literal = { version = "0.4.1" }
+hex = { version = "0.4.3" }
+
+[dev-dependencies]
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+#[profile.release]
+#lto = true
+#opt-level = 'z'
+#panic = "abort"
+#strip = true
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std"
+]

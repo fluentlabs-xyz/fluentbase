@@ -249,10 +249,12 @@ impl<SDK: SharedAPI> SvmLoaderEntrypoint<SDK> {
     }
 
     pub fn main_inner(&mut self) -> ExitCode {
-        let contract_context = self.sdk.contract_context().clone();
-        let result = SvmLoader::new(&mut self.sdk).call(contract_context);
-        self.sdk.write(result.output.as_ref());
-        exit_code_from_svm_result(result.result)
+        // let contract_context = self.sdk.contract_context().clone();
+        // let result = SvmLoader::new(&mut self.sdk).call(contract_context);
+        // self.sdk.write(result.output.as_ref());
+
+        ExitCode::Ok
+        // exit_code_from_svm_result(result.result)
     }
 }
 

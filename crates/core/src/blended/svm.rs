@@ -1,11 +1,6 @@
 use crate::{
     blended::{util::create_rwasm_proxy_bytecode, BlendedRuntime},
-    helpers::{
-        evm_error_from_exit_code,
-        exit_code_from_evm_error,
-        exit_code_from_svm_result,
-        svm_result_from_exit_code,
-    },
+    helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
 };
 use alloc::boxed::Box;
 use core::mem::take;
