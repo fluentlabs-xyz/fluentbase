@@ -2448,7 +2448,6 @@ dependencies = [
  "revm-interpreter",
  "revm-primitives",
  "rwasm",
- "solana-ee-core",
  "solana-program",
  "solana_rbpf",
  "sp1-core-executor",

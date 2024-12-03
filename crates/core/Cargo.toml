@@ -16,7 +16,7 @@ rwasm = { workspace = true, default-features = false }
 revm-interpreter = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
 
-solana-ee-core = { workspace = true, default-features = false }
+#solana-ee-core = { workspace = true, default-features = false }
 solana_rbpf = { workspace = true }
 solana-program = { workspace = true, default-features = false }
 

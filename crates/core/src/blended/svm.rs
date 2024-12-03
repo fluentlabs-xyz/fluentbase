@@ -12,7 +12,6 @@ use fluentbase_sdk::{
     ExitCode,
     SovereignAPI,
     B256,
-    PRECOMPILE_EVM,
     PRECOMPILE_SVM,
     STATE_DEPLOY,
     STATE_MAIN,
@@ -68,7 +67,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             return (Bytes::default(), ExitCode::Ok.into_i32());
         }
 
-        // initiate contract instance and pass it to interpreter for and EVM transition
+        // initiate contract instance and pass it to interpreter for and SVM transition
         let contract = Contract {
             input,
             hash: Some(code_hash),
@@ -81,7 +80,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             caller: context.caller,
             bytecode_address: None,
         };
-        let result = self.exec_svm_contract(contract, take(gas), context.is_static, call_depth);
+        let result = self.exec_contract(contract, take(gas), context.is_static, call_depth);
         *gas = result.gas;
         (
             result.output,
@@ -89,7 +88,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         )
     }
 
-    pub fn exec_svm_contract(
+    pub fn exec_contract(
         &mut self,
         mut contract: Contract,
         gas: Gas,
@@ -131,10 +130,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                     return result;
                 }
                 InterpreterAction::None => {
-                    unreachable!("not supported EVM interpreter state: None")
+                    unreachable!("not supported SVM interpreter state: None")
                 }
                 InterpreterAction::EOFCreate { .. } => {
-                    unreachable!("not supported EVM interpreter state: EOF")
+                    unreachable!("not supported SVM interpreter state: EOF")
                 }
             }
         }
@@ -161,7 +160,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             call_value: inputs.value,
         };
         // execute EVM constructor bytecode to produce new resulting EVM bytecode
-        let mut result = self.exec_svm_contract(contract, gas, false, call_depth);
+        let mut result = self.exec_contract(contract, gas, false, call_depth);
         if !result.result.is_ok() {
             return result;
         }
@@ -186,7 +185,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let code_hash = svm_bytecode.hash_slow();
         contract_account.update_bytecode(self.sdk, svm_bytecode.original_bytes(), Some(code_hash));
 
-        // if there is an address, then we have new EVM bytecode inside output
+        // if there is an address, then we have new SVM bytecode inside output
         self.store_svm_bytecode(&target_address, code_hash, svm_bytecode);
 
         result
