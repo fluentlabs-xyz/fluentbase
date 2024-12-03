@@ -154,25 +154,22 @@ pub fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
 
 pub trait DenominateGas {
     const DENOMINATE_COEFFICIENT: u64;
-    fn nominate_gas(&mut self, inner_gas_spent: u64);
 
-    fn denominate_gas(&mut self);
+    fn denominate_gas(&mut self, inner_gas_spent: u64);
 }
 
 impl DenominateGas for Gas {
     const DENOMINATE_COEFFICIENT: u64 = 1000;
-    fn nominate_gas(&mut self, inner_gas_spent: u64) {
+    fn denominate_gas(&mut self, inner_gas_spent: u64) {
         println!("Nominate gas: {:?} {:?}", self, inner_gas_spent);
         let gas_used = self.limit() - self.remaining() - inner_gas_spent;
-        // *self = Gas::new(self.limit() * 1000);
-        self.spend_all();
-        self.erase_cost(self.limit() - (gas_used * Self::DENOMINATE_COEFFICIENT) - inner_gas_spent);
-    }
-
-    fn denominate_gas(&mut self) {
-        println!("deNominate gas, {:?}", self);
-        let remaining = self.remaining();
-        self.spend_all();
-        self.erase_cost(remaining / Self::DENOMINATE_COEFFICIENT);
+        if gas_used != 0 {
+            self.spend_all();
+            self.erase_cost(
+                self.limit()
+                    - ((gas_used - 1) / Self::DENOMINATE_COEFFICIENT + 1)
+                    - inner_gas_spent,
+            );
+        }
     }
 }

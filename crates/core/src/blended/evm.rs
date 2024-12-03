@@ -1,6 +1,6 @@
 use crate::{
     blended::{util::create_rwasm_proxy_bytecode, BlendedRuntime},
-    helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
+    helpers::{evm_error_from_exit_code, exit_code_from_evm_error, DenominateGas},
 };
 use alloc::boxed::Box;
 use core::mem::take;
@@ -39,7 +39,6 @@ use revm_interpreter::{
     StateLoad,
 };
 use revm_primitives::{Bytecode, CancunSpec, Env, Log, BLOCK_HASH_HISTORY, MAX_CODE_SIZE};
-use crate::helpers::DenominateGas;
 
 impl<SDK: SovereignAPI> Host for BlendedRuntime<SDK> {
     fn env(&self) -> &Env {
@@ -232,14 +231,15 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             shared_memory = interpreter.take_memory();
 
             match next_action {
-                InterpreterAction::Call { mut inputs } => {
+                InterpreterAction::Call { inputs } => {
                     let return_memory_offset = inputs.return_memory_offset.clone();
                     let inner_gas = self.inner_gas_spend.take();
 
-                    let (output, mut gas, exit_code) = self.call_inner(inputs, STATE_MAIN, depth + 1);
+                    let (output, mut gas, exit_code) =
+                        self.call_inner(inputs, STATE_MAIN, depth + 1);
 
-                    self.inner_gas_spend = Some(inner_gas.unwrap_or_default() + gas.spent() / Gas::DENOMINATE_COEFFICIENT);
-                    gas.denominate_gas();
+                    self.inner_gas_spend = Some(inner_gas.unwrap_or_default() + gas.spent());
+
                     let result = InterpreterResult::new(
                         evm_error_from_exit_code(ExitCode::from(exit_code)),
                         output,
