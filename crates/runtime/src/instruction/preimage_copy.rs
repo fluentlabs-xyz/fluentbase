@@ -18,6 +18,6 @@ impl SyscallPreimageCopy {
 
     pub fn fn_impl(ctx: &RuntimeContext, hash: &[u8]) -> Result<Bytes, ExitCode> {
         let preimage = ctx.preimage_resolver().preimage(hash.try_into().unwrap());
-        Ok(preimage)
+        Ok(preimage.unwrap_or_default())
     }
 }

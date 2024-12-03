@@ -1,4 +1,5 @@
 use core::{mem::take, str::from_utf8};
+use fluentbase_codec::{FluentABI, SolidityABI};
 use fluentbase_genesis::{
     devnet_genesis_from_file,
     Genesis,
@@ -19,7 +20,6 @@ use fluentbase_types::{
     Account,
     Address,
     Bytes,
-    SharedAPI,
     SysFuncIdx,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
@@ -31,9 +31,7 @@ use hashbrown::HashMap;
 use hex_literal::hex;
 use revm::{
     primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, Output, TransactTo},
-    rwasm::RwasmDbWrapper,
     DatabaseCommit,
-    Evm,
     InMemoryDB,
     Rwasm,
 };
@@ -41,10 +39,11 @@ use rwasm::{
     instruction_set,
     rwasm::{BinaryFormat, RwasmModule},
 };
+use std::u64;
 
 #[allow(dead_code)]
 struct EvmTestingContext {
-    sdk: TestingContext,
+    pub sdk: TestingContext,
     genesis: Genesis,
     db: InMemoryDB,
 }
@@ -141,18 +140,6 @@ impl EvmTestingContext {
         revm_account.mark_touch();
         self.db.commit(HashMap::from([(address, revm_account)]));
     }
-
-    pub(crate) fn with_sdk<F>(&mut self, f: F)
-    where
-        F: Fn(
-            RwasmDbWrapper<'_, fluentbase_sdk::runtime::RuntimeContextWrapper, &mut InMemoryDB>,
-        ) -> (),
-    {
-        let mut evm = Evm::builder().with_db(&mut self.db).build();
-        let runtime_context = RuntimeContext::default().with_depth(0u32);
-        let native_sdk = fluentbase_sdk::runtime::RuntimeContextWrapper::new(runtime_context);
-        f(RwasmDbWrapper::new(&mut evm.context.evm, native_sdk))
-    }
 }
 
 struct TxBuilder<'a> {
@@ -184,7 +171,7 @@ impl<'a> TxBuilder<'a> {
         env.tx.gas_price = U256::from(1);
         env.tx.caller = caller;
         env.tx.transact_to = TransactTo::Call(callee);
-        env.tx.gas_limit = 10_000_000;
+        env.tx.gas_limit = 300_000_000;
         Self { ctx, env }
     }
 
@@ -209,11 +196,14 @@ impl<'a> TxBuilder<'a> {
     }
 
     fn exec(&mut self) -> ExecutionResult {
+        let db = take(&mut self.ctx.db);
         let mut evm = Rwasm::builder()
             .with_env(Box::new(take(&mut self.env)))
-            .with_ref_db(&mut self.ctx.db)
+            .with_db(db)
             .build();
-        evm.transact_commit().unwrap()
+        let result = evm.transact_commit().unwrap();
+        self.ctx.db = evm.into_db();
+        result
     }
 }
 
@@ -258,6 +248,27 @@ fn deploy_evm_tx(ctx: &mut EvmTestingContext, deployer: Address, init_bytecode: 
     //     let is_rwasm = rwasm_bytecode.get(0).cloned().unwrap() == 0xef;
     //     assert!(is_rwasm);
     // }
+    contract_address
+}
+
+fn deploy_evm_tx_with_nonce(
+    ctx: &mut EvmTestingContext,
+    deployer: Address,
+    init_bytecode: Bytes,
+    nonce: u64,
+) -> Address {
+    let result = TxBuilder::create(ctx, deployer, init_bytecode.clone().into()).exec();
+    if !result.is_success() {
+        println!("{:?}", result);
+        println!(
+            "{}",
+            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
+        );
+    }
+    assert!(result.is_success());
+    let contract_address = calc_create_address::<TestingContext>(&deployer, nonce);
+    assert_eq!(contract_address, deployer.create(nonce));
+
     contract_address
 }
 
@@ -333,6 +344,51 @@ fn test_deploy_greeting() {
 }
 
 #[test]
+fn test_deploy_duntsane() {
+    // deploy duntsane WASM contract
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = deploy_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/duntsane/lib.wasm").into(),
+    );
+
+    // call random function
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::from([94u8, 192u8, 30u8, 77u8]),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+
+    // call reset_deck function
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::from([114u8, 67u8, 8u8, 122u8]),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+
+    // call play_baccarat function
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::from([166u8, 180u8, 107u8, 200u8]),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+}
+
+#[test]
 fn test_deploy_svm() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
@@ -354,8 +410,103 @@ fn test_deploy_svm() {
     );
     let bytes = result.output().unwrap_or_default();
     let bytes_utf8 = from_utf8(bytes.as_ref()).unwrap();
-    assert!(!result.is_success());
-    assert_eq!("panic in: SyscallLog", bytes_utf8);
+    assert!(result.is_success());
+    pub const SYS_CALL_LOG_TEST_TEXT1: &str = "panic in: SyscallLog";
+    assert_eq!(SYS_CALL_LOG_TEST_TEXT1, bytes_utf8);
+}
+
+#[test]
+fn test_client_solidity() {
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
+
+    let contract_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/router-solidity/lib.wasm").into(),
+        0,
+    );
+    println!("contract_address: {:?}", contract_address);
+
+    let client_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/client-solidity/lib.wasm").into(),
+        1,
+    );
+    println!("client_address: {:?}", client_address);
+
+    ctx.add_balance(contract_address, U256::from(10e18));
+    ctx.add_balance(client_address, U256::from(10e18));
+
+    let client_input = hex!("f60ea708000000000000000000000000f91c20c0cafbfdc150adff51bbfc5808edde7cb5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000052080000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000b48656c6c6f20576f726c64000000000000000000000000000000000000000000");
+
+    println!("calling client...");
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        client_address,
+        client_input.into(),
+        None,
+        None,
+    );
+
+    assert_eq!(result.is_success(), true);
+
+    let output = result.output();
+    println!("output: {:?}", output);
+    let msg_b = result.output().unwrap();
+
+    let msg: String = SolidityABI::decode(msg_b, 0).unwrap();
+
+    assert_eq!(msg, "Hello World");
+}
+#[test]
+fn test_client_fluent() {
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
+
+    let contract_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/router-fluent/lib.wasm").into(),
+        0,
+    );
+    println!("contract_address: {:?}", contract_address);
+
+    let client_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/client-fluent/lib.wasm").into(),
+        1,
+    );
+    println!("client_address: {:?}", client_address);
+
+    ctx.add_balance(contract_address, U256::from(10e18));
+    ctx.add_balance(client_address, U256::from(10e18));
+
+    let client_input = hex!("f60ea708f91c20c0cafbfdc150adff51bbfc5808edde7cb500000000000000000000000000000000000000000000000000000000000000000852000000000000440000000b00000048656c6c6f20576f726c6400");
+
+    println!("calling client...");
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        client_address,
+        client_input.into(),
+        None,
+        None,
+    );
+
+    assert_eq!(result.is_success(), true);
+
+    let _output = result.output();
+    let msg_b = result.output().unwrap();
+
+    let msg: String = FluentABI::decode(msg_b, 0).unwrap();
+
+    assert_eq!(msg, "Hello World");
 }
 
 #[test]
@@ -377,8 +528,11 @@ fn test_deploy_keccak256() {
         None,
         None,
     );
+
+    println!("{:?}", result);
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default().as_ref();
+    println!("bytes: {:?}", hex::encode(&bytes));
     assert_eq!(
         "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
         hex::encode(&bytes[0..32]),

@@ -1,4 +1,4 @@
-FILES = greeting erc20 hashing panic router rwasm shakmaty storage keccak rwasm-jit fairblock svm
+FILES = greeting erc20 hashing panic client-fluent client-solidity router-fluent router-solidity rwasm shakmaty storage keccak rwasm-jit fairblock duntsane svm
 
 all: $(FILES) $(MANUAL)
 

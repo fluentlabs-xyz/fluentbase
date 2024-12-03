@@ -3,11 +3,12 @@ all: build
 SKIP_CONTRACTS=n
 SKIP_EXAMPLES=n
 SKIP_GENESIS=n
+
 .PHONY: build
 build:
-	#if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE); fi
+	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE); fi
 	if [ "$(SKIP_CONTRACTS)" = "n" ]; then cd crates/contracts && $(MAKE); fi
-	#if [ "$(SKIP_GENESIS)" = "n" ]; then cd crates/genesis && $(MAKE); fi
+	if [ "$(SKIP_GENESIS)" = "n" ]; then cd crates/genesis && $(MAKE); fi
 
 .PHONY: test
 test:

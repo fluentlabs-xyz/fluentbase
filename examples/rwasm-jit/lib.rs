@@ -10,7 +10,8 @@ use alloc::vec::Vec;
 use fluentbase_sdk::{
     alloc_slice,
     basic_entrypoint,
-    codec::Encoder,
+    bytes::BytesMut,
+    codec::{Encoder, FluentABI},
     create_import_linker,
     derive::Contract,
     Bytes,
@@ -153,14 +154,18 @@ impl Context {
         let config = Self::make_config(true);
         let engine = Engine::new(&config);
 
-        let mut context_input = SharedContextInputV1 {
-            block: Default::default(),
-            tx: Default::default(),
-            contract: Default::default(),
-        }
-        .encode_to_vec(0);
+        let context_input = {
+            let default_ctx = SharedContextInputV1 {
+                block: Default::default(),
+                tx: Default::default(),
+                contract: Default::default(),
+            };
+            let mut buf = BytesMut::new();
+            FluentABI::encode(&default_ctx, &mut buf, 0).unwrap();
+            buf.extend_from_slice(&input);
 
-        context_input.append(&mut input.to_vec());
+            buf.freeze().to_vec()
+        };
 
         let ctx = RuntimeContext::new(wasm_binary)
             .with_state(STATE_MAIN)

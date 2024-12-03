@@ -1,5 +1,6 @@
+use alloy_rlp::BytesMut;
 use core::str::from_utf8;
-use fluentbase_codec::Encoder;
+use fluentbase_codec::FluentABI;
 use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
 use fluentbase_types::{
     create_import_linker,
@@ -17,13 +18,19 @@ use rwasm::{
 
 pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {
     let rwasm_binary = wasm2rwasm(wasm_binary.as_slice()).unwrap();
-    let mut context_input = SharedContextInputV1 {
-        block: Default::default(),
-        tx: Default::default(),
-        contract: Default::default(),
-    }
-    .encode_to_vec(0);
-    context_input.extend_from_slice(input_data);
+
+    let context_input = {
+        let shared_ctx = SharedContextInputV1 {
+            block: Default::default(),
+            tx: Default::default(),
+            contract: Default::default(),
+        };
+        let mut buf = BytesMut::new();
+        FluentABI::encode(&shared_ctx, &mut buf, 0).unwrap();
+        buf.extend_from_slice(input_data);
+
+        buf.freeze().to_vec()
+    };
     let ctx = RuntimeContext::new(rwasm_binary)
         .with_state(STATE_MAIN)
         .with_fuel_limit(100_000_000_000)

@@ -54,7 +54,7 @@ fn is_gas_free_call(_address: &Address) -> bool {
     // address == &PRECOMPILE_EVM
 }
 
-impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
+impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     pub(crate) fn process_syscall(
         &mut self,
         contract_context: &ContractContext,
@@ -829,7 +829,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         } else {
             0
         };
-        let preimage_size = self.sdk.preimage_size(&context.address, &preimage_hash);
+        let preimage_size = self
+            .sdk
+            .preimage_size(&context.address, &preimage_hash)
+            .unwrap_or_default();
 
         debug_log!(
             " - preimage_size: size={} gas={} hash={}",

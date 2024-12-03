@@ -13,6 +13,9 @@ categories.workspace = true
 convert_case = "0.6.0"
 quote = "1.0"
 syn = { workspace = true }
+crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
+proc-macro2 = { version = "1.0", default-features = false }
+
 
 [dev-dependencies]
 

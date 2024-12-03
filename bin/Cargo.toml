@@ -10,7 +10,6 @@ path = "src/main.rs"
 [dependencies]
 rwasm = { workspace = true }
 fluentbase-types = { workspace = true }
-fluentbase-core = { workspace = true, features = ["std"] }
 wat = "1.0.80"
 clap = { workspace = true }
 log = "0.4.20"

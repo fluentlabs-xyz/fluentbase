@@ -1,10 +1,36 @@
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
-use fluentbase_sdk::{create_import_linker, ExitCode, SysFuncIdx::STATE, STATE_DEPLOY, STATE_MAIN};
+#[cfg(feature = "std")]
+use fluentbase_runtime::types::PreimageResolver;
+use fluentbase_sdk::{
+    create_import_linker,
+    Address,
+    Bytes,
+    ExitCode,
+    SovereignAPI,
+    SysFuncIdx::STATE,
+    B256,
+    STATE_DEPLOY,
+    STATE_MAIN,
+};
 use revm_interpreter::InstructionResult;
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
 };
+
+#[cfg(feature = "std")]
+pub(crate) struct SdkPreimageAdapter<'a, SDK: SovereignAPI>(pub Address, pub &'a SDK);
+
+#[cfg(feature = "std")]
+impl<'a, SDK: SovereignAPI> PreimageResolver for SdkPreimageAdapter<'a, SDK> {
+    fn preimage(&self, hash: &[u8; 32]) -> Option<Bytes> {
+        self.1.preimage(&self.0, &B256::from(hash))
+    }
+
+    fn preimage_size(&self, hash: &[u8; 32]) -> Option<u32> {
+        self.1.preimage_size(&self.0, &B256::from(hash))
+    }
+}
 
 #[inline(always)]
 pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {

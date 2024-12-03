@@ -28,8 +28,7 @@ hashbrown = { workspace = true }
 hex = "0.4.3"
 
 [features]
-default = ["std", "fvm"]
+default = ["std"]
 std = [
     "fluentbase-types/std",
 ]
-fvm = []
