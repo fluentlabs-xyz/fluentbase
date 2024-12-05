@@ -29,7 +29,7 @@ impl<SDK: SharedAPI> RouterAPIClient<SDK> {
         gas_limit: u64,
         message: String,
     ) -> String {
-        self.greeting(contract_address, value, gas_limit, message).0
+        self.greeting(contract_address, value, gas_limit, message)
     }
 
     pub fn deploy(&self) {

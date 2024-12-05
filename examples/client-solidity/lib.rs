@@ -21,7 +21,6 @@ trait RouterAPI {
 }
 
 /// Create contract for test purpose
-
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> RouterAPIClient<SDK> {
     pub fn greeting_client(
@@ -31,10 +30,10 @@ impl<SDK: SharedAPI> RouterAPIClient<SDK> {
         gas_limit: u64,
         message: String,
     ) -> String {
-        self.greeting(contract_address, value, gas_limit, message).0
+        self.greeting(contract_address, value, gas_limit, message)
     }
 
-    pub fn deploy(&self) {
+    fn deploy(&self) {
         // any custom deployment logic here
     }
 }
