@@ -1,7 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;
 extern crate fluentbase_sdk;
-
 use alloc::string::String;
 use fluentbase_sdk::{
     basic_entrypoint,

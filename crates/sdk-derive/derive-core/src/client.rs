@@ -1,103 +1,214 @@
-use crate::{function_id::FunctionIDAttribute, mode::RouterMode, route::Route};
+use crate::{
+    abi::FunctionABI,
+    codec::CodecGenerator,
+    function_id::FunctionIDAttribute,
+    mode::Mode,
+};
 use convert_case::{Case, Casing};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
+    spanned::Spanned,
     Attribute,
+    Error,
     Result,
     TraitItem,
     TraitItemFn,
 };
 
+/// Client-side method generator for Router API
+///
+/// Used to generate client code for calling Solidity contracts
+#[derive(Debug)]
 pub struct ClientMethod {
-    route: Route,
-    mode: RouterMode,
+    /// Core ABI representation
+    abi: FunctionABI,
+    /// Router mode configuration
+    mode: Mode,
+    /// Original trait method
+    method: TraitItemFn,
 }
 
 impl ClientMethod {
-    fn new(method: &TraitItemFn, mode: RouterMode) -> Result<Self> {
-        let attrs = &method.attrs;
+    /// Creates a new ClientMethod from a trait method
+    pub fn new(method: &TraitItemFn, mode: Mode) -> Result<Self> {
+        let abi = FunctionABI::from_trait_fn(method).map_err(|e| {
+            Error::new(
+                method.span(),
+                format!("Failed to convert method to ABI: {}", e),
+            )
+        })?;
 
-        let mut route = Route::try_from(method)?;
+        if let Some(attr) = method
+            .attrs
+            .iter()
+            .find(|a| a.path().is_ident("function_id"))
+        {
+            let attr_value = attr.parse_args::<FunctionIDAttribute>()?;
+            let attr_id = attr_value.function_id_bytes()?;
+            let calculated_id = abi.selector();
 
-        for attr in attrs {
-            if attr.path().is_ident("function_id") {
-                route.function_id_attr = Some(attr.parse_args::<FunctionIDAttribute>()?);
+            if attr_value.validate.unwrap_or(true) && attr_id != calculated_id {
+                return Err(Error::new(
+                    attr.span(),
+                    format!(
+                        "Function ID mismatch: expected 0x{}, got 0x{}\nExpected Rust method signature: {}",
+                        hex::encode(calculated_id),
+                        hex::encode(attr_id),
+                        abi.signature()
+                    ),
+                ));
             }
         }
 
-        Ok(ClientMethod { route, mode })
+        Ok(Self {
+            abi,
+            mode,
+            method: method.clone(),
+        })
     }
 
+    /// Generates codec implementations for encoding/decoding parameters
     fn generate_codecs(&self) -> TokenStream2 {
-        self.route.generate_codec_impl(&self.mode)
+        let function_id = self.abi.selector();
+        let codec_generator = CodecGenerator::new(&self.abi, &function_id, &self.mode);
+        codec_generator
+            .generate()
+            .expect("Failed to generate codec")
     }
 
+    /// Generates helper methods for encoding parameters and decoding results
+    /// ```
     fn generate_helpers(&self) -> TokenStream2 {
-        let fn_name = &self.route.sig().ident;
+        let fn_name = &self.method.sig.ident;
+        let encode_name = format_ident!("encode_{}", fn_name);
+        let decode_name = format_ident!("decode_{}", fn_name);
 
-        let param_names = self
-            .route
-            .args
-            .iter()
-            .map(|arg| &arg.ident)
-            .collect::<Vec<_>>();
-        let param_types = self
-            .route
-            .args
-            .iter()
-            .map(|arg| &arg.ty)
-            .collect::<Vec<_>>();
-
-        let return_types = &param_types;
-
-        let fn_name_str = fn_name.to_string();
-        let encode_name = format_ident!("encode_{}", fn_name_str);
-        let decode_name = format_ident!("decode_{}", fn_name_str);
-
-        let pascal_name = self.route.fn_name.to_case(Case::Pascal);
+        let pascal_name = self.abi.name.to_case(Case::Pascal);
         let call_struct = format_ident!("{}Call", pascal_name);
+        let return_struct = format_ident!("{}Return", pascal_name);
+
+        let encode_fn = {
+            let params = self.abi.inputs.iter().map(|param| {
+                let name = &param
+                    .fn_arg
+                    .as_ref()
+                    .expect("Parameter must have function argument info")
+                    .name;
+                let name = format_ident!("{}", name);
+                let ty = &param.fn_arg.as_ref().unwrap().ty;
+                quote! { #name: #ty }
+            });
+
+            let param_names = self.abi.inputs.iter().map(|param| {
+                let name = &param
+                    .fn_arg
+                    .as_ref()
+                    .expect("Parameter must have function argument info")
+                    .name;
+                format_ident!("{}", name)
+            });
+
+            quote! {
+                pub fn #encode_name(
+                    &self,
+                    #(#params,)*
+                ) -> fluentbase_sdk::Bytes {
+                    #call_struct::new((#(#param_names,)*)).encode().into()
+                }
+            }
+        };
+
+        let decode_fn = match self.abi.outputs.len() {
+            0 => quote! {
+                pub fn #decode_name(
+                    &self,
+                    _output: fluentbase_sdk::Bytes
+                ) {
+                    // No return value
+                }
+            },
+            1 => {
+                let return_ty = &self.abi.outputs[0].fn_arg.as_ref().unwrap().ty;
+                quote! {
+                    pub fn #decode_name(
+                        &self,
+                        output: fluentbase_sdk::Bytes
+                    ) -> #return_ty {
+                        #return_struct::decode(&output)
+                            .expect("failed to decode result")
+                            .0.0
+                    }
+                }
+            }
+            _ => {
+                let return_types = self
+                    .abi
+                    .outputs
+                    .iter()
+                    .map(|param| &param.fn_arg.as_ref().unwrap().ty);
+                quote! {
+                    pub fn #decode_name(
+                        &self,
+                        output: fluentbase_sdk::Bytes
+                    ) -> (#(#return_types,)*) {
+                        #return_struct::decode(&output)
+                            .expect("failed to decode result")
+                            .0
+                    }
+                }
+            }
+        };
 
         quote! {
-            pub fn #encode_name(
-                &self,
-                #(#param_names: #param_types,)*
-            ) -> fluentbase_sdk::Bytes {
-                 #call_struct::new((#(#param_names,)*)).encode().into()
-            }
-
-            pub fn #decode_name(
-                &self,
-                output: fluentbase_sdk::Bytes
-            ) -> (#(#return_types,)*) {
-                #call_struct::decode(&output)
-                    .expect("failed to decode result")
-                    .0
-            }
+            #encode_fn
+            #decode_fn
         }
     }
 
+    /// Generates the main implementation method for contract calls
     fn generate_implementation(&self) -> TokenStream2 {
-        let fn_name = &self.route.sig().ident;
-        let param_names = self
-            .route
-            .args
-            .iter()
-            .map(|arg| &arg.ident)
-            .collect::<Vec<_>>();
+        let fn_name = &self.method.sig.ident;
+        let encode_name = format_ident!("encode_{}", fn_name);
+        let decode_name = format_ident!("decode_{}", fn_name);
 
-        let param_types = self
-            .route
-            .args
-            .iter()
-            .map(|arg| &arg.ty)
-            .collect::<Vec<_>>();
-        let return_types = &param_types;
+        let params = self.abi.inputs.iter().map(|param| {
+            let arg_info = param
+                .fn_arg
+                .as_ref()
+                .expect("Parameter must have function argument info");
+            let name = &arg_info.name;
+            let name = format_ident!("{}", name);
+            let ty = &arg_info.ty;
+            quote! { #name: #ty }
+        });
 
-        let fn_name_str = fn_name.to_string();
-        let encode_name = format_ident!("encode_{}", fn_name_str);
-        let decode_name = format_ident!("decode_{}", fn_name_str);
+        let param_names = self.abi.inputs.iter().map(|param| {
+            let name = &param
+                .fn_arg
+                .as_ref()
+                .expect("Parameter must have function argument info")
+                .name;
+
+            format_ident!("{}", name)
+        });
+
+        let return_type = match self.abi.outputs.len() {
+            0 => quote! { () },
+            1 => {
+                let ty = &self.abi.outputs[0].fn_arg.as_ref().unwrap().ty;
+                quote! { #ty }
+            }
+            _ => {
+                let types = self
+                    .abi
+                    .outputs
+                    .iter()
+                    .map(|param| &param.fn_arg.as_ref().unwrap().ty);
+                quote! { (#(#types,)*) }
+            }
+        };
 
         quote! {
             pub fn #fn_name(
@@ -105,19 +216,21 @@ impl ClientMethod {
                 contract_address: fluentbase_sdk::Address,
                 value: fluentbase_sdk::U256,
                 gas_limit: u64,
-                #(#param_names: #param_types,)*
-            ) -> (#(#return_types,)*) {
+                #(#params,)*
+            ) -> #return_type {
                 use fluentbase_sdk::TxContextReader;
 
                 let input = self.#encode_name(#(#param_names,)*);
-
                 {
                     let context = self.sdk.context();
+
                     if context.tx_value() < value {
-                        ::core::panic!("insufficient funds");
+                        ::core::panic!("Insufficient funds for transaction"
+                        );
                     }
                     if context.tx_gas_limit() < gas_limit {
-                        ::core::panic!("insufficient gas");
+                        ::core::panic!("Insufficient gas limit for transaction");
+
                     }
                 }
 
@@ -129,7 +242,7 @@ impl ClientMethod {
                 );
 
                 if exit_code != 0 {
-                    ::core::panic!("call failed");
+                    ::core::panic!("Contract call failed with exit code");
                 }
 
                 self.#decode_name(output)
@@ -138,8 +251,11 @@ impl ClientMethod {
     }
 }
 
+/// Generator for Router API client code
 pub struct ClientGenerator {
-    pub mode: RouterMode,
+    /// Router mode configuration
+    mode: Mode,
+    /// Original trait AST
     trait_ast: syn::ItemTrait,
 }
 
@@ -149,20 +265,24 @@ impl Parse for ClientGenerator {
         let mode = if let Some(attr) = attrs.iter().find(|a| a.path().is_ident("client")) {
             attr.parse_args()?
         } else {
-            RouterMode::default()
+            Mode::default()
         };
 
         let trait_ast = input.parse()?;
-        Ok(ClientGenerator { mode, trait_ast })
+        Ok(Self { mode, trait_ast })
     }
 }
 
 impl ClientGenerator {
-    fn generate_client(&self) -> TokenStream2 {
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.mode = mode;
+    }
+    /// Generates the complete client implementation
+    fn generate_client(&self) -> Result<TokenStream2> {
         let trait_name = &self.trait_ast.ident;
         let client_name = format_ident!("{}Client", trait_name);
 
-        let methods = self
+        let methods: Result<Vec<ClientMethod>> = self
             .trait_ast
             .items
             .iter()
@@ -173,17 +293,16 @@ impl ClientGenerator {
                     None
                 }
             })
-            .collect::<Result<Vec<_>>>()
-            .unwrap_or_default();
+            .collect();
 
-        let codecs = methods.iter().map(|method| method.generate_codecs());
-        let helpers = methods.iter().map(|method| method.generate_helpers());
-        let implementations = methods
-            .iter()
-            .map(|method| method.generate_implementation());
+        let methods = methods?;
 
-        quote! {
-            // Client structure
+        let codecs = methods.iter().map(|m| m.generate_codecs());
+        let helpers = methods.iter().map(|m| m.generate_helpers());
+        let implementations = methods.iter().map(|m| m.generate_implementation());
+
+        Ok(quote! {
+            #[derive(Debug)]
             pub struct #client_name<SDK> {
                 pub sdk: SDK,
             }
@@ -191,7 +310,7 @@ impl ClientGenerator {
             // Codec implementations
             #(#codecs)*
 
-            // Helper functions
+            // Helper methods implementation
             impl<SDK: fluentbase_sdk::SharedAPI> #client_name<SDK> {
                 pub fn new(sdk: SDK) -> Self {
                     Self { sdk }
@@ -200,17 +319,50 @@ impl ClientGenerator {
                 #(#helpers)*
             }
 
-            // Main interface implementation
+            // Contract calling methods implementation
             impl<SDK: fluentbase_sdk::SharedAPI> #client_name<SDK> {
                 #(#implementations)*
             }
-        }
+        })
     }
 }
 
 impl ToTokens for ClientGenerator {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
-        let client_impl = self.generate_client();
-        tokens.extend(client_impl);
+        match self.generate_client() {
+            Ok(implementation) => tokens.extend(implementation),
+            Err(e) => tokens.extend(Error::to_compile_error(&e)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_client_method_generation() {
+        let method: TraitItemFn = parse_quote! {
+            #[function_id("testMethod(uint64)")]
+            fn test_method(&mut self, value: u64) -> String;
+        };
+
+        let client_method = ClientMethod::new(&method, Mode::default());
+        assert!(client_method.is_ok());
+    }
+
+    #[test]
+    fn test_client_trait_generator() {
+        let input = quote! {
+            trait TestAPI {
+                #[function_id("testMethod(uint64)")]
+                fn test_method(&mut self, value: u64) -> String;
+            }
+        };
+
+        let generator: ClientGenerator = syn::parse2(input).unwrap();
+        let output = generator.generate_client();
+        assert!(output.is_ok());
     }
 }

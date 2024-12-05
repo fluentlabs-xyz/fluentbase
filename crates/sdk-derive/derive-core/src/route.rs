@@ -1,471 +1,195 @@
 use crate::{
+    abi::FunctionABI,
     codec::CodecGenerator,
-    error::RouterError,
-    function_id::FunctionIDAttribute,
-    mode::RouterMode,
-    utils::rust_type_to_sol,
+    function_id::{create_function_id_mismatch_error, FunctionIDAttribute},
+    mode::Mode,
 };
 use convert_case::{Case, Casing};
-use proc_macro2::{Span, TokenStream as TokenStream2};
-use proc_macro_error::emit_error;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens};
-use syn::{
-    parse::{Parse, ParseStream},
-    parse_quote,
-    spanned::Spanned,
-    Attribute,
-    Error,
-    FnArg,
-    Ident,
-    ImplItemFn,
-    Index,
-    Result,
-    ReturnType,
-    TraitItemFn,
-    Type,
-};
+use syn::{spanned::Spanned, Error, ImplItemFn, Index, Result};
 
-/// Represents a routable method with its metadata and implementation details.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Route {
-    /// Optional function identifier attribute for custom routing
-    pub function_id_attr: Option<FunctionIDAttribute>,
-    /// Computed 4-byte function selector
-    pub function_id: [u8; 4],
-    /// Method name in camelCase format
-    pub fn_name: String,
-    /// Solidity-compatible function signature
-    pub signature: String,
-    /// Method parameters
-    pub args: Vec<MethodParameter>,
-    /// Return type parameters
-    pub return_types: Vec<Type>,
+    /// Core ABI representation
+    abi: FunctionABI,
     /// Original function implementation
-    pub original_fn: MethodType,
-    /// Indicates if the method is publicly accessible
-    pub is_public: bool,
-}
-
-#[derive(Clone, Debug)]
-pub enum MethodType {
-    Impl(ImplItemFn),
-    Trait(TraitItemFn),
-}
-
-/// Represents a method parameter with its type and identifier.
-#[derive(Clone, Debug, PartialEq)]
-pub struct MethodParameter {
-    /// Original parameter type including references
-    pub original_ty: Type,
-    /// Storage parameter type (owned version)
-    pub ty: Type,
-    /// Parameter identifier
-    pub ident: Ident,
+    method: ImplItemFn,
+    /// Validated function ID
+    function_id: [u8; 4],
 }
 
 impl Route {
-    /// Creates a new Route instance by parsing the implementation method.
-    ///
-    /// # Arguments
-    /// * `method_impl` - The function implementation to parse
-    ///
-    /// # Returns
-    /// * `Result<Route>` - Parsed route or parsing error
-    pub fn new(method_impl: &ImplItemFn) -> Result<Self> {
-        let parameters = MethodParameter::from_impl(method_impl);
-        let return_types = Self::extract_return_types(&method_impl.sig.output);
-        let fn_name = str_to_camel_case(&method_impl.sig.ident.to_string());
+    pub fn new(method: ImplItemFn) -> Result<Self> {
+        // Convert method to ABI representation
+        let abi = FunctionABI::from_impl_fn(&method).map_err(|e| {
+            Error::new(
+                method.span(),
+                format!("Failed to convert method to ABI: {}", e),
+            )
+        })?;
 
-        let parameter_types = Self::get_param_types(&parameters, &fn_name)?;
-        let method_signature = Self::generate_signature(&fn_name, &parameter_types);
+        // Get canonical signature
+        let signature = abi.signature();
+        // Calculate selector
+        let calculated_id = abi.selector();
 
-        Ok(Route {
-            function_id_attr: None, // Will be set later
-            function_id: [0; 4],    // Will be computed later
-            fn_name,
-            signature: method_signature,
-            args: parameters,
-            return_types,
-            original_fn: MethodType::Impl(method_impl.clone()),
-            is_public: matches!(method_impl.vis, syn::Visibility::Public(_)),
-        })
-    }
-
-    pub fn process_function_id(
-        span: Span,
-        method_signature: &str,
-        function_id_attr: Option<FunctionIDAttribute>,
-    ) -> core::result::Result<([u8; 4], String), RouterError> {
-        let calculated_function_id = keccak256(method_signature);
-
-        let function_id = match function_id_attr.clone() {
-            None => calculated_function_id,
-            Some(attr) => {
-                let attr_function_id = attr.function_id_bytes()?;
-
-                if attr.validate.unwrap_or(true) && attr_function_id != calculated_function_id {
-                    emit_error!(
-                        attr.span().unwrap_or(span),
-                        "Function ID mismatch: expected 0x{}, but got 0x{}",
-                        hex::encode(calculated_function_id),
-                        hex::encode(attr_function_id);
-                        help = "Ensure the given function ID matches the keccak256 hash of the method signature, or set the 'validate' flag to false."
-                    );
-
-                    calculated_function_id
-                } else {
-                    attr_function_id
-                }
-            }
-        };
-
-        let signature = function_id_attr
-            .and_then(|attr| attr.signature())
-            .unwrap_or_else(|| method_signature.to_string());
-
-        Ok((function_id, signature))
-    }
-
-    fn get_param_types(params: &[MethodParameter], fn_name: &str) -> Result<Vec<String>> {
-        params
-            .iter()
-            .map(|param| {
-                rust_type_to_sol(&param.ty)
-                    .map(|tokens| tokens.to_string())
-                    .map_err(|e| {
-                        syn::Error::new(
-                            Span::call_site(),
-                            format!(
-                                "Failed to parse parameter type in function '{}': {}",
-                                fn_name, e
-                            ),
-                        )
-                    })
-            })
-            .collect::<Result<Vec<String>>>()
-    }
-
-    /// Returns the signature of the method
-    pub fn sig(&self) -> &syn::Signature {
-        match &self.original_fn {
-            MethodType::Impl(m) => &m.sig,
-            MethodType::Trait(m) => &m.sig,
-        }
-    }
-
-    /// Extracts return types from the method signature.
-    fn extract_return_types(return_type: &ReturnType) -> Vec<Type> {
-        match return_type {
-            ReturnType::Type(_, ty) => match &**ty {
-                Type::Tuple(tuple) => tuple.elems.iter().cloned().collect(),
-                _ => vec![(&**ty).clone()],
-            },
-            ReturnType::Default => vec![],
-        }
-    }
-
-    /// Generates a Solidity-compatible function signature.
-    fn generate_signature(name: &str, param_types: &[String]) -> String {
-        format!("{}({})", name, param_types.join(","))
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect()
-    }
-
-    pub fn generate_codec_impl(&self, mode: &RouterMode) -> TokenStream2 {
-        let input_types: Vec<&Type> = self.args.iter().map(|arg| &arg.ty).collect();
-        let return_types: Vec<&Type> = self.return_types.iter().collect();
-
-        CodecGenerator::new(
-            &self.fn_name,
-            &self.function_id,
-            &self.signature,
-            input_types,
-            return_types,
-            mode,
-        )
-        .generate()
-    }
-}
-
-impl TryFrom<&TraitItemFn> for Route {
-    type Error = syn::Error;
-
-    fn try_from(method: &TraitItemFn) -> Result<Self> {
-        let parameters = MethodParameter::from_trait_fn(method);
-        let return_types = Self::extract_return_types(&method.sig.output);
-        let fn_name = str_to_camel_case(&method.sig.ident.to_string());
-
-        let parameter_types = Self::get_param_types(&parameters, &fn_name)?;
-        let method_signature = Self::generate_signature(&fn_name, &parameter_types);
-
-        let function_id_attr = method
+        // Validate against attribute if present
+        let function_id = if let Some(attr) = method
             .attrs
             .iter()
-            .find(|attr| attr.path().is_ident("function_id"))
-            .map(|attr| attr.parse_args::<FunctionIDAttribute>())
-            .transpose()?;
+            .find(|a| a.path().is_ident("function_id"))
+        {
+            let attr_value = attr.parse_args::<FunctionIDAttribute>()?;
+            let attr_id = attr_value.function_id_bytes()?;
 
-        let (function_id, signature) =
-            Self::process_function_id(method.span(), &method_signature, function_id_attr.clone())?;
+            if attr_value.validate.unwrap_or(true) && attr_id != calculated_id {
+                return Err(create_function_id_mismatch_error(
+                    attr.span(),
+                    &calculated_id,
+                    &attr_id,
+                    signature,
+                ));
+            }
+            attr_id
+        } else {
+            calculated_id
+        };
 
         Ok(Self {
-            function_id_attr,
+            abi,
+            method,
             function_id,
-            fn_name,
-            signature,
-            args: parameters,
-            return_types,
-            original_fn: MethodType::Trait(method.clone()),
-            is_public: true,
         })
     }
-}
 
-impl Parse for Route {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let attrs = Attribute::parse_outer(input)?;
+    /// Returns reference to the ABI representation
+    pub fn abi(&self) -> &FunctionABI {
+        &self.abi
+    }
 
-        let function_id_attr = attrs
-            .iter()
-            .find(|attr| attr.path().is_ident("function_id"))
-            .map(|attr| {
-                attr.parse_args::<FunctionIDAttribute>().map_err(|error| {
-                    Error::new(
-                        attr.span(),
-                        format!("Failed to parse `function_id`: {}", error),
-                    )
-                })
-            })
-            .transpose()?;
+    /// Returns reference to the original method
+    pub fn method(&self) -> &ImplItemFn {
+        &self.method
+    }
 
-        let method_impl: ImplItemFn = input.parse()?;
-        let mut route = Self::new(&method_impl)?;
+    pub fn generate_codec_impl(&self, mode: &Mode) -> TokenStream2 {
+        let codec_generator = CodecGenerator::new(&self.abi, &self.function_id, mode);
 
-        let span = function_id_attr
-            .as_ref()
-            .map_or(method_impl.span(), |attr| attr.span().unwrap());
-
-        let (function_id, signature) =
-            Self::process_function_id(span, &route.signature, function_id_attr.clone())?;
-
-        route.function_id_attr = function_id_attr;
-        route.function_id = function_id;
-        route.signature = signature;
-
-        Ok(route)
+        codec_generator
+            .generate()
+            .expect("failed to generate codec")
     }
 }
 
 impl ToTokens for Route {
-    /// Converts the route to a token stream.
     fn to_tokens(&self, tokens: &mut TokenStream2) {
-        let fn_name = match &self.original_fn {
-            MethodType::Impl(m) => &m.sig.ident,
-            MethodType::Trait(m) => &m.sig.ident,
-        };
-        let fn_call = format_ident!("{}Call", &self.fn_name.to_case(Case::Pascal));
-        let fn_call_selector = quote! { #fn_call::SELECTOR };
-        let fn_return = format_ident!("{}Return", &self.fn_name.to_case(Case::Pascal));
+        // Generate dispatch logic based on ABI
+        let dispatch = self.generate_match_arm();
+        tokens.extend(dispatch);
+    }
+}
 
-        // Generate parameter decoding tokens
-        let param_decoders = self.args.iter().map(|param| param.to_decode_token());
-        let param_indices = (0..self.args.len()).map(|i| Index::from(i));
-        let fn_call_params = self.get_function_call_params();
+// Private implementation details
+impl Route {
+    /// Generates a match arm for the router's match expression.
+    ///
+    /// This function produces code that:
+    /// 1. Decodes function parameters from input data
+    /// 2. Calls the actual contract method
+    /// 3. Encodes and writes the result
+    ///
+    /// # Generated code structure
+    /// ```ignore
+    /// SomeFunctionCall::SELECTOR => {
+    ///     // Decode parameters from input
+    ///     let (param1, param2) = match SomeFunctionCall::decode(&params) {
+    ///         Ok(decoded) => (decoded.0.0, decoded.0.1),
+    ///         Err(err) => panic!("Failed to decode parameters: {:?}", err),
+    ///     };
+    ///
+    ///     // Call method and encode result
+    ///     let output = self.some_function(&param1, &mut param2);
+    ///     let encoded = SomeReturn::new(output).encode();
+    ///     self.sdk.write(&encoded);
+    /// }
+    /// ```
+    fn generate_match_arm(&self) -> TokenStream2 {
+        // Get function name from implementation
+        let fn_name = &self.method.sig.ident;
 
-        // Generate the method dispatch code
-        let dispatch_code = match self.return_types.len() {
+        // Generate decoder/encoder type names based on ABI name
+        let call_type = format_ident!("{}Call", &self.abi.name.to_case(Case::Pascal));
+        let return_type = format_ident!("{}Return", &self.abi.name.to_case(Case::Pascal));
+
+        // Generate parameter tokens
+        let declarations: Vec<_> = self
+            .abi
+            .inputs
+            .iter()
+            .map(|p| p.to_declaration_tokens())
+            .collect();
+        let arguments: Vec<_> = self
+            .abi
+            .inputs
+            .iter()
+            .map(|p| p.to_argument_tokens())
+            .collect();
+        let param_indices: Vec<Index> = (0..self.abi.inputs.len()).map(Index::from).collect();
+
+        // Generate the result handling code based on number of outputs
+        let output_handling = match self.abi.outputs.len() {
             0 => quote! {
-                #fn_call_selector => {
-                    let (#(#param_decoders),*) = match #fn_call::decode(&params) {
-                        Ok(decoded) => (#(decoded.0.#param_indices),*),
-                        Err(err) => panic!("Failed to decode input parameters: {:?}", err),
-                    };
-
-                    let output = self.#fn_name(#fn_call_params);
-
-                    // If output is unit type (), do not wrap it in a tuple
-                    let encoded_output = [0u8; 0];
-
-                    self.sdk.write(&encoded_output);
-                }
+                self.#fn_name(#(#arguments),*);
+                self.sdk.write(&[0u8; 0]);
             },
             1 => quote! {
-                #fn_call_selector => {
-                    let (#(#param_decoders),*) = match #fn_call::decode(&params) {
-                        Ok(decoded) => (#(decoded.0.#param_indices),*),
-                        Err(err) => panic!("Failed to decode input parameters: {:?}", err),
-                    };
-
-                    let output = self.#fn_name(#fn_call_params);
-
-                    let encoded_output = #fn_return::new((output,)).encode();
-
-                    self.sdk.write(&encoded_output);
-                }
+                let output = self.#fn_name(#(#arguments),*);
+                let encoded_output = #return_type::new((output,)).encode();
+                self.sdk.write(&encoded_output);
             },
             _ => quote! {
-                    #fn_call_selector => {
-                        let (#(#param_decoders),*) = match #fn_call::decode(&params) {
-                            Ok(decoded) => (#(decoded.0.#param_indices),*),
-                            Err(err) => panic!("Failed to decode input parameters: {:?}", err),
-                        };
-
-                        let output = self.#fn_name(#fn_call_params);
-
-                        let encoded_output = #fn_return::new(output).encode();
-
-                        self.sdk.write(&encoded_output);
-                    }
+                let output = self.#fn_name(#(#arguments),*);
+                let encoded_output = #return_type::new(output).encode();
+                self.sdk.write(&encoded_output);
             },
         };
 
-        tokens.extend(dispatch_code);
-    }
-}
+        // Combine into final match arm
+        quote! {
+            #call_type::SELECTOR => {
+                let (#(#declarations),*) = match #call_type::decode(&params) {
+                    Ok(decoded) => (#(decoded.0.#param_indices),*),
+                    Err(err) => panic!("Failed to decode input parameters"),
+                };
 
-impl Route {
-    /// Generates function call parameters with proper reference handling.
-    fn get_function_call_params(&self) -> TokenStream2 {
-        let params = self.args.iter().map(|param| param.to_call_token());
-        quote! { #(#params),* }
-    }
-}
-
-impl MethodParameter {
-    /// Creates method parameters from a function implementation.
-    fn from_impl(method: &ImplItemFn) -> Vec<Self> {
-        method
-            .sig
-            .inputs
-            .iter()
-            .filter_map(|arg| {
-                if let FnArg::Typed(pat_type) = arg {
-                    if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
-                        let original_ty = (*pat_type.ty).clone();
-                        let ty = Self::to_storage_type(&original_ty);
-                        Some(MethodParameter {
-                            original_ty,
-                            ty,
-                            ident: pat_ident.ident.clone(),
-                        })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    pub fn from_trait_fn(method: &TraitItemFn) -> Vec<Self> {
-        method
-            .sig
-            .inputs
-            .iter()
-            .filter_map(|arg| {
-                if let FnArg::Typed(pat_type) = arg {
-                    if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
-                        let original_ty = (*pat_type.ty).clone();
-                        let ty = Self::to_storage_type(&original_ty);
-                        Some(MethodParameter {
-                            original_ty,
-                            ty,
-                            ident: pat_ident.ident.clone(),
-                        })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    /// Converts reference types to their owned versions
-    fn to_storage_type(ty: &Type) -> Type {
-        match ty {
-            Type::Reference(type_ref) => match &*type_ref.elem {
-                Type::Slice(slice) if is_u8_type(&slice.elem) => {
-                    parse_quote!(::alloc::vec::Vec<u8>)
-                }
-                Type::Path(path) if is_str_type(path) => {
-                    parse_quote!(::alloc::string::String)
-                }
-                other => (*other).clone(),
-            },
-            other => other.clone(),
-        }
-    }
-
-    /// Generates a token for parameter decoding.
-    fn to_decode_token(&self) -> TokenStream2 {
-        let ident = &self.ident;
-        match &self.original_ty {
-            Type::Reference(ty_ref) if ty_ref.mutability.is_some() => {
-                quote! { mut #ident }
+                #output_handling
             }
-            _ => quote! { #ident },
-        }
-    }
-
-    /// Generates a token for function call parameter.
-    fn to_call_token(&self) -> TokenStream2 {
-        let ident = &self.ident;
-        match &self.original_ty {
-            Type::Reference(ty_ref) if ty_ref.mutability.is_some() => {
-                quote! { &mut #ident }
-            }
-            Type::Reference(_) => {
-                quote! { &#ident }
-            }
-            _ => quote! { #ident },
         }
     }
 }
 
-fn is_u8_type(ty: &Type) -> bool {
-    if let Type::Path(path) = ty {
-        path.path
-            .segments
-            .last()
-            .map(|seg| seg.ident == "u8")
-            .unwrap_or(false)
-    } else {
-        false
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_route_new_success() {
+        let method: ImplItemFn = parse_quote! {
+            #[function_id("0xd3c914ca")]
+            fn test_function(arg1: u32, arg2: String) -> bool {
+                true
+            }
+        };
+
+        let route = Route::new(method);
+        assert!(route.is_ok());
+        let route = route.unwrap();
+
+        assert_eq!(route.abi.selector(), [0xd3, 0xc9, 0x14, 0xca]);
+        assert_eq!(route.abi.signature(), "testFunction(uint32,string)");
+        assert_eq!(route.abi.inputs.len(), 2);
+        assert_eq!(route.abi.outputs.len(), 1);
     }
-}
-
-fn is_str_type(path: &syn::TypePath) -> bool {
-    path.path
-        .segments
-        .last()
-        .map(|seg| seg.ident == "str")
-        .unwrap_or(false)
-}
-
-pub fn ident_to_camel_case(ident: &Ident) -> Ident {
-    let span = ident.span();
-    let camel_name = ident.to_string().to_case(Case::Camel);
-    Ident::new(&camel_name, span)
-}
-
-pub fn str_to_camel_case(s: &str) -> String {
-    s.to_case(Case::Camel)
-}
-
-pub fn keccak256(signature: &str) -> [u8; 4] {
-    use crypto_hashes::{digest::Digest, sha3::Keccak256};
-    Keccak256::digest(signature.as_bytes())
-        .as_slice()
-        .get(..4)
-        .unwrap_or(&[0; 4])
-        .try_into()
-        .unwrap_or([0; 4])
-}
-
-pub fn get_sol_signature(fn_name: &str, args: &[String]) -> String {
-    format!("{}({})", fn_name, args.join(","))
 }

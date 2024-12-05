@@ -7,6 +7,7 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
+    Error,
     Lit,
     LitStr,
     Result,
@@ -70,7 +71,7 @@ impl FunctionIDAttribute {
             .and_then(|id| {
                 Ok(match &id.value {
                     FunctionIDType::Signature(sig) => {
-                        format!("0x{}", hex::encode(&compute_keccak256(sig)?))
+                        format!("0x{}", hex::encode(compute_keccak256(sig)?))
                     }
                     FunctionIDType::HexString(hex_str) => hex_str.clone(),
                     FunctionIDType::ByteArray(arr) => format!("0x{}", hex::encode(arr)),
@@ -292,6 +293,33 @@ impl ToTokens for FunctionIDAttribute {
     }
 }
 
+pub(crate) fn create_function_id_mismatch_error(
+    span: Span,
+    calculated_id: &[u8],
+    attr_id: &[u8],
+    signature: String,
+) -> Error {
+    let error_msg = format!(
+        "Function ID mismatch\n\
+        \n\
+        Expected: 0x{}\n\
+        Found:    0x{}\n\
+        \n\
+        Rust method signature: {}\n\
+        \n\
+        Note: Function IDs are calculated based on the method signature\n\
+              and used for method dispatching only\n\
+        \n\
+        Help: You can disable this validation by adding `validate(false)`:\n\
+              #[function_id(\"{}\", validate(false))]",
+        hex::encode(calculated_id),
+        hex::encode(attr_id),
+        signature,
+        signature
+    );
+
+    Error::new(span, error_msg)
+}
 #[cfg(test)]
 mod tests {
     use super::*;

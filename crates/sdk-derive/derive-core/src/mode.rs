@@ -15,18 +15,18 @@ use tracing::warn;
 const VALID_MODES: &[&str] = &["solidity", "fluent"];
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub enum RouterMode {
+pub enum Mode {
     Solidity,
     Fluent,
 }
 
-impl Default for RouterMode {
+impl Default for Mode {
     fn default() -> Self {
         Self::Solidity
     }
 }
 
-impl FromStr for RouterMode {
+impl FromStr for Mode {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
@@ -46,7 +46,7 @@ impl FromStr for RouterMode {
     }
 }
 
-impl Parse for RouterMode {
+impl Parse for Mode {
     fn parse(input: ParseStream) -> Result<Self> {
         let meta = input.parse::<Meta>()?;
 
@@ -71,7 +71,7 @@ impl Parse for RouterMode {
     }
 }
 
-impl fmt::Display for RouterMode {
+impl fmt::Display for Mode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Solidity => write!(f, "solidity"),
@@ -87,21 +87,15 @@ mod tests {
     #[test]
     fn test_router_mode_from_str() {
         for valid_input in ["solidity", "SOLIDITY", "SoLiDiTy", "Solidity"] {
-            assert!(matches!(
-                valid_input.parse::<RouterMode>(),
-                Ok(RouterMode::Solidity)
-            ));
+            assert!(matches!(valid_input.parse::<Mode>(), Ok(Mode::Solidity)));
         }
 
         for valid_input in ["fluent", "FLUENT", "FluENT", "Fluent"] {
-            assert!(matches!(
-                valid_input.parse::<RouterMode>(),
-                Ok(RouterMode::Fluent)
-            ));
+            assert!(matches!(valid_input.parse::<Mode>(), Ok(Mode::Fluent)));
         }
 
         for invalid_input in ["invalid", "INVALID"] {
-            assert!(invalid_input.parse::<RouterMode>().is_err());
+            assert!(invalid_input.parse::<Mode>().is_err());
         }
     }
 }

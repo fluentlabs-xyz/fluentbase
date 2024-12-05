@@ -3,24 +3,23 @@
 This documentation covers two main macros for building Solidity-compatible smart contracts in Rust: `router` and `client`. These macros enable seamless interaction with Solidity-style contracts in a no_std environment.
 
 - [SDK Derive Macros](#sdk-derive-macros)
-  - [Router Macro](#router-macro)
-    - [Key Features](#key-features)
-    - [Encoding Modes](#encoding-modes)
-    - [Function ID Definition and Validation](#function-id-definition-and-validation)
-      - [Specifying Function IDs](#specifying-function-ids)
-      - [Validation System](#validation-system)
-        - [How Validation Works](#how-validation-works)
-        - [Disabling Validation](#disabling-validation)
-        - [Error Messages](#error-messages)
-    - [Method Visibility](#method-visibility)
-      - [Trait Implementation](#trait-implementation)
-      - [Direct Implementation](#direct-implementation)
-    - [Special Methods](#special-methods)
-    - [Testing](#testing)
-    - [Arguments and Types](#arguments-and-types)
-      - [Type Mappings](#type-mappings)
-      - [Basic Usage](#basic-usage)
-      - [Using Structures](#using-structures)
+  - [Key Features](#key-features)
+  - [Encoding Modes](#encoding-modes)
+  - [Function ID Definition and Validation](#function-id-definition-and-validation)
+    - [Specifying Function IDs](#specifying-function-ids)
+    - [Validation System](#validation-system)
+      - [How Validation Works](#how-validation-works)
+      - [Disabling Validation](#disabling-validation)
+      - [Error Messages](#error-messages)
+  - [Method Visibility](#method-visibility)
+    - [Trait Implementation](#trait-implementation)
+    - [Direct Implementation](#direct-implementation)
+  - [Special Methods](#special-methods)
+  - [Testing](#testing)
+  - [Arguments and Types](#arguments-and-types)
+    - [Type Mappings](#type-mappings)
+    - [Basic Usage](#basic-usage)
+    - [Using Structures](#using-structures)
   - [Client Macro](#client-macro)
     - [Key Features](#key-features-1)
     - [Encoding Modes](#encoding-modes-1)
@@ -37,7 +36,7 @@ This documentation covers two main macros for building Solidity-compatible smart
     - [Type Mappings](#type-mappings-1)
     - [Notes](#notes)
 
-## Router Macro
+**## Router Macro
 
 The `router` macro provides a streamlined way to handle Solidity-compatible contract interactions. In Fluentbase, all contract interactions go through a `main` function that serves as the primary entry point. Each transaction includes:
 
@@ -106,7 +105,7 @@ The router supports two modes of operation:
 
 - Compact encoding format
 - 4-byte word size
-- Optimized for space efficiency
+- Optimized for space efficiency**
 
 ### Function ID Definition and Validation
 
