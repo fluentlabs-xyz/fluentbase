@@ -304,7 +304,6 @@ impl Into<FuncIdx> for SysFuncIdx {
 pub enum BytecodeType {
     EVM,
     WASM,
-    ELF,
 }
 
 const WASM_SIG_LEN: usize = 4;
@@ -326,10 +325,6 @@ impl BytecodeType {
         // default WebAssembly signature
         if input.len() >= WASM_SIG_LEN && input[0..WASM_SIG_LEN] == WASM_SIG {
             return Self::WASM;
-        }
-        // default ELF signature
-        if input.len() >= ELF_SIG_LEN && input[0..ELF_SIG_LEN] == ELF_SIG {
-            return Self::ELF;
         }
         // case for rWASM contracts that are inside genesis
         if input.len() >= RWASM_SIG_LEN && input[0..RWASM_SIG_LEN] == RWASM_SIG {
