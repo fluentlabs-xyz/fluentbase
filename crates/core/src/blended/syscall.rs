@@ -1,13 +1,8 @@
-use crate::{
-    blended::BlendedRuntime,
-    debug_log,
-    helpers::exit_code_from_evm_error,
-    types::NextAction,
-};
+use crate::{blended::BlendedRuntime, helpers::exit_code_from_evm_error, types::NextAction};
 use alloc::{boxed::Box, vec::Vec};
-use alloy_rlp::Encodable;
-use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{
+    byteorder::{ByteOrder, LittleEndian},
+    debug_log,
     Address,
     Bytes,
     ContractContext,
@@ -550,7 +545,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
         let (create_cost, gas_limit) = if !is_gas_free {
             let init_cost = if init_code.len() > 0 {
-                gas::initcode_cost(init_code.length() as u64)
+                gas::initcode_cost(init_code.len() as u64)
             } else {
                 0
             };

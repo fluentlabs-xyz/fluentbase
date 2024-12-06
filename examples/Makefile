@@ -1,4 +1,4 @@
-FILES = greeting erc20 hashing panic client-fluent client-solidity router-fluent router-solidity rwasm shakmaty storage keccak rwasm-jit fairblock duntsane
+FILES = greeting erc20 hashing panic client-fluent client-solidity router-fluent router-solidity rwasm shakmaty storage keccak rwasm-jit fairblock
 
 all: $(FILES) $(MANUAL)
 
@@ -14,6 +14,7 @@ prepare:
 clean:
 	find . -type f -name "lib.wasm" -delete
 	find . -type f -name "lib.wat" -delete
+	find . -type d -name "target" -delete
 
 TARGET=wasm32-unknown-unknown
 RPC_ENDPOINT_TYPE=local # local|dev - see deploy-contract.js impl

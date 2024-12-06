@@ -1,5 +1,4 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate alloc;
 extern crate fluentbase_sdk;
 

@@ -1,15 +1,14 @@
-#[cfg(feature = "elf")]
-mod elf;
 mod evm;
 mod syscall;
 mod util;
 mod wasm;
 
-use crate::{debug_log, helpers::evm_error_from_exit_code, types::NextAction};
+use crate::{helpers::evm_error_from_exit_code, types::NextAction};
 use alloc::boxed::Box;
 use fluentbase_sdk::{
     bytes::BytesMut,
     codec::FluentABI,
+    debug_log,
     env_from_context,
     Account,
     AccountStatus,
@@ -174,11 +173,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             BytecodeType::WASM => {
                 self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
-            #[cfg(feature = "elf")]
-            BytecodeType::ELF => {
-                self.exec_elf_bytecode(context, bytecode_account, input, gas, state, call_depth)
-            }
-            _ => unreachable!("not supported bytecode type"),
         }
     }
 
@@ -249,12 +243,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             BytecodeType::WASM => {
                 self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth)
             }
-            #[cfg(feature = "elf")]
-            BytecodeType::ELF => {
-                self.deploy_elf_contract(contract_account.address, inputs, gas, call_depth)
-            }
-            #[cfg(not(feature = "elf"))]
-            _ => unreachable!("not supported bytecode type"),
         };
 
         // commit all changes made

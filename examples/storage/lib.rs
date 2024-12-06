@@ -30,8 +30,8 @@ mod test {
     use fluentbase_sdk::{
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
+        ContractContext,
     };
-    use fluentbase_types::ContractContext;
     use hex_literal::hex;
     use serial_test::serial;
 

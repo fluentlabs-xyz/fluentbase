@@ -46,3 +46,24 @@ pub use fluentbase_codec as codec;
 pub use fluentbase_sdk_derive as derive;
 pub use fluentbase_types::*;
 // pub use router_core as router;
+
+#[cfg(feature = "debug-print")]
+#[macro_export]
+macro_rules! debug_log {
+    ($msg:tt) => {{
+        #[cfg(target_arch = "wasm32")]
+        unsafe { fluentbase_sdk::rwasm::_debug_log($msg.as_ptr(), $msg.len() as u32) }
+        #[cfg(feature = "std")]
+        println!("{}", $msg);
+    }};
+    ($($arg:tt)*) => {{
+        let msg = alloc::format!($($arg)*);
+        debug_log!(msg);
+    }};
+}
+#[cfg(not(feature = "debug-print"))]
+#[macro_export]
+macro_rules! debug_log {
+    ($msg:tt) => {{}};
+    ($($arg:tt)*) => {{}};
+}
