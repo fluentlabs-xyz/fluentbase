@@ -16,8 +16,9 @@ use fluentbase_sdk::{
     derive::Contract,
     Bytes,
     SharedAPI,
+    SharedContextInputV1,
+    STATE_MAIN,
 };
-use fluentbase_types::{SharedContextInputV1, STATE_MAIN};
 use runtime::{runtime_register_sovereign_handlers, RuntimeContext};
 use rwasm::{
     engine::RwasmConfig,

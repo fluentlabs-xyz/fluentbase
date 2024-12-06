@@ -1,5 +1,5 @@
 use crate::{Runtime, RuntimeContext};
-use fluentbase_types::{
+use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian},
     Bytes,
     ExitCode,

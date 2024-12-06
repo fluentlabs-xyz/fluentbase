@@ -13,13 +13,14 @@ use rwasm::{
     rwasm::{BinaryFormat, RwasmModule},
 };
 
-pub const ENABLE_EVM_PROXY_CONTRACT: bool = true; //cfg!(feature = "evm-proxy");
+pub const ENABLE_EVM_PROXY_CONTRACT: bool = false;
 
 fn create_eip7702_proxy_bytecode(impl_address: Address) -> Bytes {
     let eip7702_bytecode = Eip7702Bytecode::new(impl_address);
     eip7702_bytecode.raw
 }
 
+#[allow(unused)]
 fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
     let mut memory_section = vec![0u8; 32 + 20];
     //  0..32: code hash

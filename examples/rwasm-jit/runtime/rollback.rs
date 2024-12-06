@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, JournalCheckpoint};
+use fluentbase_sdk::{ExitCode, JournalCheckpoint};
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallRollback;

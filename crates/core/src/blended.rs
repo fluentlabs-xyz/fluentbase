@@ -1,15 +1,14 @@
-#[cfg(feature = "elf")]
-mod elf;
 mod evm;
 mod syscall;
 mod util;
 mod wasm;
 
-use crate::{debug_log, helpers::evm_error_from_exit_code, types::NextAction};
+use crate::{helpers::evm_error_from_exit_code, types::NextAction};
 use alloc::boxed::Box;
 use fluentbase_sdk::{
     bytes::BytesMut,
     codec::FluentABI,
+    debug_log,
     env_from_context,
     Account,
     AccountStatus,
@@ -30,6 +29,7 @@ use revm_interpreter::{
     CreateInputs,
     CreateOutcome,
     Gas,
+    InstructionResult,
     InterpreterResult,
 };
 use revm_primitives::{
@@ -105,7 +105,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         {
             use fluentbase_runtime::RuntimeContext;
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
-            let runtime_context = RuntimeContext::root(params.fuel_limit).without_fuel();
+            let runtime_context = RuntimeContext::root(params.fuel_limit);
             let preimage_adapter =
                 crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
@@ -174,7 +174,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             BytecodeType::WASM => {
                 self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
-            _ => unreachable!("not supported bytecode type"),
         }
     }
 
@@ -245,12 +244,11 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             BytecodeType::WASM => {
                 self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth)
             }
-            #[cfg(feature = "elf")]
-            BytecodeType::ELF => {
-                self.deploy_elf_contract(contract_account.address, inputs, gas, call_depth)
-            }
-            #[cfg(not(feature = "elf"))]
-            _ => unreachable!("not supported bytecode type"),
+            _ => InterpreterResult::new(
+                InstructionResult::CreateContractStartingWithEF,
+                Bytes::new(),
+                gas,
+            ),
         };
 
         // commit all changes made

@@ -1,6 +1,6 @@
 use crate::{Runtime, RuntimeContext};
 use core::mem::take;
-use fluentbase_types::{
+use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian},
     ExitCode,
 };

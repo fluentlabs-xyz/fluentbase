@@ -11,6 +11,12 @@ build:
 	if [ "$(SKIP_CONTRACTS)" = "n" ]; then cd crates/contracts && $(MAKE); fi
 	if [ "$(SKIP_GENESIS)" = "n" ]; then cd crates/genesis && $(MAKE); fi
 
+.PHONY: clean
+clean:
+	clear
+	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE) clean; fi
+	cargo clean
+
 .PHONY: test
 test:
 	clear
