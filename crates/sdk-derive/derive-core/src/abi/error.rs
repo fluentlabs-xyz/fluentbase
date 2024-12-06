@@ -16,10 +16,13 @@ pub enum ABIError {
     UnsupportedPattern(String),
 
     #[error("Syntax error: {0}")]
-    SyntaxError(String),
+    Syntax(String),
 
     #[error("Internal error: {0}")]
-    InternalError(String),
+    Internal(String),
+
+    #[error("Config error: {0}")]
+    Config(String),
 }
 
 pub type ABIResult<T> = std::result::Result<T, ABIError>;

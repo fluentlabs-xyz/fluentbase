@@ -1,7 +1,7 @@
 use crate::{
     abi::FunctionABI,
     codec::CodecGenerator,
-    function_id::FunctionIDAttribute,
+    function_id::{create_function_id_mismatch_error, FunctionIDAttribute},
     mode::Mode,
 };
 use convert_case::{Case, Casing};
@@ -50,14 +50,11 @@ impl ClientMethod {
             let calculated_id = abi.selector();
 
             if attr_value.validate.unwrap_or(true) && attr_id != calculated_id {
-                return Err(Error::new(
+                return Err(create_function_id_mismatch_error(
                     attr.span(),
-                    format!(
-                        "Function ID mismatch: expected 0x{}, got 0x{}\nExpected Rust method signature: {}",
-                        hex::encode(calculated_id),
-                        hex::encode(attr_id),
-                        abi.signature()
-                    ),
+                    &calculated_id,
+                    &attr_id,
+                    abi.signature(),
                 ));
             }
         }

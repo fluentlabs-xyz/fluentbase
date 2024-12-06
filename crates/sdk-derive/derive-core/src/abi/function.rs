@@ -112,6 +112,10 @@ impl FunctionABI {
         self.name.to_case(Case::Snake)
     }
 
+    pub fn solidity_name(&self) -> String {
+        self.name.to_case(Case::Camel)
+    }
+
     /// Get complete function signature including parameter names and return types
     /// Format: function name(type1 name1, type2 name2) returns (type1 name1, type2 name2)
     pub fn full_signature(&self) -> String {

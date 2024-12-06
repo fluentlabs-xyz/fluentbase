@@ -1,8 +1,14 @@
 use super::ABIError;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use serde::Serialize;
-use std::fmt::{self, Display, Formatter};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::{
+    env,
+    fmt::{self, Display, Formatter},
+    fs,
+    path::PathBuf,
+};
 use syn::{
     FnArg,
     GenericArgument,
@@ -27,23 +33,16 @@ const UNSUPPORTED_TYPES: &[&str] = &[
 /// ABI parameter representation for Solidity function
 #[derive(Debug, Clone, Serialize)]
 pub struct FunctionParameter {
-    /// Parameter name
     #[serde(default)]
     pub name: Option<String>,
-    /// Solidity type
     #[serde(rename = "type")]
     pub sol_type: SolType,
-    /// Internal type name for custom types (e.g. structs)
     #[serde(rename = "internalType")]
     pub internal_type: String,
-    /// Components for complex types (structs, tuples)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<FunctionParameter>>,
-
-    /// Data location specifier
     #[serde(skip)]
     pub data_location: Option<DataLocation>,
-    /// Function argument details
     #[serde(skip)]
     pub fn_arg: Option<ArgumentInfo>,
 }
@@ -107,6 +106,22 @@ pub enum SolType {
     },
 }
 
+#[derive(Deserialize, Serialize)]
+struct StructComponent {
+    name: String,
+    #[serde(rename = "type")]
+    type_name: String,
+    #[serde(default)]
+    components: Vec<StructComponent>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct StructDefinition {
+    #[serde(rename = "type")]
+    type_name: String,
+    components: Vec<StructComponent>,
+}
+
 impl FunctionParameter {
     /// Creates a function parameter from a type argument
     pub fn from_type_arg(pat_type: &PatType) -> Result<Self, ABIError> {
@@ -138,7 +153,7 @@ impl FunctionParameter {
         let arg_info = self
             .fn_arg
             .as_ref()
-            .ok_or_else(|| ABIError::InternalError("Missing argument info".into()))?;
+            .ok_or_else(|| ABIError::Internal("Missing argument info".into()))?;
 
         let name = format_ident!("{}", arg_info.name);
         let ty = &arg_info.ty;
@@ -149,7 +164,7 @@ impl FunctionParameter {
             quote! { #name }
         };
 
-        syn::parse2(quote! { #pat: #ty }).map_err(|e| ABIError::SyntaxError(e.to_string()))
+        syn::parse2(quote! { #pat: #ty }).map_err(|e| ABIError::Syntax(e.to_string()))
     }
 
     /// Creates a function parameter from a Type
@@ -218,6 +233,84 @@ impl FunctionParameter {
                     }])
                 }
             },
+        }
+    }
+    pub fn to_json(&self) -> serde_json::Value {
+        match &self.components {
+            Some(components) => json!({
+                "name": self.name,
+                "type": "tuple",
+                "components": components.iter()
+                    .map(FunctionParameter::to_json)
+                    .collect::<Vec<_>>()
+            }),
+            None => json!({
+                "name": self.name,
+                "type": self.sol_type.to_string()
+            }),
+        }
+    }
+
+    fn load_struct_definition(struct_name: &str) -> Result<StructDefinition, ABIError> {
+        let out_dir = env::var("OUT_DIR")
+            .map_err(|_| ABIError::Config("OUT_DIR environment variable not found".into()))?;
+
+        let file_path = PathBuf::from(out_dir)
+            .join("solidity_abi")
+            .join(format!("{}.json", struct_name));
+
+        let content = fs::read_to_string(&file_path).map_err(|e| {
+            ABIError::Config(format!("Failed to read struct definition file: {}", e))
+        })?;
+
+        serde_json::from_str(&content)
+            .map_err(|e| ABIError::Config(format!("Failed to parse struct definition: {}", e)))
+    }
+
+    fn component_to_sol_type(component: &StructComponent) -> Result<(String, SolType), ABIError> {
+        if !component.components.is_empty() {
+            let fields = component
+                .components
+                .iter()
+                .map(|c| {
+                    let (name, sol_type) = Self::component_to_sol_type(c)?;
+                    Ok((name, sol_type))
+                })
+                .collect::<Result<Vec<_>, ABIError>>()?;
+
+            Ok((
+                component.name.clone(),
+                SolType::Struct {
+                    name: component.type_name.clone(),
+                    fields,
+                },
+            ))
+        } else {
+            let sol_type = match component.type_name.as_str() {
+                "uint8" => SolType::Uint(8),
+                "uint16" => SolType::Uint(16),
+                "uint32" => SolType::Uint(32),
+                "uint64" => SolType::Uint(64),
+                "uint128" => SolType::Uint(128),
+                "uint256" => SolType::Uint(256),
+                "int8" => SolType::Int(8),
+                "int16" => SolType::Int(16),
+                "int32" => SolType::Int(32),
+                "int64" => SolType::Int(64),
+                "int128" => SolType::Int(128),
+                "int256" => SolType::Int(256),
+                "bool" => SolType::Bool,
+                "address" => SolType::Address,
+                "string" => SolType::String,
+                "bytes" => SolType::Bytes,
+                unknown => {
+                    return Err(ABIError::UnsupportedType(format!(
+                        "Unknown type in struct definition: {}",
+                        unknown
+                    )))
+                }
+            };
+            Ok((component.name.clone(), sol_type))
         }
     }
 
@@ -303,6 +396,16 @@ impl FunctionParameter {
             SolType::Struct { name, .. } => Ok(format!("struct {}", name)),
             _ => Ok(sol_type.to_string()),
         }
+    }
+
+    fn resolve_struct_fields(struct_name: &str) -> Result<Vec<(String, SolType)>, ABIError> {
+        let definition = Self::load_struct_definition(struct_name)?;
+
+        definition
+            .components
+            .iter()
+            .map(Self::component_to_sol_type)
+            .collect()
     }
 
     /// Resolves Solidity type and data location from Rust type
@@ -410,10 +513,12 @@ impl FunctionParameter {
 
             // Custom types (assumed to be structs)
             _ if Self::is_struct_type(type_path) => {
+                let fields = Self::resolve_struct_fields(&type_name)?;
+
                 Ok((
                     SolType::Struct {
-                        name: last_segment.ident.to_string(),
-                        fields: vec![], // Fields should be populated elsewhere
+                        name: type_name,
+                        fields,
                     },
                     Some(DataLocation::Memory),
                 ))
@@ -556,20 +661,6 @@ impl SolType {
     }
 }
 
-// impl Into<TokenStream2> for &FunctionParameter {
-//     fn into(self) -> TokenStream2 {
-//         let rust_info = self.rust_info.as_ref().expect("Missing Rust info");
-//         let name = format_ident!("{}", rust_info.name);
-//         let ty = &rust_info.ty;
-
-//         if rust_info.is_mutable {
-//             quote! { mut #name: #ty }
-//         } else {
-//             quote! { #name: #ty }
-//         }
-//     }
-// }
-
 impl Display for SolType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -615,7 +706,10 @@ impl Serialize for SolType {
 mod tests {
     use super::*;
     use serde_json::json;
-    use syn::{parse_quote, ItemStruct};
+    use serial_test::serial;
+    use std::path::Path;
+    use syn::parse_quote;
+    use tempfile::TempDir;
 
     fn assert_type(ty: &Type, expected: &str) {
         let (sol_type, _) =
@@ -662,26 +756,7 @@ mod tests {
             assert_type(rust_type, expected_sol_type);
         }
     }
-    #[test]
-    fn test_complex_type_conversion() {
-        let _struct_def: ItemStruct = parse_quote! {
-            struct MyStruct {
-                value: U256,
-                active: bool,
-            }
-        };
-        let cases = [
-            (parse_quote!(MyStruct), "tuple"),
-            (parse_quote!(Vec<MyStruct>), "tuple[]"),
-            (parse_quote!((U256, bool)), "(uint256,bool)"),
-            (parse_quote!(Vec<(U256, bool)>), "(uint256,bool)[]"),
-            (parse_quote!(Vec<(MyStruct, bool)>), "(tuple,bool)[]"),
-        ];
 
-        for (ref rust_type, expected_sol_type) in cases {
-            assert_type(rust_type, expected_sol_type);
-        }
-    }
     #[test]
     fn test_parameter_abi_json() {
         let arg: FnArg = parse_quote!(amount: u256);
@@ -900,5 +975,175 @@ mod tests {
         assert_eq!(params[0].internal_type, "uint256");
         assert_eq!(params[1].name, Some("_1".to_string()));
         assert_eq!(params[1].internal_type, "bool");
+    }
+
+    #[test]
+    #[serial]
+    fn test_struct_loading() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::env::set_var("OUT_DIR", temp_dir.path());
+
+        let abi_dir = temp_dir.path().join("solidity_abi");
+        std::fs::create_dir_all(&abi_dir).unwrap();
+
+        let test_json = json!({
+            "type": "tuple",
+            "components": [
+                {"name": "x", "type": "uint64"},
+                {"name": "y", "type": "uint256"}
+            ]
+        });
+
+        let file_path = abi_dir.join("Point.json");
+        std::fs::write(
+            &file_path,
+            serde_json::to_string_pretty(&test_json).unwrap(),
+        )
+        .unwrap();
+
+        let fields = FunctionParameter::resolve_struct_fields("Point").unwrap();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "x");
+        assert_eq!(fields[1].0, "y");
+    }
+
+    fn setup_test_files(temp_dir: &Path) -> std::io::Result<()> {
+        let abi_dir = temp_dir.join("solidity_abi");
+        fs::create_dir_all(&abi_dir)?;
+
+        let point_json = json!({
+            "type": "tuple",
+            "components": [
+                {"name": "x", "type": "uint64"},
+                {"name": "y", "type": "uint256"}
+            ]
+        });
+
+        let complex_point_json = json!({
+            "type": "tuple",
+            "components": [
+                {
+                    "name": "point",
+                    "type": "tuple",
+                    "components": [
+                        {"name": "x", "type": "uint64"},
+                        {"name": "y", "type": "uint256"}
+                    ]
+                },
+                {"name": "description", "type": "string"},
+                {"name": "active", "type": "bool"}
+            ]
+        });
+
+        fs::write(
+            abi_dir.join("Point.json"),
+            serde_json::to_string_pretty(&point_json)?,
+        )?;
+
+        fs::write(
+            abi_dir.join("ComplexPoint.json"),
+            serde_json::to_string_pretty(&complex_point_json)?,
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_nested_struct_loading() {
+        let temp_dir = TempDir::new().unwrap();
+        std::env::set_var("OUT_DIR", temp_dir.path());
+
+        setup_test_files(temp_dir.path()).unwrap();
+
+        let fields = FunctionParameter::resolve_struct_fields("ComplexPoint").unwrap();
+
+        assert_eq!(fields.len(), 3, "ComplexPoint should have 3 fields");
+
+        let (point_name, point_type) = &fields[0];
+        assert_eq!(point_name, "point", "First field should be named 'point'");
+
+        match point_type {
+            SolType::Struct { name, fields } => {
+                assert_eq!(name, "tuple", "Nested struct should have type 'tuple'");
+                assert_eq!(fields.len(), 2, "Point should have 2 fields");
+
+                let (x_name, x_type) = &fields[0];
+                let (y_name, y_type) = &fields[1];
+
+                assert_eq!(x_name, "x", "First nested field should be named 'x'");
+                assert!(matches!(x_type, SolType::Uint(64)), "x should be uint64");
+
+                assert_eq!(y_name, "y", "Second nested field should be named 'y'");
+                assert!(matches!(y_type, SolType::Uint(256)), "y should be uint256");
+            }
+            _ => panic!("Expected point to be a struct type"),
+        }
+
+        let (desc_name, desc_type) = &fields[1];
+        assert_eq!(
+            desc_name, "description",
+            "Second field should be named 'description'"
+        );
+        assert!(
+            matches!(desc_type, SolType::String),
+            "description should be string type"
+        );
+
+        let (active_name, active_type) = &fields[2];
+        assert_eq!(
+            active_name, "active",
+            "Third field should be named 'active'"
+        );
+        assert!(
+            matches!(active_type, SolType::Bool),
+            "active should be bool type"
+        );
+
+        let param = FunctionParameter::from_type(
+            &syn::parse_quote!(ComplexPoint),
+            Some("complex_point".to_string()),
+        )
+        .unwrap();
+
+        let json = serde_json::to_value(&param).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "name": "complex_point",
+                "type": "tuple",
+                "internalType": "struct ComplexPoint",
+                "components": [
+                    {
+                        "name": "point",
+                        "type": "tuple",
+                        "internalType": "tuple",
+                        "components": [
+                            {
+                                "name": "x",
+                                "type": "uint64",
+                                "internalType": "uint64"
+                            },
+                            {
+                                "name": "y",
+                                "type": "uint256",
+                                "internalType": "uint256"
+                            }
+                        ]
+                    },
+                    {
+                        "name": "description",
+                        "type": "string",
+                        "internalType": "string"
+                    },
+                    {
+                        "name": "active",
+                        "type": "bool",
+                        "internalType": "bool"
+                    }
+                ]
+            })
+        );
     }
 }

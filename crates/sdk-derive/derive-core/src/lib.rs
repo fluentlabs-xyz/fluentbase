@@ -6,6 +6,7 @@ use mode::Mode;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use router::Router;
+use solidity_abi::SolidityAbiGenerator;
 use storage::Storage;
 use tracing::{debug, error, info};
 
@@ -17,6 +18,7 @@ pub mod function_id;
 pub mod mode;
 pub mod route;
 pub mod router;
+pub mod solidity_abi;
 pub mod storage;
 
 /// Processes the router macro invocation.
@@ -122,4 +124,29 @@ pub fn storage_core(input: TokenStream2) -> Result<TokenStream2, syn::Error> {
 fn parse_storage_input(input: TokenStream2) -> Result<storage::Storage, syn::Error> {
     debug!("Parsing storage implementation");
     syn::parse2(input)
+}
+
+/// Processes the solidity ABI derive macro invocation.
+///
+/// # Arguments
+/// * `input` - Input TokenStream containing the struct definition
+///
+/// # Returns
+/// * `Result<TokenStream2, syn::Error>` - Processed ABI code or error
+pub fn solidity_abi_core(input: TokenStream2) -> Result<TokenStream2, syn::Error> {
+    debug!("Processing SolidityABI derive macro");
+
+    let generator = parse_solidity_abi_input(input)?;
+    info!("Generated Solidity ABI for struct: {}", generator.name);
+
+    Ok(quote!(#generator))
+}
+
+/// Parses struct definition from the input TokenStream.
+fn parse_solidity_abi_input(input: TokenStream2) -> Result<SolidityAbiGenerator, syn::Error> {
+    debug!("Parsing struct definition for SolidityABI");
+    syn::parse2(input).map_err(|e| {
+        error!("Failed to parse struct definition: {}", e);
+        e
+    })
 }

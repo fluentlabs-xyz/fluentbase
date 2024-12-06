@@ -1,153 +1,59 @@
-# Sdk derive macro
+# fluentbase-sdk-derive
 
-## Router macro
+Procedural macros for simplifying smart contract development in the Fluentbase ecosystem.
 
-Generates a router for Fluentbase contract functions with configurable encoding modes.
+## Features
 
-# Router Macro
+- **Router Generation**: Automatic function dispatch and parameter handling
+- **Storage Layout**: Solidity-compatible state variable management
+- **Client Generation**: Type-safe contract interaction wrappers
+- **Function Identifiers**: Custom function selector support
 
-Generates a router for Fluentbase contract functions with configurable encoding modes.
+## Usage
 
-## How Contract Execution Works
+Add to your `Cargo.toml`:
 
-In Fluentbase, contracts have two system functions:
-
-- `deploy`: executed once during contract deployment
-- `main`: serves as the primary entry point for all contract interactions
-
-When a contract is called, the `main` function receives input data where:
-
-- The first 4 bytes represent a function selector
-- The remaining bytes contain the encoded function parameters
-
-## Why Router is Needed
-
-Without the router macro, developers would need to write boilerplate code to:
-
-1. Read and validate input data length
-2. Extract the function selector (first 4 bytes)
-3. Match the selector with the appropriate function
-4. Decode function parameters
-5. Handle potential errors
-6. Encode and return results
-
-Here's an example of what this would look like in raw implementation:
-
-```rust
-impl<SDK: SharedAPI> ROUTER<SDK> {
-    pub fn main(&mut self) {
-        let input_length = self.sdk.input_size();
-        if input_length < 4 {
-            panic!("insufficient input length for method selector");
-        }
-        let mut call_data = fluentbase_sdk::alloc_slice(input_length as usize);
-        self.sdk.read(&mut call_data, 0);
-        let (selector, params) = call_data.split_at(4);
-        match [selector[0], selector[1], selector[2], selector[3]] {
-            GreetingCall::SELECTOR => {
-                let (data) = match GreetingCall::decode(&params) {
-                    Ok(decoded) => (decoded.0.0),
-                    Err(_) => panic!("Failed to decode input parameters"),
-                };
-                self.greeting(data);
-                self.sdk.write(&[0u8; 0]);
-            }
-            _ => panic!("unsupported method selector"),
-        }
-    }
-}
+```toml
+[dependencies]
+fluentbase-sdk-derive = "0.1.0"
 ```
 
-## How Router Helps
-
-The router macro automates this entire process by generating all the necessary boilerplate code. With the macro, developers can focus on implementing contract logic instead of handling low-level routing details.
-
-Example of using the router macro:
+Basic example:
 
 ```rust
-#[derive(Contract)]
-struct ROUTER<SDK> {
-    sdk: SDK,
+use fluentbase_sdk_derive::{router, client, function_id, solidity_storage};
+
+// Define contract storage
+solidity_storage! {
+    mapping(Address => U256) Balance;
+    Address Owner;
 }
 
-pub trait RouterAPI {
-    fn greeting(&self, message: String) -> String;
+// Define contract API
+#[client(mode = "solidity")]
+trait TokenAPI {
+    #[function_id("transfer(address,uint256)")]
+    fn transfer(&mut self, to: Address, amount: U256) -> bool;
 }
 
+// Implement contract logic
 #[router(mode = "solidity")]
-impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
-    #[function_id("greeting(string)")]
-    fn greeting(&self, message: String) -> String {
-        message
-    }
-}
-
-basic_entrypoint!(ROUTER);
-```
-
-### Constraints
-
-- References and mutable types are not allowed for function parameters
-- All function parameters and return types must implement `fluentbase_sdk::codec::Encoder` trait ([Encoder](fluentbase_sdk::codec::Encoder))
-- Custom error handling is available through fallback function
-
-### Arguments
-
-- `mode` - Encoding mode: "solidity" or "fluent"
-
-### Usage Examples
-
-#### Regular Implementation
-
-Only public functions will be dispatched:
-
-```rust
-#[router(mode = "solidity")]
-impl<SDK: SharedAPI> ROUTER<SDK> {
-    pub fn greeting(&mut self, data: FixedBytes<32>) {
-        self.sdk.write(data.as_slice());
+impl<SDK: SharedAPI> Contract<SDK> {
+    pub fn transfer(&mut self, to: Address, amount: U256) -> bool {
+        // Contract logic here
     }
 }
 ```
 
-#### Trait Implementation
+## Documentation
 
-All functions will be dispatched:
+Detailed documentation for each macro:
 
-```rust
-trait RouterAPI {
-    fn greeting(&self, msg: String) -> String;
-}
+- [Router](docs/router.md) - Function dispatch and parameter handling
+- [Storage](docs/storage.md) - State variable management
+- [Client](docs/client.md) - Contract interaction
+- [Function ID](docs/function_id.md) - Function selectors
 
-#[router(mode = "solidity")]
-impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
-    fn greeting(&self, msg: String) -> String {
-        msg
-    }
-}
-```
+## License
 
-### Attributes
-
-Function-level attributes:
-
-- `#[function_id("fnName(types)")]` - Specify custom function selector (optional). See [function_id](../README.md#function_id-attribute) for details
-
-### Error Handling
-
-Compile-time errors occur when:
-
-- Invalid encoding mode is specified
-- Function signatures contain incompatible types
-- Incompatible function_id is specified
-
-### Generated Output
-
-The macro generates:
-
-- Function selector matching logic
-- Input parameter decoding
-- Result encoding
-- Error handling for unknown selectors
-
-For complete implementation details, see [documentation](../README.md#router-macro).
+[MIT](LICENSE)

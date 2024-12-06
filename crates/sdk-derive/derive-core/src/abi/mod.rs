@@ -1,9 +1,11 @@
-mod error;
+pub mod artifacts;
+pub mod error;
 mod function;
 mod parameter;
 
 pub use error::{ABIError, ABIResult};
 pub use function::FunctionABI;
+pub use parameter::FunctionParameter;
 use serde::Serialize;
 
 // Core types
