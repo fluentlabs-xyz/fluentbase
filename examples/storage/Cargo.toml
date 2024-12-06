@@ -10,31 +10,17 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-#fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
-fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-types = { workspace = true, default-features = false }
-
-# for Solidity ABI
-alloy-sol-types = { version = "0.7.6", default-features = false }
+fluentbase-sdk = { workspace = true }
 
 # for hex macro
 hex-literal = { version = "0.4.1", default-features = false }
 
-paste = { workspace = true }
-
 [dev-dependencies]
-hex = "0.4.3"
 serial_test = "3.0.0"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]
 path = "lib.rs"
-
-#[profile.release]
-#lto = true
-#opt-level = 'z'
-#panic = "abort"
-#strip = true
 
 [features]
 default = ["std"]

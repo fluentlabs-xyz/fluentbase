@@ -5,8 +5,7 @@ edition = "2021"
 
 [dependencies]
 alloy-sol-types = { workspace = true }
-fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-types = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true }
 rwasm = { workspace = true }
 
 keccak-hash = { version = "0.10.0", default-features = false }

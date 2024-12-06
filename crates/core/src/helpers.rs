@@ -68,27 +68,6 @@ macro_rules! result_value {
     };
 }
 
-#[cfg(feature = "debug-print")]
-#[macro_export]
-macro_rules! debug_log {
-    ($msg:tt) => {{
-        #[cfg(target_arch = "wasm32")]
-        unsafe { fluentbase_sdk::rwasm::_debug_log($msg.as_ptr(), $msg.len() as u32) }
-        #[cfg(feature = "std")]
-        println!("{}", $msg);
-    }};
-    ($($arg:tt)*) => {{
-        let msg = alloc::format!($($arg)*);
-        debug_log!(msg);
-    }};
-}
-#[cfg(not(feature = "debug-print"))]
-#[macro_export]
-macro_rules! debug_log {
-    ($msg:tt) => {{}};
-    ($($arg:tt)*) => {{}};
-}
-
 pub fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
     match exit_code {
         ExitCode::Ok => InstructionResult::Stop,

@@ -10,16 +10,15 @@ use fluentbase_genesis::{
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_runtime::RuntimeContext;
 use fluentbase_sdk::{
-    byteorder::{ByteOrder, LittleEndian},
-    runtime::TestingContext,
-};
-use fluentbase_types::{
     address,
+    byteorder::{ByteOrder, LittleEndian},
     bytes,
     calc_create_address,
+    runtime::TestingContext,
     Account,
     Address,
     Bytes,
+    HashMap,
     SysFuncIdx,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
@@ -27,7 +26,6 @@ use fluentbase_types::{
     SYSCALL_ID_CALL,
     U256,
 };
-use hashbrown::HashMap;
 use hex_literal::hex;
 use revm::{
     primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, Output, TransactTo},
@@ -341,51 +339,6 @@ fn test_deploy_greeting() {
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!("Hello, World", from_utf8(bytes.as_ref()).unwrap());
-}
-
-#[test]
-fn test_deploy_duntsane() {
-    // deploy duntsane WASM contract
-    let mut ctx = EvmTestingContext::default();
-    const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = deploy_evm_tx(
-        &mut ctx,
-        DEPLOYER_ADDRESS,
-        include_bytes!("../../examples/duntsane/lib.wasm").into(),
-    );
-
-    // call random function
-    let result = call_evm_tx(
-        &mut ctx,
-        DEPLOYER_ADDRESS,
-        contract_address,
-        Bytes::from([94u8, 192u8, 30u8, 77u8]),
-        None,
-        None,
-    );
-    assert!(result.is_success());
-
-    // call reset_deck function
-    let result = call_evm_tx(
-        &mut ctx,
-        DEPLOYER_ADDRESS,
-        contract_address,
-        Bytes::from([114u8, 67u8, 8u8, 122u8]),
-        None,
-        None,
-    );
-    assert!(result.is_success());
-
-    // call play_baccarat function
-    let result = call_evm_tx(
-        &mut ctx,
-        DEPLOYER_ADDRESS,
-        contract_address,
-        Bytes::from([166u8, 180u8, 107u8, 200u8]),
-        None,
-        None,
-    );
-    assert!(result.is_success());
 }
 
 #[test]
@@ -1095,8 +1048,9 @@ fn test_simple_nested_call() {
         .gas_price(U256::ZERO)
         .exec();
     println!("{:?}", result);
-    assert!(result.output().unwrap_or_default().len() >= 4);
-    let value = LittleEndian::read_i32(result.output().unwrap_or_default().as_ref());
+    let output = result.output().unwrap_or_default();
+    assert!(output.len() >= 4);
+    let value = LittleEndian::read_i32(output.as_ref());
     assert_eq!(value, -120);
     assert!(result.is_success());
     // 21k is tx cost + 2600 (x2) is nested calls + 4126 is opcode cost

@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::{Address, Bytes, B256};
+use fluentbase_sdk::{Address, Bytes, B256};
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallEmitLog;

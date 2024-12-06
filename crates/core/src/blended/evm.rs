@@ -180,7 +180,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         call_depth: u32,
     ) -> (Bytes, i32) {
         // take right bytecode depending on context params
-        let (mut evm_bytecode, code_hash) = self.load_evm_bytecode(&context.bytecode_address);
+        let (evm_bytecode, code_hash) = self.load_evm_bytecode(&context.bytecode_address);
 
         // if bytecode is empty, then commit result and return empty buffer
         if evm_bytecode.is_empty() {
@@ -217,19 +217,11 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         state: u32,
         call_depth: u32,
     ) -> (Bytes, i32) {
-        let (mut eip7702_bytecode, _code_hash) = self.load_evm_bytecode(&context.bytecode_address);
+        let (eip7702_bytecode, _code_hash) = self.load_evm_bytecode(&context.bytecode_address);
         let Bytecode::Eip7702(eip7702_bytecode) = eip7702_bytecode else {
             unreachable!("only EIP7702 bytecode allowed here")
         };
         let (delegated_account, _) = self.sdk.account(&eip7702_bytecode.delegated_address);
-        // let delegated_bytecode = self
-        //     .sdk
-        //     .preimage(
-        //         &eip7702_bytecode.delegated_address,
-        //         &delegated_account.code_hash,
-        //     )
-        //     .unwrap_or_default();
-        // let delegated_bytecode = Bytecode::new_raw(delegated_bytecode);
         context.bytecode_address = eip7702_bytecode.delegated_address;
         self.exec_bytecode(context, &delegated_account, input, gas, state, call_depth)
     }

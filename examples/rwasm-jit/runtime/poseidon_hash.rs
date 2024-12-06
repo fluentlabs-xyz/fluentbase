@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_poseidon::hash_with_domain;
-use fluentbase_types::{ExitCode, F254};
+use fluentbase_sdk::{ExitCode, F254};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use rwasm::{core::Trap, Caller};
 

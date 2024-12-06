@@ -49,7 +49,7 @@ use crate::runtime::{
     // state::SyscallState,
     write::SyscallWrite,
 };
-use fluentbase_types::{Bytes, SysFuncIdx, F254, POSEIDON_EMPTY};
+use fluentbase_sdk::{Bytes, SysFuncIdx, F254, POSEIDON_EMPTY};
 use rwasm::{Caller, Linker, ResumableInvocation, Store};
 
 extern crate alloc;
