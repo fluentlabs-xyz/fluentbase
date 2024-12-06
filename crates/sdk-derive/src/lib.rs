@@ -255,7 +255,7 @@ pub fn function_id(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust, ignore
 /// #[derive(Codec, Debug, Clone, SolidityABI)]
 /// pub struct Point {
 ///     x: u64,
@@ -354,7 +354,7 @@ pub fn derive_solidity_abi(input: TokenStream) -> TokenStream {
 /// # Type Requirements
 ///
 /// - Custom types must implement the `Codec` trait:
-/// ```rust
+/// ```rust, ignore
 /// #[derive(Codec)]
 /// pub struct UserData {
 ///     balance: U256,

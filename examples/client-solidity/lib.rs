@@ -16,7 +16,7 @@ use fluentbase_sdk::{
 /// RouterAPIClient
 #[client(mode = "solidity")]
 trait RouterAPI {
-    #[function_id("greeting(string)", validate(false))]
+    #[function_id("greeting(string)")]
     fn greeting(&mut self, message: String) -> String;
 }
 

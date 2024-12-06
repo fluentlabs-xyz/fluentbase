@@ -14,7 +14,7 @@ build:
 .PHONY: test
 test:
 	clear
-	cargo test --no-fail-fast -q
+	RUST_MIN_STACK=20000000 cargo test --no-fail-fast -q
 
 .PHONE: deploy_example_greeting_contract
 deploy_example_greeting_contract:
