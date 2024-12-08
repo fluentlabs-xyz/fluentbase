@@ -2,6 +2,8 @@
 mod elf;
 mod evm;
 mod svm;
+mod svm_common;
+mod svm_syscalls;
 mod syscall;
 mod util;
 mod wasm;
@@ -175,9 +177,13 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             BytecodeType::WASM => {
                 self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
-            #[cfg(feature = "elf")]
+            // BytecodeType::SVM => {
+            //     self.exec_svm_bytecode(context, bytecode_account, input, gas, state, call_depth)
+            // }
+            // #[cfg(feature = "elf")]
             BytecodeType::ELF => {
-                self.exec_elf_bytecode(context, bytecode_account, input, gas, state, call_depth)
+                // self.exec_elf_bytecode(context, bytecode_account, input, gas, state, call_depth)
+                self.exec_svm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
             _ => unreachable!("not supported bytecode type"),
         }
@@ -250,9 +256,13 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             BytecodeType::WASM => {
                 self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth)
             }
-            #[cfg(feature = "elf")]
+            // BytecodeType::SVM => {
+            //     self.deploy_svm_contract(contract_account.address, inputs, gas, call_depth)
+            // }
+            // #[cfg(feature = "elf")]
             BytecodeType::ELF => {
-                self.deploy_elf_contract(contract_account.address, inputs, gas, call_depth)
+                // self.deploy_elf_contract(contract_account.address, inputs, gas, call_depth)
+                self.deploy_svm_contract(contract_account.address, inputs, gas, call_depth)
             }
             #[cfg(not(feature = "elf"))]
             _ => unreachable!("not supported bytecode type"),

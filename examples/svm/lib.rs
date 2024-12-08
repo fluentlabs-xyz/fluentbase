@@ -50,24 +50,15 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, SolanaError> {
-        // let cost = invoke_context
-        //     .get_compute_budget()
-        //     .syscall_base_cost
-        //     .max(len);
-        // consume_compute_meter(invoke_context, cost)?;
-
         translate_string_and_do(
             memory_mapping,
             addr,
             len,
-            // invoke_context.get_check_aligned(),
             true,
             &mut |string: &str| {
-                // stable_log::program_log(&invoke_context.get_log_collector(), string);
                 #[cfg(all(feature = "std", feature = "debug-print"))]
                 println!("Log: {string}");
                 debug_log!("SyscallLog: hi, there!");
-                invoke_context.sdk.write(SYS_CALL_LOG_TEST_TEXT1.as_bytes());
                 Ok(0)
             },
         )?;
@@ -80,17 +71,14 @@ impl<SDK: SharedAPI> SVM<SDK> {
         // any custom deployment logic here
     }
     fn main(&mut self) {
-        // This tests checks that a struct field adjacent to another field
-        // which is a relocatable function pointer is not overwritten when
-        // the function pointer is relocated at load time.
+        let input = self.sdk.input();
+        let elf_bytes = input.to_vec();
+
         let config = Config {
             enable_instruction_tracing: false,
             reject_broken_elfs: true,
-            // sanitize_user_provided_values: true,
             ..Config::default()
         };
-        let input = self.sdk.input();
-        let elf_bytes = input.to_vec();
 
         let instruction_count = 0;
         let mut context_object = ExecContextObject::new(&mut self.sdk, instruction_count);
@@ -98,12 +86,6 @@ impl<SDK: SharedAPI> SVM<SDK> {
         // Holds the function symbols of an Executable
         let mut function_registry =
             FunctionRegistry::<BuiltinFunction<ExecContextObject<SDK>>>::default();
-        let shunted_funcs: &[&str] = &[];
-        shunted_funcs.iter().for_each(|&v| {
-            function_registry
-                .register_function_hashed(v, SyscallStubInterceptor::vm)
-                .unwrap();
-        });
         function_registry
             .register_function_hashed("sol_log_", SyscallLogTest::vm)
             .unwrap();
@@ -163,12 +145,7 @@ impl<SDK: SharedAPI> SVM<SDK> {
             );
             vm.registers;
 
-            // println!(
-            //     "Executing program with expected result: {}",
-            //     expected_result
-            // );
             let (interpreter_instruction_count, result) = vm.execute_program(&executable_elf, true);
-            // println!("Execution result: {:?}", result);
 
             assert_eq!(
                 expected_result,

@@ -305,6 +305,7 @@ pub enum BytecodeType {
     EVM,
     WASM,
     ELF,
+    // SVM,
 }
 
 const WASM_SIG_LEN: usize = 4;
@@ -331,6 +332,10 @@ impl BytecodeType {
         if input.len() >= ELF_SIG_LEN && input[0..ELF_SIG_LEN] == ELF_SIG {
             return Self::ELF;
         }
+        // // default SVM signature
+        // if input.len() >= SVM_SIG_LEN && input[0..SVM_SIG_LEN] == SVM_SIG {
+        //     return Self::SVM;
+        // }
         // case for rWASM contracts that are inside genesis
         if input.len() >= RWASM_SIG_LEN && input[0..RWASM_SIG_LEN] == RWASM_SIG {
             return Self::WASM;

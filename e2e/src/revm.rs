@@ -20,6 +20,7 @@ use fluentbase_types::{
     Account,
     Address,
     Bytes,
+    SovereignAPI,
     SysFuncIdx,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
@@ -39,6 +40,8 @@ use rwasm::{
     instruction_set,
     rwasm::{BinaryFormat, RwasmModule},
 };
+use solana_ee_core::helpers::serialize_parameters_aligned;
+use solana_program::{clock::Epoch, keccak, pubkey::Pubkey};
 use std::u64;
 
 #[allow(dead_code)]
@@ -389,7 +392,7 @@ fn test_deploy_duntsane() {
 }
 
 #[test]
-fn test_deploy_svm() {
+fn test_deploy_svm_example() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
@@ -413,6 +416,58 @@ fn test_deploy_svm() {
     assert!(result.is_success());
     pub const SYS_CALL_LOG_TEST_TEXT1: &str = "panic in: SyscallLog";
     assert_eq!(SYS_CALL_LOG_TEST_TEXT1, bytes_utf8);
+}
+
+#[test]
+fn test_deploy_svm_program() {
+    // deploy greeting WASM contract
+    let mut ctx = EvmTestingContext::default();
+    let solana_elf_file_name = "solana_ee_hello_world";
+    let elf_bytes = std::fs::read(format!(
+        "../../solana-ee/crates/examples/hello-world/assets/{}.so",
+        solana_elf_file_name
+    ))
+    .expect("file exists");
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = deploy_evm_tx(&mut ctx, DEPLOYER_ADDRESS, elf_bytes.into());
+
+    // prepare input for solana program
+    let account1_key = Pubkey::new_from_array([1u8; 32]);
+    let account1_owner = Pubkey::new_from_array([2u8; 32]);
+    let mut account1_lamports = 11;
+    let mut account1_data = vec![1, 2, 3];
+    let account1_rent_epoch = Epoch::default();
+    let account1 = solana_program::account_info::AccountInfo::new(
+        &account1_key,
+        true,
+        false,
+        &mut account1_lamports,
+        &mut account1_data,
+        &account1_owner,
+        false,
+        account1_rent_epoch,
+    );
+    let accounts: Vec<solana_program::account_info::AccountInfo> = vec![account1];
+    let program_id = Pubkey::new_from_array([0xcu8; 32]);
+    let instruction_data: &[u8] = &[1, 2, 3, 4];
+
+    let svm_elf_program_input_bytes =
+        serialize_parameters_aligned(&accounts, &instruction_data, &program_id)
+            .expect("failed to serialize");
+
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        svm_elf_program_input_bytes.into(),
+        Some(100_000_000),
+        None,
+    );
+    // let bytes = result.output().unwrap_or_default();
+    // let bytes_utf8 = from_utf8(bytes.as_ref()).unwrap();
+    assert!(result.is_success());
+    // pub const SYS_CALL_LOG_TEST_TEXT1: &str = "panic in: SyscallLog";
+    // assert_eq!(SYS_CALL_LOG_TEST_TEXT1, bytes_utf8);
 }
 
 #[test]

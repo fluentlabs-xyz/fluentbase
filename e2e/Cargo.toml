@@ -15,11 +15,12 @@ fluentbase-sdk = { workspace = true, default-features = false, features = ["std"
 fluentbase-poseidon = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
-fluentbase-core = { workspace = true }
 fluentbase-types = { workspace = true }
 rwasm = { workspace = true, default-features = false }
-revm-interpreter = { workspace = true, default-features = false, features = ["std"] }
 revm = { workspace = true, default-features = false, features = ["std"] }
+solana-ee-core = { workspace = true, default-features = false }
+solana_rbpf = { workspace = true }
+solana-program = { workspace = true, default-features = false }
 
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
