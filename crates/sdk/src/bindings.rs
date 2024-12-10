@@ -52,7 +52,7 @@ extern "C" {
     /// - An `i32` value indicating the result of the execution, negative or zero result stands for
     ///   terminated execution, but positive code stands for interrupted execution (works only for
     ///   root execution level)
-    fn _exec(
+    pub fn _exec(
         hash32_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,
@@ -118,7 +118,7 @@ extern "C" {
     /// computations, and is often wrapped in a safer abstraction to ensure the correct usage of
     /// memory.
     pub fn _keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    pub fn _keccak256_permute(state_ptr: *const u8);
+    pub fn _keccak256_permute(state_ptr: *const [u64; 25]);
     pub fn _poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     pub fn _poseidon_hash(
         fa32_offset: *const u8,
@@ -126,11 +126,11 @@ extern "C" {
         fd32_offset: *const u8,
         output32_offset: *mut u8,
     );
-    pub fn _sha256_extend(w_ptr: *const u8);
-    pub fn _sha256_compress(w_ptr: *const u8, h_ptr: *const u8);
+    pub fn _sha256_extend(w_ptr: *mut u8);
+    pub fn _sha256_compress(w_ptr: *mut u8, h_ptr: *const u8);
 
-    pub fn _ed25519_add(p_ptr: *const u8, q_ptr: *const u8);
-    pub fn _ed25519_decompress(slice_ptr: *const u8, sign: u32);
+    pub fn _ed25519_add(p_ptr: *mut u8, q_ptr: *const u8);
+    pub fn _ed25519_decompress(slice_ptr: *mut u8, sign: u32);
     // TODO(dmitry123): "rename to `_secp256k1_recover`"
     pub fn _ecrecover(
         digest32_offset: *const u8,
@@ -138,9 +138,9 @@ extern "C" {
         output65_offset: *mut u8,
         rec_id: u32,
     );
-    pub fn _secp256k1_add(p_ptr: *const u8, q_ptr: *const u8);
-    pub fn _secp256k1_decompress(x_ptr: *const u8, sign: u32);
-    pub fn _secp256k1_double(p_ptr: *const u8);
+    pub fn _secp256k1_add(p_ptr: *mut u8, q_ptr: *const u8);
+    pub fn _secp256k1_decompress(x_ptr: *mut u8, sign: u32);
+    pub fn _secp256k1_double(p_ptr: *mut u8);
 
     pub fn _bls12381_decompress(arg1: u32, arg2: u32);
     pub fn _bls12381_add(arg1: u32, arg2: u32);
