@@ -1028,7 +1028,7 @@ fn test_simple_nested_call() {
         // call "_write" func
         I32Const(136) // offset
         I32Const(4) // length
-        Call(SysFuncIdx::WRITE)
+        Call(SysFuncIdx::WRITE_OUTPUT)
         // exit with 0 exit code
         ConsumeFuel(40)
         I32Const(0)
@@ -1093,7 +1093,6 @@ fn test_blended_gas_spend_wasm_from_evm() {
     let mut ctx = EvmTestingContext::default();
     const ACCOUNT1_ADDRESS: Address = address!("1111111111111111111111111111111111111111");
     const ACCOUNT2_ADDRESS: Address = address!("1111111111111111111111111111111111111112");
-    const ACCOUNT3_ADDRESS: Address = address!("1111111111111111111111111111111111111113");
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
 
     let _account1 = ctx.add_wasm_contract(

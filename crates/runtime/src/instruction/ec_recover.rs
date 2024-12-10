@@ -48,7 +48,7 @@ impl SyscallEcrecover {
 mod secp256k1_tests {
     extern crate alloc;
 
-    use crate::instruction::ecrecover::SyscallEcrecover;
+    use crate::instruction::ec_recover::SyscallEcrecover;
     use fluentbase_types::B256;
     use hex_literal::hex;
     use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};

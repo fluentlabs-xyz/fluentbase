@@ -45,7 +45,7 @@ fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
         Call(SysFuncIdx::INPUT_SIZE) // length=input_size-header_size
         I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as u32)
         I32Sub
-        Call(SysFuncIdx::READ)
+        Call(SysFuncIdx::READ_INPUT)
         // delegate call
         I32Const(0) // hash32_ptr
         I32Const(32) // input_ptr

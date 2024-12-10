@@ -1,11 +1,8 @@
-use std::marker::PhantomData;
+use crate::{instruction::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use rwasm::Caller;
-use rwasm::core::Trap;
-use sp1_curves::{edwards::EdwardsParameters, AffinePoint, EllipticCurve};
-use sp1_curves::params::NumWords;
-use crate::{RuntimeContext};
-use crate::instruction::sp1::cast_u8_to_u32;
+use rwasm::{core::Trap, Caller};
+use sp1_curves::{edwards::EdwardsParameters, params::NumWords, AffinePoint, EllipticCurve};
+use std::marker::PhantomData;
 
 pub(crate) struct SyscallEdwardsAddAssign<E: EllipticCurve + EdwardsParameters> {
     _phantom: PhantomData<E>,
@@ -14,26 +11,31 @@ pub(crate) struct SyscallEdwardsAddAssign<E: EllipticCurve + EdwardsParameters> 
 impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
     /// Create a new instance of the [`SyscallEdwardsAddAssign`].
     pub const fn new() -> Self {
-        Self { _phantom: PhantomData }
+        Self {
+            _phantom: PhantomData,
+        }
     }
 }
 
 impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
-        let p_ptr = arg1;
-        if p_ptr % 4 != 0 {
-            panic!();
-        }
-        let q_ptr = arg2;
-        if q_ptr % 4 != 0 {
-            panic!();
-        }
-
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
+        p_ptr: u32,
+        q_ptr: u32,
+    ) -> Result<(), Trap> {
         let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;
 
         let p = caller.read_memory(p_ptr, num_words as u32 * 4)?;
         let q = caller.read_memory(q_ptr, num_words as u32 * 4)?;
 
+        let result_vec = Self::fn_impl(p, q)?;
+
+        caller.write_memory(p_ptr, &result_vec)?;
+
+        Ok(())
+    }
+
+    pub fn fn_impl(p: &[u8], q: &[u8]) -> Result<Vec<u8>, Trap> {
         let p = cast_u8_to_u32(p).unwrap();
         let q = cast_u8_to_u32(q).unwrap();
 
@@ -42,10 +44,11 @@ impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
         let result_affine = p_affine + q_affine;
 
         let result_words = result_affine.to_words_le();
-
-        caller.write_memory(p_ptr, result_words.into_iter().map(|x| x.to_be_bytes()).flatten().collect::<Vec<_>>().as_slice())?;
-
-        Ok(())
+        let result_vec = result_words
+            .into_iter()
+            .map(|x| x.to_be_bytes())
+            .flatten()
+            .collect::<Vec<_>>();
+        Ok(result_vec)
     }
 }
-

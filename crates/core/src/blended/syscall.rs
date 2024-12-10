@@ -1,8 +1,4 @@
-use crate::{
-    blended::BlendedRuntime,
-    helpers::{exit_code_from_evm_error, DenominateGas},
-    types::NextAction,
-};
+use crate::{blended::BlendedRuntime, helpers::exit_code_from_evm_error, types::NextAction};
 use alloc::{boxed::Box, vec::Vec};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian},
