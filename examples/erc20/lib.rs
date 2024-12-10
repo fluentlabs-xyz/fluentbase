@@ -138,13 +138,6 @@ impl<SDK: SharedAPI> ERC20API for ERC20<SDK> {
     fn transfer(&mut self, to: Address, value: U256) -> U256 {
         let from = self.sdk.context().contract_caller();
 
-        // check if the sender and receiver are valid
-        if from.is_zero() {
-            panic!("invalid sender");
-        } else if to.is_zero() {
-            panic!("invalid receiver");
-        }
-
         Balance::subtract(&mut self.sdk, from, value).unwrap_or_else(|err| panic!("{}", err));
         Balance::add(&mut self.sdk, to, value).unwrap_or_else(|err| panic!("{}", err));
 
