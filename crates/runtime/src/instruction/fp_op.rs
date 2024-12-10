@@ -1,0 +1,52 @@
+use crate::{
+    instruction::{cast_u8_to_u32, FieldOp},
+    RuntimeContext,
+};
+use k256::elliptic_curve::generic_array::typenum::Unsigned;
+use num::BigUint;
+use rwasm::{core::Trap, Caller};
+use sp1_curves::{params::NumWords, weierstrass::FpOpField};
+use sp1_primitives::consts::words_to_bytes_le_vec;
+use std::marker::PhantomData;
+
+pub struct SyscallFpOp<P, OP> {
+    _op: PhantomData<OP>,
+    _marker: PhantomData<P>,
+}
+
+impl<P: FpOpField, OP: FieldOp> SyscallFpOp<P, OP> {
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
+        x_ptr: u32,
+        y_ptr: u32,
+    ) -> Result<(), Trap> {
+        let num_words = <P as NumWords>::WordsFieldElement::USIZE;
+
+        let x = caller.read_memory(x_ptr, num_words as u32 * 4)?;
+        let y = caller.read_memory(y_ptr, num_words as u32 * 4)?;
+
+        let result_vec = Self::fn_impl(x, y)?;
+        caller.write_memory(x_ptr, &result_vec)?;
+
+        Ok(())
+    }
+
+    pub fn fn_impl(x: &[u8], y: &[u8]) -> Result<Vec<u8>, Trap> {
+        let num_words = <P as NumWords>::WordsFieldElement::USIZE;
+
+        let x = cast_u8_to_u32(x).unwrap();
+        let y = cast_u8_to_u32(y).unwrap();
+
+        let modulus = &BigUint::from_bytes_le(P::MODULUS);
+        let a = BigUint::from_slice(&x) % modulus;
+        let b = BigUint::from_slice(&y) % modulus;
+
+        let result = OP::execute(a, b, modulus);
+
+        let mut result = result.to_u32_digits();
+        result.resize(num_words, 0);
+
+        let result_vec = words_to_bytes_le_vec(result.as_slice());
+        Ok(result_vec)
+    }
+}
