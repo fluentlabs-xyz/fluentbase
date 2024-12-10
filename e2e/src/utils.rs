@@ -334,7 +334,11 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
     );
     println!("fuel consumed: {}", result.fuel_consumed);
     if result.exit_code != 0 {
-        let logs = &runtime.store().tracer().unwrap().logs;
+        let logs = &runtime
+            .store()
+            .tracer()
+            .map(|v| v.logs.clone())
+            .unwrap_or_default();
         println!("execution trace ({} steps):", logs.len());
         for log in logs.iter().rev().take(100).rev() {
             if let Some(value) = log.opcode.aux_value() {
