@@ -1,4 +1,8 @@
-use crate::{blended::BlendedRuntime, helpers::exit_code_from_evm_error, types::NextAction};
+use crate::{
+    blended::BlendedRuntime,
+    helpers::{exit_code_from_evm_error, DenominateGas},
+    types::NextAction,
+};
 use alloc::{boxed::Box, vec::Vec};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian},
@@ -65,7 +69,8 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         );
         // only main state can be forwarded to the other contract as a nested call,
         // other states can be only used by root
-        match params.code_hash {
+        let inner_gas_used = self.inner_gas_spend.take();
+        let next_action = match params.code_hash {
             SYSCALL_ID_STORAGE_READ => self.syscall_storage_read(contract_context, params),
             SYSCALL_ID_STORAGE_WRITE => self.syscall_storage_write(contract_context, params),
             SYSCALL_ID_CALL => self.syscall_call(contract_context, params, call_depth),
@@ -88,6 +93,13 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             SYSCALL_ID_TRANSIENT_READ => self.syscall_transient_read(contract_context, params),
             SYSCALL_ID_TRANSIENT_WRITE => self.syscall_transient_write(contract_context, params),
             _ => NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams),
+        };
+        match next_action {
+            NextAction::ExecutionResult { gas_used, .. }
+            | NextAction::NestedCall { gas_used, .. } => {
+                self.inner_gas_spend = Some(inner_gas_used.unwrap_or_default() + gas_used);
+                next_action
+            }
         }
     }
 
@@ -379,6 +391,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             if call_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
+
             let mut gas_limit = params.fuel_limit - call_cost;
             gas_limit = core::cmp::min(gas_limit - gas_limit / 64, params.fuel_limit);
             if gas_limit + call_cost > params.fuel_limit {

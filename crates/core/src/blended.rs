@@ -3,7 +3,11 @@ mod syscall;
 mod util;
 mod wasm;
 
-use crate::{helpers::evm_error_from_exit_code, types::NextAction};
+use crate::{
+
+    helpers::{evm_error_from_exit_code, DenominateGas},
+    types::NextAction,
+};
 use alloc::boxed::Box;
 use fluentbase_sdk::{
     bytes::BytesMut,
@@ -44,6 +48,7 @@ pub use util::{create_delegate_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
 pub struct BlendedRuntime<SDK> {
     sdk: SDK,
     env: Env,
+    pub inner_gas_spend: Option<u64>,
 }
 
 impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
@@ -51,6 +56,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         Self {
             env: env_from_context(sdk.context()),
             sdk,
+            inner_gas_spend: None,
         }
     }
 
@@ -172,7 +178,16 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 self.exec_eip7702_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
             BytecodeType::WASM => {
-                self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
+                let result = self.exec_rwasm_bytecode(
+                    context,
+                    bytecode_account,
+                    input,
+                    gas,
+                    state,
+                    call_depth,
+                );
+                gas.denominate_gas(self.inner_gas_spend.unwrap_or_default());
+                result
             }
         }
     }
@@ -228,7 +243,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             Err(exit_code) => return return_error(gas, exit_code),
         };
 
-        let result = match bytecode_type {
+        let mut result = match bytecode_type {
             BytecodeType::EVM => {
                 if ENABLE_EVM_PROXY_CONTRACT {
                     self.deploy_evm_contract_proxy(
@@ -242,7 +257,12 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 }
             }
             BytecodeType::WASM => {
-                self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth)
+                let mut result =
+                    self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth);
+                result
+                    .gas
+                    .denominate_gas(self.inner_gas_spend.unwrap_or_default());
+                result
             }
             _ => InterpreterResult::new(
                 InstructionResult::CreateContractStartingWithEF,
@@ -338,6 +358,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             is_static: inputs.is_static,
             value: inputs.value.get(),
         };
+
         let (output, exit_code) = self.exec_bytecode(
             contract_context,
             &bytecode_account,
@@ -355,7 +376,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         (output, gas, exit_code)
     }
 
-    pub fn create(&mut self, create_inputs: Box<CreateInputs>) -> CreateOutcome {
+    pub fn create(&mut self, mut create_inputs: Box<CreateInputs>) -> CreateOutcome {
         self.create_inner(create_inputs, 0)
     }
 
