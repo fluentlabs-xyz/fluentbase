@@ -1,10 +1,36 @@
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
-use fluentbase_sdk::{create_import_linker, ExitCode, SysFuncIdx::STATE, STATE_DEPLOY, STATE_MAIN};
-use revm_interpreter::InstructionResult;
+#[cfg(feature = "std")]
+use fluentbase_runtime::types::PreimageResolver;
+use fluentbase_sdk::{
+    create_import_linker,
+    Address,
+    Bytes,
+    ExitCode,
+    SovereignAPI,
+    SysFuncIdx::STATE,
+    B256,
+    STATE_DEPLOY,
+    STATE_MAIN,
+};
+use revm_interpreter::{Gas, InstructionResult};
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
 };
+
+#[cfg(feature = "std")]
+pub(crate) struct SdkPreimageAdapter<'a, SDK: SovereignAPI>(pub Address, pub &'a SDK);
+
+#[cfg(feature = "std")]
+impl<'a, SDK: SovereignAPI> PreimageResolver for SdkPreimageAdapter<'a, SDK> {
+    fn preimage(&self, hash: &[u8; 32]) -> Option<Bytes> {
+        self.1.preimage(&self.0, &B256::from(hash))
+    }
+
+    fn preimage_size(&self, hash: &[u8; 32]) -> Option<u32> {
+        self.1.preimage_size(&self.0, &B256::from(hash))
+    }
+}
 
 #[inline(always)]
 pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
@@ -42,27 +68,6 @@ macro_rules! result_value {
     };
 }
 
-#[cfg(feature = "debug-print")]
-#[macro_export]
-macro_rules! debug_log {
-    ($msg:tt) => {{
-        #[cfg(target_arch = "wasm32")]
-        unsafe { fluentbase_sdk::rwasm::_debug_log($msg.as_ptr(), $msg.len() as u32) }
-        #[cfg(feature = "std")]
-        println!("{}", $msg);
-    }};
-    ($($arg:tt)*) => {{
-        let msg = alloc::format!($($arg)*);
-        debug_log!(msg);
-    }};
-}
-#[cfg(not(feature = "debug-print"))]
-#[macro_export]
-macro_rules! debug_log {
-    ($msg:tt) => {{}};
-    ($($arg:tt)*) => {{}};
-}
-
 pub fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
     match exit_code {
         ExitCode::Ok => InstructionResult::Stop,
@@ -85,10 +90,6 @@ pub fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
         ExitCode::ContractSizeLimit => InstructionResult::CreateContractSizeLimit,
         ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
         ExitCode::FatalExternalError => InstructionResult::FatalExternalError,
-        // ExitCode::ReturnContract => InstructionResult::ReturnContract,
-        // ExitCode::ReturnContractInNotInitEOF => InstructionResult::ReturnContractInNotInitEOF,
-        // ExitCode::EOFOpcodeDisabledInLegacy => InstructionResult::EOFOpcodeDisabledInLegacy,
-        // ExitCode::EOFFunctionStackOverflow => InstructionResult::EOFFunctionStackOverflow,
         // TODO(dmitry123): "what's proper unknown error code mapping?"
         _ => InstructionResult::OutOfGas,
     }
@@ -114,7 +115,6 @@ pub fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
         | InstructionResult::StateChangeDuringStaticCall => ExitCode::WriteProtection,
         InstructionResult::InvalidFEOpcode => ExitCode::InvalidEfOpcode,
         InstructionResult::InvalidJump => ExitCode::InvalidJump,
-        // InstructionResult::NotActivated => ExitCode::NotActivated,
         InstructionResult::StackUnderflow => ExitCode::StackUnderflow,
         InstructionResult::StackOverflow => ExitCode::StackOverflow,
         InstructionResult::OutOfOffset => ExitCode::OutputOverflow,
@@ -127,10 +127,28 @@ pub fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
         }
         InstructionResult::CreateContractStartingWithEF => ExitCode::CreateContractStartingWithEF,
         InstructionResult::FatalExternalError => ExitCode::FatalExternalError,
-        // InstructionResult::ReturnContract => ExitCode::ReturnContract,
-        // InstructionResult::ReturnContractInNotInitEOF => ExitCode::ReturnContractInNotInitEOF,
-        // InstructionResult::EOFOpcodeDisabledInLegacy => ExitCode::EOFOpcodeDisabledInLegacy,
-        // InstructionResult::EOFFunctionStackOverflow => ExitCode::EOFFunctionStackOverflow,
         _ => ExitCode::UnknownError,
+    }
+}
+
+pub trait DenominateGas {
+    const DENOMINATE_COEFFICIENT: u64;
+
+    fn denominate_gas(&mut self, inner_gas_spent: u64);
+}
+
+impl DenominateGas for Gas {
+    const DENOMINATE_COEFFICIENT: u64 = 1000;
+    fn denominate_gas(&mut self, inner_gas_spent: u64) {
+        println!("Nominate gas: {:?} {:?}", self, inner_gas_spent);
+        let gas_used = self.limit() - self.remaining() - inner_gas_spent;
+        if gas_used != 0 {
+            self.spend_all();
+            self.erase_cost(
+                self.limit()
+                    - ((gas_used - 1) / Self::DENOMINATE_COEFFICIENT + 1)
+                    - inner_gas_spent,
+            );
+        }
     }
 }

@@ -1,9 +1,8 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate alloc;
 extern crate core;
+extern crate fluentbase_sdk;
 
-// #[cfg(feature = "blended")]
-// mod blended;
 #[cfg(feature = "evm")]
 mod evm;
 #[cfg(any(
@@ -15,8 +14,3 @@ mod evm;
     feature = "ecrecover",
 ))]
 mod precompile;
-#[cfg(feature = "svm")]
-mod svm;
-mod utils;
-#[cfg(feature = "wasm")]
-mod wasm;

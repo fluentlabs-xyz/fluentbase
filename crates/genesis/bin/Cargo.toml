@@ -11,5 +11,5 @@ fluentbase-genesis = { workspace = true }
 [features]
 default = ["std"]
 std = [
-    "fluentbase-genesis/std"
+    "fluentbase-genesis/std",
 ]

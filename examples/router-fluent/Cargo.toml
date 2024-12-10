@@ -1,0 +1,20 @@
+[package]
+edition = "2021"
+name = "fluentbase-example-route-wasm"
+version = "0.1.0"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+
+[dev-dependencies]
+hex = "0.4.3"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std",
+]

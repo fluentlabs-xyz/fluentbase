@@ -1,22 +1,24 @@
 use core::{mem::take, str::from_utf8};
+use fluentbase_codec::{FluentABI, SolidityABI};
 use fluentbase_genesis::{
-    devnet::{devnet_genesis_from_file, GENESIS_KECCAK_HASH_SLOT, GENESIS_POSEIDON_HASH_SLOT},
+    devnet_genesis_from_file,
     Genesis,
     EXAMPLE_GREETING_ADDRESS,
+    GENESIS_KECCAK_HASH_SLOT,
+    GENESIS_POSEIDON_HASH_SLOT,
 };
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_runtime::RuntimeContext;
 use fluentbase_sdk::{
-    byteorder::{ByteOrder, LittleEndian},
-    runtime::TestingContext,
-};
-use fluentbase_types::{
     address,
+    byteorder::{ByteOrder, LittleEndian},
     bytes,
     calc_create_address,
+    runtime::TestingContext,
     Account,
     Address,
     Bytes,
+    HashMap,
     SysFuncIdx,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
@@ -24,23 +26,22 @@ use fluentbase_types::{
     SYSCALL_ID_CALL,
     U256,
 };
-use hashbrown::HashMap;
 use hex_literal::hex;
 use revm::{
     primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, Output, TransactTo},
-    rwasm::RwasmDbWrapper,
     DatabaseCommit,
-    Evm,
     InMemoryDB,
+    Rwasm,
 };
 use rwasm::{
     instruction_set,
     rwasm::{BinaryFormat, RwasmModule},
 };
+use std::u64;
 
 #[allow(dead_code)]
 struct EvmTestingContext {
-    sdk: TestingContext,
+    pub sdk: TestingContext,
     genesis: Genesis,
     db: InMemoryDB,
 }
@@ -137,18 +138,6 @@ impl EvmTestingContext {
         revm_account.mark_touch();
         self.db.commit(HashMap::from([(address, revm_account)]));
     }
-
-    pub(crate) fn with_sdk<F>(&mut self, f: F)
-    where
-        F: Fn(
-            RwasmDbWrapper<'_, fluentbase_sdk::runtime::RuntimeContextWrapper, &mut InMemoryDB>,
-        ) -> (),
-    {
-        let mut evm = Evm::builder().with_db(&mut self.db).build();
-        let runtime_context = RuntimeContext::default().with_depth(0u32);
-        let native_sdk = fluentbase_sdk::runtime::RuntimeContextWrapper::new(runtime_context);
-        f(RwasmDbWrapper::new(&mut evm.context.evm, native_sdk))
-    }
 }
 
 struct TxBuilder<'a> {
@@ -167,12 +156,20 @@ impl<'a> TxBuilder<'a> {
         Self { ctx, env }
     }
 
-    fn call(ctx: &'a mut EvmTestingContext, caller: Address, callee: Address) -> Self {
+    fn call(
+        ctx: &'a mut EvmTestingContext,
+        caller: Address,
+        callee: Address,
+        value: Option<U256>,
+    ) -> Self {
         let mut env = Env::default();
+        if let Some(value) = value {
+            env.tx.value = value;
+        }
         env.tx.gas_price = U256::from(1);
         env.tx.caller = caller;
         env.tx.transact_to = TransactTo::Call(callee);
-        env.tx.gas_limit = 10_000_000;
+        env.tx.gas_limit = 300_000_000;
         Self { ctx, env }
     }
 
@@ -197,11 +194,14 @@ impl<'a> TxBuilder<'a> {
     }
 
     fn exec(&mut self) -> ExecutionResult {
-        let mut evm = Evm::builder()
+        let db = take(&mut self.ctx.db);
+        let mut evm = Rwasm::builder()
             .with_env(Box::new(take(&mut self.env)))
-            .with_ref_db(&mut self.ctx.db)
+            .with_db(db)
             .build();
-        evm.transact_commit().unwrap()
+        let result = evm.transact_commit().unwrap();
+        self.ctx.db = evm.into_db();
+        result
     }
 }
 
@@ -249,20 +249,53 @@ fn deploy_evm_tx(ctx: &mut EvmTestingContext, deployer: Address, init_bytecode: 
     contract_address
 }
 
+fn deploy_evm_tx_with_nonce(
+    ctx: &mut EvmTestingContext,
+    deployer: Address,
+    init_bytecode: Bytes,
+    nonce: u64,
+) -> Address {
+    let result = TxBuilder::create(ctx, deployer, init_bytecode.clone().into()).exec();
+    if !result.is_success() {
+        println!("{:?}", result);
+        println!(
+            "{}",
+            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
+        );
+    }
+    assert!(result.is_success());
+    let contract_address = calc_create_address::<TestingContext>(&deployer, nonce);
+    assert_eq!(contract_address, deployer.create(nonce));
+
+    contract_address
+}
+
+fn call_evm_tx_simple(
+    ctx: &mut EvmTestingContext,
+    caller: Address,
+    callee: Address,
+    input: Bytes,
+    gas_limit: Option<u64>,
+    value: Option<U256>,
+) -> ExecutionResult {
+    // call greeting EVM contract
+    let mut tx_builder = TxBuilder::call(ctx, caller, callee, value).input(input);
+    if let Some(gas_limit) = gas_limit {
+        tx_builder = tx_builder.gas_limit(gas_limit);
+    }
+    tx_builder.exec()
+}
+
 fn call_evm_tx(
     ctx: &mut EvmTestingContext,
     caller: Address,
     callee: Address,
     input: Bytes,
     gas_limit: Option<u64>,
+    value: Option<U256>,
 ) -> ExecutionResult {
     ctx.add_balance(caller, U256::from(1e18));
-    // call greeting EVM contract
-    let mut tx_builder = TxBuilder::call(ctx, caller, callee).input(input);
-    if let Some(gas_limit) = gas_limit {
-        tx_builder = tx_builder.gas_limit(gas_limit);
-    }
-    tx_builder.exec()
+    call_evm_tx_simple(ctx, caller, callee, input, gas_limit, value)
 }
 
 #[test]
@@ -275,6 +308,7 @@ fn test_genesis_greeting() {
         DEPLOYER_ADDRESS,
         EXAMPLE_GREETING_ADDRESS,
         Bytes::default(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -300,10 +334,105 @@ fn test_deploy_greeting() {
         contract_address,
         Bytes::default(),
         None,
+        None,
     );
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!("Hello, World", from_utf8(bytes.as_ref()).unwrap());
+}
+
+#[test]
+fn test_client_solidity() {
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
+
+    let contract_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/router-solidity/lib.wasm").into(),
+        0,
+    );
+    println!("contract_address: {:?}", contract_address);
+
+    let client_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/client-solidity/lib.wasm").into(),
+        1,
+    );
+    println!("client_address: {:?}", client_address);
+
+    ctx.add_balance(contract_address, U256::from(10e18));
+    ctx.add_balance(client_address, U256::from(10e18));
+
+    let client_input = hex!("f60ea708000000000000000000000000f91c20c0cafbfdc150adff51bbfc5808edde7cb5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000052080000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000b48656c6c6f20576f726c64000000000000000000000000000000000000000000");
+
+    println!("calling client...");
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        client_address,
+        client_input.into(),
+        None,
+        None,
+    );
+
+    assert_eq!(result.is_success(), true);
+
+    let output = result.output();
+    println!("output: {:?}", output);
+    let msg_b = result.output().unwrap();
+
+    let msg: String = SolidityABI::decode(msg_b, 0).unwrap();
+
+    assert_eq!(msg, "Hello World");
+}
+#[test]
+fn test_client_fluent() {
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
+
+    let contract_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/router-fluent/lib.wasm").into(),
+        0,
+    );
+    println!("contract_address: {:?}", contract_address);
+
+    let client_address = deploy_evm_tx_with_nonce(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/client-fluent/lib.wasm").into(),
+        1,
+    );
+    println!("client_address: {:?}", client_address);
+
+    ctx.add_balance(contract_address, U256::from(10e18));
+    ctx.add_balance(client_address, U256::from(10e18));
+
+    let client_input = hex!("f60ea708f91c20c0cafbfdc150adff51bbfc5808edde7cb500000000000000000000000000000000000000000000000000000000000000000852000000000000440000000b00000048656c6c6f20576f726c6400");
+
+    println!("calling client...");
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        client_address,
+        client_input.into(),
+        None,
+        None,
+    );
+
+    assert_eq!(result.is_success(), true);
+
+    let _output = result.output();
+    let msg_b = result.output().unwrap();
+
+    let msg: String = FluentABI::decode(msg_b, 0).unwrap();
+
+    assert_eq!(msg, "Hello World");
 }
 
 #[test]
@@ -323,9 +452,13 @@ fn test_deploy_keccak256() {
         contract_address,
         "Hello, World".into(),
         None,
+        None,
     );
+
+    println!("{:?}", result);
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default().as_ref();
+    println!("bytes: {:?}", hex::encode(&bytes));
     assert_eq!(
         "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
         hex::encode(&bytes[0..32]),
@@ -349,13 +482,11 @@ fn test_deploy_panic() {
         contract_address,
         Bytes::default(),
         None,
+        None,
     );
     assert!(!result.is_success());
     let bytes = result.output().unwrap_or_default();
-    assert_eq!(
-        "panicked at examples/panic/lib.rs:17:9: it is panic time",
-        from_utf8(bytes.as_ref()).unwrap()
-    );
+    assert_eq!("it is panic time", from_utf8(bytes.as_ref()).unwrap());
 }
 
 #[test]
@@ -372,6 +503,7 @@ fn test_evm_greeting() {
         contract_address,
         hex!("45773e4e").into(),
         None,
+        None,
     );
     println!("{:?}", result);
     assert!(result.is_success());
@@ -381,36 +513,6 @@ fn test_evm_greeting() {
     assert_eq!(result.gas_used(), 21792);
 }
 
-///
-/// Test storage though constructor
-///
-/// ```solidity
-/// // SPDX-License-Identifier: MIT
-/// pragma solidity 0.8.24;
-///
-/// contract Storage {
-///     event Test(uint256);
-///     uint256 private value;
-///     mapping(address => uint256) private balances;
-///     mapping(address => mapping(address => uint256)) private allowances;
-///     constructor() payable {
-///         value = 100;
-///         balances[msg.sender] = 100;
-///         allowances[msg.sender][address(this)] = 100;
-///     }
-///     function setValue(uint256 newValue) public {
-///         value = newValue;
-///         balances[msg.sender] = newValue;
-///         allowances[msg.sender][address(this)] = newValue;
-///         emit Test(value);
-///     }
-///     function getValue() public view returns (uint256) {
-///         require(balances[msg.sender] == value, "value mismatch");
-///         require(allowances[msg.sender][address(this)] == value, "value mismatch");
-///         return value;
-///     }
-/// }
-/// ```
 #[test]
 fn test_evm_storage() {
     // deploy greeting EVM contract
@@ -425,6 +527,7 @@ fn test_evm_storage() {
         contract_address_1,
         hex!("20965255").into(),
         None,
+        None,
     );
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
@@ -438,6 +541,7 @@ fn test_evm_storage() {
         DEPLOYER_ADDRESS,
         contract_address_2,
         hex!("20965255").into(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -453,6 +557,7 @@ fn test_evm_storage() {
         contract_address_2,
         hex!("552410770000000000000000000000000000000000000000000000000000000000000070").into(),
         None,
+        None,
     );
     assert!(result.is_success());
     // check result is 0x70
@@ -461,6 +566,7 @@ fn test_evm_storage() {
         DEPLOYER_ADDRESS,
         contract_address_2,
         hex!("20965255").into(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -479,7 +585,7 @@ fn test_simple_send() {
     const RECIPIENT_ADDRESS: Address = address!("1092381297182319023812093812312309123132");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     let gas_price = U256::from(1e9);
-    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, RECIPIENT_ADDRESS)
+    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, RECIPIENT_ADDRESS, None)
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
@@ -563,8 +669,8 @@ fn test_evm_self_destruct() {
     assert!(result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
-    // call self destructed contract
-    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, contract_address)
+    // call self-destructed contract
+    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, contract_address, None)
         .gas_price(gas_price)
         .exec();
     if !result.is_success() {
@@ -722,6 +828,7 @@ fn test_bridge_contract_with_call() {
         &mut ctx,
         signer_l1_wallet_owner,
         erc20gateway_contract_address,
+        None,
     )
     .input(bytes!(
         "\
@@ -788,6 +895,7 @@ fn test_bridge_contract_with_call() {
         &mut ctx,
         signer_l1_wallet_owner,
         erc20gateway_contract_address,
+        None,
     )
     // data: 0x70616e69636b6564206174206372617465732f636f72652f7372632f636f6e7472616374732f65636c2e72733a34373a31373a2063616c6c206d6574686f64206661696c65642c206578697420636f64653a202d31303232
     .input(bytes!(
@@ -936,14 +1044,192 @@ fn test_simple_nested_call() {
             ..Default::default()
         },
     );
-    let result = TxBuilder::call(&mut ctx, Address::ZERO, ACCOUNT3_ADDRESS)
+    let result = TxBuilder::call(&mut ctx, Address::ZERO, ACCOUNT3_ADDRESS, None)
         .gas_price(U256::ZERO)
         .exec();
     println!("{:?}", result);
-    assert!(result.output().unwrap_or_default().len() >= 4);
-    let value = LittleEndian::read_i32(result.output().unwrap_or_default().as_ref());
+    let output = result.output().unwrap_or_default();
+    assert!(output.len() >= 4);
+    let value = LittleEndian::read_i32(output.as_ref());
     assert_eq!(value, -120);
     assert!(result.is_success());
-    // 21k is tx cost + 2600 (x2) is nested calls + 4126 is opcode cost
-    assert_eq!(result.gas_used(), 21000 + 2600 * 2 + 4126);
+    // 21k is tx cost
+    // + 2600 * 2 nested calls
+    // + 5 wasm opcode (denominate 1000 + 2000 + 1126 -> 5)
+    // Result: denominate from 30326 -> 26205
+    assert_eq!(
+        result.gas_used(),
+        21000 + 2600 * 2 + (1000 + 2000 + 1126) / 1000 + 1
+    );
+}
+
+#[test]
+fn test_deploy_gas_spend() {
+    // deploy greeting WASM contract
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+
+    let result = TxBuilder::create(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/greeting/lib.wasm").into(),
+    )
+    .exec();
+    if !result.is_success() {
+        println!("{:?}", result);
+        println!(
+            "{}",
+            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
+        );
+    }
+    // 62030 - init contract cost
+    // 67400 - store space cost in fuel
+    // 5126  - opcode cost in fuel
+    assert_eq!(result.gas_used(), 62030 + (67400 + 5126) / 1000 + 1);
+}
+
+#[test]
+fn test_blended_gas_spend_wasm_from_evm() {
+    let mut ctx = EvmTestingContext::default();
+    const ACCOUNT1_ADDRESS: Address = address!("1111111111111111111111111111111111111111");
+    const ACCOUNT2_ADDRESS: Address = address!("1111111111111111111111111111111111111112");
+    const ACCOUNT3_ADDRESS: Address = address!("1111111111111111111111111111111111111113");
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+
+    let _account1 = ctx.add_wasm_contract(
+        ACCOUNT1_ADDRESS,
+        instruction_set! {
+            ConsumeFuel(1000)
+            I32Const(-71)
+            Call(SysFuncIdx::EXIT)
+        },
+    );
+    let _account2 = ctx.add_wasm_contract(
+        ACCOUNT2_ADDRESS,
+        instruction_set! {
+            ConsumeFuel(2000)
+            I32Const(-20)
+            Call(SysFuncIdx::EXIT)
+        },
+    );
+
+    let result = TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, hex!("608060405260b780600f5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806365becaf314602a575b5f5ffd5b60306032565b005b5f73111111111111111111111111111111111111111190505f60405180602001604052805f81525090505f5f9050604051825160208401818184375f5f83855f8a6107d0f1935050505050505056fea26469706673582212207eef72b1ab13ead60c06c9a0f00f0a2c74c2438d873e963f3b2bf9a2e092874564736f6c634300081c0033").into()).exec();
+    if !result.is_success() {
+        println!("Result: {:?}", result);
+        println!(
+            "{}",
+            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
+        );
+    }
+    let address = match result {
+        ExecutionResult::Success { output, .. } => match output {
+            Output::Create(_, address) => address.unwrap(),
+            _ => panic!("expected 'create'"),
+        },
+        _ => panic!("expected 'success'"),
+    };
+    println!("Contract address: {:?}", address);
+    let result = TxBuilder::call(
+        &mut ctx,
+        address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+        address,
+        None,
+    )
+    .input(bytes!("65becaf3"))
+    .exec();
+
+    assert!(result.is_success());
+    println!("Result: {:?}", result);
+    // 21064 is tx cost
+    // + 2600 call cost
+    // + 1 call wasm code
+    // + 255 evm opcodes cost
+    assert_eq!(result.gas_used(), 21064 + 1 + 2600 + 255);
+}
+
+#[test]
+fn test_blended_gas_spend_evm_from_wasm() {
+    let mut ctx = EvmTestingContext::default();
+
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    const ACCOUNT3_ADDRESS: Address = address!("1111111111111111111111111111111111111113");
+
+    let result = TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, hex!("6080604052610594806100115f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c80633b2e97481461004357806345773e4e1461007357806348b8bcc314610091575b5f5ffd5b61005d600480360381019061005891906102e5565b6100af565b60405161006a9190610380565b60405180910390f35b61007b6100dd565b6040516100889190610380565b60405180910390f35b61009961011a565b6040516100a69190610380565b60405180910390f35b60605f8273ffffffffffffffffffffffffffffffffffffffff163190506100d58161012f565b915050919050565b60606040518060400160405280600b81526020017f48656c6c6f20576f726c64000000000000000000000000000000000000000000815250905090565b60605f4790506101298161012f565b91505090565b60605f8203610175576040518060400160405280600181526020017f30000000000000000000000000000000000000000000000000000000000000008152509050610282565b5f8290505f5b5f82146101a457808061018d906103d6565b915050600a8261019d919061044a565b915061017b565b5f8167ffffffffffffffff8111156101bf576101be61047a565b5b6040519080825280601f01601f1916602001820160405280156101f15781602001600182028036833780820191505090505b5090505b5f851461027b578180610207906104a7565b925050600a8561021791906104ce565b603061022391906104fe565b60f81b81838151811061023957610238610531565b5b60200101907effffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff191690815f1a905350600a85610274919061044a565b94506101f5565b8093505050505b919050565b5f5ffd5b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f6102b48261028b565b9050919050565b6102c4816102aa565b81146102ce575f5ffd5b50565b5f813590506102df816102bb565b92915050565b5f602082840312156102fa576102f9610287565b5b5f610307848285016102d1565b91505092915050565b5f81519050919050565b5f82825260208201905092915050565b8281835e5f83830152505050565b5f601f19601f8301169050919050565b5f61035282610310565b61035c818561031a565b935061036c81856020860161032a565b61037581610338565b840191505092915050565b5f6020820190508181035f8301526103988184610348565b905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f819050919050565b5f6103e0826103cd565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8203610412576104116103a0565b5b600182019050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601260045260245ffd5b5f610454826103cd565b915061045f836103cd565b92508261046f5761046e61041d565b5b828204905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b5f6104b1826103cd565b91505f82036104c3576104c26103a0565b5b600182039050919050565b5f6104d8826103cd565b91506104e3836103cd565b9250826104f3576104f261041d565b5b828206905092915050565b5f610508826103cd565b9150610513836103cd565b925082820190508082111561052b5761052a6103a0565b5b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffdfea26469706673582212205f47a1f79c07854bad446dbc1572d306c5758cabc8296071e80f814e5ca99c8b64736f6c634300081c0033").into()).exec();
+    if !result.is_success() {
+        println!("Result: {:?}", result);
+        println!(
+            "{}",
+            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
+        );
+    }
+    let address = match result {
+        ExecutionResult::Success { output, .. } => match output {
+            Output::Create(_, address) => address.unwrap(),
+            _ => panic!("expected 'create'"),
+        },
+        _ => panic!("expected 'success'"),
+    };
+    println!("Contract address: {:?}", address);
+
+    let mut memory_section = vec![];
+    memory_section.extend_from_slice(&SYSCALL_ID_CALL.0); // 0..32
+    memory_section.extend_from_slice(address.as_slice()); // 32..
+    memory_section.extend_from_slice(U256::ZERO.as_le_slice());
+    memory_section.extend_from_slice(bytes!("45773e4e").to_vec().as_slice());
+
+    let code_section = instruction_set! {
+        // alloc and init memory
+        I32Const(1)
+        MemoryGrow
+        Drop
+        I32Const(0)
+        I32Const(0)
+        I32Const(memory_section.len() as u32)
+        MemoryInit(0)
+        DataDrop(0)
+        // sys exec hash
+        ConsumeFuel(10)
+        I32Const(0) // hash32_ptr
+        I32Const(32) // input_ptr
+        I32Const(56) // input_len
+        I32Const(0) // fuel_ptr
+        I32Const(STATE_MAIN) // state
+        Call(SysFuncIdx::EXEC)
+        I32Const(0) // hash32_ptr
+        I32Const(32) // input_ptr
+        I32Const(56) // input_len
+        I32Const(0) // fuel_ptr
+        I32Const(STATE_MAIN) // state
+        Call(SysFuncIdx::EXEC)
+        Call(SysFuncIdx::EXIT)
+    };
+    let code_section_len = code_section.len() as u32;
+    ctx.add_wasm_contract(
+        ACCOUNT3_ADDRESS,
+        RwasmModule {
+            code_section,
+            memory_section,
+            func_section: vec![code_section_len],
+            ..Default::default()
+        },
+    );
+    let result = TxBuilder::call(
+        &mut ctx,
+        address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+        ACCOUNT3_ADDRESS,
+        None,
+    )
+    .gas_price(U256::ZERO)
+    .exec();
+
+    println!("Result: {:?}", result);
+    assert!(result.is_success());
+
+    // 21064 is tx cost
+    // + 2 call wasm code (1035 -> 2)
+    // + 2600 cold call cost
+    // + 637 evm opcodes cost
+    // + 100 warm call cost
+    // + 637 evm opcodes cost
+    assert_eq!(result.gas_used(), 21000 + 2 + 2600 + 637 + 100 + 637);
 }

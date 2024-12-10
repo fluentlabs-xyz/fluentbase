@@ -1,4 +1,13 @@
-use crate::{ChainConfig, Genesis, GenesisAccount};
+use crate::{
+    enable_rwasm_contract,
+    initial_balance,
+    storage_only,
+    ChainConfig,
+    Genesis,
+    GenesisAccount,
+    EXAMPLE_FAIRBLOCK_ADDRESS,
+    EXAMPLE_GREETING_ADDRESS,
+};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
     address,
@@ -20,7 +29,6 @@ pub fn devnet_chain_config() -> ChainConfig {
         dao_fork_block: Some(0u64),
         dao_fork_support: false,
         eip150_block: Some(0u64),
-        eip150_hash: None,
         eip155_block: Some(0u64),
         eip158_block: Some(0u64),
         byzantium_block: Some(0u64),
@@ -63,19 +71,17 @@ pub fn devnet_genesis_v0_1_0_dev1_from_file() -> Genesis {
     serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
 }
 
-pub fn devnet_genesis() -> Genesis {
-    macro_rules! initial_balance {
-        ($address:literal) => {
-            (
-                address!($address),
-                GenesisAccount {
-                    balance: U256::from(100000_000000000000000000u128),
-                    ..Default::default()
-                },
-            )
-        };
-    }
+pub fn devnet_genesis_v0_1_0_dev4_from_file() -> Genesis {
+    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.4.json");
+    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
+}
 
+pub fn devnet_genesis_v0_1_0_dev5_from_file() -> Genesis {
+    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.5.json");
+    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
+}
+
+pub fn devnet_genesis() -> Genesis {
     let mut alloc = BTreeMap::from([
         // default testing accounts
         initial_balance!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
@@ -98,66 +104,52 @@ pub fn devnet_genesis() -> Genesis {
         initial_balance!("bDA5747bFD65F08deb54cb465eB87D40e51B197E"),
         initial_balance!("dD2FD4581271e230360230F9337D5c0430Bf44C0"),
         initial_balance!("8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199"),
+        storage_only!("ba8ab429ff0aaa5f1bb8f19f1f9974ffc82ff161"),
     ]);
 
-    macro_rules! enable_rwasm_contract {
-        ($addr:ident, $file_path:literal) => {{
-            use std::io::Write;
-            let bytecode = Bytes::from(include_bytes!($file_path));
-            print!("creating genesis account (0x{})... ", hex::encode($addr));
-            std::io::stdout().flush().unwrap();
-            let poseidon_hash = poseidon_hash(&bytecode);
-            let keccak_hash = keccak256(&bytecode);
-            println!("{}", hex::encode(poseidon_hash));
-            alloc.insert(
-                $addr,
-                GenesisAccount {
-                    code: Some(bytecode),
-                    storage: Some(BTreeMap::from([
-                        (GENESIS_POSEIDON_HASH_SLOT, poseidon_hash.into()),
-                        (GENESIS_KECCAK_HASH_SLOT, keccak_hash.into()),
-                    ])),
-                    ..Default::default()
-                },
-            );
-        }};
-    }
     enable_rwasm_contract!(
+        alloc,
         PRECOMPILE_EVM,
-        "../../contracts/assets/precompile_evm.rwasm"
+        "../../contracts/assets/precompile_evm.wasm"
     );
     // enable_rwasm_contract!(
     //     WCL_CONTRACT_ADDRESS,
-    //     "../../contracts/assets/wcl_contract.rwasm"
+    //     "../../contracts/assets/wcl_contract.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_BLAKE2_ADDRESS,
-    //     "../../contracts/assets/precompile_blake2.rwasm"
+    //     "../../contracts/assets/precompile_blake2.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_BN128_ADDRESS,
-    //     "../../contracts/assets/precompile_bn128.rwasm"
+    //     "../../contracts/assets/precompile_bn128.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_IDENTITY_ADDRESS,
-    //     "../../contracts/assets/precompile_identity.rwasm"
+    //     "../../contracts/assets/precompile_identity.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_KZG_POINT_EVALUATION_ADDRESS,
-    //     "../../contracts/assets/precompile_kzg_point_evaluation.rwasm"
+    //     "../../contracts/assets/precompile_kzg_point_evaluation.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_MODEXP_ADDRESS,
-    //     "../../contracts/assets/precompile_modexp.rwasm"
+    //     "../../contracts/assets/precompile_modexp.wasm"
     // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_SECP256K1_ADDRESS,
-    //     "../../contracts/assets/precompile_secp256k1.rwasm"
+    //     "../../contracts/assets/precompile_secp256k1.wasm"
     // );
-    // enable_rwasm_contract!(
-    //     EXAMPLE_GREETING_ADDRESS,
-    //     "../../../examples/greeting/lib.rwasm"
-    // );
+    enable_rwasm_contract!(
+        alloc,
+        EXAMPLE_GREETING_ADDRESS,
+        "../../contracts/assets/precompile_greeting.wasm"
+    );
+    enable_rwasm_contract!(
+        alloc,
+        EXAMPLE_FAIRBLOCK_ADDRESS,
+        "../../contracts/assets/precompile_fairblock.wasm"
+    );
     Genesis {
         config: devnet_chain_config(),
         nonce: 0,

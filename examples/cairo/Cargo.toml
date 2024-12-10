@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-#fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
-fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true }
 
 # cairo verifier
 bincode = { version = "2.0.0-rc.2", tag = "v2.0.0-rc.2", git = "https://github.com/bincode-org/bincode.git", features = ["serde"] }
@@ -20,12 +19,6 @@ hex = "0.4.3"
 [lib]
 crate-type = ["cdylib", "staticlib"]
 path = "lib.rs"
-
-#[profile.release]
-#lto = true
-#opt-level = 'z'
-#panic = "abort"
-#strip = true
 
 [features]
 default = ["std"]

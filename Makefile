@@ -3,13 +3,19 @@ all: build
 SKIP_CONTRACTS=n
 SKIP_EXAMPLES=n
 SKIP_GENESIS=n
+
 .PHONY: build
 build:
 	clear
-	if [ "$(SKIP_CONTRACTS)" = "n" ]; then cd crates/contracts && $(MAKE); fi
 	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE); fi
+	if [ "$(SKIP_CONTRACTS)" = "n" ]; then cd crates/contracts && $(MAKE); fi
 	if [ "$(SKIP_GENESIS)" = "n" ]; then cd crates/genesis && $(MAKE); fi
-	if [ -f /usr/bin/notify-send ]; then notify-send "fluentbase" "build finished"; fi || true
+
+.PHONY: clean
+clean:
+	clear
+	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE) clean; fi
+	cargo clean
 
 .PHONY: test
 test:

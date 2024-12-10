@@ -1,15 +1,12 @@
 use core::mem::take;
-use fluentbase_core::{
-    debug_log,
-    helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
-};
 use fluentbase_sdk::{
     basic_entrypoint,
+    debug_log,
     derive::{derive_keccak256, Contract},
     env_from_context,
     Address,
     Bytes,
-    ContractContext,
+    ContractContextReader,
     ExitCode,
     SharedAPI,
     B256,
@@ -17,34 +14,99 @@ use fluentbase_sdk::{
 };
 use revm_interpreter::{
     analysis::to_analysed,
-    as_usize_saturated,
+    as_u64_saturated,
     gas,
     opcode::make_instruction_table,
+    AccountLoad,
     CallOutcome,
     CallScheme,
     Contract,
     CreateOutcome,
+    Eip7702CodeLoad,
     Gas,
     Host,
     InstructionResult,
     Interpreter,
     InterpreterAction,
     InterpreterResult,
-    LoadAccountResult,
     SStoreResult,
     SelfDestructResult,
     SharedMemory,
+    StateLoad,
 };
 use revm_precompile::Log;
 use revm_primitives::{Bytecode, CancunSpec, CreateScheme, Env, BLOCK_HASH_HISTORY, MAX_CODE_SIZE};
 
-pub struct EvmLoader2<'a, SDK> {
+pub struct EvmLoader<'a, SDK> {
     sdk: &'a mut SDK,
     env: Env,
     address: Address,
 }
 
-impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
+fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
+    match exit_code {
+        ExitCode::Ok => InstructionResult::Stop,
+        ExitCode::Panic => InstructionResult::Revert,
+        ExitCode::CallDepthOverflow => InstructionResult::CallTooDeep,
+        ExitCode::InsufficientBalance => InstructionResult::OutOfFunds,
+        ExitCode::OutOfGas => InstructionResult::OutOfGas,
+        ExitCode::OpcodeNotFound => InstructionResult::OpcodeNotFound,
+        ExitCode::WriteProtection => InstructionResult::StateChangeDuringStaticCall,
+        ExitCode::InvalidEfOpcode => InstructionResult::InvalidFEOpcode,
+        ExitCode::InvalidJump => InstructionResult::InvalidJump,
+        // ExitCode::NotActivated => InstructionResult::NotActivated,
+        ExitCode::StackUnderflow => InstructionResult::StackUnderflow,
+        ExitCode::StackOverflow => InstructionResult::StackOverflow,
+        ExitCode::OutputOverflow => InstructionResult::OutOfOffset,
+        ExitCode::CreateCollision => InstructionResult::CreateCollision,
+        ExitCode::OverflowPayment => InstructionResult::OverflowPayment,
+        ExitCode::PrecompileError => InstructionResult::PrecompileError,
+        ExitCode::NonceOverflow => InstructionResult::NonceOverflow,
+        ExitCode::ContractSizeLimit => InstructionResult::CreateContractSizeLimit,
+        ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
+        ExitCode::FatalExternalError => InstructionResult::FatalExternalError,
+        // TODO(dmitry123): "what's proper unknown error code mapping?"
+        _ => InstructionResult::OutOfGas,
+    }
+}
+
+fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
+    match evm_error {
+        InstructionResult::Continue
+        | InstructionResult::Stop
+        | InstructionResult::Return
+        | InstructionResult::SelfDestruct
+        | InstructionResult::CallOrCreate => ExitCode::Ok,
+        InstructionResult::Revert => ExitCode::Panic,
+        InstructionResult::CallTooDeep => ExitCode::CallDepthOverflow,
+        InstructionResult::OutOfFunds => ExitCode::InsufficientBalance,
+        InstructionResult::OutOfGas
+        | InstructionResult::MemoryOOG
+        | InstructionResult::MemoryLimitOOG
+        | InstructionResult::PrecompileOOG
+        | InstructionResult::InvalidOperandOOG => ExitCode::OutOfGas,
+        InstructionResult::OpcodeNotFound => ExitCode::OpcodeNotFound,
+        InstructionResult::CallNotAllowedInsideStatic
+        | InstructionResult::StateChangeDuringStaticCall => ExitCode::WriteProtection,
+        InstructionResult::InvalidFEOpcode => ExitCode::InvalidEfOpcode,
+        InstructionResult::InvalidJump => ExitCode::InvalidJump,
+        InstructionResult::StackUnderflow => ExitCode::StackUnderflow,
+        InstructionResult::StackOverflow => ExitCode::StackOverflow,
+        InstructionResult::OutOfOffset => ExitCode::OutputOverflow,
+        InstructionResult::CreateCollision => ExitCode::CreateCollision,
+        InstructionResult::OverflowPayment => ExitCode::OverflowPayment,
+        InstructionResult::PrecompileError => ExitCode::PrecompileError,
+        InstructionResult::NonceOverflow => ExitCode::NonceOverflow,
+        InstructionResult::CreateContractSizeLimit | InstructionResult::CreateInitCodeSizeLimit => {
+            ExitCode::ContractSizeLimit
+        }
+        InstructionResult::CreateContractStartingWithEF => ExitCode::CreateContractStartingWithEF,
+        InstructionResult::FatalExternalError => ExitCode::FatalExternalError,
+        _ => ExitCode::UnknownError,
+    }
+}
+
+impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
     fn env(&self) -> &Env {
         &self.env
     }
@@ -53,17 +115,16 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
         &mut self.env
     }
 
-    fn load_account(&mut self, _address: Address) -> Option<LoadAccountResult> {
-        Some(LoadAccountResult {
-            is_cold: false,
+    fn load_account_delegated(&mut self, _address: Address) -> Option<AccountLoad> {
+        Some(AccountLoad {
+            load: Eip7702CodeLoad::new_not_delegated((), false),
             is_empty: false,
         })
     }
 
-    fn block_hash(&mut self, number: U256) -> Option<B256> {
-        let block_number = as_usize_saturated!(self.env().block.number);
-        let requested_number = as_usize_saturated!(number);
-        let Some(diff) = block_number.checked_sub(requested_number) else {
+    fn block_hash(&mut self, number: u64) -> Option<B256> {
+        let block_number = as_u64_saturated!(self.env().block.number);
+        let Some(diff) = block_number.checked_sub(number) else {
             return Some(B256::ZERO);
         };
         if diff > 0 && diff <= BLOCK_HASH_HISTORY {
@@ -73,48 +134,56 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
         }
     }
 
-    fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
+    fn balance(&mut self, address: Address) -> Option<StateLoad<U256>> {
         let balance = self.sdk.balance(&address);
-        Some((balance, false))
+        Some(StateLoad::new(balance, false))
     }
 
-    fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
+    fn code(&mut self, address: Address) -> Option<Eip7702CodeLoad<Bytes>> {
         debug_log!("code: address={} self-address={}", address, self.address);
-        let (evm_code_hash, is_cold) = self.code_hash(address)?;
-        let evm_bytecode = self.sdk.preimage(&evm_code_hash);
-        Some((evm_bytecode, is_cold))
+        let result = self.code_hash(address)?;
+        let evm_bytecode = self.sdk.preimage(&result.data);
+        Some(Eip7702CodeLoad::new_not_delegated(
+            evm_bytecode,
+            result.is_cold,
+        ))
     }
 
-    fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
+    fn code_hash(&mut self, address: Address) -> Option<Eip7702CodeLoad<B256>> {
         if address == self.address {
             let evm_code_hash = self
                 .sdk
                 .storage(&EVM_CODE_HASH_SLOT)
                 .to_le_bytes::<32>()
                 .into();
-            return Some((evm_code_hash, false));
+            return Some(Eip7702CodeLoad::new_not_delegated(evm_code_hash, false));
         }
         let evm_code_hash = self
             .sdk
             .ext_storage(&address, &EVM_CODE_HASH_SLOT)
             .to_le_bytes::<32>()
             .into();
-        Some((evm_code_hash, false))
+        Some(Eip7702CodeLoad::new_not_delegated(evm_code_hash, false))
     }
 
-    fn sload(&mut self, _address: Address, index: U256) -> Option<(U256, bool)> {
+    fn sload(&mut self, _address: Address, index: U256) -> Option<StateLoad<U256>> {
         let value = self.sdk.storage(&index);
-        Some((value, false))
+        Some(StateLoad::new(value, false))
     }
 
-    fn sstore(&mut self, _address: Address, index: U256, new_value: U256) -> Option<SStoreResult> {
+    fn sstore(
+        &mut self,
+        _address: Address,
+        index: U256,
+        new_value: U256,
+    ) -> Option<StateLoad<SStoreResult>> {
         self.sdk.write_storage(index, new_value);
-        Some(SStoreResult {
+        let result = SStoreResult {
             original_value: U256::ZERO,
             present_value: U256::ZERO,
             new_value,
-            is_cold: false,
-        })
+        };
+        Some(StateLoad::new(result, false))
     }
 
     fn tload(&mut self, _address: Address, index: U256) -> U256 {
@@ -130,19 +199,23 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
             .emit_log(take(&mut log.data.data), log.data.topics());
     }
 
-    fn selfdestruct(&mut self, _address: Address, target: Address) -> Option<SelfDestructResult> {
+    fn selfdestruct(
+        &mut self,
+        _address: Address,
+        target: Address,
+    ) -> Option<StateLoad<SelfDestructResult>> {
         self.sdk.destroy_account(target);
-        Some(SelfDestructResult::default())
+        Some(StateLoad::new(SelfDestructResult::default(), false))
     }
 }
 
 const EVM_CODE_HASH_SLOT: U256 = U256::from_le_bytes(derive_keccak256!("_evm_bytecode_hash"));
 
-impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
+impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
     pub fn new(sdk: &'a mut SDK) -> Self {
-        let address = sdk.contract_context().address;
+        let address = sdk.context().contract_address();
         Self {
-            env: env_from_context(sdk.block_context(), sdk.tx_context()),
+            env: env_from_context(sdk.context()),
             sdk,
             address,
         }
@@ -214,12 +287,15 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
                             inputs.input.as_ref(),
                             inputs.gas_limit,
                         ),
+                        _ => unreachable!("unexpected call scheme"),
                     };
+                    let consumed_gas = self.sdk.last_fuel_consumed();
+                    assert!(interpreter.gas.record_cost(consumed_gas), "not enough gas");
 
                     let result = InterpreterResult::new(
                         evm_error_from_exit_code(ExitCode::from(exit_code)),
                         output,
-                        gas,
+                        interpreter.gas,
                     );
                     let call_outcome = CallOutcome::new(result, return_memory_offset);
                     interpreter.insert_call_outcome(&mut shared_memory, call_outcome);
@@ -238,16 +314,19 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
                             let result = InterpreterResult::new(
                                 InstructionResult::Stop,
                                 Bytes::default(),
-                                gas,
+                                interpreter.gas,
                             );
                             CreateOutcome::new(result, Some(created_address))
                         }
                         Err(exit_code) => {
                             let error = evm_error_from_exit_code(ExitCode::from(exit_code));
-                            let result = InterpreterResult::new(error, Bytes::default(), gas);
+                            let result =
+                                InterpreterResult::new(error, Bytes::default(), interpreter.gas);
                             CreateOutcome::new(result, None)
                         }
                     };
+                    let consumed_gas = self.sdk.last_fuel_consumed();
+                    assert!(interpreter.gas.record_cost(consumed_gas), "not enough gas");
                     debug_log!("create_outcome: {:?}", &create_outcome);
                     interpreter.insert_create_outcome(create_outcome);
                 }
@@ -262,34 +341,35 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
         }
     }
 
-    pub fn call(&mut self, contract_context: ContractContext) -> InterpreterResult {
+    pub fn call(&mut self) -> InterpreterResult {
         let input = self.sdk.input();
         let (evm_bytecode, _code_hash) = self.load_evm_bytecode();
         let contract = Contract {
             input,
             bytecode: to_analysed(evm_bytecode),
             hash: None,
-            target_address: contract_context.address,
-            caller: contract_context.caller,
-            call_value: contract_context.value,
+            target_address: self.sdk.context().contract_address(),
+            bytecode_address: None,
+            caller: self.sdk.context().contract_caller(),
+            call_value: self.sdk.context().contract_value(),
         };
         let result = self.exec_evm_bytecode(contract);
-        // self.sdk.charge_fuel(result.gas.spent());
+        self.sdk.charge_fuel(result.gas.spent());
         result
     }
 
-    pub fn deploy(&mut self, contract_context: ContractContext) -> ExitCode {
+    pub fn deploy(&mut self) -> ExitCode {
         let init_code = self.sdk.input();
         let contract = Contract {
             input: Bytes::default(),
             bytecode: to_analysed(Bytecode::new_raw(init_code)),
             hash: None,
-            target_address: contract_context.address,
-            caller: contract_context.caller,
-            call_value: contract_context.value,
+            target_address: self.sdk.context().contract_address(),
+            bytecode_address: None,
+            caller: self.sdk.context().contract_caller(),
+            call_value: self.sdk.context().contract_value(),
         };
         let mut result = self.exec_evm_bytecode(contract);
-        // self.sdk.charge_fuel(result.gas.spent());
 
         if !result.is_ok() {
             // it might be an error message, have to return
@@ -311,6 +391,8 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
             return ExitCode::OutOfGas;
         }
 
+        self.sdk.charge_fuel(result.gas.spent());
+
         self.store_evm_bytecode(Bytecode::new_raw(result.output));
         ExitCode::Ok
     }
@@ -328,8 +410,7 @@ impl<SDK: SharedAPI> EvmLoaderEntrypoint<SDK> {
     }
 
     pub fn deploy_inner(&mut self) -> ExitCode {
-        let contract_context = self.sdk.contract_context().clone();
-        EvmLoader2::new(&mut self.sdk).deploy(contract_context)
+        EvmLoader::new(&mut self.sdk).deploy()
     }
 
     pub fn main(&mut self) {
@@ -338,8 +419,7 @@ impl<SDK: SharedAPI> EvmLoaderEntrypoint<SDK> {
     }
 
     pub fn main_inner(&mut self) -> ExitCode {
-        let contract_context = self.sdk.contract_context().clone();
-        let result = EvmLoader2::new(&mut self.sdk).call(contract_context);
+        let result = EvmLoader::new(&mut self.sdk).call();
         self.sdk.write(result.output.as_ref());
         exit_code_from_evm_error(result.result)
     }
@@ -375,7 +455,7 @@ mod tests {
                 value: U256::ZERO,
             })
             .build(native_sdk.clone());
-        let mut evm_loader = EvmLoader2::new(&mut sdk);
+        let mut evm_loader = EvmLoader::new(&mut sdk);
         let bytecode = hex!("60806040526105ae806100115f395ff3fe608060405234801561000f575f80fd5b506004361061003f575f3560e0");
         let bytecode = Bytecode::new_raw(bytecode.into());
         evm_loader.store_evm_bytecode(bytecode.clone());

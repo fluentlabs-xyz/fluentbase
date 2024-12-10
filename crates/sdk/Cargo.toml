@@ -5,12 +5,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-codec = { workspace = true, default-features = false }
-fluentbase-types = { workspace = true, default-features = false, features = ["rwasm"] }
-fluentbase-runtime = { workspace = true, default-features = false, optional = true }
-fluentbase-genesis = { workspace = true, default-features = false, optional = true }
+fluentbase-codec = { workspace = true }
+fluentbase-types = { workspace = true, features = ["rwasm"] }
 fluentbase-sdk-derive = { workspace = true }
 hashbrown = { workspace = true }
+
+# runtime mode
+fluentbase-runtime = { workspace = true, optional = true }
+fluentbase-genesis = { workspace = true, optional = true }
 
 [dev-dependencies]
 
@@ -23,5 +25,9 @@ std = [
     "fluentbase-types/std",
     "fluentbase-codec/std",
     "dep:fluentbase-runtime",
+    "fluentbase-runtime?/std",
     "dep:fluentbase-genesis",
+    "fluentbase-genesis?/std",
 ]
+debug-print = []
+more-panic = []
