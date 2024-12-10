@@ -1,8 +1,8 @@
-use alloy_rlp::BytesMut;
 use core::str::from_utf8;
 use fluentbase_codec::FluentABI;
 use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
-use fluentbase_types::{
+use fluentbase_sdk::{
+    bytes::BytesMut,
     create_import_linker,
     ExitCode,
     SharedContextInputV1,

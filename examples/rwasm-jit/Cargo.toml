@@ -4,15 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-types = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true }
 keccak-hash = { version = "0.10.0", default-features = false }
-
 rwasm = { workspace = true, default-features = false }
-
-[dev-dependencies]
-hex-literal = "0.4.1"
-hex = "0.4.3"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]

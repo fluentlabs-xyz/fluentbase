@@ -16,7 +16,7 @@ serde = { version = "1.0", default-features = false, features = [
     "rc",
 ], optional = true }
 byteorder = { workspace = true, default-features = false }
-rwasm = { workspace = true, default-features = false, optional = true }
+rwasm = { workspace = true, optional = true }
 alloy-primitives = { workspace = true }
 alloy-rlp = { workspace = true }
 strum_macros = { workspace = true }

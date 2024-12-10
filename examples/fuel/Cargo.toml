@@ -4,11 +4,7 @@ name = "fluentbase-example-fuel"
 version = "0.1.0"
 
 [dependencies]
-fluentbase-sdk = { workspace = true, default-features = false }
-
-[dev-dependencies]
-hex = "0.4.3"
-hex-literal = "0.4.1"
+fluentbase-sdk = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "staticlib"]

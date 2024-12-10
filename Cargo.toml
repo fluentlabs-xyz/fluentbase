@@ -53,13 +53,13 @@ alloy-genesis = { version = "0.4.2", default-features = false }
 alloy-sol-types = { version = "0.8.5", default-features = false }
 hashbrown = { version = "0.15.0" }
 serde = { version = "1.0.203", default-features = false, features = ["derive"] }
-postcard = { version = "1.0", default-features = false }
 casey = { version = "0.4" }
 paste = { version = "1.0", default-features = false }
 revm-interpreter = { path = "revm/crates/interpreter", default-features = false }
 revm-primitives = { path = "revm/crates/primitives", default-features = false }
 revm-precompile = { path = "revm/crates/precompile", default-features = false }
 revm = { path = "revm/crates/revm", default-features = false, features = [
+    "std",
     "hashbrown",
     "blst",
     #    "debug-print",
@@ -76,7 +76,6 @@ regex = { version = "1.10" }
 anyhow = { version = "1.0.86", default-features = false }
 syn = "2.0"
 clap = { version = "4.5", features = ["derive"] }
-phantom-type = { version = "0.5.0", default-features = false }
 digest = { version = "0.10", default-features = false }
 
 

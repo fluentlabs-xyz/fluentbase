@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::F254;
+use fluentbase_sdk::F254;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallPoseidon;

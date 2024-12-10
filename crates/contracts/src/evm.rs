@@ -1,10 +1,7 @@
 use core::mem::take;
-use fluentbase_core::{
-    debug_log,
-    helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
-};
 use fluentbase_sdk::{
     basic_entrypoint,
+    debug_log,
     derive::{derive_keccak256, Contract},
     env_from_context,
     Address,
@@ -44,6 +41,69 @@ pub struct EvmLoader<'a, SDK> {
     sdk: &'a mut SDK,
     env: Env,
     address: Address,
+}
+
+fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
+    match exit_code {
+        ExitCode::Ok => InstructionResult::Stop,
+        ExitCode::Panic => InstructionResult::Revert,
+        ExitCode::CallDepthOverflow => InstructionResult::CallTooDeep,
+        ExitCode::InsufficientBalance => InstructionResult::OutOfFunds,
+        ExitCode::OutOfGas => InstructionResult::OutOfGas,
+        ExitCode::OpcodeNotFound => InstructionResult::OpcodeNotFound,
+        ExitCode::WriteProtection => InstructionResult::StateChangeDuringStaticCall,
+        ExitCode::InvalidEfOpcode => InstructionResult::InvalidFEOpcode,
+        ExitCode::InvalidJump => InstructionResult::InvalidJump,
+        // ExitCode::NotActivated => InstructionResult::NotActivated,
+        ExitCode::StackUnderflow => InstructionResult::StackUnderflow,
+        ExitCode::StackOverflow => InstructionResult::StackOverflow,
+        ExitCode::OutputOverflow => InstructionResult::OutOfOffset,
+        ExitCode::CreateCollision => InstructionResult::CreateCollision,
+        ExitCode::OverflowPayment => InstructionResult::OverflowPayment,
+        ExitCode::PrecompileError => InstructionResult::PrecompileError,
+        ExitCode::NonceOverflow => InstructionResult::NonceOverflow,
+        ExitCode::ContractSizeLimit => InstructionResult::CreateContractSizeLimit,
+        ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
+        ExitCode::FatalExternalError => InstructionResult::FatalExternalError,
+        // TODO(dmitry123): "what's proper unknown error code mapping?"
+        _ => InstructionResult::OutOfGas,
+    }
+}
+
+fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
+    match evm_error {
+        InstructionResult::Continue
+        | InstructionResult::Stop
+        | InstructionResult::Return
+        | InstructionResult::SelfDestruct
+        | InstructionResult::CallOrCreate => ExitCode::Ok,
+        InstructionResult::Revert => ExitCode::Panic,
+        InstructionResult::CallTooDeep => ExitCode::CallDepthOverflow,
+        InstructionResult::OutOfFunds => ExitCode::InsufficientBalance,
+        InstructionResult::OutOfGas
+        | InstructionResult::MemoryOOG
+        | InstructionResult::MemoryLimitOOG
+        | InstructionResult::PrecompileOOG
+        | InstructionResult::InvalidOperandOOG => ExitCode::OutOfGas,
+        InstructionResult::OpcodeNotFound => ExitCode::OpcodeNotFound,
+        InstructionResult::CallNotAllowedInsideStatic
+        | InstructionResult::StateChangeDuringStaticCall => ExitCode::WriteProtection,
+        InstructionResult::InvalidFEOpcode => ExitCode::InvalidEfOpcode,
+        InstructionResult::InvalidJump => ExitCode::InvalidJump,
+        InstructionResult::StackUnderflow => ExitCode::StackUnderflow,
+        InstructionResult::StackOverflow => ExitCode::StackOverflow,
+        InstructionResult::OutOfOffset => ExitCode::OutputOverflow,
+        InstructionResult::CreateCollision => ExitCode::CreateCollision,
+        InstructionResult::OverflowPayment => ExitCode::OverflowPayment,
+        InstructionResult::PrecompileError => ExitCode::PrecompileError,
+        InstructionResult::NonceOverflow => ExitCode::NonceOverflow,
+        InstructionResult::CreateContractSizeLimit | InstructionResult::CreateInitCodeSizeLimit => {
+            ExitCode::ContractSizeLimit
+        }
+        InstructionResult::CreateContractStartingWithEF => ExitCode::CreateContractStartingWithEF,
+        InstructionResult::FatalExternalError => ExitCode::FatalExternalError,
+        _ => ExitCode::UnknownError,
+    }
 }
 
 impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {

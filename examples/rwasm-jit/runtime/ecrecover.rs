@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, B256};
+use fluentbase_sdk::{ExitCode, B256};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
@@ -49,7 +49,7 @@ mod secp256k1_tests {
     extern crate alloc;
 
     use crate::instruction::ecrecover::SyscallEcrecover;
-    use fluentbase_types::B256;
+    use fluentbase_sdk::B256;
     use hex_literal::hex;
     use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
     use sha2::{Digest, Sha256};

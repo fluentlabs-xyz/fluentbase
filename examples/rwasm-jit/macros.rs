@@ -107,7 +107,7 @@ macro_rules! impl_runtime_handler {
                 const MODULE_NAME: &'static str = stringify!($module);
                 const FUNC_NAME: &'static str = stringify!($name);
 
-                const FUNC_INDEX: fluentbase_types::SysFuncIdx = fluentbase_types::SysFuncIdx::$sys_func;
+                const FUNC_INDEX: fluentbase_sdk::SysFuncIdx = fluentbase_sdk::SysFuncIdx::$sys_func;
 
                 fn register_handler(
                     linker: &mut rwasm::Linker<RuntimeContext>,
