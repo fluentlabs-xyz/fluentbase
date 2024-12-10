@@ -1,5 +1,6 @@
-FILES = HelloWorld Storage CallWasm
+FILES = assets/HelloWorld.bin assets/Storage.bin assets/CallWasm.bin assets/ERC20.bin
 
-.PHONE: $(FILES)
-$(FILES):
-	solc --bin --overwrite assets/$@.sol -o assets/
+assets/%.bin: assets/%.sol
+	solc --bin --overwrite $< -o assets/
+
+all: $(FILES)

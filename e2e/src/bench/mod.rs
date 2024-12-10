@@ -1,4 +1,7 @@
-use crate::helpers::run_with_default_context;
+mod erc20;
+mod greeting;
+
+use crate::utils::run_with_default_context;
 use hex_literal::hex;
 use sp1_sdk::{ProverClient, SP1Stdin};
 
@@ -111,7 +114,7 @@ fn test_example_router_sp1() {
 
     let client = ProverClient::new();
 
-    let input_data = include_bytes!("../../../examples/router/lib.wasm");
+    let input_data = include_bytes!("../../../examples/router-solidity/lib.wasm");
 
     let input = hex!("f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000").to_vec();
 
@@ -275,7 +278,7 @@ fn test_example_panic_rwasm() {
 #[test]
 #[ignore]
 fn test_example_router_rwasm() {
-    let input_data = include_bytes!("../../../examples/router/lib.wasm");
+    let input_data = include_bytes!("../../../examples/router-solidity/lib.wasm");
 
     let input = hex!("f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000").to_vec();
 
