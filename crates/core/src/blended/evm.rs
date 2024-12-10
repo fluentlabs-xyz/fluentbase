@@ -1,6 +1,6 @@
 use crate::{
-    blended::{util::create_rwasm_proxy_bytecode, BlendedRuntime},
-    helpers::{evm_error_from_exit_code, exit_code_from_evm_error, DenominateGas},
+    blended::{util::create_delegate_proxy_bytecode, BlendedRuntime},
+    helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
 };
 use alloc::boxed::Box;
 use core::mem::take;
@@ -208,6 +208,24 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         )
     }
 
+    pub fn exec_eip7702_bytecode(
+        &mut self,
+        mut context: ContractContext,
+        _bytecode_account: &Account,
+        input: Bytes,
+        gas: &mut Gas,
+        state: u32,
+        call_depth: u32,
+    ) -> (Bytes, i32) {
+        let (eip7702_bytecode, _code_hash) = self.load_evm_bytecode(&context.bytecode_address);
+        let Bytecode::Eip7702(eip7702_bytecode) = eip7702_bytecode else {
+            unreachable!("only EIP7702 bytecode allowed here")
+        };
+        let (delegated_account, _) = self.sdk.account(&eip7702_bytecode.delegated_address);
+        context.bytecode_address = eip7702_bytecode.delegated_address;
+        self.exec_bytecode(context, &delegated_account, input, gas, state, call_depth)
+    }
+
     pub fn exec_evm_contract(
         &mut self,
         mut contract: Contract,
@@ -328,7 +346,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         mut gas: Gas,
         call_depth: u32,
     ) -> InterpreterResult {
-        let rwasm_bytecode = create_rwasm_proxy_bytecode(PRECOMPILE_EVM);
+        let rwasm_bytecode = create_delegate_proxy_bytecode(PRECOMPILE_EVM);
 
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)
@@ -342,7 +360,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             is_static: false,
             value: inputs.value,
         };
-        let (output, exit_code) = self.exec_rwasm_bytecode(
+        let (output, exit_code) = self.exec_bytecode(
             context,
             &contract_account,
             inputs.init_code,

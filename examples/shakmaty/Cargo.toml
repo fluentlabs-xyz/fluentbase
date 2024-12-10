@@ -4,14 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true }
 
 # shakmaty
 shakmaty = { git = "https://github.com/dmitry123/shakmaty", default-features = false, features = ["alloc"] }
-
-[dev-dependencies]
-hex-literal = "0.4.1"
-hex = "0.4.3"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]

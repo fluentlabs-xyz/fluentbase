@@ -11,7 +11,7 @@ proc-macro = false
 [dependencies]
 fluentbase-rwasm-code-snippets = { workspace = true, default-features = false }
 rwasm = { workspace = true, features = ["std"] }
-fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true }
 fluentbase-codec = { workspace = true }
 alloy-primitives = { workspace = true, default-features = false }
 hashbrown = { workspace = true }

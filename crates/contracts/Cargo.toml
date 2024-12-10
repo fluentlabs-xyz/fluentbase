@@ -13,16 +13,13 @@ categories.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-core = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true }
 
 # revm
-revm-interpreter = { workspace = true, default-features = false, features = ["rwasm", "no-gas"] }
-revm-precompile = { workspace = true, default-features = false }
-revm-primitives = { workspace = true, default-features = false }
-
-alloy-rlp = { workspace = true, default-features = false }
-alloy-sol-types = { workspace = true }
+revm-interpreter = { workspace = true, features = ["rwasm"] }
+#revm-interpreter = { workspace = true, features = ["rwasm", "no-gas"] }
+revm-precompile = { workspace = true }
+revm-primitives = { workspace = true }
 
 [dev-dependencies]
 
@@ -32,7 +29,6 @@ default = [
 ]
 std = [
     "fluentbase-sdk/std",
-    "fluentbase-core/std",
     "revm-interpreter/std",
     "revm-precompile/std",
     "revm-primitives/std",

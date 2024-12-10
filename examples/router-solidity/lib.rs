@@ -48,9 +48,9 @@ mod tests {
 
     #[test]
     fn test_contract_works() {
-        let b = Bytes::from("Hello, World!!".as_bytes());
+        let _b = Bytes::from("Hello, World!!".as_bytes());
         let s = String::from("Hello, World!!");
-        let a = Address::repeat_byte(0xAA);
+        let _a = Address::repeat_byte(0xAA);
 
         let greeting_call = GreetingCall::new((s.clone(),));
 

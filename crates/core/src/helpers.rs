@@ -12,7 +12,7 @@ use fluentbase_sdk::{
     STATE_DEPLOY,
     STATE_MAIN,
 };
-use revm_interpreter::{instructions::system::gas, Gas, InstructionResult};
+use revm_interpreter::{Gas, InstructionResult};
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
@@ -66,27 +66,6 @@ macro_rules! result_value {
             Err(v) => v,
         }
     };
-}
-
-#[cfg(feature = "debug-print")]
-#[macro_export]
-macro_rules! debug_log {
-    ($msg:tt) => {{
-        #[cfg(target_arch = "wasm32")]
-        unsafe { fluentbase_sdk::rwasm::_debug_log($msg.as_ptr(), $msg.len() as u32) }
-        #[cfg(feature = "std")]
-        println!("{}", $msg);
-    }};
-    ($($arg:tt)*) => {{
-        let msg = alloc::format!($($arg)*);
-        debug_log!(msg);
-    }};
-}
-#[cfg(not(feature = "debug-print"))]
-#[macro_export]
-macro_rules! debug_log {
-    ($msg:tt) => {{}};
-    ($($arg:tt)*) => {{}};
 }
 
 pub fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {

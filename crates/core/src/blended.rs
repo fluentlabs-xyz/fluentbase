@@ -1,12 +1,10 @@
-#[cfg(feature = "elf")]
-mod elf;
 mod evm;
 mod syscall;
 mod util;
 mod wasm;
 
 use crate::{
-    debug_log,
+
     helpers::{evm_error_from_exit_code, DenominateGas},
     types::NextAction,
 };
@@ -14,6 +12,7 @@ use alloc::boxed::Box;
 use fluentbase_sdk::{
     bytes::BytesMut,
     codec::FluentABI,
+    debug_log,
     env_from_context,
     Account,
     AccountStatus,
@@ -34,6 +33,7 @@ use revm_interpreter::{
     CreateInputs,
     CreateOutcome,
     Gas,
+    InstructionResult,
     InterpreterResult,
 };
 use revm_primitives::{
@@ -43,7 +43,7 @@ use revm_primitives::{
     MAX_INITCODE_SIZE,
     WASM_MAX_CODE_SIZE,
 };
-pub use util::{create_rwasm_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
+pub use util::{create_delegate_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
 
 pub struct BlendedRuntime<SDK> {
     sdk: SDK,
@@ -102,12 +102,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         };
 
         let mut buf = BytesMut::new();
-
         FluentABI::encode(&context_input, &mut buf, 0).unwrap();
         buf.extend_from_slice(params.input.as_ref());
         let context_input = buf.freeze();
-
-        // <context_input as FluentABI>::encode(context_input);
 
         // execute smart contract
         #[cfg(feature = "std")]
@@ -116,7 +113,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
             let runtime_context = RuntimeContext::root(params.fuel_limit);
             let preimage_adapter =
-                crate::helpers::SdkPreimageAdapter(contract_context.address, &self.sdk);
+                crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
                 .with_preimage_resolver(&preimage_adapter);
             let (fuel_consumed, exit_code) = native_sdk.exec(
@@ -177,6 +174,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             BytecodeType::EVM => {
                 self.exec_evm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
+            BytecodeType::EIP7702 => {
+                self.exec_eip7702_bytecode(context, bytecode_account, input, gas, state, call_depth)
+            }
             BytecodeType::WASM => {
                 let result = self.exec_rwasm_bytecode(
                     context,
@@ -189,11 +189,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 gas.denominate_gas(self.inner_gas_spend.unwrap_or_default());
                 result
             }
-            #[cfg(feature = "elf")]
-            BytecodeType::ELF => {
-                self.exec_elf_bytecode(context, bytecode_account, input, gas, state, call_depth)
-            }
-            _ => unreachable!("not supported bytecode type"),
         }
     }
 
@@ -269,12 +264,11 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                     .denominate_gas(self.inner_gas_spend.unwrap_or_default());
                 result
             }
-            #[cfg(feature = "elf")]
-            BytecodeType::ELF => {
-                self.deploy_elf_contract(contract_account.address, inputs, gas, call_depth)
-            }
-            #[cfg(not(feature = "elf"))]
-            _ => unreachable!("not supported bytecode type"),
+            _ => InterpreterResult::new(
+                InstructionResult::CreateContractStartingWithEF,
+                Bytes::new(),
+                gas,
+            ),
         };
 
         // commit all changes made
