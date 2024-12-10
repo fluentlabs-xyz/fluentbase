@@ -3,7 +3,7 @@ use fluentbase_runtime::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
         debug_log::SyscallDebugLog,
-        ecrecover::SyscallEcrecover,
+        ec_recover::SyscallEcrecover,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
