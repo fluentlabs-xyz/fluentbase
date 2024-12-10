@@ -91,7 +91,6 @@ pub enum ExitCode {
     RootCallOnly = -1003,
     OutputOverflow = -1005,
     PoseidonError = -1007,
-    PersistentStorageError = -1008,
     WriteProtection = -1009,
     InsufficientBalance = -1012,
     CreateCollision = -1013,
@@ -108,9 +107,6 @@ pub enum ExitCode {
     OpcodeNotFound = -1030,
     InvalidEfOpcode = -1031,
     InvalidJump = -1032,
-    NotActivatedEIP = -1033,
-    ImmutableContext = -1034,
-    ContextWriteProtection = -1035,
     NonNegativeExitCode = -1036,
     MalformedSyscallParams = -1037,
     // trap error codes
