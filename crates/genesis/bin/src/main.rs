@@ -1,5 +1,5 @@
 use clap::Parser;
-use fluentbase_genesis::devnet::devnet_genesis;
+use fluentbase_genesis::devnet_genesis;
 use std::fs;
 
 /// Command line utility which generates genesis

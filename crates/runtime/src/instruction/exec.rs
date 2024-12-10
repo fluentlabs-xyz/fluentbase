@@ -1,4 +1,8 @@
-use crate::{Runtime, RuntimeContext};
+use crate::{
+    types::{NonePreimageResolver, PreimageResolver},
+    Runtime,
+    RuntimeContext,
+};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     Bytes,
@@ -106,6 +110,24 @@ impl SyscallExec {
         fuel_limit: u64,
         state: u32,
     ) -> (u64, i32) {
+        Self::fn_impl_ex(
+            ctx,
+            code_hash,
+            input,
+            fuel_limit,
+            state,
+            &NonePreimageResolver,
+        )
+    }
+
+    pub fn fn_impl_ex<PR: PreimageResolver>(
+        ctx: &mut RuntimeContext,
+        code_hash: &B256,
+        input: &[u8],
+        fuel_limit: u64,
+        state: u32,
+        preimage_resolver: &PR,
+    ) -> (u64, i32) {
         // check call depth overflow
         if ctx.call_depth >= CALL_STACK_LIMIT {
             return (fuel_limit, ExitCode::CallDepthOverflow.into_i32());
@@ -115,12 +137,12 @@ impl SyscallExec {
         let ctx2 = RuntimeContext::new_with_hash(*code_hash)
             .with_input(input.to_vec())
             .with_fuel_limit(fuel_limit)
-            .with_preimage_resolver(ctx.preimage_resolver.clone())
+            // .with_preimage_resolver(ctx.preimage_resolver.clone())
             .with_state(state)
             .with_depth(ctx.call_depth + 1)
-            .with_tracer();
+            .with_disable_fuel(ctx.disable_fuel);
         let mut runtime = Runtime::new(ctx2);
-        let mut execution_result = runtime.call();
+        let mut execution_result = runtime.call_with_preimage_resolver(preimage_resolver);
 
         // println!("\n\nEXEC, interrupted: {}", execution_result.interrupted);
         // println!(

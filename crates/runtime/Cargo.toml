@@ -10,14 +10,15 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-rwasm = { workspace = true, default-features = false }
-fluentbase-poseidon = { workspace = true, default-features = false }
+rwasm = { workspace = true }
+fluentbase-codec = { workspace = true }
+fluentbase-poseidon = { workspace = true }
 fluentbase-types = { workspace = true, features = ["rwasm"] }
 halo2curves = { workspace = true, default-features = false }
 eth_trie = { workspace = true, default-features = false }
 
 # misc
-keccak-hash = { version = "0.10.0" }
+keccak-hash = { version = "0.11.0" }
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
 hashbrown = { workspace = true }
 hex = { version = "0.4.3", optional = true }

@@ -11,27 +11,23 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-runtime = { workspace = true }
-fluentbase-sdk = { workspace = true, default-features = false, features = ["std"] }
+fluentbase-sdk = { workspace = true }
 fluentbase-poseidon = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
-fluentbase-core = { workspace = true }
-fluentbase-types = { workspace = true }
-rwasm = { workspace = true, default-features = false }
-revm-interpreter = { workspace = true, default-features = false, features = ["std"] }
-revm = { workspace = true, default-features = false, features = ["std"] }
 
-byteorder = { workspace = true }
-alloy-rlp = { workspace = true }
-hashbrown = { workspace = true }
-paste = { workspace = true }
-wasmi = "0.31.2"
-keccak-hash = "0.10.0"
-hex-literal = "0.4.1"
-#sp1-sdk = "2.0.0"
+rwasm = { workspace = true }
+revm = { workspace = true }
+hex-literal = { workspace = true }
+hex = { workspace = true }
 
-[dev-dependencies]
-serde_json = "1.0"
-hex = { version = "0.4.3", features = [] }
-hex-literal = "0.4.1"
-keccak-hash = "0.10.0"
+[features]
+default = ["std"]
+std = [
+    "fluentbase-runtime/std",
+    "fluentbase-sdk/std",
+    "fluentbase-codec/std",
+    "fluentbase-genesis/std",
+    "rwasm/std",
+    "revm/std",
+]

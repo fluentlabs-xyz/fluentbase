@@ -87,13 +87,13 @@ impl SyscallResume {
         return_data_mut.clear();
         return_data_mut.extend(&return_data);
 
-        let _skip_trace_logs = recoverable_runtime
-            .runtime
-            .store
-            .tracer()
-            .unwrap()
-            .logs
-            .len();
+        // let _skip_trace_logs = recoverable_runtime
+        //     .runtime
+        //     .store
+        //     .tracer()
+        //     .unwrap()
+        //     .logs
+        //     .len();
 
         let mut execution_result = recoverable_runtime
             .runtime

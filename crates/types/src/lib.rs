@@ -11,7 +11,6 @@ mod contracts;
 mod journal;
 mod linker;
 mod sdk;
-mod syscall;
 mod types;
 mod utils;
 
@@ -24,7 +23,6 @@ pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use journal::*;
 pub use linker::*;
 pub use sdk::*;
-pub use syscall::*;
 pub use types::*;
 pub use utils::*;
 
@@ -45,3 +43,4 @@ pub const STATE_MAIN: u32 = 0;
 pub const STATE_DEPLOY: u32 = 1;
 
 pub const DEVNET_CHAIN_ID: u64 = 20993;
+// pub const DEVNET_CHAIN_ID: u64 = 1337;

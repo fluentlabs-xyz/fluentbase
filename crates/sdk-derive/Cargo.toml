@@ -10,17 +10,11 @@ repository.workspace = true
 version = "0.1.0"
 
 [dependencies]
-#alloy-sol-types = {version = "0.7.4", default-features = false}
-convert_case = "0.6.0"
 crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
 proc-macro-error = { version = "1", default-features = false }
-proc-macro2 = "1.0"
 quote = "1.0"
-serde = { version = "1.0", default-features = false, features = ["derive"] }
+derive-core = { path = "./derive-core", default-features = false }
 syn = { workspace = true, features = ["full"] }
-syn-solidity = { version = "0.7", default-features = false }
-hex = "0.4.3"
-regex.workspace = true
 
 [lib]
 proc-macro = true

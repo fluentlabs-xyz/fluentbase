@@ -5,11 +5,8 @@ edition = "2021"
 
 [dependencies]
 alloy-sol-types = { workspace = true }
-#sp1-zkvm = "2.0.0"
-fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-types = { workspace = true, default-features = false }
-rwasm = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true }
+rwasm = { workspace = true }
 
 keccak-hash = { version = "0.10.0", default-features = false }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
-

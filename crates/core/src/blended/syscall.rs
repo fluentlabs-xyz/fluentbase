@@ -1,13 +1,12 @@
 use crate::{
     blended::BlendedRuntime,
-    debug_log,
-    helpers::exit_code_from_evm_error,
+    helpers::{exit_code_from_evm_error, DenominateGas},
     types::NextAction,
 };
 use alloc::{boxed::Box, vec::Vec};
-use alloy_rlp::Encodable;
-use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{
+    byteorder::{ByteOrder, LittleEndian},
+    debug_log,
     Address,
     Bytes,
     ContractContext,
@@ -15,7 +14,6 @@ use fluentbase_sdk::{
     SovereignAPI,
     SyscallInvocationParams,
     B256,
-    PRECOMPILE_EVM,
     STATE_MAIN,
     SYSCALL_ID_BALANCE,
     SYSCALL_ID_CALL,
@@ -36,14 +34,26 @@ use fluentbase_sdk::{
     SYSCALL_ID_WRITE_PREIMAGE,
     U256,
 };
-use revm_interpreter::{gas, CallInputs, CallScheme, CallValue, CreateInputs, SelfDestructResult};
+use revm_interpreter::{
+    gas,
+    AccountLoad,
+    CallInputs,
+    CallScheme,
+    CallValue,
+    CreateInputs,
+    Eip7702CodeLoad,
+    SStoreResult,
+    SelfDestructResult,
+    StateLoad,
+};
 use revm_primitives::{CreateScheme, SpecId, MAX_INITCODE_SIZE};
 
-fn is_gas_free_call(address: &Address) -> bool {
-    address == &PRECOMPILE_EVM
+fn is_gas_free_call(_address: &Address) -> bool {
+    false
+    // address == &PRECOMPILE_EVM
 }
 
-impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
+impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     pub(crate) fn process_syscall(
         &mut self,
         contract_context: &ContractContext,
@@ -59,7 +69,8 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         );
         // only main state can be forwarded to the other contract as a nested call,
         // other states can be only used by root
-        match params.code_hash {
+        let inner_gas_used = self.inner_gas_spend.take();
+        let next_action = match params.code_hash {
             SYSCALL_ID_STORAGE_READ => self.syscall_storage_read(contract_context, params),
             SYSCALL_ID_STORAGE_WRITE => self.syscall_storage_write(contract_context, params),
             SYSCALL_ID_CALL => self.syscall_call(contract_context, params, call_depth),
@@ -82,6 +93,13 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             SYSCALL_ID_TRANSIENT_READ => self.syscall_transient_read(contract_context, params),
             SYSCALL_ID_TRANSIENT_WRITE => self.syscall_transient_write(contract_context, params),
             _ => NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams),
+        };
+        match next_action {
+            NextAction::ExecutionResult { gas_used, .. }
+            | NextAction::NestedCall { gas_used, .. } => {
+                self.inner_gas_spend = Some(inner_gas_used.unwrap_or_default() + gas_used);
+                next_action
+            }
         }
     }
 
@@ -148,18 +166,20 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         }
 
         let slot = U256::from_le_slice(&params.input[0..32]);
-        let value = U256::from_le_slice(&params.input[32..64]);
+        let new_value = U256::from_le_slice(&params.input[32..64]);
 
         let (original_value, _) = self.sdk.committed_storage(&context.address, &slot);
         let (present_value, is_cold) = self.sdk.storage(&context.address, &slot);
-        self.sdk.write_storage(context.address, slot, value);
+        self.sdk.write_storage(context.address, slot, new_value);
 
         let gas_cost = if !is_gas_free {
             let gas_cost = match gas::sstore_cost(
                 SpecId::CANCUN,
-                original_value,
-                present_value,
-                value,
+                &SStoreResult {
+                    original_value,
+                    present_value,
+                    new_value,
+                },
                 params.fuel_limit,
                 is_cold,
             )
@@ -177,12 +197,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             "- storage_write: address={} slot={} value={} prev_value={} gas={}",
             context.address,
             B256::from(slot.to_be_bytes::<32>()),
-            B256::from(value.to_be_bytes::<32>()),
+            B256::from(new_value.to_be_bytes::<32>()),
             B256::from(present_value.to_be_bytes::<32>()),
             gas_cost
         );
 
-        let _is_cold = self.sdk.write_storage(context.address, slot, value);
+        let _is_cold = self.sdk.write_storage(context.address, slot, new_value);
 
         NextAction::ExecutionResult {
             exit_code: ExitCode::Ok.into_i32(),
@@ -224,8 +244,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             let call_cost = gas::call_cost(
                 SpecId::CANCUN,
                 !value.is_zero(),
-                is_cold,
-                account.is_empty(),
+                AccountLoad {
+                    load: Eip7702CodeLoad::new_not_delegated((), is_cold),
+                    is_empty: account.is_empty(),
+                },
             );
             if call_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
@@ -291,7 +313,14 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         let (call_cost, gas_limit) = if !is_gas_free {
             // make sure we have enough gas for the call
-            let call_cost = gas::call_cost(SpecId::CANCUN, false, is_cold, false);
+            let call_cost = gas::call_cost(
+                SpecId::CANCUN,
+                false,
+                AccountLoad {
+                    load: Eip7702CodeLoad::new_not_delegated((), is_cold),
+                    is_empty: false,
+                },
+            );
             if call_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
@@ -351,10 +380,18 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         let (call_cost, gas_limit) = if !is_gas_free {
             // make sure we have enough gas for the call
-            let call_cost = gas::call_cost(SpecId::CANCUN, false, is_cold, false);
+            let call_cost = gas::call_cost(
+                SpecId::CANCUN,
+                false,
+                AccountLoad {
+                    load: Eip7702CodeLoad::new_not_delegated((), is_cold),
+                    is_empty: false,
+                },
+            );
             if call_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
+
             let mut gas_limit = params.fuel_limit - call_cost;
             gas_limit = core::cmp::min(gas_limit - gas_limit / 64, params.fuel_limit);
             if gas_limit + call_cost > params.fuel_limit {
@@ -422,7 +459,14 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         let (call_cost, gas_limit) = if !is_gas_free {
             // make sure we have enough gas for the call
-            let call_cost = gas::call_cost(SpecId::CANCUN, !value.is_zero(), is_cold, false);
+            let call_cost = gas::call_cost(
+                SpecId::CANCUN,
+                !value.is_zero(),
+                AccountLoad {
+                    load: Eip7702CodeLoad::new_not_delegated((), is_cold),
+                    is_empty: false,
+                },
+            );
             if call_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
@@ -514,7 +558,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         let (create_cost, gas_limit) = if !is_gas_free {
             let init_cost = if init_code.len() > 0 {
-                gas::initcode_cost(init_code.length() as u64)
+                gas::initcode_cost(init_code.len() as u64)
             } else {
                 0
             };
@@ -646,12 +690,14 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let gas_cost = if !is_gas_free {
             let gas_cost = gas::selfdestruct_cost(
                 SpecId::CANCUN,
-                SelfDestructResult {
-                    had_value: result.had_value,
-                    target_exists: result.target_exists,
-                    is_cold: result.is_cold,
-                    previously_destroyed: result.previously_destroyed,
-                },
+                StateLoad::new(
+                    SelfDestructResult {
+                        had_value: result.had_value,
+                        target_exists: result.target_exists,
+                        previously_destroyed: result.previously_destroyed,
+                    },
+                    result.is_cold,
+                ),
             );
             if gas_cost > params.fuel_limit {
                 return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
@@ -791,7 +837,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         } else {
             0
         };
-        let preimage_size = self.sdk.preimage_size(&context.address, &preimage_hash);
+        let preimage_size = self
+            .sdk
+            .preimage_size(&context.address, &preimage_hash)
+            .unwrap_or_default();
 
         debug_log!(
             " - preimage_size: size={} gas={} hash={}",

@@ -3,7 +3,8 @@ use crate::{
     helpers::{evm_error_from_exit_code, wasm2rwasm},
     types::{Frame, NextAction},
 };
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec, vec::Vec};
+use core::mem::take;
 use fluentbase_sdk::{
     Account,
     Address,
@@ -15,9 +16,8 @@ use fluentbase_sdk::{
     STATE_DEPLOY,
 };
 use revm_interpreter::{gas, CreateInputs, Gas, InterpreterResult};
-use std::mem::take;
 
-impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
+impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     pub fn deploy_wasm_contract(
         &mut self,
         target_address: Address,
@@ -46,7 +46,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)
         let (mut contract_account, _) = self.sdk.account(&target_address);
-        contract_account.update_bytecode(self.sdk, rwasm_bytecode.into(), None);
+        contract_account.update_bytecode(&mut self.sdk, rwasm_bytecode.into(), None);
 
         // execute rWASM deploy function
         let context = ContractContext {
@@ -94,7 +94,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let mut stack_frame = call_stack.last_mut().unwrap();
         let (output, fuel_used, exit_code) = loop {
             let next_action = match stack_frame {
-                Frame::Execute { params, call_id } => {
+                Frame::Execute {
+                    params,
+                    ref call_id,
+                } => {
                     if *call_id > 0 {
                         self.process_syscall(&context, take(params), call_depth)
                     } else {
@@ -102,10 +105,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                     }
                 }
                 Frame::Resume {
-                    call_id,
-                    output,
-                    exit_code,
-                    gas_used,
+                    ref call_id,
+                    ref output,
+                    ref exit_code,
+                    ref gas_used,
                 } => self.process_resume(*call_id, output.as_ref(), *exit_code, *gas_used),
             };
             match next_action {
@@ -121,9 +124,9 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                     // execution result can happen only after resume
                     match call_stack.last_mut().unwrap() {
                         Frame::Resume {
-                            output: return_data_result,
-                            exit_code: exit_code_result,
-                            gas_used: fuel_used_result,
+                            output: ref mut return_data_result,
+                            exit_code: ref mut exit_code_result,
+                            gas_used: ref mut fuel_used_result,
                             ..
                         } => {
                             *return_data_result = return_data;
@@ -150,8 +153,8 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                             };
                         }
                         Frame::Resume {
-                            call_id: call_id_result,
-                            gas_used: gas_used_result,
+                            call_id: ref mut call_id_result,
+                            gas_used: ref mut gas_used_result,
                             ..
                         } => {
                             *call_id_result = call_id;

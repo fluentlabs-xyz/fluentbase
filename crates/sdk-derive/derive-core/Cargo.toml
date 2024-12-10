@@ -1,0 +1,27 @@
+[package]
+name = "derive-core"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+
+readme.workspace = true
+repository.workspace = true
+
+[dependencies]
+convert_case = "0.6.0"
+crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
+darling = "0.20.10"
+hex = "0.4.3"
+fluentbase-codec = { workspace = true }
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { workspace = true, features = ["full"] }
+syn-solidity = { version = "0.7", default-features = false }
+thiserror = "1.0"
+tracing = { version = "0.1.40", default-features = false }
+
+[dev-dependencies]
+bytes = "1.0"
