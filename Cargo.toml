@@ -104,3 +104,6 @@ codegen-units = 1
 #codegen-units = 1
 #rpath = false
 #strip = true
+
+[patch.crates-io]
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", branch = "patch-v2.0.2" }

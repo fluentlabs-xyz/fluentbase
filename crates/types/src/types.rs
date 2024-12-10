@@ -109,6 +109,7 @@ pub enum ExitCode {
     InvalidJump = -1032,
     NonNegativeExitCode = -1036,
     MalformedSyscallParams = -1037,
+    BadBuiltinParams = -1038,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -238,18 +239,12 @@ pub enum SysFuncIdx {
     #[default]
     UNKNOWN = 0x0000,
 
-    // crypto
-    KECCAK256 = 0x0101,
-    POSEIDON = 0x0102,
-    POSEIDON_HASH = 0x0103,
-    ECRECOVER = 0x0104,
-
     // SYS host
     EXIT = 0x0001,
     STATE = 0x0002,
-    READ = 0x0003,
+    READ_INPUT = 0x0003,
     INPUT_SIZE = 0x0004,
-    WRITE = 0x0005,
+    WRITE_OUTPUT = 0x0005,
     OUTPUT_SIZE = 0x0006,
     READ_OUTPUT = 0x0007,
     EXEC = 0x0009,
@@ -257,12 +252,60 @@ pub enum SysFuncIdx {
     FORWARD_OUTPUT = 0x000b,
     CHARGE_FUEL = 0x000c,
     FUEL = 0x000d,
+    PREIMAGE_SIZE = 0x000e,
+    PREIMAGE_COPY = 0x000f,
+    DEBUG_LOG = 0x0010,
 
-    // preimage
-    PREIMAGE_SIZE = 0x070D,
-    PREIMAGE_COPY = 0x070E,
+    // hashing
+    KECCAK256 = 0x0101,
+    KECCAK256_PERMUTE = 0x0102,
+    POSEIDON = 0x0103,
+    POSEIDON_HASH = 0x0104,
+    SHA256_EXTEND = 0x0105,
+    SHA256_COMPRESS = 0x0106,
 
-    DEBUG_LOG = 0x0901,
+    // ed25519
+    ED25519_ADD = 0x0107,
+    ED25519_DECOMPRESS = 0x0108,
+
+    // secp256k1
+    SECP256K1_RECOVER = 0x0110,
+    SECP256K1_ADD = 0x0111,
+    SECP256K1_DECOMPRESS = 0x0112,
+    SECP256K1_DOUBLE = 0x0113,
+
+    // bls12381
+    BLS12381_DECOMPRESS = 0x0120,
+    BLS12381_ADD = 0x0121,
+    BLS12381_DOUBLE = 0x0122,
+    BLS12381_FP_ADD = 0x0123,
+    BLS12381_FP_SUB = 0x0124,
+    BLS12381_FP_MUL = 0x0125,
+    BLS12381_FP2_ADD = 0x0126,
+    BLS12381_FP2_SUB = 0x0127,
+    BLS12381_FP2_MUL = 0x0128,
+
+    // bn254
+    BN254_ADD = 0x0130,
+    BN254_DOUBLE = 0x0131,
+    BN254_FP_ADD = 0x0132,
+    BN254_FP_SUB = 0x0133,
+    BN254_FP_MUL = 0x0134,
+    BN254_FP2_ADD = 0x0135,
+    BN254_FP2_SUB = 0x0136,
+    BN254_FP2_MUL = 0x0137,
+
+    // uint256
+    UINT256_MUL = 0x011D,
+    // sp1
+    // WRITE_FD = 0x0202,
+    // ENTER_UNCONSTRAINED = 0x0203,
+    // EXIT_UNCONSTRAINED = 0x0204,
+    // COMMIT = 0x0210,
+    // COMMIT_DEFERRED_PROOFS = 0x021A,
+    // VERIFY_SP1_PROOF = 0x021B,
+    // HINT_LEN = 0x02F0,
+    // HINT_READ = 0x02F1,
 }
 
 impl SysFuncIdx {
@@ -270,13 +313,13 @@ impl SysFuncIdx {
         match self {
             SysFuncIdx::EXIT => 1,
             SysFuncIdx::STATE => 1,
-            SysFuncIdx::READ => 1,
+            SysFuncIdx::READ_INPUT => 1,
             SysFuncIdx::INPUT_SIZE => 1,
-            SysFuncIdx::WRITE => 1,
+            SysFuncIdx::WRITE_OUTPUT => 1,
             SysFuncIdx::KECCAK256 => 1,
             SysFuncIdx::POSEIDON => 1,
             SysFuncIdx::POSEIDON_HASH => 1,
-            SysFuncIdx::ECRECOVER => 1,
+            SysFuncIdx::SECP256K1_RECOVER => 1,
             _ => 1, //unreachable!("not configured fuel for opcode: {:?}", self),
         }
     }

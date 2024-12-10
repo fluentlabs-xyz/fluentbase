@@ -30,7 +30,7 @@ pub trait ContextFreeNativeAPI {
     /// # Returns
     /// - `B256`: A 256-bit hash of the input data.
     fn hash256(data: &[u8]) -> B256 {
-        // TODO(dmitry): "use the best hashing function here for our proving system"
+        // TODO(dmitry123): "use the best hashing function here for our proving system"
         Self::keccak256(data)
     }
 

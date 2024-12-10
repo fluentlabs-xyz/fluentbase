@@ -4,7 +4,6 @@ mod util;
 mod wasm;
 
 use crate::{
-
     helpers::{evm_error_from_exit_code, DenominateGas},
     types::NextAction,
 };
@@ -126,7 +125,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             return self.process_exec_params(exit_code, fuel_consumed, return_data);
         }
 
-        todo!("not supported yet")
+        #[cfg(not(feature = "std"))]
+        {
+            todo!("not supported yet")
+        }
     }
 
     fn process_resume(
@@ -153,7 +155,11 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             );
             return self.process_exec_params(exit_code, fuel_spent, return_data);
         }
-        todo!("not supported yet")
+
+        #[cfg(not(feature = "std"))]
+        {
+            todo!("not supported yet")
+        }
     }
 
     fn exec_bytecode(
@@ -243,7 +249,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             Err(exit_code) => return return_error(gas, exit_code),
         };
 
-        let mut result = match bytecode_type {
+        let result = match bytecode_type {
             BytecodeType::EVM => {
                 if ENABLE_EVM_PROXY_CONTRACT {
                     self.deploy_evm_contract_proxy(
@@ -376,7 +382,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         (output, gas, exit_code)
     }
 
-    pub fn create(&mut self, mut create_inputs: Box<CreateInputs>) -> CreateOutcome {
+    pub fn create(&mut self, create_inputs: Box<CreateInputs>) -> CreateOutcome {
         self.create_inner(create_inputs, 0)
     }
 
