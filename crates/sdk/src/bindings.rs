@@ -21,7 +21,13 @@ extern "C" {
 
     // TODO(dmitry123): "rename to `_write_output`"
     pub fn _write(offset: *const u8, length: u32);
+
+    /// Returns the size of the input data provided to the runtime environment.
+    ///
+    /// This function retrieves the size (in bytes) of the input payload that has
+    /// been passed to the runtime.
     pub fn _input_size() -> u32;
+
     // TODO(dmitry123): "rename to `_read_input`"
     pub fn _read(target: *mut u8, offset: u32, length: u32);
     pub fn _output_size() -> u32;
