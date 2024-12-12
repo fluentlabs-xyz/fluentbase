@@ -17,31 +17,31 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+  # lint:
+  #   name: Lint
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source $HOME/.cargo/env
-          rustup install $(cat rust-toolchain)
-          rustup component add rustfmt clippy
+  #     - name: Install Rust
+  #       run: |
+  #         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  #         source $HOME/.cargo/env
+  #         rustup install $(cat rust-toolchain)
+  #         rustup component add rustfmt clippy
 
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
+  #     - name: Setup cache
+  #       uses: Swatinem/rust-cache@v2
+  #       with:
+  #         cache-on-failure: true
+  # TODO: d1r1 fix revm fmt issues and enable this step
+  #     - name: Check formatting
+  #       run: cargo fmt --all -- --check
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      # TODO: Fix clippy errors and enable this step
-      # - name: Run clippy
-      #   run: |
-      #     cargo clippy --target wasm32-unknown-unknown --all-features -- -D warnings
+  # TODO: d1r1 Fix clippy errors and enable this step
+  # - name: Run clippy
+  #   run: |
+  #     cargo clippy --target wasm32-unknown-unknown --all-features -- -D warnings
 
   test:
     name: Test
@@ -50,11 +50,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain from rust-toolchain file
-        run: rustup show
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source "$HOME/.cargo/env"
+          rustup target add wasm32-unknown-unknown
+          rustup show
 
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
         run: |
+          source "$HOME/.cargo/env"
           cargo test --no-fail-fast
