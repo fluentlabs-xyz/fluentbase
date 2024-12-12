@@ -2793,6 +2793,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-shakmaty"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "shakmaty",
+]
+
+[[package]]
 name = "fluentbase-example-storage"
 version = "0.1.0"
 dependencies = [
