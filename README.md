@@ -15,7 +15,7 @@ that can cause potential vulnerabilities or crashes.
 * `bin` - a crate with a binary application that is used for translating WASM applications to rWASM. It’s required only
   for creating system precompiled contracts where direct translation from WASM to rWASM is required.
 * `crates` - folder with all Fluentbase modules
-    * `codec` - a crate with a custom ABI codec for encoding/decoding input messages. This codec is optimized for random
+  * `codec` - a crate with a custom ABI codec for encoding/decoding input messages. This codec is optimized for random
       reads that are used to extract only required information from passed system context. It’s very similar to Solidity
       ABI encoding, but uses more WASM friendly binary encoding and alignment.* `contracts` - a crate with all system
       precompiled contracts that brings
@@ -23,19 +23,19 @@ that can cause potential vulnerabilities or crashes.
       including EVM, SVM, WASM and all
       corresponding system contracts like
       blake2, sha256, etc.
-    * `core` - a core of EE runtimes with EVM, SVM, WASM support including deployment logic, AOT translation and
+  * `core` - a core of EE runtimes with EVM, SVM, WASM support including deployment logic, AOT translation and
       contract execution.
-    * `evm` (outdated) - repository with EVM AOT compiler.
-    * `genesis` - a program for creating genesis files for Fluent L2 network with precompiled system and compatibility
+  * `evm` (outdated) - repository with EVM AOT compiler.
+  * `genesis` - a program for creating genesis files for Fluent L2 network with precompiled system and compatibility
       contracts.
-    * `poseidon` - library for poseidon hashing.
-    * `revm` (migrating) - a fork of revm crate, but optimized and adapted for Fluentbase SDK methods and maps original
+  * `poseidon` - library for poseidon hashing.
+  * `revm` (migrating) - a fork of revm crate, but optimized and adapted for Fluentbase SDK methods and maps original
       revm’s database objects into Fluentbase’s structures. It’s needed to execute evm transactions inside reth.
-    * `runtime` - a basic execution runtime of rWASM that enables Fluentbase’s host functions.
-    * `sdk` - a basic repository for developers where they can include all required types and methods to develop their
+  * `runtime` - a basic execution runtime of rWASM that enables Fluentbase’s host functions.
+  * `sdk` - a basic repository for developers where they can include all required types and methods to develop their
       applications. It also includes all macros, definition of entrypoint, allocator, etc.
-    * `types` - basic primitive types for all crates inside this repository.
-    * `zktrie` - implementation of zktrie (sparse merkle binary trie).
+  * `types` - basic primitive types for all crates inside this repository.
+  * `zktrie` - implementation of zktrie (sparse merkle binary trie).
 * `e2e` (partially outdated) — a set of e2e tests for testing EVM transition and other WASM features.
 * `examples` - a folder with examples that can be built using Fluentbase SDK
 
@@ -62,7 +62,7 @@ P.S: Some tests are still failing (like zktrie), but 99% of them pass.
 ## Examples
 
 Fluentbase can be used to develop different types of applications, in most of the cases the same interface is used. Here
-is the simplest application can be developed using Fluentbase.
+is the simplest application can be developed using Fluentbase. Check `examples` directory for more examples.
 
 ```rust
 #![cfg_attr(target_arch = "wasm32", no_std)]
@@ -104,9 +104,11 @@ binary representation, optimized for Zero-Knowledge (ZK) operations.
 The instruction set is reduced, and sections are
 embedded inside the binary to simplify the proving process.
 
+## Contributing
+
+We welcome contributions from the community. Please read the [Contributing Guidelines](CONTRIBUTING.md) for more details.
+
 ## Limitations and Future Enhancements
 
 As of now, Fluentbase does not support floating-point operations. However, this feature is on the roadmap for future
 enhancements.
-
-

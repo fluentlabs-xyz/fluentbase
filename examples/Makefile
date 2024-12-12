@@ -23,6 +23,3 @@ EXAMPLE_NAME=greeting
 deploy_example_contract:
 	node deploy-contract.js --$(RPC_ENDPOINT_TYPE) $(EXAMPLE_NAME)/lib.wasm
 
-.PHONE: send_blended_tx
-send_blended_tx:
-	node ./send-blended-tx.js --local
