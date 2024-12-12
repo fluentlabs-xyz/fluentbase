@@ -89,6 +89,7 @@ const fn is_power_of_two(n: usize) -> bool {
 
 macro_rules! impl_encoder_for_tuple {
     ($($T:ident),+; $($idx:tt),+; $is_solidity:expr) => {
+        #[allow(unused_assignments)]
         impl<B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool, $($T,)+>
         Encoder<B, ALIGN, $is_solidity, IS_STATIC> for ($($T,)+)
         where
@@ -111,54 +112,98 @@ macro_rules! impl_encoder_for_tuple {
                 is_dynamic
             };
 
+
             fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
                 assert!(is_power_of_two(ALIGN), "ALIGN must be a power of two");
 
-                let mut current_offset = offset;
-                let word_size = if $is_solidity { WORD_SIZE_SOL } else { WORD_SIZE_DEFAULT };
 
-                if Self::IS_DYNAMIC {
-                    let buf_len = buf.len();
-
-                    let dynamic_offset = if buf_len == 0 {
-                        word_size
-                    } else {
-                        buf_len
-                    };
-                    write_u32_aligned::<B, ALIGN>(buf, current_offset, dynamic_offset as u32);
-                    current_offset += word_size;
+                if $is_solidity {
+                    // Solidity mode
+                    let aligned_offset = align_up::<ALIGN>(offset);
+                    let is_dynamic = Self::IS_DYNAMIC;
 
                     let aligned_header_size = {
                         let mut size = 0;
                         $(
-                            size += align_up::<ALIGN>($T::HEADER_SIZE);
+                            size += if $T::IS_DYNAMIC {
+                                align_up::<ALIGN>(4)
+                            } else {
+                                align_up::<ALIGN>($T::HEADER_SIZE)
+                            };
                         )+
                         size
                     };
 
-                    if buf_len < current_offset + aligned_header_size {
-                        buf.resize(current_offset + aligned_header_size, 0);
-                    }
+                    let mut tail = if is_dynamic {
+                        let buf_len = buf.len();
+                        let offset = if buf_len == 0 { align_up::<ALIGN>(4) } else { buf_len };
+                        write_u32_aligned::<B, ALIGN>(buf, aligned_offset, offset as u32);
+                        if buf.len() < aligned_header_size + offset {
+                            buf.resize(aligned_header_size + offset, 0);
+                        }
+                        buf.split_off(offset)
+                    } else {
+                        if buf.len() < aligned_offset + aligned_header_size {
+                            buf.resize(aligned_offset + aligned_header_size, 0);
+                        }
+                        buf.split_off(aligned_offset)
+                    };
 
-                    let mut tmp = buf.split_off(current_offset);
-                    current_offset = 0;
+                    let mut tail_offset = 0;
                     $(
-                        self.$idx.encode(&mut tmp, current_offset)?;
-                        current_offset += if $T::IS_DYNAMIC && $is_solidity {
-                            word_size
+                        if $T::IS_DYNAMIC {
+                            self.$idx.encode(&mut tail, tail_offset)?;
+                            tail_offset += align_up::<ALIGN>(4);
                         } else {
-                            align_up::<ALIGN>($T::HEADER_SIZE)
-                        };
+                            self.$idx.encode(&mut tail, tail_offset)?;
+                            tail_offset += align_up::<ALIGN>($T::HEADER_SIZE);
+                        }
                     )+
-                    buf.unsplit(tmp);
-                } else {
-                    $(
-                        self.$idx.encode(buf, current_offset)?;
-                        current_offset += align_up::<ALIGN>($T::HEADER_SIZE);
-                    )+
-                }
 
-                let _ = current_offset;
+                    buf.unsplit(tail);
+                } else {
+                    // WASM mode
+                    let mut current_offset = offset;
+                    let header_el_size = align_up::<ALIGN>(4);
+
+                    if Self::IS_DYNAMIC {
+                        let buf_len = buf.len();
+                        let dynamic_offset = if buf_len == 0 {
+                            header_el_size
+                        } else {
+                            buf_len
+                        };
+                        write_u32_aligned::<B, ALIGN>(buf, current_offset, dynamic_offset as u32);
+                        current_offset += header_el_size;
+
+                        let aligned_header_size = {
+                            let mut size = 0;
+                            $(
+                                size += align_up::<ALIGN>($T::HEADER_SIZE);
+                            )+
+                            size
+                        };
+
+                        if buf_len < current_offset + aligned_header_size {
+                            buf.resize(current_offset + aligned_header_size, 0);
+                        }
+                        let mut tmp = buf.split_off(current_offset);
+
+                        let mut current_tmp_offset = 0;
+                        $(
+                            self.$idx.encode(&mut tmp, current_tmp_offset)?;
+                            current_tmp_offset += align_up::<ALIGN>($T::HEADER_SIZE);
+                        )+
+
+                        buf.unsplit(tmp);
+                    } else {
+                        let mut current_field_offset = current_offset;
+                        $(
+                            self.$idx.encode(buf, current_field_offset)?;
+                            current_field_offset += align_up::<ALIGN>($T::HEADER_SIZE);
+                        )+
+                    }
+                }
 
                 Ok(())
             }
