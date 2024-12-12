@@ -1,0 +1,20 @@
+[package]
+name = "fluentbase-example-shakmaty"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+
+# shakmaty
+shakmaty = { git = "https://github.com/dmitry123/shakmaty", default-features = false, features = ["alloc"] }
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std"
+]
