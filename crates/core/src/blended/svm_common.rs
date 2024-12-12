@@ -1,8 +1,8 @@
 use fluentbase_sdk::SovereignAPI;
 use phantom_type::PhantomType;
 use solana_program::{
+    blake3,
     hash::{Hash, Hasher},
-    keccak,
 };
 
 pub trait HasherImpl {
@@ -110,5 +110,23 @@ impl<SDK: SovereignAPI> HasherImpl for PoseidonHasher<SDK> {
 
     fn result(self) -> Self::Output {
         self.value
+    }
+}
+
+pub struct Blake3Hasher(blake3::Hasher);
+impl HasherImpl for Blake3Hasher {
+    const NAME: &'static str = "Blake3";
+    type Output = blake3::Hash;
+
+    fn create_hasher() -> Self {
+        Blake3Hasher(blake3::Hasher::default())
+    }
+
+    fn hash(&mut self, val: &[u8]) {
+        self.0.hash(val);
+    }
+
+    fn result(self) -> Self::Output {
+        self.0.result()
     }
 }

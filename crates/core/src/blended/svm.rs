@@ -1,12 +1,17 @@
 use crate::{
     blended::{
-        svm_common::{Keccak256Hasher, PoseidonHasher, Sha256Hasher},
+        svm_common::{Blake3Hasher, Keccak256Hasher, Sha256Hasher},
         svm_syscalls::{
+            SyscallCreateProgramAddress,
             SyscallHash,
             SyscallLog,
+            SyscallMemcmp,
+            SyscallMemcpy,
             SyscallMemmove,
             SyscallMemset,
+            SyscallPoseidonSDK,
             SyscallSecp256k1Recover,
+            SyscallTryFindProgramAddress,
         },
         BlendedRuntime,
     },
@@ -15,11 +20,11 @@ use crate::{
 use alloc::{boxed::Box, format, vec};
 use fluentbase_sdk::{Account, Address, Bytes, ContractContext, ExitCode, SovereignAPI, B256};
 use revm_interpreter::{gas, CreateInputs, Gas, InstructionResult, InterpreterResult};
-use revm_primitives::SOLANA_MAX_CODE_SIZE;
+use revm_primitives::{hex, SOLANA_MAX_CODE_SIZE};
 use solana_ee_core::{
     context::ExecContextObject,
     create_vm,
-    helpers::{exit_code_from_svm_result, SyscallAbort, SyscallMemcpy, INSTRUCTION_METER_BUDGET},
+    helpers::{exit_code_from_svm_result, SyscallAbort, INSTRUCTION_METER_BUDGET},
 };
 use solana_rbpf::{
     ebpf,
@@ -30,6 +35,8 @@ use solana_rbpf::{
     verifier::RequisiteVerifier,
     vm::Config,
 };
+
+pub const SVM_ADDRESS_PREFIX: [u8; 12] = hex!("838677656868828082697088"); // SVMADDRPREFX
 
 impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     pub fn load_svm_bytecode(&self, address: &Address) -> (Bytes, B256) {
@@ -69,9 +76,8 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub fn exec_svm_contract(&mut self, svm_program: &[u8], svm_input: &[u8]) -> ProgramResult {
         let config = Config {
-            enable_instruction_tracing: false,
             reject_broken_elfs: true,
-            // sanitize_user_provided_values: true,
+            aligned_memory_mapping: true,
             ..Config::default()
         };
 
@@ -88,14 +94,43 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         function_registry
             .register_function_hashed("abort", SyscallAbort::vm)
             .unwrap();
+
         function_registry
-            .register_function_hashed("sol_memset_", SyscallMemset::vm)
+            .register_function_hashed(
+                *b"sol_create_program_address",
+                SyscallCreateProgramAddress::vm,
+            )
             .unwrap();
+        function_registry
+            .register_function_hashed(
+                *b"sol_try_find_program_address",
+                SyscallTryFindProgramAddress::vm,
+            )
+            .unwrap();
+
         function_registry
             .register_function_hashed("sol_memcpy_", SyscallMemcpy::vm)
             .unwrap();
         function_registry
             .register_function_hashed("sol_memmove_", SyscallMemmove::vm)
+            .unwrap();
+        function_registry
+            .register_function_hashed("sol_memcmp_", SyscallMemcmp::vm)
+            .unwrap();
+        function_registry
+            .register_function_hashed("sol_memset_", SyscallMemset::vm)
+            .unwrap();
+
+        function_registry
+            .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
+            .unwrap();
+
+        // TODO: doesn't call hash computation handle/function, returns default value (zeroes)
+        // function_registry
+        //     .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK,
+        // PoseidonHasher<SDK>>)     .unwrap();
+        function_registry
+            .register_function_hashed("sol_poseidon", SyscallPoseidonSDK::vm)
             .unwrap();
         function_registry
             .register_function_hashed("sol_sha256", SyscallHash::vm::<SDK, Sha256Hasher>)
@@ -107,10 +142,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             )
             .unwrap();
         function_registry
-            .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
-            .unwrap();
-        function_registry
-            .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK, PoseidonHasher<SDK>>)
+            .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
             .unwrap();
 
         let loader = alloc::sync::Arc::new(BuiltinProgram::new_loader(config, function_registry));
@@ -139,7 +171,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         );
         vm.registers;
 
-        let (_, result) = vm.execute_program(&executable_elf, true);
+        let (_instruction_count, result) = vm.execute_program(&executable_elf, true);
         result
     }
 

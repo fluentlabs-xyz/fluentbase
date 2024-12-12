@@ -2526,6 +2526,7 @@ dependencies = [
  "alloy-sol-types 0.8.11",
  "byteorder",
  "fluentbase-codec",
+ "fluentbase-core",
  "fluentbase-genesis",
  "fluentbase-poseidon",
  "fluentbase-runtime",
@@ -6305,6 +6306,7 @@ name = "solana-ee-core"
 version = "0.1.0"
 dependencies = [
  "byteorder",
+ "curve25519-dalek",
  "fluentbase-sdk",
  "num-traits",
  "phantom-type",

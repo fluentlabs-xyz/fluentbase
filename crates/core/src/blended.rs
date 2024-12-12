@@ -42,6 +42,7 @@ use revm_primitives::{
     MAX_INITCODE_SIZE,
     WASM_MAX_CODE_SIZE,
 };
+pub use svm::SVM_ADDRESS_PREFIX;
 pub use util::{create_rwasm_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
 
 pub struct BlendedRuntime<SDK> {
@@ -177,11 +178,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             BytecodeType::WASM => {
                 self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
-            // BytecodeType::SVM => {
-            //     self.exec_svm_bytecode(context, bytecode_account, input, gas, state, call_depth)
-            // }
-            // #[cfg(feature = "elf")]
-            BytecodeType::ELF => {
+            BytecodeType::SVM => {
                 // self.exec_elf_bytecode(context, bytecode_account, input, gas, state, call_depth)
                 self.exec_svm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
@@ -256,12 +253,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             BytecodeType::WASM => {
                 self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth)
             }
-            // BytecodeType::SVM => {
-            //     self.deploy_svm_contract(contract_account.address, inputs, gas, call_depth)
-            // }
-            // #[cfg(feature = "elf")]
-            BytecodeType::ELF => {
-                // self.deploy_elf_contract(contract_account.address, inputs, gas, call_depth)
+            BytecodeType::SVM => {
                 self.deploy_svm_contract(contract_account.address, inputs, gas, call_depth)
             }
             #[cfg(not(feature = "elf"))]

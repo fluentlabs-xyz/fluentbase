@@ -304,8 +304,7 @@ impl Into<FuncIdx> for SysFuncIdx {
 pub enum BytecodeType {
     EVM,
     WASM,
-    ELF,
-    // SVM,
+    SVM,
 }
 
 const WASM_SIG_LEN: usize = 4;
@@ -330,7 +329,7 @@ impl BytecodeType {
         }
         // default ELF signature
         if input.len() >= ELF_SIG_LEN && input[0..ELF_SIG_LEN] == ELF_SIG {
-            return Self::ELF;
+            return Self::SVM;
         }
         // // default SVM signature
         // if input.len() >= SVM_SIG_LEN && input[0..SVM_SIG_LEN] == SVM_SIG {

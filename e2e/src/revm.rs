@@ -1,5 +1,6 @@
 use core::{mem::take, str::from_utf8};
 use fluentbase_codec::{FluentABI, SolidityABI};
+use fluentbase_core::blended::SVM_ADDRESS_PREFIX;
 use fluentbase_genesis::{
     devnet_genesis_from_file,
     Genesis,
@@ -20,7 +21,6 @@ use fluentbase_types::{
     Account,
     Address,
     Bytes,
-    SovereignAPI,
     SysFuncIdx,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
@@ -41,7 +41,7 @@ use rwasm::{
     rwasm::{BinaryFormat, RwasmModule},
 };
 use solana_ee_core::helpers::serialize_parameters_aligned;
-use solana_program::{clock::Epoch, keccak, pubkey::Pubkey};
+use solana_program::{clock::Epoch, pubkey::Pubkey, system_instruction::create_account};
 use std::u64;
 
 #[allow(dead_code)]
@@ -432,24 +432,32 @@ fn test_deploy_svm_program() {
     let contract_address = deploy_evm_tx(&mut ctx, DEPLOYER_ADDRESS, elf_bytes.into());
 
     // prepare input for solana program
-    let account1_key = Pubkey::new_from_array([1u8; 32]);
-    let account1_owner = Pubkey::new_from_array([2u8; 32]);
+    let account1_pubkey = Pubkey::new_from_array([1u8; 32]);
+    let account1_owner_pubkey = Pubkey::new_from_array([2u8; 32]);
     let mut account1_lamports = 11;
     let mut account1_data = vec![1, 2, 3];
     let account1_rent_epoch = Epoch::default();
+    let instruction = create_account(
+        &account1_pubkey,
+        &account1_owner_pubkey,
+        account1_lamports,
+        20,
+        &account1_owner_pubkey,
+    );
+    let instruction_data: &[u8] = &[1, 2, 3, 4];
     let account1 = solana_program::account_info::AccountInfo::new(
-        &account1_key,
+        &account1_pubkey,
         true,
         false,
         &mut account1_lamports,
         &mut account1_data,
-        &account1_owner,
+        &account1_owner_pubkey,
         false,
         account1_rent_epoch,
     );
     let accounts: Vec<solana_program::account_info::AccountInfo> = vec![account1];
-    let program_id = Pubkey::new_from_array([0xcu8; 32]);
-    let instruction_data: &[u8] = &[1, 2, 3, 4];
+    let mut program_id = Pubkey::new_from_array([0xcu8; 32]);
+    program_id.as_mut()[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
 
     let svm_elf_program_input_bytes =
         serialize_parameters_aligned(&accounts, &instruction_data, &program_id)
