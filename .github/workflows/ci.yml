@@ -12,17 +12,6 @@ on:
       - "**.md"
       - "docs/**"
   workflow_dispatch:
-    inputs:
-      run_lint:
-        description: "Run linting checks"
-        required: true
-        default: false
-        type: boolean
-      run_evm_e2e_tests:
-        description: "Run revm e2e tests"
-        required: true
-        default: false
-        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -53,7 +42,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_lint == 'true'
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -75,7 +64,7 @@ jobs:
   evm-e2e-tests:
     name: REVM E2E Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_evm_e2e_tests == 'true'
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
