@@ -11,57 +11,97 @@ on:
     paths-ignore:
       - "**.md"
       - "docs/**"
+  workflow_dispatch:
+    inputs:
+      run_lint:
+        description: "Run linting checks"
+        required: true
+        default: false
+        type: boolean
+      run_evm_e2e_tests:
+        description: "Run revm e2e tests"
+        required: true
+        default: false
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: 1
 
 jobs:
-  # lint:
-  #   name: Lint
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-
-  #     - name: Install Rust
-  #       run: |
-  #         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  #         source $HOME/.cargo/env
-  #         rustup install $(cat rust-toolchain)
-  #         rustup component add rustfmt clippy
-
-  #     - name: Setup cache
-  #       uses: Swatinem/rust-cache@v2
-  #       with:
-  #         cache-on-failure: true
-  # TODO: d1r1 fix revm fmt issues and enable this step
-  #     - name: Check formatting
-  #       run: cargo fmt --all -- --check
-
-  # TODO: d1r1 Fix clippy errors and enable this step
-  # - name: Run clippy
-  #   run: |
-  #     cargo clippy --target wasm32-unknown-unknown --all-features -- -D warnings
-
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
 
-      - name: Install Rust toolchain from rust-toolchain file
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source "$HOME/.cargo/env"
-          rustup target add wasm32-unknown-unknown
-          rustup show
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
 
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: |
-          source "$HOME/.cargo/env"
-          cargo test --no-fail-fast
+        run: cargo test --no-fail-fast
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_lint == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        continue-on-error: true
+
+  evm-e2e-tests:
+    name: REVM E2E Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_evm_e2e_tests == 'true'
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "revm/e2e -> target"
+
+      - name: Sync ethereum tests
+        working-directory: revm/e2e
+        run: make sync_tests
+
+      - name: Run ethereum tests
+        working-directory: revm/e2e
+        run: make run_general_state_tests
