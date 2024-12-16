@@ -100,7 +100,7 @@ fn main() {
                     ("deploy".to_string(), STATE_DEPLOY),
                     ("main".to_string(), STATE_MAIN),
                 ]),
-                opcode: Instruction::Call(STATE.into()),
+                opcode: Instruction::Call((STATE as u32).into()),
             }),
             entrypoint_name: None,
             import_linker: Some(create_import_linker()),

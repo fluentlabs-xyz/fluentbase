@@ -299,7 +299,11 @@ impl<'a> TxBuilder<'a> {
 }
 
 pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {
-    let rwasm_binary = wasm2rwasm(wasm_binary.as_slice()).unwrap();
+    let rwasm_binary = if wasm_binary[0] == 0xef {
+        wasm_binary
+    } else {
+        wasm2rwasm(wasm_binary.as_slice()).unwrap()
+    };
 
     let context_input = {
         let shared_ctx = SharedContextInputV1 {
@@ -310,7 +314,6 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
         let mut buf = BytesMut::new();
         FluentABI::encode(&shared_ctx, &mut buf, 0).unwrap();
         buf.extend_from_slice(input_data);
-
         buf.freeze().to_vec()
     };
     let ctx = RuntimeContext::new(rwasm_binary)
