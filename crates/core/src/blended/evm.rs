@@ -152,6 +152,10 @@ impl<SDK: SovereignAPI> Host for BlendedRuntime<SDK> {
         };
         Some(StateLoad::new(self_destruct_result, result.is_cold))
     }
+
+    fn last_gas_consumed(&self) -> u64 {
+        0
+    }
 }
 
 impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
