@@ -33,6 +33,7 @@ use revm_interpreter::{
     InterpreterResult,
 };
 use revm_primitives::{
+    Bytecode,
     CreateScheme,
     Env,
     MAX_CALL_STACK_LIMIT,
@@ -159,24 +160,35 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     fn exec_bytecode(
         &mut self,
         context: ContractContext,
-        bytecode_account: &Account,
+        mut bytecode_account: Account,
         input: Bytes,
         gas: &mut Gas,
         state: u32,
         call_depth: u32,
     ) -> (Bytes, i32) {
-        let bytecode = self
+        let mut bytecode = self
             .sdk
             .preimage(&bytecode_account.address, &bytecode_account.code_hash)
             .unwrap_or_default();
+        if let Bytecode::Eip7702(eip7702_bytecode) = Bytecode::new_raw(bytecode.clone()) {
+            let (delegated_account, _) = self.sdk.account(&eip7702_bytecode.delegated_address);
+            bytecode = self
+                .sdk
+                .preimage(&delegated_account.address, &delegated_account.code_hash)
+                .unwrap_or_default();
+            bytecode_account = delegated_account;
+        }
         let bytecode_type = BytecodeType::from_slice(bytecode.as_ref());
         match bytecode_type {
-            BytecodeType::EVM => {
-                self.exec_evm_bytecode(context, bytecode_account, input, gas, state, call_depth)
-            }
-            BytecodeType::EIP7702 => {
-                self.exec_eip7702_bytecode(context, bytecode_account, input, gas, state, call_depth)
-            }
+            BytecodeType::EVM => self.exec_evm_bytecode(
+                context,
+                bytecode_account,
+                Bytecode::new_raw(bytecode),
+                input,
+                gas,
+                state,
+                call_depth,
+            ),
             BytecodeType::WASM => {
                 self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
@@ -346,7 +358,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         };
         let (output, exit_code) = self.exec_bytecode(
             contract_context,
-            &bytecode_account,
+            bytecode_account,
             inputs.input,
             &mut gas,
             state,
