@@ -99,6 +99,8 @@ impl SyscallResume {
             .runtime
             .resume(exit_code, fuel_consumed_before_call);
 
+        println!("Execution result: {:?} {}", execution_result, exit_code);
+
         // println!("\n\nRESUME, interrupted: {}", execution_result.interrupted);
         // println!(
         //     "exit_code: {} ({})",

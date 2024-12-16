@@ -13,7 +13,7 @@ use rwasm::{
     rwasm::{BinaryFormat, RwasmModule},
 };
 
-pub const ENABLE_EVM_PROXY_CONTRACT: bool = false;
+pub const ENABLE_EVM_PROXY_CONTRACT: bool = true;
 
 fn create_eip7702_proxy_bytecode(impl_address: Address) -> Bytes {
     let eip7702_bytecode = Eip7702Bytecode::new(impl_address);

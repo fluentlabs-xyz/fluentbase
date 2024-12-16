@@ -6,6 +6,7 @@ use crate::{
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::mem::take;
 use fluentbase_sdk::{
+    debug_log,
     Account,
     Address,
     Bytes,
@@ -111,6 +112,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                     ref gas_used,
                 } => self.process_resume(*call_id, output.as_ref(), *exit_code, *gas_used),
             };
+            debug_log!("Next action: {:?}", next_action);
             match next_action {
                 NextAction::ExecutionResult {
                     exit_code,

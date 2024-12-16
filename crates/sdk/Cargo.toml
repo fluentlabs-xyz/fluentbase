@@ -28,6 +28,7 @@ std = [
     "fluentbase-runtime?/std",
     "dep:fluentbase-genesis",
     "fluentbase-genesis?/std",
+    "debug-print"
 ]
 debug-print = []
 more-panic = []

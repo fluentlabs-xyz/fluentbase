@@ -320,11 +320,11 @@ pub trait SovereignAPI: ContextFreeNativeAPI {
 pub trait SharedAPI: ContextFreeNativeAPI {
     fn context(&self) -> impl SharedContextReader;
 
-    fn write_storage(&mut self, slot: U256, value: U256);
-    fn storage(&self, slot: &U256) -> U256;
+    fn write_storage(&mut self, slot: U256, value: U256) -> (U256, U256, bool);
+    fn storage(&self, slot: &U256) -> (U256, bool);
     fn write_transient_storage(&mut self, slot: U256, value: U256);
     fn transient_storage(&self, slot: &U256) -> U256;
-    fn ext_storage(&self, address: &Address, slot: &U256) -> U256;
+    fn ext_storage(&self, address: &Address, slot: &U256) -> (U256, bool);
 
     fn read(&self, target: &mut [u8], offset: u32);
     fn input_size(&self) -> u32;
@@ -354,7 +354,7 @@ pub trait SharedAPI: ContextFreeNativeAPI {
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]);
 
-    fn balance(&self, address: &Address) -> U256;
+    fn balance(&self, address: &Address) -> (U256, bool);
     fn write_preimage(&mut self, preimage: Bytes) -> B256;
     fn create(
         &mut self,
@@ -379,7 +379,7 @@ pub trait SharedAPI: ContextFreeNativeAPI {
     ) -> (Bytes, i32);
     fn delegate_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32);
     fn static_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32);
-    fn destroy_account(&mut self, address: Address);
+    fn destroy_account(&mut self, address: Address) -> bool;
 
     fn last_fuel_consumed(&self) -> u64 {
         0
