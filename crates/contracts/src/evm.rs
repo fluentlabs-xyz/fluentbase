@@ -277,7 +277,7 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
                             inputs.gas_limit,
                         ),
                         CallScheme::CallCode => self.sdk.call_code(
-                            inputs.target_address,
+                            inputs.bytecode_address,
                             inputs.value.transfer().unwrap_or_default(),
                             inputs.input.as_ref(),
                             inputs.gas_limit,
