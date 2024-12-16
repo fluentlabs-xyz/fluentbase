@@ -412,7 +412,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 return_memory_offset: Default::default(),
                 gas_limit,
                 bytecode_address,
-                target_address: bytecode_address,
+                target_address: context.address,
                 caller: context.caller,
                 value: CallValue::Apparent(context.value),
                 scheme: CallScheme::DelegateCall,
