@@ -131,10 +131,14 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             gas_cost
         );
 
+        let mut output = vec![];
+        output.extend_from_slice(value.as_le_slice());
+        output.push(is_cold as u8);
+
         // return value as bytes with success exit code
         NextAction::ExecutionResult {
             exit_code: ExitCode::Ok.into_i32(),
-            output: value.to_le_bytes::<32>().into(),
+            output: Bytes::from(output),
             gas_used: gas_cost,
         }
     }
@@ -158,7 +162,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
         let (original_value, _) = self.sdk.committed_storage(&context.address, &slot);
         let (present_value, is_cold) = self.sdk.storage(&context.address, &slot);
-        self.sdk.write_storage(context.address, slot, new_value);
+        let (result, _) = self.sdk.write_storage(context.address, slot, new_value);
 
         let gas_cost = if !is_gas_free {
             let gas_cost = match gas::sstore_cost(
@@ -190,11 +194,16 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             gas_cost
         );
 
-        let _is_cold = self.sdk.write_storage(context.address, slot, new_value);
+        self.sdk.write_storage(context.address, slot, new_value);
+
+        let mut output = vec![];
+        output.extend_from_slice(result.original_value.as_le_slice());
+        output.extend_from_slice(result.present_value.as_le_slice());
+        output.push(is_cold as u8);
 
         NextAction::ExecutionResult {
             exit_code: ExitCode::Ok.into_i32(),
-            output: Default::default(),
+            output: Bytes::from(output),
             gas_used: gas_cost,
         }
     }
@@ -265,7 +274,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 caller: context.address,
                 value: CallValue::Transfer(value),
                 scheme: CallScheme::Call,
-                is_static: false,
+                is_static: context.is_static,
                 is_eof: false,
             }),
             STATE_MAIN,
@@ -403,11 +412,11 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 return_memory_offset: Default::default(),
                 gas_limit,
                 bytecode_address,
-                target_address: context.address,
+                target_address: bytecode_address,
                 caller: context.caller,
                 value: CallValue::Apparent(context.value),
                 scheme: CallScheme::DelegateCall,
-                is_static: false,
+                is_static: context.is_static,
                 is_eof: false,
             }),
             params.state,
@@ -482,7 +491,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 caller: context.address,
                 value: CallValue::Transfer(value),
                 scheme: CallScheme::CallCode,
-                is_static: false,
+                is_static: context.is_static,
                 is_eof: false,
             }),
             params.state,
@@ -697,7 +706,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         // return value as bytes with success exit code
         NextAction::ExecutionResult {
             exit_code: ExitCode::Ok.into_i32(),
-            output: Default::default(),
+            output: Bytes::from([result.is_cold as u8]),
             gas_used: gas_cost,
         }
     }
@@ -736,10 +745,14 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             0
         };
 
+        let mut output = vec![];
+        output.extend_from_slice(result.balance.as_le_slice());
+        output.push(is_cold as u8);
+
         // return value as bytes with success exit code
         NextAction::ExecutionResult {
             exit_code: ExitCode::Ok.into_i32(),
-            output: Bytes::from(result.balance.to_le_bytes::<32>()),
+            output: Bytes::from(output),
             gas_used: gas_cost,
         }
     }
@@ -881,10 +894,14 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             0
         };
 
+        let mut output = vec![];
+        output.extend_from_slice(value.as_le_slice());
+        output.push(is_cold as u8);
+
         // return value as bytes with success exit code
         NextAction::ExecutionResult {
             exit_code: ExitCode::Ok.into_i32(),
-            output: value.to_le_bytes::<32>().into(),
+            output: Bytes::from(output),
             gas_used: gas_cost,
         }
     }
@@ -966,8 +983,12 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             gas_cost
         );
 
+        if context.is_static {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
+        }
+
         self.sdk
-            .write_transient_storage(context.address, slot, value);
+            .write_transient_storage(context.address, slot, value); //
 
         NextAction::ExecutionResult {
             exit_code: ExitCode::Ok.into_i32(),
