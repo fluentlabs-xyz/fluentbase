@@ -1,4 +1,4 @@
-FILES = greeting erc20 hashing panic client-fluent client-solidity router-fluent router-solidity rwasm shakmaty storage keccak rwasm-jit fairblock
+FILES = greeting erc20 hashing panic client-fluent client-solidity router-fluent router-solidity rwasm chess-validator shakmaty storage keccak rwasm-jit fairblock
 
 all: $(FILES) $(MANUAL)
 
@@ -23,6 +23,3 @@ EXAMPLE_NAME=greeting
 deploy_example_contract:
 	node deploy-contract.js --$(RPC_ENDPOINT_TYPE) $(EXAMPLE_NAME)/lib.wasm
 
-.PHONE: send_blended_tx
-send_blended_tx:
-	node ./send-blended-tx.js --local
