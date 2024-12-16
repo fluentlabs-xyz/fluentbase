@@ -13,6 +13,17 @@ fn test_example_greeting() {
 }
 
 #[test]
+#[ignore]
+fn test_example_greeting_rwasm() {
+    let (output, exit_code) = run_with_default_context(
+        include_bytes!("../../examples/greeting/lib.rwasm").to_vec(),
+        "Hello, World".as_bytes(),
+    );
+    assert_eq!(exit_code, 0);
+    assert_eq!(output.clone(), "Hello, World".as_bytes().to_vec());
+}
+
+#[test]
 fn test_example_keccak256() {
     let (output, exit_code) = run_with_default_context(
         include_bytes!("../../examples/hashing/lib.wasm").to_vec(),
