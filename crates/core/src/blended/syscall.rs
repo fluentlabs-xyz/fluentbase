@@ -988,7 +988,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         }
 
         self.sdk
-            .write_transient_storage(context.address, slot, value); //
+            .write_transient_storage(context.address, slot, value);
 
         NextAction::ExecutionResult {
             exit_code: ExitCode::Ok.into_i32(),

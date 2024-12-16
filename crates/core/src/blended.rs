@@ -94,7 +94,13 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             tx: self.sdk.context().clone_tx_context(),
             contract: contract_context.clone(),
         };
-
+        debug_log!(
+            "process_exec({}): fuel={} input_len={} state={}",
+            fluentbase_sdk::syscall_name_by_hash(&params.code_hash),
+            params.fuel_limit,
+            params.input.len(),
+            params.state,
+        );
         let mut buf = BytesMut::new();
         FluentABI::encode(&context_input, &mut buf, 0).unwrap();
         buf.extend_from_slice(params.input.as_ref());
@@ -105,7 +111,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         {
             use fluentbase_runtime::RuntimeContext;
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
-            let runtime_context = RuntimeContext::root(params.fuel_limit);
+            let runtime_context = RuntimeContext::root(params.fuel_limit).without_fuel();
             let preimage_adapter =
                 crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
             let native_sdk = RuntimeContextWrapper::new(runtime_context)

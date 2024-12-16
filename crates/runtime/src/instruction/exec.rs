@@ -47,7 +47,7 @@ impl HostError for SysExecResumable {}
 
 impl SyscallExec {
     pub fn fn_handler(
-        caller: Caller<'_, RuntimeContext>,
+        mut caller: Caller<'_, RuntimeContext>,
         hash32_ptr: u32,
         input_ptr: u32,
         input_len: u32,
@@ -64,6 +64,9 @@ impl SyscallExec {
         } else {
             caller.fuel_remaining().unwrap_or_default()
         };
+
+        caller.write_memory(fuel_ptr, &[0; 8])?;
+
         // return resumable error
         Err(SysExecResumable {
             params: SyscallInvocationParams {

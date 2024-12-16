@@ -283,7 +283,7 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
                             inputs.gas_limit,
                         ),
                         CallScheme::DelegateCall => self.sdk.delegate_call(
-                            inputs.target_address,
+                            inputs.bytecode_address,
                             inputs.input.as_ref(),
                             inputs.gas_limit,
                         ),

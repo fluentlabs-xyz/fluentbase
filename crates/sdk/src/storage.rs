@@ -31,7 +31,7 @@ where
         for i in 0.. {
             let storage_key = key + U256::from(i);
             let value = sdk.storage(&storage_key);
-            let chunk = value.to_be_bytes::<32>();
+            let chunk = value.0.to_be_bytes::<32>();
 
             if i * 32 > header_size && chunk.iter().all(|&x| x == 0) {
                 break;
@@ -75,7 +75,7 @@ where
         for i in 0.. {
             let storage_key = key + U256::from(i);
             let value = sdk.storage(&storage_key);
-            let chunk = value.to_be_bytes::<32>();
+            let chunk = value.0.to_be_bytes::<32>();
 
             if i * 32 > header_size && chunk.iter().all(|&x| x == 0) {
                 break;
