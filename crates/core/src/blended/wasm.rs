@@ -93,6 +93,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         }];
 
         let mut stack_frame = call_stack.last_mut().unwrap();
+        println!("Stack frame: {:?}", stack_frame);
         let (output, fuel_used, exit_code) = loop {
             let next_action = match stack_frame {
                 Frame::Execute {
@@ -160,6 +161,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                             ..
                         } => {
                             *call_id_result = call_id;
+                            println!("Gas used: {:?} {}", gas_used, gas.spent());
                             *gas_used_result = gas_used;
                         }
                     }
@@ -168,7 +170,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 }
             }
         };
-
+        println!("Final Gas used: {:?} {}", fuel_used, gas.spent());
         if !gas.record_cost(fuel_used) {
             return (Bytes::default(), ExitCode::OutOfGas.into_i32());
         }

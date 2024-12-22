@@ -73,6 +73,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         // otherwise, exit code is a "call_id" that identifies saved context
         let call_id = exit_code as u32;
 
+        println!("Return data: {:?} {}, ",return_data, exit_code);
         // try to parse execution params, if it's not possible then return an error
         let Ok(params) = FluentABI::<SyscallInvocationParams>::decode(&return_data, 0) else {
             unreachable!("can't decode invocation params");
@@ -102,6 +103,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             params.input.len(),
             params.state,
         );
+        println!("Exec: {:?}", params.code_hash);
         let mut buf = BytesMut::new();
         FluentABI::encode(&context_input, &mut buf, 0).unwrap();
         buf.extend_from_slice(params.input.as_ref());
@@ -112,7 +114,8 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         {
             use fluentbase_runtime::RuntimeContext;
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
-            let runtime_context = RuntimeContext::root(params.fuel_limit).without_fuel();
+            let mut runtime_context = RuntimeContext::root(params.fuel_limit);
+            runtime_context = runtime_context.without_fuel();
             let preimage_adapter =
                 crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
@@ -356,6 +359,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             is_static: inputs.is_static,
             value: inputs.value.get(),
         };
+        println!("Bytecode account: {:?}", bytecode_account);
         let (output, exit_code) = self.exec_bytecode(
             contract_context,
             bytecode_account,

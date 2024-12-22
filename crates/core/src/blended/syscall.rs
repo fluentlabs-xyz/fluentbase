@@ -17,6 +17,7 @@ use fluentbase_sdk::{
     SYSCALL_ID_CREATE,
     SYSCALL_ID_CREATE2,
     SYSCALL_ID_DELEGATE_CALL,
+    FAILED_SYSCALL_ID_DELEGATE_CALL,
     SYSCALL_ID_DESTROY_ACCOUNT,
     SYSCALL_ID_EMIT_LOG,
     SYSCALL_ID_EXT_STORAGE_READ,
@@ -72,7 +73,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             SYSCALL_ID_STATIC_CALL => {
                 self.syscall_static_call(contract_context, params, call_depth)
             }
-            SYSCALL_ID_DELEGATE_CALL => {
+            SYSCALL_ID_DELEGATE_CALL | FAILED_SYSCALL_ID_DELEGATE_CALL=> {
                 self.syscall_delegate_call(contract_context, params, call_depth)
             }
             SYSCALL_ID_CALL_CODE => self.syscall_call_code(contract_context, params, call_depth),
@@ -399,8 +400,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         };
 
         debug_log!(
-            " - delegate_call: address={} gas={} gas_limit={}",
+            " - delegate_call: address={} caller={} gas={} gas_limit={}",
             bytecode_address,
+            context.address,
             call_cost,
             gas_limit
         );
