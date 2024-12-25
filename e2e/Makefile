@@ -1,4 +1,4 @@
-FILES = HelloWorld Storage
+FILES = HelloWorld Storage DelegateCaller
 
 .PHONE: $(FILES)
 $(FILES):

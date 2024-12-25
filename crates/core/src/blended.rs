@@ -298,6 +298,8 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             return return_error(gas, ExitCode::CallDepthOverflow);
         }
 
+        debug_log!("-- call inner: caller={:?}, target={:?}", inputs.caller, inputs.target_address);
+
         // read caller and callee
         let (mut caller_account, _) = self.sdk.account(&inputs.caller);
         let (mut callee_account, _) = self.sdk.account(&inputs.target_address);
