@@ -1,7 +1,7 @@
 all: build
 
 SKIP_CONTRACTS=n
-SKIP_EXAMPLES=y
+SKIP_EXAMPLES=n
 SKIP_GENESIS=n
 
 .PHONY: build
@@ -21,14 +21,6 @@ clean:
 test:
 	clear
 	cargo test --no-fail-fast -q
-
-.PHONE: deploy_example_greeting_contract
-deploy_example_greeting_contract:
-	node ./examples/deploy-contract.js --local ./examples/greeting/lib.wasm
-
-.PHONE: send_blended_tx
-send_blended_tx:
-	node ./examples/send-blended-tx.js --local ./examples/blended/lib.wasm
 
 .PHONY: run_fluent_node
 run_fluent_node:

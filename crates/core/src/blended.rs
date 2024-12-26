@@ -3,7 +3,10 @@ mod syscall;
 mod util;
 mod wasm;
 
-use crate::{helpers::evm_error_from_exit_code, types::NextAction};
+use crate::{
+    helpers::{evm_error_from_exit_code, DenominateGas},
+    types::NextAction,
+};
 use alloc::boxed::Box;
 use fluentbase_sdk::{
     bytes::BytesMut,
@@ -45,6 +48,7 @@ pub use util::{create_delegate_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
 pub struct BlendedRuntime<SDK> {
     sdk: SDK,
     env: Env,
+    pub inner_gas_spend: Option<u64>,
 }
 
 impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
@@ -52,6 +56,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         Self {
             env: env_from_context(sdk.context()),
             sdk,
+            inner_gas_spend: None,
         }
     }
 
@@ -130,7 +135,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             return self.process_exec_params(exit_code, fuel_consumed, return_data);
         }
 
-        todo!("not supported yet")
+        #[cfg(not(feature = "std"))]
+        {
+            todo!("not supported yet")
+        }
     }
 
     fn process_resume(
@@ -157,7 +165,11 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             );
             return self.process_exec_params(exit_code, fuel_spent, return_data);
         }
-        todo!("not supported yet")
+
+        #[cfg(not(feature = "std"))]
+        {
+            todo!("not supported yet")
+        }
     }
 
     fn exec_bytecode(
@@ -193,7 +205,16 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 call_depth,
             ),
             BytecodeType::WASM => {
-                self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
+                let result = self.exec_rwasm_bytecode(
+                    context,
+                    bytecode_account,
+                    input,
+                    gas,
+                    state,
+                    call_depth,
+                );
+                gas.denominate_gas(self.inner_gas_spend.unwrap_or_default());
+                result
             }
         }
     }
@@ -263,7 +284,12 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 }
             }
             BytecodeType::WASM => {
-                self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth)
+                let mut result =
+                    self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth);
+                result
+                    .gas
+                    .denominate_gas(self.inner_gas_spend.unwrap_or_default());
+                result
             }
             _ => InterpreterResult::new(
                 InstructionResult::CreateContractStartingWithEF,

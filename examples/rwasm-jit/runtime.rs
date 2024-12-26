@@ -279,9 +279,9 @@ impl_runtime_handler!(SyscallKeccak256, KECCAK256, fn fluentbase_v1preview::_kec
 // u32) -> ());
 impl_runtime_handler!(SyscallExit, EXIT, fn fluentbase_v1preview::_exit(exit_code: i32) -> ());
 // impl_runtime_handler!(SyscallState, STATE, fn fluentbase_v1preview::_state() -> u32);
-impl_runtime_handler!(SyscallRead, READ, fn fluentbase_v1preview::_read(target: u32, offset: u32, length: u32) -> ());
+impl_runtime_handler!(SyscallRead, READ_INPUT, fn fluentbase_v1preview::_read(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SyscallInputSize, INPUT_SIZE, fn fluentbase_v1preview::_input_size() -> u32);
-impl_runtime_handler!(SyscallWrite, WRITE, fn fluentbase_v1preview::_write(offset: u32, length: u32) -> ());
+impl_runtime_handler!(SyscallWrite, WRITE_OUTPUT, fn fluentbase_v1preview::_write(offset: u32, length: u32) -> ());
 // impl_runtime_handler!(SyscallOutputSize, OUTPUT_SIZE, fn fluentbase_v1preview::_output_size() ->
 // u32); impl_runtime_handler!(SyscallReadOutput, READ_OUTPUT, fn
 // fluentbase_v1preview::_read_output(target: u32, offset: u32, length: u32) -> ());

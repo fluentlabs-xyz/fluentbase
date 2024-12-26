@@ -243,7 +243,12 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             match next_action {
                 InterpreterAction::Call { inputs } => {
                     let return_memory_offset = inputs.return_memory_offset.clone();
+                    let inner_gas = self.inner_gas_spend.take();
+
                     let (output, gas, exit_code) = self.call_inner(inputs, STATE_MAIN, depth + 1);
+
+                    self.inner_gas_spend = Some(inner_gas.unwrap_or_default() + gas.spent());
+
                     let result = InterpreterResult::new(
                         evm_error_from_exit_code(ExitCode::from(exit_code)),
                         output,

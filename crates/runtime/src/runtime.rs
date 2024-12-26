@@ -18,6 +18,7 @@ use fluentbase_types::{
     STATE_MAIN,
 };
 use hashbrown::{hash_map::Entry, HashMap};
+use keccak_hash::keccak;
 use rwasm::{
     core::ImportLinker,
     engine::{bytecode::Instruction, DropKeep, RwasmConfig, StateRouterConfig, Tracer},
@@ -55,12 +56,16 @@ impl Default for BytecodeOrHash {
 }
 
 impl BytecodeOrHash {
-    pub fn with_resolved_hash(self) -> Self {
+    pub fn with_resolved_hash(self, is_test: bool) -> Self {
         match self {
             BytecodeOrHash::Bytecode(_, Some(_)) => self,
             BytecodeOrHash::Bytecode(bytecode, None) => {
-                let hash = F254::from(poseidon_hash(&bytecode));
-                BytecodeOrHash::Bytecode(bytecode, Some(hash))
+                let hash = if is_test {
+                    keccak(bytecode.as_ref()).0
+                } else {
+                    poseidon_hash(&bytecode)
+                };
+                BytecodeOrHash::Bytecode(bytecode, Some(F254::from(hash)))
             }
             BytecodeOrHash::Hash(_) => self,
         }
@@ -83,6 +88,7 @@ pub struct RuntimeContext {
     pub(crate) trace: bool,
     pub(crate) input: Vec<u8>,
     pub(crate) disable_fuel: bool,
+    pub(crate) is_test: bool,
     // context outputs
     pub(crate) execution_result: ExecutionResult,
     pub(crate) resumable_invocation: Option<ResumableInvocation>,
@@ -110,6 +116,7 @@ impl Default for RuntimeContext {
             instance: None,
             disable_fuel: false,
             preimage_resolver: Default::default(),
+            is_test: false,
         }
     }
 }
@@ -168,6 +175,11 @@ impl RuntimeContext {
 
     pub fn with_tracer(mut self) -> Self {
         self.trace = true;
+        self
+    }
+
+    pub fn with_is_test(mut self) -> Self {
+        self.is_test = true;
         self
     }
 
@@ -388,7 +400,9 @@ impl Runtime {
 
     pub fn new(mut runtime_context: RuntimeContext) -> Self {
         // make sure bytecode hash is resolved
-        runtime_context.bytecode = runtime_context.bytecode.with_resolved_hash();
+        runtime_context.bytecode = runtime_context
+            .bytecode
+            .with_resolved_hash(runtime_context.is_test);
 
         // use existing engine or create a new one
         let engine = CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
@@ -437,11 +451,19 @@ impl Runtime {
     ) -> Result<Instance, RuntimeError> {
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             let bytecode_repr = take(&mut self.store.data_mut().bytecode);
+            let is_test = self.store.data().is_test;
 
             // resolve cached module or init it
             let module = match &bytecode_repr {
                 BytecodeOrHash::Bytecode(bytecode, hash) => {
-                    let hash = hash.unwrap_or_else(|| F254::from(poseidon_hash(&bytecode)));
+                    let hash = hash.unwrap_or_else(|| {
+                        let hash = if is_test {
+                            keccak(bytecode.as_ref()).0
+                        } else {
+                            poseidon_hash(&bytecode)
+                        };
+                        F254::from(hash)
+                    });
                     // if we have a cached module then use it, otherwise create a new one and cache
                     if let Some(module) = caching_runtime.resolve_module(&hash) {
                         Ok(module)

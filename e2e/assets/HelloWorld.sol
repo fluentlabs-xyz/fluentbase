@@ -5,7 +5,7 @@ contract HelloWorld {
     constructor() payable {
     }
     function sayHelloWorld() public pure returns (string memory) {
-        return "Hello World";
+        return "Hello, World";
     }
     function getBalanceAsStr(address addr) public view  returns (string memory) {
         uint256 balance = addr.balance;
