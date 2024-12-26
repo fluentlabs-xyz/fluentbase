@@ -40,6 +40,7 @@ use revm_primitives::{Bytecode, CancunSpec, CreateScheme, Env, BLOCK_HASH_HISTOR
 pub struct EvmLoader<'a, SDK> {
     sdk: &'a mut SDK,
     env: Env,
+    bytecode_address: Address,
     address: Address,
     last_gas_consumed: u64,
 }
@@ -217,9 +218,11 @@ const EVM_CODE_HASH_SLOT: U256 = U256::from_le_bytes(derive_keccak256!("_evm_byt
 impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
     pub fn new(sdk: &'a mut SDK) -> Self {
         let address = sdk.context().contract_address();
+        let bytecode_address = sdk.context().contract_bytecode_address();
         Self {
             env: env_from_context(sdk.context()),
             sdk,
+            bytecode_address,
             address,
             last_gas_consumed: 0,
         }
@@ -228,7 +231,7 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
     pub fn load_evm_bytecode(&self) -> (Bytecode, B256) {
         let evm_code_hash = self
             .sdk
-            .storage(&EVM_CODE_HASH_SLOT)
+            .ext_storage(&self.bytecode_address, &EVM_CODE_HASH_SLOT)
             .0
             .to_le_bytes::<32>()
             .into();
