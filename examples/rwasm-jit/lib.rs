@@ -206,6 +206,7 @@ impl Context {
                 entrypoint_name: None,
                 import_linker: Some(create_import_linker()),
                 wrap_import_functions: false,
+                translate_drop_keep: false,
             });
         }
         config

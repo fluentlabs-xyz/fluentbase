@@ -23,6 +23,7 @@ pub(crate) fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
         entrypoint_name: None,
         import_linker: Some(create_import_linker()),
         wrap_import_functions: true,
+        translate_drop_keep: false,
     });
     let rwasm_module = RwasmModule::compile_with_config(wasm_binary, &config)
         .map_err(|_| ExitCode::CompilationError)?;

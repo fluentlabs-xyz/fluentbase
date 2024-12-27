@@ -1,10 +1,10 @@
-use crate::utils::run_with_default_context;
+use crate::utils::{run_with_default_context, run_with_default_context2};
 use core::str::from_utf8;
 use hex_literal::hex;
 
 #[test]
 fn test_example_greeting() {
-    let (output, exit_code) = run_with_default_context(
+    let (output, exit_code) = run_with_default_context2(
         include_bytes!("../../examples/greeting/lib.wasm").to_vec(),
         "Hello, World".as_bytes(),
     );

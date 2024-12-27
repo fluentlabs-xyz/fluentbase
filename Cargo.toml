@@ -40,6 +40,7 @@ fluentbase-core = { path = "./crates/core", default-features = false }
 fluentbase-contracts = { path = "crates/contracts", default-features = false }
 fluentbase-core-macros = { path = "./crates/core-macros", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
+fluentbase-rwasm = { path = "./crates/rwasm", default-features = false }
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
