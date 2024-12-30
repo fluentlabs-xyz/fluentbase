@@ -102,11 +102,13 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             contract: contract_context.clone(),
         };
         debug_log!(
-            "process_exec({}): fuel={} input_len={} state={}",
+            "process_exec({}): fuel={} input_len={} state={} bytecode_address={:?} address={:?}",
             fluentbase_sdk::syscall_name_by_hash(&params.code_hash),
             params.fuel_limit,
             params.input.len(),
             params.state,
+            context_input.contract.bytecode_address,
+            context_input.contract.address
         );
         println!("Exec: {:?}", params.code_hash);
         let mut buf = BytesMut::new();

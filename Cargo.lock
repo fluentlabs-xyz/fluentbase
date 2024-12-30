@@ -5712,6 +5712,7 @@ dependencies = [
  "ethers-core",
  "ethers-providers",
  "fluentbase-core",
+ "fluentbase-genesis",
  "fluentbase-sdk",
  "indicatif",
  "reqwest 0.12.9",

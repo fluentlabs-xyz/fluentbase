@@ -141,7 +141,11 @@ impl DenominateGas for Gas {
     const DENOMINATE_COEFFICIENT: u64 = 1000;
 
     fn denominate_gas(&mut self, inner_gas_spent: u64) {
-        println!("Nominate gas: {:?} {:?}", self, inner_gas_spent);
+        if self.spent() == 0 {
+            return;
+        }
+
+        //TODO: Add checked sub and return OutOfGas error while overflow
         let gas_used = self.limit() - self.remaining() - inner_gas_spent;
         if gas_used != 0 {
             self.spend_all();

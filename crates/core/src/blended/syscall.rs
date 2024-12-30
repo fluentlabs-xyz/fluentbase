@@ -904,7 +904,13 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         } else {
             0
         };
-
+        debug_log!(
+            "- ext_storage_read: address={} slot={} value={} gas={}",
+            ext_address,
+            B256::from(slot.to_be_bytes::<32>()),
+            B256::from(value.to_be_bytes::<32>()),
+            gas_cost
+        );
         let mut output = vec![];
         output.extend_from_slice(value.as_le_slice());
         output.push(is_cold as u8);
