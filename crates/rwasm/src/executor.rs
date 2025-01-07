@@ -2,26 +2,41 @@ use crate::executor::vec::Vec;
 use alloc::vec;
 use hashbrown::HashMap;
 use rwasm::{
-    core::{TrapCode, UntypedValue},
+    core::{TrapCode, UntypedValue, ValueType},
     engine::{
-        bytecode::{AddressOffset, GlobalIdx, Instruction, SignatureIdx, TableIdx},
-        code_map::InstructionPtr,
+        bytecode::{
+            AddressOffset,
+            DataSegmentIdx,
+            ElementSegmentIdx,
+            GlobalIdx,
+            Instruction,
+            SignatureIdx,
+            TableIdx,
+        },
+        code_map::{FuncHeader, InstructionPtr, InstructionsRef},
         stack::{ValueStack, ValueStackPtr},
         DropKeep,
         Tracer,
     },
-    memory::MemoryEntity,
-    rwasm::{BinaryFormatError, RwasmModule},
+    errors::MemoryError,
+    memory::{DataSegmentEntity, MemoryEntity},
+    module::{ConstExpr, ElementSegment, ElementSegmentItems, ElementSegmentKind},
+    rwasm::{BinaryFormatError, RwasmModule, N_MAX_RECURSION_DEPTH},
     store::ResourceLimiterRef,
+    table::{ElementSegmentEntity, TableEntity},
     MemoryType,
+    TableType,
+    Value,
 };
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 pub enum RwasmError {
     BinaryFormatError(BinaryFormatError),
     TrapCode(TrapCode),
     UnknownExternalFunction(u32),
     ExecutionHalted(i32),
+    MemoryError(MemoryError),
+    InputOutOfBounds,
 }
 
 impl From<BinaryFormatError> for RwasmError {
@@ -32,6 +47,11 @@ impl From<BinaryFormatError> for RwasmError {
 impl From<TrapCode> for RwasmError {
     fn from(value: TrapCode) -> Self {
         Self::TrapCode(value)
+    }
+}
+impl From<MemoryError> for RwasmError {
+    fn from(value: MemoryError) -> Self {
+        Self::MemoryError(value)
     }
 }
 
@@ -65,25 +85,37 @@ pub struct RwasmExecutor<'a, E: SyscallHandler> {
     pub(crate) sp: ValueStackPtr,
     pub(crate) value_stack: ValueStack,
     pub(crate) ip: InstructionPtr,
-    pub(crate) resource_limiter_ref: ResourceLimiterRef<'a>,
     pub(crate) global_memory: MemoryEntity,
     pub(crate) global_variables: HashMap<GlobalIdx, UntypedValue>,
-    pub(crate) global_tables: HashMap<(TableIdx, u32), u32>,
+    pub(crate) tables: HashMap<TableIdx, TableEntity>,
+    pub(crate) data_segments: HashMap<DataSegmentIdx, DataSegmentEntity>,
+    pub(crate) element_segments: HashMap<ElementSegmentIdx, ElementSegmentEntity>,
     pub(crate) call_stack: Vec<InstructionPtr>,
     pub(crate) last_signature: Option<SignatureIdx>,
     pub(crate) tracer: Option<&'a mut Tracer>,
+    pub(crate) fuel_limit: Option<u64>,
+    pub(crate) fuel_consumed: u64,
 }
 
 impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
     pub fn parse(
         rwasm_bytecode: &[u8],
         syscall_handler: Option<&'a mut E>,
+        fuel_limit: Option<u64>,
     ) -> Result<Self, RwasmError> {
-        let rwasm_module = RwasmModule::new(rwasm_bytecode)?;
-        Ok(Self::new(rwasm_module, syscall_handler))
+        let mut rwasm_module = RwasmModule::new(rwasm_bytecode)?;
+        // a special case for an empty code section, just don't execute
+        if rwasm_module.code_section.instr.is_empty() {
+            rwasm_module.code_section.op_return();
+        }
+        Ok(Self::new(rwasm_module, syscall_handler, fuel_limit))
     }
 
-    pub fn new(rwasm_module: RwasmModule, syscall_handler: Option<&'a mut E>) -> Self {
+    pub fn new(
+        rwasm_module: RwasmModule,
+        syscall_handler: Option<&'a mut E>,
+        fuel_limit: Option<u64>,
+    ) -> Self {
         let mut func_segments = vec![0u32];
         let mut total_func_len = 0u32;
         for func_len in rwasm_module
@@ -117,6 +149,23 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
 
         let last_signature: Option<SignatureIdx> = None;
 
+        // create the main element segment (index 0) from the module elements
+        let mut element_segments = HashMap::new();
+        element_segments.insert(
+            ElementSegmentIdx::from(0u32),
+            ElementSegmentEntity::from(&ElementSegment {
+                kind: ElementSegmentKind::Passive,
+                ty: ValueType::I32,
+                items: ElementSegmentItems {
+                    exprs: rwasm_module
+                        .element_section
+                        .iter()
+                        .map(|v| ConstExpr::from_const((*v).into()))
+                        .collect(),
+                },
+            }),
+        );
+
         Self {
             rwasm_module,
             syscall_handler,
@@ -124,14 +173,76 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
             sp,
             value_stack,
             ip,
-            resource_limiter_ref,
             global_memory,
             global_variables: HashMap::new(),
-            global_tables: HashMap::new(),
+            tables: HashMap::new(),
+            data_segments: HashMap::new(),
+            element_segments,
             call_stack: Vec::new(),
             last_signature,
             tracer: None,
+            fuel_limit,
+            fuel_consumed: 0,
         }
+    }
+
+    pub fn run(&mut self) -> Result<i32, RwasmError> {
+        match self.run_the_loop() {
+            Ok(exit_code) => Ok(exit_code),
+            Err(err) => match err {
+                RwasmError::ExecutionHalted(exit_code) => Ok(exit_code),
+                _ => Err(err),
+            },
+        }
+    }
+
+    pub(crate) fn resolve_table_or_create(&mut self, table_idx: TableIdx) -> &mut TableEntity {
+        self.tables.entry(table_idx).or_insert_with(|| {
+            let mut dummy_resource_limiter = ResourceLimiterRef::default();
+            TableEntity::new(
+                TableType::new(ValueType::I32, 0, None),
+                Value::I32(0),
+                &mut dummy_resource_limiter,
+            )
+            .unwrap()
+        })
+    }
+
+    pub(crate) fn resolve_element_or_create(
+        &mut self,
+        element_idx: ElementSegmentIdx,
+    ) -> &mut ElementSegmentEntity {
+        self.element_segments.entry(element_idx).or_insert_with(|| {
+            ElementSegmentEntity::from(&ElementSegment {
+                kind: ElementSegmentKind::Passive,
+                ty: ValueType::I32,
+                items: ElementSegmentItems { exprs: [].into() },
+            })
+        })
+    }
+
+    pub(crate) fn resolve_table_with_element_or_create(
+        &mut self,
+        table_idx: TableIdx,
+        element_idx: ElementSegmentIdx,
+    ) -> (&mut TableEntity, &mut ElementSegmentEntity) {
+        let table_entity = self.tables.entry(table_idx).or_insert_with(|| {
+            let mut dummy_resource_limiter = ResourceLimiterRef::default();
+            TableEntity::new(
+                TableType::new(ValueType::I32, 0, None),
+                Value::I32(0),
+                &mut dummy_resource_limiter,
+            )
+            .unwrap()
+        });
+        let element_entity = self.element_segments.entry(element_idx).or_insert_with(|| {
+            ElementSegmentEntity::from(&ElementSegment {
+                kind: ElementSegmentKind::Passive,
+                ty: ValueType::I32,
+                items: ElementSegmentItems { exprs: [].into() },
+            })
+        });
+        (table_entity, element_entity)
     }
 
     pub(crate) fn fetch_drop_keep(&self, offset: usize) -> DropKeep {
@@ -149,16 +260,6 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         match addr.get() {
             Instruction::TableGet(table_idx) => *table_idx,
             _ => unreachable!("rwasm: can't extract table index"),
-        }
-    }
-
-    pub fn run(&mut self) -> Result<i32, RwasmError> {
-        match self.run_the_loop() {
-            Ok(exit_code) => Ok(exit_code),
-            Err(err) => match err {
-                RwasmError::ExecutionHalted(exit_code) => Ok(exit_code),
-                _ => Err(err),
-            },
         }
     }
 
@@ -221,69 +322,44 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         self.sp.eval_top2(f);
         self.ip.add(1);
     }
+
+    #[inline(always)]
+    pub(crate) fn execute_call_internal(
+        &mut self,
+        is_nested_call: bool,
+        skip: usize,
+        func_idx: u32,
+    ) -> Result<(), RwasmError> {
+        self.ip.add(skip);
+        self.value_stack.sync_stack_ptr(self.sp);
+        if is_nested_call {
+            if self.call_stack.len() > N_MAX_RECURSION_DEPTH {
+                return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
+            }
+            self.call_stack.push(self.ip);
+        }
+        let instr_ref = self
+            .func_segments
+            .get(func_idx as usize)
+            .copied()
+            .expect("rwasm: unknown internal function");
+        let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
+        self.value_stack.prepare_wasm_call(&header)?;
+        self.sp = self.value_stack.stack_ptr();
+        self.ip = InstructionPtr::new(
+            self.rwasm_module.code_section.instr.as_ptr(),
+            self.rwasm_module.code_section.metas.as_ptr(),
+        );
+        self.ip.add(instr_ref as usize);
+        Ok(())
+    }
 }
 
 #[deprecated(since = "0.1.0", note = "use `RwasmExecutor::new` instead")]
 pub fn execute_rwasm_module<'a, E: SyscallHandler>(
     rwasm_module: RwasmModule,
     syscall_handler: Option<&'a mut E>,
+    fuel_limit: Option<u64>,
 ) -> Result<i32, RwasmError> {
-    RwasmExecutor::<'a, E>::new(rwasm_module, syscall_handler).run()
-}
-
-#[derive(Default)]
-pub struct SimpleCallHandler {
-    pub input: Vec<u8>,
-    pub state: u32,
-    pub output: Vec<u8>,
-}
-
-impl SimpleCallHandler {
-    fn fn_proc_exit(
-        &self,
-        sp: &mut ValueStackPtr,
-        _global_memory: &mut MemoryEntity,
-    ) -> Result<(), RwasmError> {
-        let exit_code = sp.pop();
-        Err(RwasmError::ExecutionHalted(exit_code.as_i32()))
-    }
-
-    fn fn_state(
-        &self,
-        sp: &mut ValueStackPtr,
-        _global_memory: &mut MemoryEntity,
-    ) -> Result<(), RwasmError> {
-        sp.push(UntypedValue::from(self.state));
-        Ok(())
-    }
-
-    fn fn_write_output(
-        &mut self,
-        sp: &mut ValueStackPtr,
-        global_memory: &mut MemoryEntity,
-    ) -> Result<(), RwasmError> {
-        let (offset, length) = sp.pop2();
-        let buffer = global_memory
-            .data()
-            .get(offset.as_usize()..(offset.as_usize() + length.as_usize()))
-            .ok_or(TrapCode::MemoryOutOfBounds)?;
-        self.output.extend_from_slice(buffer);
-        Ok(())
-    }
-}
-
-impl SyscallHandler for SimpleCallHandler {
-    fn call_function(
-        &mut self,
-        func_idx: u32,
-        sp: &mut ValueStackPtr,
-        global_memory: &mut MemoryEntity,
-    ) -> Result<(), RwasmError> {
-        match func_idx {
-            0x01 => self.fn_proc_exit(sp, global_memory),
-            0x02 => self.fn_state(sp, global_memory),
-            0x05 => self.fn_write_output(sp, global_memory),
-            _ => unreachable!("rwasm: unknown function ({})", func_idx),
-        }
-    }
+    RwasmExecutor::<'a, E>::new(rwasm_module, syscall_handler, fuel_limit).run()
 }

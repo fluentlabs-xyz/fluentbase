@@ -14,6 +14,7 @@ rwasm = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-poseidon = { workspace = true }
 fluentbase-types = { workspace = true, features = ["rwasm"] }
+fluentbase-rwasm = { workspace = true }
 halo2curves = { workspace = true, default-features = false }
 eth_trie = { workspace = true, default-features = false }
 

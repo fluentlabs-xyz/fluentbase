@@ -14,21 +14,28 @@ use rwasm::{
             BlockFuel,
             BranchOffset,
             BranchTableTargets,
+            DataSegmentIdx,
+            ElementSegmentIdx,
             FuncIdx,
             GlobalIdx,
             Instruction,
             LocalDepth,
             SignatureIdx,
+            TableIdx,
         },
         code_map::{FuncHeader, InstructionPtr, InstructionsRef},
+        executor::EntityGrowError,
         CompiledFunc,
         DropKeep,
     },
     rwasm::N_MAX_RECURSION_DEPTH,
+    store::ResourceLimiterRef,
+    table::{ElementSegmentEntity, TableEntity},
 };
 
 impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
     pub(crate) fn run_the_loop(&mut self) -> Result<i32, RwasmError> {
+        let mut resource_limiter_ref = ResourceLimiterRef::default();
         loop {
             let instr = *self.ip.get();
             #[cfg(feature = "std")]
@@ -102,50 +109,52 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
                 Instruction::I64Store16(offset) => self.visit_i64_store_16(offset)?,
                 Instruction::I64Store32(offset) => self.visit_i64_store_32(offset)?,
                 Instruction::MemorySize => self.visit_memory_size(),
-                Instruction::MemoryGrow => self.visit_memory_grow()?,
+                Instruction::MemoryGrow => self.visit_memory_grow(&mut resource_limiter_ref)?,
                 Instruction::MemoryFill => self.visit_memory_fill()?,
                 Instruction::MemoryCopy => self.visit_memory_copy()?,
 
-                // Instruction::MemoryInit(segment) => self.visit_memory_init(segment)?,
-                // Instruction::DataDrop(segment) => self.visit_data_drop(segment),
-                // Instruction::TableSize(table) => self.visit_table_size(table),
-                // Instruction::TableGrow(table) => {
-                //     self.visit_table_grow(table, &mut *resource_limiter)?
-                // }
-                // Instruction::TableFill(table) => self.visit_table_fill(table)?,
-                // Instruction::TableGet(table) => self.visit_table_get(table)?,
-                // Instruction::TableSet(table) => self.visit_table_set(table)?,
-                // Instruction::TableCopy(dst) => self.visit_table_copy(dst)?,
-                // Instruction::TableInit(elem) => self.visit_table_init(elem)?,
-                // Instruction::ElemDrop(segment) => self.visit_element_drop(segment),
-                // Instruction::RefFunc(func_index) => self.visit_ref_func(func_index)?,
-                // Instruction::I32Const(value) => self.visit_i32_const(value),
-                // Instruction::I64Const(value) => self.visit_i64_const(value),
+                Instruction::MemoryInit(segment) => self.visit_memory_init(segment)?,
+                Instruction::DataDrop(segment) => self.visit_data_drop(segment),
+                Instruction::TableSize(table) => self.visit_table_size(table),
+                Instruction::TableGrow(table) => {
+                    self.visit_table_grow(table, &mut resource_limiter_ref)?
+                }
+                Instruction::TableFill(table) => self.visit_table_fill(table)?,
+                Instruction::TableGet(table) => self.visit_table_get(table)?,
+                Instruction::TableSet(table) => self.visit_table_set(table)?,
+                Instruction::TableCopy(dst) => self.visit_table_copy(dst)?,
+                Instruction::TableInit(elem) => self.visit_table_init(elem)?,
+                Instruction::ElemDrop(segment) => self.visit_element_drop(segment),
+                Instruction::RefFunc(func_index) => self.visit_ref_func(func_index)?,
+                Instruction::I32Const(value) | Instruction::I64Const(value) => {
+                    self.visit_i32_i64_const(value)
+                }
+
                 // Instruction::F32Const(value) => self.visit_f32_const(value),
                 // Instruction::F64Const(value) => self.visit_f64_const(value),
                 // Instruction::ConstRef(cref) => self.visit_const(cref),
                 Instruction::I32Eqz => self.visit_i32_eqz(),
                 Instruction::I32Eq => self.visit_i32_eq(),
                 Instruction::I32Ne => self.visit_i32_ne(),
-                // Instruction::I32LtS => self.visit_i32_lt_s(),
-                // Instruction::I32LtU => self.visit_i32_lt_u(),
-                // Instruction::I32GtS => self.visit_i32_gt_s(),
-                // Instruction::I32GtU => self.visit_i32_gt_u(),
-                // Instruction::I32LeS => self.visit_i32_le_s(),
-                // Instruction::I32LeU => self.visit_i32_le_u(),
-                // Instruction::I32GeS => self.visit_i32_ge_s(),
-                // Instruction::I32GeU => self.visit_i32_ge_u(),
+                Instruction::I32LtS => self.visit_i32_lt_s(),
+                Instruction::I32LtU => self.visit_i32_lt_u(),
+                Instruction::I32GtS => self.visit_i32_gt_s(),
+                Instruction::I32GtU => self.visit_i32_gt_u(),
+                Instruction::I32LeS => self.visit_i32_le_s(),
+                Instruction::I32LeU => self.visit_i32_le_u(),
+                Instruction::I32GeS => self.visit_i32_ge_s(),
+                Instruction::I32GeU => self.visit_i32_ge_u(),
                 Instruction::I64Eqz => self.visit_i64_eqz(),
                 Instruction::I64Eq => self.visit_i64_eq(),
                 Instruction::I64Ne => self.visit_i64_ne(),
-                // Instruction::I64LtS => self.visit_i64_lt_s(),
-                // Instruction::I64LtU => self.visit_i64_lt_u(),
-                // Instruction::I64GtS => self.visit_i64_gt_s(),
-                // Instruction::I64GtU => self.visit_i64_gt_u(),
-                // Instruction::I64LeS => self.visit_i64_le_s(),
-                // Instruction::I64LeU => self.visit_i64_le_u(),
-                // Instruction::I64GeS => self.visit_i64_ge_s(),
-                // Instruction::I64GeU => self.visit_i64_ge_u(),
+                Instruction::I64LtS => self.visit_i64_lt_s(),
+                Instruction::I64LtU => self.visit_i64_lt_u(),
+                Instruction::I64GtS => self.visit_i64_gt_s(),
+                Instruction::I64GtU => self.visit_i64_gt_u(),
+                Instruction::I64LeS => self.visit_i64_le_s(),
+                Instruction::I64LeU => self.visit_i64_le_u(),
+                Instruction::I64GeS => self.visit_i64_ge_s(),
+                Instruction::I64GeU => self.visit_i64_ge_u(),
                 Instruction::F32Eq => self.visit_f32_eq(),
                 Instruction::F32Ne => self.visit_f32_ne(),
                 Instruction::F32Lt => self.visit_f32_lt(),
@@ -258,44 +267,6 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
                 Instruction::I64Extend32S => self.visit_i64_extend32_s(),
 
                 // TODO(dmitry123): "add more opcodes"
-                Instruction::MemoryInit(data_segment_idx) => {
-                    // TODO(dmitry123): "add emptiness check"
-                    assert_eq!(
-                        data_segment_idx.to_u32(),
-                        0,
-                        "rwasm: non-zero data segment index"
-                    );
-                    let (d, s, n) = self.sp.pop3();
-                    let n = i32::from(n) as usize;
-                    let src_offset = i32::from(s) as usize;
-                    let dst_offset = i32::from(d) as usize;
-                    let memory = self
-                        .global_memory
-                        .data_mut()
-                        .get_mut(dst_offset..)
-                        .and_then(|memory| memory.get_mut(..n))
-                        .ok_or(TrapCode::MemoryOutOfBounds)?;
-                    let data = self
-                        .rwasm_module
-                        .memory_section
-                        .get(src_offset..)
-                        .and_then(|data| data.get(..n))
-                        .ok_or(TrapCode::MemoryOutOfBounds)?;
-                    memory.copy_from_slice(data);
-                    if let Some(tracer) = self.tracer.as_mut() {
-                        tracer.global_memory(dst_offset as u32, n as u32, memory);
-                    }
-                    self.ip.add(1);
-                }
-                Instruction::DataDrop(_data_segment_idx) => self.ip.add(1),
-                Instruction::I32Const(value) => {
-                    self.sp.push(value);
-                    self.ip.add(1);
-                }
-                Instruction::I64Const(value) => {
-                    self.sp.push(value);
-                    self.ip.add(1);
-                }
                 _ => unreachable!("rwasm: unsupported instruction ({:?})", instr),
             }
         }
@@ -375,7 +346,13 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
     }
 
     #[inline(always)]
-    pub(crate) fn visit_consume_fuel(&mut self, _block_fuel: BlockFuel) -> Result<(), RwasmError> {
+    pub(crate) fn visit_consume_fuel(&mut self, block_fuel: BlockFuel) -> Result<(), RwasmError> {
+        if let Some(fuel_limit) = self.fuel_limit {
+            if self.fuel_consumed + block_fuel.to_u64() >= fuel_limit {
+                return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
+            }
+        }
+        self.fuel_consumed += block_fuel.to_u64();
         self.ip.add(1);
         Ok(())
     }
@@ -460,20 +437,19 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         let func_index: u32 = self.sp.pop_as();
         self.sp.drop_keep(drop_keep);
         self.last_signature = Some(signature_idx);
-        let func_idx = self
-            .global_tables
-            .get(&(table, func_index))
-            .copied()
-            .ok_or(TrapCode::TableOutOfBounds)?;
+        let func_idx: u32 = self
+            .tables
+            .get(&table)
+            .expect("rwasm: unresolved table index")
+            .get(func_index)
+            .and_then(|v| v.i32())
+            .ok_or(TrapCode::TableOutOfBounds)?
+            .try_into()
+            .unwrap();
         if func_idx == 0 {
             return Err(TrapCode::IndirectCallToNull.into());
         }
-        self.value_stack.sync_stack_ptr(self.sp);
-        self.syscall_handler
-            .as_mut()
-            .ok_or(RwasmError::UnknownExternalFunction(func_idx))?
-            .call_function(func_idx, &mut self.sp, &mut self.global_memory)?;
-        Ok(())
+        self.execute_call_internal(false, 3, func_idx)
     }
 
     #[inline(always)]
@@ -516,22 +492,42 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         &mut self,
         signature_idx: SignatureIdx,
     ) -> Result<(), RwasmError> {
+        // resolve func index
         let table = self.fetch_table_index(1);
         let func_index: u32 = self.sp.pop_as();
         self.last_signature = Some(signature_idx);
-        let func_idx = self
-            .global_tables
-            .get(&(table, func_index))
-            .copied()
-            .ok_or(TrapCode::TableOutOfBounds)?;
+        let func_idx: u32 = self
+            .tables
+            .get(&table)
+            .expect("rwasm: unresolved table index")
+            .get(func_index)
+            .and_then(|v| v.i32())
+            .ok_or(TrapCode::TableOutOfBounds)?
+            .try_into()
+            .expect("rwasm: invalid function index");
         if func_idx == 0 {
             return Err(TrapCode::IndirectCallToNull.into());
         }
+        // call func
+        self.ip.add(2);
         self.value_stack.sync_stack_ptr(self.sp);
-        self.syscall_handler
-            .as_mut()
-            .ok_or(RwasmError::UnknownExternalFunction(func_idx))?
-            .call_function(func_idx, &mut self.sp, &mut self.global_memory)?;
+        if self.call_stack.len() > N_MAX_RECURSION_DEPTH {
+            return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
+        }
+        self.call_stack.push(self.ip);
+        let instr_ref = self
+            .func_segments
+            .get(func_idx as usize)
+            .copied()
+            .expect("rwasm: unknown internal function");
+        let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
+        self.value_stack.prepare_wasm_call(&header)?;
+        self.sp = self.value_stack.stack_ptr();
+        self.ip = InstructionPtr::new(
+            self.rwasm_module.code_section.instr.as_ptr(),
+            self.rwasm_module.code_section.metas.as_ptr(),
+        );
+        self.ip.add(instr_ref as usize);
         Ok(())
     }
 
@@ -627,7 +623,10 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
     }
 
     #[inline(always)]
-    pub(crate) fn visit_memory_grow(&mut self) -> Result<(), RwasmError> {
+    pub(crate) fn visit_memory_grow(
+        &mut self,
+        mut limiter: &mut ResourceLimiterRef<'_>,
+    ) -> Result<(), RwasmError> {
         let delta: u32 = self.sp.pop_as();
         if delta > Pages::max().into_inner() {
             self.sp.push_as(u32::MAX);
@@ -636,7 +635,7 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         }
         let new_pages = self
             .global_memory
-            .grow(Pages::new(delta).unwrap(), &mut self.resource_limiter_ref)
+            .grow(Pages::new(delta).unwrap(), &mut limiter)
             .map(u32::from)
             .unwrap_or(u32::MAX);
         self.sp.push_as(new_pages);
@@ -688,6 +687,194 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         }
         self.ip.add(1);
         Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_memory_init(
+        &mut self,
+        data_segment_idx: DataSegmentIdx,
+    ) -> Result<(), RwasmError> {
+        // TODO(dmitry123): "add emptiness check"
+        assert_eq!(
+            data_segment_idx.to_u32(),
+            0,
+            "rwasm: non-zero data segment index"
+        );
+        let (d, s, n) = self.sp.pop3();
+        let n = i32::from(n) as usize;
+        let src_offset = i32::from(s) as usize;
+        let dst_offset = i32::from(d) as usize;
+        let memory = self
+            .global_memory
+            .data_mut()
+            .get_mut(dst_offset..)
+            .and_then(|memory| memory.get_mut(..n))
+            .ok_or(TrapCode::MemoryOutOfBounds)?;
+        let data = self
+            .rwasm_module
+            .memory_section
+            .get(src_offset..)
+            .and_then(|data| data.get(..n))
+            .ok_or(TrapCode::MemoryOutOfBounds)?;
+        memory.copy_from_slice(data);
+        if let Some(tracer) = self.tracer.as_mut() {
+            tracer.global_memory(dst_offset as u32, n as u32, memory);
+        }
+        self.ip.add(1);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_data_drop(&mut self, data_segment_idx: DataSegmentIdx) {
+        if let Some(data_segment) = self.data_segments.get_mut(&data_segment_idx) {
+            data_segment.drop_bytes();
+        }
+        self.ip.add(1);
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_table_size(&mut self, table_idx: TableIdx) {
+        let table_size = self
+            .tables
+            .get(&table_idx)
+            .expect("rwasm: unresolved table segment")
+            .size();
+        self.sp.push_as(table_size);
+        self.ip.add(1);
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_table_grow(
+        &mut self,
+        table_idx: TableIdx,
+        limiter: &mut ResourceLimiterRef<'_>,
+    ) -> Result<(), RwasmError> {
+        let (init, delta) = self.sp.pop2();
+        let delta: u32 = delta.into();
+        let table = self.resolve_table_or_create(table_idx);
+        let result = match table.grow_untyped(delta, init, limiter) {
+            Ok(result) => result,
+            Err(EntityGrowError::TrapCode(trap_code)) => {
+                return Err(RwasmError::TrapCode(trap_code))
+            }
+            Err(EntityGrowError::InvalidGrow) => u32::MAX,
+        };
+        self.sp.push_as(result);
+        if let Some(tracer) = self.tracer.as_mut() {
+            tracer.table_size_change(table_idx.to_u32(), init.as_u32(), delta);
+        }
+        self.ip.add(1);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_table_fill(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
+        let (i, val, n) = self.sp.pop3();
+        self.resolve_table_or_create(table_idx)
+            .fill_untyped(i.as_u32(), val, n.as_u32())?;
+        self.ip.add(1);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_table_get(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
+        let index = self.sp.pop();
+        let value = self
+            .resolve_table_or_create(table_idx)
+            .get_untyped(index.as_u32())
+            .ok_or(TrapCode::TableOutOfBounds)?;
+        self.sp.push(value);
+        self.ip.add(1);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_table_set(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
+        let (index, value) = self.sp.pop2();
+        self.resolve_table_or_create(table_idx)
+            .set_untyped(index.as_u32(), value)
+            .map_err(|_| TrapCode::TableOutOfBounds)?;
+        if let Some(tracer) = self.tracer.as_mut() {
+            tracer.table_change(table_idx.to_u32(), index.as_u32(), value);
+        }
+        self.ip.add(1);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_table_copy(&mut self, dst_table_idx: TableIdx) -> Result<(), RwasmError> {
+        let src_table_idx = self.fetch_table_index(1);
+        let (d, s, n) = self.sp.pop3();
+        let len = u32::from(n);
+        let src_index = u32::from(s);
+        let dst_index = u32::from(d);
+        // Query both tables and check if they are the same:
+        let [src, dst] = self
+            .tables
+            .get_many_mut([&src_table_idx, &dst_table_idx])
+            .map(|v| v.expect("rwasm: unresolved table segment"));
+        if src_table_idx == dst_table_idx {
+            dst.copy_within(dst_index, src_index, len)?;
+        } else {
+            TableEntity::copy(dst, dst_index, src, src_index, len)?;
+        }
+        self.ip.add(2);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_table_init(
+        &mut self,
+        element_segment_idx: ElementSegmentIdx,
+    ) -> Result<(), RwasmError> {
+        let table_idx = self.fetch_table_index(1);
+        let (d, s, n) = self.sp.pop3();
+        let len = u32::from(n);
+        let src_index = u32::from(s);
+        let dst_index = u32::from(d);
+
+        // There is a trick with `element_segment_idx`:
+        // it refers to the segment number.
+        // However, in rwasm, all elements are stored in segment 0,
+        // so there is no need to store information about the remaining segments.
+        // According to the WebAssembly standards, though,
+        // we must retain information about all dropped element segments
+        // to perform an emptiness check.
+        // Therefore, in `element_segment_idx`, we store the original index,
+        // which is always > 0.
+        let element = self.resolve_element_or_create(element_segment_idx);
+        let is_empty_segment = element.is_empty();
+
+        let (table, mut element) =
+            self.resolve_table_with_element_or_create(table_idx, ElementSegmentIdx::from(0));
+        let mut empty_element_segment = ElementSegmentEntity::empty(element.ty());
+        if is_empty_segment {
+            element = &mut empty_element_segment;
+        }
+        table.init_untyped(dst_index, element, src_index, len)?;
+        self.ip.add(2);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_element_drop(&mut self, element_segment_idx: ElementSegmentIdx) {
+        if let Some(element_segment) = self.element_segments.get_mut(&element_segment_idx) {
+            element_segment.drop_items();
+        }
+        self.ip.add(1);
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_ref_func(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
+        self.sp.push_as(func_idx.to_u32());
+        self.ip.add(1);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_i32_i64_const(&mut self, untyped_value: UntypedValue) {
+        self.sp.push(untyped_value);
+        self.ip.add(1);
     }
 
     impl_visit_unary! {

@@ -3,6 +3,7 @@
 #![warn(unused_crate_dependencies)]
 
 mod executor;
+mod handler;
 mod opcodes;
 #[cfg(test)]
 mod tests;
@@ -12,3 +13,4 @@ extern crate alloc;
 extern crate core;
 
 pub use executor::*;
+pub use handler::*;

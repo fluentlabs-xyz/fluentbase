@@ -3,6 +3,7 @@ use crate::{
     Runtime,
     RuntimeContext,
 };
+use fluentbase_rwasm::{RwasmExecutor, SimpleCallHandler};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     Bytes,
@@ -132,6 +133,20 @@ impl SyscallExec {
         if ctx.call_depth >= CALL_STACK_LIMIT {
             return (fuel_limit, ExitCode::CallDepthOverflow.into_i32());
         }
+
+        let preimage = preimage_resolver.preimage(&code_hash.0).unwrap_or_default();
+        let mut syscall_handler = SimpleCallHandler::default();
+        syscall_handler.input = input.to_vec();
+        syscall_handler.state = state;
+        let mut executor = RwasmExecutor::parse(
+            preimage.as_ref(),
+            Some(&mut syscall_handler),
+            Some(fuel_limit),
+        )
+        .unwrap();
+        let exit_code = executor.run().unwrap();
+        ctx.execution_result.return_data = syscall_handler.output.clone();
+        return (0, exit_code);
 
         // create a new runtime instance with the context
         let ctx2 = RuntimeContext::new_with_hash(*code_hash)

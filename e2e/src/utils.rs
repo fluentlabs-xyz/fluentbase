@@ -389,7 +389,7 @@ pub(crate) fn run_with_default_context2(wasm_binary: Vec<u8>, input_data: &[u8])
     let mut simple_call_handler = SimpleCallHandler::default();
     simple_call_handler.state = STATE_MAIN;
     simple_call_handler.input = context_input;
-    let exit_code = RwasmExecutor::parse(&rwasm_binary, Some(&mut simple_call_handler))
+    let exit_code = RwasmExecutor::parse(&rwasm_binary, Some(&mut simple_call_handler), None)
         .unwrap()
         .run()
         .unwrap();

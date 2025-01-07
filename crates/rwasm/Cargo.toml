@@ -11,6 +11,7 @@ categories.workspace = true
 
 [dependencies]
 hashbrown = { workspace = true }
+tiny-keccak = { workspace = true }
 
 # we have rwasm only here because we are planning to remove this dependency in the future
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }

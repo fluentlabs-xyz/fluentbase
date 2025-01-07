@@ -1,4 +1,7 @@
-use crate::executor::{RwasmError, RwasmExecutor, SimpleCallHandler, SyscallHandler};
+use crate::{
+    executor::{RwasmError, RwasmExecutor, SyscallHandler},
+    SimpleCallHandler,
+};
 use core::str::from_utf8;
 use rwasm::rwasm::RwasmModule;
 
