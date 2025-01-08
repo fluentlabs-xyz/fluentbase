@@ -425,8 +425,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let drop_keep = self.fetch_drop_keep(1);
         self.store.sp.drop_keep(drop_keep);
         self.store.value_stack.sync_stack_ptr(self.store.sp);
-        E::call_function(Caller::new(&mut self.store), func_idx.to_u32())?;
+        // external call can cause interruption,
+        // that is why it's important to increase IP before doing the call
         self.store.ip.add(2);
+        E::call_function(Caller::new(&mut self.store), func_idx.to_u32())?;
         Ok(())
     }
 
@@ -485,9 +487,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     #[inline(always)]
     pub(crate) fn visit_call(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
         self.store.value_stack.sync_stack_ptr(self.store.sp);
-        E::call_function(Caller::new(&mut self.store), func_idx.to_u32())?;
+        // external call can cause interruption,
+        // that is why it's important to increase IP before doing the call
         self.store.ip.add(1);
-        Ok(())
+        E::call_function(Caller::new(&mut self.store), func_idx.to_u32())
     }
 
     #[inline(always)]
