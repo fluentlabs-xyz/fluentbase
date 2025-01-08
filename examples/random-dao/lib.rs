@@ -4,15 +4,13 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    SharedAPI,
     basic_entrypoint,
-    derive::Contract,
-    ContractContextReader,
-    derive::solidity_storage,
-    derive::router,
+    derive::{router, solidity_storage, Contract},
     Address,
-    U256,
+    ContractContextReader,
+    SharedAPI,
     B256,
+    U256,
 };
 
 #[derive(Contract)]
@@ -71,21 +69,18 @@ impl<SDK: SharedAPI> RANDOMDAOAPI for RANDOMDAO<SDK> {
 
 basic_entrypoint!(RANDOMDAO);
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use fluentbase_sdk::{
-        journal::JournalState,
+        journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
-        journal::JournalStateBuilder,
-        ContractContext,
         ContextFreeNativeAPI,
+        ContractContext,
     };
     use hex_literal::hex;
 
-    fn with_caller(caller: Address,
-    ) -> JournalState<TestingContext> {
+    fn with_caller(caller: Address) -> JournalState<TestingContext> {
         JournalStateBuilder::default()
             .with_contract_context(ContractContext {
                 caller: caller,
@@ -101,17 +96,28 @@ mod tests {
         // let sdk = JournalState::empty(native_sdk.clone());
         let data = U256::from(0).to_be_bytes::<32>();
         let hash = JournalState::<TestingContext>::keccak256(&data);
-        assert_eq!(hash, B256::new(hex!("290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563")));
+        assert_eq!(
+            hash,
+            B256::new(hex!(
+                "290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563"
+            ))
+        );
     }
 
     #[test]
     #[should_panic]
     fn test_zero_hash_commit() {
-        let mut caller = RANDOMDAO::new(with_caller(Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"))));
-        let hash = B256::new(hex!("290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563"));
+        let mut caller = RANDOMDAO::new(with_caller(Address::from(hex!(
+            "f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        ))));
+        let hash = B256::new(hex!(
+            "290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563"
+        ));
         caller.commit(hash);
         caller.reveal(U256::from(0));
-        let another_hash = B256::new(hex!("380decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e5aa"));
+        let another_hash = B256::new(hex!(
+            "380decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e5aa"
+        ));
         caller.commit(another_hash);
     }
 }
