@@ -125,6 +125,7 @@ pub enum ExitCode {
     UnknownError = -2017,
     UnresolvedFunction = -2018,
     StackUnderflow = -2019,
+    InputOutputOutOfBounds = -2020,
 }
 
 pub trait UnwrapExitCode<T> {
@@ -184,6 +185,12 @@ impl ExitCode {
 #[cfg(feature = "rwasm")]
 impl From<TrapCode> for ExitCode {
     fn from(value: TrapCode) -> Self {
+        Self::from(&value)
+    }
+}
+#[cfg(feature = "rwasm")]
+impl From<&TrapCode> for ExitCode {
+    fn from(value: &TrapCode) -> Self {
         match value {
             TrapCode::UnreachableCodeReached => ExitCode::UnreachableCodeReached,
             TrapCode::MemoryOutOfBounds => ExitCode::MemoryOutOfBounds,

@@ -1,42 +1,33 @@
 use crate::{Runtime, RuntimeContext};
+use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     ExitCode,
 };
-use rwasm::{core::Trap, errors::FuelError, Caller};
 
 pub struct SyscallResume;
 
 impl SyscallResume {
-    pub fn fn_handler(
-        mut caller: Caller<'_, RuntimeContext>,
-        call_id: u32,
-        return_data_ptr: u32,
-        return_data_len: u32,
-        exit_code: i32,
-        fuel_ptr: u32,
-    ) -> Result<i32, Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let [call_id, return_data_ptr, return_data_len, exit_code, fuel8_ptr] =
+            caller.stack_pop_n();
         let return_data = caller
-            .read_memory(return_data_ptr, return_data_len)?
+            .read_memory(return_data_ptr.as_u32(), return_data_len.as_u32())?
             .to_vec();
-        let fuel_spent = LittleEndian::read_u64(caller.read_memory(fuel_ptr, 8)?);
+        let fuel_spent = LittleEndian::read_u64(&caller.read_memory(fuel8_ptr.as_u32(), 8)?);
         let (fuel_consumed, exit_code) = Self::fn_impl(
             caller.data_mut(),
-            call_id,
+            call_id.as_u32(),
             return_data,
-            exit_code,
+            exit_code.as_i32(),
             fuel_spent,
         );
-        if let Err(err) = caller.consume_fuel(fuel_consumed) {
-            match err {
-                FuelError::FuelMeteringDisabled => {}
-                FuelError::OutOfFuel => return Err(ExitCode::OutOfGas.into_trap()),
-            }
-        }
+        caller.store_mut().try_consume_fuel(fuel_consumed)?;
         let mut fuel_buffer = [0u8; 8];
         LittleEndian::write_u64(&mut fuel_buffer, fuel_consumed);
-        caller.write_memory(fuel_ptr, &fuel_buffer)?;
-        Ok(exit_code)
+        caller.write_memory(fuel8_ptr.as_u32(), &fuel_buffer)?;
+        caller.stack_push(exit_code);
+        Ok(())
     }
 
     pub fn fn_impl(
@@ -54,35 +45,27 @@ impl SyscallResume {
         let mut recoverable_runtime = Runtime::recover_runtime(call_id);
 
         // during the résumé we must clear output, otherwise collision might happen
-        recoverable_runtime
-            .runtime
-            .store_mut()
-            .data_mut()
-            .clear_output();
+        recoverable_runtime.runtime.context_mut().clear_output();
 
-        let fuel_consumed_before_call = recoverable_runtime
-            .runtime
-            .store()
-            .fuel_consumed()
-            .unwrap_or_default();
+        let fuel_consumed_before_call =
+            recoverable_runtime.runtime.executor.store().fuel_consumed();
 
         // charge fuel
-        if let Err(err) = recoverable_runtime
+        if !recoverable_runtime
             .runtime
+            .executor
             .store_mut()
             .consume_fuel(fuel_used)
         {
-            match err {
-                FuelError::FuelMeteringDisabled => {}
-                FuelError::OutOfFuel => return (0, ExitCode::OutOfGas.into_i32()),
-            }
+            return (0, ExitCode::OutOfGas.into_i32());
         }
 
         // copy return data into return data
         let return_data_mut = recoverable_runtime
             .runtime
+            .executor
             .store_mut()
-            .data_mut()
+            .context_mut()
             .return_data_mut();
         return_data_mut.clear();
         return_data_mut.extend(&return_data);

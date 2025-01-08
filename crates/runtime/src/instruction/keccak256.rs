@@ -1,18 +1,14 @@
 use crate::RuntimeContext;
+use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::B256;
-use rwasm::{core::Trap, Caller};
 
 pub struct SyscallKeccak256;
 
 impl SyscallKeccak256 {
-    pub fn fn_handler(
-        mut caller: Caller<'_, RuntimeContext>,
-        data_offset: u32,
-        data_len: u32,
-        output_offset: u32,
-    ) -> Result<(), Trap> {
-        let data = caller.read_memory(data_offset, data_len)?;
-        caller.write_memory(output_offset, Self::fn_impl(data).as_slice())?;
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let [data_offset, data_len, output_offset] = caller.stack_pop_n();
+        let data = caller.read_memory(data_offset.as_u32(), data_len.as_u32())?;
+        caller.write_memory(output_offset.as_u32(), Self::fn_impl(&data).as_slice())?;
         Ok(())
     }
 

@@ -6,8 +6,7 @@ use fluentbase_genesis::{
     GENESIS_POSEIDON_HASH_SLOT,
 };
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_runtime::{Runtime, RuntimeContext};
-use fluentbase_rwasm::{RwasmExecutor, SimpleCallHandler};
+use fluentbase_runtime::{types::NonePreimageResolver, Runtime, RuntimeContext};
 use fluentbase_sdk::{
     bytes::BytesMut,
     calc_create_address,
@@ -323,8 +322,8 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
         .with_input(context_input)
         .with_is_test();
     // .with_tracer();
-    let mut runtime = Runtime::new(ctx);
-    runtime.data_mut().clear_output();
+    let mut runtime = Runtime::new(ctx, &NonePreimageResolver);
+    runtime.context_mut().clear_output();
     let result = runtime.call();
     println!(
         "exit_code: {} ({})",
@@ -365,43 +364,6 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
         );
     }
     (result.output.into(), result.exit_code)
-}
-
-pub(crate) fn run_with_default_context2(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {
-    let rwasm_binary = if wasm_binary[0] == 0xef {
-        wasm_binary
-    } else {
-        wasm2rwasm(wasm_binary.as_slice()).unwrap()
-    };
-
-    let context_input = {
-        let shared_ctx = SharedContextInputV1 {
-            block: Default::default(),
-            tx: Default::default(),
-            contract: Default::default(),
-        };
-        let mut buf = BytesMut::new();
-        FluentABI::encode(&shared_ctx, &mut buf, 0).unwrap();
-        buf.extend_from_slice(input_data);
-        buf.freeze().to_vec()
-    };
-
-    let mut simple_call_handler = SimpleCallHandler::default();
-    simple_call_handler.state = STATE_MAIN;
-    simple_call_handler.input = context_input;
-    let exit_code = RwasmExecutor::parse(&rwasm_binary, Some(&mut simple_call_handler), None)
-        .unwrap()
-        .run()
-        .unwrap();
-
-    println!("exit_code: {} ({})", exit_code, ExitCode::from(exit_code));
-    println!(
-        "output: 0x{} ({})",
-        hex::encode(&simple_call_handler.output),
-        from_utf8(&simple_call_handler.output).unwrap_or("can't decode utf-8")
-    );
-
-    (simple_call_handler.output, exit_code)
 }
 
 #[allow(dead_code)]

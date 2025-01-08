@@ -10,7 +10,6 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-rwasm = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-poseidon = { workspace = true }
 fluentbase-types = { workspace = true, features = ["rwasm"] }
@@ -23,7 +22,7 @@ keccak-hash = { version = "0.11.0" }
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
 hashbrown = { workspace = true }
 hex = { version = "0.4.3", optional = true }
-tiny-keccak = "2.0.2"
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 num = "0.4.3"
 sp1-curves = { version = "2.0.0" }
 sp1-primitives = { version = "2.0.0" }
@@ -36,7 +35,7 @@ hex-literal = { workspace = true }
 [features]
 default = ["std"]
 std = [
-    "rwasm/std",
+    "fluentbase-rwasm/std",
 ]
 rwasm = []
 debug-print = [

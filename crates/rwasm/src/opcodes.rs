@@ -1,9 +1,12 @@
 use crate::{
-    executor::{RwasmError, RwasmExecutor, SyscallHandler},
+    executor::RwasmExecutor,
     impl_visit_binary,
     impl_visit_load,
     impl_visit_store,
     impl_visit_unary,
+    Caller,
+    RwasmError,
+    SyscallHandler,
 };
 use core::cmp;
 use rwasm::{
@@ -33,13 +36,13 @@ use rwasm::{
     table::{ElementSegmentEntity, TableEntity},
 };
 
-impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
+impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     pub(crate) fn run_the_loop(&mut self) -> Result<i32, RwasmError> {
         let mut resource_limiter_ref = ResourceLimiterRef::default();
         loop {
-            let instr = *self.ip.get();
+            let instr = *self.store.ip.get();
             #[cfg(feature = "std")]
-            println!("{:02}: {:?}", self.ip.pc(), instr);
+            println!("{:02}: {:?}", self.store.ip.pc(), instr);
             match instr {
                 Instruction::LocalGet(local_depth) => self.visit_local_get(local_depth),
                 Instruction::LocalSet(local_depth) => self.visit_local_set(local_depth),
@@ -274,96 +277,97 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
 
     #[inline(always)]
     pub(crate) fn visit_local_get(&mut self, local_depth: LocalDepth) {
-        let value = self.sp.nth_back(local_depth.to_usize());
-        self.sp.push(value);
-        self.ip.add(1);
+        let value = self.store.sp.nth_back(local_depth.to_usize());
+        self.store.sp.push(value);
+        self.store.ip.add(1);
     }
 
     #[inline(always)]
     pub(crate) fn visit_local_set(&mut self, local_depth: LocalDepth) {
-        let new_value = self.sp.pop();
-        self.sp.set_nth_back(local_depth.to_usize(), new_value);
-        self.ip.add(1);
+        let new_value = self.store.sp.pop();
+        self.store
+            .sp
+            .set_nth_back(local_depth.to_usize(), new_value);
+        self.store.ip.add(1);
     }
 
     #[inline(always)]
     pub(crate) fn visit_local_tee(&mut self, local_depth: LocalDepth) {
-        let new_value = self.sp.last();
-        self.sp.set_nth_back(local_depth.to_usize(), new_value);
-        self.ip.add(1);
+        let new_value = self.store.sp.last();
+        self.store
+            .sp
+            .set_nth_back(local_depth.to_usize(), new_value);
+        self.store.ip.add(1);
     }
 
     #[inline(always)]
     pub(crate) fn visit_br(&mut self, branch_offset: BranchOffset) {
-        self.ip.offset(branch_offset.to_i32() as isize)
+        self.store.ip.offset(branch_offset.to_i32() as isize)
     }
 
     #[inline(always)]
     pub(crate) fn visit_br_if(&mut self, branch_offset: BranchOffset) {
-        let condition = self.sp.pop_as();
+        let condition = self.store.sp.pop_as();
         if condition {
-            self.ip.add(1);
+            self.store.ip.add(1);
         } else {
-            self.ip.offset(branch_offset.to_i32() as isize);
+            self.store.ip.offset(branch_offset.to_i32() as isize);
         }
     }
 
     #[inline(always)]
     pub(crate) fn visit_br_if_nez(&mut self, branch_offset: BranchOffset) {
-        let condition = self.sp.pop_as();
+        let condition = self.store.sp.pop_as();
         if condition {
-            self.ip.offset(branch_offset.to_i32() as isize);
+            self.store.ip.offset(branch_offset.to_i32() as isize);
         } else {
-            self.ip.add(1);
+            self.store.ip.add(1);
         }
     }
 
     #[inline(always)]
     pub(crate) fn visit_br_adjust(&mut self, branch_offset: BranchOffset) {
         let drop_keep = self.fetch_drop_keep(1);
-        self.sp.drop_keep(drop_keep);
-        self.ip.offset(branch_offset.to_i32() as isize);
+        self.store.sp.drop_keep(drop_keep);
+        self.store.ip.offset(branch_offset.to_i32() as isize);
     }
 
     #[inline(always)]
     pub(crate) fn visit_br_adjust_if_nez(&mut self, branch_offset: BranchOffset) {
-        let condition = self.sp.pop_as();
+        let condition = self.store.sp.pop_as();
         if condition {
             let drop_keep = self.fetch_drop_keep(1);
-            self.sp.drop_keep(drop_keep);
-            self.ip.offset(branch_offset.to_i32() as isize);
+            self.store.sp.drop_keep(drop_keep);
+            self.store.ip.offset(branch_offset.to_i32() as isize);
         } else {
-            self.ip.add(2);
+            self.store.ip.add(2);
         }
     }
 
     #[inline(always)]
     pub(crate) fn visit_br_table(&mut self, targets: BranchTableTargets) {
-        let index: u32 = self.sp.pop_as();
+        let index: u32 = self.store.sp.pop_as();
         let max_index = targets.to_usize() - 1;
         let normalized_index = cmp::min(index as usize, max_index);
-        self.ip.add(2 * normalized_index + 1);
+        self.store.ip.add(2 * normalized_index + 1);
     }
 
     #[inline(always)]
     pub(crate) fn visit_consume_fuel(&mut self, block_fuel: BlockFuel) -> Result<(), RwasmError> {
-        if let Some(fuel_limit) = self.fuel_limit {
-            if self.fuel_consumed + block_fuel.to_u64() >= fuel_limit {
-                return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
-            }
+        if !self.store.consume_fuel(block_fuel.to_u64()) {
+            return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
         }
-        self.fuel_consumed += block_fuel.to_u64();
-        self.ip.add(1);
+        self.store.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_return(&mut self, drop_keep: DropKeep) -> Option<i32> {
-        self.sp.drop_keep(drop_keep);
-        self.value_stack.sync_stack_ptr(self.sp);
-        match self.call_stack.pop() {
+        self.store.sp.drop_keep(drop_keep);
+        self.store.value_stack.sync_stack_ptr(self.store.sp);
+        match self.store.call_stack.pop() {
             Some(caller) => {
-                self.ip = caller;
+                self.store.ip = caller;
                 None
             }
             None => Some(0),
@@ -372,19 +376,19 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
 
     #[inline(always)]
     pub(crate) fn visit_return_if_nez(&mut self, drop_keep: DropKeep) -> Option<i32> {
-        let condition = self.sp.pop_as();
+        let condition = self.store.sp.pop_as();
         if condition {
-            self.sp.drop_keep(drop_keep);
-            self.value_stack.sync_stack_ptr(self.sp);
-            match self.call_stack.pop() {
+            self.store.sp.drop_keep(drop_keep);
+            self.store.value_stack.sync_stack_ptr(self.store.sp);
+            match self.store.call_stack.pop() {
                 Some(caller) => {
-                    self.ip = caller;
+                    self.store.ip = caller;
                     None
                 }
                 None => Some(0),
             }
         } else {
-            self.ip.add(1);
+            self.store.ip.add(1);
             None
         }
     }
@@ -395,35 +399,34 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         func_idx: CompiledFunc,
     ) -> Result<(), RwasmError> {
         let drop_keep = self.fetch_drop_keep(1);
-        self.sp.drop_keep(drop_keep);
-        self.ip.add(2);
-        self.value_stack.sync_stack_ptr(self.sp);
+        self.store.sp.drop_keep(drop_keep);
+        self.store.ip.add(2);
+        self.store.value_stack.sync_stack_ptr(self.store.sp);
         let instr_ref = self
+            .store
+            .instance
             .func_segments
             .get(func_idx.to_u32() as usize)
             .copied()
             .expect("rwasm: unknown internal function");
         let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
-        self.value_stack.prepare_wasm_call(&header)?;
-        self.sp = self.value_stack.stack_ptr();
-        self.ip = InstructionPtr::new(
-            self.rwasm_module.code_section.instr.as_ptr(),
-            self.rwasm_module.code_section.metas.as_ptr(),
+        self.store.value_stack.prepare_wasm_call(&header)?;
+        self.store.sp = self.store.value_stack.stack_ptr();
+        self.store.ip = InstructionPtr::new(
+            self.store.instance.module.code_section.instr.as_ptr(),
+            self.store.instance.module.code_section.metas.as_ptr(),
         );
-        self.ip.add(instr_ref as usize);
+        self.store.ip.add(instr_ref as usize);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_return_call(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
         let drop_keep = self.fetch_drop_keep(1);
-        self.sp.drop_keep(drop_keep);
-        self.value_stack.sync_stack_ptr(self.sp);
-        self.syscall_handler
-            .as_mut()
-            .ok_or(RwasmError::UnknownExternalFunction(func_idx.to_u32()))?
-            .call_function(func_idx.to_u32(), &mut self.sp, &mut self.global_memory)?;
-        self.ip.add(2);
+        self.store.sp.drop_keep(drop_keep);
+        self.store.value_stack.sync_stack_ptr(self.store.sp);
+        E::call_function(Caller::new(&mut self.store), func_idx.to_u32())?;
+        self.store.ip.add(2);
         Ok(())
     }
 
@@ -434,10 +437,11 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
     ) -> Result<(), RwasmError> {
         let drop_keep = self.fetch_drop_keep(1);
         let table = self.fetch_table_index(2);
-        let func_index: u32 = self.sp.pop_as();
-        self.sp.drop_keep(drop_keep);
-        self.last_signature = Some(signature_idx);
+        let func_index: u32 = self.store.sp.pop_as();
+        self.store.sp.drop_keep(drop_keep);
+        self.store.last_signature = Some(signature_idx);
         let func_idx: u32 = self
+            .store
             .tables
             .get(&table)
             .expect("rwasm: unresolved table index")
@@ -454,36 +458,35 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
 
     #[inline(always)]
     pub(crate) fn visit_call_internal(&mut self, func_idx: CompiledFunc) -> Result<(), RwasmError> {
-        self.ip.add(1);
-        self.value_stack.sync_stack_ptr(self.sp);
-        if self.call_stack.len() > N_MAX_RECURSION_DEPTH {
+        self.store.ip.add(1);
+        self.store.value_stack.sync_stack_ptr(self.store.sp);
+        if self.store.call_stack.len() > N_MAX_RECURSION_DEPTH {
             return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
         }
-        self.call_stack.push(self.ip);
+        self.store.call_stack.push(self.store.ip);
         let instr_ref = self
+            .store
+            .instance
             .func_segments
             .get(func_idx.to_u32() as usize)
             .copied()
             .expect("rwasm: unknown internal function");
         let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
-        self.value_stack.prepare_wasm_call(&header)?;
-        self.sp = self.value_stack.stack_ptr();
-        self.ip = InstructionPtr::new(
-            self.rwasm_module.code_section.instr.as_ptr(),
-            self.rwasm_module.code_section.metas.as_ptr(),
+        self.store.value_stack.prepare_wasm_call(&header)?;
+        self.store.sp = self.store.value_stack.stack_ptr();
+        self.store.ip = InstructionPtr::new(
+            self.store.instance.module.code_section.instr.as_ptr(),
+            self.store.instance.module.code_section.metas.as_ptr(),
         );
-        self.ip.add(instr_ref as usize);
+        self.store.ip.add(instr_ref as usize);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_call(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
-        self.value_stack.sync_stack_ptr(self.sp);
-        self.syscall_handler
-            .as_mut()
-            .ok_or(RwasmError::UnknownExternalFunction(func_idx.to_u32()))?
-            .call_function(func_idx.to_u32(), &mut self.sp, &mut self.global_memory)?;
-        self.ip.add(1);
+        self.store.value_stack.sync_stack_ptr(self.store.sp);
+        E::call_function(Caller::new(&mut self.store), func_idx.to_u32())?;
+        self.store.ip.add(1);
         Ok(())
     }
 
@@ -494,9 +497,10 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
     ) -> Result<(), RwasmError> {
         // resolve func index
         let table = self.fetch_table_index(1);
-        let func_index: u32 = self.sp.pop_as();
-        self.last_signature = Some(signature_idx);
+        let func_index: u32 = self.store.sp.pop_as();
+        self.store.last_signature = Some(signature_idx);
         let func_idx: u32 = self
+            .store
             .tables
             .get(&table)
             .expect("rwasm: unresolved table index")
@@ -509,25 +513,27 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
             return Err(TrapCode::IndirectCallToNull.into());
         }
         // call func
-        self.ip.add(2);
-        self.value_stack.sync_stack_ptr(self.sp);
-        if self.call_stack.len() > N_MAX_RECURSION_DEPTH {
+        self.store.ip.add(2);
+        self.store.value_stack.sync_stack_ptr(self.store.sp);
+        if self.store.call_stack.len() > N_MAX_RECURSION_DEPTH {
             return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
         }
-        self.call_stack.push(self.ip);
+        self.store.call_stack.push(self.store.ip);
         let instr_ref = self
+            .store
+            .instance
             .func_segments
             .get(func_idx as usize)
             .copied()
             .expect("rwasm: unknown internal function");
         let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
-        self.value_stack.prepare_wasm_call(&header)?;
-        self.sp = self.value_stack.stack_ptr();
-        self.ip = InstructionPtr::new(
-            self.rwasm_module.code_section.instr.as_ptr(),
-            self.rwasm_module.code_section.metas.as_ptr(),
+        self.store.value_stack.prepare_wasm_call(&header)?;
+        self.store.sp = self.store.value_stack.stack_ptr();
+        self.store.ip = InstructionPtr::new(
+            self.store.instance.module.code_section.instr.as_ptr(),
+            self.store.instance.module.code_section.metas.as_ptr(),
         );
-        self.ip.add(instr_ref as usize);
+        self.store.ip.add(instr_ref as usize);
         Ok(())
     }
 
@@ -536,24 +542,24 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         &mut self,
         signature_idx: SignatureIdx,
     ) -> Result<(), RwasmError> {
-        if let Some(actual_signature) = self.last_signature.take() {
+        if let Some(actual_signature) = self.store.last_signature.take() {
             if actual_signature != signature_idx {
                 return Err(TrapCode::BadSignature).map_err(Into::into);
             }
         }
-        self.ip.add(1);
+        self.store.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_drop(&mut self) {
-        self.sp.drop();
-        self.ip.add(1);
+        self.store.sp.drop();
+        self.store.ip.add(1);
     }
 
     #[inline(always)]
     pub(crate) fn visit_select(&mut self) {
-        self.sp.eval_top3(|e1, e2, e3| {
+        self.store.sp.eval_top3(|e1, e2, e3| {
             let condition = <bool as From<UntypedValue>>::from(e3);
             if condition {
                 e1
@@ -561,25 +567,26 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
                 e2
             }
         });
-        self.ip.add(1);
+        self.store.ip.add(1);
     }
 
     #[inline(always)]
     pub(crate) fn visit_global_get(&mut self, global_idx: GlobalIdx) {
         let global_value = self
+            .store
             .global_variables
             .get(&global_idx)
             .copied()
             .unwrap_or_default();
-        self.sp.push(global_value);
-        self.ip.add(1);
+        self.store.sp.push(global_value);
+        self.store.ip.add(1);
     }
 
     #[inline(always)]
     pub(crate) fn visit_global_set(&mut self, global_idx: GlobalIdx) {
-        let new_value = self.sp.pop();
-        self.global_variables.insert(global_idx, new_value);
-        self.ip.add(1);
+        let new_value = self.store.sp.pop();
+        self.store.global_variables.insert(global_idx, new_value);
+        self.store.ip.add(1);
     }
 
     impl_visit_load! {
@@ -617,9 +624,9 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
 
     #[inline(always)]
     pub(crate) fn visit_memory_size(&mut self) {
-        let result: u32 = self.global_memory.current_pages().into();
-        self.sp.push_as(result);
-        self.ip.add(1);
+        let result: u32 = self.store.global_memory.current_pages().into();
+        self.store.sp.push_as(result);
+        self.store.ip.add(1);
     }
 
     #[inline(always)]
@@ -627,50 +634,52 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         &mut self,
         mut limiter: &mut ResourceLimiterRef<'_>,
     ) -> Result<(), RwasmError> {
-        let delta: u32 = self.sp.pop_as();
+        let delta: u32 = self.store.sp.pop_as();
         if delta > Pages::max().into_inner() {
-            self.sp.push_as(u32::MAX);
-            self.ip.add(1);
+            self.store.sp.push_as(u32::MAX);
+            self.store.ip.add(1);
             return Ok(());
         }
         let new_pages = self
+            .store
             .global_memory
             .grow(Pages::new(delta).unwrap(), &mut limiter)
             .map(u32::from)
             .unwrap_or(u32::MAX);
-        self.sp.push_as(new_pages);
-        self.ip.add(1);
+        self.store.sp.push_as(new_pages);
+        self.store.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_memory_fill(&mut self) -> Result<(), RwasmError> {
-        let (d, val, n) = self.sp.pop3();
+        let (d, val, n) = self.store.sp.pop3();
         let n = i32::from(n) as usize;
         let offset = i32::from(d) as usize;
         let byte = u8::from(val);
         let memory = self
+            .store
             .global_memory
             .data_mut()
             .get_mut(offset..)
             .and_then(|memory| memory.get_mut(..n))
             .ok_or(TrapCode::MemoryOutOfBounds)?;
         memory.fill(byte);
-        if let Some(tracer) = self.tracer.as_mut() {
+        if let Some(tracer) = self.store.tracer.as_mut() {
             tracer.memory_change(offset as u32, n as u32, memory);
         }
-        self.ip.add(1);
+        self.store.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_memory_copy(&mut self) -> Result<(), RwasmError> {
-        let (d, s, n) = self.sp.pop3();
+        let (d, s, n) = self.store.sp.pop3();
         let n = i32::from(n) as usize;
         let src_offset = i32::from(s) as usize;
         let dst_offset = i32::from(d) as usize;
         // These accesses just perform the bounds checks required by the Wasm spec.
-        let data = self.global_memory.data_mut();
+        let data = self.store.global_memory.data_mut();
         data.get(src_offset..)
             .and_then(|memory| memory.get(..n))
             .ok_or(TrapCode::MemoryOutOfBounds)?;
@@ -678,14 +687,14 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
             .and_then(|memory| memory.get(..n))
             .ok_or(TrapCode::MemoryOutOfBounds)?;
         data.copy_within(src_offset..src_offset.wrapping_add(n), dst_offset);
-        if let Some(tracer) = self.tracer.as_mut() {
+        if let Some(tracer) = self.store.tracer.as_mut() {
             tracer.memory_change(
                 dst_offset as u32,
                 n as u32,
                 &data[dst_offset..(dst_offset + n)],
             );
         }
-        self.ip.add(1);
+        self.store.ip.add(1);
         Ok(())
     }
 
@@ -700,47 +709,51 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
             0,
             "rwasm: non-zero data segment index"
         );
-        let (d, s, n) = self.sp.pop3();
+        let (d, s, n) = self.store.sp.pop3();
         let n = i32::from(n) as usize;
         let src_offset = i32::from(s) as usize;
         let dst_offset = i32::from(d) as usize;
         let memory = self
+            .store
             .global_memory
             .data_mut()
             .get_mut(dst_offset..)
             .and_then(|memory| memory.get_mut(..n))
             .ok_or(TrapCode::MemoryOutOfBounds)?;
         let data = self
-            .rwasm_module
+            .store
+            .instance
+            .module
             .memory_section
             .get(src_offset..)
             .and_then(|data| data.get(..n))
             .ok_or(TrapCode::MemoryOutOfBounds)?;
         memory.copy_from_slice(data);
-        if let Some(tracer) = self.tracer.as_mut() {
+        if let Some(tracer) = self.store.tracer.as_mut() {
             tracer.global_memory(dst_offset as u32, n as u32, memory);
         }
-        self.ip.add(1);
+        self.store.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_data_drop(&mut self, data_segment_idx: DataSegmentIdx) {
-        if let Some(data_segment) = self.data_segments.get_mut(&data_segment_idx) {
+        if let Some(data_segment) = self.store.data_segments.get_mut(&data_segment_idx) {
             data_segment.drop_bytes();
         }
-        self.ip.add(1);
+        self.store.ip.add(1);
     }
 
     #[inline(always)]
     pub(crate) fn visit_table_size(&mut self, table_idx: TableIdx) {
         let table_size = self
+            .store
             .tables
             .get(&table_idx)
             .expect("rwasm: unresolved table segment")
             .size();
-        self.sp.push_as(table_size);
-        self.ip.add(1);
+        self.store.sp.push_as(table_size);
+        self.store.ip.add(1);
     }
 
     #[inline(always)]
@@ -749,7 +762,7 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         table_idx: TableIdx,
         limiter: &mut ResourceLimiterRef<'_>,
     ) -> Result<(), RwasmError> {
-        let (init, delta) = self.sp.pop2();
+        let (init, delta) = self.store.sp.pop2();
         let delta: u32 = delta.into();
         let table = self.resolve_table_or_create(table_idx);
         let result = match table.grow_untyped(delta, init, limiter) {
@@ -759,57 +772,58 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
             }
             Err(EntityGrowError::InvalidGrow) => u32::MAX,
         };
-        self.sp.push_as(result);
-        if let Some(tracer) = self.tracer.as_mut() {
+        self.store.sp.push_as(result);
+        if let Some(tracer) = self.store.tracer.as_mut() {
             tracer.table_size_change(table_idx.to_u32(), init.as_u32(), delta);
         }
-        self.ip.add(1);
+        self.store.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_table_fill(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
-        let (i, val, n) = self.sp.pop3();
+        let (i, val, n) = self.store.sp.pop3();
         self.resolve_table_or_create(table_idx)
             .fill_untyped(i.as_u32(), val, n.as_u32())?;
-        self.ip.add(1);
+        self.store.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_table_get(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
-        let index = self.sp.pop();
+        let index = self.store.sp.pop();
         let value = self
             .resolve_table_or_create(table_idx)
             .get_untyped(index.as_u32())
             .ok_or(TrapCode::TableOutOfBounds)?;
-        self.sp.push(value);
-        self.ip.add(1);
+        self.store.sp.push(value);
+        self.store.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_table_set(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
-        let (index, value) = self.sp.pop2();
+        let (index, value) = self.store.sp.pop2();
         self.resolve_table_or_create(table_idx)
             .set_untyped(index.as_u32(), value)
             .map_err(|_| TrapCode::TableOutOfBounds)?;
-        if let Some(tracer) = self.tracer.as_mut() {
+        if let Some(tracer) = self.store.tracer.as_mut() {
             tracer.table_change(table_idx.to_u32(), index.as_u32(), value);
         }
-        self.ip.add(1);
+        self.store.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_table_copy(&mut self, dst_table_idx: TableIdx) -> Result<(), RwasmError> {
         let src_table_idx = self.fetch_table_index(1);
-        let (d, s, n) = self.sp.pop3();
+        let (d, s, n) = self.store.sp.pop3();
         let len = u32::from(n);
         let src_index = u32::from(s);
         let dst_index = u32::from(d);
         // Query both tables and check if they are the same:
         let [src, dst] = self
+            .store
             .tables
             .get_many_mut([&src_table_idx, &dst_table_idx])
             .map(|v| v.expect("rwasm: unresolved table segment"));
@@ -818,7 +832,7 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         } else {
             TableEntity::copy(dst, dst_index, src, src_index, len)?;
         }
-        self.ip.add(2);
+        self.store.ip.add(2);
         Ok(())
     }
 
@@ -828,7 +842,7 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
         element_segment_idx: ElementSegmentIdx,
     ) -> Result<(), RwasmError> {
         let table_idx = self.fetch_table_index(1);
-        let (d, s, n) = self.sp.pop3();
+        let (d, s, n) = self.store.sp.pop3();
         let len = u32::from(n);
         let src_index = u32::from(s);
         let dst_index = u32::from(d);
@@ -852,29 +866,29 @@ impl<'a, E: SyscallHandler> RwasmExecutor<'a, E> {
             element = &mut empty_element_segment;
         }
         table.init_untyped(dst_index, element, src_index, len)?;
-        self.ip.add(2);
+        self.store.ip.add(2);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_element_drop(&mut self, element_segment_idx: ElementSegmentIdx) {
-        if let Some(element_segment) = self.element_segments.get_mut(&element_segment_idx) {
+        if let Some(element_segment) = self.store.elements.get_mut(&element_segment_idx) {
             element_segment.drop_items();
         }
-        self.ip.add(1);
+        self.store.ip.add(1);
     }
 
     #[inline(always)]
     pub(crate) fn visit_ref_func(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
-        self.sp.push_as(func_idx.to_u32());
-        self.ip.add(1);
+        self.store.sp.push_as(func_idx.to_u32());
+        self.store.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn visit_i32_i64_const(&mut self, untyped_value: UntypedValue) {
-        self.sp.push(untyped_value);
-        self.ip.add(1);
+        self.store.sp.push(untyped_value);
+        self.store.ip.add(1);
     }
 
     impl_visit_unary! {

@@ -2865,7 +2865,6 @@ dependencies = [
  "k256",
  "keccak-hash 0.11.0",
  "num",
- "rwasm",
  "sha2",
  "sp1-curves",
  "sp1-primitives",
@@ -6088,7 +6087,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#9e5735ef6191e9ffb70bcf42bb8bb6ffbd49da85"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#38fdb92c9e87b9b09334411e1ca130d6ffdd475e"
 dependencies = [
  "byteorder",
  "downcast-rs",
