@@ -269,7 +269,6 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::I64Extend16S => self.visit_i64_extend16_s(),
                 Instruction::I64Extend32S => self.visit_i64_extend32_s(),
 
-                // TODO(dmitry123): "add more opcodes"
                 _ => unreachable!("rwasm: unsupported instruction ({:?})", instr),
             }
         }
@@ -354,9 +353,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
 
     #[inline(always)]
     pub(crate) fn visit_consume_fuel(&mut self, block_fuel: BlockFuel) -> Result<(), RwasmError> {
-        if !self.store.consume_fuel(block_fuel.to_u64()) {
-            return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
-        }
+        self.store.try_consume_fuel(block_fuel.to_u64())?;
         self.store.ip.add(1);
         Ok(())
     }
@@ -638,15 +635,23 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         mut limiter: &mut ResourceLimiterRef<'_>,
     ) -> Result<(), RwasmError> {
         let delta: u32 = self.store.sp.pop_as();
-        if delta > Pages::max().into_inner() {
-            self.store.sp.push_as(u32::MAX);
-            self.store.ip.add(1);
-            return Ok(());
+        let delta = match Pages::new(delta) {
+            Some(delta) => delta,
+            None => {
+                self.store.sp.push_as(u32::MAX);
+                self.store.ip.add(1);
+                return Ok(());
+            }
+        };
+        if let Some(_) = self.store.fuel_limit {
+            let delta_in_bytes = delta.to_bytes().unwrap_or(0) as u64;
+            self.store
+                .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(delta_in_bytes))?;
         }
         let new_pages = self
             .store
             .global_memory
-            .grow(Pages::new(delta).unwrap(), &mut limiter)
+            .grow(delta, &mut limiter)
             .map(u32::from)
             .unwrap_or(u32::MAX);
         self.store.sp.push_as(new_pages);
@@ -660,6 +665,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let n = i32::from(n) as usize;
         let offset = i32::from(d) as usize;
         let byte = u8::from(val);
+        if let Some(_) = self.store.fuel_limit {
+            self.store
+                .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
+        }
         let memory = self
             .store
             .global_memory
@@ -681,6 +690,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let n = i32::from(n) as usize;
         let src_offset = i32::from(s) as usize;
         let dst_offset = i32::from(d) as usize;
+        if let Some(_) = self.store.fuel_limit {
+            self.store
+                .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
+        }
         // These accesses just perform the bounds checks required by the Wasm spec.
         let data = self.store.global_memory.data_mut();
         data.get(src_offset..)
@@ -716,6 +729,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let n = i32::from(n) as usize;
         let src_offset = i32::from(s) as usize;
         let dst_offset = i32::from(d) as usize;
+        if let Some(_) = self.store.fuel_limit {
+            self.store
+                .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
+        }
         let memory = self
             .store
             .global_memory
@@ -767,6 +784,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     ) -> Result<(), RwasmError> {
         let (init, delta) = self.store.sp.pop2();
         let delta: u32 = delta.into();
+        if let Some(_) = self.store.fuel_limit {
+            self.store
+                .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(delta as u64))?;
+        }
         let table = self.resolve_table_or_create(table_idx);
         let result = match table.grow_untyped(delta, init, limiter) {
             Ok(result) => result,
@@ -786,6 +807,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     #[inline(always)]
     pub(crate) fn visit_table_fill(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
         let (i, val, n) = self.store.sp.pop3();
+        if let Some(_) = self.store.fuel_limit {
+            self.store
+                .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
+        }
         self.resolve_table_or_create(table_idx)
             .fill_untyped(i.as_u32(), val, n.as_u32())?;
         self.store.ip.add(1);
@@ -824,6 +849,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let len = u32::from(n);
         let src_index = u32::from(s);
         let dst_index = u32::from(d);
+        if let Some(_) = self.store.fuel_limit {
+            self.store
+                .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
+        }
         // Query both tables and check if they are the same:
         let [src, dst] = self
             .store
@@ -849,6 +878,11 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let len = u32::from(n);
         let src_index = u32::from(s);
         let dst_index = u32::from(d);
+
+        if let Some(_) = self.store.fuel_limit {
+            self.store
+                .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(len as u64))?;
+        }
 
         // There is a trick with `element_segment_idx`:
         // it refers to the segment number.

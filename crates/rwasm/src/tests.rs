@@ -1,7 +1,4 @@
-use crate::{
-    executor::{RwasmError, RwasmExecutor, SyscallHandler},
-    SimpleCallHandler,
-};
+use crate::{RwasmError, RwasmExecutor, SimpleCallContext, SimpleCallHandler, SyscallHandler};
 use core::str::from_utf8;
 use rwasm::rwasm::RwasmModule;
 
@@ -35,20 +32,24 @@ fn trace_rwasm(rwasm_bytecode: &[u8]) {
     println!("\n")
 }
 
-pub fn execute_rwasm_bytecode<'a, E: SyscallHandler>(
+pub fn execute_rwasm_bytecode<E: SyscallHandler<()>>(
     rwasm_bytecode: &[u8],
-    syscall_handler: Option<&'a mut E>,
 ) -> Result<i32, RwasmError> {
-    RwasmExecutor::<'a, E>::parse(rwasm_bytecode, syscall_handler)?.run()
+    RwasmExecutor::<E, ()>::parse(rwasm_bytecode, None, ())?.run()
 }
 
 #[test]
 fn test_execute_rwasm_bytecode() {
     let greeting_rwasm = include_bytes!("../../../examples/greeting/lib.rwasm");
     trace_rwasm(greeting_rwasm);
-    let mut call_handler = SimpleCallHandler::default();
-    let exit_code = execute_rwasm_bytecode(greeting_rwasm, Some(&mut call_handler)).unwrap();
+    let mut executor = RwasmExecutor::<SimpleCallHandler, SimpleCallContext>::parse(
+        greeting_rwasm,
+        None,
+        SimpleCallContext::default(),
+    )
+    .unwrap();
+    let exit_code = executor.run().unwrap();
     assert_eq!(exit_code, 0);
-    let utf8_output = from_utf8(&call_handler.output).unwrap();
+    let utf8_output = from_utf8(&executor.store.context.output).unwrap();
     assert_eq!(utf8_output, "Hello, World");
 }

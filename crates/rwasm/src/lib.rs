@@ -19,8 +19,8 @@ pub use executor::*;
 pub use handler::*;
 pub use rwasm::{
     core::{HostError, TrapCode},
-    engine::{bytecode::Instruction, stack::ValueStackPtr},
+    engine::{bytecode::Instruction, stack::ValueStackPtr, RwasmConfig, StateRouterConfig},
     memory::MemoryEntity,
-    rwasm::{InstructionSet, RwasmModule, RwasmModuleInstance},
+    rwasm::{BinaryFormat, InstructionSet, RwasmModule, RwasmModuleInstance},
 };
 pub use types::*;

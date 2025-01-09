@@ -6,6 +6,7 @@ use rwasm::{
         bytecode::{DataSegmentIdx, ElementSegmentIdx, GlobalIdx, SignatureIdx, TableIdx},
         code_map::InstructionPtr,
         stack::{ValueStack, ValueStackPtr},
+        FuelCosts,
         Tracer,
     },
     memory::{DataSegmentEntity, MemoryEntity},
@@ -28,6 +29,7 @@ pub struct RwasmContext<T> {
     pub(crate) context: T,
     pub(crate) fuel_limit: Option<u64>,
     pub(crate) tracer: Option<Tracer>,
+    pub(crate) fuel_costs: FuelCosts,
     // rwasm modified segments
     pub(crate) global_variables: HashMap<GlobalIdx, UntypedValue>,
     pub(crate) tables: HashMap<TableIdx, TableEntity>,
@@ -88,6 +90,7 @@ impl<T> RwasmContext<T> {
             context,
             fuel_limit,
             tracer: None,
+            fuel_costs: Default::default(),
             global_variables: Default::default(),
             tables: Default::default(),
             data_segments: Default::default(),
@@ -98,20 +101,21 @@ impl<T> RwasmContext<T> {
     }
 
     pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), RwasmError> {
-        if !self.consume_fuel(fuel) {
-            return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
-        }
-        Ok(())
-    }
-
-    pub fn consume_fuel(&mut self, fuel: u64) -> bool {
+        #[cfg(feature = "std")]
+        println!(
+            " + fuel charged: fuel={} remaining={}",
+            fuel,
+            self.fuel_limit
+                .map(|v| v - self.consumed_fuel - fuel)
+                .unwrap_or(0)
+        );
         if let Some(fuel_limit) = self.fuel_limit {
             if self.consumed_fuel + fuel >= fuel_limit {
-                return false;
+                return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
             }
         }
         self.consumed_fuel += fuel;
-        true
+        Ok(())
     }
 
     pub fn remaining_fuel(&self) -> Option<u64> {

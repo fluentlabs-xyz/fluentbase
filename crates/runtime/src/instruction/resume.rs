@@ -51,11 +51,12 @@ impl SyscallResume {
             recoverable_runtime.runtime.executor.store().fuel_consumed();
 
         // charge fuel
-        if !recoverable_runtime
+        if recoverable_runtime
             .runtime
             .executor
             .store_mut()
-            .consume_fuel(fuel_used)
+            .try_consume_fuel(fuel_used)
+            .is_err()
         {
             return (0, ExitCode::OutOfGas.into_i32());
         }
