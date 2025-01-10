@@ -3,13 +3,12 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use alloc::vec::Vec;
 use fluentbase_sdk::{
     alloc_slice,
     basic_entrypoint,
     derive::{solidity_storage, Contract},
     Address,
-    Bytes,
+    U256,
     ContractContextReader,
     SharedAPI,
 };
@@ -20,12 +19,12 @@ struct SIMPLESTORAGE<SDK> {
 }
 
 pub trait SIMPLESTORAGEAPI {
-    fn get(&self) -> Bytes;
-    fn set(&mut self, value: Bytes);
+    fn get(&self) -> U256;
+    fn set(&mut self, value: U256);
 }
 
 solidity_storage! {
-    mapping(Address => Bytes) Values;
+    mapping(Address => U256) Values;
 }
 
 impl<SDK: SharedAPI> SIMPLESTORAGE<SDK> {
@@ -36,11 +35,12 @@ impl<SDK: SharedAPI> SIMPLESTORAGE<SDK> {
         let caller = self.sdk.context().contract_caller();
         if input_size == 0 {
             let value = Values::get(&self.sdk, caller);
-            self.sdk.write(&value[..]);
+            let value = value + U256::from(1);
+            self.sdk.write(&value.to_le_bytes::<32>());
         } else {
             let input = alloc_slice(input_size as usize);
             self.sdk.read(input, 0);
-            let value = Bytes::from(Vec::from(input));
+            let value = U256::from_le_slice(input);
             Values::set(&mut self.sdk, caller, value);
         }
     }
