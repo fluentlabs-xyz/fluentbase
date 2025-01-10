@@ -11,7 +11,7 @@ crate-type = ["cdylib", "staticlib"]
 path = "lib.rs"
 
 [features]
-default = []
+default = ["std"]
 std = [
     "fluentbase-sdk/std"
 ]

@@ -139,14 +139,19 @@ pub trait DenominateGas {
 
 impl DenominateGas for Gas {
     const DENOMINATE_COEFFICIENT: u64 = 1000;
+
     fn denominate_gas(&mut self, inner_gas_spent: u64) {
-        println!("Nominate gas: {:?} {:?}", self, inner_gas_spent);
-        let gas_used = self.limit() - self.remaining() - inner_gas_spent;
-        if gas_used != 0 {
+        if self.spent() == 0 {
+            return;
+        }
+
+        //TODO: Add checked sub and return OutOfGas error while overflow
+        let gas_used = self.limit() as i128 - self.remaining() as i128 - inner_gas_spent as i128;
+        if gas_used > 0 {
             self.spend_all();
             self.erase_cost(
                 self.limit()
-                    - ((gas_used - 1) / Self::DENOMINATE_COEFFICIENT + 1)
+                    - ((gas_used as u64 - 1) / Self::DENOMINATE_COEFFICIENT + 1)
                     - inner_gas_spent,
             );
         }

@@ -214,7 +214,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         SharedContextReaderImpl(unsafe { self.shared_context_ref() })
     }
 
-    fn write_storage(&mut self, slot: U256, value: U256) {
+    fn write_storage(&mut self, slot: U256, value: U256) -> (U256, U256, bool) {
         let mut input: [u8; 64] = [0u8; 64];
         if !slot.is_zero() {
             input[0..32].copy_from_slice(slot.as_le_slice());
@@ -228,11 +228,20 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             GAS_LIMIT_SYSCALL_STORAGE_WRITE,
             STATE_MAIN,
         );
+        let mut output = vec![0; 32 + 32 + 1];
+        self.native_sdk.read_output(output.as_mut_slice(), 0);
+
         self.last_fuel_consumed.set(fuel_consumed);
         assert_eq!(exit_code, 0);
+
+        (
+            U256::from_le_slice(&output[0..32]),
+            U256::from_le_slice(&output[32..64]),
+            output[64] != 0,
+        )
     }
 
-    fn storage(&self, slot: &U256) -> U256 {
+    fn storage(&self, slot: &U256) -> (U256, bool) {
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_STORAGE_READ,
             slot.as_le_slice(),
@@ -241,9 +250,9 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         );
         self.last_fuel_consumed.set(fuel_consumed);
         assert_eq!(exit_code, 0);
-        let mut output: [u8; 32] = [0u8; 32];
+        let mut output: [u8; 33] = [0u8; 33];
         self.native_sdk.read_output(&mut output, 0);
-        U256::from_le_bytes(output)
+        (U256::from_le_slice(&output[0..32]), output[32] != 0)
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) {
@@ -278,7 +287,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         U256::from_le_bytes(output)
     }
 
-    fn ext_storage(&self, address: &Address, slot: &U256) -> U256 {
+    fn ext_storage(&self, address: &Address, slot: &U256) -> (U256, bool) {
         let mut input: [u8; 20 + 32] = [0u8; 20 + 32];
         input[0..20].copy_from_slice(address.as_slice());
         input[20..52].copy_from_slice(slot.as_le_slice());
@@ -290,9 +299,9 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         );
         self.last_fuel_consumed.set(fuel_consumed);
         assert_eq!(exit_code, 0);
-        let mut output: [u8; 32] = [0u8; 32];
+        let mut output: [u8; 33] = [0u8; 33];
         self.native_sdk.read_output(&mut output, 0);
-        U256::from_le_bytes(output)
+        (U256::from_le_slice(&output[0..32]), output[32] != 0)
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
@@ -369,7 +378,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         assert_eq!(exit_code, 0);
     }
 
-    fn balance(&self, address: &Address) -> U256 {
+    fn balance(&self, address: &Address) -> (U256, bool) {
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_BALANCE,
             address.as_slice(),
@@ -378,9 +387,9 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         );
         self.last_fuel_consumed.set(fuel_consumed);
         assert_eq!(exit_code, 0);
-        let mut output: [u8; 32] = [0u8; 32];
+        let mut output: [u8; 33] = [0u8; 33];
         self.native_sdk.read_output(&mut output, 0);
-        U256::from_le_bytes(output)
+        (U256::from_le_slice(&output[0..32]), output[32] != 0)
     }
 
     fn write_preimage(&mut self, preimage: Bytes) -> B256 {
@@ -491,7 +500,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         (self.native_sdk.return_data(), exit_code)
     }
 
-    fn destroy_account(&mut self, address: Address) {
+    fn destroy_account(&mut self, address: Address) -> bool {
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_DESTROY_ACCOUNT,
             address.as_slice(),
@@ -500,6 +509,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         );
         self.last_fuel_consumed.set(fuel_consumed);
         assert_eq!(exit_code, 0);
+
+        let mut output: [u8; 1] = [0u8; 1];
+        self.native_sdk.read_output(&mut output, 0);
+        output[0] != 0
     }
 
     fn last_fuel_consumed(&self) -> u64 {
