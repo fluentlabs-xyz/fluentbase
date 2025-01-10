@@ -388,8 +388,6 @@ pub const SYSCALL_ID_CALL_CODE: B256 =
     b256!("10c6aac9a8c0edaa89d4eb61ccd665b386d1faef9222d1f04b88aa9f43ede6d4"); // keccak256("_syscall_call_code")
 pub const SYSCALL_ID_DELEGATE_CALL: B256 =
     b256!("75bd4ec817c86b0736da59cb28bb22979b1547ee30426044e0ded9055ecfee5a"); // keccak256("_syscall_delegate_call")
-pub const FAILED_SYSCALL_ID_DELEGATE_CALL: B256 =
-    b256!("000000000000000036da59cb28bb22979b1547ee30426044e0ded9055ecfee5a");
 pub const SYSCALL_ID_CREATE: B256 =
     b256!("9708d5acbee3bf900474f0e80767e267e15a3c0f8bda6f3f882235855d42a61f"); // keccak256("_syscall_create")
 pub const SYSCALL_ID_CREATE2: B256 =

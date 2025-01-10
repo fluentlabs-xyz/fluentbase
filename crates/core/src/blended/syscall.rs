@@ -17,7 +17,6 @@ use fluentbase_sdk::{
     SYSCALL_ID_CREATE,
     SYSCALL_ID_CREATE2,
     SYSCALL_ID_DELEGATE_CALL,
-    FAILED_SYSCALL_ID_DELEGATE_CALL,
     SYSCALL_ID_DESTROY_ACCOUNT,
     SYSCALL_ID_EMIT_LOG,
     SYSCALL_ID_EXT_STORAGE_READ,
@@ -74,7 +73,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             SYSCALL_ID_STATIC_CALL => {
                 self.syscall_static_call(contract_context, params, call_depth)
             }
-            SYSCALL_ID_DELEGATE_CALL | FAILED_SYSCALL_ID_DELEGATE_CALL=> {
+            SYSCALL_ID_DELEGATE_CALL => {
                 self.syscall_delegate_call(contract_context, params, call_depth)
             }
             SYSCALL_ID_CALL_CODE => self.syscall_call_code(contract_context, params, call_depth),
@@ -140,9 +139,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             gas_cost
         );
 
-        let mut output = vec![];
-        output.extend_from_slice(value.as_le_slice());
-        output.push(is_cold as u8);
+        let mut output = [0u8; 32 + 1];
+        output[0..32].copy_from_slice(value.as_le_slice());
+        output[32] = is_cold as u8;
 
         // return value as bytes with success exit code
         NextAction::ExecutionResult {
@@ -164,6 +163,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         } else if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        }
+
+        if context.is_static {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
         }
 
         let slot = U256::from_le_slice(&params.input[0..32]);
@@ -205,10 +208,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
         self.sdk.write_storage(context.address, slot, new_value);
 
-        let mut output = vec![];
-        output.extend_from_slice(result.original_value.as_le_slice());
-        output.extend_from_slice(result.present_value.as_le_slice());
-        output.push(is_cold as u8);
+        let mut output = [0u8; 32 + 32 + 1];
+        output[0..32].copy_from_slice(result.original_value.as_le_slice());
+        output[32..64].copy_from_slice(result.present_value.as_le_slice());
+        output[64] = is_cold as u8;
 
         NextAction::ExecutionResult {
             exit_code: ExitCode::Ok.into_i32(),
@@ -237,6 +240,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         let target_address = Address::from_slice(&params.input[0..20]);
         let value = U256::from_le_slice(&params.input[20..52]);
         let contract_input = params.input.slice(52..);
+
+        if context.is_static && !value.is_zero() {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
+        }
 
         let has_transfer = !value.is_zero();
         if context.is_static && has_transfer {
@@ -458,6 +465,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
+        if context.is_static {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
+        }
+
         let target_address = Address::from_slice(&params.input[0..20]);
         let value = U256::from_le_slice(&params.input[20..52]);
         let contract_input = params.input.slice(52..);
@@ -526,6 +537,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
         if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        }
+
+        if context.is_static {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
         }
 
         // make sure we have enough bytes inside input params
@@ -628,6 +643,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
 
+        if context.is_static {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
+        }
+
         if params.input.len() < 1 {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         } else if params.state != STATE_MAIN {
@@ -681,6 +700,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         params: SyscallInvocationParams,
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
+
+        if context.is_static {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
+        }
 
         // make sure input is 20 bytes len, and we have enough gas to pay for the call
         if params.input.len() != 20 {
@@ -756,9 +779,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             0
         };
 
-        let mut output = vec![];
-        output.extend_from_slice(result.balance.as_le_slice());
-        output.push(is_cold as u8);
+        let mut output = [0u8; 32 + 1];
+        output[0..32].copy_from_slice(result.balance.as_le_slice());
+        output[32] = is_cold as u8;
 
         // return value as bytes with success exit code
         NextAction::ExecutionResult {
@@ -777,6 +800,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
         if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        }
+
+        if context.is_static {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
         }
 
         let preimage_hash = SDK::keccak256(params.input.as_ref());
@@ -911,9 +938,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             B256::from(value.to_be_bytes::<32>()),
             gas_cost
         );
-        let mut output = vec![];
-        output.extend_from_slice(value.as_le_slice());
-        output.push(is_cold as u8);
+        let mut output = [0u8; 32 + 1];
+        output[0..32].copy_from_slice(value.as_le_slice());
+        output[32] = is_cold as u8;
 
         // return value as bytes with success exit code
         NextAction::ExecutionResult {
@@ -973,6 +1000,10 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
 
+        if context.is_static {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
+        }
+
         // make sure input is 32 bytes len, and we have enough gas to pay for the call
         if params.input.len() != 64 {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
@@ -999,10 +1030,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             B256::from(value.to_be_bytes::<32>()),
             gas_cost
         );
-
-        if context.is_static {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
-        }
 
         self.sdk
             .write_transient_storage(context.address, slot, value);

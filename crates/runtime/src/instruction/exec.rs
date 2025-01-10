@@ -57,18 +57,13 @@ impl SyscallExec {
         // make sure we have enough fuel for this call
         let fuel_limit = if fuel_ptr > 0 {
             let fuel_limit = LittleEndian::read_u64(caller.read_memory(fuel_ptr, 8)?);
-            println!("Fuel limit: {:?} {}", fuel_limit, fuel_ptr);
             if fuel_limit > caller.fuel_remaining().unwrap_or(fuel_limit) {
                 return Err(ExitCode::OutOfGas.into_trap());
             }
             fuel_limit
         } else {
-            caller.fuel_remaining().unwrap_or(100000000)
+            caller.fuel_remaining().unwrap_or_default()
         };
-
-        //TODO: REWRITE FUEL PTR
-        caller.write_memory(fuel_ptr, &[0; 8])?;
-
         // return resumable error
         Err(SysExecResumable {
             params: SyscallInvocationParams {
@@ -138,7 +133,6 @@ impl SyscallExec {
             return (fuel_limit, ExitCode::CallDepthOverflow.into_i32());
         }
 
-        println!("Runtime exec");
         // create a new runtime instance with the context
         let ctx2 = RuntimeContext::new_with_hash(*code_hash)
             .with_input(input.to_vec())
@@ -146,7 +140,6 @@ impl SyscallExec {
             // .with_preimage_resolver(ctx.preimage_resolver.clone())
             .with_state(state)
             .with_depth(ctx.call_depth + 1)
-
             .with_disable_fuel(ctx.disable_fuel);
         let mut runtime = Runtime::new(ctx2);
         let mut execution_result = runtime.call_with_preimage_resolver(preimage_resolver);
@@ -207,7 +200,7 @@ impl SyscallExec {
         }
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
-        println!("Exec res out: {:?}", execution_result.output);
+
         ctx.execution_result.return_data = execution_result.output.clone();
 
         (execution_result.fuel_consumed, execution_result.exit_code)

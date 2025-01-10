@@ -78,7 +78,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         // otherwise, exit code is a "call_id" that identifies saved context
         let call_id = exit_code as u32;
 
-        println!("Return data: {:?} {}, ",return_data, exit_code);
         // try to parse execution params, if it's not possible then return an error
         let Ok(params) = FluentABI::<SyscallInvocationParams>::decode(&return_data, 0) else {
             unreachable!("can't decode invocation params");
@@ -101,16 +100,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             tx: self.sdk.context().clone_tx_context(),
             contract: contract_context.clone(),
         };
-        debug_log!(
-            "process_exec({}): fuel={} input_len={} state={} bytecode_address={:?} address={:?}",
-            fluentbase_sdk::syscall_name_by_hash(&params.code_hash),
-            params.fuel_limit,
-            params.input.len(),
-            params.state,
-            context_input.contract.bytecode_address,
-            context_input.contract.address
-        );
-        println!("Exec: {:?}", params.code_hash);
+
         let mut buf = BytesMut::new();
         FluentABI::encode(&context_input, &mut buf, 0).unwrap();
         buf.extend_from_slice(params.input.as_ref());
@@ -121,8 +111,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         {
             use fluentbase_runtime::RuntimeContext;
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
-            let mut runtime_context = RuntimeContext::root(params.fuel_limit);
-            runtime_context = runtime_context.without_fuel();
+            let runtime_context = RuntimeContext::root(params.fuel_limit);
             let preimage_adapter =
                 crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
@@ -326,8 +315,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             return return_error(gas, ExitCode::CallDepthOverflow);
         }
 
-        debug_log!("-- call inner: caller={:?}, target={:?}", inputs.caller, inputs.target_address);
-
         // read caller and callee
         let (mut caller_account, _) = self.sdk.account(&inputs.caller);
         let (mut callee_account, _) = self.sdk.account(&inputs.target_address);
@@ -389,7 +376,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             is_static: inputs.is_static,
             value: inputs.value.get(),
         };
-        println!("Bytecode account: {:?}", bytecode_account);
+
         let (output, exit_code) = self.exec_bytecode(
             contract_context,
             bytecode_account,
