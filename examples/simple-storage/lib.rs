@@ -7,10 +7,8 @@ use fluentbase_sdk::{
     alloc_slice,
     basic_entrypoint,
     derive::{solidity_storage, Contract},
-    Address,
-    U256,
-    ContractContextReader,
     SharedAPI,
+    U256,
 };
 
 #[derive(Contract)]
@@ -24,7 +22,7 @@ pub trait SIMPLESTORAGEAPI {
 }
 
 solidity_storage! {
-    mapping(Address => U256) Values;
+    U256 Value;
 }
 
 impl<SDK: SharedAPI> SIMPLESTORAGE<SDK> {
@@ -32,21 +30,19 @@ impl<SDK: SharedAPI> SIMPLESTORAGE<SDK> {
 
     fn main(&mut self) {
         let input_size = self.sdk.input_size();
-        let caller = self.sdk.context().contract_caller();
         if input_size == 0 {
-            let value = Values::get(&self.sdk, caller);
+            let value = Value::get(&self.sdk);
             self.sdk.write(&value.to_le_bytes::<32>());
         } else {
             let input = alloc_slice(input_size as usize);
             self.sdk.read(input, 0);
             let value = U256::from_le_slice(input);
-            Values::set(&mut self.sdk, caller, value);
+            Value::set(&mut self.sdk, value);
         }
     }
 }
 
 basic_entrypoint!(SIMPLESTORAGE);
-
 
 #[cfg(test)]
 mod tests {
@@ -56,7 +52,6 @@ mod tests {
         runtime::TestingContext,
         ContractContext,
         U256,
-        Address
     };
     use hex_literal::hex;
 
@@ -89,15 +84,21 @@ mod tests {
     fn test_simple_storage_set_and_get() {
         let owner_address = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
         let test_value = U256::from(42);
-        let sdk = with_test_input(Vec::from(test_value.to_le_bytes::<32>()), Some(owner_address));
+        let sdk = with_test_input(
+            Vec::from(test_value.to_le_bytes::<32>()),
+            Some(owner_address),
+        );
         let mut simple_storage = SIMPLESTORAGE::new(sdk);
         simple_storage.main(); // Set value
-        let sdk = with_test_input(vec![], Some(owner_address));
-        let mut simple_storage = SIMPLESTORAGE::new(sdk);
+        rewrite_input(&mut simple_storage.sdk, vec![], Some(owner_address));
         simple_storage.main(); // Get value
-        let output = simple_storage.sdk.inner.borrow_mut().native_sdk.take_output();
+        let output = simple_storage
+            .sdk
+            .inner
+            .borrow_mut()
+            .native_sdk
+            .take_output();
         let retrieved_value = U256::from_le_slice(&output);
         assert_eq!(retrieved_value, test_value);
     }
 }
-
