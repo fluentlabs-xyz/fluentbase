@@ -9,6 +9,8 @@ use fluentbase_sdk::{
     derive::{solidity_storage, Contract},
     SharedAPI,
     U256,
+    Address,
+    ContractContextReader,
 };
 
 #[derive(Contract)]
@@ -22,22 +24,23 @@ pub trait SIMPLESTORAGEAPI {
 }
 
 solidity_storage! {
-    U256 Value;
+    mapping(Address=>U256) Values;
 }
 
 impl<SDK: SharedAPI> SIMPLESTORAGE<SDK> {
     fn deploy(&mut self) {}
 
     fn main(&mut self) {
+        let caller = self.sdk.context().contract_caller();
         let input_size = self.sdk.input_size();
         if input_size == 0 {
-            let value = Value::get(&self.sdk);
+            let value = Values::get(&self.sdk, caller);
             self.sdk.write(&value.to_le_bytes::<32>());
         } else {
             let input = alloc_slice(input_size as usize);
             self.sdk.read(input, 0);
             let value = U256::from_le_slice(input);
-            Value::set(&mut self.sdk, value);
+            Values::set(&mut self.sdk, caller, value);
         }
     }
 }
@@ -52,6 +55,7 @@ mod tests {
         runtime::TestingContext,
         ContractContext,
         U256,
+        Address,
     };
     use hex_literal::hex;
 
