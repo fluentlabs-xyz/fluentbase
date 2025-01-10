@@ -32,6 +32,7 @@ use revm_interpreter::{
     CreateInputs,
     CreateOutcome,
     Gas,
+    Host,
     InstructionResult,
     InterpreterResult,
 };
@@ -112,8 +113,21 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             use fluentbase_runtime::RuntimeContext;
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
             let runtime_context = RuntimeContext::root(params.fuel_limit);
-            let preimage_adapter =
-                crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
+
+            let (account, _) = self.sdk.account(&contract_context.bytecode_address);
+            let bytecode = self
+                .sdk
+                .preimage(&contract_context.bytecode_address, &account.code_hash)
+                .unwrap_or_default();
+
+            let preimage_adapter = if let Bytecode::Eip7702(eip7702_bytecode) =
+                Bytecode::new_raw(bytecode)
+            {
+                crate::helpers::SdkPreimageAdapter(eip7702_bytecode.delegated_address, &self.sdk)
+            } else {
+                crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk)
+            };
+
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
                 .with_preimage_resolver(&preimage_adapter);
             let (fuel_consumed, exit_code) = native_sdk.exec(

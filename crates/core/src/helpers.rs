@@ -146,12 +146,12 @@ impl DenominateGas for Gas {
         }
 
         //TODO: Add checked sub and return OutOfGas error while overflow
-        let gas_used = self.limit() - self.remaining() - inner_gas_spent;
-        if gas_used != 0 {
+        let gas_used = self.limit() as i128 - self.remaining() as i128 - inner_gas_spent as i128;
+        if gas_used > 0 {
             self.spend_all();
             self.erase_cost(
                 self.limit()
-                    - ((gas_used - 1) / Self::DENOMINATE_COEFFICIENT + 1)
+                    - ((gas_used as u64 - 1) / Self::DENOMINATE_COEFFICIENT + 1)
                     - inner_gas_spent,
             );
         }
