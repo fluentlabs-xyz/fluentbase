@@ -32,8 +32,6 @@ use revm_interpreter::{
     CreateInputs,
     CreateOutcome,
     Gas,
-    Host,
-    InstructionResult,
     InterpreterResult,
 };
 use revm_primitives::{
@@ -296,11 +294,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                     .denominate_gas(self.inner_gas_spend.unwrap_or_default());
                 result
             }
-            _ => InterpreterResult::new(
-                InstructionResult::CreateContractStartingWithEF,
-                Bytes::new(),
-                gas,
-            ),
         };
 
         // commit all changes made

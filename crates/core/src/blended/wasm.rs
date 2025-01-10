@@ -6,7 +6,6 @@ use crate::{
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::mem::take;
 use fluentbase_sdk::{
-    debug_log,
     Account,
     Address,
     Bytes,
