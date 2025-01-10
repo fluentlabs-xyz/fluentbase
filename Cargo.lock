@@ -2805,6 +2805,7 @@ name = "fluentbase-example-simple-storage"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "hex-literal",
 ]
 
 [[package]]
