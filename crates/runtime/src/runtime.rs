@@ -315,6 +315,7 @@ impl CachingRuntime {
             entrypoint_name: None,
             import_linker: Some(import_linker),
             wrap_import_functions: true,
+            translate_drop_keep: false,
         });
         config
             .floats(false)

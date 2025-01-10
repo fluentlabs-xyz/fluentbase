@@ -47,7 +47,7 @@ impl HostError for SysExecResumable {}
 
 impl SyscallExec {
     pub fn fn_handler(
-        mut caller: Caller<'_, RuntimeContext>,
+        caller: Caller<'_, RuntimeContext>,
         hash32_ptr: u32,
         input_ptr: u32,
         input_len: u32,
