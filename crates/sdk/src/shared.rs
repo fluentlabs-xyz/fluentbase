@@ -443,11 +443,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         address: Address,
         value: U256,
         input: &[u8],
-        mut fuel_limit: u64,
+        fuel_limit: u64,
     ) -> (Bytes, i32) {
-        if fuel_limit == 0 {
-            fuel_limit = self.native_sdk.fuel();
-        }
         let mut buffer = vec![0u8; 20 + 32];
         buffer[0..20].copy_from_slice(address.as_slice());
         if !value.is_zero() {
@@ -466,11 +463,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         address: Address,
         value: U256,
         input: &[u8],
-        mut fuel_limit: u64,
+        fuel_limit: u64,
     ) -> (Bytes, i32) {
-        if fuel_limit == 0 {
-            fuel_limit = self.native_sdk.fuel();
-        }
         let mut buffer = vec![0u8; 20 + 32];
         buffer[0..20].copy_from_slice(address.as_slice());
         if !value.is_zero() {
@@ -484,15 +478,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         (self.native_sdk.return_data(), exit_code)
     }
 
-    fn delegate_call(
-        &mut self,
-        address: Address,
-        input: &[u8],
-        mut fuel_limit: u64,
-    ) -> (Bytes, i32) {
-        if fuel_limit == 0 {
-            fuel_limit = self.native_sdk.fuel();
-        }
+    fn delegate_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32) {
         let mut buffer = vec![0u8; 20];
         buffer[0..20].copy_from_slice(address.as_slice());
         buffer.extend_from_slice(input);
@@ -503,10 +489,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         (self.native_sdk.return_data(), exit_code)
     }
 
-    fn static_call(&mut self, address: Address, input: &[u8], mut fuel_limit: u64) -> (Bytes, i32) {
-        if fuel_limit == 0 {
-            fuel_limit = self.native_sdk.fuel();
-        }
+    fn static_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32) {
         let mut buffer = vec![0u8; 20];
         buffer[0..20].copy_from_slice(address.as_slice());
         buffer.extend_from_slice(input);

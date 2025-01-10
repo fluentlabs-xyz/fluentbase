@@ -56,7 +56,10 @@ impl SyscallExec {
     ) -> Result<i32, Trap> {
         // make sure we have enough fuel for this call
         let fuel_limit = if fuel_ptr > 0 {
-            let fuel_limit = LittleEndian::read_u64(caller.read_memory(fuel_ptr, 8)?);
+            let mut fuel_limit = LittleEndian::read_u64(caller.read_memory(fuel_ptr, 8)?);
+            if fuel_limit == 0 {
+                fuel_limit = caller.fuel_remaining().unwrap_or_default();
+            }
             if fuel_limit > caller.fuel_remaining().unwrap_or(fuel_limit) {
                 return Err(ExitCode::OutOfGas.into_trap());
             }
