@@ -58,7 +58,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         };
         let (output, exit_code) = self.exec_rwasm_bytecode(
             context,
-            &contract_account,
+            contract_account,
             Bytes::default(),
             &mut gas,
             STATE_DEPLOY,
@@ -75,7 +75,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     pub(crate) fn exec_rwasm_bytecode(
         &mut self,
         context: ContractContext,
-        bytecode_account: &Account,
+        bytecode_account: Account,
         input: Bytes,
         gas: &mut Gas,
         state: u32,

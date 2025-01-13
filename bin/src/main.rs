@@ -105,6 +105,7 @@ fn main() {
             entrypoint_name: None,
             import_linker: Some(create_import_linker()),
             wrap_import_functions: true,
+            translate_drop_keep: false,
         })
         .consume_fuel(true);
     let rwasm_module = RwasmModule::compile_with_config(&wasm_binary, &config).unwrap();

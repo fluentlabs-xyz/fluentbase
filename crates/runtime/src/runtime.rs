@@ -43,7 +43,7 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BytecodeOrHash {
     Bytecode(Bytes, Option<F254>),
     Hash(F254),
@@ -315,6 +315,7 @@ impl CachingRuntime {
             entrypoint_name: None,
             import_linker: Some(import_linker),
             wrap_import_functions: true,
+            translate_drop_keep: false,
         });
         config
             .floats(false)
