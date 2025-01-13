@@ -1,4 +1,4 @@
-FILES = greeting erc20 hashing panic client-fluent client-solidity router-fluent router-solidity rwasm chess-validator shakmaty storage keccak rwasm-jit fairblock simple-storage
+FILES = greeting erc20 hashing panic client-fluent client-solidity router-fluent router-solidity rwasm chess-validator shakmaty storage keccak rwasm-jit fairblock simple-storage echo
 
 all: $(FILES) $(MANUAL)
 
