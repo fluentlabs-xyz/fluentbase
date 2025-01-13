@@ -1,6 +1,7 @@
 use crate::{
     executor::RwasmExecutor,
     impl_visit_binary,
+    impl_visit_fallible_binary,
     impl_visit_load,
     impl_visit_store,
     impl_visit_unary,
@@ -176,10 +177,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::I32Add => self.visit_i32_add(),
                 Instruction::I32Sub => self.visit_i32_sub(),
                 Instruction::I32Mul => self.visit_i32_mul(),
-                // Instruction::I32DivS => self.visit_i32_div_s()?,
-                // Instruction::I32DivU => self.visit_i32_div_u()?,
-                // Instruction::I32RemS => self.visit_i32_rem_s()?,
-                // Instruction::I32RemU => self.visit_i32_rem_u()?,
+                Instruction::I32DivS => self.visit_i32_div_s()?,
+                Instruction::I32DivU => self.visit_i32_div_u()?,
+                Instruction::I32RemS => self.visit_i32_rem_s()?,
+                Instruction::I32RemU => self.visit_i32_rem_u()?,
                 Instruction::I32And => self.visit_i32_and(),
                 Instruction::I32Or => self.visit_i32_or(),
                 Instruction::I32Xor => self.visit_i32_xor(),
@@ -194,10 +195,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::I64Add => self.visit_i64_add(),
                 Instruction::I64Sub => self.visit_i64_sub(),
                 Instruction::I64Mul => self.visit_i64_mul(),
-                // Instruction::I64DivS => self.visit_i64_div_s()?,
-                // Instruction::I64DivU => self.visit_i64_div_u()?,
-                // Instruction::I64RemS => self.visit_i64_rem_s()?,
-                // Instruction::I64RemU => self.visit_i64_rem_u()?,
+                Instruction::I64DivS => self.visit_i64_div_s()?,
+                Instruction::I64DivU => self.visit_i64_div_u()?,
+                Instruction::I64RemS => self.visit_i64_rem_s()?,
+                Instruction::I64RemU => self.visit_i64_rem_u()?,
                 Instruction::I64And => self.visit_i64_and(),
                 Instruction::I64Or => self.visit_i64_or(),
                 Instruction::I64Xor => self.visit_i64_xor(),
@@ -1063,5 +1064,17 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         fn visit_f64_min(f64_min);
         fn visit_f64_max(f64_max);
         fn visit_f64_copysign(f64_copysign);
+    }
+
+    impl_visit_fallible_binary! {
+        fn visit_i32_div_s(i32_div_s);
+        fn visit_i32_div_u(i32_div_u);
+        fn visit_i32_rem_s(i32_rem_s);
+        fn visit_i32_rem_u(i32_rem_u);
+
+        fn visit_i64_div_s(i64_div_s);
+        fn visit_i64_div_u(i64_div_u);
+        fn visit_i64_rem_s(i64_rem_s);
+        fn visit_i64_rem_u(i64_rem_u);
     }
 }
