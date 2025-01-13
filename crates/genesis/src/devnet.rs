@@ -7,6 +7,7 @@ use crate::{
     GenesisAccount,
     EXAMPLE_FAIRBLOCK_ADDRESS,
     EXAMPLE_GREETING_ADDRESS,
+    EXAMPLE_MULTICALL_ADDRESS,
 };
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
@@ -150,6 +151,12 @@ pub fn devnet_genesis() -> Genesis {
         EXAMPLE_FAIRBLOCK_ADDRESS,
         "../../contracts/assets/precompile_fairblock.wasm"
     );
+    enable_rwasm_contract!(
+        alloc,
+        EXAMPLE_MULTICALL_ADDRESS,
+        "../../contracts/assets/precompile_multicall.wasm"
+    );
+
     Genesis {
         config: devnet_chain_config(),
         nonce: 0,
