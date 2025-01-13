@@ -391,6 +391,7 @@ pub fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
         entrypoint_name: None,
         import_linker: Some(create_import_linker()),
         wrap_import_functions: true,
+        translate_drop_keep: false,
     });
     RwasmModule::compile_with_config(wasm_binary, &config)
 }
