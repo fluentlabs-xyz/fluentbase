@@ -635,21 +635,23 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         JournalContextReader(ctx)
     }
 
-    fn write_storage(&mut self, slot: U256, value: U256) {
+    fn write_storage(&mut self, slot: U256, value: U256) -> (U256, U256, bool) {
         let caller = {
             let ctx = self.inner.borrow_mut();
             ctx.contract_context.as_ref().map(|v| v.address).unwrap()
         };
         SovereignAPI::write_storage(self, caller, slot, value);
+
+        (U256::default(), U256::default(), false)
     }
 
-    fn storage(&self, slot: &U256) -> U256 {
+    fn storage(&self, slot: &U256) -> (U256, bool) {
         let caller = {
             let ctx = self.inner.borrow_mut();
             ctx.contract_context.as_ref().map(|v| v.address).unwrap()
         };
         let (value, _) = SovereignAPI::storage(self, &caller, slot);
-        value
+        (value, false)
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) {
@@ -668,9 +670,9 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         SovereignAPI::transient_storage(self, &caller, slot)
     }
 
-    fn ext_storage(&self, address: &Address, slot: &U256) -> U256 {
+    fn ext_storage(&self, address: &Address, slot: &U256) -> (U256, bool) {
         let (value, _) = SovereignAPI::storage(self, address, slot);
-        value
+        (value, false)
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
@@ -729,7 +731,7 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         SovereignAPI::write_log(self, caller, data, topics.to_vec());
     }
 
-    fn balance(&self, _address: &Address) -> U256 {
+    fn balance(&self, _address: &Address) -> (U256, bool) {
         todo!()
     }
 
@@ -791,7 +793,7 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         (ctx.native_sdk.return_data(), exit_code)
     }
 
-    fn destroy_account(&mut self, _address: Address) {
+    fn destroy_account(&mut self, _address: Address) -> bool {
         todo!()
     }
 }

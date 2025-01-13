@@ -26,7 +26,7 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BytecodeOrHash {
     Bytecode(Bytes, Option<F254>),
     Hash(F254),

@@ -32,10 +32,10 @@ use revm_interpreter::{
     CreateInputs,
     CreateOutcome,
     Gas,
-    InstructionResult,
     InterpreterResult,
 };
 use revm_primitives::{
+    Bytecode,
     CreateScheme,
     Env,
     MAX_CALL_STACK_LIMIT,
@@ -111,8 +111,21 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             use fluentbase_runtime::RuntimeContext;
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
             let runtime_context = RuntimeContext::root(params.fuel_limit);
-            let preimage_adapter =
-                crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
+
+            let (account, _) = self.sdk.account(&contract_context.bytecode_address);
+            let bytecode = self
+                .sdk
+                .preimage(&contract_context.bytecode_address, &account.code_hash)
+                .unwrap_or_default();
+
+            let preimage_adapter = if let Bytecode::Eip7702(eip7702_bytecode) =
+                Bytecode::new_raw(bytecode)
+            {
+                crate::helpers::SdkPreimageAdapter(eip7702_bytecode.delegated_address, &self.sdk)
+            } else {
+                crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk)
+            };
+
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
                 .with_preimage_resolver(&preimage_adapter);
             let (fuel_consumed, exit_code) = native_sdk.exec(
@@ -165,24 +178,35 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     fn exec_bytecode(
         &mut self,
         context: ContractContext,
-        bytecode_account: &Account,
+        mut bytecode_account: Account,
         input: Bytes,
         gas: &mut Gas,
         state: u32,
         call_depth: u32,
     ) -> (Bytes, i32) {
-        let bytecode = self
+        let mut bytecode = self
             .sdk
             .preimage(&bytecode_account.address, &bytecode_account.code_hash)
             .unwrap_or_default();
+        if let Bytecode::Eip7702(eip7702_bytecode) = Bytecode::new_raw(bytecode.clone()) {
+            let (delegated_account, _) = self.sdk.account(&eip7702_bytecode.delegated_address);
+            bytecode = self
+                .sdk
+                .preimage(&delegated_account.address, &delegated_account.code_hash)
+                .unwrap_or_default();
+            bytecode_account = delegated_account;
+        }
         let bytecode_type = BytecodeType::from_slice(bytecode.as_ref());
         match bytecode_type {
-            BytecodeType::EVM => {
-                self.exec_evm_bytecode(context, bytecode_account, input, gas, state, call_depth)
-            }
-            BytecodeType::EIP7702 => {
-                self.exec_eip7702_bytecode(context, bytecode_account, input, gas, state, call_depth)
-            }
+            BytecodeType::EVM => self.exec_evm_bytecode(
+                context,
+                bytecode_account,
+                Bytecode::new_raw(bytecode),
+                input,
+                gas,
+                state,
+                call_depth,
+            ),
             BytecodeType::WASM => {
                 let result = self.exec_rwasm_bytecode(
                     context,
@@ -270,11 +294,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                     .denominate_gas(self.inner_gas_spend.unwrap_or_default());
                 result
             }
-            _ => InterpreterResult::new(
-                InstructionResult::CreateContractStartingWithEF,
-                Bytes::new(),
-                gas,
-            ),
         };
 
         // commit all changes made
@@ -367,7 +386,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
         let (output, exit_code) = self.exec_bytecode(
             contract_context,
-            &bytecode_account,
+            bytecode_account,
             inputs.input,
             &mut gas,
             state,

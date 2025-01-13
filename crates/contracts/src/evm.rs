@@ -40,7 +40,9 @@ use revm_primitives::{Bytecode, CancunSpec, CreateScheme, Env, BLOCK_HASH_HISTOR
 pub struct EvmLoader<'a, SDK> {
     sdk: &'a mut SDK,
     env: Env,
+    bytecode_address: Address,
     address: Address,
+    last_gas_consumed: u64,
 }
 
 fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
@@ -135,8 +137,8 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
     }
 
     fn balance(&mut self, address: Address) -> Option<StateLoad<U256>> {
-        let balance = self.sdk.balance(&address);
-        Some(StateLoad::new(balance, false))
+        let (balance, is_cold) = self.sdk.balance(&address);
+        Some(StateLoad::new(balance, is_cold))
     }
 
     fn code(&mut self, address: Address) -> Option<Eip7702CodeLoad<Bytes>> {
@@ -151,24 +153,19 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
 
     fn code_hash(&mut self, address: Address) -> Option<Eip7702CodeLoad<B256>> {
         if address == self.address {
-            let evm_code_hash = self
-                .sdk
-                .storage(&EVM_CODE_HASH_SLOT)
-                .to_le_bytes::<32>()
-                .into();
-            return Some(Eip7702CodeLoad::new_not_delegated(evm_code_hash, false));
+            let (evm_code_hash, is_cold) = self.sdk.storage(&EVM_CODE_HASH_SLOT);
+            let evm_code_hash = evm_code_hash.to_le_bytes::<32>().into();
+
+            return Some(Eip7702CodeLoad::new_not_delegated(evm_code_hash, is_cold));
         }
-        let evm_code_hash = self
-            .sdk
-            .ext_storage(&address, &EVM_CODE_HASH_SLOT)
-            .to_le_bytes::<32>()
-            .into();
-        Some(Eip7702CodeLoad::new_not_delegated(evm_code_hash, false))
+        let (evm_code_hash, is_cold) = self.sdk.ext_storage(&address, &EVM_CODE_HASH_SLOT);
+        let evm_code_hash = evm_code_hash.to_le_bytes::<32>().into();
+        Some(Eip7702CodeLoad::new_not_delegated(evm_code_hash, is_cold))
     }
 
     fn sload(&mut self, _address: Address, index: U256) -> Option<StateLoad<U256>> {
-        let value = self.sdk.storage(&index);
-        Some(StateLoad::new(value, false))
+        let (value, is_cold) = self.sdk.storage(&index);
+        Some(StateLoad::new(value, is_cold))
     }
 
     fn sstore(
@@ -177,13 +174,16 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
         index: U256,
         new_value: U256,
     ) -> Option<StateLoad<SStoreResult>> {
-        self.sdk.write_storage(index, new_value);
+        let (original_value, present_value, is_cold) = self.sdk.write_storage(index, new_value);
         let result = SStoreResult {
-            original_value: U256::ZERO,
-            present_value: U256::ZERO,
+            original_value,
+            present_value,
             new_value,
         };
-        Some(StateLoad::new(result, false))
+
+        self.last_gas_consumed = self.sdk.last_fuel_consumed();
+
+        Some(StateLoad::new(result, is_cold))
     }
 
     fn tload(&mut self, _address: Address, index: U256) -> U256 {
@@ -204,8 +204,12 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
         _address: Address,
         target: Address,
     ) -> Option<StateLoad<SelfDestructResult>> {
-        self.sdk.destroy_account(target);
-        Some(StateLoad::new(SelfDestructResult::default(), false))
+        let is_cold = self.sdk.destroy_account(target);
+        Some(StateLoad::new(SelfDestructResult::default(), is_cold))
+    }
+
+    fn last_gas_consumed(&self) -> u64 {
+        self.last_gas_consumed
     }
 }
 
@@ -214,17 +218,21 @@ const EVM_CODE_HASH_SLOT: U256 = U256::from_le_bytes(derive_keccak256!("_evm_byt
 impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
     pub fn new(sdk: &'a mut SDK) -> Self {
         let address = sdk.context().contract_address();
+        let bytecode_address = sdk.context().contract_bytecode_address();
         Self {
             env: env_from_context(sdk.context()),
             sdk,
+            bytecode_address,
             address,
+            last_gas_consumed: 0,
         }
     }
 
     pub fn load_evm_bytecode(&self) -> (Bytecode, B256) {
         let evm_code_hash = self
             .sdk
-            .storage(&EVM_CODE_HASH_SLOT)
+            .ext_storage(&self.bytecode_address, &EVM_CODE_HASH_SLOT)
+            .0
             .to_le_bytes::<32>()
             .into();
         let evm_bytecode = self.sdk.preimage(&evm_code_hash);
@@ -272,13 +280,13 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
                             inputs.gas_limit,
                         ),
                         CallScheme::CallCode => self.sdk.call_code(
-                            inputs.target_address,
+                            inputs.bytecode_address,
                             inputs.value.transfer().unwrap_or_default(),
                             inputs.input.as_ref(),
                             inputs.gas_limit,
                         ),
                         CallScheme::DelegateCall => self.sdk.delegate_call(
-                            inputs.target_address,
+                            inputs.bytecode_address,
                             inputs.input.as_ref(),
                             inputs.gas_limit,
                         ),
@@ -484,6 +492,38 @@ mod tests {
         // deploy
         {
             native_sdk.set_input(hex!("60806040526105ae806100115f395ff3fe608060405234801561000f575f80fd5b506004361061003f575f3560e01c80633b2e97481461004357806345773e4e1461007357806348b8bcc314610091575b5f80fd5b61005d600480360381019061005891906102e5565b6100af565b60405161006a919061039a565b60405180910390f35b61007b6100dd565b604051610088919061039a565b60405180910390f35b61009961011a565b6040516100a6919061039a565b60405180910390f35b60605f8273ffffffffffffffffffffffffffffffffffffffff163190506100d58161012f565b915050919050565b60606040518060400160405280600b81526020017f48656c6c6f20576f726c64000000000000000000000000000000000000000000815250905090565b60605f4790506101298161012f565b91505090565b60605f8203610175576040518060400160405280600181526020017f30000000000000000000000000000000000000000000000000000000000000008152509050610282565b5f8290505f5b5f82146101a457808061018d906103f0565b915050600a8261019d9190610464565b915061017b565b5f8167ffffffffffffffff8111156101bf576101be610494565b5b6040519080825280601f01601f1916602001820160405280156101f15781602001600182028036833780820191505090505b5090505b5f851461027b578180610207906104c1565b925050600a8561021791906104e8565b60306102239190610518565b60f81b8183815181106102395761023861054b565b5b60200101907effffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff191690815f1a905350600a856102749190610464565b94506101f5565b8093505050505b919050565b5f80fd5b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f6102b48261028b565b9050919050565b6102c4816102aa565b81146102ce575f80fd5b50565b5f813590506102df816102bb565b92915050565b5f602082840312156102fa576102f9610287565b5b5f610307848285016102d1565b91505092915050565b5f81519050919050565b5f82825260208201905092915050565b5f5b8381101561034757808201518184015260208101905061032c565b5f8484015250505050565b5f601f19601f8301169050919050565b5f61036c82610310565b610376818561031a565b935061038681856020860161032a565b61038f81610352565b840191505092915050565b5f6020820190508181035f8301526103b28184610362565b905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f819050919050565b5f6103fa826103e7565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff820361042c5761042b6103ba565b5b600182019050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601260045260245ffd5b5f61046e826103e7565b9150610479836103e7565b92508261048957610488610437565b5b828204905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b5f6104cb826103e7565b91505f82036104dd576104dc6103ba565b5b600182039050919050565b5f6104f2826103e7565b91506104fd836103e7565b92508261050d5761050c610437565b5b828206905092915050565b5f610522826103e7565b915061052d836103e7565b9250828201905080821115610545576105446103ba565b5b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffdfea2646970667358221220feebf5ace29c3c3146cb63bf7ca9009c2005f349075639d267cfbd817adde3e564736f6c63430008180033"));
+            let exit_code = app.deploy_inner();
+            assert_eq!(exit_code, ExitCode::Ok);
+        }
+        // main
+        {
+            native_sdk.set_input(hex!("45773e4e"));
+            let exit_code = app.main_inner();
+            assert_eq!(exit_code, ExitCode::Ok);
+            let bytes = &native_sdk.take_output()[64..75];
+            assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_deploy_tstore() {
+        let mut native_sdk = TestingContext::empty().with_fuel(100_000);
+        let sdk = JournalStateBuilder::default()
+            .with_contract_context(ContractContext {
+                address: Address::from([
+                    189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111,
+                    164, 142, 177,
+                ]),
+                bytecode_address: Default::default(),
+                caller: Address::ZERO,
+                is_static: false,
+                value: U256::ZERO,
+            })
+            .build(native_sdk.clone());
+        let mut app = EvmLoaderEntrypoint::new(sdk);
+        // deploy
+        {
+            native_sdk.set_input(hex!("600460025f5d5a5f5c505a9003035f5500"));
             let exit_code = app.deploy_inner();
             assert_eq!(exit_code, ExitCode::Ok);
         }

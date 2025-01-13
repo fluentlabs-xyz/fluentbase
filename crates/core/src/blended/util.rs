@@ -79,5 +79,6 @@ fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
 }
 
 pub fn create_delegate_proxy_bytecode(impl_address: Address) -> Bytes {
+    // create_rwasm_proxy_bytecode(impl_address)
     create_eip7702_proxy_bytecode(impl_address)
 }

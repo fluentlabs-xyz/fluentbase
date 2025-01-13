@@ -349,7 +349,6 @@ impl Into<FuncIdx> for SysFuncIdx {
 #[allow(non_camel_case_types)]
 pub enum BytecodeType {
     EVM,
-    EIP7702,
     WASM,
 }
 
@@ -378,10 +377,6 @@ impl BytecodeType {
         // case for rWASM contracts that are inside genesis
         if input.len() >= RWASM_SIG_LEN && input[0..RWASM_SIG_LEN] == RWASM_SIG {
             return Self::WASM;
-        }
-        // case for rWASM contracts that are inside genesis
-        if input.len() >= EIP7702_SIG_LEN && input[0..EIP7702_SIG_LEN] == EIP7702_SIG {
-            return Self::EIP7702;
         }
         // all the rest are EVM bytecode
         Self::EVM
@@ -425,24 +420,24 @@ pub const SYSCALL_ID_TRANSIENT_WRITE: B256 =
 
 pub const fn syscall_name_by_hash(hash: &B256) -> &str {
     match *hash {
-        SYSCALL_ID_STORAGE_READ => "STORAGE_READ",
-        SYSCALL_ID_STORAGE_WRITE => "STORAGE_WRITE",
-        SYSCALL_ID_CALL => "CALL",
-        SYSCALL_ID_STATIC_CALL => "STATIC_CALL",
-        SYSCALL_ID_DELEGATE_CALL => "DELEGATE_CALL",
-        SYSCALL_ID_CALL_CODE => "CALL_CODE",
-        SYSCALL_ID_CREATE => "CREATE",
-        SYSCALL_ID_CREATE2 => "CREATE2",
-        SYSCALL_ID_EMIT_LOG => "EMIT_LOG",
-        SYSCALL_ID_DESTROY_ACCOUNT => "DESTROY_ACCOUNT",
-        SYSCALL_ID_BALANCE => "BALANCE",
-        SYSCALL_ID_WRITE_PREIMAGE => "WRITE_PREIMAGE",
-        SYSCALL_ID_PREIMAGE_COPY => "PREIMAGE_COPY",
-        SYSCALL_ID_PREIMAGE_SIZE => "PREIMAGE_SIZE",
-        SYSCALL_ID_EXT_STORAGE_READ => "EXT_STORAGE_READ",
-        SYSCALL_ID_TRANSIENT_READ => "TRANSIENT_READ",
-        SYSCALL_ID_TRANSIENT_WRITE => "TRANSIENT_WRITE",
-        _ => "UNKNOWN",
+        SYSCALL_ID_STORAGE_READ => "SYSCALL_ID_STORAGE_READ",
+        SYSCALL_ID_STORAGE_WRITE => "SYSCALL_ID_STORAGE_WRITE",
+        SYSCALL_ID_CALL => "SYSCALL_ID_CALL",
+        SYSCALL_ID_STATIC_CALL => "SYSCALL_ID_STATIC_CALL",
+        SYSCALL_ID_CALL_CODE => "SYSCALL_ID_CALL_CODE",
+        SYSCALL_ID_DELEGATE_CALL => "SYSCALL_ID_DELEGATE_CALL",
+        SYSCALL_ID_CREATE => "SYSCALL_ID_CREATE",
+        SYSCALL_ID_CREATE2 => "SYSCALL_ID_CREATE2",
+        SYSCALL_ID_EMIT_LOG => "SYSCALL_ID_EMIT_LOG",
+        SYSCALL_ID_DESTROY_ACCOUNT => "SYSCALL_ID_DESTROY_ACCOUNT",
+        SYSCALL_ID_BALANCE => "SYSCALL_ID_BALANCE",
+        SYSCALL_ID_WRITE_PREIMAGE => "SYSCALL_ID_WRITE_PREIMAGE",
+        SYSCALL_ID_PREIMAGE_COPY => "SYSCALL_ID_PREIMAGE_COPY",
+        SYSCALL_ID_PREIMAGE_SIZE => "SYSCALL_ID_PREIMAGE_SIZE",
+        SYSCALL_ID_EXT_STORAGE_READ => "SYSCALL_ID_EXT_STORAGE_READ",
+        SYSCALL_ID_TRANSIENT_READ => "SYSCALL_ID_TRANSIENT_READ",
+        SYSCALL_ID_TRANSIENT_WRITE => "SYSCALL_ID_TRANSIENT_WRITE",
+        _ => "EXEC",
     }
 }
 
