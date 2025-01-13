@@ -36,9 +36,6 @@ mod tests {
         echo.deploy();
         echo.main();
         let output = native_sdk.take_output();
-        assert_eq!(
-            &output[0..12],
-            hex!("48656c6c6f2c20576f726c64")
-        );
+        assert_eq!(&output[0..12], hex!("48656c6c6f2c20576f726c64"));
     }
 }
