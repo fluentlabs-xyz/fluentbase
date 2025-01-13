@@ -1,4 +1,4 @@
-FILES = greeting erc20 hashing panic client-fluent client-solidity router-fluent router-solidity rwasm chess-validator shakmaty storage keccak rwasm-jit fairblock
+FILES = greeting erc20 hashing panic client-fluent client-solidity router-fluent router-solidity rwasm chess-validator shakmaty storage keccak rwasm-jit fairblock simple-storage echo
 
 all: $(FILES) $(MANUAL)
 
@@ -22,4 +22,3 @@ EXAMPLE_NAME=greeting
 .PHONY: deploy_example_contract
 deploy_example_contract:
 	node deploy-contract.js --$(RPC_ENDPOINT_TYPE) $(EXAMPLE_NAME)/lib.wasm
-

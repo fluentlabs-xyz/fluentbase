@@ -2710,6 +2710,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-echo"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "hex",
+ "hex-literal",
+]
+
+[[package]]
 name = "fluentbase-example-erc20"
 version = "0.1.0"
 dependencies = [
@@ -2798,6 +2807,14 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "shakmaty",
+]
+
+[[package]]
+name = "fluentbase-example-simple-storage"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "hex-literal",
 ]
 
 [[package]]
