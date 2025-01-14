@@ -14,6 +14,7 @@ fn test_genesis_greeting() {
         None,
         None,
     );
+
     assert!(result.is_success());
     println!("gas used (call): {}", result.gas_used());
     let bytes = result.output().unwrap_or_default();

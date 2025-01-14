@@ -10,6 +10,7 @@ use fluentbase_sdk::{
     Bytes,
     ContractContextReader,
     SharedAPI,
+    U256,
 };
 
 #[derive(Contract)]
@@ -27,12 +28,13 @@ impl<SDK: SharedAPI> MulticallAPI for Multicall<SDK> {
     fn multicall(&mut self, data: Vec<Bytes>) -> Vec<Bytes> {
         // Use target address from context - this is the address of original contract
         let target_addr = self.sdk.context().contract_address();
+
         let mut results = Vec::with_capacity(data.len());
 
         for call_data in data {
             let chunk = call_data.chunk();
             // Always delegate call to the target contract address
-            let (output, exit_code) = self.sdk.delegate_call(target_addr, chunk, 0);
+            let (output, exit_code) = self.sdk.call(target_addr, U256::from(0), chunk, 0);
 
             if exit_code != 0 {
                 panic!("Multicall: delegate call failed");
@@ -45,6 +47,7 @@ impl<SDK: SharedAPI> MulticallAPI for Multicall<SDK> {
     }
 }
 
+#[allow(dead_code)]
 impl<SDK: SharedAPI> Multicall<SDK> {
     fn deploy(&self) {
         // any custom deployment logic here
@@ -57,29 +60,7 @@ mod tests {
     use super::*;
     use alloc::vec::Vec;
     use alloy_sol_types::{sol, SolCall};
-    use fluentbase_sdk::{
-        codec::SolidityABI,
-        journal::{JournalState, JournalStateBuilder},
-        runtime::TestingContext,
-        Address,
-        ContractContext,
-    };
-
-    fn prepare_testing_context<T: Into<Vec<u8>>>(
-        input: T,
-        contract_addr: Address,
-    ) -> (TestingContext, JournalState<TestingContext>) {
-        let native_sdk = TestingContext::empty().with_input(input);
-        let sdk = JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
-                caller: Address::default(),
-                address: contract_addr,
-                ..Default::default()
-            })
-            .with_devnet_genesis()
-            .build(native_sdk.clone());
-        (native_sdk, sdk)
-    }
+    use fluentbase_sdk::codec::SolidityABI;
 
     fn verify_sol_encoding<T: SolCall>(call: &T, input: &[u8]) {
         assert_eq!(

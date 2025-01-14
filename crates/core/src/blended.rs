@@ -1,13 +1,14 @@
 mod evm;
+mod multicall;
 mod syscall;
 mod util;
 mod wasm;
-
 use crate::{
     helpers::{evm_error_from_exit_code, DenominateGas},
     types::NextAction,
 };
 use alloc::boxed::Box;
+use fluentbase_genesis::EXAMPLE_MULTICALL_ADDRESS;
 use fluentbase_sdk::{
     bytes::BytesMut,
     codec::FluentABI,
@@ -26,6 +27,7 @@ use fluentbase_sdk::{
     SyscallInvocationParams,
     STATE_MAIN,
 };
+use multicall::MULTICALL_SELECTOR;
 use revm_interpreter::{
     CallInputs,
     CallOutcome,
@@ -94,12 +96,17 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         contract_context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
+        // Check if this is a multicall invocation
+        let is_multicall = params.input.len() >= 4 && params.input[..4] == MULTICALL_SELECTOR;
+
+        // Prepare shared context input
         let context_input = SharedContextInputV1 {
             block: self.sdk.context().clone_block_context(),
             tx: self.sdk.context().clone_tx_context(),
             contract: contract_context.clone(),
         };
 
+        // Encode context input with params
         let mut buf = BytesMut::new();
         FluentABI::encode(&context_input, &mut buf, 0).unwrap();
         buf.extend_from_slice(params.input.as_ref());
@@ -112,20 +119,41 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
             let runtime_context = RuntimeContext::root(params.fuel_limit);
 
-            let (account, _) = self.sdk.account(&contract_context.bytecode_address);
-            let bytecode = self
-                .sdk
-                .preimage(&contract_context.bytecode_address, &account.code_hash)
-                .unwrap_or_default();
+            // For multicall, we need to get the bytecode from the multicall contract
+            // For regular calls, we get the bytecode from the contract context
+            let (_, bytecode) = if is_multicall {
+                let (acc, _) = self.sdk.account(&EXAMPLE_MULTICALL_ADDRESS);
+                let code = self
+                    .sdk
+                    .preimage(&EXAMPLE_MULTICALL_ADDRESS, &acc.code_hash)
+                    .unwrap_or_default();
+                (acc, code)
+            } else {
+                let (acc, _) = self.sdk.account(&contract_context.bytecode_address);
+                let code = self
+                    .sdk
+                    .preimage(&contract_context.bytecode_address, &acc.code_hash)
+                    .unwrap_or_default();
+                (acc, code)
+            };
 
+            // Handle EIP7702 delegation and create preimage adapter
             let preimage_adapter = if let Bytecode::Eip7702(eip7702_bytecode) =
                 Bytecode::new_raw(bytecode)
             {
                 crate::helpers::SdkPreimageAdapter(eip7702_bytecode.delegated_address, &self.sdk)
             } else {
-                crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk)
+                crate::helpers::SdkPreimageAdapter(
+                    if is_multicall {
+                        EXAMPLE_MULTICALL_ADDRESS
+                    } else {
+                        contract_context.bytecode_address
+                    },
+                    &self.sdk,
+                )
             };
 
+            // Setup runtime context and execute
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
                 .with_preimage_resolver(&preimage_adapter);
             let (fuel_consumed, exit_code) = native_sdk.exec(
@@ -184,10 +212,19 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         state: u32,
         call_depth: u32,
     ) -> (Bytes, i32) {
-        let mut bytecode = self
-            .sdk
-            .preimage(&bytecode_account.address, &bytecode_account.code_hash)
-            .unwrap_or_default();
+        let mut bytecode = if input.len() >= 4 && input[..4] == MULTICALL_SELECTOR {
+            let (multicall_account, _) = self.sdk.account(&EXAMPLE_MULTICALL_ADDRESS);
+            bytecode_account = multicall_account;
+
+            self.sdk
+                .preimage(&bytecode_account.address, &bytecode_account.code_hash)
+                .unwrap_or_default()
+        } else {
+            self.sdk
+                .preimage(&bytecode_account.address, &bytecode_account.code_hash)
+                .unwrap_or_default()
+        };
+
         if let Bytecode::Eip7702(eip7702_bytecode) = Bytecode::new_raw(bytecode.clone()) {
             let (delegated_account, _) = self.sdk.account(&eip7702_bytecode.delegated_address);
             bytecode = self

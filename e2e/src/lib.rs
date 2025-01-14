@@ -23,3 +23,6 @@ mod router;
 mod stateless;
 #[cfg(test)]
 mod utils;
+
+#[cfg(test)]
+mod multicall;
