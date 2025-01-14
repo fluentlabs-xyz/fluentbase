@@ -1,3 +1,3 @@
-# Router macro (solidity mode)
+# Multicall contract
 
-An example of the `router!` macro usage. For real world example, you can check the [ERC-20](../erc20) example.
+A precompile contract, which allows to call multiple functions in a single transaction.
