@@ -11,9 +11,6 @@ pub const EXAMPLE_GREETING_ADDRESS: Address = address!("43799b91fb174261ec2950eb
 /// Example fairblock `keccak256("_example_fairblock")[12..]`
 pub const EXAMPLE_FAIRBLOCK_ADDRESS: Address = address!("d92adea71798aadff13f526556dea230214e0a30");
 
-/// Example multicall `keccak256("_example_multicall")[12..]`
-pub const EXAMPLE_MULTICALL_ADDRESS: Address = address!("9dafdaa2b09260d530ce3ffb304be59ca9613844");
-
 pub use devnet::{
     devnet_chain_config,
     devnet_genesis,

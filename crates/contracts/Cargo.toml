@@ -1,42 +1,43 @@
 [package]
-name = "fluentbase-contracts"
-version = "0.1.0"
 authors.workspace = true
-repository.workspace = true
-edition.workspace = true
-readme.workspace = true
-license.workspace = true
-keywords.workspace = true
 categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "fluentbase-contracts"
+readme.workspace = true
+repository.workspace = true
+version = "0.1.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-fluentbase-sdk = { workspace = true }
+fluentbase-sdk = {workspace = true}
 
 # revm
-revm-interpreter = { workspace = true, features = ["rwasm"] }
+revm-interpreter = {workspace = true, features = ["rwasm"]}
 #revm-interpreter = { workspace = true, features = ["rwasm", "no-gas"] }
-revm-precompile = { workspace = true }
-revm-primitives = { workspace = true }
+revm-precompile = {workspace = true}
+revm-primitives = {workspace = true}
 
 [dev-dependencies]
 
 [features]
-default = [
-    "std"
-]
-std = [
-    "fluentbase-sdk/std",
-    "revm-interpreter/std",
-    "revm-precompile/std",
-    "revm-primitives/std",
-]
 blake2 = []
-sha256 = []
-ripemd160 = []
-identity = []
-modexp = []
+default = [
+  "std",
+]
 ecrecover = []
 evm = []
+identity = []
+modexp = []
+multicall = []
+ripemd160 = []
+sha256 = []
+std = [
+  "fluentbase-sdk/std",
+  "revm-interpreter/std",
+  "revm-precompile/std",
+  "revm-primitives/std",
+]

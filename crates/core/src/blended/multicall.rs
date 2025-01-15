@@ -1,1 +1,0 @@
-pub const MULTICALL_SELECTOR: [u8; 4] = [0xac, 0x96, 0x50, 0xd8];
