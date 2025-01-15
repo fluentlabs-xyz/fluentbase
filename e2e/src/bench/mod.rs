@@ -1,5 +1,6 @@
 mod erc20;
 mod greeting;
+mod multicall;
 
 use crate::utils::run_with_default_context;
 use hex_literal::hex;
