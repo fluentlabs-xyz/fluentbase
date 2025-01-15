@@ -100,15 +100,24 @@ impl<T> RwasmContext<T> {
         }
     }
 
-    pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), RwasmError> {
-        #[cfg(feature = "std")]
-        println!(
-            " + fuel charged: fuel={} remaining={}",
-            fuel,
-            self.fuel_limit
-                .map(|v| v - self.consumed_fuel - fuel)
-                .unwrap_or(0)
+    pub fn program_counter(&self) -> u32 {
+        self.ip.pc()
+    }
+
+    pub fn reset_instruction_pointer_to(&mut self, pc: Option<usize>) {
+        let mut ip = InstructionPtr::new(
+            self.instance.module.code_section.instr.as_ptr(),
+            self.instance.module.code_section.metas.as_ptr(),
         );
+        ip.add(pc.unwrap_or(self.instance.start));
+        self.ip = ip;
+    }
+
+    pub fn reset_last_signature(&mut self) {
+        self.last_signature = None;
+    }
+
+    pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), RwasmError> {
         if let Some(fuel_limit) = self.fuel_limit {
             if self.consumed_fuel + fuel >= fuel_limit {
                 return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));

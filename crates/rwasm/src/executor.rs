@@ -2,11 +2,18 @@ use crate::{types::RwasmError, RwasmContext, SyscallHandler};
 use rwasm::{
     core::{TrapCode, UntypedValue, ValueType},
     engine::{
-        bytecode::{AddressOffset, ElementSegmentIdx, Instruction, TableIdx},
+        bytecode::{AddressOffset, DataSegmentIdx, ElementSegmentIdx, Instruction, TableIdx},
         code_map::{FuncHeader, InstructionPtr, InstructionsRef},
         DropKeep,
     },
-    module::{ElementSegment, ElementSegmentItems, ElementSegmentKind},
+    memory::DataSegmentEntity,
+    module::{
+        DataSegment,
+        DataSegmentKind,
+        ElementSegment,
+        ElementSegmentItems,
+        ElementSegmentKind,
+    },
     rwasm::{RwasmModule, RwasmModuleInstance, N_MAX_RECURSION_DEPTH},
     store::ResourceLimiterRef,
     table::{ElementSegmentEntity, TableEntity},
@@ -61,6 +68,21 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             )
             .unwrap()
         })
+    }
+
+    pub(crate) fn resolve_data_or_create(
+        &mut self,
+        data_segment_idx: DataSegmentIdx,
+    ) -> &mut DataSegmentEntity {
+        self.store
+            .data_segments
+            .entry(data_segment_idx)
+            .or_insert_with(|| {
+                DataSegmentEntity::from(&DataSegment {
+                    kind: DataSegmentKind::Passive,
+                    bytes: [0x1].into(),
+                })
+            })
     }
 
     pub(crate) fn resolve_element_or_create(

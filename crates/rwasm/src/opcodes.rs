@@ -43,7 +43,16 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         loop {
             let instr = *self.store.ip.get();
             #[cfg(feature = "std")]
-            println!("{:02}: {:?}", self.store.ip.pc(), instr);
+            {
+                let stack = self
+                    .store
+                    .value_stack
+                    .dump_stack(self.store.sp)
+                    .iter()
+                    .map(|v| v.as_u64())
+                    .collect::<Vec<_>>();
+                println!("{:02}: {:?}, stack={:?}", self.store.ip.pc(), instr, stack);
+            }
             match instr {
                 Instruction::LocalGet(local_depth) => self.visit_local_get(local_depth),
                 Instruction::LocalSet(local_depth) => self.visit_local_set(local_depth),
@@ -130,12 +139,11 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::TableInit(elem) => self.visit_table_init(elem)?,
                 Instruction::ElemDrop(segment) => self.visit_element_drop(segment),
                 Instruction::RefFunc(func_index) => self.visit_ref_func(func_index)?,
-                Instruction::I32Const(value) | Instruction::I64Const(value) => {
-                    self.visit_i32_i64_const(value)
-                }
+                Instruction::I32Const(value)
+                | Instruction::I64Const(value)
+                | Instruction::F32Const(value)
+                | Instruction::F64Const(value) => self.visit_i32_i64_const(value),
 
-                // Instruction::F32Const(value) => self.visit_f32_const(value),
-                // Instruction::F64Const(value) => self.visit_f64_const(value),
                 // Instruction::ConstRef(cref) => self.visit_const(cref),
                 Instruction::I32Eqz => self.visit_i32_eqz(),
                 Instruction::I32Eq => self.visit_i32_eq(),
@@ -450,9 +458,9 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             .ok_or(TrapCode::TableOutOfBounds)?
             .try_into()
             .unwrap();
-        if func_idx == 0 {
-            return Err(TrapCode::IndirectCallToNull.into());
-        }
+        // if func_idx == 0 {
+        //     return Err(TrapCode::IndirectCallToNull.into());
+        // }
         self.execute_call_internal(false, 3, func_idx)
     }
 
@@ -510,9 +518,9 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             .ok_or(TrapCode::TableOutOfBounds)?
             .try_into()
             .expect("rwasm: invalid function index");
-        if func_idx == 0 {
-            return Err(TrapCode::IndirectCallToNull.into());
-        }
+        // if func_idx == 0 {
+        //     return Err(TrapCode::IndirectCallToNull.into());
+        // }
         // call func
         self.store.ip.add(2);
         self.store.value_stack.sync_stack_ptr(self.store.sp);
@@ -695,7 +703,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
         }
-        // These accesses just perform the bounds checks required by the Wasm spec.
+        // these accesses just perform the bound checks required by the Wasm spec.
         let data = self.store.global_memory.data_mut();
         data.get(src_offset..)
             .and_then(|memory| memory.get(..n))
@@ -720,12 +728,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         &mut self,
         data_segment_idx: DataSegmentIdx,
     ) -> Result<(), RwasmError> {
-        // TODO(dmitry123): "add emptiness check"
-        assert_eq!(
-            data_segment_idx.to_u32(),
-            0,
-            "rwasm: non-zero data segment index"
-        );
+        let is_empty_data_segment = self.resolve_data_or_create(data_segment_idx).is_empty();
         let (d, s, n) = self.store.sp.pop3();
         let n = i32::from(n) as usize;
         let src_offset = i32::from(s) as usize;
@@ -741,11 +744,11 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             .get_mut(dst_offset..)
             .and_then(|memory| memory.get_mut(..n))
             .ok_or(TrapCode::MemoryOutOfBounds)?;
-        let data = self
-            .store
-            .instance
-            .module
-            .memory_section
+        let mut memory_section = self.store.instance.module.memory_section.as_slice();
+        if is_empty_data_segment {
+            memory_section = &[];
+        }
+        let data = memory_section
             .get(src_offset..)
             .and_then(|data| data.get(..n))
             .ok_or(TrapCode::MemoryOutOfBounds)?;
@@ -759,9 +762,8 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
 
     #[inline(always)]
     pub(crate) fn visit_data_drop(&mut self, data_segment_idx: DataSegmentIdx) {
-        if let Some(data_segment) = self.store.data_segments.get_mut(&data_segment_idx) {
-            data_segment.drop_bytes();
-        }
+        let data_segment = self.resolve_data_or_create(data_segment_idx);
+        data_segment.drop_bytes();
         self.store.ip.add(1);
     }
 
@@ -855,15 +857,20 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
         }
         // Query both tables and check if they are the same:
-        let [src, dst] = self
-            .store
-            .tables
-            .get_many_mut([&src_table_idx, &dst_table_idx])
-            .map(|v| v.expect("rwasm: unresolved table segment"));
-        if src_table_idx == dst_table_idx {
-            dst.copy_within(dst_index, src_index, len)?;
-        } else {
+        if src_table_idx != dst_table_idx {
+            let [src, dst] = self
+                .store
+                .tables
+                .get_many_mut([&src_table_idx, &dst_table_idx])
+                .map(|v| v.expect("rwasm: unresolved table segment"));
             TableEntity::copy(dst, dst_index, src, src_index, len)?;
+        } else {
+            let src = self
+                .store
+                .tables
+                .get_mut(&src_table_idx)
+                .expect("rwasm: unresolved table segment");
+            src.copy_within(dst_index, src_index, len)?;
         }
         self.store.ip.add(2);
         Ok(())
@@ -910,9 +917,8 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
 
     #[inline(always)]
     pub(crate) fn visit_element_drop(&mut self, element_segment_idx: ElementSegmentIdx) {
-        if let Some(element_segment) = self.store.elements.get_mut(&element_segment_idx) {
-            element_segment.drop_items();
-        }
+        let element_segment = self.resolve_element_or_create(element_segment_idx);
+        element_segment.drop_items();
         self.store.ip.add(1);
     }
 

@@ -6,7 +6,7 @@ use rwasm::{
 
 #[derive(Debug)]
 pub enum RwasmError {
-    BinaryFormatError(BinaryFormatError),
+    MalformedBinary,
     TrapCode(TrapCode),
     UnknownExternalFunction(u32),
     ExecutionHalted(i32),
@@ -24,8 +24,8 @@ impl RwasmError {
 }
 
 impl From<BinaryFormatError> for RwasmError {
-    fn from(value: BinaryFormatError) -> Self {
-        Self::BinaryFormatError(value)
+    fn from(_value: BinaryFormatError) -> Self {
+        Self::MalformedBinary
     }
 }
 impl From<TrapCode> for RwasmError {
