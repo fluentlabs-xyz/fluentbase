@@ -19,3 +19,4 @@ rwasm = { workspace = true }
 [features]
 default = ["std"]
 std = []
+e2e = []

@@ -427,7 +427,7 @@ impl Runtime {
                     break;
                 }
                 Err(err) => match err {
-                    RwasmError::BinaryFormatError(_) => {
+                    RwasmError::MalformedBinary => {
                         unreachable!("runtime: binary format error is not possible here")
                     }
                     RwasmError::TrapCode(trap_code) => {
