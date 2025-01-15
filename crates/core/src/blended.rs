@@ -191,7 +191,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             return None;
         };
 
-        if input[..4] == PRECOMPILE_MULTICALL[..4] {
+        if input[..4] == PRECOMPILE_MULTICALL[16..] {
             let (acc, _) = self.sdk.account(&PRECOMPILE_MULTICALL);
             return Some(acc);
         }

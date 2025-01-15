@@ -37,5 +37,5 @@ pub const PRECOMPILE_BLS12_381_MAP_FP2_TO_G2: Address =
 pub const PRECOMPILE_SECP256R1_VERIFY: Address =
     address!("0000000000000000000000000000000000000100");
 
-// first 4 bytes of keccak256("multicall(bytes[])") + padding to 20 bytes
-pub const PRECOMPILE_MULTICALL: Address = address!("ac9650d800000000000000000000000000000000");
+// keccak256("precompile")[..16] + keccak256("multicall(bytes[])")[..4]
+pub const PRECOMPILE_MULTICALL: Address = address!("c4179c5a26cda29e689fe027ee5f5e4eac9650d8");
