@@ -320,7 +320,7 @@ fn module_compilation_succeeds(context: &mut TestContext, span: Span, module: wa
     match context.compile_and_instantiate(module) {
         Ok(_) => {}
         Err(error) => panic!(
-            "{}: failed to instantiate module but should have suceeded: {}",
+            "{}: failed to instantiate module but should have suceeded: {:?}",
             context.spanned(span),
             error
         ),

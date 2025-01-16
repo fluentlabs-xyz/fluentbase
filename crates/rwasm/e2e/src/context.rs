@@ -174,9 +174,11 @@ impl TestContext<'_> {
             let wasm_module = Module::new(self.engine(), &wasm[..])?;
             let mut states = Vec::<(String, u32)>::new();
             for (k, v) in wasm_module.exports.iter() {
-                let func_idx = v
-                    .into_func_idx()
-                    .unwrap_or_else(|| unreachable!("not supported export type: {:?}", v));
+                let func_idx = v.into_func_idx();
+                if func_idx.is_none() {
+                    continue;
+                }
+                let func_idx = func_idx.unwrap();
                 let func_typ = wasm_module.get_export(k).unwrap();
                 let func_typ = func_typ.func().unwrap();
                 let state_value = 10000 + func_idx.into_u32();
@@ -191,8 +193,8 @@ impl TestContext<'_> {
                     opcode: Instruction::Call(u32::MAX.into()),
                 }),
                 entrypoint_name: None,
-                import_linker: None,
-                wrap_import_functions: false,
+                import_linker: Some(self.import_linker.clone()),
+                wrap_import_functions: true,
                 translate_drop_keep: false,
             }
         };
@@ -225,6 +227,35 @@ impl TestContext<'_> {
         let rwasm_module = RwasmModule::read_from_slice(&encoded_rwasm_module).unwrap();
 
         // println!();
+        // #[allow(unused)]
+        // fn trace_rwasm(rwasm_bytecode: &[u8]) {
+        //     let rwasm_module = RwasmModule::new(rwasm_bytecode).unwrap();
+        //     let mut func_length = 0usize;
+        //     let mut expected_func_length = rwasm_module
+        //         .func_section
+        //         .first()
+        //         .copied()
+        //         .unwrap_or(u32::MAX) as usize;
+        //     let mut func_index = 0usize;
+        //     println!("\n -- function #{} -- ", func_index);
+        //     for (i, instr) in rwasm_module.code_section.instr.iter().enumerate() {
+        //         println!("{:02}: {:?}", i, instr);
+        //         func_length += 1;
+        //         if func_length == expected_func_length {
+        //             func_index += 1;
+        //             expected_func_length = rwasm_module
+        //                 .func_section
+        //                 .get(func_index)
+        //                 .copied()
+        //                 .unwrap_or(u32::MAX) as usize;
+        //             if expected_func_length != u32::MAX as usize {
+        //                 println!("\n -- function #{} -- ", func_index);
+        //             }
+        //             func_length = 0;
+        //         }
+        //     }
+        //     println!("\n")
+        // }
         // trace_rwasm(&encoded_rwasm_module);
         // println!();
 

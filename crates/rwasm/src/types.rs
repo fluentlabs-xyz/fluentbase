@@ -4,7 +4,7 @@ use rwasm::{
     rwasm::BinaryFormatError,
 };
 
-pub const N_DEFAULT_STACK_SIZE: usize = 1024;
+pub const N_DEFAULT_STACK_SIZE: usize = 4096;
 pub const N_MAX_STACK_SIZE: usize = 4096;
 
 #[derive(Debug)]

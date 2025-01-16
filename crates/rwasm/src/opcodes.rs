@@ -9,6 +9,7 @@ use crate::{
     Caller,
     RwasmError,
     SyscallHandler,
+    N_MAX_STACK_SIZE,
 };
 use core::cmp;
 use rwasm::{
@@ -45,23 +46,29 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             let instr = *self.store.ip.get();
 
             // TODO(dmitry123): "find a way how to optimize it"
-            if self.store.value_stack.has_stack_overflowed(self.store.sp) {
+            if self.store.value_stack.stack_len(self.store.sp) >= N_MAX_STACK_SIZE {
                 return Err(TrapCode::StackOverflow.into());
             }
 
-            #[cfg(feature = "std")]
-            {
-                let stack = self
-                    .store
-                    .value_stack
-                    .dump_stack(self.store.sp)
-                    .iter()
-                    .rev()
-                    .take(10)
-                    .map(|v| v.as_u64())
-                    .collect::<Vec<_>>();
-                println!("{:02}: {:?}, stack={:?}", self.store.ip.pc(), instr, stack);
-            }
+            // #[cfg(feature = "std")]
+            // {
+            //     let stack = self
+            //         .store
+            //         .value_stack
+            //         .dump_stack(self.store.sp)
+            //         .iter()
+            //         .rev()
+            //         .take(10)
+            //         .map(|v| v.as_u64())
+            //         .collect::<Vec<_>>();
+            //     println!(
+            //         "{:02}: {:?}, stack={:?} ({})",
+            //         self.store.ip.pc(),
+            //         instr,
+            //         stack,
+            //         self.store.value_stack.stack_len(self.store.sp)
+            //     );
+            // }
             match instr {
                 Instruction::LocalGet(local_depth) => self.visit_local_get(local_depth),
                 Instruction::LocalSet(local_depth) => self.visit_local_set(local_depth),
