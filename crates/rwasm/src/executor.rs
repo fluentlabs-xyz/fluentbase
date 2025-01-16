@@ -201,6 +201,16 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     }
 
     #[inline(always)]
+    pub(crate) fn try_execute_unary(
+        &mut self,
+        f: fn(UntypedValue) -> Result<UntypedValue, TrapCode>,
+    ) -> Result<(), TrapCode> {
+        self.store.sp.try_eval_top(f)?;
+        self.store.ip.add(1);
+        Ok(())
+    }
+
+    #[inline(always)]
     pub(crate) fn try_execute_binary(
         &mut self,
         f: fn(UntypedValue, UntypedValue) -> Result<UntypedValue, TrapCode>,

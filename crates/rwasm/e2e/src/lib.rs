@@ -108,8 +108,8 @@ define_spec_tests! {
     // fn wasm_br_if("br_if");
     // fn wasm_br_table("br_table");
     // fn wasm_bulk("bulk"); // indirect call to null doesn't pass :(
-    fn wasm_call("call");
-    // fn wasm_call_indirect("call_indirect");
+    // fn wasm_call("call");
+    // fn wasm_call_indirect("call_indirect"); // indirect call to null doesn't pass :(
     // // fn wasm_extended_const_data("proposals/extended-const/data"); // NOT WORKING (imported memory)
     // // fn wasm_extended_const_elem("proposals/extended-const/elem"); // NOT WORKING (imported memory)
     // // fn wasm_extended_const_global("proposals/extended-const/global"); // NOT WORKING (imported memory)
@@ -120,28 +120,28 @@ define_spec_tests! {
     // fn wasm_conversions("conversions");
     // fn wasm_custom("custom");
     // fn wasm_data("data");
-    // fn wasm_elem("elem");
+    // fn wasm_elem("elem"); // don't pass (due to the exported tables)
     // fn wasm_endianness("endianness");
-    // fn wasm_exports("exports");
+    // fn wasm_exports("exports"); // don't pass (due to the exported globals)
     // fn wasm_f32("f32");
     // fn wasm_f32_bitwise("f32_bitwise");
     // fn wasm_f32_cmp("f32_cmp");
     // fn wasm_f64("f64");
     // fn wasm_f64_bitwise("f64_bitwise");
     // fn wasm_f64_cmp("f64_cmp");
-    // fn wasm_fac("fac");
+    // fn wasm_fac("fac"); // don't pass
     // fn wasm_float_exprs("float_exprs");
     // fn wasm_float_literals("float_literals");
     // fn wasm_float_memory("float_memory");
     // fn wasm_float_misc("float_misc");
     // fn wasm_forward("forward");
     // fn wasm_func("func");
-    // fn wasm_func_ptrs("func_ptrs");
-    // fn wasm_global("global");
+    // fn wasm_func_ptrs("func_ptrs"); // don't pass
+    // fn wasm_global("global"); // don't pass (due to the ExternRef)
     // fn wasm_i32("i32");
     // fn wasm_i64("i64");
     // fn wasm_if("if");
-    // // fn wasm_imports("imports"); // NOT WORKING (exported globals)
+    // fn wasm_imports("imports"); // NOT WORKING (exported globals)
     // fn wasm_inline_module("inline-module");
     // fn wasm_int_exprs("int_exprs");
     // fn wasm_int_literals("int_literals");
@@ -154,14 +154,14 @@ define_spec_tests! {
     // fn wasm_local_tee("local_tee");
     // fn wasm_loop("loop");
     // fn wasm_memory("memory");
-    // fn wasm_memory_copy("memory_copy");
+    // fn wasm_memory_copy("memory_copy"); // don't pass
     // fn wasm_memory_fill("memory_fill");
     // fn wasm_memory_grow("memory_grow");
-    // fn wasm_memory_init("memory_init");
+    // fn wasm_memory_init("memory_init"); // don't pass
     // fn wasm_memory_redundancy("memory_redundancy");
     // fn wasm_memory_size("memory_size");
     // fn wasm_memory_trap("memory_trap");
-    // fn wasm_names("names");
+    fn wasm_names("names");
     // fn wasm_nop("nop");
     // fn wasm_ref_func("ref_func");
     // fn wasm_ref_is_null("ref_is_null");

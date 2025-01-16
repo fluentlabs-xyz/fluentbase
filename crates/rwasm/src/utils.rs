@@ -53,6 +53,18 @@ macro_rules! impl_visit_binary {
 }
 
 #[macro_export]
+macro_rules! impl_visit_fallible_unary {
+    ( $( fn $visit_ident:ident($untyped_ident:ident); )* ) => {
+        $(
+            #[inline(always)]
+            fn $visit_ident(&mut self) -> Result<(), TrapCode> {
+                self.try_execute_unary(UntypedValue::$untyped_ident)
+            }
+        )*
+    }
+}
+
+#[macro_export]
 macro_rules! impl_visit_fallible_binary {
     ( $( fn $visit_ident:ident($untyped_ident:ident); )* ) => {
         $(

@@ -1,4 +1,4 @@
-use crate::RwasmError;
+use crate::{RwasmError, N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE};
 use hashbrown::HashMap;
 use rwasm::{
     core::{TrapCode, UntypedValue, ValueType, N_MAX_MEMORY_PAGES},
@@ -44,7 +44,7 @@ pub struct RwasmContext<T> {
 impl<T> RwasmContext<T> {
     pub fn new(instance: RwasmModuleInstance, fuel_limit: Option<u64>, context: T) -> Self {
         // create stack with sp
-        let mut value_stack = ValueStack::default();
+        let mut value_stack = ValueStack::new(N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE);
         let sp = value_stack.stack_ptr();
 
         // assign sp to the position inside code section
@@ -104,13 +104,18 @@ impl<T> RwasmContext<T> {
         self.ip.pc()
     }
 
-    pub fn reset_instruction_pointer_to(&mut self, pc: Option<usize>) {
+    pub fn reset(&mut self, pc: Option<usize>) {
         let mut ip = InstructionPtr::new(
             self.instance.module.code_section.instr.as_ptr(),
             self.instance.module.code_section.metas.as_ptr(),
         );
         ip.add(pc.unwrap_or(self.instance.start));
         self.ip = ip;
+        self.consumed_fuel = 0;
+        self.value_stack.drain();
+        self.sp = self.value_stack.stack_ptr();
+        self.call_stack.clear();
+        self.last_signature = None;
     }
 
     pub fn reset_last_signature(&mut self) {

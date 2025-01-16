@@ -2,6 +2,7 @@ use crate::{
     executor::RwasmExecutor,
     impl_visit_binary,
     impl_visit_fallible_binary,
+    impl_visit_fallible_unary,
     impl_visit_load,
     impl_visit_store,
     impl_visit_unary,
@@ -42,6 +43,12 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let mut resource_limiter_ref = ResourceLimiterRef::default();
         loop {
             let instr = *self.store.ip.get();
+
+            // TODO(dmitry123): "find a way how to optimize it"
+            if self.store.value_stack.has_stack_overflowed(self.store.sp) {
+                return Err(TrapCode::StackOverflow.into());
+            }
+
             #[cfg(feature = "std")]
             {
                 let stack = self
@@ -49,6 +56,8 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                     .value_stack
                     .dump_stack(self.store.sp)
                     .iter()
+                    .rev()
+                    .take(10)
                     .map(|v| v.as_u64())
                     .collect::<Vec<_>>();
                 println!("{:02}: {:?}, stack={:?}", self.store.ip.pc(), instr, stack);
@@ -244,16 +253,16 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::F64Max => self.visit_f64_max(),
                 Instruction::F64Copysign => self.visit_f64_copysign(),
                 Instruction::I32WrapI64 => self.visit_i32_wrap_i64(),
-                // Instruction::I32TruncF32S => self.visit_i32_trunc_f32_s()?,
-                // Instruction::I32TruncF32U => self.visit_i32_trunc_f32_u()?,
-                // Instruction::I32TruncF64S => self.visit_i32_trunc_f64_s()?,
-                // Instruction::I32TruncF64U => self.visit_i32_trunc_f64_u()?,
+                Instruction::I32TruncF32S => self.visit_i32_trunc_f32_s()?,
+                Instruction::I32TruncF32U => self.visit_i32_trunc_f32_u()?,
+                Instruction::I32TruncF64S => self.visit_i32_trunc_f64_s()?,
+                Instruction::I32TruncF64U => self.visit_i32_trunc_f64_u()?,
                 Instruction::I64ExtendI32S => self.visit_i64_extend_i32_s(),
                 Instruction::I64ExtendI32U => self.visit_i64_extend_i32_u(),
-                // Instruction::I64TruncF32S => self.visit_i64_trunc_f32_s()?,
-                // Instruction::I64TruncF32U => self.visit_i64_trunc_f32_u()?,
-                // Instruction::I64TruncF64S => self.visit_i64_trunc_f64_s()?,
-                // Instruction::I64TruncF64U => self.visit_i64_trunc_f64_u()?,
+                Instruction::I64TruncF32S => self.visit_i64_trunc_f32_s()?,
+                Instruction::I64TruncF32U => self.visit_i64_trunc_f32_u()?,
+                Instruction::I64TruncF64S => self.visit_i64_trunc_f64_s()?,
+                Instruction::I64TruncF64U => self.visit_i64_trunc_f64_u()?,
                 Instruction::F32ConvertI32S => self.visit_f32_convert_i32_s(),
                 Instruction::F32ConvertI32U => self.visit_f32_convert_i32_u(),
                 Instruction::F32ConvertI64S => self.visit_f32_convert_i64_s(),
@@ -992,6 +1001,18 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         fn visit_i64_trunc_sat_f32_u(i64_trunc_sat_f32_u);
         fn visit_i64_trunc_sat_f64_s(i64_trunc_sat_f64_s);
         fn visit_i64_trunc_sat_f64_u(i64_trunc_sat_f64_u);
+    }
+
+    impl_visit_fallible_unary! {
+        fn visit_i32_trunc_f32_s(i32_trunc_f32_s);
+        fn visit_i32_trunc_f32_u(i32_trunc_f32_u);
+        fn visit_i32_trunc_f64_s(i32_trunc_f64_s);
+        fn visit_i32_trunc_f64_u(i32_trunc_f64_u);
+
+        fn visit_i64_trunc_f32_s(i64_trunc_f32_s);
+        fn visit_i64_trunc_f32_u(i64_trunc_f32_u);
+        fn visit_i64_trunc_f64_s(i64_trunc_f64_s);
+        fn visit_i64_trunc_f64_u(i64_trunc_f64_u);
     }
 
     impl_visit_binary! {
