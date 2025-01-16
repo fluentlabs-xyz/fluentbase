@@ -13,20 +13,20 @@ version = "0.1.0"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-fluentbase-sdk = {workspace = true}
+fluentbase-sdk = { workspace = true }
 
 # revm
-revm-interpreter = {workspace = true, features = ["rwasm"]}
+revm-interpreter = { workspace = true, features = ["rwasm"] }
 #revm-interpreter = { workspace = true, features = ["rwasm", "no-gas"] }
-revm-precompile = {workspace = true}
-revm-primitives = {workspace = true}
+revm-precompile = { workspace = true }
+revm-primitives = { workspace = true }
 
 [dev-dependencies]
 
 [features]
 blake2 = []
 default = [
-  "std",
+    "std",
 ]
 ecrecover = []
 evm = []
@@ -36,8 +36,8 @@ multicall = []
 ripemd160 = []
 sha256 = []
 std = [
-  "fluentbase-sdk/std",
-  "revm-interpreter/std",
-  "revm-precompile/std",
-  "revm-primitives/std",
+    "fluentbase-sdk/std",
+    "revm-interpreter/std",
+    "revm-precompile/std",
+    "revm-primitives/std",
 ]

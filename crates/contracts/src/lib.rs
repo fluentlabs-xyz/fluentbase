@@ -17,4 +17,5 @@ mod precompile;
 
 /// Native smart contracts
 #[cfg(any(feature = "multicall"))]
-mod precompiles;
+// mod precompiles;
+mod multicall;

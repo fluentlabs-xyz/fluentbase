@@ -177,25 +177,23 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     /// Checks if the function call should be redirected to a native precompiled contract.
     ///
-    /// When the first 4 bytes of the input (function selector) match a precompile's address prefix,
-    /// returns the corresponding precompile account that should handle the call.
+    /// When the first four bytes of the input (function selector) match a precompile's address
+    /// prefix, returns the corresponding precompiled account that should handle the call.
     ///
     /// # Arguments
     /// * `input` - The complete calldata for the function call
     ///
     /// # Returns
-    /// * `Some(Account)` - The precompile account if a match is found
+    /// * `Some(Account)` - The precompiled account if a match is found
     /// * `None` - If no matching precompile is found or input is too short
     fn try_resolve_precompile_account(&mut self, input: &[u8]) -> Option<Account> {
         if input.len() < 4 {
             return None;
         };
-
         if input[..4] == PRECOMPILE_MULTICALL[16..] {
             let (acc, _) = self.sdk.account(&PRECOMPILE_MULTICALL);
             return Some(acc);
         }
-
         None
     }
 
