@@ -44,13 +44,11 @@ basic_entrypoint!(ROUTER);
 mod tests {
     use super::*;
     use alloy_sol_types::{sol, SolCall};
-    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext, Address, Bytes};
+    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
 
     #[test]
-    fn test_contract_works() {
-        let _b = Bytes::from("Hello, World!!".as_bytes());
+    fn test_greeting() {
         let s = String::from("Hello, World!!");
-        let _a = Address::repeat_byte(0xAA);
 
         let greeting_call = GreetingCall::new((s.clone(),));
 
@@ -58,20 +56,14 @@ mod tests {
 
         // SOL INPUT
         sol!(
-            function buying(string message);
+            function greeting(string message);
         );
 
-        let buying_call_sol = buyingCall { message: s.clone() };
+        let input_sol = greetingCall { message: s.clone() }.abi_encode();
 
-        let byuing_call_input_sol = buying_call_sol.abi_encode();
+        assert_eq!(hex::encode(&input), hex::encode(&input_sol));
 
-        assert_eq!(
-            hex::encode(&input[4..]),
-            hex::encode(&byuing_call_input_sol[4..])
-        );
-
-        println!("Input: {:?}", hex::encode(&input));
-        println!("call contract...");
+        println!("greeting(string) input: {:?}", hex::encode(&input));
         let sdk = TestingContext::empty().with_input(input);
         let mut router = ROUTER::new(JournalState::empty(sdk.clone()));
         router.deploy();
@@ -83,4 +75,38 @@ mod tests {
         println!("output: {:?}", &output.0);
         assert_eq!(output.0 .0, s);
     }
+
+    #[test]
+    fn test_custom_greeting() {
+        let s = String::from("Custom Hello, World!!");
+
+        let input = CustomGreetingCall::new((s.clone(),)).encode();
+
+        // SOL INPUT
+        sol!(
+            function customGreeting(string message);
+        );
+
+        let input_sol = customGreetingCall { message: s.clone() }.abi_encode();
+
+        assert_eq!(hex::encode(&input), hex::encode(&input_sol));
+
+        println!("customGreeting(string) input: {:?}", hex::encode(&input));
+        let sdk = TestingContext::empty().with_input(input);
+        let mut router = ROUTER::new(JournalState::empty(sdk.clone()));
+        router.deploy();
+        router.main();
+
+        let encoded_output = &sdk.take_output();
+        println!("output: {:?}", hex::encode(&encoded_output));
+        let output = CustomGreetingReturn::decode(&encoded_output.as_slice()).unwrap();
+        println!("output: {:?}", &output.0);
+        assert_eq!(output.0 .0, s);
+    }
 }
+
+// // greeting call (Hello, World!)
+// f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000d48656c6c6f2c20576f726c642100000000000000000000000000000000000000
+
+// // custom greeting call (Custom Hello, World!)
+// 36b83a9a00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000014437573746f6d2048656c6c6f2c20576f726c6421000000000000000000000000

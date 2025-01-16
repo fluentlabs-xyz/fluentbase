@@ -11,6 +11,11 @@ mod evm;
     feature = "ripemd160",
     feature = "identity",
     feature = "modexp",
-    feature = "ecrecover",
+    feature = "ecrecover"
 ))]
 mod precompile;
+
+/// Native smart contracts
+#[cfg(any(feature = "multicall"))]
+// mod precompiles;
+mod multicall;

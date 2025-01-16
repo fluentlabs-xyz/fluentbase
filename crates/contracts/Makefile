@@ -1,4 +1,4 @@
-PRECOMPILES=evm blake2 sha256 ripemd160 identity modexp ecrecover
+PRECOMPILES=evm blake2 sha256 ripemd160 identity modexp ecrecover multicall
 EXAMPLES=greeting fairblock
 CUR_DIR="$(shell pwd)"
 OUT_DIR="${CUR_DIR}/assets"

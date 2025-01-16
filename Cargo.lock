@@ -2637,6 +2637,7 @@ dependencies = [
 name = "fluentbase-core"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-genesis",
  "fluentbase-runtime",
  "fluentbase-sdk",
  "revm-interpreter",

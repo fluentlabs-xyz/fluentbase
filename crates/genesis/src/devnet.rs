@@ -17,6 +17,7 @@ use fluentbase_types::{
     B256,
     DEVNET_CHAIN_ID,
     PRECOMPILE_EVM,
+    PRECOMPILE_MULTICALL,
     U256,
 };
 use revm_primitives::keccak256;
@@ -142,6 +143,12 @@ pub fn devnet_genesis() -> Genesis {
     // );
     enable_rwasm_contract!(
         alloc,
+        PRECOMPILE_MULTICALL,
+        "../../contracts/assets/precompile_multicall.wasm"
+    );
+
+    enable_rwasm_contract!(
+        alloc,
         EXAMPLE_GREETING_ADDRESS,
         "../../contracts/assets/precompile_greeting.wasm"
     );
@@ -150,6 +157,7 @@ pub fn devnet_genesis() -> Genesis {
         EXAMPLE_FAIRBLOCK_ADDRESS,
         "../../contracts/assets/precompile_fairblock.wasm"
     );
+
     Genesis {
         config: devnet_chain_config(),
         nonce: 0,

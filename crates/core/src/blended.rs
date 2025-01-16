@@ -2,7 +2,6 @@ mod evm;
 mod syscall;
 mod util;
 mod wasm;
-
 use crate::{
     helpers::{evm_error_from_exit_code, DenominateGas},
     types::NextAction,
@@ -24,6 +23,7 @@ use fluentbase_sdk::{
     SovereignAPI,
     SovereignContextReader,
     SyscallInvocationParams,
+    PRECOMPILE_MULTICALL,
     STATE_MAIN,
 };
 use revm_interpreter::{
@@ -175,19 +175,47 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         }
     }
 
+    /// Checks if the function call should be redirected to a native precompiled contract.
+    ///
+    /// When the first four bytes of the input (function selector) match a precompile's address
+    /// prefix, returns the corresponding precompiled account that should handle the call.
+    ///
+    /// # Arguments
+    /// * `input` - The complete calldata for the function call
+    ///
+    /// # Returns
+    /// * `Some(Account)` - The precompiled account if a match is found
+    /// * `None` - If no matching precompile is found or input is too short
+    fn try_resolve_precompile_account(&mut self, input: &[u8]) -> Option<Account> {
+        if input.len() < 4 {
+            return None;
+        };
+        if input[..4] == PRECOMPILE_MULTICALL[16..] {
+            let (acc, _) = self.sdk.account(&PRECOMPILE_MULTICALL);
+            return Some(acc);
+        }
+        None
+    }
+
     fn exec_bytecode(
         &mut self,
-        context: ContractContext,
+        mut context: ContractContext,
         mut bytecode_account: Account,
         input: Bytes,
         gas: &mut Gas,
         state: u32,
         call_depth: u32,
     ) -> (Bytes, i32) {
+        if let Some(precompile_account) = self.try_resolve_precompile_account(&input) {
+            bytecode_account = precompile_account;
+            context.bytecode_address = bytecode_account.address;
+        }
+
         let mut bytecode = self
             .sdk
             .preimage(&bytecode_account.address, &bytecode_account.code_hash)
             .unwrap_or_default();
+
         if let Bytecode::Eip7702(eip7702_bytecode) = Bytecode::new_raw(bytecode.clone()) {
             let (delegated_account, _) = self.sdk.account(&eip7702_bytecode.delegated_address);
             bytecode = self
