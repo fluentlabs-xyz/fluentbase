@@ -4,34 +4,70 @@ extern crate fluentbase_sdk;
 
 use alloc::vec::Vec;
 use fluentbase_sdk::{
+    alloc_slice,
     basic_entrypoint,
     bytes::Buf,
-    derive::{function_id, router, Contract},
+    codec::{
+        bytes::{BufMut, BytesMut},
+        encoder::SolidityABI,
+    },
+    derive::Contract,
     Bytes,
     ContractContextReader,
     SharedAPI,
 };
+
+// Selector for "multicall(bytes[])" - 0xac9650d8
+const MULTICALL_SELECTOR: [u8; 4] = [0xac, 0x96, 0x50, 0xd8];
 
 #[derive(Contract)]
 struct Multicall<SDK> {
     sdk: SDK,
 }
 
-#[router(mode = "solidity")]
 impl<SDK: SharedAPI> Multicall<SDK> {
-    #[function_id("multicall(bytes[])")] // 0xac9650d8
-    pub fn multicall(&mut self, data: Vec<Bytes>) -> Vec<Bytes> {
-        // Use target address from context - this is the address of original contract
-        let target_addr = self.sdk.context().contract_address();
+    fn deploy(&self) {
+        // any custom deployment logic here
+    }
 
+    fn main(&mut self) {
+        let input_length = self.sdk.input_size();
+        if input_length < 4 {
+            panic!("insufficient input length for method selector");
+        }
+
+        // Read full input data
+        let mut call_data = alloc_slice(input_length as usize);
+        self.sdk.read(&mut call_data, 0);
+
+        // Split into selector and parameters
+        let (selector, params) = call_data.split_at(4);
+
+        // Early return on invalid selector
+        if selector != MULTICALL_SELECTOR {
+            panic!("unsupported method selector");
+        }
+
+        // Prepare buffer for decoding - adding offset since Vec<Bytes> is dynamic
+        let mut combined_buf = BytesMut::new();
+        combined_buf.put_slice(&fluentbase_sdk::U256::from(32).to_be_bytes::<32>());
+        combined_buf.put_slice(params);
+
+        // Decode parameters into Vec<Bytes>
+        let (data,) = match SolidityABI::<(Vec<Bytes>,)>::decode(&combined_buf.freeze(), 0) {
+            Ok(decoded) => decoded,
+            Err(err) => panic!("Failed to decode input parameters: {:?}", err),
+        };
+
+        // Get contract address for delegate calls
+        let target_addr = self.sdk.context().contract_address();
         let mut results = Vec::with_capacity(data.len());
 
+        // Execute each call
         for call_data in data {
             let chunk = call_data.chunk();
-            // Always delegate call to the target contract address
             let (output, exit_code) = self.sdk.delegate_call(target_addr, chunk, 0);
 
-            // If any of the delegate calls fail, panic
             if exit_code != 0 {
                 panic!("Multicall: delegate call failed");
             }
@@ -39,14 +75,14 @@ impl<SDK: SharedAPI> Multicall<SDK> {
             results.push(output);
         }
 
-        results
-    }
-}
+        // Encode results for return
+        let mut buf = BytesMut::new();
+        SolidityABI::encode(&(results,), &mut buf, 0).expect("Failed to encode output");
+        let encoded_output = buf.freeze();
 
-#[allow(dead_code)]
-impl<SDK: SharedAPI> Multicall<SDK> {
-    fn deploy(&self) {
-        // any custom deployment logic here
+        // Remove offset from encoded output since caller expects only data
+        let clean_output = encoded_output[32..].to_vec();
+        self.sdk.write(&clean_output);
     }
 }
 
