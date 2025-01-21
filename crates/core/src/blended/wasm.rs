@@ -30,13 +30,12 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         };
 
         // translate WASM to rWASM
-        let rwasm_bytecode = match wasm2rwasm(inputs.init_code.as_ref()) {
+        let (rwasm_bytecode, input) = match wasm2rwasm(inputs.init_code.as_ref()) {
             Ok(rwasm_bytecode) => rwasm_bytecode,
             Err(exit_code) => {
                 return return_error(gas, exit_code);
             }
         };
-
         // // record gas for each created byte
         let gas_for_code = rwasm_bytecode.len() as u64 * gas::CODEDEPOSIT;
         if !gas.record_cost(gas_for_code) {
@@ -59,7 +58,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         let (output, exit_code) = self.exec_rwasm_bytecode(
             context,
             contract_account,
-            Bytes::default(),
+            Bytes::from(input),
             &mut gas,
             STATE_DEPLOY,
             call_depth,

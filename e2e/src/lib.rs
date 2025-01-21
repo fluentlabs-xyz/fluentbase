@@ -26,3 +26,5 @@ mod utils;
 
 #[cfg(test)]
 mod multicall;
+#[cfg(test)]
+mod constructor;
