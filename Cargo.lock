@@ -2711,6 +2711,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-constructor-args"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "hex-literal",
+]
+
+[[package]]
 name = "fluentbase-example-echo"
 version = "0.1.0"
 dependencies = [
