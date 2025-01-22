@@ -2662,6 +2662,7 @@ dependencies = [
  "fluentbase-genesis",
  "fluentbase-poseidon",
  "fluentbase-runtime",
+ "fluentbase-rwasm",
  "fluentbase-sdk",
  "hex",
  "hex-literal",
@@ -2881,6 +2882,7 @@ dependencies = [
  "eth_trie",
  "fluentbase-codec",
  "fluentbase-poseidon",
+ "fluentbase-rwasm",
  "fluentbase-types",
  "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
  "hashbrown 0.15.2",
@@ -2889,11 +2891,32 @@ dependencies = [
  "k256",
  "keccak-hash 0.11.0",
  "num",
- "rwasm",
  "sha2",
  "sp1-curves",
  "sp1-primitives",
  "tiny-keccak",
+ "wat",
+]
+
+[[package]]
+name = "fluentbase-rwasm"
+version = "0.1.0"
+dependencies = [
+ "hashbrown 0.15.2",
+ "rwasm",
+ "tiny-keccak",
+]
+
+[[package]]
+name = "fluentbase-rwasm-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "fluentbase-rwasm",
+ "rwasm",
+ "serial_test",
+ "wast 62.0.1",
  "wat",
 ]
 
@@ -6103,7 +6126,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#3716bc9c281f70d401ac8972c908b4d37c7043f8"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#65993af85df7db29f51726c1ddbdd31ed0afb6a3"
 dependencies = [
  "byteorder",
  "downcast-rs",
@@ -7560,9 +7583,9 @@ dependencies = [
 [[package]]
 name = "tiny-keccak"
 version = "2.0.2"
-source = "git+https://github.com/sp1-patches/tiny-keccak?branch=patch-v2.0.2#bf0b28f63510a90c7b6c21ac6ff461c93ecd2331"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
 dependencies = [
- "cfg-if",
  "crunchy",
 ]
 
@@ -8196,6 +8219,15 @@ checksum = "6ee99da9c5ba11bd675621338ef6fa52296b76b83305e9b6e5c77d4c286d6d49"
 
 [[package]]
 name = "wasm-encoder"
+version = "0.31.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41763f20eafed1399fff1afb466496d3a959f58241436cfdc17e3f5ca954de16"
+dependencies = [
+ "leb128",
+]
+
+[[package]]
+name = "wasm-encoder"
 version = "0.221.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c17a3bd88f2155da63a1f2fcb8a56377a24f0b6dfed12733bb5f544e86f690c5"
@@ -8239,6 +8271,18 @@ dependencies = [
 
 [[package]]
 name = "wast"
+version = "62.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8ae06f09dbe377b889fbd620ff8fa21e1d49d1d9d364983c0cdbf9870cb9f1f"
+dependencies = [
+ "leb128",
+ "memchr",
+ "unicode-width 0.1.14",
+ "wasm-encoder 0.31.1",
+]
+
+[[package]]
+name = "wast"
 version = "221.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fcc4470b9de917ba199157d1f0ae104f2ae362be728c43e68c571c7715bd629e"
@@ -8247,7 +8291,7 @@ dependencies = [
  "leb128",
  "memchr",
  "unicode-width 0.2.0",
- "wasm-encoder",
+ "wasm-encoder 0.221.2",
 ]
 
 [[package]]
@@ -8256,7 +8300,7 @@ version = "1.221.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b1f3c6d82af47286494c6caea1d332037f5cbeeac82bbf5ef59cb8c201c466e"
 dependencies = [
- "wast",
+ "wast 221.0.2",
 ]
 
 [[package]]

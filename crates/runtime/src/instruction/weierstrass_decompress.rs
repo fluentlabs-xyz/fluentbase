@@ -1,7 +1,7 @@
 use crate::RuntimeContext;
+use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use rwasm::{core::Trap, Caller};
 use sp1_curves::{
     params::NumLimbs,
     weierstrass::{bls12_381::bls12381_decompress, secp256k1::secp256k1_decompress},
@@ -25,11 +25,9 @@ impl<E: EllipticCurve> SyscallWeierstrassDecompressAssign<E> {
     }
 
     /// Handles the syscall for point addition on a Weierstrass curve.
-    pub fn fn_handler(
-        mut caller: Caller<'_, RuntimeContext>,
-        x_ptr: u32,
-        sign_bit: u32,
-    ) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let (x_ptr, sign_bit) = caller.stack_pop2_as::<u32>();
+
         let num_limbs = <E::BaseField as NumLimbs>::Limbs::USIZE;
         let num_words_field_element = num_limbs / 4;
 
@@ -38,15 +36,16 @@ impl<E: EllipticCurve> SyscallWeierstrassDecompressAssign<E> {
             num_words_field_element as u32 * 4,
         )?;
 
-        let result_vec = Self::fn_impl(x_bytes, sign_bit)?;
+        let result_vec = Self::fn_impl(&x_bytes, sign_bit)
+            .map_err(|err| RwasmError::ExecutionHalted(err.into_i32()))?;
         caller.write_memory(x_ptr, &result_vec)?;
 
         Ok(())
     }
 
-    pub fn fn_impl(x_bytes: &[u8], sign_bit: u32) -> Result<Vec<u8>, Trap> {
+    pub fn fn_impl(x_bytes: &[u8], sign_bit: u32) -> Result<Vec<u8>, ExitCode> {
         if sign_bit > 1 {
-            return Err(ExitCode::BadBuiltinParams.into_trap());
+            return Err(ExitCode::BadBuiltinParams);
         }
 
         let num_limbs = <E::BaseField as NumLimbs>::Limbs::USIZE;

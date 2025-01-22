@@ -1,14 +1,11 @@
 use crate::RuntimeContext;
-use rwasm::{core::Trap, Caller};
+use fluentbase_rwasm::{Caller, RwasmError};
 
 pub struct SyscallWrite;
 
 impl SyscallWrite {
-    pub fn fn_handler(
-        mut caller: Caller<'_, RuntimeContext>,
-        offset: u32,
-        length: u32,
-    ) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let (offset, length) = caller.stack_pop2_as::<u32>();
         let data = caller.read_memory(offset, length)?.to_vec();
         Self::fn_impl(caller.data_mut(), &data);
         Ok(())

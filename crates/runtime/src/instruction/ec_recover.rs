@@ -1,4 +1,5 @@
 use crate::RuntimeContext;
+use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::{ExitCode, B256};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
@@ -6,27 +7,17 @@ use k256::{
     EncodedPoint,
     PublicKey,
 };
-use rwasm::{core::Trap, Caller};
 
 pub struct SyscallEcrecover;
 
 impl SyscallEcrecover {
-    pub fn fn_handler(
-        mut caller: Caller<'_, RuntimeContext>,
-        digest32_offset: u32,
-        sig64_offset: u32,
-        output65_offset: u32,
-        rec_id: u32,
-    ) -> Result<(), Trap> {
-        let digest = caller.read_memory(digest32_offset, 32)?;
-        let sig = caller.read_memory(sig64_offset, 64)?;
-        let public_key = Self::fn_impl(
-            &B256::from_slice(digest),
-            sig.try_into().unwrap(),
-            rec_id as u8,
-        )
-        .map_err(|err| err.into_trap())?;
-        caller.write_memory(output65_offset, &public_key)?;
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let [digest32_ptr, sig64_ptr, output65_ptr, rec_id] = caller.stack_pop_n();
+        let digest = caller.memory_read_fixed::<32>(digest32_ptr.as_usize())?;
+        let sig = caller.memory_read_fixed::<64>(sig64_ptr.as_usize())?;
+        let public_key = Self::fn_impl(&B256::from(digest), &sig, rec_id.as_u32() as u8)
+            .map_err(|err| RwasmError::ExecutionHalted(err.into_i32()))?;
+        caller.memory_write(output65_ptr.as_usize(), &public_key)?;
         Ok(())
     }
 

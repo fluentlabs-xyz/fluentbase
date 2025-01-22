@@ -1,10 +1,12 @@
 use crate::RuntimeContext;
-use rwasm::{core::Trap, Caller};
+use fluentbase_rwasm::{Caller, RwasmError};
 
 pub(crate) struct SyscallSha256Extend;
 
 impl SyscallSha256Extend {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, w_ptr: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let w_ptr: u32 = caller.stack_pop_as();
+
         for i in 16..64 {
             // Read w[i-15].
             let w_i_minus_15 = u32::from_be_bytes(

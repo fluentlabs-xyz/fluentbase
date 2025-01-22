@@ -4,6 +4,7 @@ members = [
     "crates/*",
     "revm/crates/*",
     "crates/genesis/bin",
+    "crates/rwasm/e2e",
     "examples/*",
     "e2e",
 ]
@@ -40,6 +41,8 @@ fluentbase-core = { path = "./crates/core", default-features = false }
 fluentbase-contracts = { path = "crates/contracts", default-features = false }
 fluentbase-core-macros = { path = "./crates/core-macros", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
+fluentbase-rwasm = { path = "./crates/rwasm", default-features = false, features = ["std"] }
+fluentbase-rwasm-e2e = { path = "./crates/rwasm/e2e", default-features = false }
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
@@ -72,12 +75,10 @@ hex-literal = { version = "0.4.1" }
 strum = { version = "0.26" }
 strum_macros = { version = "0.26" }
 lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
-regex = { version = "1.10" }
 anyhow = { version = "1.0.86", default-features = false }
 syn = "2.0"
 clap = { version = "4.5", features = ["derive"] }
-digest = { version = "0.10", default-features = false }
-
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [profile.bench]
 lto = "fat"
@@ -104,6 +105,3 @@ codegen-units = 1
 #codegen-units = 1
 #rpath = false
 #strip = true
-
-[patch.crates-io]
-tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", branch = "patch-v2.0.2" }

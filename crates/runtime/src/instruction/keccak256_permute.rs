@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use rwasm::{core::Trap, Caller};
+use fluentbase_rwasm::{Caller, RwasmError};
 use tiny_keccak::keccakf;
 
 pub(crate) const STATE_SIZE: u32 = 25;
@@ -10,16 +10,17 @@ pub const STATE_NUM_WORDS: u32 = STATE_SIZE * 2;
 pub struct SyscallKeccak256Permute;
 
 impl SyscallKeccak256Permute {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, state_ptr: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let state_ptr: u32 = caller.stack_pop_as();
         let state = caller.read_memory(state_ptr, STATE_NUM_WORDS)?;
 
-        let result = Self::fn_impl(state)?;
+        let result = Self::fn_impl(&state);
         caller.write_memory(state_ptr, &result)?;
 
         Ok(())
     }
 
-    pub fn fn_impl(state: &[u8]) -> Result<Vec<u8>, Trap> {
+    pub fn fn_impl(state: &[u8]) -> Vec<u8> {
         let mut state_result = Vec::new();
         for values in state.chunks_exact(2) {
             let least_sig = values[0];
@@ -35,11 +36,10 @@ impl SyscallKeccak256Permute {
             values_to_write.push(least_sig);
             values_to_write.push(most_sig);
         }
-        let result_vec = values_to_write
+        values_to_write
             .into_iter()
             .map(|x| x.to_be_bytes())
             .flatten()
-            .collect::<Vec<_>>();
-        Ok(result_vec)
+            .collect::<Vec<_>>()
     }
 }
