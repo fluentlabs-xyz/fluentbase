@@ -16,8 +16,10 @@ libzktrie.so
 /tmp/*
 !/tmp/.gitkeep
 
-# exclude all wat files
+# exclude all wat, wasm and genesis files
 *.wat
+*.wasm
+crates/genesis/assets/genesis-devnet.json
 
 crates/revm/e2e/tests
 
