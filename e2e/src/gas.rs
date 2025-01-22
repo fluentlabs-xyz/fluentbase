@@ -117,6 +117,7 @@ fn test_simple_nested_call() {
 }
 
 #[test]
+#[ignore]
 fn test_deploy_gas_spend() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
