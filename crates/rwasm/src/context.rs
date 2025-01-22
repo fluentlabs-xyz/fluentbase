@@ -1,4 +1,4 @@
-use crate::{RwasmError, N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE};
+use crate::{RwasmError, FUNC_REF_OFFSET, N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE};
 use hashbrown::HashMap;
 use rwasm::{
     core::{TrapCode, UntypedValue, ValueType, N_MAX_MEMORY_PAGES},
@@ -74,7 +74,7 @@ impl<T> RwasmContext<T> {
                         .module
                         .element_section
                         .iter()
-                        .map(|v| ConstExpr::from_const((*v).into()))
+                        .map(|v| ConstExpr::from_const((*v + FUNC_REF_OFFSET).into()))
                         .collect(),
                 },
             }),

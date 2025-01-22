@@ -9,6 +9,7 @@ use crate::{
     Caller,
     RwasmError,
     SyscallHandler,
+    FUNC_REF_OFFSET,
     N_MAX_STACK_SIZE,
     TABLE_ELEMENT_NULL,
 };
@@ -475,9 +476,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             .ok_or(TrapCode::TableOutOfBounds)?
             .try_into()
             .unwrap();
-        // if func_idx == 0 {
-        //     return Err(TrapCode::IndirectCallToNull.into());
-        // }
+        if func_idx == 0 {
+            return Err(TrapCode::IndirectCallToNull.into());
+        }
+        let func_idx = func_idx - FUNC_REF_OFFSET;
         self.execute_call_internal(false, 3, func_idx)
     }
 
@@ -536,6 +538,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         if func_idx == TABLE_ELEMENT_NULL {
             return Err(TrapCode::IndirectCallToNull.into());
         }
+        let func_idx = func_idx - FUNC_REF_OFFSET;
         // call func
         self.store.ip.add(2);
         self.store.value_stack.sync_stack_ptr(self.store.sp);
@@ -916,8 +919,9 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         // to perform an emptiness check.
         // Therefore, in `element_segment_idx`, we store the original index,
         // which is always > 0.
-        let element = self.resolve_element_or_create(element_segment_idx);
-        let is_empty_segment = element.is_empty();
+        let is_empty_segment = self
+            .resolve_element_or_create(element_segment_idx)
+            .is_empty();
 
         let (table, mut element) =
             self.resolve_table_with_element_or_create(table_idx, ElementSegmentIdx::from(0));
@@ -939,7 +943,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
 
     #[inline(always)]
     pub(crate) fn visit_ref_func(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
-        self.store.sp.push_as(func_idx.to_u32());
+        self.store.sp.push_as(func_idx.to_u32() + FUNC_REF_OFFSET);
         self.store.ip.add(1);
         Ok(())
     }
