@@ -2691,7 +2691,6 @@ dependencies = [
  "alloy-sol-types 0.8.14",
  "fluentbase-sdk",
  "hex",
- "hex-literal",
  "shakmaty",
 ]
 
@@ -2709,6 +2708,13 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "hex",
+]
+
+[[package]]
+name = "fluentbase-example-constructor-params"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
 ]
 
 [[package]]

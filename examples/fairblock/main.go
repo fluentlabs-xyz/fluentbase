@@ -40,7 +40,7 @@ func main() {
 	input := make([]C.char, inputSize)
 	ptr := (*C.char)(&input[0])
 
-	_read(ptr, C.uint(0), inputSize)
+	_read(ptr, C.uint(380), inputSize)
 
 	rawPk := C.GoBytes(unsafe.Pointer(&input[headerLen]), C.int(pkLen))
 	pk := bls.NullKyberG1()

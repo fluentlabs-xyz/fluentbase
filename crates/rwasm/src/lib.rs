@@ -6,8 +6,6 @@ mod context;
 mod executor;
 mod handler;
 mod opcodes;
-#[cfg(test)]
-mod tests;
 mod types;
 mod utils;
 

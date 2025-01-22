@@ -33,7 +33,7 @@ impl<'a, SDK: SovereignAPI> PreimageResolver for SdkPreimageAdapter<'a, SDK> {
 }
 
 #[inline(always)]
-pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
+pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<(Vec<u8>, Vec<u8>), ExitCode> {
     let mut config = RwasmModule::default_config(None);
     config.rwasm_config(RwasmConfig {
         state_router: Some(StateRouterConfig {
@@ -48,7 +48,7 @@ pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
         wrap_import_functions: true,
         translate_drop_keep: false,
     });
-    let rwasm_module = RwasmModule::compile_with_config(wasm_binary, &config)
+    let (rwasm_module, input) = RwasmModule::compile_and_retrieve_input(wasm_binary, &config)
         .map_err(|_| ExitCode::CompilationError)?;
     let length = rwasm_module.encoded_length();
     let mut rwasm_bytecode = vec![0u8; length];
@@ -56,7 +56,7 @@ pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
     rwasm_module
         .write_binary(&mut binary_format_writer)
         .expect("failed to encode rwasm bytecode");
-    Ok(rwasm_bytecode)
+    Ok((rwasm_bytecode, input))
 }
 
 #[macro_export]
@@ -91,6 +91,7 @@ pub fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
         ExitCode::ContractSizeLimit => InstructionResult::CreateContractSizeLimit,
         ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
         ExitCode::FatalExternalError => InstructionResult::FatalExternalError,
+        ExitCode::CompilationError => InstructionResult::OpcodeNotFound,
         // TODO(dmitry123): "what's proper unknown error code mapping?"
         _ => InstructionResult::OutOfGas,
     }

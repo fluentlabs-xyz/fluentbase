@@ -2,12 +2,12 @@ name: Rust CI
 
 on:
   push:
-    branches: [main, devel]
+    branches: [ main, devel ]
     paths-ignore:
       - "**.md"
       - "docs/**"
   pull_request:
-    branches: [main, devel]
+    branches: [ main, devel ]
     paths-ignore:
       - "**.md"
       - "docs/**"
@@ -35,6 +35,15 @@ jobs:
 
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install gblend tool
+        run: cargo install gblend
+
+      - name: Build artifacts
+        run: TERM=dumb make
 
       - name: Run tests
         run: cargo test --no-fail-fast

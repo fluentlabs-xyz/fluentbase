@@ -4,9 +4,10 @@ Fluentbase is a framework that introduces an SDK and a proving system for Fluent
 framework can be used by developers to create shared applications (aka smart contracts), dedicated applications, system
 precompile contracts or just for custom STFs.
 
-All artifacts are under gitignore, to build them run make command:
+All artifacts are under gitignore, to build them run make command and make sure gblend CLI tool is installed:
 
 ```bash
+cargo install gblend
 make
 ```
 
