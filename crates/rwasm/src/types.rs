@@ -6,6 +6,9 @@ use rwasm::{
 
 pub const N_DEFAULT_STACK_SIZE: usize = 4096;
 pub const N_MAX_STACK_SIZE: usize = 4096;
+pub const N_MAX_TABLE_SIZE: usize = 1024;
+
+pub const TABLE_ELEMENT_NULL: u32 = 0;
 
 #[derive(Debug)]
 pub enum RwasmError {

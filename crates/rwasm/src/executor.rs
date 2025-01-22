@@ -1,4 +1,11 @@
-use crate::{types::RwasmError, RwasmContext, SyscallHandler};
+use crate::{
+    types::RwasmError,
+    RwasmContext,
+    SyscallHandler,
+    N_MAX_TABLE_SIZE,
+    TABLE_ELEMENT_NULL,
+};
+use core::marker::PhantomData;
 use rwasm::{
     core::{TrapCode, UntypedValue, ValueType},
     engine::{
@@ -20,7 +27,6 @@ use rwasm::{
     TableType,
     Value,
 };
-use std::marker::PhantomData;
 
 pub struct RwasmExecutor<E: SyscallHandler<T>, T> {
     pub(crate) store: RwasmContext<T>,
@@ -58,15 +64,42 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         }
     }
 
+    pub(crate) fn resolve_table(&mut self, table_idx: TableIdx) -> &mut TableEntity {
+        self.store
+            .tables
+            .get_mut(&table_idx)
+            .expect("rwasm: missing table")
+    }
+
     pub(crate) fn resolve_table_or_create(&mut self, table_idx: TableIdx) -> &mut TableEntity {
-        self.store.tables.entry(table_idx).or_insert_with(|| {
-            let mut dummy_resource_limiter = ResourceLimiterRef::default();
-            TableEntity::new(
-                TableType::new(ValueType::I32, 0, None),
-                Value::I32(0),
-                &mut dummy_resource_limiter,
-            )
-            .unwrap()
+        self.store
+            .tables
+            .entry(table_idx)
+            .or_insert_with(Self::empty_table)
+    }
+
+    fn empty_table() -> TableEntity {
+        let mut dummy_resource_limiter = ResourceLimiterRef::default();
+        TableEntity::new(
+            TableType::new(ValueType::I32, 0, Some(N_MAX_TABLE_SIZE as u32)),
+            Value::I32(TABLE_ELEMENT_NULL as i32),
+            &mut dummy_resource_limiter,
+        )
+        .unwrap()
+    }
+
+    fn empty_element_segment() -> ElementSegmentEntity {
+        ElementSegmentEntity::from(&ElementSegment {
+            kind: ElementSegmentKind::Passive,
+            ty: ValueType::I32,
+            items: ElementSegmentItems { exprs: [].into() },
+        })
+    }
+
+    fn empty_data_segment() -> DataSegmentEntity {
+        DataSegmentEntity::from(&DataSegment {
+            kind: DataSegmentKind::Passive,
+            bytes: [0x1].into(),
         })
     }
 
@@ -77,25 +110,17 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         self.store
             .data_segments
             .entry(data_segment_idx)
-            .or_insert_with(|| {
-                DataSegmentEntity::from(&DataSegment {
-                    kind: DataSegmentKind::Passive,
-                    bytes: [0x1].into(),
-                })
-            })
+            .or_insert_with(Self::empty_data_segment)
     }
 
     pub(crate) fn resolve_element_or_create(
         &mut self,
         element_idx: ElementSegmentIdx,
     ) -> &mut ElementSegmentEntity {
-        self.store.elements.entry(element_idx).or_insert_with(|| {
-            ElementSegmentEntity::from(&ElementSegment {
-                kind: ElementSegmentKind::Passive,
-                ty: ValueType::I32,
-                items: ElementSegmentItems { exprs: [].into() },
-            })
-        })
+        self.store
+            .elements
+            .entry(element_idx)
+            .or_insert_with(Self::empty_element_segment)
     }
 
     pub(crate) fn resolve_table_with_element_or_create(
@@ -103,22 +128,16 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         table_idx: TableIdx,
         element_idx: ElementSegmentIdx,
     ) -> (&mut TableEntity, &mut ElementSegmentEntity) {
-        let table_entity = self.store.tables.entry(table_idx).or_insert_with(|| {
-            let mut dummy_resource_limiter = ResourceLimiterRef::default();
-            TableEntity::new(
-                TableType::new(ValueType::I32, 0, None),
-                Value::I32(0),
-                &mut dummy_resource_limiter,
-            )
-            .unwrap()
-        });
-        let element_entity = self.store.elements.entry(element_idx).or_insert_with(|| {
-            ElementSegmentEntity::from(&ElementSegment {
-                kind: ElementSegmentKind::Passive,
-                ty: ValueType::I32,
-                items: ElementSegmentItems { exprs: [].into() },
-            })
-        });
+        let table_entity = self
+            .store
+            .tables
+            .entry(table_idx)
+            .or_insert_with(Self::empty_table);
+        let element_entity = self
+            .store
+            .elements
+            .entry(element_idx)
+            .or_insert_with(Self::empty_element_segment);
         (table_entity, element_entity)
     }
 

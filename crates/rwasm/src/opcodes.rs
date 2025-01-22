@@ -10,6 +10,7 @@ use crate::{
     RwasmError,
     SyscallHandler,
     N_MAX_STACK_SIZE,
+    TABLE_ELEMENT_NULL,
 };
 use core::cmp;
 use rwasm::{
@@ -530,13 +531,11 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             .get(&table)
             .expect("rwasm: unresolved table index")
             .get(func_index)
-            .and_then(|v| v.i32())
-            .ok_or(TrapCode::TableOutOfBounds)?
-            .try_into()
-            .expect("rwasm: invalid function index");
-        // if func_idx == 0 {
-        //     return Err(TrapCode::IndirectCallToNull.into());
-        // }
+            .and_then(|v| v.i32().map(|v| v as u32))
+            .ok_or(TrapCode::TableOutOfBounds)?;
+        if func_idx == TABLE_ELEMENT_NULL {
+            return Err(TrapCode::IndirectCallToNull.into());
+        }
         // call func
         self.store.ip.add(2);
         self.store.value_stack.sync_stack_ptr(self.store.sp);
@@ -830,7 +829,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
         }
-        self.resolve_table_or_create(table_idx)
+        self.resolve_table(table_idx)
             .fill_untyped(i.as_u32(), val, n.as_u32())?;
         self.store.ip.add(1);
         Ok(())
@@ -840,7 +839,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     pub(crate) fn visit_table_get(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
         let index = self.store.sp.pop();
         let value = self
-            .resolve_table_or_create(table_idx)
+            .resolve_table(table_idx)
             .get_untyped(index.as_u32())
             .ok_or(TrapCode::TableOutOfBounds)?;
         self.store.sp.push(value);
@@ -851,7 +850,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     #[inline(always)]
     pub(crate) fn visit_table_set(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
         let (index, value) = self.store.sp.pop2();
-        self.resolve_table_or_create(table_idx)
+        self.resolve_table(table_idx)
             .set_untyped(index.as_u32(), value)
             .map_err(|_| TrapCode::TableOutOfBounds)?;
         if let Some(tracer) = self.store.tracer.as_mut() {

@@ -1,4 +1,4 @@
-use crate::{RwasmError, RwasmExecutor, SimpleCallContext, SimpleCallHandler, SyscallHandler};
+use crate::{RwasmExecutor, SimpleCallContext, SimpleCallHandler};
 use core::str::from_utf8;
 use rwasm::rwasm::RwasmModule;
 
@@ -30,12 +30,6 @@ fn trace_rwasm(rwasm_bytecode: &[u8]) {
         }
     }
     println!("\n")
-}
-
-pub fn execute_rwasm_bytecode<E: SyscallHandler<()>>(
-    rwasm_bytecode: &[u8],
-) -> Result<i32, RwasmError> {
-    RwasmExecutor::<E, ()>::parse(rwasm_bytecode, None, ())?.run()
 }
 
 #[test]
