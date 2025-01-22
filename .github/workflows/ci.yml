@@ -36,6 +36,9 @@ jobs:
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Build artifacts
         run: TERM=dumb make
 
