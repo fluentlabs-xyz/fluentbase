@@ -37,7 +37,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build artifacts
-        run: make
+        run: TERM=dumb make
 
       - name: Run tests
         run: cargo test --no-fail-fast
