@@ -52,7 +52,7 @@ You can run `make` command to build all contracts, examples and genesis files.
 
 Resulting files can be found in the following directories:
 
-* `crates/contracts/assets` - wasm and rwasm binaries for all precompiles, system contracts and compatability contracts.
+* `crates/contracts/assets` - wasm and rwasm binaries for all precompiles, system contracts and compatibility contracts.
 * `crates/genesis/assets` - reth/geth compatible genesis files with injected rwasm binaries (is used by reth).
 * `examples/*` - each folder contains `lib.wasm` and `lib.wat` files that matches compiled example bytecode.
 
