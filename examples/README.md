@@ -2,18 +2,18 @@
 
 ========
 
-In this repository we provide examples for running apps in Fluent network.
-All these apps are developed using Fluentbase SDK and can be proven using our circuits (coming soon).
+In this repository, we provide examples of running apps in Fluent network.
+All these apps are developed using Fluentbase SDK and can be proven to use our circuits (coming soon).
 
-To init, build and deploy this examples you can use the [gblend cli](https://github.com/fluentlabs-xyz/gblend).
+To init, build and deploy these examples, you can use the [gblend cli](https://github.com/fluentlabs-xyz/gblend).
 
 By the way, we also have a Makefile for building examples, so you can use it as well.
 
-## Creating new app
+## Creating a new app
 
 ### From scratch
 
-To create your own repository with example just create an empty crate and add fluentbase SDK dependency.
+To create your own repository with example, create an empty crate and add fluentbase SDK dependency.
 
 ```bash
 cargo new hello_world --lib
@@ -39,7 +39,7 @@ extern "C" fn main() {
 }
 ```
 
-As you can see there two functions that must be exported with exact names:
+As you can see, there are two functions that must be exported with exact names:
 
 - `deploy` - this function is called before creating app (similar to Solidity's constructor)
 - `main` - this one is getting called on each contract interaction
@@ -98,7 +98,8 @@ After project creation, you'll want to:
 3. [Deploy your contract](#deploy)
 
 > [!TIP]
-> Templates provide a quick start with working examples and proper project structure. They're the recommended way to begin new Fluent Network projects.
+> Templates provide a quick start with working examples and proper project structure. They're the recommended way to
+> begin new Fluent Network projects.
 
 ## Build
 
@@ -200,4 +201,5 @@ gblend deploy --rpc https://your-node.network --chain-id 1234 path/to/contract.w
 > ```
 
 > [!NOTE]
-> Additional parameters like `gas-limit`, `gas-price`, and `confirmations` can also be configured through environment variables or command line flags.
+> Additional parameters like `gas-limit`, `gas-price`, and `confirmations` can also be configured through environment
+> variables or command line flags.
