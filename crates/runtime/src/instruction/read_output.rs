@@ -1,28 +1,26 @@
 use crate::RuntimeContext;
+use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
-use rwasm::{core::Trap, Caller};
 
 pub struct SyscallReadOutput;
 
 impl SyscallReadOutput {
-    pub fn fn_handler(
-        mut caller: Caller<'_, RuntimeContext>,
-        target: u32,
-        offset: u32,
-        length: u32,
-    ) -> Result<(), Trap> {
-        let input = Self::fn_impl(caller.data(), offset, length).map_err(|err| err.into_trap())?;
-        let _ = caller.write_memory(target, &input)?;
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let [target_ptr, offset, length] = caller.stack_pop_n();
+        let input = Self::fn_impl(caller.data(), offset.as_u32(), length.as_u32())?;
+        let _ = caller.write_memory(target_ptr.as_u32(), &input)?;
         Ok(())
     }
 
-    pub fn fn_impl(ctx: &RuntimeContext, offset: u32, length: u32) -> Result<Vec<u8>, ExitCode> {
+    pub fn fn_impl(ctx: &RuntimeContext, offset: u32, length: u32) -> Result<Vec<u8>, RwasmError> {
         if offset + length <= ctx.execution_result.return_data.len() as u32 {
             Ok(ctx.execution_result.return_data
                 [(offset as usize)..(offset as usize + length as usize)]
                 .to_vec())
         } else {
-            Err(ExitCode::MemoryOutOfBounds)
+            Err(RwasmError::ExecutionHalted(
+                ExitCode::InputOutputOutOfBounds.into_i32(),
+            ))
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::{instruction::cast_u8_to_u32, RuntimeContext};
+use fluentbase_rwasm::{Caller, RwasmError};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use rwasm::{core::Trap, Caller};
 use sp1_curves::{params::NumWords, AffinePoint, EllipticCurve};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
@@ -18,11 +18,8 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
     }
 
     /// Handles the syscall for point addition on a Weierstrass curve.
-    pub fn fn_handler(
-        mut caller: Caller<'_, RuntimeContext>,
-        p_ptr: u32,
-        q_ptr: u32,
-    ) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let (p_ptr, q_ptr) = caller.stack_pop2_as::<u32>();
         let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;
 
         // Read p and q values from memory
@@ -30,13 +27,13 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
         let q = caller.read_memory(q_ptr, num_words as u32 * 4)?;
 
         // Write the result back to memory at the p_ptr location
-        let result_vec = Self::fn_impl(p, q)?;
+        let result_vec = Self::fn_impl(&p, &q);
         caller.write_memory(p_ptr, &result_vec)?;
 
         Ok(())
     }
 
-    pub fn fn_impl(p: &[u8], q: &[u8]) -> Result<Vec<u8>, Trap> {
+    pub fn fn_impl(p: &[u8], q: &[u8]) -> Vec<u8> {
         let p = cast_u8_to_u32(p).unwrap();
         let q = cast_u8_to_u32(q).unwrap();
 
@@ -50,7 +47,6 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
         // Convert the result back to memory format (LE words)
         let result_words = result_affine.to_words_le();
 
-        let result_vec = words_to_bytes_le_vec(result_words.as_slice());
-        Ok(result_vec)
+        words_to_bytes_le_vec(result_words.as_slice())
     }
 }

@@ -15,6 +15,7 @@ fluentbase-sdk = { workspace = true }
 fluentbase-poseidon = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
+fluentbase-rwasm = { workspace = true }
 
 rwasm = { workspace = true }
 revm = { workspace = true }

@@ -89,8 +89,7 @@ impl<'a, PR: PreimageResolver> ContextFreeNativeAPI for RuntimeContextWrapper<'a
 
 impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
     fn read(&self, target: &mut [u8], offset: u32) {
-        let result = SyscallRead::fn_impl(&self.ctx.borrow(), offset, target.len() as u32)
-            .unwrap_exit_code();
+        let result = SyscallRead::fn_impl(&self.ctx.borrow(), offset, target.len() as u32).unwrap();
         target.copy_from_slice(&result);
     }
 
@@ -116,8 +115,8 @@ impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
     }
 
     fn read_output(&self, target: &mut [u8], offset: u32) {
-        let result = SyscallReadOutput::fn_impl(&self.ctx.borrow(), offset, target.len() as u32)
-            .unwrap_exit_code();
+        let result =
+            SyscallReadOutput::fn_impl(&self.ctx.borrow(), offset, target.len() as u32).unwrap();
         target.copy_from_slice(&result);
     }
 
@@ -170,7 +169,7 @@ impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
         if let Some(preimage_size) = self.preimage_resolver.preimage_size(&hash.0) {
             return preimage_size;
         }
-        SyscallPreimageSize::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap_exit_code()
+        SyscallPreimageSize::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap()
     }
 
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
@@ -178,8 +177,7 @@ impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
             target.copy_from_slice(&preimage);
             return;
         }
-        let preimage =
-            SyscallPreimageCopy::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap_exit_code();
+        let preimage = SyscallPreimageCopy::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap();
         target.copy_from_slice(&preimage);
     }
 

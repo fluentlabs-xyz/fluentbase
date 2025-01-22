@@ -1,0 +1,21 @@
+[package]
+name = "fluentbase-rwasm-e2e"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-rwasm = { workspace = true }
+#fluentbase-types = { workspace = true }
+
+# we have rwasm only here because we are planning to remove this dependency in the future
+rwasm = { workspace = true }
+
+byteorder = "1.4.3"
+wat = "1.0.66"
+anyhow = "1.0.71"
+wast = "62.0.0"
+serial_test = "3.0.0"
+
+[features]
+default = ["e2e"]
+e2e = ["fluentbase-rwasm/e2e", "rwasm/e2e"]

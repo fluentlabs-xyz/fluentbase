@@ -6,7 +6,7 @@ use fluentbase_genesis::{
     GENESIS_POSEIDON_HASH_SLOT,
 };
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_runtime::{Runtime, RuntimeContext};
+use fluentbase_runtime::{types::NonePreimageResolver, Runtime, RuntimeContext};
 use fluentbase_sdk::{
     bytes::BytesMut,
     calc_create_address,
@@ -322,8 +322,8 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
         .with_input(context_input)
         .with_is_test();
     // .with_tracer();
-    let mut runtime = Runtime::new(ctx);
-    runtime.data_mut().clear_output();
+    let mut runtime = Runtime::new(ctx, &NonePreimageResolver);
+    runtime.context_mut().clear_output();
     let result = runtime.call();
     println!(
         "exit_code: {} ({})",

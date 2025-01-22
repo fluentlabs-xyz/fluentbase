@@ -1,8 +1,8 @@
 use eth_trie::DB;
 use fluentbase_codec::CodecError;
+use fluentbase_rwasm::RwasmError;
 use fluentbase_types::{Bytes, F254};
 use hashbrown::HashMap;
-use rwasm::{rwasm::BinaryFormatError, Error as RwasmError};
 
 pub trait PreimageResolver {
     fn preimage(&self, hash: &[u8; 32]) -> Option<Bytes>;
@@ -82,19 +82,10 @@ impl TrieDb for eth_trie::MemoryDB {
 
 #[derive(Debug)]
 pub enum RuntimeError {
-    BinaryFormatError(BinaryFormatError),
-    Rwasm(RwasmError),
-    MissingEntrypoint,
-    UnloadedModule(F254),
-    ExitCode(i32),
-    ExecutionInterrupted,
     CodecError(CodecError),
-}
-
-impl From<BinaryFormatError> for RuntimeError {
-    fn from(value: BinaryFormatError) -> Self {
-        Self::BinaryFormatError(value)
-    }
+    Rwasm(RwasmError),
+    UnloadedModule(F254),
+    Interrupted,
 }
 
 impl From<RwasmError> for RuntimeError {
@@ -108,19 +99,3 @@ impl From<CodecError> for RuntimeError {
         Self::CodecError(value)
     }
 }
-
-macro_rules! rwasm_error {
-    ($error_type:path) => {
-        impl From<$error_type> for $crate::types::RuntimeError {
-            fn from(value: $error_type) -> Self {
-                Self::Rwasm(value.into())
-            }
-        }
-    };
-}
-
-rwasm_error!(rwasm::global::GlobalError);
-rwasm_error!(rwasm::memory::MemoryError);
-rwasm_error!(rwasm::table::TableError);
-rwasm_error!(rwasm::linker::LinkerError);
-rwasm_error!(rwasm::module::ModuleError);

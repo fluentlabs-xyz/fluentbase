@@ -1,13 +1,10 @@
-use crate::{runtime::Runtime, RuntimeContext};
+use crate::{runtime::Runtime, types::NonePreimageResolver, RuntimeContext};
+use fluentbase_rwasm::{BinaryFormat, Instruction, RwasmConfig, RwasmModule, StateRouterConfig};
 use fluentbase_types::{create_import_linker, SysFuncIdx::STATE, STATE_DEPLOY, STATE_MAIN};
 use hex_literal::hex;
-use rwasm::{
-    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
-    rwasm::{BinaryFormat, RwasmModule},
-};
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
-    let import_linker = Runtime::new_import_linker();
+    let import_linker = create_import_linker();
     let wasm_binary = wat::parse_str(wat).unwrap();
     let mut rwasm_config = RwasmModule::default_config(Some(import_linker));
     rwasm_config.rwasm_config(RwasmConfig {
@@ -83,7 +80,7 @@ fn test_wrong_indirect_type() {
     let ctx = RuntimeContext::new(rwasm_bytecode)
         .with_fuel_limit(1_000_000)
         .with_state(STATE_DEPLOY);
-    let mut runtime = Runtime::new(ctx);
+    let mut runtime = Runtime::new(ctx, &NonePreimageResolver);
     let res = runtime.call();
     let ctx = runtime.take_context();
     assert_eq!(res.exit_code, 0);

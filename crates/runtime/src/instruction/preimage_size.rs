@@ -1,23 +1,18 @@
 use crate::RuntimeContext;
-use fluentbase_types::ExitCode;
-use rwasm::{core::Trap, Caller};
+use fluentbase_rwasm::{Caller, RwasmError, TrapCode};
 
 pub struct SyscallPreimageSize;
 
 impl SyscallPreimageSize {
-    pub fn fn_handler(
-        mut caller: Caller<'_, RuntimeContext>,
-        hash32_offset: u32,
-    ) -> Result<u32, Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let hash32_offset: u32 = caller.stack_pop_as();
         let hash = caller.read_memory(hash32_offset, 32)?.to_vec();
-        Self::fn_impl(caller.data_mut(), &hash).map_err(|err| err.into_trap())
+        let preimage_size = Self::fn_impl(caller.data_mut(), &hash)?;
+        caller.stack_push(preimage_size);
+        Ok(())
     }
 
-    pub fn fn_impl(ctx: &RuntimeContext, hash: &[u8]) -> Result<u32, ExitCode> {
-        let preimage_size = ctx
-            .preimage_resolver()
-            .preimage_size(hash.try_into().unwrap())
-            .unwrap_or(0);
-        Ok(preimage_size)
+    pub fn fn_impl(_ctx: &RuntimeContext, _hash: &[u8]) -> Result<u32, RwasmError> {
+        Err(RwasmError::TrapCode(TrapCode::UnreachableCodeReached))
     }
 }

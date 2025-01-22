@@ -1,18 +1,14 @@
 use crate::RuntimeContext;
+use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::F254;
-use rwasm::{core::Trap, Caller};
 
 pub struct SyscallPoseidon;
 
 impl SyscallPoseidon {
-    pub fn fn_handler(
-        mut caller: Caller<'_, RuntimeContext>,
-        f32s_offset: u32,
-        f32s_len: u32,
-        output_offset: u32,
-    ) -> Result<(), Trap> {
-        let data = caller.read_memory(f32s_offset, f32s_len)?;
-        caller.write_memory(output_offset, Self::fn_impl(data).as_slice())?;
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let [f32s_ptr, f32s_len, output_ptr] = caller.stack_pop_n();
+        let data = caller.read_memory(f32s_ptr.as_u32(), f32s_len.as_u32())?;
+        caller.write_memory(output_ptr.as_u32(), Self::fn_impl(&data).as_slice())?;
         Ok(())
     }
 
