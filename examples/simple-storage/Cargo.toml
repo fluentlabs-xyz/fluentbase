@@ -1,0 +1,18 @@
+[package]
+name = "fluentbase-example-simple-storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+hex-literal = { version = "0.4.1", default-features = false }
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std"
+]
