@@ -8,6 +8,8 @@ edition = "2021"
 fluentbase-codec = { workspace = true }
 fluentbase-types = { workspace = true, features = ["rwasm"] }
 fluentbase-sdk-derive = { workspace = true }
+hex = { workspace = true }
+hex-literal = { workspace = true }
 hashbrown = { workspace = true }
 
 # runtime mode

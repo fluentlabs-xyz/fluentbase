@@ -1,4 +1,7 @@
-use crate::byteorder::{BigEndian, ByteOrder, LittleEndian};
+use crate::{
+    byteorder::{ByteOrder, LittleEndian},
+    evm::{write_evm_exit_message, write_evm_panic_message},
+};
 use alloc::vec;
 use core::cell::Cell;
 use fluentbase_codec::{FluentABI, FluentEncoder};
@@ -334,15 +337,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn exit(&self, exit_code: i32) -> ! {
-        // we use Solidity 0.8 compatible error format where the first 4 bytes is signature,
-        // and the last 4 bytes is error code
-        let mut output: [u8; 4 + 32] = [
-            0x4e, 0x48, 0x7b, 0x71, // 4 byte signature `Error(uint256)` - 0..4
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, // 32 bytes error code (only last 4 bytes used) - 4..36
-        ];
-        LittleEndian::write_i32(&mut output[32..], exit_code);
+        // write EVM-compatible exit message
+        write_evm_exit_message(&self.native_sdk, exit_code);
         // exit with the exit code specified
         self.native_sdk.exit(if exit_code != 0 {
             ExitCode::ExecutionHalted as i32
@@ -352,38 +348,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn panic(&self, panic_message: &str) -> ! {
-        // we use Solidity 0.8 compatible error format where the first 4 bytes is signature,
-        // and the last
-        let mut output: [u8; 4 + 32 + 32] = [
-            0x08, 0xc3, 0x79, 0xa0, // 4 byte signature `Panic(string)` - 0..4
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x20, // 32 byte array offset - 4..36
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, // length of the string - (36+32-4...)..(36+32)
-        ];
-        BigEndian::write_u32(
-            &mut output[(36 + 32 - 4)..(36 + 32)],
-            panic_message.len() as u32,
-        );
-        // write the header of the ABI message into output
-        self.native_sdk.write(&output);
-        // write each message chunk into output
-        for chunk in panic_message.as_bytes().chunks(32) {
-            let padding_len = unsafe { chunk.len().unchecked_sub(32) };
-            if padding_len > 0 {
-                // we do the trick to avoid slice range check
-                // that generates a lot of additional webassembly bytecode
-                // that never emits
-                const ZEROS: [u8; 32] = [0u8; 32];
-                let padded_zeroes =
-                    unsafe { &*core::ptr::slice_from_raw_parts(ZEROS.as_ptr(), padding_len) };
-                self.native_sdk.write(padded_zeroes);
-            }
-            // write chunk into output
-            self.native_sdk.write(chunk);
-        }
+        // write EVM-compatible panic message
+        write_evm_panic_message(&self.native_sdk, panic_message);
         // exit with panic exit code (-71 is a WASMI constant, we use the same)
         self.native_sdk.exit(ExitCode::Panic as i32)
     }
