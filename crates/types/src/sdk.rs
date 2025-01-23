@@ -341,6 +341,7 @@ pub trait SharedAPI: ContextFreeNativeAPI {
 
     fn write(&mut self, output: &[u8]);
     fn exit(&self, exit_code: i32) -> !;
+    fn panic(&self, panic_message: &str) -> !;
 
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]);
     fn preimage_size(&self, hash: &B256) -> u32;
