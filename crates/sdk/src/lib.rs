@@ -8,7 +8,7 @@ extern crate core;
 #[cfg(not(feature = "std"))]
 mod bindings;
 #[macro_use]
-pub mod macros;
+pub mod entrypoint;
 mod evm;
 pub mod journal;
 #[cfg(feature = "std")]
@@ -17,25 +17,25 @@ pub mod runtime;
 pub mod rwasm;
 pub mod shared;
 pub mod storage;
-pub mod types;
 
 #[cfg(not(feature = "std"))]
 #[panic_handler]
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
-    use self::bindings::{_exit, _write};
+    use crate::{evm::write_evm_panic_message, rwasm::RwasmContext};
+    let native_sdk = RwasmContext {};
     if cfg!(feature = "more-panic") {
         let panic_message = alloc::format!("{}", info).replace("\n", " ");
-        _write(panic_message.as_ptr(), panic_message.len() as u32);
+        write_evm_panic_message(&native_sdk, &panic_message);
     } else {
         let panic_message = info
             .message()
             .as_str()
             .unwrap_or_else(|| &"can't resolve panic message");
-        _write(panic_message.as_ptr(), panic_message.len() as u32);
+        write_evm_panic_message(&native_sdk, &panic_message);
     }
-    _exit(ExitCode::Panic.into_i32());
+    native_sdk.exit(ExitCode::Panic.into_i32());
 }
 
 #[cfg(not(feature = "std"))]

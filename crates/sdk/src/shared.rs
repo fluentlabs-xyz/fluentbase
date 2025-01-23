@@ -337,8 +337,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn exit(&self, exit_code: i32) -> ! {
-        // write EVM-compatible exit message
-        write_evm_exit_message(&self.native_sdk, exit_code);
+        // write an EVM-compatible exit message (only if exit code is not zero)
+        if exit_code != 0 {
+            write_evm_exit_message(&self.native_sdk, exit_code);
+        }
         // exit with the exit code specified
         self.native_sdk.exit(if exit_code != 0 {
             ExitCode::ExecutionHalted as i32
@@ -348,7 +350,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn panic(&self, panic_message: &str) -> ! {
-        // write EVM-compatible panic message
+        // write an EVM-compatible panic message
         write_evm_panic_message(&self.native_sdk, panic_message);
         // exit with panic exit code (-71 is a WASMI constant, we use the same)
         self.native_sdk.exit(ExitCode::Panic as i32)

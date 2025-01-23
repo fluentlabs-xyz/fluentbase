@@ -1,6 +1,7 @@
 use crate::byteorder::{BigEndian, ByteOrder};
 use fluentbase_types::NativeAPI;
 
+#[inline(always)]
 pub(crate) fn write_evm_exit_message<API: NativeAPI>(native_sdk: &API, exit_code: i32) {
     // we use Solidity 0.8 compatible error format where the first 4 bytes is signature,
     // and the last 4 bytes is error code
@@ -15,6 +16,7 @@ pub(crate) fn write_evm_exit_message<API: NativeAPI>(native_sdk: &API, exit_code
     native_sdk.write(&output);
 }
 
+#[inline(always)]
 pub(crate) fn write_evm_panic_message<API: NativeAPI>(native_sdk: &API, panic_message: &str) {
     // we use Solidity 0.8 compatible error format where the first 4 bytes is signature,
     // and the last
