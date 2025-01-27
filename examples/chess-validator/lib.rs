@@ -1,5 +1,6 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate alloc;
+extern crate fluentbase_sdk;
 
 use alloc::string::String;
 use fluentbase_sdk::{

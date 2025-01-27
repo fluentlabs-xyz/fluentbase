@@ -51,7 +51,10 @@ fn test_example_rwasm() {
 fn test_example_panic() {
     let input_data = include_bytes!("../../examples/panic/lib.wasm");
     let (output, exit_code) = run_with_default_context(input_data.to_vec(), &[]);
-    assert_eq!(from_utf8(&output).unwrap(), "it is panic time");
+    assert_eq!(
+        from_utf8(&output[68..]).unwrap(),
+        "it's panic time\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+    );
     assert_eq!(exit_code, -71);
 }
 

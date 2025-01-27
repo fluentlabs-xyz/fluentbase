@@ -15,6 +15,7 @@ fluentbase-runtime = { workspace = true, optional = true }
 fluentbase-genesis = { workspace = true, optional = true }
 
 [dev-dependencies]
+hex = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

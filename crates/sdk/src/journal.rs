@@ -705,6 +705,12 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         ctx.native_sdk.exit(exit_code)
     }
 
+    fn panic(&self, panic_message: &str) -> ! {
+        let ctx = self.inner.borrow();
+        ctx.native_sdk.write(panic_message.as_bytes());
+        ctx.native_sdk.exit(-71)
+    }
+
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
         let ctx = self.inner.borrow();
         let preimage = ctx

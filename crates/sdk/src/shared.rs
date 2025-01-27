@@ -1,4 +1,7 @@
-use crate::byteorder::{ByteOrder, LittleEndian};
+use crate::{
+    byteorder::{ByteOrder, LittleEndian},
+    evm::{write_evm_exit_message, write_evm_panic_message},
+};
 use alloc::vec;
 use core::cell::Cell;
 use fluentbase_codec::{FluentABI, FluentEncoder};
@@ -11,6 +14,7 @@ use fluentbase_types::{
     ContextFreeNativeAPI,
     ContractContext,
     ContractContextReader,
+    ExitCode,
     NativeAPI,
     SharedAPI,
     SharedContextInputV1,
@@ -333,7 +337,23 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn exit(&self, exit_code: i32) -> ! {
-        self.native_sdk.exit(exit_code)
+        // write an EVM-compatible exit message (only if exit code is not zero)
+        if exit_code != 0 {
+            write_evm_exit_message(&self.native_sdk, exit_code);
+        }
+        // exit with the exit code specified
+        self.native_sdk.exit(if exit_code != 0 {
+            ExitCode::ExecutionHalted as i32
+        } else {
+            ExitCode::Ok as i32
+        })
+    }
+
+    fn panic(&self, panic_message: &str) -> ! {
+        // write an EVM-compatible panic message
+        write_evm_panic_message(&self.native_sdk, panic_message);
+        // exit with panic exit code (-71 is a WASMI constant, we use the same)
+        self.native_sdk.exit(ExitCode::Panic as i32)
     }
 
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {

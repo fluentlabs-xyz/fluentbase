@@ -72,7 +72,10 @@ fn test_wasm_panic() {
     );
     assert!(!result.is_success());
     let bytes = result.output().unwrap_or_default();
-    assert_eq!("it is panic time", from_utf8(bytes.as_ref()).unwrap());
+    assert_eq!(
+        "it's panic time\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        from_utf8(&bytes.as_ref()[68..]).unwrap()
+    );
 }
 
 #[test]

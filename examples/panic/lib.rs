@@ -15,7 +15,8 @@ impl<SDK: SharedAPI> PANIC<SDK> {
     }
     fn main(&self) {
         // panic with some message
-        panic!("it is panic time")
+        self.sdk.panic("it's panic time");
+        // panic!("it is panic time")
     }
 }
 
