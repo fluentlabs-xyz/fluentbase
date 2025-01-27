@@ -17,6 +17,7 @@ pub mod runtime;
 pub mod rwasm;
 pub mod shared;
 pub mod storage;
+pub mod constructor;
 
 #[cfg(not(feature = "std"))]
 #[panic_handler]
