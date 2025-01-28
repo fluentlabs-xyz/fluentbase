@@ -22,6 +22,7 @@ revm = { workspace = true }
 hex-literal = { workspace = true }
 hex = { workspace = true }
 sp1-sdk = "^2.0.0"
+alloy-sol-types = { workspace = true }
 
 [features]
 default = ["std"]
