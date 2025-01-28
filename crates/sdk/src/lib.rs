@@ -9,15 +9,16 @@ extern crate core;
 mod bindings;
 #[macro_use]
 pub mod entrypoint;
+pub mod constructor;
 mod evm;
 pub mod journal;
+pub mod leb128;
 #[cfg(feature = "std")]
 pub mod runtime;
 #[cfg(not(feature = "std"))]
 pub mod rwasm;
 pub mod shared;
 pub mod storage;
-pub mod constructor;
 
 #[cfg(not(feature = "std"))]
 #[panic_handler]
