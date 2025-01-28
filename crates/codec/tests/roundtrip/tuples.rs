@@ -100,7 +100,7 @@ fn test_tuple_wasm() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    FluentABI::encode(&test_value, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_value, &mut buf, 0).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -110,7 +110,7 @@ fn test_tuple_wasm() {
     );
 
     // Verify round-trip encoding/decoding
-    let decoded = FluentABI::<(Bytes, Address)>::decode(&encoded, 0).unwrap();
+    let decoded = CompactABI::<(Bytes, Address)>::decode(&encoded, 0).unwrap();
     assert_eq!(decoded, test_value, "Round-trip encoding/decoding failed");
 }
 

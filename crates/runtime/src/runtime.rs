@@ -5,7 +5,7 @@ use crate::{
     },
     types::{NonePreimageResolver, PreimageResolver},
 };
-use fluentbase_codec::{bytes::BytesMut, FluentABI};
+use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_rwasm::{
     Caller,
@@ -30,6 +30,7 @@ use std::{
 pub enum BytecodeOrHash {
     Bytecode(Bytes, Option<F254>),
     Hash(F254),
+    Instance(RwasmModuleInstance, Bytes, Option<F254>),
 }
 
 impl Default for BytecodeOrHash {
@@ -40,24 +41,34 @@ impl Default for BytecodeOrHash {
 
 impl BytecodeOrHash {
     pub fn with_resolved_hash(self, is_test: bool) -> Self {
+        let get_hash = |bytecode: &[u8]| {
+            let hash = if is_test {
+                keccak(bytecode.as_ref()).0
+            } else {
+                poseidon_hash(&bytecode)
+            };
+            F254::from(hash)
+        };
         match self {
             BytecodeOrHash::Bytecode(_, Some(_)) => self,
             BytecodeOrHash::Bytecode(bytecode, None) => {
-                let hash = if is_test {
-                    keccak(bytecode.as_ref()).0
-                } else {
-                    poseidon_hash(&bytecode)
-                };
-                BytecodeOrHash::Bytecode(bytecode, Some(F254::from(hash)))
+                let hash = get_hash(bytecode.as_ref());
+                BytecodeOrHash::Bytecode(bytecode, Some(hash))
             }
             BytecodeOrHash::Hash(_) => self,
+            BytecodeOrHash::Instance(_, _, Some(_)) => self,
+            BytecodeOrHash::Instance(instance, bytecode, None) => {
+                let hash = get_hash(bytecode.as_ref());
+                BytecodeOrHash::Instance(instance, bytecode, Some(hash))
+            }
         }
     }
 
     pub fn resolve_hash(&self) -> F254 {
         match self {
-            BytecodeOrHash::Bytecode(_, hash) => hash.expect("poseidon hash must be resolved"),
+            BytecodeOrHash::Bytecode(_, hash) => hash.expect("hash must be resolved"),
             BytecodeOrHash::Hash(hash) => *hash,
+            BytecodeOrHash::Instance(_, _, hash) => hash.expect("hash must be resolved"),
         }
     }
 }
@@ -69,7 +80,7 @@ pub struct RuntimeContext {
     pub(crate) state: u32,
     pub(crate) call_depth: u32,
     pub(crate) trace: bool,
-    pub(crate) input: Vec<u8>,
+    pub(crate) input: Bytes,
     pub(crate) disable_fuel: bool,
     pub(crate) is_test: bool,
     // context outputs
@@ -88,7 +99,7 @@ impl Default for RuntimeContext {
             bytecode: BytecodeOrHash::default(),
             fuel_limit: 0,
             state: 0,
-            input: vec![],
+            input: Bytes::default(),
             call_depth: 0,
             trace: false,
             execution_result: ExecutionResult::default(),
@@ -117,12 +128,17 @@ impl RuntimeContext {
         }
     }
 
-    pub fn with_input(mut self, input_data: Vec<u8>) -> Self {
+    pub fn with_bytecode(mut self, bytecode: BytecodeOrHash) -> Self {
+        self.bytecode = bytecode;
+        self
+    }
+
+    pub fn with_input(mut self, input_data: Bytes) -> Self {
         self.input = input_data;
         self
     }
 
-    pub fn change_input(&mut self, input_data: Vec<u8>) {
+    pub fn change_input(&mut self, input_data: Bytes) {
         self.input = input_data;
     }
 
@@ -169,8 +185,8 @@ impl RuntimeContext {
         self.execution_result.exit_code
     }
 
-    pub fn input(&self) -> &Vec<u8> {
-        self.input.as_ref()
+    pub fn input(&self) -> &Bytes {
+        &self.input
     }
 
     pub fn input_size(&self) -> u32 {
@@ -246,6 +262,20 @@ impl CachingRuntime {
         }
     }
 
+    pub fn insert_module(
+        &mut self,
+        rwasm_hash: F254,
+        instance: RwasmModuleInstance,
+        bytecode: Bytes,
+    ) -> &RwasmModuleInstance {
+        self.cached_bytecode.insert(rwasm_hash, bytecode);
+        let entry = match self.modules.entry(rwasm_hash) {
+            Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
+            Entry::Vacant(entry) => entry,
+        };
+        entry.insert(instance)
+    }
+
     pub fn init_module(&mut self, rwasm_hash: F254) -> &RwasmModuleInstance {
         let rwasm_bytecode = self
             .cached_bytecode
@@ -316,14 +346,7 @@ impl Runtime {
             // resolve cached module or init it
             let rwasm_module = match &bytecode_repr {
                 BytecodeOrHash::Bytecode(bytecode, hash) => {
-                    let hash = hash.unwrap_or_else(|| {
-                        let hash = if is_test {
-                            keccak(bytecode.as_ref()).0
-                        } else {
-                            poseidon_hash(&bytecode)
-                        };
-                        F254::from(hash)
-                    });
+                    let hash = hash.unwrap();
                     // if we have a cached module then use it, otherwise create a new one and cache
                     if let Some(module) = caching_runtime.resolve_module(&hash) {
                         module
@@ -348,6 +371,15 @@ impl Runtime {
                             }
                             caching_runtime.init_module(*hash)
                         }
+                    }
+                }
+                BytecodeOrHash::Instance(instance, bytecode, hash) => {
+                    let hash = hash.unwrap();
+                    // if we have a cached module then use it, otherwise create a new one and cache
+                    if let Some(module) = caching_runtime.resolve_module(&hash) {
+                        module
+                    } else {
+                        caching_runtime.insert_module(hash, instance.clone(), bytecode.clone())
                     }
                 }
             };
@@ -493,7 +525,7 @@ impl Runtime {
         // instead we remember it inside the internal structure
         // and assign a special identifier for recovery
         let mut encoded_state = BytesMut::new();
-        FluentABI::encode(&sys_exec_resumable.params, &mut encoded_state, 0)
+        CompactABI::encode(&sys_exec_resumable.params, &mut encoded_state, 0)
             .expect("runtime: can't encode resumable state");
         execution_result
             .output

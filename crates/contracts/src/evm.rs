@@ -443,7 +443,7 @@ mod tests {
         journal::JournalStateBuilder,
         runtime::TestingContext,
         Address,
-        ContractContext,
+        ContractContextV1,
         U256,
     };
     use revm_primitives::hex;
@@ -452,7 +452,7 @@ mod tests {
     fn test_evm_store_load() {
         let native_sdk = TestingContext::empty();
         let mut sdk = JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 address: Address::from([
                     189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111,
                     164, 142, 177,
@@ -477,7 +477,7 @@ mod tests {
     fn test_deploy_greeting() {
         let mut native_sdk = TestingContext::empty().with_fuel(100_000);
         let sdk = JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 address: Address::from([
                     189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111,
                     164, 142, 177,
@@ -509,7 +509,7 @@ mod tests {
     fn test_deploy_tstore() {
         let mut native_sdk = TestingContext::empty().with_fuel(100_000);
         let sdk = JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 address: Address::from([
                     189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111,
                     164, 142, 177,

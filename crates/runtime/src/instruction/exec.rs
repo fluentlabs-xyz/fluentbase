@@ -139,7 +139,7 @@ impl SyscallExec {
 
         // create a new runtime instance with the context
         let ctx2 = RuntimeContext::new_with_hash(*code_hash)
-            .with_input(input.to_vec())
+            .with_input(Bytes::copy_from_slice(input))
             .with_fuel_limit(fuel_limit)
             .with_state(state)
             .with_depth(ctx.call_depth + 1)

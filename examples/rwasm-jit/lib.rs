@@ -11,7 +11,7 @@ use fluentbase_sdk::{
     alloc_slice,
     basic_entrypoint,
     bytes::BytesMut,
-    codec::{Encoder, FluentABI},
+    codec::{CompactABI, Encoder},
     create_import_linker,
     derive::Contract,
     Bytes,
@@ -162,7 +162,7 @@ impl Context {
                 contract: Default::default(),
             };
             let mut buf = BytesMut::new();
-            FluentABI::encode(&default_ctx, &mut buf, 0).unwrap();
+            CompactABI::encode(&default_ctx, &mut buf, 0).unwrap();
             buf.extend_from_slice(&input);
 
             buf.freeze().to_vec()

@@ -128,7 +128,7 @@ macro_rules! define_encoder_mode {
 }
 
 define_encoder_mode!(SolidityABI, BE, 32, true);
-define_encoder_mode!(FluentABI, LE, 4, false);
+define_encoder_mode!(CompactABI, LE, 4, false);
 
 // SolidityPackedABI works only for static types
 define_encoder_mode!(SolidityPackedABI, BE, 1, true, static_only);

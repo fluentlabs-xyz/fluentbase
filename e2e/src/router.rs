@@ -1,5 +1,5 @@
 use crate::utils::EvmTestingContext;
-use fluentbase_codec::{FluentABI, SolidityABI};
+use fluentbase_codec::{CompactABI, SolidityABI};
 use fluentbase_sdk::{address, Address, U256};
 use hex_literal::hex;
 
@@ -87,7 +87,7 @@ fn test_client_fluent() {
     let _output = result.output();
     let msg_b = result.output().unwrap();
 
-    let msg: String = FluentABI::decode(msg_b, 0).unwrap();
+    let msg: String = CompactABI::decode(msg_b, 0).unwrap();
 
     assert_eq!(msg, "Hello World");
 }

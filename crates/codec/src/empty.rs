@@ -144,22 +144,22 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for EmptyV
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FluentABI, SolidityABI};
+    use crate::{CompactABI, SolidityABI};
     use byteorder::BigEndian;
 
     #[test]
     fn test_empty_vec_wasm_little_endian() {
         let empty_vec = EmptyVec;
         let mut buf = BytesMut::new();
-        FluentABI::encode(&empty_vec, &mut buf, 0).unwrap();
+        CompactABI::encode(&empty_vec, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         assert_eq!(hex::encode(&encoded), "000000000c00000000000000");
 
-        let decoded = FluentABI::decode(&encoded, 0).unwrap();
+        let decoded = CompactABI::decode(&encoded, 0).unwrap();
         assert_eq!(empty_vec, decoded);
 
-        let (offset, length) = FluentABI::<EmptyVec>::partial_decode(&encoded, 0).unwrap();
+        let (offset, length) = CompactABI::<EmptyVec>::partial_decode(&encoded, 0).unwrap();
         assert_eq!(offset, 12);
         assert_eq!(length, 0);
     }
@@ -205,16 +205,16 @@ mod tests {
     fn test_empty_vec_wasm_with_offset() {
         let empty_vec = EmptyVec;
         let mut buf = BytesMut::from(&[0xFF, 0xFF, 0xFF][..]);
-        FluentABI::encode(&empty_vec, &mut buf, 3).unwrap();
+        CompactABI::encode(&empty_vec, &mut buf, 3).unwrap();
 
         let encoded = buf.freeze();
         println!("{}", hex::encode(&encoded));
         assert_eq!(hex::encode(&encoded), "ffffff000000000c00000000000000");
 
-        let decoded = FluentABI::decode(&encoded, 3).unwrap();
+        let decoded = CompactABI::decode(&encoded, 3).unwrap();
         assert_eq!(empty_vec, decoded);
 
-        let (offset, length) = FluentABI::<EmptyVec>::partial_decode(&encoded, 3).unwrap();
+        let (offset, length) = CompactABI::<EmptyVec>::partial_decode(&encoded, 3).unwrap();
         assert_eq!(offset, 12);
         assert_eq!(length, 0);
     }

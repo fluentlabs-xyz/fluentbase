@@ -39,7 +39,7 @@ fn test_struct_wasm() {
 
     // Encode using FluentABI
     let mut buf = BytesMut::new();
-    FluentABI::encode(&test_struct, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_struct, &mut buf, 0).unwrap();
     let encoded = buf.freeze();
 
     // Verify encoding matches reference data
@@ -50,7 +50,7 @@ fn test_struct_wasm() {
     );
 
     // Verify round-trip encoding/decoding
-    let decoded = FluentABI::<TestStruct>::decode(&encoded, 0).unwrap();
+    let decoded = CompactABI::<TestStruct>::decode(&encoded, 0).unwrap();
     assert_eq!(decoded, test_struct, "Round-trip encoding/decoding failed");
 }
 

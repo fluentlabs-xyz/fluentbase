@@ -7,10 +7,10 @@ use fluentbase_sdk::{
     alloc_slice,
     basic_entrypoint,
     derive::{solidity_storage, Contract},
-    SharedAPI,
-    U256,
     Address,
     ContractContextReader,
+    SharedAPI,
+    U256,
 };
 
 #[derive(Contract)]
@@ -53,9 +53,9 @@ mod tests {
     use fluentbase_sdk::{
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
-        ContractContext,
-        U256,
         Address,
+        ContractContextV1,
+        U256,
     };
     use hex_literal::hex;
 
@@ -66,7 +66,7 @@ mod tests {
     ) {
         sdk.inner.borrow_mut().native_sdk.take_output();
         sdk.inner.borrow_mut().native_sdk.set_input(input);
-        sdk.rewrite_contract_context(ContractContext {
+        sdk.rewrite_contract_context(ContractContextV1 {
             caller: caller.unwrap_or_default(),
             ..Default::default()
         });
@@ -77,7 +77,7 @@ mod tests {
         caller: Option<Address>,
     ) -> JournalState<TestingContext> {
         JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 caller: caller.unwrap_or_default(),
                 ..Default::default()
             })

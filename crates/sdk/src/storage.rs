@@ -1,4 +1,4 @@
-use fluentbase_codec::{bytes::BytesMut, FluentABI, FluentEncoder, SolidityABI, SolidityEncoder};
+use fluentbase_codec::{bytes::BytesMut, CompactABI, FluentEncoder, SolidityABI, SolidityEncoder};
 use fluentbase_types::{SharedAPI, U256};
 
 // StorageValueSolidity trait with Solidity-specific parameters
@@ -82,13 +82,13 @@ where
             }
             buf.extend_from_slice(&chunk);
         }
-        FluentABI::<T>::decode(&buf, 0).unwrap_or_else(|_| T::default())
+        CompactABI::<T>::decode(&buf, 0).unwrap_or_else(|_| T::default())
     }
 
     fn set(sdk: &mut SDK, key: U256, value: T) {
         let buffer_size = value.size_hint();
         let mut encoded_buffer = BytesMut::with_capacity(buffer_size);
-        FluentABI::<T>::encode(&value, &mut encoded_buffer, 0).expect("Encoding failed");
+        CompactABI::<T>::encode(&value, &mut encoded_buffer, 0).expect("Encoding failed");
 
         let chunk_size = 32;
         let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;

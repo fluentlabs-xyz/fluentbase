@@ -1,5 +1,5 @@
 use crate::{
-    encoder::{Encoder, FluentABI, SolidityABI, SolidityPackedABI},
+    encoder::{CompactABI, Encoder, SolidityABI, SolidityPackedABI},
     test_utils::print_bytes,
     Codec,
 };
@@ -321,7 +321,7 @@ fn test_vector_wasm_nested() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    FluentABI::encode(&test_value, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_value, &mut buf, 0).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -331,7 +331,7 @@ fn test_vector_wasm_nested() {
     );
 
     // Verify round-trip encoding/decoding
-    let decoded = FluentABI::<Vec<Vec<u32>>>::decode(&encoded, 0).unwrap();
+    let decoded = CompactABI::<Vec<Vec<u32>>>::decode(&encoded, 0).unwrap();
     assert_eq!(decoded, test_value, "Round-trip encoding/decoding failed");
 }
 
@@ -434,7 +434,7 @@ fn test_vector_wasm_partial_decode() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    FluentABI::encode(&test_value, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_value, &mut buf, 0).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -445,7 +445,7 @@ fn test_vector_wasm_partial_decode() {
 
     // Test partial decoding - should return (offset, data_size)
     // Note: We skip first 4 bytes (length) to get to the offset
-    let (data_offset, data_size) = FluentABI::<Vec<u32>>::partial_decode(&encoded, 4).unwrap();
+    let (data_offset, data_size) = CompactABI::<Vec<u32>>::partial_decode(&encoded, 4).unwrap();
 
     assert_eq!(data_offset, 12, "Vector data should start at offset 12");
     assert_eq!(
@@ -461,7 +461,7 @@ fn test_vector_wasm_partial_decode() {
     );
 
     // Optional: Verify full decoding still works
-    let decoded = FluentABI::<Vec<u32>>::decode(&encoded, 0).unwrap();
+    let decoded = CompactABI::<Vec<u32>>::decode(&encoded, 0).unwrap();
     assert_eq!(
         decoded, test_value,
         "Full decoding should still work after partial decode"
@@ -546,7 +546,7 @@ fn test_map_wasm_simple() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    FluentABI::encode(&test_value, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_value, &mut buf, 0).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -556,7 +556,7 @@ fn test_map_wasm_simple() {
     );
 
     // Verify round-trip encoding/decoding
-    let decoded = FluentABI::<HashMap<u32, u32>>::decode(&encoded, 0).unwrap();
+    let decoded = CompactABI::<HashMap<u32, u32>>::decode(&encoded, 0).unwrap();
     assert_eq!(decoded, test_value, "Round-trip encoding/decoding failed");
 }
 
@@ -605,7 +605,7 @@ fn test_map_wasm_nested() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    FluentABI::encode(&test_value, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_value, &mut buf, 0).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -615,6 +615,6 @@ fn test_map_wasm_nested() {
     );
 
     // Verify round-trip encoding/decoding
-    let decoded = FluentABI::<HashMap<u32, HashMap<u32, u32>>>::decode(&encoded, 0).unwrap();
+    let decoded = CompactABI::<HashMap<u32, HashMap<u32, u32>>>::decode(&encoded, 0).unwrap();
     assert_eq!(decoded, test_value, "Round-trip encoding/decoding failed");
 }

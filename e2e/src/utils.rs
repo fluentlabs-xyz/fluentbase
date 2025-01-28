@@ -10,7 +10,7 @@ use fluentbase_runtime::{types::NonePreimageResolver, Runtime, RuntimeContext};
 use fluentbase_sdk::{
     bytes::BytesMut,
     calc_create_address,
-    codec::FluentABI,
+    codec::CompactABI,
     create_import_linker,
     runtime::TestingContext,
     Account,
@@ -312,7 +312,7 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
             contract: Default::default(),
         };
         let mut buf = BytesMut::new();
-        FluentABI::encode(&shared_ctx, &mut buf, 0).unwrap();
+        CompactABI::encode(&shared_ctx, &mut buf, 0).unwrap();
         buf.extend_from_slice(input_data);
         buf.freeze().to_vec()
     };

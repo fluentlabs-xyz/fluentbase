@@ -1,5 +1,6 @@
 use crate::{
     alloc_vec,
+    bytes::{Buf, BufMut, BytesMut},
     Account,
     AccountStatus,
     Address,
@@ -12,7 +13,7 @@ use crate::{
 };
 use alloc::{vec, vec::Vec};
 use auto_impl::auto_impl;
-use fluentbase_codec::{Codec, CodecError, FluentABI};
+use fluentbase_codec::{Codec, CodecError, CompactABI};
 
 pub trait ContextFreeNativeAPI {
     fn keccak256(data: &[u8]) -> B256;
@@ -82,7 +83,7 @@ pub trait NativeAPI: ContextFreeNativeAPI {
 pub type IsColdAccess = bool;
 
 #[derive(Codec, Default, Clone)]
-pub struct BlockContext {
+pub struct BlockContextV1 {
     pub chain_id: u64,
     pub coinbase: Address,
     pub timestamp: u64,
@@ -93,7 +94,7 @@ pub struct BlockContext {
     pub base_fee: U256,
 }
 
-impl From<&revm_primitives::Env> for BlockContext {
+impl From<&revm_primitives::Env> for BlockContextV1 {
     fn from(value: &revm_primitives::Env) -> Self {
         Self {
             chain_id: value.cfg.chain_id,
@@ -109,7 +110,7 @@ impl From<&revm_primitives::Env> for BlockContext {
 }
 
 #[derive(Codec, Default, Clone)]
-pub struct TxContext {
+pub struct TxContextV1 {
     pub gas_limit: u64,
     pub nonce: u64,
     pub gas_price: U256,
@@ -120,7 +121,7 @@ pub struct TxContext {
     pub value: U256,
 }
 
-impl From<&revm_primitives::Env> for TxContext {
+impl From<&revm_primitives::Env> for TxContextV1 {
     fn from(value: &revm_primitives::Env) -> Self {
         Self {
             gas_limit: value.tx.gas_limit,
@@ -137,7 +138,7 @@ impl From<&revm_primitives::Env> for TxContext {
 }
 
 #[derive(Default, Codec, Clone, Debug)]
-pub struct ContractContext {
+pub struct ContractContextV1 {
     pub address: Address,
     pub bytecode_address: Address,
     pub caller: Address,
@@ -193,9 +194,40 @@ pub fn env_from_context<CR: BlockContextReader + TxContextReader>(cr: CR) -> rev
 
 #[derive(Codec, Default)]
 pub struct SharedContextInputV1 {
-    pub block: BlockContext,
-    pub tx: TxContext,
-    pub contract: ContractContext,
+    pub block: BlockContextV1,
+    pub tx: TxContextV1,
+    pub contract: ContractContextV1,
+}
+
+pub enum SharedContextInput {
+    V1(SharedContextInputV1),
+}
+
+impl SharedContextInput {
+    fn version(&self) -> u8 {
+        match self {
+            SharedContextInput::V1(_) => 0x01,
+        }
+    }
+
+    pub fn decode(buf: &impl Buf) -> Result<Self, CodecError> {
+        let version = buf.chunk()[0];
+        Ok(match version {
+            0x01 => Self::V1(CompactABI::<SharedContextInputV1>::decode(buf, 1)?),
+            _ => unreachable!("unexpected version"),
+        })
+    }
+
+    pub fn encode(&self) -> Result<Bytes, CodecError> {
+        let mut buf = BytesMut::new();
+        buf.put_u8(self.version());
+        match self {
+            SharedContextInput::V1(value) => {
+                CompactABI::encode(value, &mut buf, 1)?;
+            }
+        }
+        Ok(buf.freeze().into())
+    }
 }
 
 pub struct CallPrecompileResult {
@@ -217,18 +249,12 @@ pub struct DestroyedAccountResult {
     pub previously_destroyed: bool,
 }
 
-#[derive(Clone, Default, Debug, Codec)]
+#[derive(Codec, Clone, Default, Debug)]
 pub struct SyscallInvocationParams {
     pub code_hash: B256,
     pub input: Bytes,
     pub fuel_limit: u64,
     pub state: u32,
-}
-
-impl SyscallInvocationParams {
-    pub fn from_slice(buffer: &[u8]) -> Result<Self, CodecError> {
-        FluentABI::decode(&buffer, 0)
-    }
 }
 
 #[auto_impl(&)]
@@ -264,16 +290,16 @@ pub trait ContractContextReader {
 
 #[auto_impl(&)]
 pub trait SovereignContextReader: BlockContextReader + TxContextReader {
-    fn clone_block_context(&self) -> BlockContext;
-    fn clone_tx_context(&self) -> TxContext;
+    fn clone_block_context(&self) -> BlockContextV1;
+    fn clone_tx_context(&self) -> TxContextV1;
 }
 #[auto_impl(&)]
 pub trait SharedContextReader:
     BlockContextReader + TxContextReader + ContractContextReader
 {
-    fn clone_block_context(&self) -> BlockContext;
-    fn clone_tx_context(&self) -> TxContext;
-    fn clone_contract_context(&self) -> ContractContext;
+    fn clone_block_context(&self) -> BlockContextV1;
+    fn clone_tx_context(&self) -> TxContextV1;
+    fn clone_contract_context(&self) -> ContractContextV1;
 }
 
 pub trait SovereignAPI: ContextFreeNativeAPI {

@@ -1,7 +1,3 @@
-mod evm;
-mod syscall;
-mod util;
-mod wasm;
 use crate::{
     helpers::{evm_error_from_exit_code, DenominateGas},
     types::NextAction,
@@ -9,14 +5,14 @@ use crate::{
 use alloc::boxed::Box;
 use fluentbase_sdk::{
     bytes::BytesMut,
-    codec::FluentABI,
+    codec::CompactABI,
     debug_log,
     env_from_context,
     Account,
     AccountStatus,
     BytecodeType,
     Bytes,
-    ContractContext,
+    ContractContextV1,
     ExitCode,
     NativeAPI,
     SharedContextInputV1,
@@ -43,6 +39,11 @@ use revm_primitives::{
     WASM_MAX_CODE_SIZE,
 };
 pub use util::{create_delegate_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
+
+mod evm;
+mod syscall;
+mod util;
+mod wasm;
 
 pub struct BlendedRuntime<SDK> {
     sdk: SDK,
@@ -78,7 +79,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         let call_id = exit_code as u32;
 
         // try to parse execution params, if it's not possible then return an error
-        let Ok(params) = FluentABI::<SyscallInvocationParams>::decode(&return_data, 0) else {
+        let Ok(params) = CompactABI::<SyscallInvocationParams>::decode(&return_data, 0) else {
             unreachable!("can't decode invocation params");
         };
 
@@ -89,9 +90,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         }
     }
 
-    fn process_exec(
+    pub fn process_exec(
         &mut self,
-        contract_context: &ContractContext,
+        contract_context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let context_input = SharedContextInputV1 {
@@ -101,7 +102,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         };
 
         let mut buf = BytesMut::new();
-        FluentABI::encode(&context_input, &mut buf, 0).unwrap();
+        CompactABI::encode(&context_input, &mut buf, 0).unwrap();
         buf.extend_from_slice(params.input.as_ref());
         let context_input = buf.freeze();
 
@@ -110,24 +111,13 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         {
             use fluentbase_runtime::RuntimeContext;
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
+
             let runtime_context = RuntimeContext::root(params.fuel_limit);
-
-            let (account, _) = self.sdk.account(&contract_context.bytecode_address);
-            let bytecode = self
-                .sdk
-                .preimage(&contract_context.bytecode_address, &account.code_hash)
-                .unwrap_or_default();
-
-            let preimage_adapter = if let Bytecode::Eip7702(eip7702_bytecode) =
-                Bytecode::new_raw(bytecode)
-            {
-                crate::helpers::SdkPreimageAdapter(eip7702_bytecode.delegated_address, &self.sdk)
-            } else {
-                crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk)
-            };
-
+            let preimage_adapter =
+                crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
                 .with_preimage_resolver(&preimage_adapter);
+
             let (fuel_consumed, exit_code) = native_sdk.exec(
                 &params.code_hash,
                 &context_input,
@@ -199,7 +189,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     fn exec_bytecode(
         &mut self,
-        mut context: ContractContext,
+        mut context: ContractContextV1,
         mut bytecode_account: Account,
         input: Bytes,
         gas: &mut Gas,
@@ -218,6 +208,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
         if let Bytecode::Eip7702(eip7702_bytecode) = Bytecode::new_raw(bytecode.clone()) {
             let (delegated_account, _) = self.sdk.account(&eip7702_bytecode.delegated_address);
+            context.bytecode_address = delegated_account.address;
             bytecode = self
                 .sdk
                 .preimage(&delegated_account.address, &delegated_account.code_hash)
@@ -404,7 +395,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         }
 
         let (bytecode_account, _) = self.sdk.account(&inputs.bytecode_address);
-        let contract_context = ContractContext {
+        let contract_context = ContractContextV1 {
             address: inputs.target_address,
             bytecode_address: bytecode_account.address,
             caller: inputs.caller,

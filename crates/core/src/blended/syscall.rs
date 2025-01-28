@@ -5,7 +5,7 @@ use fluentbase_sdk::{
     debug_log,
     Address,
     Bytes,
-    ContractContext,
+    ContractContextV1,
     ExitCode,
     SovereignAPI,
     SyscallInvocationParams,
@@ -52,7 +52,7 @@ fn is_gas_free_call(_address: &Address) -> bool {
 impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
     pub(crate) fn process_syscall(
         &mut self,
-        contract_context: &ContractContext,
+        contract_context: &ContractContextV1,
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
@@ -101,7 +101,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_storage_read(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
@@ -153,7 +153,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_storage_write(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
@@ -222,7 +222,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_call(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
@@ -306,7 +306,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_static_call(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
@@ -374,7 +374,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_delegate_call(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
@@ -450,7 +450,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_call_code(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
@@ -529,7 +529,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_create<const IS_CREATE2: bool>(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
@@ -638,7 +638,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_emit_log(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
@@ -696,7 +696,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_destroy_account(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
@@ -747,7 +747,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_balance(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
@@ -793,7 +793,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_write_preimage(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let _is_gas_free = is_gas_free_call(&context.bytecode_address);
@@ -821,7 +821,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_preimage_copy(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let _is_gas_free = is_gas_free_call(&context.bytecode_address);
@@ -852,7 +852,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_preimage_size(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
@@ -900,7 +900,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_ext_storage_read(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
@@ -952,7 +952,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_transient_read(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);
@@ -995,7 +995,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn syscall_transient_write(
         &mut self,
-        context: &ContractContext,
+        context: &ContractContextV1,
         params: SyscallInvocationParams,
     ) -> NextAction {
         let is_gas_free = is_gas_free_call(&context.bytecode_address);

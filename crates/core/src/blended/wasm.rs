@@ -9,7 +9,7 @@ use fluentbase_sdk::{
     Account,
     Address,
     Bytes,
-    ContractContext,
+    ContractContextV1,
     ExitCode,
     SovereignAPI,
     SyscallInvocationParams,
@@ -48,7 +48,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         contract_account.update_bytecode(&mut self.sdk, rwasm_bytecode.into(), None);
 
         // execute rWASM deploy function
-        let context = ContractContext {
+        let context = ContractContextV1 {
             address: target_address,
             bytecode_address: target_address,
             caller: inputs.caller,
@@ -73,7 +73,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub(crate) fn exec_rwasm_bytecode(
         &mut self,
-        context: ContractContext,
+        context: ContractContextV1,
         bytecode_account: Account,
         input: Bytes,
         gas: &mut Gas,

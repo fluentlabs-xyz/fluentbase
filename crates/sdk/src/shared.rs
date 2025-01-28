@@ -4,23 +4,23 @@ use crate::{
 };
 use alloc::vec;
 use core::cell::Cell;
-use fluentbase_codec::{FluentABI, FluentEncoder};
+use fluentbase_codec::{CompactABI, FluentEncoder};
 use fluentbase_types::{
     alloc_slice,
     Address,
-    BlockContext,
     BlockContextReader,
+    BlockContextV1,
     Bytes,
     ContextFreeNativeAPI,
-    ContractContext,
     ContractContextReader,
+    ContractContextV1,
     ExitCode,
     NativeAPI,
     SharedAPI,
     SharedContextInputV1,
     SharedContextReader,
-    TxContext,
     TxContextReader,
+    TxContextV1,
     B256,
     F254,
     GAS_LIMIT_SYSCALL_BALANCE,
@@ -79,7 +79,7 @@ impl<API: NativeAPI> SharedContextImpl<API> {
                 [0u8; SharedContextInputV1::FLUENT_HEADER_SIZE];
             self.native_sdk.read(&mut header_input, 0);
 
-            let result = FluentABI::<SharedContextInputV1>::decode(&&header_input[..], 0).unwrap();
+            let result = CompactABI::<SharedContextInputV1>::decode(&&header_input[..], 0).unwrap();
 
             result
         });
@@ -199,15 +199,15 @@ impl<'a> ContractContextReader for SharedContextReaderImpl<'a> {
     }
 }
 impl<'a> SharedContextReader for SharedContextReaderImpl<'a> {
-    fn clone_block_context(&self) -> BlockContext {
+    fn clone_block_context(&self) -> BlockContextV1 {
         self.0.block.clone()
     }
 
-    fn clone_tx_context(&self) -> TxContext {
+    fn clone_tx_context(&self) -> TxContextV1 {
         self.0.tx.clone()
     }
 
-    fn clone_contract_context(&self) -> ContractContext {
+    fn clone_contract_context(&self) -> ContractContextV1 {
         self.0.contract.clone()
     }
 }

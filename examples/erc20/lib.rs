@@ -199,7 +199,7 @@ mod test {
         address,
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
-        ContractContext,
+        ContractContextV1,
     };
     use hex_literal::hex;
     use serial_test::serial;
@@ -211,7 +211,7 @@ mod test {
     ) {
         sdk.inner.borrow_mut().native_sdk.take_output();
         sdk.inner.borrow_mut().native_sdk.set_input(input);
-        sdk.rewrite_contract_context(ContractContext {
+        sdk.rewrite_contract_context(ContractContextV1 {
             caller: caller.unwrap_or_default(),
             ..Default::default()
         });
@@ -222,7 +222,7 @@ mod test {
         caller: Option<Address>,
     ) -> JournalState<TestingContext> {
         JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 caller: caller.unwrap_or_default(),
                 ..Default::default()
             })
