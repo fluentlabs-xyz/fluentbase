@@ -7,10 +7,10 @@ use fluentbase_sdk::{
     alloc_slice,
     basic_entrypoint,
     derive::{solidity_storage, Contract},
-    SharedAPI,
-    U256,
     Address,
     ContractContextReader,
+    SharedAPI,
+    U256,
 };
 
 #[derive(Contract)]
@@ -53,9 +53,9 @@ mod tests {
     use fluentbase_sdk::{
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
+        Address,
         ContractContext,
         U256,
-        Address,
     };
     use hex_literal::hex;
 

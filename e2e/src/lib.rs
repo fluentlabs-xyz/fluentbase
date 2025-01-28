@@ -25,7 +25,8 @@ mod stateless;
 mod utils;
 
 #[cfg(test)]
-mod multicall;
-#[cfg(test)]
 mod constructor;
+#[cfg(test)]
 mod deployer;
+#[cfg(test)]
+mod multicall;
