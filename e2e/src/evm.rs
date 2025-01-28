@@ -1,7 +1,6 @@
 use crate::utils::{EvmTestingContext, TxBuilder};
-use alloy_sol_types::{sol, SolCall};
 use core::str::from_utf8;
-use fluentbase_sdk::{address, calc_create_address, runtime::TestingContext, Address, Bytes, U256};
+use fluentbase_sdk::{address, calc_create_address, runtime::TestingContext, Address, U256};
 use hex_literal::hex;
 
 #[test]
