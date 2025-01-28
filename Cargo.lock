@@ -2928,6 +2928,7 @@ dependencies = [
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.15.2",
+ "hex",
 ]
 
 [[package]]
