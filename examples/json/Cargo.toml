@@ -1,0 +1,19 @@
+[package]
+name = "fluentbase-example-json"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+serde = { workspace = true }
+serde-json-core = { version = "0.6.0" }
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std"
+]
