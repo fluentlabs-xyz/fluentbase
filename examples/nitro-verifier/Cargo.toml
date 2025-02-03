@@ -1,0 +1,27 @@
+[package]
+name = "fluentbase-example-nitro-verifier"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+hex-literal = { version = "0.4.1", default-features = false }
+#serde_bytes = { version = "0.11.15", default-features = false, features = ["alloc"] }
+#serde_cbor = { version = "0.11.2", default-features = false, features = ["alloc"] }
+#serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+#serde_repr = { version = "0.1.19", default-features = false }
+#minicbor = { version = "0.25.1", default-features = false, features = ["alloc", "derive"] }
+coset = { version = "0.3.8", default-features = false }
+ciborium = { version = "^0.2.1", default-features = false }
+ciborium-io = { version = "^0.2.0", default-features = false, features = ["alloc"] }
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std"
+]
+
