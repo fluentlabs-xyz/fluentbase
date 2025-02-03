@@ -12,6 +12,7 @@ use fluentbase_sdk::{
     SharedAPI,
     U256,
 };
+
 #[derive(Contract)]
 struct NITROVERIFIER<SDK> {
     sdk: SDK,
@@ -25,7 +26,7 @@ pub trait NITROVERIFIERAPI {
 solidity_storage! {
     mapping(Address=>U256) Values;
 }
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct AttestationDoc {
     /// Issuing NSM ID
     pub module_id: String,
@@ -56,51 +57,136 @@ pub struct AttestationDoc {
     pub nonce: Option<Vec<u8>>,
 }
 
+static NITRO_ROOT_CA_BYTES: &[u8] = include_bytes!("nitro.pem");
+
+static SUPPORTED_SIG_ALGS: &[&webpki::SignatureAlgorithm] = &[
+    &webpki::ECDSA_P256_SHA256,
+    &webpki::ECDSA_P256_SHA384,
+    &webpki::ECDSA_P384_SHA256,
+    &webpki::ECDSA_P384_SHA384,
+    &webpki::ED25519,
+    &webpki::RSA_PSS_2048_8192_SHA256_LEGACY_KEY,
+    &webpki::RSA_PSS_2048_8192_SHA384_LEGACY_KEY,
+    &webpki::RSA_PSS_2048_8192_SHA512_LEGACY_KEY,
+    &webpki::RSA_PKCS1_2048_8192_SHA256,
+    &webpki::RSA_PKCS1_2048_8192_SHA384,
+    &webpki::RSA_PKCS1_2048_8192_SHA512,
+    &webpki::RSA_PKCS1_3072_8192_SHA384,
+];
+
+pub fn validate_cert_trust_chain(target: &[u8], intermediates: &[&[u8]]) {
+    let end_entity_cert = webpki::EndEntityCert::try_from(target).unwrap();
+
+    let (_, nitro_pem_cert) = x509_parser::pem::parse_x509_pem(NITRO_ROOT_CA_BYTES).unwrap();
+    let nitro_trust_anchor =
+        [webpki::TrustAnchor::try_from_cert_der(&nitro_pem_cert.contents).unwrap()];
+    let server_trust_anchors = webpki::TlsServerTrustAnchors(&nitro_trust_anchor);
+
+    let now = 1695050165;
+    let time = webpki::Time::from_seconds_since_unix_epoch(now);
+
+    end_entity_cert
+        .verify_is_valid_tls_server_cert(
+            SUPPORTED_SIG_ALGS,
+            &server_trust_anchors,
+            intermediates,
+            time,
+        )
+        .unwrap();
+}
+
 impl AttestationDoc {
     pub fn from_slice(slice: &[u8]) -> Self {
-        let value: ciborium::Value = ciborium::de::from_reader(slice).unwrap();
-        let mut a = value.into_array().unwrap();
-        assert_eq!(a.len(), 9);
-        Self {
-            nonce: match a.remove(8) {
-                ciborium::Value::Bytes(b) => Some(b),
-                ciborium::Value::Null => None,
-                _ => panic!("unexpected type"),
-            },
-            user_data: match a.remove(7) {
-                ciborium::Value::Bytes(b) => Some(b),
-                ciborium::Value::Null => None,
-                _ => panic!("unexpected type"),
-            },
-            public_key: match a.remove(6) {
-                ciborium::Value::Bytes(b) => Some(b),
-                ciborium::Value::Null => None,
-                _ => panic!("unexpected type"),
-            },
-            cabundle: a
-                .remove(5)
-                .into_array()
-                .unwrap()
-                .into_iter()
-                .map(|x| x.into_bytes().unwrap())
-                .collect(),
-            certificate: a.remove(4).into_bytes().unwrap(),
-            pcrs: a
-                .remove(3)
-                .into_map()
-                .unwrap()
-                .into_iter()
-                .map(|x| {
-                    (
-                        i128::from(x.0.into_integer().unwrap()) as u64,
-                        x.1.into_bytes().unwrap(),
-                    )
-                })
-                .collect(),
-            timestamp: i128::from(a.remove(2).into_integer().unwrap()) as u64,
-            digest: a.remove(1).into_text().unwrap(),
-            module_id: a.remove(0).into_text().unwrap(),
+        let value: ciborium::Value =
+            ciborium::de::from_reader(slice).expect("attestation document should be cbor encoded");
+        let mut doc = Self::default();
+        for (key, value) in value
+            .into_map()
+            .expect("attestation document should be a cbor map")
+            .into_iter()
+        {
+            match key
+                .as_text()
+                .expect("attestation document key should be a cbor text")
+            {
+                "module_id" => {
+                    doc.module_id = value
+                        .into_text()
+                        .expect("attestation.module_id should be of text type");
+                }
+                "digest" => {
+                    doc.digest = value
+                        .into_text()
+                        .expect("attestation.digest should be of text type");
+                }
+                "timestamp" => {
+                    doc.timestamp = i128::from(
+                        value
+                            .into_integer()
+                            .expect("attestation.timestamp should be an integer"),
+                    ) as u64;
+                }
+                "pcrs" => {
+                    doc.pcrs = value
+                        .into_map()
+                        .expect("attestation.pcrs should be a map")
+                        .into_iter()
+                        .map(|x| {
+                            (
+                                i128::from(
+                                    x.0.into_integer()
+                                        .expect("attestation.pcrs keys should be integers"),
+                                ) as u64,
+                                x.1.into_bytes()
+                                    .expect("attestation.pcrs values should be bytes"),
+                            )
+                        })
+                        .collect();
+                }
+                "certificate" => {
+                    doc.certificate = value
+                        .into_bytes()
+                        .expect("attestation.certificate should be bytes");
+                }
+                "cabundle" => {
+                    doc.cabundle = value
+                        .into_array()
+                        .expect("attestation.cabundle should be an array")
+                        .into_iter()
+                        .map(|x| {
+                            x.into_bytes()
+                                .expect("attestation.cabundle elements should be bytes")
+                        })
+                        .collect();
+                }
+                "public_key" => {
+                    doc.public_key = match value {
+                        ciborium::Value::Bytes(b) => Some(b),
+                        ciborium::Value::Null => None,
+                        _ => panic!("attestation.public_key should be bytes or null"),
+                    };
+                }
+                "user_data" => {
+                    doc.user_data = match value {
+                        ciborium::Value::Bytes(b) => Some(b),
+                        ciborium::Value::Null => None,
+                        _ => panic!("attestation.user_data should be bytes or null"),
+                    };
+                }
+                "nonce" => {
+                    doc.nonce = match value {
+                        ciborium::Value::Bytes(b) => Some(b),
+                        ciborium::Value::Null => None,
+                        _ => panic!("attestation.nonce should be bytes or null"),
+                    };
+                }
+                _ => panic!("unexpected key encountered in attestation document"),
+            }
         }
+        let cabundle: Vec<&[u8]> = doc.cabundle.iter().map(|x| &x[..]).collect();
+        validate_cert_trust_chain(&doc.certificate, &cabundle);
+        let (_, parsed_cert) = x509_parser::parse_x509_certificate(&doc.certificate).unwrap();
+        doc
     }
 }
 
@@ -164,6 +250,5 @@ mod tests {
             .native_sdk
             .take_output();
         println!("{:?}", String::from_utf8(output));
-        println!("XUUUI");
     }
 }
