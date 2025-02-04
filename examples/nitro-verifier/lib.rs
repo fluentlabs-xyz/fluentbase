@@ -2,8 +2,9 @@
 #![allow(dead_code)]
 extern crate alloc;
 extern crate fluentbase_sdk;
-use alloc::format;
+use alloc::{format, string::String, vec::Vec};
 use coset::CborSerializable;
+use der::{referenced::OwnedToRef, Decode, DecodePem, Encode};
 use fluentbase_sdk::{
     alloc_slice,
     basic_entrypoint,
@@ -12,7 +13,9 @@ use fluentbase_sdk::{
     SharedAPI,
     U256,
 };
-
+use p384::ecdsa::signature::Verifier;
+use spki::{AlgorithmIdentifierOwned, DecodePublicKey};
+use x509_cert::certificate::Certificate;
 #[derive(Contract)]
 struct NITROVERIFIER<SDK> {
     sdk: SDK,
@@ -59,40 +62,42 @@ pub struct AttestationDoc {
 
 static NITRO_ROOT_CA_BYTES: &[u8] = include_bytes!("nitro.pem");
 
-static SUPPORTED_SIG_ALGS: &[&webpki::SignatureAlgorithm] = &[
-    &webpki::ECDSA_P256_SHA256,
-    &webpki::ECDSA_P256_SHA384,
-    &webpki::ECDSA_P384_SHA256,
-    &webpki::ECDSA_P384_SHA384,
-    &webpki::ED25519,
-    &webpki::RSA_PSS_2048_8192_SHA256_LEGACY_KEY,
-    &webpki::RSA_PSS_2048_8192_SHA384_LEGACY_KEY,
-    &webpki::RSA_PSS_2048_8192_SHA512_LEGACY_KEY,
-    &webpki::RSA_PKCS1_2048_8192_SHA256,
-    &webpki::RSA_PKCS1_2048_8192_SHA384,
-    &webpki::RSA_PKCS1_2048_8192_SHA512,
-    &webpki::RSA_PKCS1_3072_8192_SHA384,
-];
+pub fn verify_signature(
+    cert: &Certificate,
+    signed_data: &[u8],
+    signature: &[u8],
+    algo: &AlgorithmIdentifierOwned,
+) {
+    let spki = &cert.tbs_certificate.subject_public_key_info;
 
-pub fn validate_cert_trust_chain(target: &[u8], intermediates: &[&[u8]]) {
-    let end_entity_cert = webpki::EndEntityCert::try_from(target).unwrap();
+    match algo.oid {
+        ecdsa::ECDSA_SHA384_OID => {
+            let signature = p384::ecdsa::DerSignature::try_from(signature).unwrap();
+            let key = p384::ecdsa::VerifyingKey::from_sec1_bytes(
+                spki.subject_public_key.as_bytes().unwrap(),
+            )
+            .unwrap();
+            key.verify(signed_data, &signature).unwrap();
+        }
+        _ => {
+            panic!("Unsupported ECDSA algorithm");
+        }
+    };
+}
 
-    let (_, nitro_pem_cert) = x509_parser::pem::parse_x509_pem(NITRO_ROOT_CA_BYTES).unwrap();
-    let nitro_trust_anchor =
-        [webpki::TrustAnchor::try_from_cert_der(&nitro_pem_cert.contents).unwrap()];
-    let server_trust_anchors = webpki::TlsServerTrustAnchors(&nitro_trust_anchor);
+pub fn verify_cert_signature(cert: &Certificate, signed: &Certificate) {
+    if cert.tbs_certificate.subject != signed.tbs_certificate.issuer {
+        panic!("Unsupported certificate");
+    }
 
-    let now = 1695050165;
-    let time = webpki::Time::from_seconds_since_unix_epoch(now);
-
-    end_entity_cert
-        .verify_is_valid_tls_server_cert(
-            SUPPORTED_SIG_ALGS,
-            &server_trust_anchors,
-            intermediates,
-            time,
-        )
+    let signed_data = signed.tbs_certificate.to_der().unwrap();
+    let signature = signed
+        .signature
+        .as_bytes()
+        .ok_or("Could not get cert signature")
         .unwrap();
+
+    verify_signature(cert, &signed_data, signature, &signed.signature_algorithm);
 }
 
 impl AttestationDoc {
@@ -183,9 +188,10 @@ impl AttestationDoc {
                 _ => panic!("unexpected key encountered in attestation document"),
             }
         }
-        let cabundle: Vec<&[u8]> = doc.cabundle.iter().map(|x| &x[..]).collect();
-        validate_cert_trust_chain(&doc.certificate, &cabundle);
-        let (_, parsed_cert) = x509_parser::parse_x509_certificate(&doc.certificate).unwrap();
+        // let cabundle: Vec<&[u8]> = doc.cabundle.iter().map(|x| &x[..]).collect();
+        // validate_cert_trust_chain(&doc.certificate, &cabundle);
+
+        // let (_, parsed_cert) = x509_parser::parse_x509_certificate(&doc.certificate).unwrap();
         doc
     }
 }
@@ -198,10 +204,9 @@ impl<SDK: SharedAPI> NITROVERIFIER<SDK> {
         let input = alloc_slice(input_size as usize);
         self.sdk.read(input, 0);
         let sign1 = coset::CoseSign1::from_slice(&input).unwrap();
-
         let doc = AttestationDoc::from_slice(sign1.payload.unwrap().as_slice());
-        let s = format!("{:?}", doc);
-        self.sdk.write(s.as_bytes());
+        let c = x509_cert::certificate::Certificate::from_der(&doc.certificate).unwrap();
+        self.sdk.write(format!("{:?}", c).as_bytes());
     }
 }
 
@@ -216,7 +221,9 @@ mod tests {
         Address,
         ContractContext,
     };
+    // create a Sha256 object
     use hex_literal::hex;
+    use sha2::Digest;
 
     /// Helper function to rewrite input and contract context.
     fn with_test_input<T: Into<Vec<u8>>>(
@@ -250,5 +257,10 @@ mod tests {
             .native_sdk
             .take_output();
         println!("{:?}", String::from_utf8(output));
+
+        let trust_anchor =
+            Certificate::from_pem(NITRO_ROOT_CA_BYTES).expect("Failed to parse trust anchor PEM");
+
+        verify_cert_signature(&trust_anchor, &trust_anchor);
     }
 }
