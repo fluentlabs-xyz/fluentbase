@@ -2819,8 +2819,6 @@ dependencies = [
  "fluentbase-sdk",
  "hex-literal",
  "p384",
- "sha2",
- "spki",
  "x509-cert",
 ]
 
