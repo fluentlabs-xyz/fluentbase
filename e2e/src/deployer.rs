@@ -1,5 +1,5 @@
 use crate::utils::EvmTestingContext;
-use alloy_sol_types::{sol, SolCall, SolType, SolValue};
+use alloy_sol_types::{sol, SolCall, SolValue};
 use fluentbase_sdk::{Address, Bytes};
 
 /// Contract `ContractDeployer.sol` is a smart contract that deploys
@@ -61,7 +61,6 @@ fn test_evm_create_wasm_contract() {
 #[test]
 fn test_evm_create_large_wasm_contract() {
     let mut ctx = EvmTestingContext::default();
-    let owner: Address = Address::ZERO;
     deploy_via_deployer(
         &mut ctx,
         include_bytes!("../../examples/erc20/lib.wasm").into(),
