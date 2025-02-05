@@ -2817,6 +2817,7 @@ dependencies = [
  "der",
  "ecdsa",
  "fluentbase-sdk",
+ "hex",
  "hex-literal",
  "p384",
  "x509-cert",

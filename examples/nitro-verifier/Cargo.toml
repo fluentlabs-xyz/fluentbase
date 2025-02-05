@@ -12,6 +12,7 @@ x509-cert = { version = "0.2.5", default-features = false, features = ["pem"] }
 der = { version = "0.7.9", default-features = false, features = ["alloc"] }
 ecdsa = { version = "0.16.9", default-features = false, features = ["digest", "alloc", "der"] }
 p384 = { version = "0.13.0", default-features = false, features = ["ecdsa-core", "ecdsa"] }
+hex = "0.4.3"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]
