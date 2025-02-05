@@ -86,10 +86,6 @@ pub fn verify_signature(
 }
 
 pub fn verify_cert_signature(cert: &Certificate, signed: &Certificate) {
-    if cert.tbs_certificate.subject != signed.tbs_certificate.issuer {
-        panic!("Unsupported certificate");
-    }
-
     let signed_data = signed.tbs_certificate.to_der().unwrap();
     let signature = signed
         .signature
@@ -188,11 +184,19 @@ impl AttestationDoc {
                 _ => panic!("unexpected key encountered in attestation document"),
             }
         }
-        // let cabundle: Vec<&[u8]> = doc.cabundle.iter().map(|x| &x[..]).collect();
-        // validate_cert_trust_chain(&doc.certificate, &cabundle);
-
-        // let (_, parsed_cert) = x509_parser::parse_x509_certificate(&doc.certificate).unwrap();
         doc
+    }
+
+    fn verify_certificate(&self) {
+        let mut chain = Vec::new();
+        chain.push(Certificate::from_pem(NITRO_ROOT_CA_BYTES).unwrap());
+        for cert in &self.cabundle {
+            chain.push(Certificate::from_der(cert).unwrap());
+        }
+        chain.push(Certificate::from_der(&self.certificate).unwrap());
+        for i in 0..chain.len() - 1 {
+            verify_cert_signature(&chain[i], &chain[i + 1]);
+        }
     }
 }
 
@@ -206,7 +210,8 @@ impl<SDK: SharedAPI> NITROVERIFIER<SDK> {
         let sign1 = coset::CoseSign1::from_slice(&input).unwrap();
         let doc = AttestationDoc::from_slice(sign1.payload.unwrap().as_slice());
         let c = x509_cert::certificate::Certificate::from_der(&doc.certificate).unwrap();
-        self.sdk.write(format!("{:?}", c).as_bytes());
+        self.sdk
+            .write(format!("{:?}", doc.cabundle.first().unwrap()).as_bytes());
     }
 }
 
@@ -258,9 +263,8 @@ mod tests {
             .take_output();
         println!("{:?}", String::from_utf8(output));
 
-        let trust_anchor =
-            Certificate::from_pem(NITRO_ROOT_CA_BYTES).expect("Failed to parse trust anchor PEM");
-
-        verify_cert_signature(&trust_anchor, &trust_anchor);
+        let sign1 = coset::CoseSign1::from_slice(&data).unwrap();
+        let doc = AttestationDoc::from_slice(sign1.payload.unwrap().as_slice());
+        doc.verify_certificate();
     }
 }
