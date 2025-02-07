@@ -6,7 +6,6 @@ use fluentbase_sdk::address;
 // use alloy_primitives::{};
 use std::time::Instant;
 
-// #[ignore] // executes in 10+ seconds
 #[test]
 fn test_nitro_verifier_wasm_version() {
     let caller = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");

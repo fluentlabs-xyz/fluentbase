@@ -30,4 +30,5 @@ mod constructor;
 mod deployer;
 #[cfg(test)]
 mod multicall;
+#[cfg(test)]
 mod nitro;
