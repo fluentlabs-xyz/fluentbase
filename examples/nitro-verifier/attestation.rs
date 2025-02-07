@@ -190,10 +190,13 @@ pub fn parse_and_verify(slice: &[u8]) -> AttestationDoc {
     let sign1 = coset::CoseSign1::from_slice(slice).unwrap();
     debug_log!("parsing doc");
     let doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
-    debug_log!("parsing certificate");
+    debug_log!("parsing CA certificate");
     let root_cert = Certificate::from_pem(NITRO_ROOT_CA_BYTES).unwrap();
+    debug_log!("verifying CA certificate");
     verify_attestation_doc(&doc, &root_cert);
+    debug_log!("parsing certificate");
     let cert = Certificate::from_der(doc.certificate.as_slice()).unwrap();
+    debug_log!("verifying certificate");
     verify_cosesign1(&sign1, &cert);
     doc
 }
