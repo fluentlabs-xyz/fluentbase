@@ -131,6 +131,11 @@ impl EvmTestingContext {
         account.info.balance
     }
 
+    pub(crate) fn get_nonce(&mut self, address: Address) -> u64 {
+        let account = self.db.load_account(address).unwrap();
+        account.info.nonce
+    }
+
     pub(crate) fn add_balance(&mut self, address: Address, value: U256) {
         let account = self.db.load_account(address).unwrap();
         account.info.balance += value;
@@ -262,7 +267,7 @@ impl<'a> TxBuilder<'a> {
         env.tx.gas_price = U256::from(1);
         env.tx.caller = caller;
         env.tx.transact_to = TransactTo::Call(callee);
-        env.tx.gas_limit = 300_000_0000;
+        env.tx.gas_limit = 300_000_000;
         Self { ctx, env }
     }
 
@@ -283,6 +288,11 @@ impl<'a> TxBuilder<'a> {
 
     pub fn gas_price(mut self, gas_price: U256) -> Self {
         self.env.tx.gas_price = gas_price;
+        self
+    }
+
+    pub fn timestamp(mut self, timestamp: u64) -> Self {
+        self.env.block.timestamp = U256::from(timestamp);
         self
     }
 
