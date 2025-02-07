@@ -262,7 +262,7 @@ impl<'a> TxBuilder<'a> {
         env.tx.gas_price = U256::from(1);
         env.tx.caller = caller;
         env.tx.transact_to = TransactTo::Call(callee);
-        env.tx.gas_limit = 300_000_000;
+        env.tx.gas_limit = 300_000_0000;
         Self { ctx, env }
     }
 

@@ -1,6 +1,7 @@
 use alloc::{string::String, vec, vec::Vec};
 use coset::{CborSerializable, CoseError, CoseSign1};
 use der::{Decode, DecodePem, Encode};
+use fluentbase_sdk::debug_log;
 use p384::ecdsa::signature::Verifier;
 use x509_cert::certificate::Certificate;
 
@@ -185,8 +186,11 @@ fn verify_cosesign1(cosesign1: &CoseSign1, certificate: &Certificate) {
 }
 
 pub fn parse_and_verify(slice: &[u8]) -> AttestationDoc {
+    debug_log!("parsing sign");
     let sign1 = coset::CoseSign1::from_slice(slice).unwrap();
+    debug_log!("parsing doc");
     let doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap());
+    debug_log!("parsing certificate");
     let root_cert = Certificate::from_pem(NITRO_ROOT_CA_BYTES).unwrap();
     verify_attestation_doc(&doc, &root_cert);
     let cert = Certificate::from_der(doc.certificate.as_slice()).unwrap();

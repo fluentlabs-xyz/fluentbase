@@ -49,6 +49,7 @@ mod tests {
             .with_devnet_genesis()
             .build(TestingContext::empty().with_input(input))
     }
+
     #[test]
     fn test_nitro_attestation_verification() {
         // Example of valid attestation document

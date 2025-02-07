@@ -2693,7 +2693,6 @@ dependencies = [
  "fluentbase-genesis",
  "fluentbase-poseidon",
  "fluentbase-runtime",
- "fluentbase-rwasm",
  "fluentbase-sdk",
  "hex",
  "hex-literal",
