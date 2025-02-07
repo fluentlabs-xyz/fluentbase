@@ -148,7 +148,9 @@ fn verify_certificate(subject: &Certificate, issuer: &Certificate) {
         ecdsa::ECDSA_SHA384_OID => {
             let signature = p384::ecdsa::DerSignature::try_from(signature).unwrap();
             let verify_key = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key).unwrap();
+
             verify_key.verify(&signed_data, &signature).unwrap();
+            debug_log!("verified key");
         }
         _ => {
             panic!("Unsupported ECDSA algorithm");
@@ -158,7 +160,8 @@ fn verify_certificate(subject: &Certificate, issuer: &Certificate) {
 
 fn verify_attestation_doc(doc: &AttestationDoc, root_certificate: &Certificate) {
     let mut chain = Vec::new();
-    chain.push(root_certificate.clone());
+    assert!(!doc.cabundle.is_empty());
+    assert_eq!(doc.cabundle[0], root_certificate.to_der().unwrap());
     for cert in &doc.cabundle {
         chain.push(Certificate::from_der(cert).unwrap());
     }
