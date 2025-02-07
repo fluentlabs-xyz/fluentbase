@@ -193,7 +193,7 @@ impl EvmTestingContext {
         deployer: Address,
         init_bytecode: Bytes,
         nonce: u64,
-    ) -> Address {
+    ) -> (Address, u64) {
         let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
         if !result.is_success() {
             println!("{:?}", result);
@@ -206,7 +206,7 @@ impl EvmTestingContext {
         let contract_address = calc_create_address::<TestingContext>(&deployer, nonce);
         assert_eq!(contract_address, deployer.create(nonce));
 
-        contract_address
+        (contract_address, result.gas_used())
     }
 
     pub(crate) fn call_evm_tx_simple(

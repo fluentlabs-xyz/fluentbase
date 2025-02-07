@@ -1,9 +1,8 @@
 extern crate test;
 
 use crate::utils::{EvmTestingContext, TxBuilder};
-use alloy_sol_types::{sol, SolCall, SolValue};
+use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::address;
-// use alloy_primitives::{};
 use std::time::Instant;
 
 #[test]
@@ -41,11 +40,15 @@ fn test_nitro_verifier_solidity_version() {
     let mut ctx = EvmTestingContext::default();
     let caller = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
+    let start = Instant::now();
+    let mut total_gas = 0;
+
     // Step 1: Deploy CertManager.sol and NitroValidator.sol smart contracts.
     // https://github.com/base-org/nitro-validator/blob/main/src/NitroValidator.sol
     let cert_manager_bytecode = hex::decode(include_bytes!("../assets/CertManager.bin")).unwrap();
-    let cert_manager_address =
+    let (cert_manager_address, gas_used) =
         ctx.deploy_evm_tx_with_nonce(caller, cert_manager_bytecode.into(), 0);
+    total_gas += gas_used;
     let mut nitro_validator_bytecode =
         hex::decode(include_bytes!("../assets/NitroValidator.bin")).unwrap();
     let constructor_args = hex::decode(format!(
@@ -54,11 +57,9 @@ fn test_nitro_verifier_solidity_version() {
     ))
     .unwrap();
     nitro_validator_bytecode.extend(constructor_args);
-    let nitro_validator_address =
+    let (nitro_validator_address, gas_used) =
         ctx.deploy_evm_tx_with_nonce(caller, nitro_validator_bytecode.into(), 1);
-
-    let start = Instant::now();
-    let mut total_gas = 0;
+    total_gas += gas_used;
 
     // Step 2: Decode the attestation blob into "to-be-signed" and "signature" via
     // decodeAttestationTbs().
