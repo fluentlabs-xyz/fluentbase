@@ -19,17 +19,18 @@ impl SyscallDebugLog {
 
     #[cfg(feature = "debug-print")]
     pub fn fn_impl(msg: &[u8]) {
-        use std::time::Instant;
-        let now = Instant::now();
+        use std::time::SystemTime;
+        let curr_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
         let last_time = LAST_LOG_TIME.get();
-        let curr_time = now.elapsed().as_millis() as i64;
         let time_diff = if last_time > 0 {
             curr_time - last_time
         } else {
             0
         };
         LAST_LOG_TIME.set(curr_time);
-        // let now_str = now.format("%Y%m%d_%H%M%S%.3f");
         const MSG_LIMIT: usize = 1000;
         let msg = if msg.len() > MSG_LIMIT {
             &msg[..MSG_LIMIT]

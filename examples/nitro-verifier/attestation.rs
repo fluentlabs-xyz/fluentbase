@@ -198,5 +198,6 @@ pub fn parse_and_verify(slice: &[u8]) -> AttestationDoc {
     let cert = Certificate::from_der(doc.certificate.as_slice()).unwrap();
     debug_log!("verifying certificate");
     verify_cosesign1(&sign1, &cert);
+    debug_log!("all done");
     doc
 }
