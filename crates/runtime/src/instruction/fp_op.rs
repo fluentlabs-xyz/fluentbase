@@ -20,11 +20,11 @@ impl<P: FpOpField, OP: FieldOp> SyscallFpOp<P, OP> {
 
         let num_words = <P as NumWords>::WordsFieldElement::USIZE;
 
-        let x = caller.read_memory(x_ptr, num_words as u32 * 4)?;
-        let y = caller.read_memory(y_ptr, num_words as u32 * 4)?;
+        let x = caller.memory_read_vec(x_ptr as usize, num_words * 4)?;
+        let y = caller.memory_read_vec(y_ptr as usize, num_words * 4)?;
 
         let result_vec = Self::fn_impl(&x, &y);
-        caller.write_memory(x_ptr, &result_vec)?;
+        caller.memory_write(x_ptr as usize, &result_vec)?;
 
         Ok(())
     }

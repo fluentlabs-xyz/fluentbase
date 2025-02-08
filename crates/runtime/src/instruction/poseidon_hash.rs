@@ -14,7 +14,7 @@ impl SyscallPoseidonHash {
             &F254::from(caller.memory_read_fixed::<32>(fd_offset.as_usize())?),
         )
         .map_err(|err| RwasmError::ExecutionHalted(err.into_i32()))?;
-        caller.write_memory(output_offset.as_u32(), output.as_slice())?;
+        caller.memory_write(output_offset.as_usize(), output.as_slice())?;
         Ok(())
     }
 

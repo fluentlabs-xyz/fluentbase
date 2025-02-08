@@ -31,14 +31,14 @@ impl<E: EllipticCurve> SyscallWeierstrassDecompressAssign<E> {
         let num_limbs = <E::BaseField as NumLimbs>::Limbs::USIZE;
         let num_words_field_element = num_limbs / 4;
 
-        let x_bytes = caller.read_memory(
-            x_ptr + (num_limbs as u32),
-            num_words_field_element as u32 * 4,
+        let x_bytes = caller.memory_read_vec(
+            (x_ptr + (num_limbs as u32)) as usize,
+            num_words_field_element * 4,
         )?;
 
         let result_vec = Self::fn_impl(&x_bytes, sign_bit)
             .map_err(|err| RwasmError::ExecutionHalted(err.into_i32()))?;
-        caller.write_memory(x_ptr, &result_vec)?;
+        caller.memory_write(x_ptr as usize, &result_vec)?;
 
         Ok(())
     }

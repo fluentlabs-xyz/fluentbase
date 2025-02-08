@@ -7,9 +7,9 @@ pub struct SyscallPreimageCopy;
 impl SyscallPreimageCopy {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
         let (hash32_ptr, preimage_ptr) = caller.stack_pop2_as::<u32>();
-        let hash = caller.read_memory(hash32_ptr, 32)?.to_vec();
+        let hash = caller.memory_read_fixed::<32>(hash32_ptr as usize)?;
         let preimage = Self::fn_impl(caller.data_mut(), &hash)?;
-        caller.write_memory(preimage_ptr, preimage.as_ref())?;
+        caller.memory_write(preimage_ptr as usize, preimage.as_ref())?;
         Ok(())
     }
 

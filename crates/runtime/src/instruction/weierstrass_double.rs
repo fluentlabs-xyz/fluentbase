@@ -22,10 +22,10 @@ impl<E: EllipticCurve> SyscallWeierstrassDoubleAssign<E> {
         let p_ptr: u32 = caller.stack_pop_as();
 
         let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;
-        let p = caller.read_memory(p_ptr, num_words as u32 * 4)?;
+        let p = caller.memory_read_vec(p_ptr as usize, num_words * 4)?;
 
         let result_vec = Self::fn_impl(&p);
-        caller.write_memory(p_ptr, &result_vec)?;
+        caller.memory_write(p_ptr as usize, &result_vec)?;
 
         Ok(())
     }

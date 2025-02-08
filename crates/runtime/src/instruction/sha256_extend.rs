@@ -11,7 +11,7 @@ impl SyscallSha256Extend {
             // Read w[i-15].
             let w_i_minus_15 = u32::from_be_bytes(
                 caller
-                    .read_memory(w_ptr + (i - 15) * 4, 4)?
+                    .memory_read_fixed::<4>((w_ptr + (i - 15) * 4) as usize)?
                     .try_into()
                     .unwrap(),
             );
@@ -23,7 +23,7 @@ impl SyscallSha256Extend {
             // Read w[i-2].
             let w_i_minus_2 = u32::from_be_bytes(
                 caller
-                    .read_memory(w_ptr + (i - 2) * 4, 4)?
+                    .memory_read_fixed::<4>((w_ptr + (i - 2) * 4) as usize)?
                     .try_into()
                     .unwrap(),
             );
@@ -35,7 +35,7 @@ impl SyscallSha256Extend {
             // Read w[i-16].
             let w_i_minus_16 = u32::from_be_bytes(
                 caller
-                    .read_memory(w_ptr + (i - 16) * 4, 4)?
+                    .memory_read_fixed::<4>((w_ptr + (i - 16) * 4) as usize)?
                     .try_into()
                     .unwrap(),
             );
@@ -43,7 +43,7 @@ impl SyscallSha256Extend {
             // Read w[i-7].
             let w_i_minus_7 = u32::from_be_bytes(
                 caller
-                    .read_memory(w_ptr + (i - 7) * 4, 4)?
+                    .memory_read_fixed::<4>((w_ptr + (i - 7) * 4) as usize)?
                     .try_into()
                     .unwrap(),
             );
@@ -54,7 +54,7 @@ impl SyscallSha256Extend {
                 .wrapping_add(s0)
                 .wrapping_add(w_i_minus_7);
 
-            caller.write_memory(w_ptr + i * 4, &w_i.to_be_bytes())?;
+            caller.memory_write((w_ptr + i * 4) as usize, &w_i.to_be_bytes())?;
         }
 
         Ok(())

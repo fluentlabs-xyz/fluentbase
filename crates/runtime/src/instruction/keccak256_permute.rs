@@ -12,10 +12,10 @@ pub struct SyscallKeccak256Permute;
 impl SyscallKeccak256Permute {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
         let state_ptr: u32 = caller.stack_pop_as();
-        let state = caller.read_memory(state_ptr, STATE_NUM_WORDS)?;
+        let state = caller.memory_read_fixed::<{ STATE_NUM_WORDS as usize }>(state_ptr as usize)?;
 
         let result = Self::fn_impl(&state);
-        caller.write_memory(state_ptr, &result)?;
+        caller.memory_write(state_ptr as usize, &result)?;
 
         Ok(())
     }
