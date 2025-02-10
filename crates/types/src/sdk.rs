@@ -1,6 +1,6 @@
 use crate::{
     alloc_vec,
-    bytes::{Buf, BufMut, BytesMut},
+    bytes::{Buf, BytesMut},
     Account,
     AccountStatus,
     Address,
@@ -53,7 +53,7 @@ pub trait NativeAPI: ContextFreeNativeAPI {
     fn state(&self) -> u32;
     fn fuel(&self) -> u64;
     fn charge_fuel(&self, value: u64) -> u64;
-    fn exec(&self, code_hash: &F254, input: &[u8], gas_limit: u64, state: u32) -> (u64, i32);
+    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> (u64, i32);
     fn resume(
         &self,
         call_id: u32,
@@ -211,19 +211,22 @@ impl SharedContextInput {
     }
 
     pub fn decode(buf: &impl Buf) -> Result<Self, CodecError> {
-        let version = buf.chunk()[0];
-        Ok(match version {
-            0x01 => Self::V1(CompactABI::<SharedContextInputV1>::decode(buf, 1)?),
-            _ => unreachable!("unexpected version"),
-        })
+        // let version = buf.chunk()[0];
+        // Ok(match version {
+        //     0x01 => Self::V1(CompactABI::<SharedContextInputV1>::decode(buf, 1)?),
+        //     _ => unreachable!("unexpected version"),
+        // })
+        Ok(Self::V1(CompactABI::<SharedContextInputV1>::decode(
+            buf, 0,
+        )?))
     }
 
     pub fn encode(&self) -> Result<Bytes, CodecError> {
         let mut buf = BytesMut::new();
-        buf.put_u8(self.version());
+        // buf.put_u8(self.version());
         match self {
             SharedContextInput::V1(value) => {
-                CompactABI::encode(value, &mut buf, 1)?;
+                CompactABI::encode(value, &mut buf, 0)?;
             }
         }
         Ok(buf.freeze().into())
@@ -253,7 +256,7 @@ pub struct DestroyedAccountResult {
 pub struct SyscallInvocationParams {
     pub code_hash: B256,
     pub input: Bytes,
-    pub fuel_limit: u64,
+    pub gas_limit: u64,
     pub state: u32,
 }
 
@@ -343,13 +346,46 @@ pub trait SovereignAPI: ContextFreeNativeAPI {
     fn transfer(&self, from: &mut Account, to: &mut Account, value: U256) -> Result<(), ExitCode>;
 }
 
+pub struct SyscallResult<T> {
+    pub data: T,
+    pub fuel_used: u64,
+}
+
+impl<T> SyscallResult<T> {
+    pub fn new(data: T, fuel_used: u64) -> Self {
+        Self { data, fuel_used }
+    }
+}
+
+impl SyscallResult<()> {
+    pub fn empty(fuel_used: u64) -> Self {
+        Self {
+            data: (),
+            fuel_used,
+        }
+    }
+}
+
+impl<T> core::ops::Deref for SyscallResult<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+impl<T> core::ops::DerefMut for SyscallResult<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
+
 pub trait SharedAPI: ContextFreeNativeAPI {
     fn context(&self) -> impl SharedContextReader;
 
-    fn write_storage(&mut self, slot: U256, value: U256) -> (U256, U256, bool);
-    fn storage(&self, slot: &U256) -> (U256, bool);
-    fn write_transient_storage(&mut self, slot: U256, value: U256);
-    fn transient_storage(&self, slot: &U256) -> U256;
+    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
+    fn storage(&self, slot: &U256) -> SyscallResult<U256>;
+    fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
+    fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;
     fn ext_storage(&self, address: &Address, slot: &U256) -> (U256, bool);
 
     fn read(&self, target: &mut [u8], offset: u32);

@@ -25,16 +25,15 @@ impl<E: EdwardsParameters> SyscallEdwardsDecompress<E> {
         let (slice_ptr, sign) = caller.stack_pop2();
         // Read the Y bytes from memory
         let y_bytes = caller
-            .read_memory(
-                slice_ptr.as_u32() + COMPRESSED_POINT_BYTES as u32,
-                WORDS_FIELD_ELEMENT as u32 * 4,
+            .memory_read_fixed::<{ WORDS_FIELD_ELEMENT * 4 }>(
+                slice_ptr.as_usize() + COMPRESSED_POINT_BYTES,
             )?
             .try_into()
             .unwrap();
         let result_vec = Self::fn_impl(y_bytes, sign.as_u32())
             .map_err(|err| RwasmError::ExecutionHalted(err.into_i32()))?;
         // Write the decompressed X back to memory
-        caller.write_memory(slice_ptr.as_u32(), &result_vec)?;
+        caller.memory_write(slice_ptr.as_usize(), &result_vec)?;
         Ok(())
     }
 

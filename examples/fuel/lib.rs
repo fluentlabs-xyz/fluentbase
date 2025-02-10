@@ -60,10 +60,11 @@ mod tests {
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
         Address,
+        Bytes,
         ContractContextV1,
     };
 
-    fn with_test_input<T: Into<Vec<u8>>>(
+    fn with_test_input<T: Into<Bytes>>(
         input: T,
         caller: Option<Address>,
     ) -> JournalState<TestingContext> {

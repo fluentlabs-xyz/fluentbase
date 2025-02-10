@@ -47,9 +47,6 @@ impl SyscallResume {
         // during the résumé we must clear output, otherwise collision might happen
         recoverable_runtime.runtime.context_mut().clear_output();
 
-        let fuel_consumed_before_call =
-            recoverable_runtime.runtime.executor.store().fuel_consumed();
-
         // charge fuel
         if recoverable_runtime
             .runtime
@@ -60,6 +57,9 @@ impl SyscallResume {
         {
             return (0, ExitCode::OutOfGas.into_i32());
         }
+
+        let fuel_consumed_before_call =
+            recoverable_runtime.runtime.executor.store().fuel_consumed();
 
         // copy return data into return data
         let return_data_mut = recoverable_runtime

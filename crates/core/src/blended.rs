@@ -31,12 +31,12 @@ use revm_interpreter::{
     InterpreterResult,
 };
 use revm_primitives::{
+    wasm::WASM_MAX_CODE_SIZE,
     Bytecode,
     CreateScheme,
     Env,
     MAX_CALL_STACK_LIMIT,
     MAX_INITCODE_SIZE,
-    WASM_MAX_CODE_SIZE,
 };
 pub use util::{create_delegate_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
 
@@ -112,7 +112,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             use fluentbase_runtime::RuntimeContext;
             use fluentbase_sdk::runtime::RuntimeContextWrapper;
 
-            let runtime_context = RuntimeContext::root(params.fuel_limit);
+            let runtime_context = RuntimeContext::root(params.gas_limit);
             let preimage_adapter =
                 crate::helpers::SdkPreimageAdapter(contract_context.bytecode_address, &self.sdk);
             let native_sdk = RuntimeContextWrapper::new(runtime_context)
@@ -121,7 +121,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             let (fuel_consumed, exit_code) = native_sdk.exec(
                 &params.code_hash,
                 &context_input,
-                params.fuel_limit,
+                params.gas_limit,
                 params.state,
             );
             let return_data = native_sdk.return_data();

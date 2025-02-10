@@ -10,6 +10,7 @@ use fluentbase_types::{
     ExitCode,
     SyscallInvocationParams,
     B256,
+    FUEL_DENOM_RATE,
 };
 use std::fmt::{Debug, Display, Formatter};
 
@@ -58,6 +59,9 @@ impl SyscallExec {
         } else {
             caller.store().remaining_fuel().unwrap_or(u64::MAX)
         };
+        // calculate gas limit as lower bounded (for charging gas, we use upper bound rounding,
+        // that is why we need to do lower bound rounding for gas limit)
+        let gas_limit = fuel_limit / FUEL_DENOM_RATE;
         // return resumable error
         Err(RwasmError::HostInterruption(Box::new(SysExecResumable {
             params: SyscallInvocationParams {
@@ -65,7 +69,7 @@ impl SyscallExec {
                 input: Bytes::copy_from_slice(
                     &caller.memory_read_vec(input_ptr.as_usize(), input_len.as_usize())?,
                 ),
-                fuel_limit,
+                gas_limit,
                 state: state.as_u32(),
             },
             is_root: caller.store().context().call_depth == 0,
@@ -81,7 +85,7 @@ impl SyscallExec {
             caller.store_mut().context_mut(),
             &context.params.code_hash,
             context.params.input.as_ref(),
-            context.params.fuel_limit,
+            context.params.gas_limit,
             context.params.state,
         );
         caller.store_mut().try_consume_fuel(fuel_consumed)?;

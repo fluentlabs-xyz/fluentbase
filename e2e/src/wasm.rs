@@ -20,9 +20,10 @@ fn test_wasm_greeting() {
         None,
         None,
     );
+    let output = result.output().unwrap_or_default();
+    println!("{:?}", result);
     assert!(result.is_success());
-    let bytes = result.output().unwrap_or_default();
-    assert_eq!("Hello, World", from_utf8(bytes.as_ref()).unwrap());
+    assert_eq!("Hello, World", from_utf8(output.as_ref()).unwrap());
 }
 
 #[test]

@@ -84,7 +84,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
             params: SyscallInvocationParams {
                 code_hash: bytecode_account.code_hash,
                 input,
-                fuel_limit: gas.remaining(),
+                gas_limit: gas.remaining(),
                 state,
             },
             call_id: 0,

@@ -31,7 +31,7 @@ where
         for i in 0.. {
             let storage_key = key + U256::from(i);
             let value = sdk.storage(&storage_key);
-            let chunk = value.0.to_be_bytes::<32>();
+            let chunk = value.data.to_be_bytes::<32>();
 
             if i * 32 > header_size && chunk.iter().all(|&x| x == 0) {
                 break;
@@ -75,7 +75,7 @@ where
         for i in 0.. {
             let storage_key = key + U256::from(i);
             let value = sdk.storage(&storage_key);
-            let chunk = value.0.to_be_bytes::<32>();
+            let chunk = value.data.to_be_bytes::<32>();
 
             if i * 32 > header_size && chunk.iter().all(|&x| x == 0) {
                 break;
@@ -88,7 +88,8 @@ where
     fn set(sdk: &mut SDK, key: U256, value: T) {
         let buffer_size = value.size_hint();
         let mut encoded_buffer = BytesMut::with_capacity(buffer_size);
-        CompactABI::<T>::encode(&value, &mut encoded_buffer, 0).expect("Encoding failed");
+        CompactABI::<T>::encode(&value, &mut encoded_buffer, 0)
+            .unwrap_or_else(|_| unreachable!("ABI encoding failure"));
 
         let chunk_size = 32;
         let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
