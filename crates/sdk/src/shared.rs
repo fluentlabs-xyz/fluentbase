@@ -3,17 +3,15 @@ use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
 };
 use alloc::vec;
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use fluentbase_codec::{CompactABI, FluentEncoder};
 use fluentbase_types::{
     alloc_slice,
     Address,
     BlockContextReader,
-    BlockContextV1,
     Bytes,
     ContextFreeNativeAPI,
     ContractContextReader,
-    ContractContextV1,
     ExitCode,
     NativeAPI,
     SharedAPI,
@@ -21,7 +19,6 @@ use fluentbase_types::{
     SharedContextReader,
     SyscallResult,
     TxContextReader,
-    TxContextV1,
     B256,
     F254,
     FUEL_LIMIT_SYSCALL_BALANCE,
@@ -56,6 +53,7 @@ use fluentbase_types::{
 
 pub struct SharedContextImpl<API: NativeAPI> {
     native_sdk: API,
+    shared_context_input_v1: RefCell<Option<SharedContextInputV1>>,
     last_fuel_consumed: Cell<u64>,
 }
 
@@ -63,28 +61,27 @@ impl<API: NativeAPI> SharedContextImpl<API> {
     pub fn new(native_sdk: API) -> Self {
         Self {
             native_sdk,
+            shared_context_input_v1: RefCell::new(None),
             last_fuel_consumed: Cell::new(0),
         }
     }
 
-    unsafe fn shared_context_ref(&self) -> &'static SharedContextInputV1 {
-        static mut CONTEXT: Option<SharedContextInputV1> = None;
-        CONTEXT.get_or_insert_with(|| {
+    fn shared_context_ref(&self) -> &RefCell<Option<SharedContextInputV1>> {
+        let mut shared_context_input_v1 = self.shared_context_input_v1.borrow_mut();
+        shared_context_input_v1.get_or_insert_with(|| {
             let input_size = self.native_sdk.input_size() as usize;
             assert!(
                 input_size >= SharedContextInputV1::FLUENT_HEADER_SIZE,
                 "malformed input header"
             );
-
             let mut header_input: [u8; SharedContextInputV1::FLUENT_HEADER_SIZE] =
                 [0u8; SharedContextInputV1::FLUENT_HEADER_SIZE];
             self.native_sdk.read(&mut header_input, 0);
-
-            let result = CompactABI::<SharedContextInputV1>::decode(&&header_input[..], 0).unwrap();
-
+            let result = CompactABI::<SharedContextInputV1>::decode(&&header_input[..], 0)
+                .unwrap_or_else(|_| unreachable!("fluentbase: malformed input header"));
             result
         });
-        CONTEXT.as_ref().unwrap()
+        &self.shared_context_input_v1
     }
 
     pub fn commit_changes_and_exit(&mut self) -> ! {
@@ -118,105 +115,93 @@ impl<API: NativeAPI> ContextFreeNativeAPI for SharedContextImpl<API> {
     }
 }
 
-struct SharedContextReaderImpl<'a>(&'a SharedContextInputV1);
+struct SharedContextReaderImpl<'a>(&'a RefCell<Option<SharedContextInputV1>>);
 
 impl<'a> BlockContextReader for SharedContextReaderImpl<'a> {
     fn block_chain_id(&self) -> u64 {
-        self.0.block.chain_id
+        self.0.borrow().as_ref().unwrap().block.chain_id
     }
 
     fn block_coinbase(&self) -> Address {
-        self.0.block.coinbase
+        self.0.borrow().as_ref().unwrap().block.coinbase
     }
 
     fn block_timestamp(&self) -> u64 {
-        self.0.block.timestamp
+        self.0.borrow().as_ref().unwrap().block.timestamp
     }
 
     fn block_number(&self) -> u64 {
-        self.0.block.number
+        self.0.borrow().as_ref().unwrap().block.number
     }
 
     fn block_difficulty(&self) -> U256 {
-        self.0.block.difficulty
+        self.0.borrow().as_ref().unwrap().block.difficulty
     }
 
     fn block_prev_randao(&self) -> B256 {
-        self.0.block.prev_randao
+        self.0.borrow().as_ref().unwrap().block.prev_randao
     }
 
     fn block_gas_limit(&self) -> u64 {
-        self.0.block.gas_limit
+        self.0.borrow().as_ref().unwrap().block.gas_limit
     }
 
     fn block_base_fee(&self) -> U256 {
-        self.0.block.base_fee
+        self.0.borrow().as_ref().unwrap().block.base_fee
     }
 }
 impl<'a> TxContextReader for SharedContextReaderImpl<'a> {
     fn tx_gas_limit(&self) -> u64 {
-        self.0.tx.gas_limit
+        self.0.borrow().as_ref().unwrap().tx.gas_limit
     }
 
     fn tx_nonce(&self) -> u64 {
-        self.0.tx.nonce
+        self.0.borrow().as_ref().unwrap().tx.nonce
     }
 
     fn tx_gas_price(&self) -> U256 {
-        self.0.tx.gas_price
+        self.0.borrow().as_ref().unwrap().tx.gas_price
     }
 
     fn tx_gas_priority_fee(&self) -> Option<U256> {
-        self.0.tx.gas_priority_fee
+        self.0.borrow().as_ref().unwrap().tx.gas_priority_fee
     }
 
     fn tx_origin(&self) -> Address {
-        self.0.tx.origin
+        self.0.borrow().as_ref().unwrap().tx.origin
     }
 
     fn tx_value(&self) -> U256 {
-        self.0.tx.value
+        self.0.borrow().as_ref().unwrap().tx.value
     }
 }
 impl<'a> ContractContextReader for SharedContextReaderImpl<'a> {
     fn contract_address(&self) -> Address {
-        self.0.contract.address
+        self.0.borrow().as_ref().unwrap().contract.address
     }
 
     fn contract_bytecode_address(&self) -> Address {
-        self.0.contract.bytecode_address
+        self.0.borrow().as_ref().unwrap().contract.bytecode_address
     }
 
     fn contract_caller(&self) -> Address {
-        self.0.contract.caller
+        self.0.borrow().as_ref().unwrap().contract.caller
     }
 
     fn contract_is_static(&self) -> bool {
-        self.0.contract.is_static
+        self.0.borrow().as_ref().unwrap().contract.is_static
     }
 
     fn contract_value(&self) -> U256 {
-        self.0.contract.value
+        self.0.borrow().as_ref().unwrap().contract.value
     }
 }
-impl<'a> SharedContextReader for SharedContextReaderImpl<'a> {
-    fn clone_block_context(&self) -> BlockContextV1 {
-        self.0.block.clone()
-    }
-
-    fn clone_tx_context(&self) -> TxContextV1 {
-        self.0.tx.clone()
-    }
-
-    fn clone_contract_context(&self) -> ContractContextV1 {
-        self.0.contract.clone()
-    }
-}
+impl<'a> SharedContextReader for SharedContextReaderImpl<'a> {}
 
 /// SharedContextImpl always created from input
 impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     fn context(&self) -> impl SharedContextReader {
-        SharedContextReaderImpl(unsafe { self.shared_context_ref() })
+        SharedContextReaderImpl(self.shared_context_ref())
     }
 
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {

@@ -300,9 +300,6 @@ pub trait SovereignContextReader: BlockContextReader + TxContextReader {
 pub trait SharedContextReader:
     BlockContextReader + TxContextReader + ContractContextReader
 {
-    fn clone_block_context(&self) -> BlockContextV1;
-    fn clone_tx_context(&self) -> TxContextV1;
-    fn clone_contract_context(&self) -> ContractContextV1;
 }
 
 pub trait SovereignAPI: ContextFreeNativeAPI {

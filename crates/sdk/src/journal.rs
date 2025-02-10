@@ -388,19 +388,7 @@ impl<API: NativeAPI> SovereignContextReader for JournalContextReader<API> {
         self.0.borrow().tx_context.clone()
     }
 }
-impl<API: NativeAPI> SharedContextReader for JournalContextReader<API> {
-    fn clone_block_context(&self) -> BlockContextV1 {
-        self.0.borrow().block_context.clone()
-    }
-
-    fn clone_tx_context(&self) -> TxContextV1 {
-        self.0.borrow().tx_context.clone()
-    }
-
-    fn clone_contract_context(&self) -> ContractContextV1 {
-        self.0.borrow().contract_context.as_ref().unwrap().clone()
-    }
-}
+impl<API: NativeAPI> SharedContextReader for JournalContextReader<API> {}
 
 impl<API: NativeAPI> SovereignAPI for JournalState<API> {
     fn context(&self) -> impl SovereignContextReader {
