@@ -300,14 +300,14 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         }
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_local_get(&mut self, local_depth: LocalDepth) {
         let value = self.store.sp.nth_back(local_depth.to_usize());
         self.store.sp.push(value);
         self.store.ip.add(1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_local_set(&mut self, local_depth: LocalDepth) {
         let new_value = self.store.sp.pop();
         self.store
@@ -316,7 +316,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         self.store.ip.add(1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_local_tee(&mut self, local_depth: LocalDepth) {
         let new_value = self.store.sp.last();
         self.store
@@ -325,12 +325,12 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         self.store.ip.add(1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_br(&mut self, branch_offset: BranchOffset) {
         self.store.ip.offset(branch_offset.to_i32() as isize)
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_br_if(&mut self, branch_offset: BranchOffset) {
         let condition = self.store.sp.pop_as();
         if condition {
@@ -340,7 +340,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         }
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_br_if_nez(&mut self, branch_offset: BranchOffset) {
         let condition = self.store.sp.pop_as();
         if condition {
@@ -350,14 +350,14 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         }
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_br_adjust(&mut self, branch_offset: BranchOffset) {
         let drop_keep = self.fetch_drop_keep(1);
         self.store.sp.drop_keep(drop_keep);
         self.store.ip.offset(branch_offset.to_i32() as isize);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_br_adjust_if_nez(&mut self, branch_offset: BranchOffset) {
         let condition = self.store.sp.pop_as();
         if condition {
@@ -369,7 +369,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         }
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_br_table(&mut self, targets: BranchTableTargets) {
         let index: u32 = self.store.sp.pop_as();
         let max_index = targets.to_usize() - 1;
@@ -377,14 +377,14 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         self.store.ip.add(2 * normalized_index + 1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_consume_fuel(&mut self, block_fuel: BlockFuel) -> Result<(), RwasmError> {
         self.store.try_consume_fuel(block_fuel.to_u64())?;
         self.store.ip.add(1);
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_return(&mut self, drop_keep: DropKeep) -> Option<i32> {
         self.store.sp.drop_keep(drop_keep);
         self.store.value_stack.sync_stack_ptr(self.store.sp);
@@ -397,7 +397,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         }
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_return_if_nez(&mut self, drop_keep: DropKeep) -> Option<i32> {
         let condition = self.store.sp.pop_as();
         if condition {
@@ -416,7 +416,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         }
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_return_call_internal(
         &mut self,
         func_idx: CompiledFunc,
@@ -443,7 +443,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_return_call(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
         let drop_keep = self.fetch_drop_keep(1);
         self.store.sp.drop_keep(drop_keep);
@@ -455,7 +455,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_return_call_indirect(
         &mut self,
         signature_idx: SignatureIdx,
@@ -482,7 +482,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         self.execute_call_internal(false, 3, func_idx)
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_call_internal(&mut self, func_idx: CompiledFunc) -> Result<(), RwasmError> {
         self.store.ip.add(1);
         self.store.value_stack.sync_stack_ptr(self.store.sp);
@@ -508,7 +508,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_call(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
         self.store.value_stack.sync_stack_ptr(self.store.sp);
         // external call can cause interruption,
@@ -517,7 +517,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         E::call_function(Caller::new(&mut self.store), func_idx.to_u32())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_call_indirect(
         &mut self,
         signature_idx: SignatureIdx,
@@ -563,7 +563,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_signature_check(
         &mut self,
         signature_idx: SignatureIdx,
@@ -577,13 +577,13 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_drop(&mut self) {
         self.store.sp.drop();
         self.store.ip.add(1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_select(&mut self) {
         self.store.sp.eval_top3(|e1, e2, e3| {
             let condition = <bool as From<UntypedValue>>::from(e3);
@@ -596,7 +596,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         self.store.ip.add(1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_global_get(&mut self, global_idx: GlobalIdx) {
         let global_value = self
             .store
@@ -608,7 +608,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         self.store.ip.add(1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_global_set(&mut self, global_idx: GlobalIdx) {
         let new_value = self.store.sp.pop();
         self.store.global_variables.insert(global_idx, new_value);
@@ -648,14 +648,14 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         fn visit_i64_store_32(i64_store32, 4);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_memory_size(&mut self) {
         let result: u32 = self.store.global_memory.current_pages().into();
         self.store.sp.push_as(result);
         self.store.ip.add(1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_memory_grow(
         &mut self,
         mut limiter: &mut ResourceLimiterRef<'_>,
@@ -685,7 +685,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_memory_fill(&mut self) -> Result<(), RwasmError> {
         let (d, val, n) = self.store.sp.pop3();
         let n = i32::from(n) as usize;
@@ -710,7 +710,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_memory_copy(&mut self) -> Result<(), RwasmError> {
         let (d, s, n) = self.store.sp.pop3();
         let n = i32::from(n) as usize;
@@ -740,7 +740,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_memory_init(
         &mut self,
         data_segment_idx: DataSegmentIdx,
@@ -777,14 +777,14 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_data_drop(&mut self, data_segment_idx: DataSegmentIdx) {
         let data_segment = self.resolve_data_or_create(data_segment_idx);
         data_segment.drop_bytes();
         self.store.ip.add(1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_table_size(&mut self, table_idx: TableIdx) {
         let table_size = self
             .store
@@ -796,7 +796,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         self.store.ip.add(1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_table_grow(
         &mut self,
         table_idx: TableIdx,
@@ -824,7 +824,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_table_fill(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
         let (i, val, n) = self.store.sp.pop3();
         if let Some(_) = self.store.fuel_limit {
@@ -837,7 +837,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_table_get(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
         let index = self.store.sp.pop();
         let value = self
@@ -849,7 +849,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_table_set(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
         let (index, value) = self.store.sp.pop2();
         self.resolve_table(table_idx)
@@ -862,7 +862,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_table_copy(&mut self, dst_table_idx: TableIdx) -> Result<(), RwasmError> {
         let src_table_idx = self.fetch_table_index(1);
         let (d, s, n) = self.store.sp.pop3();
@@ -893,7 +893,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_table_init(
         &mut self,
         element_segment_idx: ElementSegmentIdx,
@@ -933,21 +933,21 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_element_drop(&mut self, element_segment_idx: ElementSegmentIdx) {
         let element_segment = self.resolve_element_or_create(element_segment_idx);
         element_segment.drop_items();
         self.store.ip.add(1);
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_ref_func(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
         self.store.sp.push_as(func_idx.to_u32() + FUNC_REF_OFFSET);
         self.store.ip.add(1);
         Ok(())
     }
 
-    //#[inline(always)]
+    #[inline(never)]
     pub(crate) fn visit_i32_i64_const(&mut self, untyped_value: UntypedValue) {
         self.store.sp.push(untyped_value);
         self.store.ip.add(1);

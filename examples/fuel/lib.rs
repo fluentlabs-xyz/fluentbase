@@ -60,6 +60,7 @@ mod tests {
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
         Address,
+        Bytes,
         ContractContext,
     };
 
