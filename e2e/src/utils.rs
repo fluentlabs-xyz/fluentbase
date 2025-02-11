@@ -10,7 +10,7 @@ use fluentbase_runtime::{types::NonePreimageResolver, Runtime, RuntimeContext};
 use fluentbase_sdk::{
     bytes::BytesMut,
     calc_create_address,
-    codec::FluentABI,
+    codec::CompactABI,
     create_import_linker,
     runtime::TestingContext,
     Account,
@@ -29,15 +29,14 @@ use fluentbase_sdk::{
 use revm::{
     primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, TransactTo},
     DatabaseCommit,
+    Evm,
     InMemoryDB,
-    Rwasm,
 };
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{instruction::InstructionExtra, BinaryFormat, BinaryFormatWriter, RwasmModule},
     Error,
 };
-use std::u64;
 
 #[allow(dead_code)]
 pub(crate) struct EvmTestingContext {
@@ -155,36 +154,12 @@ impl EvmTestingContext {
                 from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
             );
         }
+        if !result.is_success() {
+            try_print_utf8_error(result.output().as_ref().unwrap())
+        }
         assert!(result.is_success());
         let contract_address = calc_create_address::<TestingContext>(&deployer, 0);
         assert_eq!(contract_address, deployer.create(0));
-        // let contract_account = ctx.db.accounts.get(&contract_address).unwrap();
-        // if bytecode_type == BytecodeType::EVM {
-        //     let source_bytecode = ctx
-        //         .db
-        //         .contracts
-        //         .get(&contract_account.info.code_hash)
-        //         .unwrap()
-        //         .original_bytes()
-        //         .to_vec();
-        //     assert_eq!(contract_account.info.code_hash, keccak256(&source_bytecode));
-        //     assert!(source_bytecode.len() > 0);
-        // }
-        // if bytecode_type == BytecodeType::WASM {
-        //     let rwasm_bytecode = ctx
-        //         .db
-        //         .contracts
-        //         .get(&contract_account.info.rwasm_code_hash)
-        //         .unwrap()
-        //         .bytes()
-        //         .to_vec();
-        //     assert_eq!(
-        //         contract_account.info.rwasm_code_hash.0,
-        //         poseidon_hash(&rwasm_bytecode)
-        //     );
-        //     let is_rwasm = rwasm_bytecode.get(0).cloned().unwrap() == 0xef;
-        //     assert!(is_rwasm);
-        // }
         contract_address
     }
 
@@ -267,7 +242,7 @@ impl<'a> TxBuilder<'a> {
         env.tx.gas_price = U256::from(1);
         env.tx.caller = caller;
         env.tx.transact_to = TransactTo::Call(callee);
-        env.tx.gas_limit = 300_000_000;
+        env.tx.gas_limit = 3_000_000;
         Self { ctx, env }
     }
 
@@ -298,14 +273,27 @@ impl<'a> TxBuilder<'a> {
 
     pub fn exec(&mut self) -> ExecutionResult {
         let db = take(&mut self.ctx.db);
-        let mut evm = Rwasm::builder()
+        let mut evm = Evm::builder()
             .with_env(Box::new(take(&mut self.env)))
             .with_db(db)
             .build();
         let result = evm.transact_commit().unwrap();
-        self.ctx.db = evm.into_db();
+        (self.ctx.db, _) = evm.into_db_and_env_with_handler_cfg();
         result
     }
+}
+
+pub(crate) fn try_print_utf8_error(mut output: &[u8]) {
+    if output.starts_with(&[0x08, 0xc3, 0x79, 0xa0]) {
+        output = &output[68..];
+    }
+    println!(
+        "output: 0x{} ({})",
+        hex::encode(&output),
+        from_utf8(output)
+            .unwrap_or("can't decode utf-8")
+            .trim_end_matches("\0")
+    );
 }
 
 pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {
@@ -322,7 +310,7 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
             contract: Default::default(),
         };
         let mut buf = BytesMut::new();
-        FluentABI::encode(&shared_ctx, &mut buf, 0).unwrap();
+        CompactABI::encode(&shared_ctx, &mut buf, 0).unwrap();
         buf.extend_from_slice(input_data);
         buf.freeze().to_vec()
     };
@@ -340,11 +328,7 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
         result.exit_code,
         ExitCode::from(result.exit_code)
     );
-    println!(
-        "output: 0x{} ({})",
-        hex::encode(&result.output),
-        from_utf8(&result.output).unwrap_or("can't decode utf-8")
-    );
+    try_print_utf8_error(&result.output[..]);
     println!("fuel consumed: {}", result.fuel_consumed);
     if result.exit_code != 0 {
         let logs = &runtime

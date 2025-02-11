@@ -54,30 +54,31 @@ mod tests {
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
         Address,
-        ContractContext,
+        Bytes,
+        ContractContextV1,
         U256,
     };
     use hex_literal::hex;
 
-    fn rewrite_input<T: Into<Vec<u8>>>(
+    fn rewrite_input<T: Into<Bytes>>(
         sdk: &mut JournalState<TestingContext>,
         input: T,
         caller: Option<Address>,
     ) {
         sdk.inner.borrow_mut().native_sdk.take_output();
         sdk.inner.borrow_mut().native_sdk.set_input(input);
-        sdk.rewrite_contract_context(ContractContext {
+        sdk.rewrite_contract_context(ContractContextV1 {
             caller: caller.unwrap_or_default(),
             ..Default::default()
         });
     }
     /// Helper function to rewrite input and contract context.
-    fn with_test_input<T: Into<Vec<u8>>>(
+    fn with_test_input<T: Into<Bytes>>(
         input: T,
         caller: Option<Address>,
     ) -> JournalState<TestingContext> {
         JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 caller: caller.unwrap_or_default(),
                 ..Default::default()
             })

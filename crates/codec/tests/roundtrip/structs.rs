@@ -1,9 +1,9 @@
 use super::*;
 
-// TODO: d1r1 Investigate dynamic offset requirements for FluentABI encoding
+// TODO: d1r1 Investigate dynamic offset requirements for CompactABI encoding
 // Questions to address:
 // - Should dynamic types (Bytes, Vec) have offset table like in SolidityABI?
-// - How does FluentABI handle nested dynamic fields?
+// - How does CompactABI handle nested dynamic fields?
 // - Do we need to modify the encoding format for better WASM compatibility?
 //
 // Related references:
@@ -20,7 +20,7 @@ fn test_struct_wasm() {
         bytes_val: Bytes,
         vec_val: Vec<u32>,
     }
-    // Reference encoded data for FluentABI format
+    // Reference encoded data for CompactABI format
     let expected_encoded = hex::decode(concat!(
         "01000000",                 // bool_val: true
         "18000000050000000",        // bytes_val offset and data size
@@ -37,9 +37,9 @@ fn test_struct_wasm() {
         vec_val: vec![10, 20, 30],
     };
 
-    // Encode using FluentABI
+    // Encode using CompactABI
     let mut buf = BytesMut::new();
-    FluentABI::encode(&test_struct, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_struct, &mut buf, 0).unwrap();
     let encoded = buf.freeze();
 
     // Verify encoding matches reference data
@@ -50,7 +50,7 @@ fn test_struct_wasm() {
     );
 
     // Verify round-trip encoding/decoding
-    let decoded = FluentABI::<TestStruct>::decode(&encoded, 0).unwrap();
+    let decoded = CompactABI::<TestStruct>::decode(&encoded, 0).unwrap();
     assert_eq!(decoded, test_struct, "Round-trip encoding/decoding failed");
 }
 

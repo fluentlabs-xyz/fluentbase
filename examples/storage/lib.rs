@@ -30,17 +30,17 @@ mod test {
     use fluentbase_sdk::{
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
-        ContractContext,
+        ContractContextV1,
     };
     use hex_literal::hex;
     use serial_test::serial;
 
-    fn with_test_input<T: Into<Vec<u8>>>(
+    fn with_test_input<T: Into<Bytes>>(
         input: T,
         caller: Option<Address>,
     ) -> JournalState<TestingContext> {
         JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 caller: caller.unwrap_or_default(),
                 ..Default::default()
             })

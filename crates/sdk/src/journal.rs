@@ -11,12 +11,12 @@ use fluentbase_genesis::{
 use fluentbase_types::{
     Account,
     AccountStatus,
-    BlockContext,
     BlockContextReader,
+    BlockContextV1,
     CallPrecompileResult,
     ContextFreeNativeAPI,
-    ContractContext,
     ContractContextReader,
+    ContractContextV1,
     DestroyedAccountResult,
     ExitCode,
     IsColdAccess,
@@ -26,8 +26,9 @@ use fluentbase_types::{
     SharedContextReader,
     SovereignAPI,
     SovereignContextReader,
-    TxContext,
+    SyscallResult,
     TxContextReader,
+    TxContextV1,
     WriteStorageResult,
     F254,
     STATE_MAIN,
@@ -72,9 +73,9 @@ pub struct JournalStateBuilder {
     accounts: Option<HashMap<Address, Account>>,
     storage: Option<HashMap<(Address, U256), U256>>,
     preimages: Option<HashMap<B256, (Bytes, u32)>>,
-    block_context: BlockContext,
-    tx_context: TxContext,
-    contract_context: Option<ContractContext>,
+    block_context: BlockContextV1,
+    tx_context: TxContextV1,
+    contract_context: Option<ContractContextV1>,
 }
 
 impl JournalStateBuilder {
@@ -179,30 +180,30 @@ impl JournalStateBuilder {
             .insert(hash, (preimage, 1));
     }
 
-    pub fn with_block_context(mut self, block_context: BlockContext) -> Self {
+    pub fn with_block_context(mut self, block_context: BlockContextV1) -> Self {
         self.add_block_context(block_context);
         self
     }
 
-    pub fn add_block_context(&mut self, block_context: BlockContext) {
+    pub fn add_block_context(&mut self, block_context: BlockContextV1) {
         self.block_context = block_context;
     }
 
-    pub fn with_tx_context(mut self, tx_context: TxContext) -> Self {
+    pub fn with_tx_context(mut self, tx_context: TxContextV1) -> Self {
         self.add_tx_context(tx_context);
         self
     }
 
-    pub fn add_tx_context(&mut self, tx_context: TxContext) {
+    pub fn add_tx_context(&mut self, tx_context: TxContextV1) {
         self.tx_context = tx_context;
     }
 
-    pub fn with_contract_context(mut self, contract_context: ContractContext) -> Self {
+    pub fn with_contract_context(mut self, contract_context: ContractContextV1) -> Self {
         self.add_contract_context(contract_context);
         self
     }
 
-    pub fn add_contract_context(&mut self, contract_context: ContractContext) {
+    pub fn add_contract_context(&mut self, contract_context: ContractContextV1) {
         self.contract_context.replace(contract_context);
     }
 }
@@ -219,9 +220,9 @@ pub struct JournalStateInner<API: NativeAPI> {
     pub native_sdk: API,
     transient_storage: HashMap<(Address, U256), U256>,
     // block/tx/contract contexts
-    block_context: BlockContext,
-    tx_context: TxContext,
-    contract_context: Option<ContractContext>,
+    block_context: BlockContextV1,
+    tx_context: TxContextV1,
+    contract_context: Option<ContractContextV1>,
 }
 
 impl<API: NativeAPI> JournalStateInner<API> {
@@ -257,11 +258,11 @@ impl<API: NativeAPI> JournalState<API> {
         builder.build(native_sdk)
     }
 
-    pub fn rewrite_tx_context(&mut self, tx_context: TxContext) {
+    pub fn rewrite_tx_context(&mut self, tx_context: TxContextV1) {
         self.inner.borrow_mut().tx_context = tx_context;
     }
 
-    pub fn rewrite_contract_context(&mut self, contract_context: ContractContext) {
+    pub fn rewrite_contract_context(&mut self, contract_context: ContractContextV1) {
         self.inner.borrow_mut().contract_context = Some(contract_context);
     }
 }
@@ -379,27 +380,15 @@ impl<API: NativeAPI> ContractContextReader for JournalContextReader<API> {
     }
 }
 impl<API: NativeAPI> SovereignContextReader for JournalContextReader<API> {
-    fn clone_block_context(&self) -> BlockContext {
+    fn clone_block_context(&self) -> BlockContextV1 {
         self.0.borrow().block_context.clone()
     }
 
-    fn clone_tx_context(&self) -> TxContext {
+    fn clone_tx_context(&self) -> TxContextV1 {
         self.0.borrow().tx_context.clone()
     }
 }
-impl<API: NativeAPI> SharedContextReader for JournalContextReader<API> {
-    fn clone_block_context(&self) -> BlockContext {
-        self.0.borrow().block_context.clone()
-    }
-
-    fn clone_tx_context(&self) -> TxContext {
-        self.0.borrow().tx_context.clone()
-    }
-
-    fn clone_contract_context(&self) -> ContractContext {
-        self.0.borrow().contract_context.as_ref().unwrap().clone()
-    }
-}
+impl<API: NativeAPI> SharedContextReader for JournalContextReader<API> {}
 
 impl<API: NativeAPI> SovereignAPI for JournalState<API> {
     fn context(&self) -> impl SovereignContextReader {
@@ -635,39 +624,40 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         JournalContextReader(ctx)
     }
 
-    fn write_storage(&mut self, slot: U256, value: U256) -> (U256, U256, bool) {
+    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
         let caller = {
             let ctx = self.inner.borrow_mut();
             ctx.contract_context.as_ref().map(|v| v.address).unwrap()
         };
         SovereignAPI::write_storage(self, caller, slot, value);
-
-        (U256::default(), U256::default(), false)
+        SyscallResult::empty(0)
     }
 
-    fn storage(&self, slot: &U256) -> (U256, bool) {
+    fn storage(&self, slot: &U256) -> SyscallResult<U256> {
         let caller = {
             let ctx = self.inner.borrow_mut();
             ctx.contract_context.as_ref().map(|v| v.address).unwrap()
         };
         let (value, _) = SovereignAPI::storage(self, &caller, slot);
-        (value, false)
+        SyscallResult::new(value, 0)
     }
 
-    fn write_transient_storage(&mut self, slot: U256, value: U256) {
+    fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
         let caller = {
             let ctx = self.inner.borrow_mut();
             ctx.contract_context.as_ref().map(|v| v.address).unwrap()
         };
         SovereignAPI::write_transient_storage(self, caller, slot, value);
+        SyscallResult::empty(0)
     }
 
-    fn transient_storage(&self, slot: &U256) -> U256 {
+    fn transient_storage(&self, slot: &U256) -> SyscallResult<U256> {
         let caller = {
             let ctx = self.inner.borrow_mut();
             ctx.contract_context.as_ref().map(|v| v.address).unwrap()
         };
-        SovereignAPI::transient_storage(self, &caller, slot)
+        let value = SovereignAPI::transient_storage(self, &caller, slot);
+        SyscallResult::new(value, 0)
     }
 
     fn ext_storage(&self, address: &Address, slot: &U256) -> (U256, bool) {

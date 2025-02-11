@@ -32,17 +32,18 @@ mod tests {
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
         Address,
-        ContractContext,
+        Bytes,
+        ContractContextV1,
     };
     use hex_literal::hex;
 
     /// Helper function to rewrite input and contract context.
-    fn with_test_input<T: Into<Vec<u8>>>(
+    fn with_test_input<T: Into<Bytes>>(
         input: T,
         caller: Option<Address>,
     ) -> JournalState<TestingContext> {
         JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 caller: caller.unwrap_or_default(),
                 ..Default::default()
             })

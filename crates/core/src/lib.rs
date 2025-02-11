@@ -6,4 +6,4 @@ extern crate core;
 
 pub mod blended;
 pub mod helpers;
-mod types;
+pub mod types;
