@@ -268,7 +268,7 @@ fn test_vector_solidity_empty() {
 
 #[test]
 fn test_vector_wasm_nested() {
-    // Define expected encoding for FluentABI nested vector format:
+    // Define expected encoding for CompactABI nested vector format:
     // Header (main array):
     // - 4 bytes: number of vectors (3)
     // - 4 bytes: offset to first vector (12)
@@ -412,7 +412,7 @@ fn test_vector_solidity_partial_decode() {
 
 #[test]
 fn test_vector_wasm_partial_decode() {
-    // Define expected encoding for FluentABI vector:
+    // Define expected encoding for CompactABI vector:
     // - First 4 bytes: length of vector (5)
     // - Next 4 bytes: offset to data (12)
     // - Next 4 bytes: size of data in bytes (20)
@@ -440,7 +440,7 @@ fn test_vector_wasm_partial_decode() {
     assert_eq!(
         encoded.to_vec(),
         expected_encoded,
-        "FluentABI vector encoding doesn't match expected value"
+        "CompactABI vector encoding doesn't match expected value"
     );
 
     // Test partial decoding - should return (offset, data_size)
@@ -517,7 +517,7 @@ fn test_map_sol_nested() {
 }
 #[test]
 fn test_map_wasm_simple() {
-    // Define expected encoding for FluentABI simple map:
+    // Define expected encoding for CompactABI simple map:
     // Header:
     // - length (4 bytes): number of pairs
     // - data_offset (4 bytes): offset to keys-values area
@@ -562,7 +562,7 @@ fn test_map_wasm_simple() {
 
 #[test]
 fn test_map_wasm_nested() {
-    // Define expected encoding for FluentABI nested map:
+    // Define expected encoding for CompactABI nested map:
     // Main header:
     // - length (4 bytes): number of outer pairs
     // - data_offset (4 bytes): offset to keys-values area

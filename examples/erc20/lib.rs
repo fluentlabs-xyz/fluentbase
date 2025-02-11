@@ -204,7 +204,7 @@ mod test {
     use hex_literal::hex;
     use serial_test::serial;
 
-    fn rewrite_input<T: Into<Vec<u8>>>(
+    fn rewrite_input<T: Into<Bytes>>(
         sdk: &mut JournalState<TestingContext>,
         input: T,
         caller: Option<Address>,
@@ -217,7 +217,7 @@ mod test {
         });
     }
 
-    fn with_test_input<T: Into<Vec<u8>>>(
+    fn with_test_input<T: Into<Bytes>>(
         input: T,
         caller: Option<Address>,
     ) -> JournalState<TestingContext> {

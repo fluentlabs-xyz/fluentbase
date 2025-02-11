@@ -54,12 +54,13 @@ mod tests {
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
         Address,
+        Bytes,
         ContractContextV1,
         U256,
     };
     use hex_literal::hex;
 
-    fn rewrite_input<T: Into<Vec<u8>>>(
+    fn rewrite_input<T: Into<Bytes>>(
         sdk: &mut JournalState<TestingContext>,
         input: T,
         caller: Option<Address>,
@@ -72,7 +73,7 @@ mod tests {
         });
     }
     /// Helper function to rewrite input and contract context.
-    fn with_test_input<T: Into<Vec<u8>>>(
+    fn with_test_input<T: Into<Bytes>>(
         input: T,
         caller: Option<Address>,
     ) -> JournalState<TestingContext> {

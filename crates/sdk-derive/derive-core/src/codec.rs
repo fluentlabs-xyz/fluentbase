@@ -62,7 +62,7 @@ impl<'a> CodecGenerator<'a> {
         let crate_name = self.determine_crate_name();
         match self.mode {
             RouterMode::Solidity => quote! { #crate_name::encoder::SolidityABI },
-            RouterMode::Fluent => quote! { #crate_name::encoder::FluentABI },
+            RouterMode::Fluent => quote! { #crate_name::encoder::CompactABI },
         }
     }
 

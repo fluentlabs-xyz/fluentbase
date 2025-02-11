@@ -133,8 +133,8 @@ impl RuntimeContext {
         self
     }
 
-    pub fn with_input(mut self, input_data: Bytes) -> Self {
-        self.input = input_data;
+    pub fn with_input<I: Into<Bytes>>(mut self, input_data: I) -> Self {
+        self.input = input_data.into();
         self
     }
 
