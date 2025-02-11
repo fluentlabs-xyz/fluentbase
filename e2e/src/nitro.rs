@@ -106,6 +106,7 @@ fn test_nitro_verifier_solidity_version() {
     }
     .abi_encode();
     let result = TxBuilder::call(&mut ctx, caller, nitro_validator_address, None)
+        .gas_limit(70_000_000)
         .input(input.into())
         .timestamp(1695050165) // ensure correct block timestamp to match certificate time window.
         .exec();
