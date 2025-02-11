@@ -3,35 +3,33 @@ use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
 };
 use alloc::vec;
-use core::cell::Cell;
-use fluentbase_codec::{FluentABI, FluentEncoder};
+use core::cell::{Cell, RefCell};
+use fluentbase_codec::{CompactABI, FluentEncoder};
 use fluentbase_types::{
     alloc_slice,
     Address,
-    BlockContext,
     BlockContextReader,
     Bytes,
     ContextFreeNativeAPI,
-    ContractContext,
     ContractContextReader,
     ExitCode,
     NativeAPI,
     SharedAPI,
     SharedContextInputV1,
     SharedContextReader,
-    TxContext,
+    SyscallResult,
     TxContextReader,
     B256,
     F254,
-    GAS_LIMIT_SYSCALL_BALANCE,
-    GAS_LIMIT_SYSCALL_DESTROY_ACCOUNT,
-    GAS_LIMIT_SYSCALL_EMIT_LOG,
-    GAS_LIMIT_SYSCALL_EXT_STORAGE_READ,
-    GAS_LIMIT_SYSCALL_PREIMAGE_SIZE,
-    GAS_LIMIT_SYSCALL_STORAGE_READ,
-    GAS_LIMIT_SYSCALL_STORAGE_WRITE,
-    GAS_LIMIT_SYSCALL_TRANSIENT_READ,
-    GAS_LIMIT_SYSCALL_TRANSIENT_WRITE,
+    FUEL_LIMIT_SYSCALL_BALANCE,
+    FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT,
+    FUEL_LIMIT_SYSCALL_EMIT_LOG,
+    FUEL_LIMIT_SYSCALL_EXT_STORAGE_READ,
+    FUEL_LIMIT_SYSCALL_PREIMAGE_SIZE,
+    FUEL_LIMIT_SYSCALL_STORAGE_READ,
+    FUEL_LIMIT_SYSCALL_STORAGE_WRITE,
+    FUEL_LIMIT_SYSCALL_TRANSIENT_READ,
+    FUEL_LIMIT_SYSCALL_TRANSIENT_WRITE,
     STATE_MAIN,
     SYSCALL_ID_BALANCE,
     SYSCALL_ID_CALL,
@@ -55,6 +53,7 @@ use fluentbase_types::{
 
 pub struct SharedContextImpl<API: NativeAPI> {
     native_sdk: API,
+    shared_context_input_v1: RefCell<Option<SharedContextInputV1>>,
     last_fuel_consumed: Cell<u64>,
 }
 
@@ -62,28 +61,27 @@ impl<API: NativeAPI> SharedContextImpl<API> {
     pub fn new(native_sdk: API) -> Self {
         Self {
             native_sdk,
+            shared_context_input_v1: RefCell::new(None),
             last_fuel_consumed: Cell::new(0),
         }
     }
 
-    unsafe fn shared_context_ref(&self) -> &'static SharedContextInputV1 {
-        static mut CONTEXT: Option<SharedContextInputV1> = None;
-        CONTEXT.get_or_insert_with(|| {
+    fn shared_context_ref(&self) -> &RefCell<Option<SharedContextInputV1>> {
+        let mut shared_context_input_v1 = self.shared_context_input_v1.borrow_mut();
+        shared_context_input_v1.get_or_insert_with(|| {
             let input_size = self.native_sdk.input_size() as usize;
             assert!(
                 input_size >= SharedContextInputV1::FLUENT_HEADER_SIZE,
                 "malformed input header"
             );
-
             let mut header_input: [u8; SharedContextInputV1::FLUENT_HEADER_SIZE] =
                 [0u8; SharedContextInputV1::FLUENT_HEADER_SIZE];
             self.native_sdk.read(&mut header_input, 0);
-
-            let result = FluentABI::<SharedContextInputV1>::decode(&&header_input[..], 0).unwrap();
-
+            let result = CompactABI::<SharedContextInputV1>::decode(&&header_input[..], 0)
+                .unwrap_or_else(|_| unreachable!("fluentbase: malformed input header"));
             result
         });
-        CONTEXT.as_ref().unwrap()
+        &self.shared_context_input_v1
     }
 
     pub fn commit_changes_and_exit(&mut self) -> ! {
@@ -117,149 +115,140 @@ impl<API: NativeAPI> ContextFreeNativeAPI for SharedContextImpl<API> {
     }
 }
 
-struct SharedContextReaderImpl<'a>(&'a SharedContextInputV1);
+struct SharedContextReaderImpl<'a>(&'a RefCell<Option<SharedContextInputV1>>);
 
 impl<'a> BlockContextReader for SharedContextReaderImpl<'a> {
     fn block_chain_id(&self) -> u64 {
-        self.0.block.chain_id
+        self.0.borrow().as_ref().unwrap().block.chain_id
     }
 
     fn block_coinbase(&self) -> Address {
-        self.0.block.coinbase
+        self.0.borrow().as_ref().unwrap().block.coinbase
     }
 
     fn block_timestamp(&self) -> u64 {
-        self.0.block.timestamp
+        self.0.borrow().as_ref().unwrap().block.timestamp
     }
 
     fn block_number(&self) -> u64 {
-        self.0.block.number
+        self.0.borrow().as_ref().unwrap().block.number
     }
 
     fn block_difficulty(&self) -> U256 {
-        self.0.block.difficulty
+        self.0.borrow().as_ref().unwrap().block.difficulty
     }
 
     fn block_prev_randao(&self) -> B256 {
-        self.0.block.prev_randao
+        self.0.borrow().as_ref().unwrap().block.prev_randao
     }
 
     fn block_gas_limit(&self) -> u64 {
-        self.0.block.gas_limit
+        self.0.borrow().as_ref().unwrap().block.gas_limit
     }
 
     fn block_base_fee(&self) -> U256 {
-        self.0.block.base_fee
+        self.0.borrow().as_ref().unwrap().block.base_fee
     }
 }
 impl<'a> TxContextReader for SharedContextReaderImpl<'a> {
     fn tx_gas_limit(&self) -> u64 {
-        self.0.tx.gas_limit
+        self.0.borrow().as_ref().unwrap().tx.gas_limit
     }
 
     fn tx_nonce(&self) -> u64 {
-        self.0.tx.nonce
+        self.0.borrow().as_ref().unwrap().tx.nonce
     }
 
     fn tx_gas_price(&self) -> U256 {
-        self.0.tx.gas_price
+        self.0.borrow().as_ref().unwrap().tx.gas_price
     }
 
     fn tx_gas_priority_fee(&self) -> Option<U256> {
-        self.0.tx.gas_priority_fee
+        self.0.borrow().as_ref().unwrap().tx.gas_priority_fee
     }
 
     fn tx_origin(&self) -> Address {
-        self.0.tx.origin
+        self.0.borrow().as_ref().unwrap().tx.origin
     }
 
     fn tx_value(&self) -> U256 {
-        self.0.tx.value
+        self.0.borrow().as_ref().unwrap().tx.value
     }
 }
 impl<'a> ContractContextReader for SharedContextReaderImpl<'a> {
     fn contract_address(&self) -> Address {
-        self.0.contract.address
+        self.0.borrow().as_ref().unwrap().contract.address
     }
 
     fn contract_bytecode_address(&self) -> Address {
-        self.0.contract.bytecode_address
+        self.0.borrow().as_ref().unwrap().contract.bytecode_address
     }
 
     fn contract_caller(&self) -> Address {
-        self.0.contract.caller
+        self.0.borrow().as_ref().unwrap().contract.caller
     }
 
     fn contract_is_static(&self) -> bool {
-        self.0.contract.is_static
+        self.0.borrow().as_ref().unwrap().contract.is_static
     }
 
     fn contract_value(&self) -> U256 {
-        self.0.contract.value
+        self.0.borrow().as_ref().unwrap().contract.value
     }
 }
-impl<'a> SharedContextReader for SharedContextReaderImpl<'a> {
-    fn clone_block_context(&self) -> BlockContext {
-        self.0.block.clone()
-    }
-
-    fn clone_tx_context(&self) -> TxContext {
-        self.0.tx.clone()
-    }
-
-    fn clone_contract_context(&self) -> ContractContext {
-        self.0.contract.clone()
-    }
-}
+impl<'a> SharedContextReader for SharedContextReaderImpl<'a> {}
 
 /// SharedContextImpl always created from input
 impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     fn context(&self) -> impl SharedContextReader {
-        SharedContextReaderImpl(unsafe { self.shared_context_ref() })
+        SharedContextReaderImpl(self.shared_context_ref())
     }
 
-    fn write_storage(&mut self, slot: U256, value: U256) -> (U256, U256, bool) {
-        let mut input: [u8; 64] = [0u8; 64];
-        if !slot.is_zero() {
-            input[0..32].copy_from_slice(slot.as_le_slice());
-        }
-        if !value.is_zero() {
-            input[32..64].copy_from_slice(value.as_le_slice());
+    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
+        let mut input = [0u8; U256::BYTES + U256::BYTES];
+        unsafe {
+            core::ptr::copy(
+                slot.as_limbs().as_ptr() as *mut u8,
+                input.as_mut_ptr(),
+                U256::BYTES,
+            );
+            core::ptr::copy(
+                value.as_limbs().as_ptr() as *mut u8,
+                input.as_mut_ptr().add(U256::BYTES),
+                U256::BYTES,
+            );
         }
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_STORAGE_WRITE,
             &input,
-            GAS_LIMIT_SYSCALL_STORAGE_WRITE,
+            FUEL_LIMIT_SYSCALL_STORAGE_WRITE,
             STATE_MAIN,
         );
-        let mut output = vec![0; 32 + 32 + 1];
-        self.native_sdk.read_output(output.as_mut_slice(), 0);
-
         self.last_fuel_consumed.set(fuel_consumed);
-        assert_eq!(exit_code, 0);
-
-        (
-            U256::from_le_slice(&output[0..32]),
-            U256::from_le_slice(&output[32..64]),
-            output[64] != 0,
-        )
+        if exit_code != 0 {
+            self.panic("write storage syscall failed");
+        }
+        SyscallResult::empty(fuel_consumed)
     }
 
-    fn storage(&self, slot: &U256) -> (U256, bool) {
+    fn storage(&self, slot: &U256) -> SyscallResult<U256> {
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_STORAGE_READ,
             slot.as_le_slice(),
-            GAS_LIMIT_SYSCALL_STORAGE_READ,
+            FUEL_LIMIT_SYSCALL_STORAGE_READ,
             STATE_MAIN,
         );
         self.last_fuel_consumed.set(fuel_consumed);
-        assert_eq!(exit_code, 0);
-        let mut output: [u8; 33] = [0u8; 33];
+        if exit_code != 0 {
+            self.panic("storage syscall failed");
+        }
+        let mut output = [0u8; U256::BYTES];
         self.native_sdk.read_output(&mut output, 0);
-        (U256::from_le_slice(&output[0..32]), output[32] != 0)
+        let value = U256::from_le_slice(&output);
+        SyscallResult::new(value, fuel_consumed)
     }
 
-    fn write_transient_storage(&mut self, slot: U256, value: U256) {
+    fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
         let mut input: [u8; 64] = [0u8; 64];
         if !slot.is_zero() {
             input[0..32].copy_from_slice(slot.as_le_slice());
@@ -270,25 +259,30 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_TRANSIENT_WRITE,
             &input,
-            GAS_LIMIT_SYSCALL_TRANSIENT_WRITE,
+            FUEL_LIMIT_SYSCALL_TRANSIENT_WRITE,
             STATE_MAIN,
         );
         self.last_fuel_consumed.set(fuel_consumed);
-        assert_eq!(exit_code, 0);
+        if exit_code != 0 {
+            self.panic("write transient storage syscall failed");
+        }
+        SyscallResult::empty(fuel_consumed)
     }
 
-    fn transient_storage(&self, slot: &U256) -> U256 {
+    fn transient_storage(&self, slot: &U256) -> SyscallResult<U256> {
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_TRANSIENT_READ,
             slot.as_le_slice(),
-            GAS_LIMIT_SYSCALL_TRANSIENT_READ,
+            FUEL_LIMIT_SYSCALL_TRANSIENT_READ,
             STATE_MAIN,
         );
         self.last_fuel_consumed.set(fuel_consumed);
-        assert_eq!(exit_code, 0);
+        if exit_code != 0 {
+            self.panic("transient storage syscall failed");
+        }
         let mut output: [u8; 32] = [0u8; 32];
         self.native_sdk.read_output(&mut output, 0);
-        U256::from_le_bytes(output)
+        SyscallResult::new(U256::from_le_slice(&output[0..32]), fuel_consumed)
     }
 
     fn ext_storage(&self, address: &Address, slot: &U256) -> (U256, bool) {
@@ -298,11 +292,13 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_EXT_STORAGE_READ,
             &input,
-            GAS_LIMIT_SYSCALL_EXT_STORAGE_READ,
+            FUEL_LIMIT_SYSCALL_EXT_STORAGE_READ,
             STATE_MAIN,
         );
         self.last_fuel_consumed.set(fuel_consumed);
-        assert_eq!(exit_code, 0);
+        if exit_code != 0 {
+            self.panic("ext storage syscall failed");
+        }
         let mut output: [u8; 33] = [0u8; 33];
         self.native_sdk.read_output(&mut output, 0);
         (U256::from_le_slice(&output[0..32]), output[32] != 0)
@@ -361,7 +357,9 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             self.native_sdk
                 .exec(&SYSCALL_ID_PREIMAGE_COPY, hash.as_ref(), 0, STATE_MAIN);
         self.last_fuel_consumed.set(fuel_consumed);
-        assert_eq!(exit_code, 0);
+        if exit_code != 0 {
+            self.panic("preimage copy syscall failed");
+        }
         let preimage = self.native_sdk.return_data();
         target.copy_from_slice(preimage.as_ref());
     }
@@ -370,11 +368,13 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_PREIMAGE_SIZE,
             hash.as_ref(),
-            GAS_LIMIT_SYSCALL_PREIMAGE_SIZE,
+            FUEL_LIMIT_SYSCALL_PREIMAGE_SIZE,
             STATE_MAIN,
         );
         self.last_fuel_consumed.set(fuel_consumed);
-        assert_eq!(exit_code, 0);
+        if exit_code != 0 {
+            self.panic("preimage size syscall failed");
+        }
         let mut output: [u8; 4] = [0u8; 4];
         self.native_sdk.read_output(&mut output, 0);
         LittleEndian::read_u32(&output)
@@ -392,21 +392,25 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         let (_, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_EMIT_LOG,
             &buffer,
-            GAS_LIMIT_SYSCALL_EMIT_LOG,
+            FUEL_LIMIT_SYSCALL_EMIT_LOG,
             STATE_MAIN,
         );
-        assert_eq!(exit_code, 0);
+        if exit_code != 0 {
+            self.panic("emit log syscall failed");
+        }
     }
 
     fn balance(&self, address: &Address) -> (U256, bool) {
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_BALANCE,
             address.as_slice(),
-            GAS_LIMIT_SYSCALL_BALANCE,
+            FUEL_LIMIT_SYSCALL_BALANCE,
             STATE_MAIN,
         );
         self.last_fuel_consumed.set(fuel_consumed);
-        assert_eq!(exit_code, 0);
+        if exit_code != 0 {
+            self.panic("balance syscall failed");
+        }
         let mut output: [u8; 33] = [0u8; 33];
         self.native_sdk.read_output(&mut output, 0);
         (U256::from_le_slice(&output[0..32]), output[32] != 0)
@@ -417,7 +421,9 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             self.native_sdk
                 .exec(&SYSCALL_ID_WRITE_PREIMAGE, preimage.as_ref(), 0, STATE_MAIN);
         self.last_fuel_consumed.set(fuel_consumed);
-        assert_eq!(exit_code, 0);
+        if exit_code != 0 {
+            self.panic("write preimage syscall failed");
+        }
         let mut output: [u8; 32] = [0u8; 32];
         self.native_sdk.read_output(&mut output, 0);
         B256::from(output)
@@ -524,11 +530,13 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         let (fuel_consumed, exit_code) = self.native_sdk.exec(
             &SYSCALL_ID_DESTROY_ACCOUNT,
             address.as_slice(),
-            GAS_LIMIT_SYSCALL_DESTROY_ACCOUNT,
+            FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT,
             STATE_MAIN,
         );
         self.last_fuel_consumed.set(fuel_consumed);
-        assert_eq!(exit_code, 0);
+        if exit_code != 0 {
+            self.panic("destroy account failed");
+        }
 
         let mut output: [u8; 1] = [0u8; 1];
         self.native_sdk.read_output(&mut output, 0);

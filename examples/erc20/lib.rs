@@ -199,30 +199,30 @@ mod test {
         address,
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
-        ContractContext,
+        ContractContextV1,
     };
     use hex_literal::hex;
     use serial_test::serial;
 
-    fn rewrite_input<T: Into<Vec<u8>>>(
+    fn rewrite_input<T: Into<Bytes>>(
         sdk: &mut JournalState<TestingContext>,
         input: T,
         caller: Option<Address>,
     ) {
         sdk.inner.borrow_mut().native_sdk.take_output();
         sdk.inner.borrow_mut().native_sdk.set_input(input);
-        sdk.rewrite_contract_context(ContractContext {
+        sdk.rewrite_contract_context(ContractContextV1 {
             caller: caller.unwrap_or_default(),
             ..Default::default()
         });
     }
 
-    fn with_test_input<T: Into<Vec<u8>>>(
+    fn with_test_input<T: Into<Bytes>>(
         input: T,
         caller: Option<Address>,
     ) -> JournalState<TestingContext> {
         JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 caller: caller.unwrap_or_default(),
                 ..Default::default()
             })

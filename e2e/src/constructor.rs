@@ -15,6 +15,7 @@ fn test_deploy_with_constructor_params() {
     input.extend(bytecode);
     input.extend(encoded_params);
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, input.into());
+    println!("contract address: {:?}", contract_address);
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
         contract_address,
@@ -22,6 +23,7 @@ fn test_deploy_with_constructor_params() {
         None,
         None,
     );
+    println!("gas used: {:?}", result.gas_used());
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!(constructor_params, bytes.to_vec());

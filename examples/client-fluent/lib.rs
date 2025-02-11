@@ -42,7 +42,7 @@ basic_entrypoint!(RouterAPIClient);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{address, bytes::BytesMut, codec::FluentABI, Address};
+    use fluentbase_sdk::{address, bytes::BytesMut, codec::CompactABI, Address};
 
     #[test]
     fn generate_target_contract_input() {
@@ -76,7 +76,7 @@ mod tests {
         decode_buf.extend_from_slice(&input[4..]);
 
         let decoded_input: (Address, U256, u64, String) =
-            FluentABI::decode(&decode_buf.freeze(), 0).unwrap();
+            CompactABI::decode(&decode_buf.freeze(), 0).unwrap();
 
         assert_eq!(decoded_input, (contract_address, value, gas_limit, msg));
     }

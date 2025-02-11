@@ -4,7 +4,7 @@ use byteorder::BE;
 use bytes::BytesMut;
 use fluentbase_codec::{
     byteorder,
-    encoder::{Encoder, FluentABI, SolidityABI, SolidityPackedABI},
+    encoder::{CompactABI, Encoder, SolidityABI, SolidityPackedABI},
     Codec,
 };
 

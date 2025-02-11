@@ -202,7 +202,7 @@ pub fn read_bytes_header_solidity<B: ByteOrder, const ALIGN: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encoder::{FluentABI, SolidityABI};
+    use crate::encoder::{CompactABI, SolidityABI};
     use alloy_sol_types::{sol_data, SolType};
     use byteorder::{BigEndian, LE};
 
@@ -287,7 +287,7 @@ mod tests {
         let original = alloy_primitives::Bytes::from(vec![1, 2, 3, 4, 5]);
 
         let mut buf = BytesMut::new();
-        FluentABI::encode(&original, &mut buf, 0).unwrap();
+        CompactABI::encode(&original, &mut buf, 0).unwrap();
 
         let encoded = buf.freeze();
         println!("encoded: {:?}", hex::encode(&encoded));

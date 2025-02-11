@@ -8,7 +8,7 @@ use fluentbase_sdk::{
     Account,
     Address,
     Bytes,
-    ContractContext,
+    ContractContextV1,
     ExitCode,
     SovereignAPI,
     B256,
@@ -74,30 +74,24 @@ impl<SDK: SovereignAPI> Host for BlendedRuntime<SDK> {
         Some(StateLoad::new(account.balance, is_cold))
     }
 
-    fn code(&mut self, address: Address) -> Option<Eip7702CodeLoad<Bytes>> {
+    fn code(&mut self, address: Address) -> Option<StateLoad<Bytes>> {
         let (account, is_cold) = self.sdk.account(&address);
         if account.is_empty() {
-            return Some(Eip7702CodeLoad::new_not_delegated(
-                Bytes::default(),
-                is_cold,
-            ));
+            return Some(StateLoad::new(Bytes::default(), is_cold));
         }
         let evm_bytecode = self
             .sdk
             .preimage(&address, &account.code_hash)
             .unwrap_or_default();
-        Some(Eip7702CodeLoad::new_not_delegated(evm_bytecode, is_cold))
+        Some(StateLoad::new(evm_bytecode, is_cold))
     }
 
-    fn code_hash(&mut self, address: Address) -> Option<Eip7702CodeLoad<B256>> {
+    fn code_hash(&mut self, address: Address) -> Option<StateLoad<B256>> {
         let (account, is_cold) = self.sdk.account(&address);
         if account.is_empty() {
-            return Some(Eip7702CodeLoad::new_not_delegated(B256::ZERO, is_cold));
+            return Some(StateLoad::new(B256::ZERO, is_cold));
         }
-        Some(Eip7702CodeLoad::new_not_delegated(
-            account.code_hash,
-            is_cold,
-        ))
+        Some(StateLoad::new(account.code_hash, is_cold))
     }
 
     fn sload(&mut self, address: Address, index: U256) -> Option<StateLoad<U256>> {
@@ -184,7 +178,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
 
     pub fn exec_evm_bytecode(
         &mut self,
-        context: ContractContext,
+        context: ContractContextV1,
         bytecode_account: Account,
         evm_bytecode: Bytecode,
         input: Bytes,
@@ -270,6 +264,9 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 InterpreterAction::EOFCreate { .. } => {
                     unreachable!("not supported EVM interpreter state: EOF")
                 }
+                _ => {
+                    unreachable!("not supported EVM interpreter state: EOF")
+                }
             }
         }
     }
@@ -344,7 +341,7 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         let (mut contract_account, _) = self.sdk.account(&target_address);
         contract_account.update_bytecode(&mut self.sdk, rwasm_bytecode, None);
 
-        let context = ContractContext {
+        let context = ContractContextV1 {
             address: target_address,
             bytecode_address: target_address,
             caller: inputs.caller,

@@ -1,7 +1,7 @@
 use fluentbase_sdk::{Bytes, ExitCode, SyscallInvocationParams};
 
 #[derive(Clone, Debug)]
-pub(crate) enum NextAction {
+pub enum NextAction {
     ExecutionResult {
         exit_code: i32,
         output: Bytes,

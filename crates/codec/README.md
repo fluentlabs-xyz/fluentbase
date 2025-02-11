@@ -16,10 +16,10 @@ introduces several optimizations and additional features for efficient data acce
 
 The library supports two main encoding modes:
 
-### FluentABI Mode
+### CompactABI Mode
 
 ```rust
-FluentABI::encode(&value, &mut buf, 0)
+CompactABI::encode(&value, &mut buf, 0)
 ```
 
 - Little-endian byte order
@@ -82,7 +82,7 @@ For dynamic types, the codec stores metadata that enables partial reading. For e
 ### Basic Structure
 
 ```rust
-use fluentbase_codec::{Codec, FluentABI};
+use fluentbase_codec::{Codec, CompactABI};
 use bytes::BytesMut;
 
 #[derive(Codec)]
@@ -94,10 +94,10 @@ struct Point {
 // Encoding
 let point = Point { x: 10, y: 20 };
 let mut buf = BytesMut::new();
-FluentABI::encode(&point, &mut buf, 0).unwrap();
+CompactABI::encode(&point, &mut buf, 0).unwrap();
 
 // Decoding
-let decoded: Point = FluentABI::decode(&buf, 0).unwrap();
+let decoded: Point = CompactABI::decode(&buf, 0).unwrap();
 ```
 
 ### Dynamic Array Example
@@ -106,9 +106,9 @@ let decoded: Point = FluentABI::decode(&buf, 0).unwrap();
 // Vector encoding with metadata
 let numbers = vec![1, 2, 3];
 
-// FluentABI encoding (with full metadata)
+// CompactABI encoding (with full metadata)
 let mut fluent_buf = BytesMut::new();
-FluentABI::encode(&numbers, &mut fluent_buf, 0).unwrap();
+CompactABI::encode(&numbers, &mut fluent_buf, 0).unwrap();
 // Format: [length:3][offset:12][size:12][1][2][3]
 
 // SolidityABI encoding

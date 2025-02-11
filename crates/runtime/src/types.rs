@@ -1,7 +1,7 @@
 use eth_trie::DB;
 use fluentbase_codec::CodecError;
 use fluentbase_rwasm::RwasmError;
-use fluentbase_types::{Bytes, F254};
+use fluentbase_types::{Bytes, B256, F254};
 use hashbrown::HashMap;
 
 pub trait PreimageResolver {
@@ -19,6 +19,30 @@ impl PreimageResolver for NonePreimageResolver {
 
     fn preimage_size(&self, _hash: &[u8; 32]) -> Option<u32> {
         None
+    }
+}
+
+#[derive(Default)]
+pub struct FixedPreimageResolver {
+    preimage: Bytes,
+    hash: B256,
+}
+
+impl FixedPreimageResolver {
+    pub fn new(preimage: Bytes, hash: B256) -> Self {
+        Self { preimage, hash }
+    }
+}
+
+impl PreimageResolver for FixedPreimageResolver {
+    fn preimage(&self, hash: &[u8; 32]) -> Option<Bytes> {
+        assert_eq!(&self.hash.0, hash, "runtime: mismatched hash");
+        Some(self.preimage.clone())
+    }
+
+    fn preimage_size(&self, hash: &[u8; 32]) -> Option<u32> {
+        assert_eq!(&self.hash.0, hash, "runtime: mismatched hash");
+        Some(self.preimage.len() as u32)
     }
 }
 

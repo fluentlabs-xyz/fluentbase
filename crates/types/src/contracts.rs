@@ -38,7 +38,26 @@ pub const PRECOMPILE_SECP256R1_VERIFY: Address =
     address!("0000000000000000000000000000000000000100");
 
 // keccak256("native_precompile")[..4] + keccak256("multicall(bytes[])")[..4]
-// pub const PRECOMPILE_MULTICALL: Address = address!("e78e5e46000000000000000000000000ac9650d8");
+pub const PRECOMPILE_MULTICALL: Address = address!("e78e5e46000000000000000000000000ac9650d8");
 
-// keccak256("precompile")[..16] + keccak256("multicall(bytes[])")[..4]
-pub const PRECOMPILE_MULTICALL: Address = address!("c4179c5a26cda29e689fe027ee5f5e4eac9650d8");
+/// Checks if the function call should be redirected to a native precompiled contract.
+///
+/// When the first four bytes of the input (function selector) match a precompile's address
+/// prefix, returns the corresponding precompiled account that should handle the call.
+///
+/// # Arguments
+/// * `input` - The complete calldata for the function call
+///
+/// # Returns
+/// * `Some(Account)` - The precompiled account if a match is found
+/// * `None` - If no matching precompile is found or input is too short
+pub fn try_resolve_precompile_account(input: &[u8]) -> Option<Address> {
+    if input.len() < 4 {
+        return None;
+    };
+    if input[..4] == PRECOMPILE_MULTICALL[16..] {
+        Some(PRECOMPILE_MULTICALL)
+    } else {
+        None
+    }
+}

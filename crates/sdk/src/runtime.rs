@@ -193,12 +193,12 @@ impl TestingContext {
         Self::new(RuntimeContext::default())
     }
 
-    pub fn with_input<I: Into<Vec<u8>>>(mut self, input: I) -> Self {
+    pub fn with_input<I: Into<Bytes>>(mut self, input: I) -> Self {
         self.set_input(input);
         self
     }
 
-    pub fn set_input<I: Into<Vec<u8>>>(&mut self, input: I) {
+    pub fn set_input<I: Into<Bytes>>(&mut self, input: I) {
         self.ctx
             .replace_with(|ctx| take(ctx).with_input(input.into()));
     }

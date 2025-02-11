@@ -10,6 +10,7 @@ mod allocator;
 mod contracts;
 mod journal;
 mod linker;
+mod rwasm;
 mod sdk;
 mod types;
 mod utils;
@@ -22,6 +23,7 @@ pub use contracts::*;
 pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use journal::*;
 pub use linker::*;
+pub use rwasm::*;
 pub use sdk::*;
 pub use types::*;
 pub use utils::*;
@@ -42,5 +44,9 @@ pub const NATIVE_TRANSFER_ADDRESS: Address = address!("0000000000000000000000000
 pub const STATE_MAIN: u32 = 0;
 pub const STATE_DEPLOY: u32 = 1;
 
-pub const DEVNET_CHAIN_ID: u64 = 20993;
-// pub const DEVNET_CHAIN_ID: u64 = 1337;
+/// A chain id for Fluent Developer Preview, where value hex is equal to 0x5201 where:
+/// - 0x52 - is ASCII of R
+/// - 0x01 - is a version of developer preview
+pub const DEVELOPER_PREVIEW_CHAIN_ID: u64 = 20993;
+
+pub const FUEL_DENOM_RATE: u64 = 1000;

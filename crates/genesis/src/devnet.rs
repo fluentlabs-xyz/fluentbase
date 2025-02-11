@@ -15,7 +15,7 @@ use fluentbase_types::{
     Address,
     Bytes,
     B256,
-    DEVNET_CHAIN_ID,
+    DEVELOPER_PREVIEW_CHAIN_ID,
     PRECOMPILE_EVM,
     PRECOMPILE_MULTICALL,
     U256,
@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 pub fn devnet_chain_config() -> ChainConfig {
     ChainConfig {
-        chain_id: DEVNET_CHAIN_ID,
+        chain_id: DEVELOPER_PREVIEW_CHAIN_ID,
         homestead_block: Some(0u64),
         dao_fork_block: Some(0u64),
         dao_fork_support: false,

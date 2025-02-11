@@ -1,4 +1,4 @@
-use crate::U256;
+use crate::{FUEL_DENOM_RATE, U256};
 use alloy_primitives::{b256, hex, B256};
 #[cfg(feature = "rwasm")]
 use rwasm::{
@@ -85,7 +85,8 @@ pub enum ExitCode {
     // warning: when adding new codes doesn't forget to add them to impls below
     #[default]
     Ok = 0,
-    Panic = -71,
+    Panic = -71, // -71 to be wasi friendly
+    Error = -2,
     // fluentbase error codes
     ExecutionHalted = -1001,
     RootCallOnly = -1003,
@@ -441,12 +442,12 @@ pub const fn syscall_name_by_hash(hash: &B256) -> &str {
     }
 }
 
-pub const GAS_LIMIT_SYSCALL_STORAGE_READ: u64 = 2_100;
-pub const GAS_LIMIT_SYSCALL_STORAGE_WRITE: u64 = 22_100;
-pub const GAS_LIMIT_SYSCALL_EMIT_LOG: u64 = 10_000;
-pub const GAS_LIMIT_SYSCALL_DESTROY_ACCOUNT: u64 = 32_600;
-pub const GAS_LIMIT_SYSCALL_BALANCE: u64 = 2_600;
-pub const GAS_LIMIT_SYSCALL_EXT_STORAGE_READ: u64 = 2_100;
-pub const GAS_LIMIT_SYSCALL_PREIMAGE_SIZE: u64 = 2_600;
-pub const GAS_LIMIT_SYSCALL_TRANSIENT_READ: u64 = 100;
-pub const GAS_LIMIT_SYSCALL_TRANSIENT_WRITE: u64 = 100;
+pub const FUEL_LIMIT_SYSCALL_STORAGE_READ: u64 = 2_100 * FUEL_DENOM_RATE;
+pub const FUEL_LIMIT_SYSCALL_STORAGE_WRITE: u64 = 22_100 * FUEL_DENOM_RATE;
+pub const FUEL_LIMIT_SYSCALL_EMIT_LOG: u64 = 10_000 * FUEL_DENOM_RATE;
+pub const FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT: u64 = 32_600 * FUEL_DENOM_RATE;
+pub const FUEL_LIMIT_SYSCALL_BALANCE: u64 = 2_600 * FUEL_DENOM_RATE;
+pub const FUEL_LIMIT_SYSCALL_EXT_STORAGE_READ: u64 = 2_100 * FUEL_DENOM_RATE;
+pub const FUEL_LIMIT_SYSCALL_PREIMAGE_SIZE: u64 = 2_600 * FUEL_DENOM_RATE;
+pub const FUEL_LIMIT_SYSCALL_TRANSIENT_READ: u64 = 100 * FUEL_DENOM_RATE;
+pub const FUEL_LIMIT_SYSCALL_TRANSIENT_WRITE: u64 = 100 * FUEL_DENOM_RATE;

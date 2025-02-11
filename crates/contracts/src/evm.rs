@@ -141,31 +141,28 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
         Some(StateLoad::new(balance, is_cold))
     }
 
-    fn code(&mut self, address: Address) -> Option<Eip7702CodeLoad<Bytes>> {
+    fn code(&mut self, address: Address) -> Option<StateLoad<Bytes>> {
         debug_log!("code: address={} self-address={}", address, self.address);
         let result = self.code_hash(address)?;
         let evm_bytecode = self.sdk.preimage(&result.data);
-        Some(Eip7702CodeLoad::new_not_delegated(
-            evm_bytecode,
-            result.is_cold,
-        ))
+        Some(StateLoad::new(evm_bytecode, result.is_cold))
     }
 
-    fn code_hash(&mut self, address: Address) -> Option<Eip7702CodeLoad<B256>> {
+    fn code_hash(&mut self, address: Address) -> Option<StateLoad<B256>> {
         if address == self.address {
-            let (evm_code_hash, is_cold) = self.sdk.storage(&EVM_CODE_HASH_SLOT);
+            let evm_code_hash = self.sdk.storage(&EVM_CODE_HASH_SLOT).data;
             let evm_code_hash = evm_code_hash.to_le_bytes::<32>().into();
 
-            return Some(Eip7702CodeLoad::new_not_delegated(evm_code_hash, is_cold));
+            return Some(StateLoad::new(evm_code_hash, false));
         }
         let (evm_code_hash, is_cold) = self.sdk.ext_storage(&address, &EVM_CODE_HASH_SLOT);
         let evm_code_hash = evm_code_hash.to_le_bytes::<32>().into();
-        Some(Eip7702CodeLoad::new_not_delegated(evm_code_hash, is_cold))
+        Some(StateLoad::new(evm_code_hash, is_cold))
     }
 
     fn sload(&mut self, _address: Address, index: U256) -> Option<StateLoad<U256>> {
-        let (value, is_cold) = self.sdk.storage(&index);
-        Some(StateLoad::new(value, is_cold))
+        let value = self.sdk.storage(&index).data;
+        Some(StateLoad::new(value, false))
     }
 
     fn sstore(
@@ -174,20 +171,20 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
         index: U256,
         new_value: U256,
     ) -> Option<StateLoad<SStoreResult>> {
-        let (original_value, present_value, is_cold) = self.sdk.write_storage(index, new_value);
-        let result = SStoreResult {
-            original_value,
-            present_value,
-            new_value,
-        };
-
-        self.last_gas_consumed = self.sdk.last_fuel_consumed();
-
-        Some(StateLoad::new(result, is_cold))
+        todo!("not supported yet")
+        // let result = self.sdk.write_storage(index, new_value);
+        // let (original_value, present_value, is_cold) = ;
+        // let result = SStoreResult {
+        //     original_value,
+        //     present_value,
+        //     new_value,
+        // };
+        // self.last_gas_consumed = self.sdk.last_fuel_consumed();
+        // Some(StateLoad::new(result, is_cold))
     }
 
     fn tload(&mut self, _address: Address, index: U256) -> U256 {
-        self.sdk.transient_storage(&index)
+        self.sdk.transient_storage(&index).data
     }
 
     fn tstore(&mut self, _address: Address, index: U256, value: U256) {
@@ -345,6 +342,9 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
                 InterpreterAction::EOFCreate { .. } => {
                     unreachable!("not supported EVM interpreter state: EOF")
                 }
+                InterpreterAction::InterruptedCall { .. } => {
+                    unreachable!("not supported EVM interpreter state: EOF")
+                }
             }
         }
     }
@@ -443,7 +443,7 @@ mod tests {
         journal::JournalStateBuilder,
         runtime::TestingContext,
         Address,
-        ContractContext,
+        ContractContextV1,
         U256,
     };
     use revm_primitives::hex;
@@ -452,7 +452,7 @@ mod tests {
     fn test_evm_store_load() {
         let native_sdk = TestingContext::empty();
         let mut sdk = JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 address: Address::from([
                     189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111,
                     164, 142, 177,
@@ -477,7 +477,7 @@ mod tests {
     fn test_deploy_greeting() {
         let mut native_sdk = TestingContext::empty().with_fuel(100_000);
         let sdk = JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 address: Address::from([
                     189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111,
                     164, 142, 177,
@@ -509,7 +509,7 @@ mod tests {
     fn test_deploy_tstore() {
         let mut native_sdk = TestingContext::empty().with_fuel(100_000);
         let sdk = JournalStateBuilder::default()
-            .with_contract_context(ContractContext {
+            .with_contract_context(ContractContextV1 {
                 address: Address::from([
                     189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111,
                     164, 142, 177,
