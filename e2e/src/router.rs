@@ -9,14 +9,14 @@ fn test_client_solidity() {
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
 
-    let contract_address = ctx.deploy_evm_tx_with_nonce(
+    let (contract_address, _) = ctx.deploy_evm_tx_with_nonce(
         DEPLOYER_ADDRESS,
         include_bytes!("../../examples/router-solidity/lib.wasm").into(),
         0,
     );
     println!("contract_address: {:?}", contract_address);
 
-    let client_address = ctx.deploy_evm_tx_with_nonce(
+    let (client_address, _) = ctx.deploy_evm_tx_with_nonce(
         DEPLOYER_ADDRESS,
         include_bytes!("../../examples/client-solidity/lib.wasm").into(),
         1,
@@ -54,14 +54,14 @@ fn test_client_fluent() {
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
 
-    let contract_address = ctx.deploy_evm_tx_with_nonce(
+    let (contract_address, _) = ctx.deploy_evm_tx_with_nonce(
         DEPLOYER_ADDRESS,
         include_bytes!("../../examples/router-fluent/lib.wasm").into(),
         0,
     );
     println!("contract_address: {:?}", contract_address);
 
-    let client_address = ctx.deploy_evm_tx_with_nonce(
+    let (client_address, _) = ctx.deploy_evm_tx_with_nonce(
         DEPLOYER_ADDRESS,
         include_bytes!("../../examples/client-fluent/lib.wasm").into(),
         1,

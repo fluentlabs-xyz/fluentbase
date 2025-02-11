@@ -621,9 +621,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-trie"
-version = "0.7.8"
+version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6917c79e837aa7b77b7a6dae9f89cbe15313ac161c4d3cfaf8909ef21f3d22d8"
+checksum = "d95a94854e420f07e962f7807485856cde359ab99ab6413883e15235ad996e8b"
 dependencies = [
  "alloy-primitives 0.8.14",
  "alloy-rlp",
@@ -1663,6 +1663,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "coset"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4c8cc80f631f8307b887faca24dcc3abc427cd0367f6eb6188f6e8f5b7ad8fb"
+dependencies = [
+ "ciborium",
+ "ciborium-io",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1966,7 +1976,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f55bf8e7b65898637379c1b74eb1551107c8294ed26d855ceb9fd1a09cfc9bc0"
 dependencies = [
  "const-oid",
+ "der_derive",
+ "flagset",
+ "pem-rfc7468",
  "zeroize",
+]
+
+[[package]]
+name = "der_derive"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8034092389675178f570469e6c3b0465d3d30b4505c294a6550db47f3c17ad18"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -2651,6 +2675,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "flagset"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3ea1ec5f8307826a5b71094dd91fc04d4ae75d5709b20ad351c7fb4815c86ec"
+
+[[package]]
 name = "fluentbase-bin"
 version = "0.1.0"
 dependencies = [
@@ -2729,11 +2759,11 @@ dependencies = [
 name = "fluentbase-e2e"
 version = "0.1.0"
 dependencies = [
+ "alloy-sol-types 0.8.14",
  "fluentbase-codec",
  "fluentbase-genesis",
  "fluentbase-poseidon",
  "fluentbase-runtime",
- "fluentbase-rwasm",
  "fluentbase-sdk",
  "hex",
  "hex-literal",
@@ -2831,12 +2861,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-json"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "serde",
+ "serde-json-core",
+]
+
+[[package]]
 name = "fluentbase-example-keccak"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "hex",
  "hex-literal",
+]
+
+[[package]]
+name = "fluentbase-example-nitro-verifier"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "coset",
+ "der",
+ "ecdsa",
+ "fluentbase-sdk",
+ "hex",
+ "hex-literal",
+ "p384",
+ "x509-cert",
 ]
 
 [[package]]
@@ -3434,6 +3488,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3475,6 +3538,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2bca93b15ea5a746f220e56587f71e73c6165eab783df9e26590069953e3c30"
 dependencies = [
  "fxhash",
+]
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32",
+ "serde",
+ "stable_deref_trait",
 ]
 
 [[package]]
@@ -5016,6 +5090,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "p384"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70786f51bcc69f6a4c0360e063a4cac5419ef7c5cd5b3c99ad70f3be5ba79209"
+dependencies = [
+ "ecdsa",
+ "elliptic-curve",
+ "primeorder",
+ "sha2",
+]
+
+[[package]]
 name = "pairing"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5144,6 +5230,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8835c273a76a90455d7344889b0964598e3316e2a79ede8e36f16bdcf2228b8"
 dependencies = [
  "base64 0.13.1",
+]
+
+[[package]]
+name = "pem-rfc7468"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
+dependencies = [
+ "base64ct",
 ]
 
 [[package]]
@@ -5849,7 +5944,6 @@ dependencies = [
  "ethers-providers",
  "fluentbase-core",
  "fluentbase-runtime",
- "fluentbase-rwasm",
  "fluentbase-sdk",
  "indicatif",
  "once_cell",
@@ -5915,7 +6009,6 @@ dependencies = [
  "cfg-if",
  "dyn-clone",
  "enumn",
- "fluentbase-rwasm",
  "hex",
  "kzg-rs",
  "serde",
@@ -6445,6 +6538,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6513c1ad0b11a9376da888e3e0baa0077f1aed55c17f50e7b2397136129fb88f"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde-json-core"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b81787e655bd59cecadc91f7b6b8651330b2be6c33246039a65e5cd6f4e0828"
+dependencies = [
+ "heapless",
+ "ryu",
+ "serde",
 ]
 
 [[package]]
@@ -8772,6 +8876,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
+]
+
+[[package]]
+name = "x509-cert"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
+dependencies = [
+ "const-oid",
+ "der",
+ "spki",
 ]
 
 [[package]]

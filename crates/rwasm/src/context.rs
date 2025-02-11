@@ -215,16 +215,6 @@ impl<'a, T> Caller<'a, T> {
         Ok(buffer)
     }
 
-    #[deprecated(note = "use `memory_read_vec` instead")]
-    pub fn read_memory(&self, offset: u32, length: u32) -> Result<Vec<u8>, RwasmError> {
-        self.memory_read_vec(offset as usize, length as usize)
-    }
-
-    #[deprecated(note = "use `memory_read` instead")]
-    pub fn write_memory(&mut self, offset: u32, buf: &[u8]) -> Result<(), RwasmError> {
-        self.memory_write(offset as usize, buf)
-    }
-
     pub fn memory_write(&mut self, offset: usize, buffer: &[u8]) -> Result<(), RwasmError> {
         self.store.global_memory.write(offset, buffer)?;
         // TODO(dmitry123): "add tracer"

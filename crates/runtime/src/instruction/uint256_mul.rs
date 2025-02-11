@@ -9,12 +9,12 @@ impl SyscallUint256Mul {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
         let [x_ptr, y_ptr, m_ptr] = caller.stack_pop_n();
 
-        let x = caller.read_memory(x_ptr.as_u32(), WORDS_FIELD_ELEMENT as u32)?;
-        let y = caller.read_memory(y_ptr.as_u32(), WORDS_FIELD_ELEMENT as u32)?;
-        let m = caller.read_memory(m_ptr.as_u32(), WORDS_FIELD_ELEMENT as u32)?;
+        let x = caller.memory_read_fixed::<WORDS_FIELD_ELEMENT>(x_ptr.as_usize())?;
+        let y = caller.memory_read_fixed::<WORDS_FIELD_ELEMENT>(y_ptr.as_usize())?;
+        let m = caller.memory_read_fixed::<WORDS_FIELD_ELEMENT>(m_ptr.as_usize())?;
 
         let result_vec = Self::fn_impl(&x, &y, &m);
-        caller.write_memory(x_ptr.as_u32(), &result_vec)
+        caller.memory_write(x_ptr.as_usize(), &result_vec)
     }
 
     pub fn fn_impl(x: &[u8], y: &[u8], m: &[u8]) -> Vec<u8> {

@@ -30,7 +30,7 @@ impl SyscallSha256Compress {
         for i in 0..8 {
             let value = u32::from_be_bytes(
                 caller
-                    .read_memory(h_ptr + i as u32 * 4, 4)?
+                    .memory_read_fixed::<4>((h_ptr + i as u32 * 4) as usize)?
                     .try_into()
                     .unwrap(),
             );
@@ -50,7 +50,12 @@ impl SyscallSha256Compress {
         for i in 0..64 {
             let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ (!e & g);
-            let w_i = u32::from_be_bytes(caller.read_memory(w_ptr + i * 4, 4)?.try_into().unwrap());
+            let w_i = u32::from_be_bytes(
+                caller
+                    .memory_read_fixed::<4>((w_ptr + i * 4) as usize)?
+                    .try_into()
+                    .unwrap(),
+            );
             original_w.push(w_i);
             let temp1 = h
                 .wrapping_add(s1)
@@ -74,8 +79,8 @@ impl SyscallSha256Compress {
         // Execute the "finalize" phase.
         let v = [a, b, c, d, e, f, g, h];
         for i in 0..8 {
-            caller.write_memory(
-                h_ptr + i as u32 * 4,
+            caller.memory_write(
+                (h_ptr + i as u32 * 4) as usize,
                 &hx[i].wrapping_add(v[i]).to_be_bytes(),
             )?;
         }

@@ -131,6 +131,11 @@ impl EvmTestingContext {
         account.info.balance
     }
 
+    pub(crate) fn get_nonce(&mut self, address: Address) -> u64 {
+        let account = self.db.load_account(address).unwrap();
+        account.info.nonce
+    }
+
     pub(crate) fn add_balance(&mut self, address: Address, value: U256) {
         let account = self.db.load_account(address).unwrap();
         account.info.balance += value;
@@ -188,7 +193,7 @@ impl EvmTestingContext {
         deployer: Address,
         init_bytecode: Bytes,
         nonce: u64,
-    ) -> Address {
+    ) -> (Address, u64) {
         let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
         if !result.is_success() {
             println!("{:?}", result);
@@ -201,7 +206,7 @@ impl EvmTestingContext {
         let contract_address = calc_create_address::<TestingContext>(&deployer, nonce);
         assert_eq!(contract_address, deployer.create(nonce));
 
-        contract_address
+        (contract_address, result.gas_used())
     }
 
     pub(crate) fn call_evm_tx_simple(
@@ -283,6 +288,11 @@ impl<'a> TxBuilder<'a> {
 
     pub fn gas_price(mut self, gas_price: U256) -> Self {
         self.env.tx.gas_price = gas_price;
+        self
+    }
+
+    pub fn timestamp(mut self, timestamp: u64) -> Self {
+        self.env.block.timestamp = U256::from(timestamp);
         self
     }
 

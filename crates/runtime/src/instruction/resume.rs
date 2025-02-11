@@ -12,9 +12,10 @@ impl SyscallResume {
         let [call_id, return_data_ptr, return_data_len, exit_code, fuel8_ptr] =
             caller.stack_pop_n();
         let return_data = caller
-            .read_memory(return_data_ptr.as_u32(), return_data_len.as_u32())?
+            .memory_read_vec(return_data_ptr.as_usize(), return_data_len.as_usize())?
             .to_vec();
-        let fuel_spent = LittleEndian::read_u64(&caller.read_memory(fuel8_ptr.as_u32(), 8)?);
+        let fuel_spent =
+            LittleEndian::read_u64(&caller.memory_read_fixed::<8>(fuel8_ptr.as_usize())?);
         let (fuel_consumed, exit_code) = Self::fn_impl(
             caller.data_mut(),
             call_id.as_u32(),
@@ -25,7 +26,7 @@ impl SyscallResume {
         caller.store_mut().try_consume_fuel(fuel_consumed)?;
         let mut fuel_buffer = [0u8; 8];
         LittleEndian::write_u64(&mut fuel_buffer, fuel_consumed);
-        caller.write_memory(fuel8_ptr.as_u32(), &fuel_buffer)?;
+        caller.memory_write(fuel8_ptr.as_usize(), &fuel_buffer)?;
         caller.stack_push(exit_code);
         Ok(())
     }

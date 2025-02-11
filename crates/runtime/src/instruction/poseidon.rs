@@ -7,8 +7,8 @@ pub struct SyscallPoseidon;
 impl SyscallPoseidon {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
         let [f32s_ptr, f32s_len, output_ptr] = caller.stack_pop_n();
-        let data = caller.read_memory(f32s_ptr.as_u32(), f32s_len.as_u32())?;
-        caller.write_memory(output_ptr.as_u32(), Self::fn_impl(&data).as_slice())?;
+        let data = caller.memory_read_vec(f32s_ptr.as_usize(), f32s_len.as_usize())?;
+        caller.memory_write(output_ptr.as_usize(), Self::fn_impl(&data).as_slice())?;
         Ok(())
     }
 

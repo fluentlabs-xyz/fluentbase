@@ -47,7 +47,7 @@ impl SyscallExec {
         // make sure we have enough fuel for this call
         let fuel_limit = if fuel8_ptr.as_u32() > 0 {
             let mut fuel_limit =
-                LittleEndian::read_u64(&caller.read_memory(fuel8_ptr.as_u32(), 8)?);
+                LittleEndian::read_u64(&caller.memory_read_fixed::<8>(fuel8_ptr.as_usize())?);
             if fuel_limit == 0 {
                 fuel_limit = caller.store().remaining_fuel().unwrap_or_default();
             }

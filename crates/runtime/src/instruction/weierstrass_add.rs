@@ -23,12 +23,12 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
         let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;
 
         // Read p and q values from memory
-        let p = caller.read_memory(p_ptr, num_words as u32 * 4)?;
-        let q = caller.read_memory(q_ptr, num_words as u32 * 4)?;
+        let p = caller.memory_read_vec(p_ptr as usize, num_words * 4)?;
+        let q = caller.memory_read_vec(q_ptr as usize, num_words * 4)?;
 
         // Write the result back to memory at the p_ptr location
         let result_vec = Self::fn_impl(&p, &q);
-        caller.write_memory(p_ptr, &result_vec)?;
+        caller.memory_write(p_ptr as usize, &result_vec)?;
 
         Ok(())
     }

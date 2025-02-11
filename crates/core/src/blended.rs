@@ -31,12 +31,12 @@ use revm_interpreter::{
     InterpreterResult,
 };
 use revm_primitives::{
+    wasm::WASM_MAX_CODE_SIZE,
     Bytecode,
     CreateScheme,
     Env,
     MAX_CALL_STACK_LIMIT,
     MAX_INITCODE_SIZE,
-    WASM_MAX_CODE_SIZE,
 };
 pub use util::{create_delegate_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
 
