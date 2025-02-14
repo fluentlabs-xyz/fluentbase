@@ -78,7 +78,7 @@ fn test_simple_nested_call() {
         Drop
         I32Const(0)
         I32Const(0)
-        I32Const(memory_section.len() as u32)
+        I32Const(memory_section.len() as i32)
         MemoryInit(0)
         DataDrop(0)
         // sys exec hash
@@ -87,7 +87,7 @@ fn test_simple_nested_call() {
         I32Const(32) // input_ptr
         I32Const(52) // input_len
         I32Const(0) // fuel_ptr
-        I32Const(STATE_MAIN) // state
+        I32Const(STATE_MAIN as i32) // state
         Call(SysFuncIdx::EXEC)
         Drop
         I32Const(200) // target offset
@@ -100,7 +100,7 @@ fn test_simple_nested_call() {
         I32Const(84) // input_ptr
         I32Const(52) // input_len
         I32Const(0) // fuel_ptr
-        I32Const(STATE_MAIN) // state
+        I32Const(STATE_MAIN as i32) // state
         Call(SysFuncIdx::EXEC)
         Drop
         I32Const(201) // target offset
@@ -281,7 +281,7 @@ hex!("6080604052610594806100115f395ff3fe608060405234801561000f575f5ffd5b50600436
         Drop
         I32Const(0)
         I32Const(0)
-        I32Const(memory_section.len() as u32)
+        I32Const(memory_section.len() as i32)
         MemoryInit(0)
         DataDrop(0)
         // sys exec hash
@@ -290,13 +290,13 @@ hex!("6080604052610594806100115f395ff3fe608060405234801561000f575f5ffd5b50600436
         I32Const(32) // input_ptr
         I32Const(56) // input_len
         I32Const(0) // fuel_ptr
-        I32Const(STATE_MAIN) // state
+        I32Const(STATE_MAIN as i32) // state
         Call(SysFuncIdx::EXEC)
         I32Const(0) // hash32_ptr
         I32Const(32) // input_ptr
         I32Const(56) // input_len
         I32Const(0) // fuel_ptr
-        I32Const(STATE_MAIN) // state
+        I32Const(STATE_MAIN as i32) // state
         Call(SysFuncIdx::EXEC)
         Call(SysFuncIdx::EXIT)
     };

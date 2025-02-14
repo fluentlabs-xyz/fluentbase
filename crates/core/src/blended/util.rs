@@ -36,21 +36,21 @@ fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
         // initializes a memory segment
         I32Const(0) // destination
         I32Const(0) // source
-        I32Const(memory_section.len() as u32) // length
+        I32Const(memory_section.len() as i32) // length
         MemoryInit(0) // initialize 0 segment
         DataDrop(0) // mark 0 segment as dropped (required to satisfy WASM standards)
         // copy input (EVM bytecode can't exceed 2*24kB, so this op is safe)
         I32Const(52) // target
-        I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as u32) // offset
+        I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as i32) // offset
         Call(SysFuncIdx::INPUT_SIZE) // length=input_size-header_size
-        I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as u32)
+        I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as i32)
         I32Sub
         Call(SysFuncIdx::READ_INPUT)
         // delegate call
         I32Const(0) // hash32_ptr
         I32Const(32) // input_ptr
         Call(SysFuncIdx::INPUT_SIZE) // input_len=input_size-header_size+20
-        I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as u32)
+        I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as i32)
         I32Sub
         I32Const(20)
         I32Add

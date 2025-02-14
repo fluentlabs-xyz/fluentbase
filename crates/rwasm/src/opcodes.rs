@@ -14,7 +14,7 @@ use crate::{
 };
 use core::cmp;
 use rwasm::{
-    core::{Pages, TrapCode, UntypedValue},
+    core::{Pages, TrapCode, UntypedValue, F32},
     engine::{
         bytecode::{
             AddressOffset,
@@ -156,10 +156,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::TableInit(elem) => self.visit_table_init(elem)?,
                 Instruction::ElemDrop(segment) => self.visit_element_drop(segment),
                 Instruction::RefFunc(func_index) => self.visit_ref_func(func_index)?,
-                Instruction::I32Const(value)
-                | Instruction::I64Const(value)
-                | Instruction::F32Const(value)
-                | Instruction::F64Const(value) => self.visit_i32_i64_const(value),
+                Instruction::I32Const(value) => self.visit_i32_const(value),
+                Instruction::I64Const32(value) => self.visit_i64_const32(value),
+                Instruction::F32Const(value) => self.visit_f32_const(value),
+                Instruction::F64Const32(value) => self.visit_f64_const32(value),
 
                 // Instruction::ConstRef(cref) => self.visit_const(cref),
                 Instruction::I32Eqz => self.visit_i32_eqz(),
@@ -948,8 +948,32 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     }
 
     #[inline(never)]
-    pub(crate) fn visit_i32_i64_const(&mut self, untyped_value: UntypedValue) {
-        self.store.sp.push(untyped_value);
+    pub(crate) fn visit_i32_const(&mut self, untyped_value: i32) {
+        self.store.sp.push(untyped_value.into());
+        self.store.ip.add(1);
+    }
+
+    #[inline(never)]
+    pub(crate) fn visit_i64_const32(&mut self, untyped_value: i32) {
+        self.store.sp.eval_top(|v| {
+            let bits = v.to_bits() | (untyped_value as u64) << 32;
+            UntypedValue::from_bits(bits)
+        });
+        self.store.ip.add(1);
+    }
+
+    #[inline(never)]
+    pub(crate) fn visit_f32_const(&mut self, untyped_value: F32) {
+        self.store.sp.push(untyped_value.into());
+        self.store.ip.add(1);
+    }
+
+    #[inline(never)]
+    pub(crate) fn visit_f64_const32(&mut self, untyped_value: F32) {
+        self.store.sp.eval_top(|v| {
+            let bits = v.to_bits() | (untyped_value.to_bits() as u64) << 32;
+            UntypedValue::from_bits(bits)
+        });
         self.store.ip.add(1);
     }
 

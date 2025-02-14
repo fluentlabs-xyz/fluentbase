@@ -2,7 +2,7 @@
 macro_rules! impl_visit_load {
     ( $( fn $visit_ident:ident($untyped_ident:ident); )* ) => {
         $(
-            #[inline(always)]
+            #[inline(never)]
             pub(crate) fn $visit_ident(
                 &mut self,
                 offset: AddressOffset,
@@ -17,7 +17,7 @@ macro_rules! impl_visit_load {
 macro_rules! impl_visit_store {
     ( $( fn $visit_ident:ident($untyped_ident:ident, $type_size:literal); )* ) => {
         $(
-            #[inline(always)]
+            #[inline(never)]
             pub(crate) fn $visit_ident(
                 &mut self,
                 offset: AddressOffset,
@@ -32,7 +32,7 @@ macro_rules! impl_visit_store {
 macro_rules! impl_visit_unary {
     ( $( fn $visit_ident:ident($untyped_ident:ident); )* ) => {
         $(
-            #[inline(always)]
+            #[inline(never)]
             fn $visit_ident(&mut self) {
                 self.execute_unary(UntypedValue::$untyped_ident)
             }
@@ -44,7 +44,7 @@ macro_rules! impl_visit_unary {
 macro_rules! impl_visit_binary {
     ( $( fn $visit_ident:ident($untyped_ident:ident); )* ) => {
         $(
-            #[inline(always)]
+            #[inline(never)]
             fn $visit_ident(&mut self) {
                 self.execute_binary(UntypedValue::$untyped_ident)
             }
@@ -56,7 +56,7 @@ macro_rules! impl_visit_binary {
 macro_rules! impl_visit_fallible_unary {
     ( $( fn $visit_ident:ident($untyped_ident:ident); )* ) => {
         $(
-            #[inline(always)]
+            #[inline(never)]
             fn $visit_ident(&mut self) -> Result<(), TrapCode> {
                 self.try_execute_unary(UntypedValue::$untyped_ident)
             }
@@ -68,7 +68,7 @@ macro_rules! impl_visit_fallible_unary {
 macro_rules! impl_visit_fallible_binary {
     ( $( fn $visit_ident:ident($untyped_ident:ident); )* ) => {
         $(
-            #[inline(always)]
+            #[inline(never)]
             fn $visit_ident(&mut self) -> Result<(), TrapCode> {
                 self.try_execute_binary(UntypedValue::$untyped_ident)
             }
