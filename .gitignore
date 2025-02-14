@@ -18,8 +18,7 @@ libzktrie.so
 
 # exclude all wat, wasm and genesis files
 *.wat
-*.wasm
-crates/genesis/assets/genesis-devnet.json
+examples/**/*.wasm
 
 crates/revm/e2e/tests
 
