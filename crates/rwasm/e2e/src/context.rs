@@ -15,6 +15,7 @@ use anyhow::Result;
 use fluentbase_rwasm::{
     AlwaysFailingSyscallHandler,
     Caller,
+    ExecutorConfig,
     RwasmError,
     RwasmExecutor,
     SimpleCallHandler,
@@ -259,8 +260,11 @@ impl TestContext<'_> {
         // trace_rwasm(&encoded_rwasm_module);
         // println!();
 
-        let mut executor =
-            TestingRwasmExecutor::new(rwasm_module.instantiate(), None, TestingContext::default());
+        let mut executor = TestingRwasmExecutor::new(
+            rwasm_module.instantiate(),
+            ExecutorConfig::new().floats_enabled(false),
+            TestingContext::default(),
+        );
         executor.store_mut().context_mut().state = ENTRYPOINT_FUNC_IDX;
         println!(" --- entrypoint ---");
         let exit_code = executor.run().map_err(|err| {
