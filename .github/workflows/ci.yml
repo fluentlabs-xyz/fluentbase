@@ -42,6 +42,9 @@ jobs:
       - name: Install gblend tool
         run: cargo install gblend
 
+      - name: Cargo check
+        run: cargo check
+
       - name: Build artifacts
         run: TERM=dumb make
 
