@@ -19,6 +19,7 @@ pub enum RwasmError {
     ExecutionHalted(i32),
     MemoryError(MemoryError),
     HostInterruption(Box<dyn HostError>),
+    FloatsAreDisabled,
 }
 
 impl RwasmError {

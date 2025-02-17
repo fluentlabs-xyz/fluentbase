@@ -1,4 +1,10 @@
-use crate::{RwasmError, FUNC_REF_OFFSET, N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE};
+use crate::{
+    config::ExecutorConfig,
+    RwasmError,
+    FUNC_REF_OFFSET,
+    N_DEFAULT_STACK_SIZE,
+    N_MAX_STACK_SIZE,
+};
 use hashbrown::HashMap;
 use rwasm::{
     core::{TrapCode, UntypedValue, ValueType, N_MAX_MEMORY_PAGES},
@@ -20,6 +26,7 @@ use rwasm::{
 pub struct RwasmContext<T> {
     // function segments
     pub(crate) instance: RwasmModuleInstance,
+    pub(crate) config: ExecutorConfig,
     // execution context information
     pub(crate) consumed_fuel: u64,
     pub(crate) value_stack: ValueStack,
@@ -27,7 +34,6 @@ pub struct RwasmContext<T> {
     pub(crate) global_memory: MemoryEntity,
     pub(crate) ip: InstructionPtr,
     pub(crate) context: T,
-    pub(crate) fuel_limit: Option<u64>,
     pub(crate) tracer: Option<Tracer>,
     pub(crate) fuel_costs: FuelCosts,
     // rwasm modified segments
@@ -42,7 +48,7 @@ pub struct RwasmContext<T> {
 }
 
 impl<T> RwasmContext<T> {
-    pub fn new(instance: RwasmModuleInstance, fuel_limit: Option<u64>, context: T) -> Self {
+    pub fn new(instance: RwasmModuleInstance, config: ExecutorConfig, context: T) -> Self {
         // create stack with sp
         let mut value_stack = ValueStack::new(N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE);
         let sp = value_stack.stack_ptr();
@@ -82,13 +88,13 @@ impl<T> RwasmContext<T> {
 
         Self {
             instance,
+            config,
             consumed_fuel: 0,
             value_stack,
             sp,
             global_memory,
             ip,
             context,
-            fuel_limit,
             tracer: None,
             fuel_costs: Default::default(),
             global_variables: Default::default(),
@@ -123,7 +129,7 @@ impl<T> RwasmContext<T> {
     }
 
     pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), RwasmError> {
-        if let Some(fuel_limit) = self.fuel_limit {
+        if let Some(fuel_limit) = self.config.fuel_limit {
             if self.consumed_fuel + fuel >= fuel_limit {
                 return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
             }
@@ -133,7 +139,7 @@ impl<T> RwasmContext<T> {
     }
 
     pub fn remaining_fuel(&self) -> Option<u64> {
-        Some(self.fuel_limit? - self.consumed_fuel)
+        Some(self.config.fuel_limit? - self.consumed_fuel)
     }
 
     pub fn fuel_consumed(&self) -> u64 {
@@ -168,7 +174,6 @@ impl<'a, T> Caller<'a, T> {
 
     pub fn stack_push<I: Into<UntypedValue>>(&mut self, value: I) {
         self.store.sp.push_as(value);
-        // TODO(dmitry123): "add tracer"
     }
 
     pub fn stack_pop(&mut self) -> UntypedValue {
@@ -217,7 +222,9 @@ impl<'a, T> Caller<'a, T> {
 
     pub fn memory_write(&mut self, offset: usize, buffer: &[u8]) -> Result<(), RwasmError> {
         self.store.global_memory.write(offset, buffer)?;
-        // TODO(dmitry123): "add tracer"
+        if let Some(tracer) = self.store.tracer.as_mut() {
+            tracer.memory_change(offset as u32, buffer.len() as u32, buffer);
+        }
         Ok(())
     }
 

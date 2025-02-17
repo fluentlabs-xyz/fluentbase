@@ -9,6 +9,7 @@ use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_rwasm::{
     Caller,
+    ExecutorConfig,
     RwasmContext,
     RwasmError,
     RwasmExecutor,
@@ -389,7 +390,7 @@ impl Runtime {
 
             let executor = RwasmExecutor::new(
                 rwasm_module.clone(),
-                Some(runtime_context.fuel_limit),
+                ExecutorConfig::new().fuel_limit(runtime_context.fuel_limit),
                 runtime_context,
             );
             Self { executor }
@@ -501,6 +502,9 @@ impl Runtime {
 
                         self.handle_resumable_state(&mut execution_result, resumable_state);
                         break;
+                    }
+                    RwasmError::FloatsAreDisabled => {
+                        unreachable!("runtime: floats are disabled")
                     }
                 },
             }

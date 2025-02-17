@@ -1,4 +1,5 @@
 use crate::{
+    config::ExecutorConfig,
     types::RwasmError,
     RwasmContext,
     SyscallHandler,
@@ -36,18 +37,18 @@ pub struct RwasmExecutor<E: SyscallHandler<T>, T> {
 impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     pub fn parse(
         rwasm_bytecode: &[u8],
-        fuel_limit: Option<u64>,
+        config: ExecutorConfig,
         context: T,
     ) -> Result<Self, RwasmError> {
         Ok(Self::new(
             RwasmModule::new_or_empty(rwasm_bytecode)?.instantiate(),
-            fuel_limit,
+            config,
             context,
         ))
     }
 
-    pub fn new(rwasm_module: RwasmModuleInstance, fuel_limit: Option<u64>, context: T) -> Self {
-        let store = RwasmContext::new(rwasm_module, fuel_limit, context);
+    pub fn new(rwasm_module: RwasmModuleInstance, config: ExecutorConfig, context: T) -> Self {
+        let store = RwasmContext::new(rwasm_module, config, context);
         Self {
             store,
             phantom_data: Default::default(),
@@ -279,12 +280,4 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     pub fn store_mut(&mut self) -> &mut RwasmContext<T> {
         &mut self.store
     }
-}
-
-#[deprecated(since = "0.1.0", note = "use `RwasmExecutor::new` instead")]
-pub fn execute_rwasm_module<E: SyscallHandler<()>>(
-    rwasm_module: RwasmModule,
-    fuel_limit: Option<u64>,
-) -> Result<i32, RwasmError> {
-    RwasmExecutor::<E, ()>::new(rwasm_module.instantiate(), fuel_limit, ()).run()
 }

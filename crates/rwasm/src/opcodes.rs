@@ -10,7 +10,6 @@ use crate::{
     RwasmError,
     SyscallHandler,
     FUNC_REF_OFFSET,
-    N_MAX_STACK_SIZE,
     TABLE_ELEMENT_NULL,
 };
 use core::cmp;
@@ -43,14 +42,17 @@ use rwasm::{
 
 impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     pub(crate) fn run_the_loop(&mut self) -> Result<i32, RwasmError> {
+        macro_rules! impl_float_check {
+            ($expr:expr) => {{
+                if self.store.config.floats_enabled {
+                    return Err(RwasmError::FloatsAreDisabled);
+                }
+                $expr
+            }};
+        }
         let mut resource_limiter_ref = ResourceLimiterRef::default();
         loop {
             let instr = *self.store.ip.get();
-
-            // TODO(dmitry123): "find a way how to optimize it"
-            if self.store.value_stack.stack_len(self.store.sp) >= N_MAX_STACK_SIZE {
-                return Err(TrapCode::StackOverflow.into());
-            }
 
             // #[cfg(feature = "std")]
             // {
@@ -118,8 +120,8 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::GlobalSet(global_idx) => self.visit_global_set(global_idx),
                 Instruction::I32Load(offset) => self.visit_i32_load(offset)?,
                 Instruction::I64Load(offset) => self.visit_i64_load(offset)?,
-                Instruction::F32Load(offset) => self.visit_f32_load(offset)?,
-                Instruction::F64Load(offset) => self.visit_f64_load(offset)?,
+                Instruction::F32Load(offset) => impl_float_check!(self.visit_f32_load(offset)?),
+                Instruction::F64Load(offset) => impl_float_check!(self.visit_f64_load(offset)?),
                 Instruction::I32Load8S(offset) => self.visit_i32_load_i8_s(offset)?,
                 Instruction::I32Load8U(offset) => self.visit_i32_load_i8_u(offset)?,
                 Instruction::I32Load16S(offset) => self.visit_i32_load_i16_s(offset)?,
@@ -132,8 +134,8 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::I64Load32U(offset) => self.visit_i64_load_i32_u(offset)?,
                 Instruction::I32Store(offset) => self.visit_i32_store(offset)?,
                 Instruction::I64Store(offset) => self.visit_i64_store(offset)?,
-                Instruction::F32Store(offset) => self.visit_f32_store(offset)?,
-                Instruction::F64Store(offset) => self.visit_f64_store(offset)?,
+                Instruction::F32Store(offset) => impl_float_check!(self.visit_f32_store(offset)?),
+                Instruction::F64Store(offset) => impl_float_check!(self.visit_f64_store(offset)?),
                 Instruction::I32Store8(offset) => self.visit_i32_store_8(offset)?,
                 Instruction::I32Store16(offset) => self.visit_i32_store_16(offset)?,
                 Instruction::I64Store8(offset) => self.visit_i64_store_8(offset)?,
@@ -157,10 +159,12 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::TableInit(elem) => self.visit_table_init(elem)?,
                 Instruction::ElemDrop(segment) => self.visit_element_drop(segment),
                 Instruction::RefFunc(func_index) => self.visit_ref_func(func_index)?,
-                Instruction::I32Const(value)
-                | Instruction::I64Const(value)
-                | Instruction::F32Const(value)
-                | Instruction::F64Const(value) => self.visit_i32_i64_const(value),
+                Instruction::I32Const(value) | Instruction::I64Const(value) => {
+                    self.visit_i32_i64_const(value)
+                }
+                Instruction::F32Const(value) | Instruction::F64Const(value) => {
+                    impl_float_check!(self.visit_i32_i64_const(value))
+                }
 
                 // Instruction::ConstRef(cref) => self.visit_const(cref),
                 Instruction::I32Eqz => self.visit_i32_eqz(),
@@ -185,18 +189,18 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::I64LeU => self.visit_i64_le_u(),
                 Instruction::I64GeS => self.visit_i64_ge_s(),
                 Instruction::I64GeU => self.visit_i64_ge_u(),
-                Instruction::F32Eq => self.visit_f32_eq(),
-                Instruction::F32Ne => self.visit_f32_ne(),
-                Instruction::F32Lt => self.visit_f32_lt(),
-                Instruction::F32Gt => self.visit_f32_gt(),
-                Instruction::F32Le => self.visit_f32_le(),
-                Instruction::F32Ge => self.visit_f32_ge(),
-                Instruction::F64Eq => self.visit_f64_eq(),
-                Instruction::F64Ne => self.visit_f64_ne(),
-                Instruction::F64Lt => self.visit_f64_lt(),
-                Instruction::F64Gt => self.visit_f64_gt(),
-                Instruction::F64Le => self.visit_f64_le(),
-                Instruction::F64Ge => self.visit_f64_ge(),
+                Instruction::F32Eq => impl_float_check!(self.visit_f32_eq()),
+                Instruction::F32Ne => impl_float_check!(self.visit_f32_ne()),
+                Instruction::F32Lt => impl_float_check!(self.visit_f32_lt()),
+                Instruction::F32Gt => impl_float_check!(self.visit_f32_gt()),
+                Instruction::F32Le => impl_float_check!(self.visit_f32_le()),
+                Instruction::F32Ge => impl_float_check!(self.visit_f32_ge()),
+                Instruction::F64Eq => impl_float_check!(self.visit_f64_eq()),
+                Instruction::F64Ne => impl_float_check!(self.visit_f64_ne()),
+                Instruction::F64Lt => impl_float_check!(self.visit_f64_lt()),
+                Instruction::F64Gt => impl_float_check!(self.visit_f64_gt()),
+                Instruction::F64Le => impl_float_check!(self.visit_f64_le()),
+                Instruction::F64Ge => impl_float_check!(self.visit_f64_ge()),
                 Instruction::I32Clz => self.visit_i32_clz(),
                 Instruction::I32Ctz => self.visit_i32_ctz(),
                 Instruction::I32Popcnt => self.visit_i32_popcnt(),
@@ -233,63 +237,63 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 Instruction::I64ShrU => self.visit_i64_shr_u(),
                 Instruction::I64Rotl => self.visit_i64_rotl(),
                 Instruction::I64Rotr => self.visit_i64_rotr(),
-                Instruction::F32Abs => self.visit_f32_abs(),
-                Instruction::F32Neg => self.visit_f32_neg(),
-                Instruction::F32Ceil => self.visit_f32_ceil(),
-                Instruction::F32Floor => self.visit_f32_floor(),
-                Instruction::F32Trunc => self.visit_f32_trunc(),
-                Instruction::F32Nearest => self.visit_f32_nearest(),
-                Instruction::F32Sqrt => self.visit_f32_sqrt(),
-                Instruction::F32Add => self.visit_f32_add(),
-                Instruction::F32Sub => self.visit_f32_sub(),
-                Instruction::F32Mul => self.visit_f32_mul(),
-                Instruction::F32Div => self.visit_f32_div(),
-                Instruction::F32Min => self.visit_f32_min(),
-                Instruction::F32Max => self.visit_f32_max(),
-                Instruction::F32Copysign => self.visit_f32_copysign(),
-                Instruction::F64Abs => self.visit_f64_abs(),
-                Instruction::F64Neg => self.visit_f64_neg(),
-                Instruction::F64Ceil => self.visit_f64_ceil(),
-                Instruction::F64Floor => self.visit_f64_floor(),
-                Instruction::F64Trunc => self.visit_f64_trunc(),
-                Instruction::F64Nearest => self.visit_f64_nearest(),
-                Instruction::F64Sqrt => self.visit_f64_sqrt(),
-                Instruction::F64Add => self.visit_f64_add(),
-                Instruction::F64Sub => self.visit_f64_sub(),
-                Instruction::F64Mul => self.visit_f64_mul(),
-                Instruction::F64Div => self.visit_f64_div(),
-                Instruction::F64Min => self.visit_f64_min(),
-                Instruction::F64Max => self.visit_f64_max(),
-                Instruction::F64Copysign => self.visit_f64_copysign(),
+                Instruction::F32Abs => impl_float_check!(self.visit_f32_abs()),
+                Instruction::F32Neg => impl_float_check!(self.visit_f32_neg()),
+                Instruction::F32Ceil => impl_float_check!(self.visit_f32_ceil()),
+                Instruction::F32Floor => impl_float_check!(self.visit_f32_floor()),
+                Instruction::F32Trunc => impl_float_check!(self.visit_f32_trunc()),
+                Instruction::F32Nearest => impl_float_check!(self.visit_f32_nearest()),
+                Instruction::F32Sqrt => impl_float_check!(self.visit_f32_sqrt()),
+                Instruction::F32Add => impl_float_check!(self.visit_f32_add()),
+                Instruction::F32Sub => impl_float_check!(self.visit_f32_sub()),
+                Instruction::F32Mul => impl_float_check!(self.visit_f32_mul()),
+                Instruction::F32Div => impl_float_check!(self.visit_f32_div()),
+                Instruction::F32Min => impl_float_check!(self.visit_f32_min()),
+                Instruction::F32Max => impl_float_check!(self.visit_f32_max()),
+                Instruction::F32Copysign => impl_float_check!(self.visit_f32_copysign()),
+                Instruction::F64Abs => impl_float_check!(self.visit_f64_abs()),
+                Instruction::F64Neg => impl_float_check!(self.visit_f64_neg()),
+                Instruction::F64Ceil => impl_float_check!(self.visit_f64_ceil()),
+                Instruction::F64Floor => impl_float_check!(self.visit_f64_floor()),
+                Instruction::F64Trunc => impl_float_check!(self.visit_f64_trunc()),
+                Instruction::F64Nearest => impl_float_check!(self.visit_f64_nearest()),
+                Instruction::F64Sqrt => impl_float_check!(self.visit_f64_sqrt()),
+                Instruction::F64Add => impl_float_check!(self.visit_f64_add()),
+                Instruction::F64Sub => impl_float_check!(self.visit_f64_sub()),
+                Instruction::F64Mul => impl_float_check!(self.visit_f64_mul()),
+                Instruction::F64Div => impl_float_check!(self.visit_f64_div()),
+                Instruction::F64Min => impl_float_check!(self.visit_f64_min()),
+                Instruction::F64Max => impl_float_check!(self.visit_f64_max()),
+                Instruction::F64Copysign => impl_float_check!(self.visit_f64_copysign()),
                 Instruction::I32WrapI64 => self.visit_i32_wrap_i64(),
-                Instruction::I32TruncF32S => self.visit_i32_trunc_f32_s()?,
-                Instruction::I32TruncF32U => self.visit_i32_trunc_f32_u()?,
-                Instruction::I32TruncF64S => self.visit_i32_trunc_f64_s()?,
-                Instruction::I32TruncF64U => self.visit_i32_trunc_f64_u()?,
+                Instruction::I32TruncF32S => impl_float_check!(self.visit_i32_trunc_f32_s()?),
+                Instruction::I32TruncF32U => impl_float_check!(self.visit_i32_trunc_f32_u()?),
+                Instruction::I32TruncF64S => impl_float_check!(self.visit_i32_trunc_f64_s()?),
+                Instruction::I32TruncF64U => impl_float_check!(self.visit_i32_trunc_f64_u()?),
                 Instruction::I64ExtendI32S => self.visit_i64_extend_i32_s(),
                 Instruction::I64ExtendI32U => self.visit_i64_extend_i32_u(),
-                Instruction::I64TruncF32S => self.visit_i64_trunc_f32_s()?,
-                Instruction::I64TruncF32U => self.visit_i64_trunc_f32_u()?,
-                Instruction::I64TruncF64S => self.visit_i64_trunc_f64_s()?,
-                Instruction::I64TruncF64U => self.visit_i64_trunc_f64_u()?,
-                Instruction::F32ConvertI32S => self.visit_f32_convert_i32_s(),
-                Instruction::F32ConvertI32U => self.visit_f32_convert_i32_u(),
-                Instruction::F32ConvertI64S => self.visit_f32_convert_i64_s(),
-                Instruction::F32ConvertI64U => self.visit_f32_convert_i64_u(),
-                Instruction::F32DemoteF64 => self.visit_f32_demote_f64(),
-                Instruction::F64ConvertI32S => self.visit_f64_convert_i32_s(),
-                Instruction::F64ConvertI32U => self.visit_f64_convert_i32_u(),
-                Instruction::F64ConvertI64S => self.visit_f64_convert_i64_s(),
-                Instruction::F64ConvertI64U => self.visit_f64_convert_i64_u(),
-                Instruction::F64PromoteF32 => self.visit_f64_promote_f32(),
-                Instruction::I32TruncSatF32S => self.visit_i32_trunc_sat_f32_s(),
-                Instruction::I32TruncSatF32U => self.visit_i32_trunc_sat_f32_u(),
-                Instruction::I32TruncSatF64S => self.visit_i32_trunc_sat_f64_s(),
-                Instruction::I32TruncSatF64U => self.visit_i32_trunc_sat_f64_u(),
-                Instruction::I64TruncSatF32S => self.visit_i64_trunc_sat_f32_s(),
-                Instruction::I64TruncSatF32U => self.visit_i64_trunc_sat_f32_u(),
-                Instruction::I64TruncSatF64S => self.visit_i64_trunc_sat_f64_s(),
-                Instruction::I64TruncSatF64U => self.visit_i64_trunc_sat_f64_u(),
+                Instruction::I64TruncF32S => impl_float_check!(self.visit_i64_trunc_f32_s()?),
+                Instruction::I64TruncF32U => impl_float_check!(self.visit_i64_trunc_f32_u()?),
+                Instruction::I64TruncF64S => impl_float_check!(self.visit_i64_trunc_f64_s()?),
+                Instruction::I64TruncF64U => impl_float_check!(self.visit_i64_trunc_f64_u()?),
+                Instruction::F32ConvertI32S => impl_float_check!(self.visit_f32_convert_i32_s()),
+                Instruction::F32ConvertI32U => impl_float_check!(self.visit_f32_convert_i32_u()),
+                Instruction::F32ConvertI64S => impl_float_check!(self.visit_f32_convert_i64_s()),
+                Instruction::F32ConvertI64U => impl_float_check!(self.visit_f32_convert_i64_u()),
+                Instruction::F32DemoteF64 => impl_float_check!(self.visit_f32_demote_f64()),
+                Instruction::F64ConvertI32S => impl_float_check!(self.visit_f64_convert_i32_s()),
+                Instruction::F64ConvertI32U => impl_float_check!(self.visit_f64_convert_i32_u()),
+                Instruction::F64ConvertI64S => impl_float_check!(self.visit_f64_convert_i64_s()),
+                Instruction::F64ConvertI64U => impl_float_check!(self.visit_f64_convert_i64_u()),
+                Instruction::F64PromoteF32 => impl_float_check!(self.visit_f64_promote_f32()),
+                Instruction::I32TruncSatF32S => impl_float_check!(self.visit_i32_trunc_sat_f32_s()),
+                Instruction::I32TruncSatF32U => impl_float_check!(self.visit_i32_trunc_sat_f32_u()),
+                Instruction::I32TruncSatF64S => impl_float_check!(self.visit_i32_trunc_sat_f64_s()),
+                Instruction::I32TruncSatF64U => impl_float_check!(self.visit_i32_trunc_sat_f64_u()),
+                Instruction::I64TruncSatF32S => impl_float_check!(self.visit_i64_trunc_sat_f32_s()),
+                Instruction::I64TruncSatF32U => impl_float_check!(self.visit_i64_trunc_sat_f32_u()),
+                Instruction::I64TruncSatF64S => impl_float_check!(self.visit_i64_trunc_sat_f64_s()),
+                Instruction::I64TruncSatF64U => impl_float_check!(self.visit_i64_trunc_sat_f64_u()),
                 Instruction::I32Extend8S => self.visit_i32_extend8_s(),
                 Instruction::I32Extend16S => self.visit_i32_extend16_s(),
                 Instruction::I64Extend8S => self.visit_i64_extend8_s(),
@@ -670,7 +674,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 return Ok(());
             }
         };
-        if let Some(_) = self.store.fuel_limit {
+        if let Some(_) = self.store.config.fuel_limit {
             let delta_in_bytes = delta.to_bytes().unwrap_or(0) as u64;
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(delta_in_bytes))?;
@@ -692,7 +696,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let n = i32::from(n) as usize;
         let offset = i32::from(d) as usize;
         let byte = u8::from(val);
-        if let Some(_) = self.store.fuel_limit {
+        if let Some(_) = self.store.config.fuel_limit {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
         }
@@ -717,7 +721,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let n = i32::from(n) as usize;
         let src_offset = i32::from(s) as usize;
         let dst_offset = i32::from(d) as usize;
-        if let Some(_) = self.store.fuel_limit {
+        if let Some(_) = self.store.config.fuel_limit {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
         }
@@ -751,7 +755,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let n = i32::from(n) as usize;
         let src_offset = i32::from(s) as usize;
         let dst_offset = i32::from(d) as usize;
-        if let Some(_) = self.store.fuel_limit {
+        if let Some(_) = self.store.config.fuel_limit {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
         }
@@ -805,7 +809,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     ) -> Result<(), RwasmError> {
         let (init, delta) = self.store.sp.pop2();
         let delta: u32 = delta.into();
-        if let Some(_) = self.store.fuel_limit {
+        if let Some(_) = self.store.config.fuel_limit {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(delta as u64))?;
         }
@@ -828,7 +832,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     #[inline(always)]
     pub(crate) fn visit_table_fill(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
         let (i, val, n) = self.store.sp.pop3();
-        if let Some(_) = self.store.fuel_limit {
+        if let Some(_) = self.store.config.fuel_limit {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
         }
@@ -870,7 +874,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let len = u32::from(n);
         let src_index = u32::from(s);
         let dst_index = u32::from(d);
-        if let Some(_) = self.store.fuel_limit {
+        if let Some(_) = self.store.config.fuel_limit {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
         }
@@ -905,7 +909,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let src_index = u32::from(s);
         let dst_index = u32::from(d);
 
-        if let Some(_) = self.store.fuel_limit {
+        if let Some(_) = self.store.config.fuel_limit {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(len as u64))?;
         }

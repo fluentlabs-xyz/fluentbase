@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 #![warn(unused_crate_dependencies)]
 
+mod config;
 mod context;
 mod executor;
 mod handler;
@@ -12,6 +13,7 @@ mod utils;
 extern crate alloc;
 extern crate core;
 
+pub use config::*;
 pub use context::*;
 pub use executor::*;
 pub use handler::*;
