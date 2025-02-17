@@ -49,8 +49,6 @@ impl<SDK: SharedAPI> RWASM<SDK> {
     }
     fn main(&mut self) {
         let wasm_binary = self.sdk.input();
-
-        let wasm_binary = wasm_binary.0.as_ref();
         let is_run = if wasm_binary[0] == 0 { false } else { true };
         let input_size = wasm_binary[1];
 

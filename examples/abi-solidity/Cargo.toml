@@ -1,0 +1,18 @@
+[package]
+name = "fluentbase-example-abi-solidity"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+hex-literal = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std"
+]

@@ -2773,6 +2773,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-abi-solidity"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "hex-literal",
+]
+
+[[package]]
 name = "fluentbase-example-cairo"
 version = "0.1.0"
 dependencies = [

@@ -243,6 +243,7 @@ impl<API: NativeAPI> JournalStateInner<API> {
     }
 }
 
+#[derive(Clone)]
 pub struct JournalState<API: NativeAPI> {
     pub inner: Rc<RefCell<JournalStateInner<API>>>,
 }

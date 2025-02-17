@@ -1,4 +1,5 @@
 use crate::{
+    alloc_slice,
     alloc_vec,
     bytes::{Buf, BytesMut},
     Account,
@@ -388,11 +389,11 @@ pub trait SharedAPI: ContextFreeNativeAPI {
     fn read(&self, target: &mut [u8], offset: u32);
     fn input_size(&self) -> u32;
 
-    fn input(&self) -> Bytes {
+    fn input<'a>(&self) -> &'a [u8] {
         let input_size = self.input_size();
-        let mut buffer = alloc_vec(input_size as usize);
+        let mut buffer = alloc_slice(input_size as usize);
         self.read(&mut buffer, 0);
-        buffer.into()
+        buffer
     }
 
     fn charge_fuel(&self, value: u64);

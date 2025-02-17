@@ -342,7 +342,6 @@ impl Runtime {
                 .with_resolved_hash(runtime_context.is_test);
 
             let bytecode_repr = take(&mut runtime_context.bytecode);
-            let is_test = runtime_context.is_test;
 
             // resolve cached module or init it
             let rwasm_module = match &bytecode_repr {
