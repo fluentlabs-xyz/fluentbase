@@ -52,6 +52,8 @@ pub fn devnet_chain_config() -> ChainConfig {
         parlia: None,
         deposit_contract_address: None,
         prague_time: None,
+        osaka_time: None,
+        blob_schedule: Default::default(),
     }
 }
 
