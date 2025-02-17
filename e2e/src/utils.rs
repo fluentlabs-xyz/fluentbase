@@ -296,12 +296,45 @@ pub(crate) fn try_print_utf8_error(mut output: &[u8]) {
     );
 }
 
+#[allow(unused)]
+fn trace_rwasm(rwasm_bytecode: &[u8]) {
+    let rwasm_module = RwasmModule::new(rwasm_bytecode).unwrap();
+    let mut func_length = 0usize;
+    let mut expected_func_length = rwasm_module
+        .func_section
+        .first()
+        .copied()
+        .unwrap_or(u32::MAX) as usize;
+    let mut func_index = 0usize;
+    println!("\n -- function #{} -- ", func_index);
+    for (i, instr) in rwasm_module.code_section.instr.iter().enumerate() {
+        println!("{:02}: {:?}", i, instr);
+        func_length += 1;
+        if func_length == expected_func_length {
+            func_index += 1;
+            expected_func_length = rwasm_module
+                .func_section
+                .get(func_index)
+                .copied()
+                .unwrap_or(u32::MAX) as usize;
+            if expected_func_length != u32::MAX as usize {
+                println!("\n -- function #{} -- ", func_index);
+            }
+            func_length = 0;
+        }
+    }
+    println!("\n")
+}
+
 pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {
     let rwasm_binary = if wasm_binary[0] == 0xef {
         wasm_binary
     } else {
         wasm2rwasm(wasm_binary.as_slice()).unwrap()
     };
+
+    // println!("rwasm binary: {}\n", hex::encode(&rwasm_binary));
+    // trace_rwasm(&rwasm_binary);
 
     let context_input = {
         let shared_ctx = SharedContextInputV1 {

@@ -3025,7 +3025,9 @@ dependencies = [
 name = "fluentbase-rwasm"
 version = "0.1.0"
 dependencies = [
+ "byteorder",
  "hashbrown 0.15.2",
+ "paste",
  "rwasm",
  "tiny-keccak",
 ]
@@ -6310,7 +6312,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#4654035315c20ee8d5bd68e9110a30d64b98f0c2"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#1aae587a20268273e12a41d15cfd0b893327c658"
 dependencies = [
  "byteorder",
  "downcast-rs",

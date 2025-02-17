@@ -282,7 +282,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         }
         let mut output: [u8; 32] = [0u8; 32];
         self.native_sdk.read_output(&mut output, 0);
-        SyscallResult::new(U256::from_le_slice(&output[0..32]), fuel_consumed)
+        let value = U256::from_le_slice(&output[0..32]);
+        SyscallResult::new(value, fuel_consumed)
     }
 
     fn ext_storage(&self, address: &Address, slot: &U256) -> (U256, bool) {

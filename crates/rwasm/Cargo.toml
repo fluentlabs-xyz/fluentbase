@@ -15,8 +15,10 @@ tiny-keccak = { workspace = true }
 
 # we have rwasm only here because we are planning to remove this dependency in the future
 rwasm = { workspace = true }
+paste.workspace = true
+byteorder.workspace = true
 
 [features]
-default = ["std"]
+default = ["std", "rwasm/std"]
 std = []
 e2e = []

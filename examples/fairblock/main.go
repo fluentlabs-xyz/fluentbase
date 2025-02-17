@@ -4,6 +4,8 @@ import "C"
 import (
 	"bytes"
 	enc "github.com/FairBlock/DistributedIBE/encryption"
+	"reflect"
+
 	//"bytes"
 	//"fmt"
 	bls "github.com/drand/kyber-bls12381"
@@ -45,6 +47,8 @@ func main() {
 	rawPk := C.GoBytes(unsafe.Pointer(&input[headerLen]), C.int(pkLen))
 	pk := bls.NullKyberG1()
 	err := pk.UnmarshalBinary(rawPk)
+
+	reflect.Value{}
 
 	if err != nil {
 		print_err(err)

@@ -17,6 +17,7 @@ use fluentbase_rwasm::{
     Caller,
     RwasmError,
     RwasmExecutor,
+    RwasmModule2,
     SimpleCallHandler,
 };
 use rwasm::{
@@ -224,7 +225,7 @@ impl TestContext<'_> {
         rwasm_module
             .write_binary_to_vec(&mut encoded_rwasm_module)
             .unwrap();
-        let rwasm_module = RwasmModule::read_from_slice(&encoded_rwasm_module).unwrap();
+        let rwasm_module = RwasmModule2::new(&encoded_rwasm_module);
 
         // println!();
         // #[allow(unused)]
@@ -260,7 +261,7 @@ impl TestContext<'_> {
         // println!();
 
         let mut executor =
-            TestingRwasmExecutor::new(rwasm_module.instantiate(), None, TestingContext::default());
+            TestingRwasmExecutor::new(Arc::new(rwasm_module), None, TestingContext::default());
         executor.store_mut().context_mut().state = ENTRYPOINT_FUNC_IDX;
         println!(" --- entrypoint ---");
         let exit_code = executor.run().map_err(|err| {

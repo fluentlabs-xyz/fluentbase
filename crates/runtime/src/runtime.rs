@@ -12,8 +12,7 @@ use fluentbase_rwasm::{
     RwasmContext,
     RwasmError,
     RwasmExecutor,
-    RwasmModule,
-    RwasmModuleInstance,
+    RwasmModule2,
     SyscallHandler,
 };
 use fluentbase_types::{Bytes, ExitCode, SysFuncIdx, F254, POSEIDON_EMPTY};
@@ -23,14 +22,16 @@ use std::{
     cell::RefCell,
     fmt::{Debug, Formatter},
     mem::take,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
 };
 
 #[derive(Clone, Debug)]
 pub enum BytecodeOrHash {
     Bytecode(Bytes, Option<F254>),
     Hash(F254),
-    Instance(RwasmModuleInstance, Bytes, Option<F254>),
 }
 
 impl Default for BytecodeOrHash {
@@ -56,11 +57,6 @@ impl BytecodeOrHash {
                 BytecodeOrHash::Bytecode(bytecode, Some(hash))
             }
             BytecodeOrHash::Hash(_) => self,
-            BytecodeOrHash::Instance(_, _, Some(_)) => self,
-            BytecodeOrHash::Instance(instance, bytecode, None) => {
-                let hash = get_hash(bytecode.as_ref());
-                BytecodeOrHash::Instance(instance, bytecode, Some(hash))
-            }
         }
     }
 
@@ -68,7 +64,6 @@ impl BytecodeOrHash {
         match self {
             BytecodeOrHash::Bytecode(_, hash) => hash.expect("hash must be resolved"),
             BytecodeOrHash::Hash(hash) => *hash,
-            BytecodeOrHash::Instance(_, _, hash) => hash.expect("hash must be resolved"),
         }
     }
 }
@@ -249,7 +244,7 @@ pub(crate) struct RecoverableRuntime {
 pub struct CachingRuntime {
     // TODO(dmitry123): "add expiration to this map to avoid memory leak"
     cached_bytecode: HashMap<F254, Bytes>,
-    modules: HashMap<F254, RwasmModuleInstance>,
+    modules: HashMap<F254, Arc<RwasmModule2>>,
     recoverable_runtimes: HashMap<u32, RecoverableRuntime>,
 }
 
@@ -265,18 +260,20 @@ impl CachingRuntime {
     pub fn insert_module(
         &mut self,
         rwasm_hash: F254,
-        instance: RwasmModuleInstance,
+        instance: RwasmModule2,
         bytecode: Bytes,
-    ) -> &RwasmModuleInstance {
+    ) -> Arc<RwasmModule2> {
         self.cached_bytecode.insert(rwasm_hash, bytecode);
         let entry = match self.modules.entry(rwasm_hash) {
             Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
             Entry::Vacant(entry) => entry,
         };
-        entry.insert(instance)
+        let instance = Arc::new(instance);
+        entry.insert(instance.clone());
+        instance
     }
 
-    pub fn init_module(&mut self, rwasm_hash: F254) -> &RwasmModuleInstance {
+    pub fn init_module(&mut self, rwasm_hash: F254) -> Arc<RwasmModule2> {
         let rwasm_bytecode = self
             .cached_bytecode
             .get(&rwasm_hash)
@@ -285,13 +282,13 @@ impl CachingRuntime {
             Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
             Entry::Vacant(entry) => entry,
         };
-        let reduced_module =
-            RwasmModule::new_or_empty(rwasm_bytecode).expect("runtime: can't parse rwasm module");
-        entry.insert(reduced_module.instantiate())
+        let reduced_module = Arc::new(RwasmModule2::new(rwasm_bytecode));
+        entry.insert(reduced_module.clone());
+        reduced_module
     }
 
-    pub fn resolve_module(&self, rwasm_hash: &F254) -> Option<&RwasmModuleInstance> {
-        self.modules.get(rwasm_hash)
+    pub fn resolve_module(&self, rwasm_hash: &F254) -> Option<Arc<RwasmModule2>> {
+        self.modules.get(rwasm_hash).cloned()
     }
 }
 
@@ -341,7 +338,6 @@ impl Runtime {
                 .with_resolved_hash(runtime_context.is_test);
 
             let bytecode_repr = take(&mut runtime_context.bytecode);
-            let is_test = runtime_context.is_test;
 
             // resolve cached module or init it
             let rwasm_module = match &bytecode_repr {
@@ -371,15 +367,6 @@ impl Runtime {
                             }
                             caching_runtime.init_module(*hash)
                         }
-                    }
-                }
-                BytecodeOrHash::Instance(instance, bytecode, hash) => {
-                    let hash = hash.unwrap();
-                    // if we have a cached module then use it, otherwise create a new one and cache
-                    if let Some(module) = caching_runtime.resolve_module(&hash) {
-                        module
-                    } else {
-                        caching_runtime.insert_module(hash, instance.clone(), bytecode.clone())
                     }
                 }
             };

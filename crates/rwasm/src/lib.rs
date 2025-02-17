@@ -5,7 +5,7 @@
 mod context;
 mod executor;
 mod handler;
-mod opcodes;
+mod module;
 mod types;
 mod utils;
 
@@ -15,6 +15,7 @@ extern crate core;
 pub use context::*;
 pub use executor::*;
 pub use handler::*;
+pub use module::*;
 pub use rwasm::{
     core::{HostError, TrapCode},
     engine::{bytecode::Instruction, stack::ValueStackPtr, RwasmConfig, StateRouterConfig},

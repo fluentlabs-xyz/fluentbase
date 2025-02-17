@@ -1,17 +1,23 @@
-use crate::{RwasmError, FUNC_REF_OFFSET, N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE};
+use crate::{
+    module::RwasmModule2,
+    RwasmError,
+    FUNC_REF_OFFSET,
+    N_DEFAULT_STACK_SIZE,
+    N_MAX_STACK_SIZE,
+};
+use alloc::sync::Arc;
 use hashbrown::HashMap;
 use rwasm::{
     core::{TrapCode, UntypedValue, ValueType, N_MAX_MEMORY_PAGES},
     engine::{
         bytecode::{DataSegmentIdx, ElementSegmentIdx, GlobalIdx, SignatureIdx, TableIdx},
-        code_map::InstructionPtr,
         stack::{ValueStack, ValueStackPtr},
         FuelCosts,
         Tracer,
     },
     memory::{DataSegmentEntity, MemoryEntity},
     module::{ConstExpr, ElementSegment, ElementSegmentItems, ElementSegmentKind},
-    rwasm::RwasmModuleInstance,
+    rwasm::instruction::MAX_INSTRUCTION_SIZE_BYTES,
     store::ResourceLimiterRef,
     table::{ElementSegmentEntity, TableEntity},
     MemoryType,
@@ -19,13 +25,13 @@ use rwasm::{
 
 pub struct RwasmContext<T> {
     // function segments
-    pub(crate) instance: RwasmModuleInstance,
+    pub(crate) module: Arc<RwasmModule2>,
     // execution context information
     pub(crate) consumed_fuel: u64,
     pub(crate) value_stack: ValueStack,
     pub(crate) sp: ValueStackPtr,
     pub(crate) global_memory: MemoryEntity,
-    pub(crate) ip: InstructionPtr,
+    pub(crate) program_counter: usize,
     pub(crate) context: T,
     pub(crate) fuel_limit: Option<u64>,
     pub(crate) tracer: Option<Tracer>,
@@ -36,23 +42,16 @@ pub struct RwasmContext<T> {
     pub(crate) data_segments: HashMap<DataSegmentIdx, DataSegmentEntity>,
     pub(crate) elements: HashMap<ElementSegmentIdx, ElementSegmentEntity>,
     // list of nested calls return pointers
-    pub(crate) call_stack: Vec<InstructionPtr>,
+    pub(crate) call_stack: Vec<usize>,
     // the last used signature (needed for indirect calls type checks)
     pub(crate) last_signature: Option<SignatureIdx>,
 }
 
 impl<T> RwasmContext<T> {
-    pub fn new(instance: RwasmModuleInstance, fuel_limit: Option<u64>, context: T) -> Self {
+    pub fn new(module: Arc<RwasmModule2>, fuel_limit: Option<u64>, context: T) -> Self {
         // create stack with sp
         let mut value_stack = ValueStack::new(N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE);
         let sp = value_stack.stack_ptr();
-
-        // assign sp to the position inside code section
-        let mut ip = InstructionPtr::new(
-            instance.module.code_section.instr.as_ptr(),
-            instance.module.code_section.metas.as_ptr(),
-        );
-        ip.add(instance.start);
 
         // create global memory
         let mut resource_limiter_ref = ResourceLimiterRef::default();
@@ -70,8 +69,7 @@ impl<T> RwasmContext<T> {
                 kind: ElementSegmentKind::Passive,
                 ty: ValueType::I32,
                 items: ElementSegmentItems {
-                    exprs: instance
-                        .module
+                    exprs: module
                         .element_section
                         .iter()
                         .map(|v| ConstExpr::from_const((*v + FUNC_REF_OFFSET).into()))
@@ -79,14 +77,15 @@ impl<T> RwasmContext<T> {
                 },
             }),
         );
+        let program_counter = module.entrypoint_offset as usize * MAX_INSTRUCTION_SIZE_BYTES;
 
         Self {
-            instance,
+            module,
             consumed_fuel: 0,
             value_stack,
             sp,
             global_memory,
-            ip,
+            program_counter,
             context,
             fuel_limit,
             tracer: None,
@@ -101,16 +100,12 @@ impl<T> RwasmContext<T> {
     }
 
     pub fn program_counter(&self) -> u32 {
-        self.ip.pc()
+        self.program_counter as u32
     }
 
     pub fn reset(&mut self, pc: Option<usize>) {
-        let mut ip = InstructionPtr::new(
-            self.instance.module.code_section.instr.as_ptr(),
-            self.instance.module.code_section.metas.as_ptr(),
-        );
-        ip.add(pc.unwrap_or(self.instance.start));
-        self.ip = ip;
+        self.program_counter =
+            pc.unwrap_or(self.module.entrypoint_offset as usize * MAX_INSTRUCTION_SIZE_BYTES);
         self.consumed_fuel = 0;
         self.value_stack.drain();
         self.sp = self.value_stack.stack_ptr();
