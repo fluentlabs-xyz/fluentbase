@@ -20,6 +20,7 @@ libzktrie.so
 *.wat
 examples/**/*.wasm
 
-crates/revm/e2e/tests
+revm/e2e/Cargo.lock
+revm/e2e/tests
 
 node_modules
