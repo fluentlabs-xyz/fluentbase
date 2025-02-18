@@ -6,7 +6,6 @@ use crate::{
     types::{NonePreimageResolver, PreimageResolver},
 };
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
-use fluentbase_poseidon::poseidon_hash;
 use fluentbase_rwasm::{
     Caller,
     ExecutorConfig,
@@ -24,7 +23,6 @@ use std::{
     cell::RefCell,
     fmt::{Debug, Formatter},
     mem::take,
-    sync::atomic::{AtomicU32, Ordering},
 };
 
 #[derive(Clone, Debug)]
@@ -41,13 +39,9 @@ impl Default for BytecodeOrHash {
 }
 
 impl BytecodeOrHash {
-    pub fn with_resolved_hash(self, is_test: bool) -> Self {
+    pub fn with_resolved_hash(self) -> Self {
         let get_hash = |bytecode: &[u8]| {
-            let hash = if is_test {
-                keccak(bytecode.as_ref()).0
-            } else {
-                poseidon_hash(&bytecode)
-            };
+            let hash = keccak(bytecode.as_ref()).0;
             F254::from(hash)
         };
         match self {
@@ -83,7 +77,7 @@ pub struct RuntimeContext {
     pub(crate) trace: bool,
     pub(crate) input: Bytes,
     pub(crate) disable_fuel: bool,
-    pub(crate) is_test: bool,
+    pub(crate) call_counter: u32,
     // context outputs
     pub(crate) execution_result: ExecutionResult,
 }
@@ -105,7 +99,7 @@ impl Default for RuntimeContext {
             trace: false,
             execution_result: ExecutionResult::default(),
             disable_fuel: false,
-            is_test: false,
+            call_counter: 0,
         }
     }
 }
@@ -160,11 +154,6 @@ impl RuntimeContext {
 
     pub fn with_tracer(mut self) -> Self {
         self.trace = true;
-        self
-    }
-
-    pub fn with_is_test(mut self) -> Self {
-        self.is_test = true;
         self
     }
 
@@ -241,17 +230,11 @@ impl ExecutionResult {
     }
 }
 
-static mut GLOBAL_RUNTIME_INDEX: AtomicU32 = AtomicU32::new(1);
-
-pub(crate) struct RecoverableRuntime {
-    pub(crate) runtime: Runtime,
-}
-
 pub struct CachingRuntime {
     // TODO(dmitry123): "add expiration to this map to avoid memory leak"
     cached_bytecode: HashMap<F254, Bytes>,
     modules: HashMap<F254, RwasmModuleInstance>,
-    recoverable_runtimes: HashMap<u32, RecoverableRuntime>,
+    recoverable_runtimes: HashMap<u32, Runtime>,
 }
 
 impl CachingRuntime {
@@ -337,9 +320,7 @@ impl Runtime {
     ) -> Self {
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             // make sure bytecode hash is resolved
-            runtime_context.bytecode = runtime_context
-                .bytecode
-                .with_resolved_hash(runtime_context.is_test);
+            runtime_context.bytecode = runtime_context.bytecode.with_resolved_hash();
 
             let bytecode_repr = take(&mut runtime_context.bytecode);
 
@@ -420,19 +401,17 @@ impl Runtime {
         self.handle_execution_result(result, fuel_consumed_before_call)
     }
 
-    pub(crate) fn remember_runtime(self) -> u32 {
+    pub(crate) fn remember_runtime(self, root_ctx: &mut RuntimeContext) -> i32 {
         // save the current runtime state for future recovery
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
-            let call_id = unsafe { GLOBAL_RUNTIME_INDEX.fetch_add(1u32, Ordering::Relaxed) };
-            let recoverable_runtime = RecoverableRuntime { runtime: self };
-            caching_runtime
-                .recoverable_runtimes
-                .insert(call_id, recoverable_runtime);
-            call_id
+            root_ctx.call_counter += 1;
+            let call_id = root_ctx.call_counter;
+            caching_runtime.recoverable_runtimes.insert(call_id, self);
+            call_id as i32
         })
     }
 
-    pub(crate) fn recover_runtime(call_id: u32) -> RecoverableRuntime {
+    pub(crate) fn recover_runtime(call_id: u32) -> Runtime {
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             caching_runtime
                 .recoverable_runtimes

@@ -203,7 +203,7 @@ impl SyscallExec {
         if execution_result.interrupted {
             // then we remember this runtime and assign call id into exit code (positive exit code
             // stands for interrupted runtime call id, negative or zero for error)
-            execution_result.exit_code = runtime.remember_runtime() as i32;
+            execution_result.exit_code = runtime.remember_runtime(ctx);
         }
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"

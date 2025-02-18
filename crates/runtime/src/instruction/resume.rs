@@ -46,11 +46,10 @@ impl SyscallResume {
         let mut recoverable_runtime = Runtime::recover_runtime(call_id);
 
         // during the résumé we must clear output, otherwise collision might happen
-        recoverable_runtime.runtime.context_mut().clear_output();
+        recoverable_runtime.context_mut().clear_output();
 
         // charge fuel
         if recoverable_runtime
-            .runtime
             .executor
             .store_mut()
             .try_consume_fuel(fuel_used)
@@ -59,12 +58,10 @@ impl SyscallResume {
             return (0, ExitCode::OutOfGas.into_i32());
         }
 
-        let fuel_consumed_before_call =
-            recoverable_runtime.runtime.executor.store().fuel_consumed();
+        let fuel_consumed_before_call = recoverable_runtime.executor.store().fuel_consumed();
 
         // copy return data into return data
         let return_data_mut = recoverable_runtime
-            .runtime
             .executor
             .store_mut()
             .context_mut()
@@ -80,9 +77,7 @@ impl SyscallResume {
         //     .logs
         //     .len();
 
-        let mut execution_result = recoverable_runtime
-            .runtime
-            .resume(exit_code, fuel_consumed_before_call);
+        let mut execution_result = recoverable_runtime.resume(exit_code, fuel_consumed_before_call);
 
         // println!("\n\nRESUME, interrupted: {}", execution_result.interrupted);
         // println!(
@@ -136,7 +131,7 @@ impl SyscallResume {
         if execution_result.interrupted {
             // then we remember this runtime and assign call id into exit code (positive exit code
             // stands for interrupted runtime call id, negative or zero for error)
-            execution_result.exit_code = recoverable_runtime.runtime.remember_runtime() as i32;
+            execution_result.exit_code = recoverable_runtime.remember_runtime(ctx);
         }
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"

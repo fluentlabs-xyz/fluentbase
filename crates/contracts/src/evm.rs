@@ -168,8 +168,8 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
     fn sstore(
         &mut self,
         _address: Address,
-        index: U256,
-        new_value: U256,
+        _index: U256,
+        _new_value: U256,
     ) -> Option<StateLoad<SStoreResult>> {
         todo!("not supported yet")
         // let result = self.sdk.write_storage(index, new_value);
@@ -353,7 +353,7 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
         let input = self.sdk.input();
         let (evm_bytecode, _code_hash) = self.load_evm_bytecode();
         let contract = Contract {
-            input,
+            input: Bytes::from(input),
             bytecode: to_analysed(evm_bytecode),
             hash: None,
             target_address: self.sdk.context().contract_address(),
@@ -370,7 +370,7 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
         let init_code = self.sdk.input();
         let contract = Contract {
             input: Bytes::default(),
-            bytecode: to_analysed(Bytecode::new_raw(init_code)),
+            bytecode: to_analysed(Bytecode::new_raw(Bytes::from(init_code))),
             hash: None,
             target_address: self.sdk.context().contract_address(),
             bytecode_address: None,

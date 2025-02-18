@@ -317,8 +317,7 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
     let ctx = RuntimeContext::new(rwasm_binary)
         .with_state(STATE_MAIN)
         .with_fuel_limit(100_000_000_000)
-        .with_input(context_input)
-        .with_is_test();
+        .with_input(context_input);
     // .with_tracer();
     let mut runtime = Runtime::new(ctx, &NonePreimageResolver);
     runtime.context_mut().clear_output();

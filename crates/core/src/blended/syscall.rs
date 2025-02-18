@@ -56,13 +56,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
-        debug_log!(
-            "process_syscall({}): fuel={} input_len={} state={}",
-            fluentbase_sdk::syscall_name_by_hash(&params.code_hash),
-            params.gas_limit,
-            params.input.len(),
-            params.state,
-        );
         // only main state can be forwarded to the other contract as a nested call,
         // other states can be only used by root
         let inner_gas_used = self.inner_gas_spend.take();
