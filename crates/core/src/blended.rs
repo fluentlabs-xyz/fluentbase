@@ -19,7 +19,7 @@ use fluentbase_sdk::{
     SovereignAPI,
     SovereignContextReader,
     SyscallInvocationParams,
-    PRECOMPILE_MULTICALL,
+    PRECOMPILE_NATIVE_MULTICALL,
     STATE_MAIN,
 };
 use revm_interpreter::{
@@ -180,8 +180,8 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
         if input.len() < 4 {
             return None;
         };
-        if input[..4] == PRECOMPILE_MULTICALL[16..] {
-            let (acc, _) = self.sdk.account(&PRECOMPILE_MULTICALL);
+        if input[..4] == PRECOMPILE_NATIVE_MULTICALL[16..] {
+            let (acc, _) = self.sdk.account(&PRECOMPILE_NATIVE_MULTICALL);
             return Some(acc);
         }
         None

@@ -1,10 +1,10 @@
 #[macro_export]
 macro_rules! initial_balance {
-    ($address:literal) => {
+    ($address:literal, $value:expr) => {
         (
             address!($address),
             GenesisAccount {
-                balance: U256::from(100000_000000000000000000u128),
+                balance: $value,
                 ..Default::default()
             },
         )
@@ -40,16 +40,4 @@ macro_rules! enable_rwasm_contract {
             },
         );
     }};
-}
-
-#[macro_export]
-macro_rules! storage_only {
-    ($address:literal) => {
-        (
-            address!($address),
-            GenesisAccount {
-                ..Default::default()
-            },
-        )
-    };
 }
