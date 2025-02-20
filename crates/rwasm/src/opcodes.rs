@@ -74,6 +74,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             //     );
             // }
             match instr {
+                Instruction::Unreachable => self.visit_unreachable()?,
                 Instruction::LocalGet(local_depth) => self.visit_local_get(local_depth),
                 Instruction::LocalSet(local_depth) => self.visit_local_set(local_depth),
                 Instruction::LocalTee(local_depth) => self.visit_local_tee(local_depth),
@@ -85,9 +86,6 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                     self.visit_br_adjust_if_nez(branch_offset)
                 }
                 Instruction::BrTable(targets) => self.visit_br_table(targets),
-                Instruction::Unreachable => {
-                    return Err(RwasmError::TrapCode(TrapCode::UnreachableCodeReached));
-                }
                 Instruction::ConsumeFuel(block_fuel) => self.visit_consume_fuel(block_fuel)?,
                 Instruction::Return(drop_keep) => {
                     if let Some(exit_code) = self.visit_return(drop_keep) {
@@ -303,6 +301,11 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 _ => unreachable!("rwasm: unsupported instruction ({:?})", instr),
             }
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn visit_unreachable(&mut self) -> Result<(), RwasmError> {
+        Err(RwasmError::TrapCode(TrapCode::UnreachableCodeReached))
     }
 
     #[inline(always)]
