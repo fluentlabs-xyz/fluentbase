@@ -22,6 +22,10 @@ revm-primitives = { workspace = true, default-features = false }
 rwasm = { workspace = true }
 hex = "0.4.3"
 
+[build-dependencies]
+fluentbase-example-greeting = { path = "../../examples/greeting" }
+fluentbase-contracts-multicall = { path = "../../contracts/multicall" }
+
 [features]
 default = ["std"]
 std = [

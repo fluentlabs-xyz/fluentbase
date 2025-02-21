@@ -37,7 +37,6 @@ fluentbase-codec = { path = "./crates/codec", default-features = false, features
 fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
-fluentbase-contracts = { path = "crates/contracts", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-rwasm = { path = "./crates/rwasm", default-features = false, features = ["std"] }
 fluentbase-rwasm-e2e = { path = "./crates/rwasm/e2e", default-features = false }

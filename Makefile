@@ -2,7 +2,9 @@ all: build
 
 .PHONY: build
 build:
-	cargo build # build examples & contracts by triggering "build.rs"
+	# build examples & contracts by triggering "build.rs"
+	cargo check --lib
+	# build genesis files
 	cd crates/genesis && $(MAKE) # build genesis
 
 .PHONY: examples
