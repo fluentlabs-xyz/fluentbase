@@ -24,12 +24,18 @@ use fluentbase_runtime::{
     types::{NonePreimageResolver, PreimageResolver},
     RuntimeContext,
 };
-use fluentbase_types::{Bytes, ContextFreeNativeAPI, NativeAPI, UnwrapExitCode, B256, F254};
+use fluentbase_types::{Bytes, NativeAPI, UnwrapExitCode, B256, F254};
 use std::{cell::RefCell, mem::take};
 
 pub struct RuntimeContextWrapper<'a, PR: PreimageResolver> {
     pub ctx: Rc<RefCell<RuntimeContext>>,
     pub preimage_resolver: &'a PR,
+}
+
+impl Default for RuntimeContextWrapper<'static, NonePreimageResolver> {
+    fn default() -> Self {
+        Self::new(RuntimeContext::default())
+    }
 }
 
 impl RuntimeContextWrapper<'static, NonePreimageResolver> {
@@ -61,7 +67,7 @@ impl Clone for RuntimeContextWrapper<'static, NonePreimageResolver> {
     }
 }
 
-impl<'a, PR: PreimageResolver> ContextFreeNativeAPI for RuntimeContextWrapper<'a, PR> {
+impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
     fn keccak256(data: &[u8]) -> B256 {
         SyscallKeccak256::fn_impl(data)
     }
@@ -85,9 +91,7 @@ impl<'a, PR: PreimageResolver> ContextFreeNativeAPI for RuntimeContextWrapper<'a
     fn debug_log(message: &str) {
         SyscallDebugLog::fn_impl(message.as_bytes())
     }
-}
 
-impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
     fn read(&self, target: &mut [u8], offset: u32) {
         let result = SyscallRead::fn_impl(&self.ctx.borrow(), offset, target.len() as u32).unwrap();
         target.copy_from_slice(&result);
@@ -186,7 +190,7 @@ impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
     }
 }
 
-pub type TestingContext = RuntimeContextWrapper<'static, NonePreimageResolver>;
+type TestingContext = RuntimeContextWrapper<'static, NonePreimageResolver>;
 
 impl TestingContext {
     pub fn empty() -> Self {
@@ -214,5 +218,9 @@ impl TestingContext {
 
     pub fn take_output(&self) -> Vec<u8> {
         take(self.ctx.borrow_mut().output_mut())
+    }
+
+    pub fn exit_code(&self) -> i32 {
+        self.ctx.borrow_mut().exit_code()
     }
 }

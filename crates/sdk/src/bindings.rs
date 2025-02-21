@@ -118,7 +118,7 @@ extern "C" {
     /// computations, and is often wrapped in a safer abstraction to ensure the correct usage of
     /// memory.
     pub fn _keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    pub fn _keccak256_permute(state_ptr: *const [u64; 25]);
+    pub fn _keccak256_permute(state_ptr: *mut [u64; 25]);
     pub fn _poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     pub fn _poseidon_hash(
         fa32_offset: *const u8,

@@ -22,10 +22,10 @@ impl SyscallEcrecover {
     }
 
     pub fn fn_impl(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Result<[u8; 65], ExitCode> {
-        let sig = Signature::from_slice(&sig[..]).map_err(|_| ExitCode::EcrecoverBadSignature)?;
+        let sig = Signature::from_slice(&sig[..]).map_err(|_| ExitCode::MalformedBuiltinParams)?;
         let rec_id = RecoveryId::new(rec_id & 0b1 > 0, rec_id & 0b10 > 0);
         let pk = VerifyingKey::recover_from_prehash(digest.as_slice(), &sig, rec_id)
-            .map_err(|_| ExitCode::EcrecoverError)?;
+            .map_err(|_| ExitCode::MalformedBuiltinParams)?;
         let pk_computed = EncodedPoint::from(&pk);
         let public_key = PublicKey::from_encoded_point(&pk_computed).unwrap();
         let pk_uncompressed = public_key.to_encoded_point(false);

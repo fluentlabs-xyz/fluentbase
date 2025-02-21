@@ -15,7 +15,6 @@ fluentbase-codec = { workspace = true }
 fluentbase-sdk = { workspace = true }
 hashbrown = { workspace = true }
 once_cell = { version = "1.19.0", default-features = false }
-fluentbase-core = { workspace = true }
 
 [dev-dependencies]
 wat = "1.0.77"

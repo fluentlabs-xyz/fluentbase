@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "bin",
+    "contracts/*",
     "crates/*",
     "revm/crates/*",
     "crates/genesis/bin",
@@ -9,14 +10,12 @@ members = [
     "e2e",
 ]
 exclude = [
+    # fairblock is a Go application
+    "contracts/fairblock",
     "crates/evm",
     "crates/evm/evm-rwasm",
     "crates/evm/evm-snippets",
     "revm/e2e",
-    "examples/node_modules",
-    # fairblock is a Go application
-    "examples/fairblock",
-    "examples/sp1",
 ]
 resolver = "2"
 
@@ -32,14 +31,13 @@ keywords = ["wasm", "webassembly", "interpreter", "vm"]
 categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
+fluentbase-build = { path = "./crates/build", default-features = false }
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"] }
 fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
-fluentbase-core = { path = "./crates/core", default-features = false }
 fluentbase-contracts = { path = "crates/contracts", default-features = false }
-fluentbase-core-macros = { path = "./crates/core-macros", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-rwasm = { path = "./crates/rwasm", default-features = false, features = ["std"] }
 fluentbase-rwasm-e2e = { path = "./crates/rwasm/e2e", default-features = false }

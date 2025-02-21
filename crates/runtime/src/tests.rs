@@ -85,7 +85,7 @@ fn test_wrong_indirect_type() {
     let ctx = runtime.take_context();
     assert_eq!(res.exit_code, 0);
     let res = Runtime::run_with_context(ctx.with_state(STATE_MAIN));
-    assert_eq!(res.exit_code, -2008);
+    assert_eq!(res.exit_code, -2003);
 }
 
 #[test]

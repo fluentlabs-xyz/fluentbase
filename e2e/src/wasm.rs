@@ -21,7 +21,7 @@ fn test_wasm_greeting() {
         None,
     );
     let output = result.output().unwrap_or_default();
-    println!("{:?}", result);
+    println!("Result: {:?}", result);
     assert!(result.is_success());
     assert_eq!("Hello, World", from_utf8(output.as_ref()).unwrap());
 }
@@ -33,7 +33,7 @@ fn test_wasm_keccak256() {
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(
         DEPLOYER_ADDRESS,
-        include_bytes!("../../examples/hashing/lib.wasm").into(),
+        include_bytes!("../../examples/keccak256/lib.wasm").into(),
     );
     // call greeting WASM contract
     let result = ctx.call_evm_tx(

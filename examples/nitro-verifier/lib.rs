@@ -3,53 +3,24 @@
 
 extern crate alloc;
 extern crate fluentbase_sdk;
+
 mod attestation;
 
-use fluentbase_sdk::{alloc_slice, basic_entrypoint, derive::Contract, SharedAPI};
+use fluentbase_sdk::{alloc_slice, func_entrypoint, SharedAPI};
 
-#[derive(Contract)]
-struct NITROVERIFIER<SDK> {
-    sdk: SDK,
+pub fn main(sdk: impl SharedAPI) {
+    let input_size = sdk.input_size();
+    let input = alloc_slice(input_size as usize);
+    sdk.read(input, 0);
+    attestation::parse_and_verify(&input);
 }
 
-impl<SDK: SharedAPI> NITROVERIFIER<SDK> {
-    fn deploy(&mut self) {}
-
-    fn main(&mut self) {
-        let input_size = self.sdk.input_size();
-        let input = alloc_slice(input_size as usize);
-        self.sdk.read(input, 0);
-        attestation::parse_and_verify(&input);
-    }
-}
-
-basic_entrypoint!(NITROVERIFIER);
+func_entrypoint!(main);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{
-        journal::{JournalState, JournalStateBuilder},
-        runtime::TestingContext,
-        Address,
-        Bytes,
-        ContractContextV1,
-    };
-    use hex_literal::hex;
-
-    /// Helper function to rewrite input and contract context.
-    fn with_test_input<T: Into<Bytes>>(
-        input: T,
-        caller: Option<Address>,
-    ) -> JournalState<TestingContext> {
-        JournalStateBuilder::default()
-            .with_contract_context(ContractContextV1 {
-                caller: caller.unwrap_or_default(),
-                ..Default::default()
-            })
-            .with_devnet_genesis()
-            .build(TestingContext::empty().with_input(input))
-    }
+    use fluentbase_sdk::testing::TestingContext;
 
     #[test]
     fn test_nitro_attestation_verification() {
@@ -60,14 +31,7 @@ mod tests {
             .into();
         let doc = attestation::parse_and_verify(&data);
         assert_eq!(doc.digest, "SHA384");
-
-        let sdk = with_test_input(
-            Vec::from(data),
-            Some(Address::from(hex!(
-                "f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-            ))),
-        );
-        let mut nitro_verifier = NITROVERIFIER::new(sdk);
-        nitro_verifier.main();
+        let sdk = TestingContext::default().with_input(data);
+        main(sdk);
     }
 }

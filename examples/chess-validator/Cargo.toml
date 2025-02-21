@@ -7,11 +7,14 @@ edition = "2021"
 fluentbase-sdk = { workspace = true }
 
 # shakmaty
-shakmaty = { git = "https://github.com/dmitry123/shakmaty", default-features = false, features = ["alloc"] }
+shakmaty = { git = "https://github.com/niklasf/shakmaty", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 hex = "0.4.3"
 alloy-sol-types = { version = "0.8.5", default-features = false }
+
+[build-dependencies]
+fluentbase-build = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "staticlib"]

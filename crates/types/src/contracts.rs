@@ -37,9 +37,9 @@ pub const PRECOMPILE_BLS12_381_MAP_FP2_TO_G2: Address =
 pub const PRECOMPILE_SECP256R1_VERIFY: Address =
     address!("0000000000000000000000000000000000000100");
 
-// keccak256("native_precompile")[..4] + keccak256("multicall(bytes[])")[..4]
+// "R native" + keccak256("multicall(bytes[])")[..4]
 pub const PRECOMPILE_NATIVE_MULTICALL: Address =
-    address!("e78e5e46000000000000000000000000ac9650d8");
+    address!("52206e61746976650000000000000000ac9650d8");
 
 /// Checks if the function call should be redirected to a native precompiled contract.
 ///

@@ -22,12 +22,12 @@ pub use crate::{
     },
     B256,
 };
-use fluentbase_types::{ContextFreeNativeAPI, NativeAPI, F254};
+use fluentbase_types::{NativeAPI, F254};
 
 #[derive(Default)]
 pub struct RwasmContext;
 
-impl ContextFreeNativeAPI for RwasmContext {
+impl NativeAPI for RwasmContext {
     #[inline(always)]
     fn keccak256(data: &[u8]) -> B256 {
         unsafe {
@@ -91,9 +91,7 @@ impl ContextFreeNativeAPI for RwasmContext {
     fn debug_log(message: &str) {
         unsafe { _debug_log(message.as_ptr(), message.len() as u32) }
     }
-}
 
-impl NativeAPI for RwasmContext {
     #[inline(always)]
     fn read(&self, target: &mut [u8], offset: u32) {
         unsafe { _read(target.as_mut_ptr(), offset, target.len() as u32) }

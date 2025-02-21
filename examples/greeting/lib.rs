@@ -1,38 +1,25 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{basic_entrypoint, derive::Contract, SharedAPI};
+use fluentbase_sdk::{func_entrypoint, SharedAPI};
 
-#[derive(Contract)]
-struct GREETING<SDK> {
-    sdk: SDK,
+pub fn main(mut sdk: impl SharedAPI) {
+    // write "Hello, World" message into output
+    sdk.write("Hello, World".as_bytes());
 }
 
-impl<SDK: SharedAPI> GREETING<SDK> {
-    fn deploy(&mut self) {
-        // any custom deployment logic here
-    }
-    fn main(&mut self) {
-        // write "Hello, World" message into output
-        self.sdk.write("Hello, World".as_bytes());
-    }
-}
-
-basic_entrypoint!(GREETING);
+func_entrypoint!(main);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
+    use fluentbase_sdk::testing::TestingContext;
 
     #[test]
     fn test_contract_works() {
-        let native_sdk = TestingContext::empty().with_input("");
-        let sdk = JournalState::empty(native_sdk.clone());
-        let mut greeting = GREETING::new(sdk);
-        greeting.deploy();
-        greeting.main();
-        let output = native_sdk.take_output();
+        let sdk = TestingContext::default();
+        main(sdk.clone());
+        let output = sdk.take_output();
         assert_eq!(&output, "Hello, World".as_bytes());
     }
 }

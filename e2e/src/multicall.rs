@@ -58,7 +58,7 @@ fn test_multicall() {
     );
 
     if !result.is_success() {
-        if let Ok(output_str) = String::from_utf8(result.output().unwrap_or_default().to_vec()) {
+        if let Ok(output_str) = from_utf8(&result.output().unwrap_or_default().to_vec()[68..]) {
             println!("Decoded output: {}", output_str);
         }
         panic!("Multicall failed: {:?}", result);

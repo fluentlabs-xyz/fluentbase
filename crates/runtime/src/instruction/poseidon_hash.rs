@@ -23,7 +23,7 @@ impl SyscallPoseidonHash {
         let fr_from_bytes = |fr_data: &F254| -> Result<Fr, ExitCode> {
             let fr = Fr::from_bytes(&fr_data.0);
             if fr.is_none().into() {
-                return Err(ExitCode::PoseidonError);
+                return Err(ExitCode::MalformedBuiltinParams);
             }
             Ok(fr.unwrap())
         };

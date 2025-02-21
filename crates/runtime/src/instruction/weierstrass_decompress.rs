@@ -45,7 +45,7 @@ impl<E: EllipticCurve> SyscallWeierstrassDecompressAssign<E> {
 
     pub fn fn_impl(x_bytes: &[u8], sign_bit: u32) -> Result<Vec<u8>, ExitCode> {
         if sign_bit > 1 {
-            return Err(ExitCode::BadBuiltinParams);
+            return Err(ExitCode::MalformedBuiltinParams);
         }
 
         let num_limbs = <E::BaseField as NumLimbs>::Limbs::USIZE;

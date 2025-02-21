@@ -21,7 +21,7 @@ impl SyscallSha256Compress {
         let (w_ptr, h_ptr) = caller.stack_pop2_as::<u32>();
         if w_ptr == h_ptr {
             return Err(RwasmError::ExecutionHalted(
-                ExitCode::PrecompileError.into_i32(),
+                ExitCode::MalformedBuiltinParams.into_i32(),
             ));
         }
 

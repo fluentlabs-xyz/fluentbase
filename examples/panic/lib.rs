@@ -2,22 +2,24 @@
 #![allow(unused)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{basic_entrypoint, derive::Contract, SharedAPI};
+use fluentbase_sdk::{func_entrypoint, SharedAPI};
 
-#[derive(Contract)]
-struct PANIC<SDK> {
-    sdk: SDK,
+pub fn main(sdk: impl SharedAPI) {
+    // panic with some message
+    sdk.panic("it's panic time");
 }
 
-impl<SDK: SharedAPI> PANIC<SDK> {
-    fn deploy(&self) {
-        // any custom deployment logic here
-    }
-    fn main(&self) {
-        // panic with some message
-        self.sdk.panic("it's panic time");
-        // panic!("it is panic time")
+func_entrypoint!(main);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluentbase_sdk::testing::TestingContext;
+
+    #[should_panic(expected = "it's panic time")]
+    #[test]
+    fn tets_contract_works() {
+        let sdk = TestingContext::default();
+        main(sdk);
     }
 }
-
-basic_entrypoint!(PANIC);

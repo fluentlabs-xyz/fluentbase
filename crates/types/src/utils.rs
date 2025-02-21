@@ -1,4 +1,5 @@
-use crate::{b256, Address, ContextFreeNativeAPI, NativeAPI, B256, F254, U256};
+use crate::{b256, Address, Bytes, NativeAPI, B256, F254, U256};
+use revm_primitives::Eip7702Bytecode;
 
 const POSEIDON_DOMAIN: F254 =
     b256!("0000000000000000000000000000000000000000000000010000000000000000");
@@ -22,7 +23,7 @@ pub fn calc_storage_key<API: NativeAPI>(address: &Address, slot32_le_ptr: *const
 }
 
 #[inline(always)]
-pub fn calc_create_address<API: ContextFreeNativeAPI>(deployer: &Address, nonce: u64) -> Address {
+pub fn calc_create_address<API: NativeAPI>(deployer: &Address, nonce: u64) -> Address {
     use alloy_rlp::{Encodable, EMPTY_LIST_CODE, EMPTY_STRING_CODE};
     const MAX_LEN: usize = 1 + (1 + 20) + 9;
     let len = 22 + nonce.length();
@@ -37,7 +38,7 @@ pub fn calc_create_address<API: ContextFreeNativeAPI>(deployer: &Address, nonce:
 }
 
 #[inline(always)]
-pub fn calc_create2_address<API: ContextFreeNativeAPI>(
+pub fn calc_create2_address<API: NativeAPI>(
     deployer: &Address,
     salt: &U256,
     init_code_hash: &B256,
@@ -51,6 +52,76 @@ pub fn calc_create2_address<API: ContextFreeNativeAPI>(
     Address::from_word(hash)
 }
 
+pub const ENABLE_EVM_PROXY_CONTRACT: bool = false;
+
+fn create_eip7702_proxy_bytecode(impl_address: Address) -> Bytes {
+    let eip7702_bytecode = Eip7702Bytecode::new(impl_address);
+    eip7702_bytecode.raw
+}
+
+// #[allow(unused)]
+// fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
+//     let mut memory_section = vec![0u8; 32 + 20];
+//     //  0..32: code hash
+//     // 32..52: precompile address
+//     memory_section[0..32].copy_from_slice(SYSCALL_ID_DELEGATE_CALL.as_slice()); // 32 bytes
+//     memory_section[32..52].copy_from_slice(impl_address.as_slice()); // 20 bytes
+//     debug_assert_eq!(memory_section.len(), 52);
+//     let code_section = instruction_set! {
+//         // alloc default memory
+//         I32Const(1) // number of pages (64kB memory in total)
+//         MemoryGrow // grow memory
+//         Drop // drop exit code (it can't fail here)
+//         // initializes a memory segment
+//         I32Const(0) // destination
+//         I32Const(0) // source
+//         I32Const(memory_section.len() as u32) // length
+//         MemoryInit(0) // initialize 0 segment
+//         DataDrop(0) // mark 0 segment as dropped (required to satisfy WASM standards)
+//         // copy input (EVM bytecode can't exceed 2*24kB, so this op is safe)
+//         I32Const(52) // target
+//         I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as u32) // offset
+//         Call(SysFuncIdx::INPUT_SIZE) // length=input_size-header_size
+//         I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as u32)
+//         I32Sub
+//         Call(SysFuncIdx::READ_INPUT)
+//         // delegate call
+//         I32Const(0) // hash32_ptr
+//         I32Const(32) // input_ptr
+//         Call(SysFuncIdx::INPUT_SIZE) // input_len=input_size-header_size+20
+//         I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as u32)
+//         I32Sub
+//         I32Const(20)
+//         I32Add
+//         I32Const(0) // fuel_limit
+//         Call(SysFuncIdx::STATE) // state
+//         Call(SysFuncIdx::EXEC)
+//         // forward return data into output
+//         I32Const(0) // offset
+//         Call(SysFuncIdx::OUTPUT_SIZE) // length
+//         Call(SysFuncIdx::FORWARD_OUTPUT)
+//         // exit with the resulting exit code
+//         Call(SysFuncIdx::EXIT)
+//     };
+//     let func_section = vec![code_section.len() as u32];
+//     let evm_loader_module = RwasmModule {
+//         code_section,
+//         memory_section,
+//         func_section,
+//         ..Default::default()
+//     };
+//     let mut rwasm_bytecode = Vec::new();
+//     evm_loader_module
+//         .write_binary_to_vec(&mut rwasm_bytecode)
+//         .unwrap();
+//     rwasm_bytecode.into()
+// }
+
+pub fn create_delegate_proxy_bytecode(impl_address: Address) -> Bytes {
+    // create_rwasm_proxy_bytecode(impl_address)
+    create_eip7702_proxy_bytecode(impl_address)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,7 +129,7 @@ mod tests {
 
     struct TestContext;
 
-    impl ContextFreeNativeAPI for TestContext {
+    impl NativeAPI for TestContext {
         fn keccak256(data: &[u8]) -> B256 {
             keccak256(data)
         }
@@ -80,6 +151,74 @@ mod tests {
         }
 
         fn debug_log(_message: &str) {
+            todo!()
+        }
+
+        fn read(&self, _target: &mut [u8], _offset: u32) {
+            todo!()
+        }
+
+        fn input_size(&self) -> u32 {
+            todo!()
+        }
+
+        fn write(&self, _value: &[u8]) {
+            todo!()
+        }
+
+        fn forward_output(&self, _offset: u32, _len: u32) {
+            todo!()
+        }
+
+        fn exit(&self, _exit_code: i32) -> ! {
+            todo!()
+        }
+
+        fn output_size(&self) -> u32 {
+            todo!()
+        }
+
+        fn read_output(&self, _target: &mut [u8], _offset: u32) {
+            todo!()
+        }
+
+        fn state(&self) -> u32 {
+            todo!()
+        }
+
+        fn fuel(&self) -> u64 {
+            todo!()
+        }
+
+        fn charge_fuel(&self, _value: u64) -> u64 {
+            todo!()
+        }
+
+        fn exec(
+            &self,
+            _code_hash: &F254,
+            _input: &[u8],
+            _fuel_limit: u64,
+            _state: u32,
+        ) -> (u64, i32) {
+            todo!()
+        }
+
+        fn resume(
+            &self,
+            _call_id: u32,
+            _return_data: &[u8],
+            _exit_code: i32,
+            _fuel_used: u64,
+        ) -> (u64, i32) {
+            todo!()
+        }
+
+        fn preimage_size(&self, _hash: &B256) -> u32 {
+            todo!()
+        }
+
+        fn preimage_copy(&self, _hash: &B256, _target: &mut [u8]) {
             todo!()
         }
     }

@@ -12,7 +12,6 @@ hashbrown = { workspace = true }
 
 # runtime mode
 fluentbase-runtime = { workspace = true, optional = true }
-fluentbase-genesis = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex = { workspace = true }
@@ -27,8 +26,6 @@ std = [
     "fluentbase-codec/std",
     "dep:fluentbase-runtime",
     "fluentbase-runtime?/std",
-    "dep:fluentbase-genesis",
-    "fluentbase-genesis?/std",
 ]
 debug-print = []
 more-panic = []

@@ -7,77 +7,6 @@ use rwasm::{
 };
 use strum_macros::{Display, FromRepr};
 
-pub type Bytes64 = [u8; 64];
-pub type Bytes34 = [u8; 34];
-
-pub type Bytes32 = [u8; 32];
-pub type Bytes20 = [u8; 20];
-
-#[derive(Default, Clone, Debug)]
-pub struct Fuel {
-    pub limit: u64,
-    pub refund: i64,
-    pub spent: u64,
-}
-
-impl Fuel {
-    pub fn new(limit: u64) -> Self {
-        Self {
-            limit,
-            refund: 0,
-            spent: 0,
-        }
-    }
-
-    pub fn with_refund(mut self, refund: i64) -> Self {
-        self.refund = refund;
-        self
-    }
-
-    pub fn with_spent(mut self, spent: u64) -> Self {
-        self.spent = spent;
-        self
-    }
-
-    pub fn remaining(&self) -> u64 {
-        self.limit - self.spent
-    }
-
-    pub fn spent(&self) -> u64 {
-        self.spent
-    }
-
-    pub fn charge(&mut self, value: u64) -> bool {
-        if value > self.remaining() {
-            return false;
-        }
-        self.spent += value;
-        true
-    }
-
-    pub fn refund(&mut self, value: u64) {
-        assert!(self.spent >= value);
-        self.spent -= value;
-    }
-}
-
-impl From<u64> for Fuel {
-    #[inline]
-    fn from(value: u64) -> Self {
-        Self {
-            limit: value,
-            refund: 0,
-            spent: 0,
-        }
-    }
-}
-impl Into<u64> for Fuel {
-    #[inline]
-    fn into(self) -> u64 {
-        self.limit - self.spent
-    }
-}
-
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Display, FromRepr)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(i32)]
@@ -86,47 +15,27 @@ pub enum ExitCode {
     #[default]
     Ok = 0,
     Panic = -71, // -71 to be wasi friendly
-    Error = -2,
     // fluentbase error codes
     ExecutionHalted = -1001,
-    RootCallOnly = -1003,
-    OutputOverflow = -1005,
-    PoseidonError = -1007,
-    WriteProtection = -1009,
-    InsufficientBalance = -1012,
-    CreateCollision = -1013,
-    ContractSizeLimit = -1014,
-    CallDepthOverflow = -1016,
-    FatalExternalError = -1017,
-    CompilationError = -1018,
-    OverflowPayment = -1019,
-    PrecompileError = -1025,
-    EcrecoverBadSignature = -1026,
-    EcrecoverError = -1027,
-    NonceOverflow = -1028,
-    CreateContractStartingWithEF = -1029,
-    OpcodeNotFound = -1030,
-    InvalidEfOpcode = -1031,
-    InvalidJump = -1032,
-    NonNegativeExitCode = -1036,
-    MalformedSyscallParams = -1037,
-    BadBuiltinParams = -1038,
+    RootCallOnly = -1002,
+    MalformedBuiltinParams = -1003,
+    CallDepthOverflow = -1004,
+    NonNegativeExitCode = -1005,
+    UnknownError = -1006,
+    InputOutputOutOfBounds = -1007,
     // trap error codes
-    UnreachableCodeReached = -2006,
-    MemoryOutOfBounds = -2007,
-    TableOutOfBounds = -2008,
-    IndirectCallToNull = -2009,
-    IntegerDivisionByZero = -2010,
-    IntegerOverflow = -2011,
-    BadConversionToInteger = -2012,
-    StackOverflow = -2013,
-    BadSignature = -2014,
-    OutOfGas = -2015,
-    GrowthOperationLimited = -2016,
-    UnknownError = -2017,
-    UnresolvedFunction = -2018,
-    StackUnderflow = -2019,
-    InputOutputOutOfBounds = -2020,
+    UnreachableCodeReached = -2001,
+    MemoryOutOfBounds = -2002,
+    TableOutOfBounds = -2003,
+    IndirectCallToNull = -2004,
+    IntegerDivisionByZero = -2005,
+    IntegerOverflow = -2006,
+    BadConversionToInteger = -2007,
+    StackOverflow = -2008,
+    BadSignature = -2009,
+    OutOfFuel = -2010,
+    GrowthOperationLimited = -2011,
+    UnresolvedFunction = -2013,
 }
 
 pub trait UnwrapExitCode<T> {
@@ -202,7 +111,7 @@ impl From<&TrapCode> for ExitCode {
             TrapCode::BadConversionToInteger => ExitCode::BadConversionToInteger,
             TrapCode::StackOverflow => ExitCode::StackOverflow,
             TrapCode::BadSignature => ExitCode::BadSignature,
-            TrapCode::OutOfFuel => ExitCode::OutOfGas,
+            TrapCode::OutOfFuel => ExitCode::OutOfFuel,
             TrapCode::GrowthOperationLimited => ExitCode::GrowthOperationLimited,
             TrapCode::UnresolvedFunction => ExitCode::UnresolvedFunction,
         }

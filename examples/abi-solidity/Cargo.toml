@@ -7,6 +7,9 @@ edition = "2021"
 fluentbase-sdk = { workspace = true }
 hex-literal = { workspace = true }
 
+[build-dependencies]
+fluentbase-build = { workspace = true }
+
 [lib]
 crate-type = ["cdylib", "staticlib"]
 path = "lib.rs"

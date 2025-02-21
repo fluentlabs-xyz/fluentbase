@@ -18,7 +18,8 @@ libzktrie.so
 
 # exclude all wat, wasm and genesis files
 *.wat
-examples/**/*.wasm
+contracts/**/lib.wasm
+examples/**/lib.wasm
 
 revm/e2e/Cargo.lock
 revm/e2e/tests

@@ -195,55 +195,24 @@ basic_entrypoint!(ERC20);
 #[cfg(test)]
 mod test {
     use super::*;
-    use fluentbase_sdk::{
-        address,
-        journal::{JournalState, JournalStateBuilder},
-        runtime::TestingContext,
-        ContractContextV1,
-    };
+    use fluentbase_sdk::{address, testing::TestingContext, ContractContextV1};
     use hex_literal::hex;
     use serial_test::serial;
-
-    fn rewrite_input<T: Into<Bytes>>(
-        sdk: &mut JournalState<TestingContext>,
-        input: T,
-        caller: Option<Address>,
-    ) {
-        sdk.inner.borrow_mut().native_sdk.take_output();
-        sdk.inner.borrow_mut().native_sdk.set_input(input);
-        sdk.rewrite_contract_context(ContractContextV1 {
-            caller: caller.unwrap_or_default(),
-            ..Default::default()
-        });
-    }
-
-    fn with_test_input<T: Into<Bytes>>(
-        input: T,
-        caller: Option<Address>,
-    ) -> JournalState<TestingContext> {
-        JournalStateBuilder::default()
-            .with_contract_context(ContractContextV1 {
-                caller: caller.unwrap_or_default(),
-                ..Default::default()
-            })
-            .with_devnet_genesis()
-            .build(TestingContext::empty().with_input(input))
-    }
 
     #[serial]
     #[test]
     pub fn test_deploy() {
         let owner_address = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
         let owner_balance = U256::from_str_radix("1000000000000000000000000", 10).unwrap();
-
-        // Set up the test input with the owner's address as the contract caller
-        let sdk = with_test_input(vec![], Some(owner_address));
+        // set up the test input with the owner's address as the contract caller
+        let sdk = TestingContext::default().with_contract_context(ContractContextV1 {
+            caller: owner_address,
+            ..Default::default()
+        });
         let mut erc20 = ERC20::new(sdk);
-
-        // Call the deployment function to initialize the contract state
+        // call the deployment function to initialize the contract state
         erc20.deploy();
-
-        // Verify the balance
+        // verify the balance
         let balance = Balance::get(&mut erc20.sdk, owner_address);
         assert_eq!(balance, owner_balance);
     }
@@ -252,18 +221,13 @@ mod test {
     #[test]
     pub fn test_name() {
         let call_name = NameCall::new(()).encode();
-
-        let sdk = with_test_input(call_name, None);
-
-        let mut erc20 = ERC20::new(sdk);
+        let sdk = TestingContext::default().with_input(call_name);
+        let mut erc20 = ERC20::new(sdk.clone());
         erc20.deploy();
         erc20.main();
-
-        let result = erc20.sdk.inner.borrow_mut().native_sdk.take_output();
-
+        let result = sdk.take_output();
         let val = SymbolReturn::decode(&result.as_slice()).unwrap();
         let symbol = String::from_utf8_lossy(&val.0 .0);
-
         assert_eq!(symbol, "Token");
     }
 
@@ -271,17 +235,13 @@ mod test {
     #[test]
     pub fn test_symbol() {
         let call_symbol = SymbolCall::new(()).encode();
-
-        let sdk = with_test_input(call_symbol, None);
-        let mut erc20 = ERC20::new(sdk);
+        let sdk = TestingContext::default().with_input(call_symbol);
+        let mut erc20 = ERC20::new(sdk.clone());
         erc20.deploy();
         erc20.main();
-
-        let result = erc20.sdk.inner.borrow_mut().native_sdk.take_output();
-
+        let result = sdk.take_output();
         let val = SymbolReturn::decode(&result.as_slice()).unwrap();
         let symbol = String::from_utf8_lossy(&val.0 .0);
-
         assert_eq!(symbol, "TOK");
     }
 
@@ -290,8 +250,11 @@ mod test {
     pub fn test_balance_of() {
         let owner_address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let expected_balance = "1000000000000000000000000";
-        let sdk = with_test_input(vec![], Some(owner_address));
-        let mut erc20 = ERC20::new(sdk);
+        let sdk = TestingContext::default().with_contract_context(ContractContextV1 {
+            caller: owner_address,
+            ..Default::default()
+        });
+        let mut erc20 = ERC20::new(sdk.clone());
         erc20.deploy();
         assert_eq!(
             Balance::get(&mut erc20.sdk, owner_address).to_string(),
@@ -299,9 +262,9 @@ mod test {
         );
         let call_balance_of =
             hex!("70a08231000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-        rewrite_input(&mut erc20.sdk, call_balance_of, Some(owner_address));
+        let sdk = sdk.with_input(call_balance_of);
         erc20.main();
-        let result = erc20.sdk.inner.borrow_mut().native_sdk.take_output();
+        let result = sdk.take_output();
         let output_balance = U256::from_be_slice(&result);
         assert_eq!(output_balance.to_string(), expected_balance);
     }
@@ -312,8 +275,11 @@ mod test {
         let from = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let to = address!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3");
         let value = U256::from_str_radix("100000000000000000000", 10).unwrap();
-        let sdk = with_test_input(vec![], Some(from));
-        let mut erc20 = ERC20::new(sdk);
+        let sdk = TestingContext::default().with_contract_context(ContractContextV1 {
+            caller: from,
+            ..Default::default()
+        });
+        let mut erc20 = ERC20::new(sdk.clone());
         // run constructor
         erc20.deploy();
         // check balances
@@ -324,11 +290,7 @@ mod test {
         );
         assert_eq!(Balance::get(&mut erc20.sdk, to).to_string(), "0");
         // transfer funds (100 tokens)
-        rewrite_input(
-            &mut erc20.sdk,
-            TransferCall((to, value)).encode(),
-            Some(from),
-        );
+        let _sdk = sdk.with_input(TransferCall((to, value)).encode());
         erc20.main();
         // check balances again
         assert_eq!(
@@ -348,18 +310,24 @@ mod test {
         let spender = address!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3");
         let approve_call = ApproveCall::new((spender, U256::from(1000))).encode();
 
-        let sdk = with_test_input(approve_call, Some(owner));
-        let mut erc20 = ERC20::new(sdk);
+        let sdk = TestingContext::default()
+            .with_contract_context(ContractContextV1 {
+                caller: owner,
+                ..Default::default()
+            })
+            .with_input(approve_call);
+        let mut erc20 = ERC20::new(sdk.clone());
 
-        // Approve allowance
+        // approve allowance
         erc20.main();
         assert_eq!(Allowance::get(&erc20.sdk, owner, spender), U256::from(1000));
+        sdk.take_output();
 
-        // Check allowance
+        // check allowance
         let allowance_call = AllowanceCall::new((owner, spender)).encode();
-        rewrite_input(&mut erc20.sdk, allowance_call, None);
+        let sdk = sdk.with_input(allowance_call);
         erc20.main();
-        let result = erc20.sdk.inner.borrow_mut().native_sdk.take_output();
+        let result = sdk.take_output();
         let allowance = U256::from_be_slice(&result);
         assert_eq!(allowance, U256::from(1000));
     }
@@ -371,8 +339,11 @@ mod test {
         let spender = address!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3");
         let recipient = address!("6dDb6e7F3b7e4991e3f75121aE3De2e1edE3bF19");
 
-        let sdk = with_test_input(vec![], Some(owner));
-        let mut erc20 = ERC20::new(sdk);
+        let sdk = TestingContext::default().with_contract_context(ContractContextV1 {
+            caller: owner,
+            ..Default::default()
+        });
+        let mut erc20 = ERC20::new(sdk.clone());
 
         // Deploy contract and approve allowance
         erc20.deploy();
@@ -383,13 +354,17 @@ mod test {
         );
 
         let approve_call = ApproveCall::new((spender, U256::from(1000))).encode();
-        rewrite_input(&mut erc20.sdk, approve_call, Some(owner));
+        let sdk = sdk.with_input(approve_call);
         erc20.main();
 
         // Transfer from owner to recipient via spender
         let transfer_from_call =
             TransferFromCall::new((owner, recipient, U256::from(100))).encode();
-        rewrite_input(&mut erc20.sdk, transfer_from_call, Some(spender));
+        sdk.with_input(transfer_from_call)
+            .with_contract_context(ContractContextV1 {
+                caller: spender,
+                ..Default::default()
+            });
         erc20.main();
 
         // Check balances and allowance

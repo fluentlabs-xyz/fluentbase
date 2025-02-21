@@ -12,8 +12,7 @@ use fluentbase_sdk::{
     calc_create_address,
     codec::CompactABI,
     create_import_linker,
-    runtime::TestingContext,
-    Account,
+    testing::{TestingContext, TestingContextNativeAPI},
     Address,
     Bytes,
     ExitCode,
@@ -78,21 +77,17 @@ impl EvmTestingContext {
                         .map(|v| keccak256(&v))
                         .unwrap_or(KECCAK_EMPTY)
                 });
-            let account = Account {
-                address: *k,
+            let mut info: AccountInfo = AccountInfo {
                 balance: v.balance,
                 nonce: v.nonce.unwrap_or_default(),
-                // it makes not much sense to fill these fields, but it reduces hash calculation
-                // time a bit
-                code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
                 code_hash: poseidon_hash,
+                code: None,
             };
-            let mut info: AccountInfo = account.into();
             info.code = v.code.clone().map(Bytecode::new_raw);
             db.insert_account_info(*k, info);
         }
         Self {
-            sdk: TestingContext::new(RuntimeContext::default()),
+            sdk: TestingContext::default(),
             genesis,
             db,
         }
@@ -109,15 +104,12 @@ impl EvmTestingContext {
             rwasm_module.write_binary_to_vec(&mut result).unwrap();
             result
         };
-        let account = Account {
-            address,
+        let mut info: AccountInfo = AccountInfo {
             balance: U256::ZERO,
             nonce: 0,
-            // it makes not much sense to fill these fields, but it optimizes hash calculation a bit
-            code_size: rwasm_binary.len() as u64,
             code_hash: poseidon_hash(&rwasm_binary).into(),
+            code: None,
         };
-        let mut info: AccountInfo = account.into();
         if !rwasm_binary.is_empty() {
             info.code = Some(Bytecode::new_raw(rwasm_binary.into()));
         }
@@ -157,8 +149,9 @@ impl EvmTestingContext {
         if !result.is_success() {
             try_print_utf8_error(result.output().as_ref().unwrap())
         }
+        println!("deployment gas used: {}", result.gas_used());
         assert!(result.is_success());
-        let contract_address = calc_create_address::<TestingContext>(&deployer, 0);
+        let contract_address = calc_create_address::<TestingContextNativeAPI>(&deployer, 0);
         assert_eq!(contract_address, deployer.create(0));
         contract_address
     }
@@ -178,7 +171,7 @@ impl EvmTestingContext {
             );
         }
         assert!(result.is_success());
-        let contract_address = calc_create_address::<TestingContext>(&deployer, nonce);
+        let contract_address = calc_create_address::<TestingContextNativeAPI>(&deployer, nonce);
         assert_eq!(contract_address, deployer.create(nonce));
 
         (contract_address, result.gas_used())
@@ -225,7 +218,7 @@ impl<'a> TxBuilder<'a> {
         env.tx.caller = deployer;
         env.tx.transact_to = TransactTo::Create;
         env.tx.data = init_code;
-        env.tx.gas_limit = 300_000_000;
+        env.tx.gas_limit = 30_000_000;
         Self { ctx, env }
     }
 
@@ -296,11 +289,44 @@ pub(crate) fn try_print_utf8_error(mut output: &[u8]) {
     );
 }
 
+fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
+    let mut config = RwasmModule::default_config(None);
+    config.rwasm_config(RwasmConfig {
+        state_router: Some(StateRouterConfig {
+            states: Box::new([
+                ("deploy".to_string(), STATE_DEPLOY),
+                ("main".to_string(), STATE_MAIN),
+            ]),
+            opcode: Instruction::Call(STATE.into()),
+        }),
+        entrypoint_name: None,
+        import_linker: Some(create_import_linker()),
+        wrap_import_functions: true,
+        translate_drop_keep: false,
+    });
+    RwasmModule::compile_with_config(wasm_binary, &config)
+}
+
+fn wasm2rwasm(wasm_binary: &[u8]) -> Vec<u8> {
+    let rwasm_module = rwasm_module(wasm_binary);
+    if rwasm_module.is_err() {
+        panic!("failed to compile wasm to rwasm: {:?}", rwasm_module.err());
+    }
+    let rwasm_module = rwasm_module.unwrap();
+    let length = rwasm_module.encoded_length();
+    let mut rwasm_bytecode = vec![0u8; length];
+    let mut binary_format_writer = BinaryFormatWriter::new(&mut rwasm_bytecode);
+    rwasm_module
+        .write_binary(&mut binary_format_writer)
+        .expect("failed to encode rwasm bytecode");
+    rwasm_bytecode
+}
+
 pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {
     let rwasm_binary = if wasm_binary[0] == 0xef {
         wasm_binary
     } else {
-        wasm2rwasm(wasm_binary.as_slice()).unwrap()
+        wasm2rwasm(wasm_binary.as_slice())
     };
 
     let context_input = {
@@ -368,39 +394,4 @@ pub(crate) fn catch_panic(ctx: &fluentbase_runtime::ExecutionResult) {
         "panic with err: {}",
         std::str::from_utf8(&ctx.output).unwrap()
     );
-}
-
-#[inline(always)]
-pub fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
-    let mut config = RwasmModule::default_config(None);
-    config.rwasm_config(RwasmConfig {
-        state_router: Some(StateRouterConfig {
-            states: Box::new([
-                ("deploy".to_string(), STATE_DEPLOY),
-                ("main".to_string(), STATE_MAIN),
-            ]),
-            opcode: Instruction::Call(STATE.into()),
-        }),
-        entrypoint_name: None,
-        import_linker: Some(create_import_linker()),
-        wrap_import_functions: true,
-        translate_drop_keep: false,
-    });
-    RwasmModule::compile_with_config(wasm_binary, &config)
-}
-
-#[inline(always)]
-pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
-    let rwasm_module = rwasm_module(wasm_binary);
-    if rwasm_module.is_err() {
-        return Err(ExitCode::CompilationError);
-    }
-    let rwasm_module = rwasm_module.unwrap();
-    let length = rwasm_module.encoded_length();
-    let mut rwasm_bytecode = vec![0u8; length];
-    let mut binary_format_writer = BinaryFormatWriter::new(&mut rwasm_bytecode);
-    rwasm_module
-        .write_binary(&mut binary_format_writer)
-        .expect("failed to encode rwasm bytecode");
-    Ok(rwasm_bytecode)
 }

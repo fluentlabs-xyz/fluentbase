@@ -34,4 +34,4 @@ std = [
     "byteorder/std",
 ]
 rwasm = []
-optimism = []
+optimism = ["revm-primitives/optimism"]

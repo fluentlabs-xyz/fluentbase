@@ -146,20 +146,23 @@ pub fn devnet_genesis() -> Genesis {
     // );
 
     enable_rwasm_contract!(
+        "multicall",
         alloc,
         PRECOMPILE_NATIVE_MULTICALL,
-        "../../contracts/assets/precompile_multicall.wasm"
+        "../../../contracts/multicall/lib.wasm"
     );
 
     enable_rwasm_contract!(
+        "greeting",
         alloc,
         EXAMPLE_GREETING_ADDRESS,
-        "../../contracts/assets/precompile_greeting.wasm"
+        "../../../examples/greeting/lib.wasm"
     );
     enable_rwasm_contract!(
+        "fairblock",
         alloc,
         EXAMPLE_FAIRBLOCK_ADDRESS,
-        "../../contracts/assets/precompile_fairblock.wasm"
+        "../../../contracts/fairblock/lib.wasm"
     );
 
     Genesis {

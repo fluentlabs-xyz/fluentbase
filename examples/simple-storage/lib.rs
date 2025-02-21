@@ -36,55 +36,23 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{
-        journal::{JournalState, JournalStateBuilder},
-        runtime::TestingContext,
-        Address,
-        Bytes,
-        ContractContextV1,
-        U256,
-    };
+    use fluentbase_sdk::{testing::TestingContext, Address, Bytes, ContractContextV1, U256};
     use hex_literal::hex;
-
-    fn rewrite_input<T: Into<Bytes>>(
-        sdk: &mut JournalState<TestingContext>,
-        input: T,
-        caller: Option<Address>,
-    ) {
-        sdk.inner.borrow_mut().native_sdk.take_output();
-        sdk.inner.borrow_mut().native_sdk.set_input(input);
-        sdk.rewrite_contract_context(ContractContextV1 {
-            caller: caller.unwrap_or_default(),
-            ..Default::default()
-        });
-    }
-
-    /// Helper function to rewrite input and contract context.
-    fn with_test_input<T: Into<Bytes>>(
-        input: T,
-        caller: Option<Address>,
-    ) -> JournalState<TestingContext> {
-        JournalStateBuilder::default()
-            .with_contract_context(ContractContextV1 {
-                caller: caller.unwrap_or_default(),
-                ..Default::default()
-            })
-            .with_devnet_genesis()
-            .build(TestingContext::empty().with_input(input))
-    }
 
     #[test]
     fn test_simple_storage_set_and_get() {
         let owner_address = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
         let test_value = U256::from(42);
-        let mut sdk = with_test_input(
-            Vec::from(test_value.to_le_bytes::<32>()),
-            Some(owner_address),
-        );
+        let sdk = TestingContext::default()
+            .with_input(test_value.to_le_bytes::<32>())
+            .with_contract_context(ContractContextV1 {
+                caller: owner_address,
+                ..Default::default()
+            });
         main(sdk.clone());
-        rewrite_input(&mut sdk, vec![], Some(owner_address));
+        let sdk = sdk.with_input(Bytes::default());
         main(sdk.clone());
-        let output = sdk.inner.borrow_mut().native_sdk.take_output();
+        let output = sdk.take_output();
         let retrieved_value = U256::from_le_slice(&output);
         assert_eq!(retrieved_value, test_value);
     }

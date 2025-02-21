@@ -1,6 +1,12 @@
 use crate::utils::{EvmTestingContext, TxBuilder};
 use core::str::from_utf8;
-use fluentbase_sdk::{address, calc_create_address, runtime::TestingContext, Address, U256};
+use fluentbase_sdk::{
+    address,
+    calc_create_address,
+    testing::TestingContextNativeAPI,
+    Address,
+    U256,
+};
 use hex_literal::hex;
 
 #[test]
@@ -119,7 +125,7 @@ fn test_create_send() {
     .gas_price(gas_price)
     .value(U256::from(1e18))
     .exec();
-    let contract_address = calc_create_address::<TestingContext>(&SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address::<TestingContextNativeAPI>(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     let tx_cost = gas_price * U256::from(result.gas_used());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18) - tx_cost);
@@ -137,7 +143,7 @@ fn test_evm_revert() {
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
-    let contract_address = calc_create_address::<TestingContext>(&SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address::<TestingContextNativeAPI>(&SENDER_ADDRESS, 0);
     assert!(!result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(2e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(0e18));
@@ -151,7 +157,7 @@ fn test_evm_revert() {
     .value(U256::from(1e18))
     .exec();
     // here nonce must be 1 because we increment nonce for failed txs
-    let contract_address = calc_create_address::<TestingContext>(&SENDER_ADDRESS, 1);
+    let contract_address = calc_create_address::<TestingContextNativeAPI>(&SENDER_ADDRESS, 1);
     println!("{}", contract_address);
     assert!(result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
@@ -174,7 +180,7 @@ fn test_evm_self_destruct() {
     .gas_price(gas_price)
     .value(U256::from(1e18))
     .exec();
-    let contract_address = calc_create_address::<TestingContext>(&SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address::<TestingContextNativeAPI>(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));

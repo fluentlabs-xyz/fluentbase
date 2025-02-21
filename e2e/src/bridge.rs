@@ -4,7 +4,7 @@ use fluentbase_sdk::{
     address,
     bytes,
     calc_create_address,
-    runtime::TestingContext,
+    testing::TestingContextNativeAPI,
     Address,
     Bytes,
     U256,
@@ -20,7 +20,7 @@ fn test_bridge_contract() {
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     let gas_price = U256::from(0);
     // now send success tx
-    let contract_address = calc_create_address::<TestingContext>(&SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address::<TestingContextNativeAPI>(&SENDER_ADDRESS, 0);
     let mut tx_builder = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,

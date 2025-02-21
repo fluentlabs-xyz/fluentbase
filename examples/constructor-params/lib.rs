@@ -3,34 +3,47 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{
-    basic_entrypoint,
-    derive::{solidity_storage, Contract},
-    SharedAPI,
-    U256,
-};
-
-#[derive(Contract)]
-struct App<SDK> {
-    sdk: SDK,
-}
+use fluentbase_sdk::{derive::solidity_storage, func_entrypoint, SharedAPI, U256};
 
 solidity_storage! {
     U256 Value;
 }
 
-impl<SDK: SharedAPI> App<SDK> {
-    fn deploy(&mut self) {
-        let mut input = [0u8; 32];
-        self.sdk.read(&mut input, 0);
-        let value = U256::from_le_bytes(input);
-        self.sdk.write_storage(Value::SLOT, value);
-    }
-
-    fn main(&mut self) {
-        let value = self.sdk.storage(&Value::SLOT);
-        self.sdk.write(&value.to_le_bytes::<32>());
-    }
+fn deploy(mut sdk: impl SharedAPI) {
+    let mut input = [0u8; 32];
+    sdk.read(&mut input, 0);
+    let value = U256::from_le_bytes(input);
+    sdk.write_storage(Value::SLOT, value);
 }
 
-basic_entrypoint!(App);
+fn main(mut sdk: impl SharedAPI) {
+    let value = sdk.storage(&Value::SLOT);
+    sdk.write(&value.to_le_bytes::<32>());
+}
+
+func_entrypoint!(main, deploy);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluentbase_sdk::{address, testing::TestingContext, ContractContextV1, U256};
+
+    #[test]
+    fn test_constructor_params() {
+        let context = ContractContextV1 {
+            address: address!("1111111111111111111111111111111111111111"),
+            bytecode_address: address!("2222222222222222222222222222222222222222"),
+            caller: address!("3333333333333333333333333333333333333333"),
+            is_static: false,
+            value: U256::ZERO,
+        };
+        let sdk = TestingContext::default()
+            .with_input(U256::from(123).to_le_bytes::<32>())
+            .with_contract_context(context.clone());
+        deploy(sdk.clone());
+        main(sdk.clone());
+        let output = sdk.take_output();
+        let value = U256::from_le_slice(&output);
+        assert_eq!(value, U256::from(123));
+    }
+}

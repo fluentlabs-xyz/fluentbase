@@ -1,16 +1,10 @@
-use fluentbase_types::{
-    create_import_linker,
-    ExitCode,
-    SysFuncIdx::STATE,
-    STATE_DEPLOY,
-    STATE_MAIN,
-};
+use fluentbase_types::{create_import_linker, SysFuncIdx::STATE, STATE_DEPLOY, STATE_MAIN};
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
 };
 
-pub(crate) fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
+pub(crate) fn wasm2rwasm(wasm_binary: &[u8]) -> Vec<u8> {
     let mut config = RwasmModule::default_config(None);
     config.rwasm_config(RwasmConfig {
         state_router: Some(StateRouterConfig {
@@ -26,12 +20,12 @@ pub(crate) fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
         translate_drop_keep: false,
     });
     let rwasm_module = RwasmModule::compile_with_config(wasm_binary, &config)
-        .map_err(|_| ExitCode::CompilationError)?;
+        .expect("failed to compile wasm bytecode");
     let length = rwasm_module.encoded_length();
     let mut rwasm_bytecode = vec![0u8; length];
     let mut binary_format_writer = BinaryFormatWriter::new(&mut rwasm_bytecode);
     rwasm_module
         .write_binary(&mut binary_format_writer)
         .expect("failed to encode rwasm bytecode");
-    Ok(rwasm_bytecode)
+    rwasm_bytecode
 }

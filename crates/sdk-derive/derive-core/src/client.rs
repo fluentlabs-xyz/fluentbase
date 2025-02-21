@@ -114,25 +114,25 @@ impl ClientMethod {
                 {
                     let context = self.sdk.context();
                     if context.tx_value() < value {
-                        ::core::panic!("insufficient funds");
+                        ::core::panic!("client: insufficient funds");
                     }
                     if context.tx_gas_limit() < gas_limit {
-                        ::core::panic!("insufficient gas");
+                        ::core::panic!("client: insufficient gas");
                     }
                 }
 
-                let (output, exit_code) = self.sdk.call(
+                let result = self.sdk.call(
                     contract_address,
                     value,
                     &input,
                     gas_limit
                 );
 
-                if exit_code != 0 {
-                    ::core::panic!("call failed");
+                if !result.is_ok() {
+                    ::core::panic!("client: call failed");
                 }
 
-                self.#decode_name(output)
+                self.#decode_name(result.data)
             }
         }
     }

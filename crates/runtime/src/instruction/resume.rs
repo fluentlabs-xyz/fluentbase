@@ -55,7 +55,7 @@ impl SyscallResume {
             .try_consume_fuel(fuel_used)
             .is_err()
         {
-            return (0, ExitCode::OutOfGas.into_i32());
+            return (0, ExitCode::OutOfFuel.into_i32());
         }
 
         let fuel_consumed_before_call = recoverable_runtime.executor.store().fuel_consumed();

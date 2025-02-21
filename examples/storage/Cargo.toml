@@ -18,6 +18,9 @@ hex-literal = { version = "0.4.1", default-features = false }
 [dev-dependencies]
 serial_test = "3.0.0"
 
+[build-dependencies]
+fluentbase-build = { workspace = true }
+
 [lib]
 crate-type = ["cdylib", "staticlib"]
 path = "lib.rs"

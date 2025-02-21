@@ -1,6 +1,2 @@
-node_modules
-target
-hello_world
-Cargo.lock
+*.wasm
 *.wat
-

@@ -18,17 +18,16 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
+    use fluentbase_sdk::testing::TestingContext;
     use hex_literal::hex;
 
     #[test]
     fn test_contract_works() {
-        let native_sdk = TestingContext::empty().with_input(hex!(
+        let sdk = TestingContext::default().with_input(hex!(
             "000000000000000000000000000000000000000000000000000000000000007b"
         ));
-        let sdk = JournalState::empty(native_sdk.clone());
-        main(sdk);
-        let output = native_sdk.take_output();
+        main(sdk.clone());
+        let output = sdk.take_output();
         let value = U256::from_be_slice(&output);
         assert_eq!(value, U256::from(246));
     }

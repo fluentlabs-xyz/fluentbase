@@ -39,7 +39,7 @@ impl<E: EdwardsParameters> SyscallEdwardsDecompress<E> {
 
     pub fn fn_impl(mut y_bytes: [u8; 32], sign: u32) -> Result<Vec<u8>, ExitCode> {
         if sign > 1 {
-            return Err(ExitCode::BadBuiltinParams);
+            return Err(ExitCode::MalformedBuiltinParams);
         }
 
         // Copy bytes into another array so we can modify the last byte and make CompressedEdwardsY

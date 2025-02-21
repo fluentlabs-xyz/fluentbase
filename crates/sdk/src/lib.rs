@@ -4,13 +4,14 @@
 extern crate alloc;
 extern crate core;
 
+use hashbrown as _;
+
 #[cfg(not(feature = "std"))]
 mod bindings;
 #[macro_use]
 pub mod entrypoint;
 pub mod constructor;
 mod evm;
-pub mod journal;
 pub mod leb128;
 #[cfg(feature = "std")]
 pub mod runtime;
@@ -18,6 +19,8 @@ pub mod runtime;
 pub mod rwasm;
 pub mod shared;
 pub mod storage;
+#[cfg(feature = "std")]
+pub mod testing;
 
 #[cfg(not(feature = "std"))]
 #[panic_handler]
@@ -47,9 +50,7 @@ static ALLOCATOR: fluentbase_types::HeapBaseAllocator = fluentbase_types::HeapBa
 pub use fluentbase_codec as codec;
 pub use fluentbase_sdk_derive as derive;
 pub use fluentbase_types::*;
-// pub use router_core as router;
 
-// #[cfg(feature = "debug-print")]
 #[macro_export]
 macro_rules! debug_log {
     ($msg:tt) => {{
@@ -63,9 +64,3 @@ macro_rules! debug_log {
         debug_log!(msg);
     }};
 }
-// #[cfg(not(feature = "debug-print"))]
-// #[macro_export]
-// macro_rules! debug_log {
-//     ($msg:tt) => {{}};
-//     ($($arg:tt)*) => {{}};
-// }

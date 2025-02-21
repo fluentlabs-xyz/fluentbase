@@ -14,6 +14,9 @@ ecdsa = { version = "0.16.9", default-features = false, features = ["digest", "a
 p384 = { version = "0.13.0", default-features = false, features = ["ecdsa-core", "ecdsa"] }
 hex = "0.4.3"
 
+[build-dependencies]
+fluentbase-build = { workspace = true }
+
 [lib]
 crate-type = ["cdylib", "staticlib"]
 path = "lib.rs"
