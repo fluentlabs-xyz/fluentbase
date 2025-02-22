@@ -2945,8 +2945,6 @@ name = "fluentbase-genesis"
 version = "0.1.0"
 dependencies = [
  "alloy-genesis",
- "fluentbase-contracts-multicall",
- "fluentbase-example-greeting",
  "fluentbase-poseidon",
  "fluentbase-types",
  "hex",
