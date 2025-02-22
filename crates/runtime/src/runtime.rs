@@ -281,7 +281,6 @@ impl CachingRuntime {
 
 thread_local! {
     static CACHING_RUNTIME: RefCell<CachingRuntime> = RefCell::new(CachingRuntime::new());
-    static SYSCALL_HANDLER: RefCell<RuntimeSyscallHandler> = RefCell::new(RuntimeSyscallHandler::default());
 }
 
 #[derive(Default)]
