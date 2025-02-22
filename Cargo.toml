@@ -4,7 +4,6 @@ members = [
     "contracts/*",
     "crates/*",
     "revm/crates/*",
-    "crates/genesis/bin",
     "crates/rwasm/e2e",
     "examples/*",
     "e2e",
@@ -12,9 +11,7 @@ members = [
 exclude = [
     # fairblock is a Go application
     "contracts/fairblock",
-    "crates/evm",
-    "crates/evm/evm-rwasm",
-    "crates/evm/evm-snippets",
+    # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
 ]
 resolver = "2"

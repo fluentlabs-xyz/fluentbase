@@ -1,25 +1,17 @@
-use crate::{
-    enable_rwasm_contract,
-    initial_balance,
-    ChainConfig,
-    Genesis,
-    GenesisAccount,
-    EXAMPLE_FAIRBLOCK_ADDRESS,
-    EXAMPLE_GREETING_ADDRESS,
-};
-use fluentbase_poseidon::poseidon_hash;
+use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_types::{
     address,
-    b256,
     Address,
     Bytes,
     B256,
     DEVELOPER_PREVIEW_CHAIN_ID,
+    EXAMPLE_FAIRBLOCK_ADDRESS,
+    EXAMPLE_GREETING_ADDRESS,
     PRECOMPILE_NATIVE_MULTICALL,
     U256,
+    WASM_SIG,
 };
-use revm_primitives::keccak256;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, env, fs::File, io::Write, path::PathBuf};
 
 pub fn devnet_chain_config() -> ChainConfig {
     ChainConfig {
@@ -55,31 +47,43 @@ pub fn devnet_chain_config() -> ChainConfig {
     }
 }
 
-/// Keccak256("poseidon_hash_key")
-pub const GENESIS_POSEIDON_HASH_SLOT: B256 =
-    b256!("72adc1368da53d255ed52bce3690fa2b9ec0f64072bcdf3c86adcaf50b54cff1");
-/// Keccak256("keccak256_hash_key")
-pub const GENESIS_KECCAK_HASH_SLOT: B256 =
-    b256!("0215c908b95b16bf09cad5a8f36d2f80c367055b890489abfba6a5f6540b391f");
-
-pub fn devnet_genesis_from_file() -> Genesis {
-    let json_file = include_str!("../assets/genesis-devnet.json");
-    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
+#[macro_export]
+macro_rules! initial_balance {
+    ($address:literal, $value:expr) => {
+        (
+            address!($address),
+            GenesisAccount::default().with_balance($value),
+        )
+    };
 }
 
-pub fn devnet_genesis_v0_1_0_dev1_from_file() -> Genesis {
-    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.1.json");
-    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
-}
-
-pub fn devnet_genesis_v0_1_0_dev4_from_file() -> Genesis {
-    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.4.json");
-    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
-}
-
-pub fn devnet_genesis_v0_1_0_dev5_from_file() -> Genesis {
-    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.5.json");
-    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
+fn init_contract(
+    alloc: &mut BTreeMap<Address, GenesisAccount>,
+    name: &str,
+    address: Address,
+    binary_data: &[u8],
+) {
+    let bytecode: Bytes = if binary_data.starts_with(&WASM_SIG) {
+        let result = fluentbase_types::compile_wasm_to_rwasm(binary_data).unwrap();
+        if !result.constructor_params.is_empty() {
+            panic!(
+                "rwasm contract ({}) should not have constructor params",
+                name
+            );
+        }
+        result.rwasm_bytecode
+    } else {
+        Bytes::copy_from_slice(binary_data)
+    };
+    print!("creating genesis account {} (0x{})... ", name, address);
+    std::io::stdout().flush().unwrap();
+    println!("{} bytes", bytecode.len());
+    let mut account = alloc
+        .get(&address)
+        .cloned()
+        .unwrap_or_else(GenesisAccount::default);
+    account.code = Some(bytecode);
+    alloc.insert(address, account);
 }
 
 pub fn devnet_genesis() -> Genesis {
@@ -111,58 +115,26 @@ pub fn devnet_genesis() -> Genesis {
         initial_balance!("Ba8AB429Ff0AaA5f1Bb8f19f1f9974fFC82Ff161", U256::ZERO),
     ]);
 
-    // enable_rwasm_contract!(
-    //     alloc,
-    //     PRECOMPILE_EVM,
-    //     "../../contracts/assets/precompile_evm.wasm"
-    // );
-    // enable_rwasm_contract!(
-    //     WCL_CONTRACT_ADDRESS,
-    //     "../../contracts/assets/wcl_contract.wasm"
-    // );
-    // enable_rwasm_contract!(
-    //     PRECOMPILE_BLAKE2_ADDRESS,
-    //     "../../contracts/assets/precompile_blake2.wasm"
-    // );
-    // enable_rwasm_contract!(
-    //     PRECOMPILE_BN128_ADDRESS,
-    //     "../../contracts/assets/precompile_bn128.wasm"
-    // );
-    // enable_rwasm_contract!(
-    //     PRECOMPILE_IDENTITY_ADDRESS,
-    //     "../../contracts/assets/precompile_identity.wasm"
-    // );
-    // enable_rwasm_contract!(
-    //     PRECOMPILE_KZG_POINT_EVALUATION_ADDRESS,
-    //     "../../contracts/assets/precompile_kzg_point_evaluation.wasm"
-    // );
-    // enable_rwasm_contract!(
-    //     PRECOMPILE_MODEXP_ADDRESS,
-    //     "../../contracts/assets/precompile_modexp.wasm"
-    // );
-    // enable_rwasm_contract!(
-    //     PRECOMPILE_SECP256K1_ADDRESS,
-    //     "../../contracts/assets/precompile_secp256k1.wasm"
-    // );
-
-    enable_rwasm_contract!(
+    const PRECOMPILE_MULTICALL: &[u8] = include_bytes!("../../contracts/multicall/lib.wasm");
+    init_contract(
+        &mut alloc,
         "multicall",
-        alloc,
         PRECOMPILE_NATIVE_MULTICALL,
-        "../../../contracts/multicall/lib.wasm"
+        PRECOMPILE_MULTICALL,
     );
-
-    enable_rwasm_contract!(
+    const PRECOMPILE_GREETING: &[u8] = include_bytes!("../../examples/greeting/lib.wasm");
+    init_contract(
+        &mut alloc,
         "greeting",
-        alloc,
         EXAMPLE_GREETING_ADDRESS,
-        "../../../examples/greeting/lib.wasm"
+        PRECOMPILE_GREETING,
     );
-    enable_rwasm_contract!(
+    const PRECOMPILE_FAIRBLOCK: &[u8] = include_bytes!("../../contracts/fairblock/lib.wasm");
+    init_contract(
+        &mut alloc,
         "fairblock",
-        alloc,
         EXAMPLE_FAIRBLOCK_ADDRESS,
-        "../../../contracts/fairblock/lib.wasm"
+        PRECOMPILE_FAIRBLOCK,
     );
 
     Genesis {
@@ -180,4 +152,19 @@ pub fn devnet_genesis() -> Genesis {
         blob_gas_used: None,
         number: Some(0),
     }
+}
+
+fn write_genesis_json(genesis: Genesis, file_name: &str) {
+    let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let genesis_json = serde_json::to_string_pretty(&genesis).unwrap();
+    let out_dir = cargo_manifest_dir.join(file_name);
+    println!("cargo:rerun-if-changed={}", out_dir.to_str().unwrap());
+    let mut file = File::create(out_dir).unwrap();
+    file.write(genesis_json.as_bytes()).unwrap();
+    file.sync_all().unwrap();
+    file.flush().unwrap();
+}
+
+fn main() {
+    write_genesis_json(devnet_genesis(), "assets/genesis-devnet.json");
 }

@@ -1,11 +1,5 @@
 use core::{mem::take, str::from_utf8};
-use fluentbase_genesis::{
-    devnet_genesis_from_file,
-    Genesis,
-    GENESIS_KECCAK_HASH_SLOT,
-    GENESIS_POSEIDON_HASH_SLOT,
-};
-use fluentbase_poseidon::poseidon_hash;
+use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
 use fluentbase_runtime::{types::NonePreimageResolver, Runtime, RuntimeContext};
 use fluentbase_sdk::{
     bytes::BytesMut,
@@ -20,7 +14,6 @@ use fluentbase_sdk::{
     SharedContextInputV1,
     SysFuncIdx::STATE,
     KECCAK_EMPTY,
-    POSEIDON_EMPTY,
     STATE_DEPLOY,
     STATE_MAIN,
     U256,
@@ -57,30 +50,15 @@ impl EvmTestingContext {
         let mut db = InMemoryDB::default();
         // convert all accounts from genesis into jzkt
         for (k, v) in genesis.alloc.iter() {
-            let poseidon_hash = v
-                .storage
+            let code_hash = v
+                .code
                 .as_ref()
-                .and_then(|v| v.get(&GENESIS_POSEIDON_HASH_SLOT).cloned())
-                .unwrap_or_else(|| {
-                    v.code
-                        .as_ref()
-                        .map(|v| poseidon_hash(&v).into())
-                        .unwrap_or(POSEIDON_EMPTY)
-                });
-            let _keccak_hash = v
-                .storage
-                .as_ref()
-                .and_then(|v| v.get(&GENESIS_KECCAK_HASH_SLOT).cloned())
-                .unwrap_or_else(|| {
-                    v.code
-                        .as_ref()
-                        .map(|v| keccak256(&v))
-                        .unwrap_or(KECCAK_EMPTY)
-                });
+                .map(|value| keccak256(&value))
+                .unwrap_or(KECCAK_EMPTY);
             let mut info: AccountInfo = AccountInfo {
                 balance: v.balance,
                 nonce: v.nonce.unwrap_or_default(),
-                code_hash: poseidon_hash,
+                code_hash,
                 code: None,
             };
             info.code = v.code.clone().map(Bytecode::new_raw);
@@ -107,7 +85,7 @@ impl EvmTestingContext {
         let mut info: AccountInfo = AccountInfo {
             balance: U256::ZERO,
             nonce: 0,
-            code_hash: poseidon_hash(&rwasm_binary).into(),
+            code_hash: keccak256(&rwasm_binary),
             code: None,
         };
         if !rwasm_binary.is_empty() {

@@ -1,7 +1,6 @@
 use crate::utils::EvmTestingContext;
 use core::str::from_utf8;
-use fluentbase_genesis::EXAMPLE_GREETING_ADDRESS;
-use fluentbase_sdk::{Address, Bytes};
+use fluentbase_sdk::{Address, Bytes, EXAMPLE_GREETING_ADDRESS};
 
 #[test]
 fn test_genesis_greeting() {

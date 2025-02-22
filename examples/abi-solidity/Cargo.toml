@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-example-abi-solidity"
+name = "fluentbase-examples-abi-solidity"
 version = "0.1.0"
 edition = "2021"
 

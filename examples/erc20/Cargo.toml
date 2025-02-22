@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-example-erc20"
+name = "fluentbase-examples-erc20"
 version = "0.1.0"
 edition = "2021"
 

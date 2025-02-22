@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-example-json"
+name = "fluentbase-examples-json"
 version = "0.1.0"
 edition = "2021"
 

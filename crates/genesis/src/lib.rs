@@ -1,23 +1,21 @@
-pub use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
-use fluentbase_types::{address, Address};
+pub use alloy_genesis::Genesis;
 
-mod devnet;
-mod macros;
-mod utils;
+pub fn devnet_genesis_from_file() -> Genesis {
+    let json_file = include_str!("../assets/genesis-devnet.json");
+    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
+}
 
-/// Example greeting `keccak256("_example_greeting")[12..]`
-pub const EXAMPLE_GREETING_ADDRESS: Address = address!("43799b91fb174261ec2950ebb819c2cff2983bdf");
+pub fn devnet_genesis_v0_1_0_dev1_from_file() -> Genesis {
+    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.1.json");
+    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
+}
 
-/// Example fairblock `keccak256("_example_fairblock")[12..]`
-pub const EXAMPLE_FAIRBLOCK_ADDRESS: Address = address!("d92adea71798aadff13f526556dea230214e0a30");
+pub fn devnet_genesis_v0_1_0_dev4_from_file() -> Genesis {
+    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.4.json");
+    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
+}
 
-pub use devnet::{
-    devnet_chain_config,
-    devnet_genesis,
-    devnet_genesis_from_file,
-    devnet_genesis_v0_1_0_dev1_from_file,
-    devnet_genesis_v0_1_0_dev4_from_file,
-    devnet_genesis_v0_1_0_dev5_from_file,
-    GENESIS_KECCAK_HASH_SLOT,
-    GENESIS_POSEIDON_HASH_SLOT,
-};
+pub fn devnet_genesis_v0_1_0_dev5_from_file() -> Genesis {
+    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.5.json");
+    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
+}

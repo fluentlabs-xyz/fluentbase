@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-example-constructor-params"
+name = "fluentbase-examples-constructor-params"
 version = "0.1.0"
 edition = "2021"
 

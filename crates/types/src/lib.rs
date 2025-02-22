@@ -8,10 +8,11 @@ extern crate core;
 mod allocator;
 mod context;
 mod contracts;
-mod journal;
+mod exit_code;
 mod linker;
 mod rwasm;
 mod sdk;
+mod sys_func_idx;
 mod types;
 mod utils;
 
@@ -20,11 +21,12 @@ pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, By
 pub use byteorder;
 pub use context::*;
 pub use contracts::*;
+pub use exit_code::*;
 pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
-pub use journal::*;
 pub use linker::*;
 pub use rwasm::*;
 pub use sdk::*;
+pub use sys_func_idx::SysFuncIdx;
 pub use types::*;
 pub use utils::*;
 

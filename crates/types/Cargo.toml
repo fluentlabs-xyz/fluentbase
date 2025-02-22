@@ -26,12 +26,11 @@ fluentbase-codec = { workspace = true }
 auto_impl = { workspace = true }
 
 [features]
-default = ["std", "rwasm"]
+default = ["std"]
 serde = ["dep:serde"]
 std = [
     "rwasm/std",
     "alloy-primitives/std",
     "byteorder/std",
 ]
-rwasm = []
 optimism = ["revm-primitives/optimism"]

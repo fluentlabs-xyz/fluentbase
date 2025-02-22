@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-example-simple-storage"
+name = "fluentbase-examples-simple-storage"
 version = "0.1.0"
 edition = "2021"
 

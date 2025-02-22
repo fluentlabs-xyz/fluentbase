@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-example-storage"
+name = "fluentbase-examples-storage"
 version = "0.1.0"
 authors.workspace = true
 repository.workspace = true

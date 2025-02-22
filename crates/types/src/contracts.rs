@@ -1,41 +1,28 @@
 use alloy_primitives::{address, Address};
 
-pub const PRECOMPILE_EVM: Address = address!("0000000000000000000000000000000000005210");
-pub const PRECOMPILE_WASM: Address = address!("0000000000000000000000000000000000005220");
-pub const PRECOMPILE_SVM: Address = address!("0000000000000000000000000000000000005230");
+const fn evm_address(value: u8) -> Address {
+    Address::with_last_byte(value)
+}
 
-pub const PRECOMPILE_SECP256K1_ECRECOVER: Address =
-    address!("0000000000000000000000000000000000000001");
-pub const PRECOMPILE_SHA256: Address = address!("0000000000000000000000000000000000000002");
-pub const PRECOMPILE_RIPEMD160: Address = address!("0000000000000000000000000000000000000003");
-pub const PRECOMPILE_IDENTITY: Address = address!("0000000000000000000000000000000000000004");
-pub const PRECOMPILE_MODEXP: Address = address!("0000000000000000000000000000000000000005");
-pub const PRECOMPILE_BN128_ADD: Address = address!("0000000000000000000000000000000000000006");
-pub const PRECOMPILE_BN128_MUL: Address = address!("0000000000000000000000000000000000000007");
-pub const PRECOMPILE_BN128_PAIR: Address = address!("0000000000000000000000000000000000000008");
-pub const PRECOMPILE_BLAKE2: Address = address!("0000000000000000000000000000000000000009");
-pub const PRECOMPILE_KZG_POINT_EVALUATION: Address =
-    address!("000000000000000000000000000000000000000a");
-pub const PRECOMPILE_BLS12_381_G1_ADD: Address =
-    address!("000000000000000000000000000000000000000b");
-pub const PRECOMPILE_BLS12_381_G1_MUL: Address =
-    address!("000000000000000000000000000000000000000c");
-pub const PRECOMPILE_BLS12_381_G1_MSM: Address =
-    address!("000000000000000000000000000000000000000d");
-pub const PRECOMPILE_BLS12_381_G2_ADD: Address =
-    address!("000000000000000000000000000000000000000e");
-pub const PRECOMPILE_BLS12_381_G2_MUL: Address =
-    address!("000000000000000000000000000000000000000f");
-pub const PRECOMPILE_BLS12_381_G2_MSM: Address =
-    address!("0000000000000000000000000000000000000010");
-pub const PRECOMPILE_BLS12_381_PAIRING: Address =
-    address!("0000000000000000000000000000000000000011");
-pub const PRECOMPILE_BLS12_381_MAP_FP_TO_G1: Address =
-    address!("0000000000000000000000000000000000000012");
-pub const PRECOMPILE_BLS12_381_MAP_FP2_TO_G2: Address =
-    address!("0000000000000000000000000000000000000013");
-pub const PRECOMPILE_SECP256R1_VERIFY: Address =
-    address!("0000000000000000000000000000000000000100");
+pub const PRECOMPILE_SECP256K1_ECRECOVER: Address = evm_address(0x1);
+pub const PRECOMPILE_SHA256: Address = evm_address(0x2);
+pub const PRECOMPILE_RIPEMD160: Address = evm_address(0x3);
+pub const PRECOMPILE_IDENTITY: Address = evm_address(0x4);
+pub const PRECOMPILE_MODEXP: Address = evm_address(0x5);
+pub const PRECOMPILE_BN128_ADD: Address = evm_address(0x6);
+pub const PRECOMPILE_BN128_MUL: Address = evm_address(0x7);
+pub const PRECOMPILE_BN128_PAIR: Address = evm_address(0x8);
+pub const PRECOMPILE_BLAKE2: Address = evm_address(0x9);
+pub const PRECOMPILE_KZG_POINT_EVALUATION: Address = evm_address(0x0a);
+pub const PRECOMPILE_BLS12_381_G1_ADD: Address = evm_address(0x0b);
+pub const PRECOMPILE_BLS12_381_G1_MUL: Address = evm_address(0x0c);
+pub const PRECOMPILE_BLS12_381_G1_MSM: Address = evm_address(0x0d);
+pub const PRECOMPILE_BLS12_381_G2_ADD: Address = evm_address(0x0e);
+pub const PRECOMPILE_BLS12_381_G2_MUL: Address = evm_address(0x0f);
+pub const PRECOMPILE_BLS12_381_G2_MSM: Address = evm_address(0x10);
+pub const PRECOMPILE_BLS12_381_PAIRING: Address = evm_address(0x11);
+pub const PRECOMPILE_BLS12_381_MAP_FP_TO_G1: Address = evm_address(0x12);
+pub const PRECOMPILE_BLS12_381_MAP_FP2_TO_G2: Address = evm_address(0x13);
 
 // "R native" + keccak256("multicall(bytes[])")[..4]
 pub const PRECOMPILE_NATIVE_MULTICALL: Address =
@@ -52,7 +39,7 @@ pub const PRECOMPILE_NATIVE_MULTICALL: Address =
 /// # Returns
 /// * `Some(Account)` - The precompiled account if a match is found
 /// * `None` - If no matching precompile is found or input is too short
-pub fn try_resolve_precompile_account(input: &[u8]) -> Option<Address> {
+pub fn try_resolve_precompile_account_from_input(input: &[u8]) -> Option<Address> {
     if input.len() < 4 {
         return None;
     };
@@ -62,3 +49,9 @@ pub fn try_resolve_precompile_account(input: &[u8]) -> Option<Address> {
         None
     }
 }
+
+/// Example greeting `keccak256("_example_greeting")[12..]`
+pub const EXAMPLE_GREETING_ADDRESS: Address = address!("43799b91fb174261ec2950ebb819c2cff2983bdf");
+
+/// Example fairblock `keccak256("_example_fairblock")[12..]`
+pub const EXAMPLE_FAIRBLOCK_ADDRESS: Address = address!("d92adea71798aadff13f526556dea230214e0a30");

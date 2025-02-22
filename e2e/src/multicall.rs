@@ -2,8 +2,7 @@ use crate::utils::EvmTestingContext;
 use alloc::vec::Vec;
 use core::str::from_utf8;
 use fluentbase_codec::SolidityABI;
-use fluentbase_genesis::EXAMPLE_GREETING_ADDRESS;
-use fluentbase_sdk::{address, Address, Bytes};
+use fluentbase_sdk::{address, Address, Bytes, EXAMPLE_GREETING_ADDRESS};
 use hex_literal::hex;
 
 #[test]

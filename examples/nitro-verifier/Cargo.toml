@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-example-nitro-verifier"
+name = "fluentbase-examples-nitro-verifier"
 version = "0.1.0"
 edition = "2021"
 

@@ -41,6 +41,7 @@ mod tests {
             .with_input(U256::from(123).to_le_bytes::<32>())
             .with_contract_context(context.clone());
         deploy(sdk.clone());
+        let sdk = sdk.with_input(vec![]);
         main(sdk.clone());
         let output = sdk.take_output();
         let value = U256::from_le_slice(&output);

@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-example-echo"
+name = "fluentbase-examples-echo"
 version = "0.1.0"
 edition = "2021"
 

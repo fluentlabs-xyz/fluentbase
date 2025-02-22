@@ -3,7 +3,7 @@ macro_rules! import_func {
         (
             "fluentbase_v1preview",
             $name,
-            $crate::types::SysFuncIdx::$sys_func_idx as u32,
+            $crate::SysFuncIdx::$sys_func_idx as u32,
             0,
         )
     };

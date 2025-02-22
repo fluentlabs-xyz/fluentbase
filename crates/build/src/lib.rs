@@ -19,11 +19,11 @@ fn cargo_rerun_if_changed(metadata: &Metadata, program_dir: &Path) {
         program_dir.join("Cargo.toml"),
         program_dir.join("lib.rs"),
     ];
-    for dir in dirs {
-        if dir.exists() {
+    for file in dirs {
+        if file.exists() {
             println!(
                 "cargo::rerun-if-changed={}",
-                dir.canonicalize().unwrap().display()
+                file.canonicalize().unwrap().display()
             );
         }
     }

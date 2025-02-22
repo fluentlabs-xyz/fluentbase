@@ -40,7 +40,6 @@ fn _sys_alloc_aligned(bytes: usize, align: usize) -> *mut u8 {
         heap_pos += align - offset;
     }
     // allocate memory pages if needed
-    const WASM_PAGE_SIZE_IN_BYTES: usize = 65536;
     let pages_allocated = core::arch::wasm32::memory_size::<0>();
     let pages_needed = calc_pages_needed(pages_allocated, heap_pos + bytes);
     if pages_needed > 0 {

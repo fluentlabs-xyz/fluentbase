@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "fluentbase-example-router-solidity"
+name = "fluentbase-examples-router-solidity"
 version = "0.1.0"
 
 [dependencies]

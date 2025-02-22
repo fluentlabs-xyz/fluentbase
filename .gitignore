@@ -24,4 +24,5 @@ examples/**/lib.wasm
 revm/e2e/Cargo.lock
 revm/e2e/tests
 
+genesis-devnet.json
 node_modules

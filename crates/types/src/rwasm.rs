@@ -1,4 +1,4 @@
-use crate::{create_import_linker, Bytes, SysFuncIdx::STATE, STATE_DEPLOY, STATE_MAIN};
+use crate::{create_import_linker, sys_func_idx::SysFuncIdx, Bytes, STATE_DEPLOY, STATE_MAIN};
 use alloc::{boxed::Box, string::ToString, vec};
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
@@ -19,7 +19,7 @@ pub fn compile_wasm_to_rwasm(wasm_binary: &[u8]) -> Option<RwasmCompilationResul
                 ("deploy".to_string(), STATE_DEPLOY),
                 ("main".to_string(), STATE_MAIN),
             ]),
-            opcode: Instruction::Call((STATE as u32).into()),
+            opcode: Instruction::Call(SysFuncIdx::STATE.into()),
         }),
         entrypoint_name: None,
         import_linker: Some(create_import_linker()),

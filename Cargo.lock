@@ -2793,7 +2793,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-abi-solidity"
+name = "fluentbase-examples-abi-solidity"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2802,7 +2802,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-chess-validator"
+name = "fluentbase-examples-checkmate"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.21",
@@ -2813,7 +2813,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-client-solidity"
+name = "fluentbase-examples-client-solidity"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2822,7 +2822,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-constructor-params"
+name = "fluentbase-examples-constructor-params"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2830,7 +2830,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-echo"
+name = "fluentbase-examples-echo"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2840,7 +2840,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-erc20"
+name = "fluentbase-examples-erc20"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.21",
@@ -2851,7 +2851,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-greeting"
+name = "fluentbase-examples-greeting"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2859,7 +2859,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-json"
+name = "fluentbase-examples-json"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2869,7 +2869,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-keccak256"
+name = "fluentbase-examples-keccak256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2879,7 +2879,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-nitro-verifier"
+name = "fluentbase-examples-nitro-verifier"
 version = "0.1.0"
 dependencies = [
  "ciborium",
@@ -2895,7 +2895,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-panic"
+name = "fluentbase-examples-panic"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2903,7 +2903,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-router-solidity"
+name = "fluentbase-examples-router-solidity"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.8.21",
@@ -2913,7 +2913,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-rwasm"
+name = "fluentbase-examples-rwasm"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2922,7 +2922,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-simple-storage"
+name = "fluentbase-examples-simple-storage"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2931,7 +2931,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-storage"
+name = "fluentbase-examples-storage"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2945,21 +2945,8 @@ name = "fluentbase-genesis"
 version = "0.1.0"
 dependencies = [
  "alloy-genesis",
- "fluentbase-poseidon",
  "fluentbase-types",
- "hex",
- "revm-primitives",
- "rwasm",
  "serde",
- "serde_json",
-]
-
-[[package]]
-name = "fluentbase-genesis-bin"
-version = "0.1.0"
-dependencies = [
- "clap",
- "fluentbase-genesis",
  "serde_json",
 ]
 
