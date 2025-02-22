@@ -7,7 +7,7 @@ mod contract;
 
 mod utils;
 
-use derive_core::{client_core, router_core, storage_core};
+use fluentbase_sdk_derive_core::{client_core, router_core, storage_core};
 
 #[proc_macro_error]
 #[proc_macro_attribute]

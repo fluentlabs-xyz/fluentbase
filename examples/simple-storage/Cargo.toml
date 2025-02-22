@@ -11,7 +11,7 @@ hex-literal = { version = "0.4.1", default-features = false }
 fluentbase-build = { workspace = true }
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib"]
 path = "lib.rs"
 
 [features]

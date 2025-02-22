@@ -1,5 +1,5 @@
 [package]
-name = "derive-core"
+name = "fluentbase-sdk-derive-core"
 
 authors.workspace = true
 categories.workspace = true

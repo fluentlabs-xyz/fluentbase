@@ -12,7 +12,6 @@ categories.workspace = true
 [dependencies]
 fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
-fluentbase-poseidon = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
 
@@ -20,7 +19,6 @@ rwasm = { workspace = true }
 revm = { workspace = true }
 hex-literal = { workspace = true }
 hex = { workspace = true }
-sp1-sdk = "^2.0.0"
 alloy-sol-types = { workspace = true }
 
 [features]

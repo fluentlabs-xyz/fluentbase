@@ -11,7 +11,7 @@ rwasm = { workspace = true }
 fluentbase-build = { workspace = true }
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib"]
 path = "lib.rs"
 
 [features]
