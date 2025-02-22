@@ -150,7 +150,7 @@ pub fn build_go_program_from_env() {
     println!("cargo:rerun-if-changed=main.go");
     println!("cargo:rerun-if-changed=lib.wasm");
 
-    let status = Command::new("tinygo")
+    let is_success = Command::new("tinygo")
         .args(&[
             "build",
             "-o",
@@ -160,8 +160,10 @@ pub fn build_go_program_from_env() {
             "github.com/fluentlabs-xyz/fluentbase/examples/fairblock",
         ])
         .status()
-        .unwrap();
-    if !status.success() {
+        .ok()
+        .filter(|s| s.success())
+        .is_some();
+    if !is_success {
         println!("cargo:warning=missing TinyGo, build might be outdated");
     }
 
