@@ -3,9 +3,9 @@ all: build
 .PHONY: build
 build:
 	# build examples & contracts by triggering "build.rs"
-	cargo check --exclude fluentbase-genesis --workspace --lib
+	cargo check --lib #--exclude fluentbase-genesis --workspace --lib
 	# build genesis files
-	cd crates/genesis && $(MAKE) # build genesis
+	#cd crates/genesis && $(MAKE) # build genesis
 
 .PHONY: examples
 examples:

@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    #    "bin",
     "contracts/*",
     "crates/*",
     "revm/crates/*",
@@ -9,8 +8,6 @@ members = [
     "e2e",
 ]
 exclude = [
-    # fairblock is a Go application
-    "contracts/fairblock",
     # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
 ]

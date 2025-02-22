@@ -2027,6 +2027,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-fairblock"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+]
+
+[[package]]
 name = "fluentbase-contracts-identity"
 version = "0.1.0"
 dependencies = [
@@ -2236,6 +2243,7 @@ name = "fluentbase-genesis"
 version = "0.1.0"
 dependencies = [
  "alloy-genesis",
+ "fluentbase-contracts-fairblock",
  "fluentbase-contracts-multicall",
  "fluentbase-examples-greeting",
  "fluentbase-types",

@@ -141,3 +141,40 @@ pub fn build_wasm_program_from_env() {
         .unwrap();
     }
 }
+
+pub fn build_go_program_from_env() {
+    let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+
+    println!("cargo:rerun-if-changed=go.mod");
+    println!("cargo:rerun-if-changed=go.sum");
+    println!("cargo:rerun-if-changed=main.go");
+    println!("cargo:rerun-if-changed=lib.wasm");
+
+    let status = Command::new("tinygo")
+        .args(&[
+            "build",
+            "-o",
+            "lib.wasm",
+            "--target",
+            "wasm-unknown",
+            "github.com/fluentlabs-xyz/fluentbase/examples/fairblock",
+        ])
+        .status()
+        .unwrap();
+    if !status.success() {
+        println!("cargo:warning=missing TinyGo, build might be outdated");
+    }
+
+    let wasm_output = cargo_manifest_dir.join("lib.wasm");
+    let wast_output = cargo_manifest_dir.join("lib.wat");
+
+    // Build the project as a WASM binary
+    let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
+    if wasm_to_wat.is_ok() {
+        fs::write(
+            wast_output,
+            from_utf8(&wasm_to_wat.unwrap().stdout).unwrap(),
+        )
+        .unwrap();
+    }
+}

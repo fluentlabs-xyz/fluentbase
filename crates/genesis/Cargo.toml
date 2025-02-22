@@ -22,9 +22,11 @@ fluentbase-types = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
 # we need these deps to ensure build order
-fluentbase-examples-greeting = { path = "../../examples/greeting" }
 fluentbase-contracts-multicall = { path = "../../contracts/multicall" }
+fluentbase-contracts-fairblock = { path = "../../contracts/fairblock" }
+fluentbase-examples-greeting = { path = "../../examples/greeting" }
 
 [features]
 default = ["std"]
