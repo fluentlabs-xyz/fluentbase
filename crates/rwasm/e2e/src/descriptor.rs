@@ -4,7 +4,7 @@ use std::{
 };
 use wast::token::Span;
 
-/// The desciptor of a Wasm spec test suite run.
+/// The descriptor of a Wasm spec test suite run.
 #[derive(Debug)]
 pub struct TestDescriptor {
     /// The path of the Wasm spec test `.wast` file.
