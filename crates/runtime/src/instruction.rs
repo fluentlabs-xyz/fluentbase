@@ -1,14 +1,14 @@
 pub mod charge_fuel;
 pub mod debug_log;
 pub mod ec_recover;
-pub mod ed_add;
-pub mod ed_decompress;
+// pub mod ed_add;
+// pub mod ed_decompress;
 pub mod exec;
 pub mod exit;
 pub mod forward_output;
-pub mod fp2_addsub;
-pub mod fp2_mul;
-pub mod fp_op;
+// pub mod fp2_addsub;
+// pub mod fp2_mul;
+// pub mod fp_op;
 pub mod fuel;
 pub mod input_size;
 pub mod keccak256;
@@ -24,10 +24,10 @@ pub mod resume;
 pub mod sha256_compress;
 pub mod sha256_extend;
 pub mod state;
-pub mod uint256_mul;
-pub mod weierstrass_add;
-pub mod weierstrass_decompress;
-pub mod weierstrass_double;
+// pub mod uint256_mul;
+// pub mod weierstrass_add;
+// pub mod weierstrass_decompress;
+// pub mod weierstrass_double;
 pub mod write;
 
 use crate::{
@@ -35,14 +35,14 @@ use crate::{
         charge_fuel::SyscallChargeFuel,
         debug_log::SyscallDebugLog,
         ec_recover::SyscallEcrecover,
-        ed_add::SyscallEdwardsAddAssign,
-        ed_decompress::SyscallEdwardsDecompress,
+        // ed_add::SyscallEdwardsAddAssign,
+        // ed_decompress::SyscallEdwardsDecompress,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
-        fp2_addsub::SyscallFp2AddSub,
-        fp2_mul::SyscallFp2Mul,
-        fp_op::SyscallFpOp,
+        // fp2_addsub::SyscallFp2AddSub,
+        // fp2_mul::SyscallFp2Mul,
+        // fp_op::SyscallFpOp,
         fuel::SyscallFuel,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
@@ -58,10 +58,10 @@ use crate::{
         sha256_compress::SyscallSha256Compress,
         sha256_extend::SyscallSha256Extend,
         state::SyscallState,
-        uint256_mul::SyscallUint256Mul,
-        weierstrass_add::SyscallWeierstrassAddAssign,
-        weierstrass_decompress::SyscallWeierstrassDecompressAssign,
-        weierstrass_double::SyscallWeierstrassDoubleAssign,
+        // uint256_mul::SyscallUint256Mul,
+        // weierstrass_add::SyscallWeierstrassAddAssign,
+        // weierstrass_decompress::SyscallWeierstrassDecompressAssign,
+        // weierstrass_double::SyscallWeierstrassDoubleAssign,
         write::SyscallWrite,
     },
     RuntimeContext,
@@ -69,14 +69,14 @@ use crate::{
 use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::SysFuncIdx;
 use num::BigUint;
-use sp1_curves::{
-    edwards::ed25519::Ed25519,
-    weierstrass::{
-        bls12_381::{Bls12381, Bls12381BaseField},
-        bn254::{Bn254, Bn254BaseField},
-        secp256k1::Secp256k1,
-    },
-};
+// use sp1_curves::{
+//     edwards::ed25519::Ed25519,
+//     weierstrass::{
+//         bls12_381::{Bls12381, Bls12381BaseField},
+//         bn254::{Bn254, Bn254BaseField},
+//         secp256k1::Secp256k1,
+//     },
+// };
 
 pub fn invoke_runtime_handler(
     caller: Caller<'_, RuntimeContext>,
@@ -104,52 +104,69 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::POSEIDON_HASH => SyscallPoseidonHash::fn_handler(caller),
         SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller),
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller),
-        SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller),
-        SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller),
         SysFuncIdx::SECP256K1_RECOVER => SyscallEcrecover::fn_handler(caller),
-        SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller),
-        SysFuncIdx::SECP256K1_DECOMPRESS => {
-            SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller)
-        }
-        SysFuncIdx::SECP256K1_DOUBLE => {
-            SyscallWeierstrassDoubleAssign::<Secp256k1>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_DECOMPRESS => {
-            SyscallWeierstrassDecompressAssign::<Bls12381>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_ADD => SyscallWeierstrassAddAssign::<Bls12381>::fn_handler(caller),
-        SysFuncIdx::BLS12381_DOUBLE => {
-            SyscallWeierstrassDoubleAssign::<Bls12381>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP_ADD => {
-            SyscallFpOp::<Bls12381BaseField, FieldAdd>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP_SUB => {
-            SyscallFpOp::<Bls12381BaseField, FieldSub>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP_MUL => {
-            SyscallFpOp::<Bls12381BaseField, FieldMul>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP2_ADD => {
-            SyscallFp2AddSub::<Bls12381BaseField, FieldAdd>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP2_SUB => {
-            SyscallFp2AddSub::<Bls12381BaseField, FieldSub>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP2_MUL => SyscallFp2Mul::<Bls12381BaseField>::fn_handler(caller),
-        SysFuncIdx::BN254_ADD => SyscallWeierstrassAddAssign::<Bn254>::fn_handler(caller),
-        SysFuncIdx::BN254_DOUBLE => SyscallWeierstrassDoubleAssign::<Bn254>::fn_handler(caller),
-        SysFuncIdx::BN254_FP_ADD => SyscallFpOp::<Bn254BaseField, FieldAdd>::fn_handler(caller),
-        SysFuncIdx::BN254_FP_SUB => SyscallFpOp::<Bn254BaseField, FieldSub>::fn_handler(caller),
-        SysFuncIdx::BN254_FP_MUL => SyscallFpOp::<Bn254BaseField, FieldMul>::fn_handler(caller),
-        SysFuncIdx::BN254_FP2_ADD => {
-            SyscallFp2AddSub::<Bn254BaseField, FieldAdd>::fn_handler(caller)
-        }
-        SysFuncIdx::BN254_FP2_SUB => {
-            SyscallFp2AddSub::<Bn254BaseField, FieldSub>::fn_handler(caller)
-        }
-        SysFuncIdx::BN254_FP2_MUL => SyscallFp2Mul::<Bn254BaseField>::fn_handler(caller),
-        SysFuncIdx::UINT256_MUL => SyscallUint256Mul::fn_handler(caller),
+
+        // SysFuncIdx::SECP256K1_DOUBLE => {
+        //     SyscallWeierstrassDoubleAssign::<Secp256k1>::fn_handler(caller)
+        // }
+        // SysFuncIdx::SECP256K1_ADD => {
+        //     SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller)
+        // }
+        // SysFuncIdx::SECP256K1_DECOMPRESS => {
+        //     SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller)
+        // }
+        // SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller),
+        // SysFuncIdx::ED25519_DECOMPRESS => {
+        //     SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BLS12381_DECOMPRESS => {
+        //     SyscallWeierstrassDecompressAssign::<Bls12381>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BLS12381_ADD => {
+        //     SyscallWeierstrassAddAssign::<Bls12381>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BLS12381_DOUBLE => {
+        //     SyscallWeierstrassDoubleAssign::<Bls12381>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BLS12381_FP_ADD => {
+        //     SyscallFpOp::<Bls12381BaseField, FieldAdd>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BLS12381_FP_SUB => {
+        //     SyscallFpOp::<Bls12381BaseField, FieldSub>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BLS12381_FP_MUL => {
+        //     SyscallFpOp::<Bls12381BaseField, FieldMul>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BLS12381_FP2_ADD => {
+        //     SyscallFp2AddSub::<Bls12381BaseField, FieldAdd>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BLS12381_FP2_SUB => {
+        //     SyscallFp2AddSub::<Bls12381BaseField, FieldSub>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BLS12381_FP2_MUL => {
+        //     SyscallFp2Mul::<Bls12381BaseField>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BN254_ADD => SyscallWeierstrassAddAssign::<Bn254>::fn_handler(caller),
+        // SysFuncIdx::BN254_DOUBLE => {
+        //     SyscallWeierstrassDoubleAssign::<Bn254>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BN254_FP_ADD => {
+        //     SyscallFpOp::<Bn254BaseField, FieldAdd>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BN254_FP_SUB => {
+        //     SyscallFpOp::<Bn254BaseField, FieldSub>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BN254_FP_MUL => {
+        //     SyscallFpOp::<Bn254BaseField, FieldMul>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BN254_FP2_ADD => {
+        //     SyscallFp2AddSub::<Bn254BaseField, FieldAdd>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BN254_FP2_SUB => {
+        //     SyscallFp2AddSub::<Bn254BaseField, FieldSub>::fn_handler(caller)
+        // }
+        // SysFuncIdx::BN254_FP2_MUL => SyscallFp2Mul::<Bn254BaseField>::fn_handler(caller),
+        // SysFuncIdx::UINT256_MUL => SyscallUint256Mul::fn_handler(caller),
         _ => unreachable!("unknown system function ({})", sys_func_idx),
     }
 }

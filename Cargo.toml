@@ -56,7 +56,7 @@ revm-precompile = { path = "revm/crates/precompile", default-features = false }
 revm = { path = "revm/crates/revm", default-features = false, features = [
     "std",
     "hashbrown",
-    "blst",
+    #    "blst",
     #    "debug-print",
 ] }
 auto_impl = { version = "1.2", default-features = false }

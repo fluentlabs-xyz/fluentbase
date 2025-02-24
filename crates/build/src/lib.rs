@@ -70,7 +70,7 @@ pub fn build_wasm_program_from_env() {
     // let cargo_pkg_name = env::var("CARGO_PKG_NAME").unwrap();
     // let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target = env::var("TARGET").unwrap();
-    let cargo_manifest_path = env::var("CARGO_MANIFEST_PATH").unwrap();
+    let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
     let program_dir = Path::new(&cargo_manifest_dir);
 
     let mut metadata_cmd = MetadataCommand::new();
@@ -116,6 +116,7 @@ pub fn build_wasm_program_from_env() {
         )
         .status()
         .expect("WASM compilation failure");
+
     if !status.success() {
         panic!(
             "WASM compilation failure with code: {}",
