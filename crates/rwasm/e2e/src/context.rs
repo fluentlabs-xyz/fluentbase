@@ -350,7 +350,7 @@ impl TestContext<'_> {
     ///
     /// - If no module instances can be found.
     /// - If no function identified with `func_name` can be found.
-    /// - If function invokation returned an error.
+    /// - If function invocation returned an error.
     pub fn invoke(
         &mut self,
         module_name: Option<&str>,
