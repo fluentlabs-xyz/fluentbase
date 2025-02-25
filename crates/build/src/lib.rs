@@ -86,7 +86,7 @@ pub fn build_wasm_program_from_env() {
 
     cargo_rerun_if_changed(&metadata, program_dir);
 
-    if target.contains("wasm32") {
+    if target.contains("wasm32") || target.contains("succinct") {
         println!(
             "cargo:warning=build skipped for {} due to wasm32 compilation target ({})",
             root_package_name, target,
