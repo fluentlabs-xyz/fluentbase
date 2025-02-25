@@ -73,6 +73,11 @@ pub fn build_wasm_program_from_env() {
     let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
     let program_dir = Path::new(&cargo_manifest_dir);
 
+    println!(
+        "cargo:warning=building wasm program {}",
+        cargo_manifest_path.to_str().unwrap()
+    );
+
     let mut metadata_cmd = MetadataCommand::new();
     let metadata = metadata_cmd
         .manifest_path(cargo_manifest_path)
