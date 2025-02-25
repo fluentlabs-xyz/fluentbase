@@ -110,6 +110,7 @@ pub fn build_wasm_program_from_env() {
     let status = Command::new("cargo")
         .args([
             "build",
+            "-vv",
             "--target",
             WASM32_TARGET,
             "--release",
