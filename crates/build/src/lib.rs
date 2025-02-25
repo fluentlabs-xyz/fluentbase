@@ -101,6 +101,9 @@ pub fn build_wasm_program_from_env() {
         panic!("multiple WASM artefacts are supported");
     }
 
+    // try to add wasm32 target
+    Command::new("rustup").args(["target", "add", WASM32_TARGET]);
+
     // Build the project as a WASM binary
     let status = Command::new("cargo")
         .args([
