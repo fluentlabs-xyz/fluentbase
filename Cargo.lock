@@ -2106,6 +2106,9 @@ name = "fluentbase-genesis"
 version = "0.1.0"
 dependencies = [
  "alloy-genesis",
+ "fluentbase-contracts-fairblock",
+ "fluentbase-contracts-multicall",
+ "fluentbase-examples-greeting",
  "fluentbase-types",
  "serde",
  "serde_json",
