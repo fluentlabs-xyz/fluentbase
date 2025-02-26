@@ -86,7 +86,7 @@ pub fn build_wasm_program_from_env() {
 
     cargo_rerun_if_changed(&metadata, program_dir);
 
-    if target.contains("wasm32") || target.contains("succinct") {
+    if target.contains("wasm32") {
         println!(
             "cargo:warning=build skipped for {} due to wasm32 compilation target ({})",
             root_package_name, target,
@@ -100,9 +100,6 @@ pub fn build_wasm_program_from_env() {
     } else if artefact_paths.len() > 1 {
         panic!("multiple WASM artefacts are supported");
     }
-
-    // try to add wasm32 target
-    Command::new("rustup").args(["target", "add", WASM32_TARGET]);
 
     // Build the project as a WASM binary
     let status = Command::new("cargo")
