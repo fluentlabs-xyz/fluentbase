@@ -23,10 +23,10 @@ alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# we need these deps to ensure build order
-fluentbase-contracts-multicall = { path = "../../contracts/multicall" }
-fluentbase-contracts-fairblock = { path = "../../contracts/fairblock" }
-fluentbase-examples-greeting = { path = "../../examples/greeting" }
+# we need these deps to ensure build order when generating genesis
+fluentbase-contracts-multicall = { path = "../../contracts/multicall", optional = true }
+fluentbase-contracts-fairblock = { path = "../../contracts/fairblock", optional = true }
+fluentbase-examples-greeting = { path = "../../examples/greeting", optional = true }
 
 [features]
 default = ["std"]
@@ -35,4 +35,10 @@ std = [
     "alloy-genesis/std",
     "serde/std",
     "serde_json/std",
+    "generate-genesis",
+]
+generate-genesis = [
+    "dep:fluentbase-contracts-multicall",
+    "dep:fluentbase-contracts-fairblock",
+    "dep:fluentbase-examples-greeting",
 ]
