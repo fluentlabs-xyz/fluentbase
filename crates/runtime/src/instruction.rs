@@ -104,17 +104,16 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::POSEIDON_HASH => SyscallPoseidonHash::fn_handler(caller),
         SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller),
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller),
+        SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller),
+        SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller),
         SysFuncIdx::SECP256K1_RECOVER => SyscallEcrecover::fn_handler(caller),
-
-        SysFuncIdx::SECP256K1_DOUBLE => {
-            SyscallWeierstrassDoubleAssign::<Secp256k1>::fn_handler(caller)
-        }
         SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller),
         SysFuncIdx::SECP256K1_DECOMPRESS => {
             SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller)
         }
-        SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller),
-        SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller),
+        SysFuncIdx::SECP256K1_DOUBLE => {
+            SyscallWeierstrassDoubleAssign::<Secp256k1>::fn_handler(caller)
+        }
         SysFuncIdx::BLS12381_DECOMPRESS => {
             SyscallWeierstrassDecompressAssign::<Bls12381>::fn_handler(caller)
         }
