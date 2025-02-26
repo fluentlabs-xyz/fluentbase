@@ -51,7 +51,7 @@ impl<E: EdwardsParameters> SyscallEdwardsDecompress<E> {
         let decompressed = decompress(&compressed_y);
 
         // Convert the decompressed X to bytes and then words
-        let mut decompressed_x_bytes = decompressed.x.to_bytes_le();
+        let mut decompressed_x_bytes = decompressed.unwrap().x.to_bytes_le();
         decompressed_x_bytes.resize(32, 0u8); // Ensure it has the correct size
 
         Ok(decompressed_x_bytes)
