@@ -6,6 +6,7 @@ extern crate alloc;
 extern crate core;
 
 mod allocator;
+mod bytecode_type;
 mod context;
 mod contracts;
 mod exit_code;
@@ -13,11 +14,12 @@ mod linker;
 mod rwasm;
 mod sdk;
 mod sys_func_idx;
-mod types;
+mod syscall;
 mod utils;
 
 pub use allocator::*;
 pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
+pub use bytecode_type::*;
 pub use byteorder;
 pub use context::*;
 pub use contracts::*;
@@ -27,7 +29,7 @@ pub use linker::*;
 pub use rwasm::*;
 pub use sdk::*;
 pub use sys_func_idx::SysFuncIdx;
-pub use types::*;
+pub use syscall::*;
 pub use utils::*;
 
 pub const KECCAK_EMPTY: B256 =
