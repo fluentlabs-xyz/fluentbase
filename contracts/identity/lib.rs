@@ -3,20 +3,23 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, func_entrypoint, Bytes, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::{alloc_slice, func_entrypoint, SharedAPI, FUEL_DENOM_RATE};
+use revm_precompile::{
+    calc_linear_cost_u32,
+    identity::{IDENTITY_BASE, IDENTITY_PER_WORD},
+};
 
 pub fn main(mut sdk: impl SharedAPI) {
-    // read full input data
     let input_length = sdk.input_size();
+    // fail fast if we don't have enough fuel for the call
+    let gas_used = calc_linear_cost_u32(input_length as usize, IDENTITY_BASE, IDENTITY_PER_WORD);
+    if gas_used > sdk.fuel() / FUEL_DENOM_RATE {
+        sdk.charge_fuel(u64::MAX);
+    }
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
-    let input = Bytes::copy_from_slice(input);
-    // call identity function
-    let gas_limit = sdk.fuel() / FUEL_DENOM_RATE;
-    let result = revm_precompile::identity::identity_run(&input, gas_limit)
-        .unwrap_or_else(|_| panic!("identity: precompile execution failed"));
-    // write output
-    sdk.write(result.bytes.as_ref());
+    // write an identical output
+    sdk.write(input);
 }
 
 func_entrypoint!(main);
