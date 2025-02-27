@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
+tiny-keccak = { workspace = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"

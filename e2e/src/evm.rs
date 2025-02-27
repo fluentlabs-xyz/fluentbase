@@ -8,6 +8,7 @@ use fluentbase_sdk::{
     U256,
 };
 use hex_literal::hex;
+use revm::interpreter::opcode;
 
 #[test]
 fn test_evm_greeting() {
@@ -239,8 +240,9 @@ fn test_evm_erc20() {
         let result = ctx.call_evm_tx(
             OWNER_ADDRESS,
             contract_address,
-            hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into(),
-            None,
+
+hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001"
+).into(),             None,
             None,
         );
         println!("{:?}", result);
@@ -266,4 +268,38 @@ fn test_evm_erc20() {
     check_balance(&mut ctx, U256::from(1));
     transfer_coin(&mut ctx);
     check_balance(&mut ctx, U256::from(2));
+}
+
+#[test]
+fn test_evm_balance() {
+    const OWNER_ADDRESS: Address = Address::with_last_byte(1);
+    let mut bytecode = Vec::new();
+    bytecode.push(opcode::PUSH20);
+    bytecode.extend_from_slice(OWNER_ADDRESS.as_slice());
+    bytecode.push(opcode::BALANCE);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::MSTORE);
+    bytecode.push(opcode::PUSH1);
+    bytecode.extend_from_slice(&[32]);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::RETURN);
+    // deploy greeting EVM contract
+    let mut ctx = EvmTestingContext::default();
+    ctx.add_bytecode(Address::with_last_byte(255), bytecode.into());
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        Address::with_last_byte(255),
+        hex!("").into(),
+        None,
+        None,
+    );
+    println!("{:?}", result);
+    assert!(result.is_success());
+    let output = result.into_output().unwrap_or_default();
+    assert_eq!(output.len(), 32);
+    let balance = U256::from_be_slice(output.as_ref());
+    assert_eq!(
+        balance,
+        U256::from_str_radix("999999999997000000", 10).unwrap()
+    );
 }

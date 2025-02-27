@@ -33,7 +33,6 @@ fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-rwasm = { path = "./crates/rwasm", default-features = false, features = ["std"] }
-fluentbase-rwasm-e2e = { path = "./crates/rwasm/e2e", default-features = false }
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
@@ -80,7 +79,7 @@ codegen-units = 1
 panic = "abort"
 lto = true
 opt-level = 3
-strip = false
+strip = true
 debug = false
 debug-assertions = false
 rpath = false

@@ -2,6 +2,7 @@
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{alloc_slice, func_entrypoint, SharedAPI};
+use tiny_keccak::{Hasher, Keccak};
 
 pub fn main(mut sdk: impl SharedAPI) {
     // get the size of the input and allocate memory for input
@@ -9,10 +10,13 @@ pub fn main(mut sdk: impl SharedAPI) {
     let input = alloc_slice(input_size as usize);
     // copy input to the allocated memory
     sdk.read(input, 0);
-    // calculate keccak256 & poseidon hashes
-    let keccak256_hash = sdk.keccak256(input);
+    // calculate keccak256 hash
+    let mut keccak256 = Keccak::v256();
+    let mut output = [0u8; 32];
+    keccak256.update(input);
+    keccak256.finalize(&mut output);
     // write both hashes to output (multiple writes do append)
-    sdk.write(keccak256_hash.as_slice());
+    sdk.write(&output);
 }
 
 func_entrypoint!(main);

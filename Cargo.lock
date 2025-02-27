@@ -165,7 +165,7 @@ dependencies = [
  "derive_more",
  "once_cell",
  "serde",
- "sha2",
+ "sha2 0.10.8",
 ]
 
 [[package]]
@@ -937,6 +937,15 @@ dependencies = [
 
 [[package]]
 name = "block-buffer"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4152116fd6e9dadb291ae18fc1ec3575ed6d84c29642d97890f4b4a3417297e4"
+dependencies = [
+ "generic-array 0.14.7",
+]
+
+[[package]]
+name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
@@ -1337,10 +1346,20 @@ dependencies = [
  "md4",
  "ripemd",
  "sha-1",
- "sha2",
+ "sha2 0.10.8",
  "sha3",
  "streebog",
  "whirlpool",
+]
+
+[[package]]
+name = "crypto-mac"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b584a330336237c1eecd3e94266efb216c56ed91225d634cb2991c5f3fd1aeab"
+dependencies = [
+ "generic-array 0.14.7",
+ "subtle",
 ]
 
 [[package]]
@@ -1593,7 +1612,7 @@ version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
- "block-buffer",
+ "block-buffer 0.10.4",
  "const-oid",
  "crypto-common",
  "subtle",
@@ -1981,7 +2000,7 @@ dependencies = [
  "fluentbase-codec-derive",
  "hashbrown 0.15.2",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "paste",
  "serde",
  "strum",
@@ -2087,7 +2106,7 @@ dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "revm",
  "rwasm",
 ]
@@ -2098,7 +2117,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
- "hex-literal",
+ "hex-literal 0.4.1",
 ]
 
 [[package]]
@@ -2134,7 +2153,7 @@ dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
 ]
 
 [[package]]
@@ -2144,7 +2163,7 @@ dependencies = [
  "alloy-sol-types",
  "fluentbase-build",
  "fluentbase-sdk",
- "hex-literal",
+ "hex-literal 0.4.1",
  "serial_test",
 ]
 
@@ -2173,7 +2192,8 @@ dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
+ "tiny-keccak",
 ]
 
 [[package]]
@@ -2187,7 +2207,7 @@ dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "p384",
  "x509-cert",
 ]
@@ -2220,12 +2240,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-examples-secp256k1"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "hex",
+ "hex-literal 1.0.0",
+ "libsecp256k1",
+ "secp256k1-sys",
+ "tiny-keccak",
+]
+
+[[package]]
 name = "fluentbase-examples-simple-storage"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
- "hex-literal",
+ "hex-literal 0.4.1",
 ]
 
 [[package]]
@@ -2234,7 +2267,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
- "hex-literal",
+ "hex-literal 0.4.1",
  "serial_test",
 ]
 
@@ -2255,11 +2288,8 @@ dependencies = [
 name = "fluentbase-poseidon"
 version = "0.1.0"
 dependencies = [
- "bitvec",
  "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
- "lazy_static",
  "poseidon",
- "revm-primitives",
 ]
 
 [[package]]
@@ -2274,11 +2304,11 @@ dependencies = [
  "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
  "hashbrown 0.15.2",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "k256",
  "keccak-hash 0.11.0",
  "num",
- "sha2",
+ "sha2 0.10.8",
  "sp1-curves",
  "sp1-primitives",
  "tiny-keccak",
@@ -2794,12 +2824,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
 
 [[package]]
+name = "hex-literal"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcaaec4551594c969335c98c903c1397853d4198408ea609190f420500f6be71"
+
+[[package]]
+name = "hmac"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "126888268dcc288495a26bf004b38c5fdbb31682f992c84ceb046a1f0fe38840"
+dependencies = [
+ "crypto-mac",
+ "digest 0.9.0",
+]
+
+[[package]]
 name = "hmac"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest 0.10.7",
+]
+
+[[package]]
+name = "hmac-drbg"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17ea0a1394df5b6574da6e0c1ade9e78868c9fb0a4e5ef4428e32da4676b85b1"
+dependencies = [
+ "digest 0.9.0",
+ "generic-array 0.14.7",
+ "hmac 0.8.1",
 ]
 
 [[package]]
@@ -3293,7 +3350,7 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "once_cell",
- "sha2",
+ "sha2 0.10.8",
  "signature",
 ]
 
@@ -3344,7 +3401,7 @@ checksum = "0850eb19206463a61bede4f7b7e6b21731807137619044b1f3c287ebcfe2b3b0"
 dependencies = [
  "ff",
  "hex",
- "sha2",
+ "sha2 0.10.8",
  "sp1_bls12_381",
  "spin 0.9.8",
 ]
@@ -3375,6 +3432,54 @@ name = "libm"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8355be11b20d696c8f18f6cc018c4e372165b1fa8126cef092399c9951984ffa"
+
+[[package]]
+name = "libsecp256k1"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95b09eff1b35ed3b33b877ced3a691fc7a481919c7e29c53c906226fcf55e2a1"
+dependencies = [
+ "arrayref",
+ "base64 0.13.1",
+ "digest 0.9.0",
+ "hmac-drbg",
+ "libsecp256k1-core",
+ "libsecp256k1-gen-ecmult",
+ "libsecp256k1-gen-genmult",
+ "rand",
+ "serde",
+ "sha2 0.9.9",
+ "typenum",
+]
+
+[[package]]
+name = "libsecp256k1-core"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5be9b9bb642d8522a44d533eab56c16c738301965504753b03ad1de3425d5451"
+dependencies = [
+ "crunchy",
+ "digest 0.9.0",
+ "subtle",
+]
+
+[[package]]
+name = "libsecp256k1-gen-ecmult"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3038c808c55c87e8a172643a7d87187fc6c4174468159cb3090659d55bcb4809"
+dependencies = [
+ "libsecp256k1-core",
+]
+
+[[package]]
+name = "libsecp256k1-gen-genmult"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db8d6ba2cec9eacc40e6e8ccc98931840301f1006e95647ceb2dd5c3aa06f7c"
+dependencies = [
+ "libsecp256k1-core",
+]
 
 [[package]]
 name = "linux-raw-sys"
@@ -3696,6 +3801,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b410bbe7e14ab526a0e86877eb47c6996a2bd7746f027ba551028c925390e4e9"
 
 [[package]]
+name = "opaque-debug"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
 name = "open-fastrlp"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3779,7 +3890,7 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "primeorder",
- "sha2",
+ "sha2 0.10.8",
 ]
 
 [[package]]
@@ -4011,7 +4122,7 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "primeorder",
- "sha2",
+ "sha2 0.10.8",
 ]
 
 [[package]]
@@ -4692,6 +4803,7 @@ name = "revm-interpreter"
 version = "15.1.0"
 dependencies = [
  "bincode",
+ "fluentbase-types",
  "paste",
  "phf",
  "revm-primitives",
@@ -4722,7 +4834,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "sha2",
+ "sha2 0.10.8",
  "substrate-bn",
 ]
 
@@ -4751,7 +4863,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
 dependencies = [
- "hmac",
+ "hmac 0.12.1",
  "subtle",
 ]
 
@@ -5321,6 +5433,19 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest 0.10.7",
+]
+
+[[package]]
+name = "sha2"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d58a1e1bf39749807d89cf2d98ac2dfa0ff1cb3faa38fbb64dd88ac8013d800"
+dependencies = [
+ "block-buffer 0.9.0",
+ "cfg-if",
+ "cpufeatures",
+ "digest 0.9.0",
+ "opaque-debug",
 ]
 
 [[package]]

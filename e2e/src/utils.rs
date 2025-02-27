@@ -95,6 +95,18 @@ impl EvmTestingContext {
         info
     }
 
+    pub(crate) fn add_bytecode(&mut self, address: Address, bytecode: Bytes) -> AccountInfo {
+        let mut info: AccountInfo = AccountInfo {
+            balance: U256::ZERO,
+            nonce: 0,
+            code_hash: keccak256(bytecode.as_ref()),
+            code: None,
+        };
+        info.code = Some(Bytecode::new_raw(bytecode));
+        self.db.insert_account_info(address, info.clone());
+        info
+    }
+
     pub(crate) fn get_balance(&mut self, address: Address) -> U256 {
         let account = self.db.load_account(address).unwrap();
         account.info.balance
@@ -125,7 +137,7 @@ impl EvmTestingContext {
             );
         }
         if !result.is_success() {
-            try_print_utf8_error(result.output().as_ref().unwrap())
+            try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref())
         }
         println!("deployment gas used: {}", result.gas_used());
         assert!(result.is_success());
