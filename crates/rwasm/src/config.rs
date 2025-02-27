@@ -2,6 +2,7 @@
 pub struct ExecutorConfig {
     pub fuel_limit: Option<u64>,
     pub floats_enabled: bool,
+    pub tracer_enabled: bool,
 }
 
 impl ExecutorConfig {
@@ -16,6 +17,11 @@ impl ExecutorConfig {
 
     pub fn floats_enabled(mut self, floats_enabled: bool) -> Self {
         self.floats_enabled = floats_enabled;
+        self
+    }
+
+    pub fn tracer_enabled(mut self, tracer_enabled: bool) -> Self {
+        self.tracer_enabled = tracer_enabled;
         self
     }
 }

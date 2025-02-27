@@ -25,6 +25,7 @@ use rwasm::{
             ElementSegmentIdx,
             FuncIdx,
             GlobalIdx,
+            InstrMeta,
             Instruction,
             LocalDepth,
             SignatureIdx,
@@ -73,6 +74,22 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             //         self.store.value_stack.stack_len(self.store.sp)
             //     );
             // }
+
+            // handle pre-instruction state
+            if self.store.tracer.is_some() {
+                let memory_size: u32 = self.store.global_memory.current_pages().into();
+                let consumed_fuel = self.store.fuel_consumed();
+                let stack = self.store.value_stack.dump_stack(self.store.sp);
+                self.store.tracer.as_mut().unwrap().pre_opcode_state(
+                    self.store.ip.pc(),
+                    instr,
+                    stack,
+                    &InstrMeta::new(0, 0, 0),
+                    memory_size,
+                    consumed_fuel,
+                );
+            }
+
             match instr {
                 Instruction::Unreachable => self.visit_unreachable()?,
                 Instruction::LocalGet(local_depth) => self.visit_local_get(local_depth),

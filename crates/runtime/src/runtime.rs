@@ -369,7 +369,9 @@ impl Runtime {
 
             let executor = RwasmExecutor::new(
                 rwasm_module.clone(),
-                ExecutorConfig::new().fuel_limit(runtime_context.fuel_limit),
+                ExecutorConfig::new()
+                    .fuel_limit(runtime_context.fuel_limit)
+                    .tracer_enabled(runtime_context.trace),
                 runtime_context,
             );
             Self { executor }

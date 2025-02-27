@@ -148,8 +148,12 @@ impl SyscallExec {
             .with_state(state)
             .with_depth(ctx.call_depth + 1)
             .with_disable_fuel(ctx.disable_fuel);
+        // .with_tracer();
         let mut runtime = Runtime::new(ctx2, preimage_resolver);
         let mut execution_result = runtime.call();
+
+        // let trace = runtime.store().tracer().unwrap().logs.len();
+        // println!("execution trace ({} steps):", trace);
 
         // println!("\n\nEXEC, interrupted: {}", execution_result.interrupted);
         // println!(

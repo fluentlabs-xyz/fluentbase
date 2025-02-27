@@ -86,6 +86,12 @@ impl<T> RwasmContext<T> {
             }),
         );
 
+        let tracer = if config.tracer_enabled {
+            Some(Tracer::default())
+        } else {
+            None
+        };
+
         Self {
             instance,
             config,
@@ -95,7 +101,7 @@ impl<T> RwasmContext<T> {
             global_memory,
             ip,
             context,
-            tracer: None,
+            tracer,
             fuel_costs: Default::default(),
             global_variables: Default::default(),
             tables: Default::default(),
