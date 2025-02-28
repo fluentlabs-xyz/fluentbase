@@ -70,7 +70,7 @@ pub fn build_wasm_program_from_env() {
     // let cargo_pkg_name = env::var("CARGO_PKG_NAME").unwrap();
     // let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target = env::var("TARGET").unwrap();
-    let cargo_manifest_path = env::var("CARGO_MANIFEST_PATH").unwrap();
+    let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
     let program_dir = Path::new(&cargo_manifest_dir);
 
     let mut metadata_cmd = MetadataCommand::new();
@@ -86,7 +86,7 @@ pub fn build_wasm_program_from_env() {
 
     cargo_rerun_if_changed(&metadata, program_dir);
 
-    if target.contains("wasm32") || target.contains("succinct") {
+    if target.contains("wasm32") {
         println!(
             "cargo:warning=build skipped for {} due to wasm32 compilation target ({})",
             root_package_name, target,
@@ -100,9 +100,6 @@ pub fn build_wasm_program_from_env() {
     } else if artefact_paths.len() > 1 {
         panic!("multiple WASM artefacts are supported");
     }
-
-    // try to add wasm32 target
-    Command::new("rustup").args(["target", "add", WASM32_TARGET]);
 
     // Build the project as a WASM binary
     let status = Command::new("cargo")

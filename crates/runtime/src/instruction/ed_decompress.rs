@@ -48,7 +48,7 @@ impl<E: EdwardsParameters> SyscallEdwardsDecompress<E> {
 
         // Compute actual decompressed X
         let compressed_y = CompressedEdwardsY(y_bytes);
-        let decompressed = decompress(&compressed_y);
+        let decompressed = decompress(&compressed_y).ok_or(ExitCode::MalformedBuiltinParams)?;
 
         // Convert the decompressed X to bytes and then words
         let mut decompressed_x_bytes = decompressed.x.to_bytes_le();

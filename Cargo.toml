@@ -40,7 +40,7 @@ rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", def
 
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
-alloy-primitives = { version = "0.8.21", default-features = false, features = ["rlp", "map"] }
+alloy-primitives = { version = "=0.8.21", default-features = false, features = ["rlp", "map"] }
 alloy-rlp = { version = "0.3.10", default-features = false, features = ["derive"] }
 alloy-genesis = { version = "0.11.1", default-features = false }
 alloy-sol-types = { version = "0.8.20", default-features = false }
@@ -55,8 +55,6 @@ revm-precompile = { path = "revm/crates/precompile", default-features = false }
 revm = { path = "revm/crates/revm", default-features = false, features = [
     "std",
     "hashbrown",
-    "blst",
-    #    "debug-print",
 ] }
 auto_impl = { version = "1.2", default-features = false }
 bytes = { version = "1.5", default-features = false }

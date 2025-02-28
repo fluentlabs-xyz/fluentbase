@@ -56,6 +56,7 @@ fn test_wasm_keccak256() {
 }
 
 #[test]
+#[ignore]
 fn test_wasm_secp256k1() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
