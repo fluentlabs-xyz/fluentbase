@@ -22,7 +22,7 @@ fn cargo_rerun_if_changed(metadata: &Metadata, program_dir: &Path) {
     for file in dirs {
         if file.exists() {
             println!(
-                "cargo::rerun-if-changed={}",
+                "cargo:rerun-if-changed={}",
                 file.canonicalize().unwrap().display()
             );
         }
