@@ -153,7 +153,7 @@ pub fn read_bytes_header_wasm<B: ByteOrder, const ALIGN: usize>(
     Ok((data_offset, data_len))
 }
 
-/// Reads the header of a Solidiof the data
+/// Reads the header of a Solidity data
 ///
 /// Given the original data:
 /// ```
