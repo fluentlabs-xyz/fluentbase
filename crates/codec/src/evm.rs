@@ -80,7 +80,7 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for Bytes
     }
 
     /// Decode the bytes from the buffer.
-    /// Reads the header to get the data offset and size, then read the actual data.
+    /// Reads the header to get the data offset and size, then reads the actual data.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         Ok(Self::from(read_bytes::<B, ALIGN, false>(buf, offset)?))
     }
@@ -343,7 +343,7 @@ impl<
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
                 expected: offset + word_size,
                 found: buf.remaining(),
-                msg: "buf too small to read Uint".to_string(),
+                msg: "Buffer too small to read Uint".to_string(),
             }));
         }
 
@@ -397,7 +397,7 @@ impl<
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
                 expected: offset + 32,
                 found: buf.remaining(),
-                msg: "buf too small to read Uint".to_string(),
+                msg: "Buffer too small to read Uint".to_string(),
             }));
         }
 
