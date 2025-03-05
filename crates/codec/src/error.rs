@@ -38,7 +38,7 @@ impl Display for EncodingError {
                 available,
                 details,
             } => {
-                write!(f, "Not enough space in the buf: required {} bytes, but only {} bytes available. {}", required, available, details)
+                write!(f, "Not enough space in the buffer: required {} bytes, but only {} bytes available. {}", required, available, details)
             }
             EncodingError::InvalidInputData(msg) => {
                 write!(f, "Invalid data provided for encoding: {}", msg)
@@ -87,12 +87,12 @@ impl Display for DecodingError {
             } => {
                 write!(
                     f,
-                    "Not enough data in the buf: expected at least {} bytes, found {}. {}",
+                    "Not enough data in the buffer: expected at least {} bytes, found {}. {}",
                     expected, found, msg
                 )
             }
             DecodingError::BufferOverflow { msg } => write!(f, "Buffer overflow: {}", msg),
-            DecodingError::UnexpectedEof => write!(f, "Unexpected end of buf"),
+            DecodingError::UnexpectedEof => write!(f, "Unexpected end of buffer"),
             DecodingError::Overflow => write!(f, "Overflow error"),
             DecodingError::ParseError(msg) => write!(f, "Parsing error: {}", msg),
         }
