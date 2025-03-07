@@ -20,7 +20,7 @@ mod genesis_builder {
             chain_id: DEVELOPER_PREVIEW_CHAIN_ID,
             homestead_block: Some(0u64),
             dao_fork_block: Some(0u64),
-            dao_fork_support: false,
+            dao_fork_support: true,
             eip150_block: Some(0u64),
             eip155_block: Some(0u64),
             eip158_block: Some(0u64),

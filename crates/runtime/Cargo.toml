@@ -41,3 +41,4 @@ rwasm = []
 debug-print = [
     "dep:hex"
 ]
+optimism = ["fluentbase-types/optimism"]

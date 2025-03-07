@@ -16,6 +16,7 @@ categories.workspace = true
 serde = { workspace = true, default-features = false }
 serde_json = { version = "1.0", default-features = false }
 alloy-genesis = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true }
 
 [build-dependencies]
 fluentbase-types = { workspace = true }

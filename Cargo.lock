@@ -2044,6 +2044,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
  "fluentbase-codec",
+ "fluentbase-examples-keccak256",
  "fluentbase-genesis",
  "fluentbase-runtime",
  "fluentbase-sdk",
