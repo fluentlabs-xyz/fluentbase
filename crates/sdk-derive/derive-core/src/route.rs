@@ -435,7 +435,7 @@ fn is_str_type(path: &syn::TypePath) -> bool {
 fn create_mismatch_error(
     attr: &FunctionIDAttribute,
     method_signature: &str,
-    method_fn_id: [u8; 4],
+    calculated_fn_id: [u8; 4],
 ) -> syn::Error {
     let mut message = format!(
         "Function ID mismatch.\nMethod signature: '{}'\n",
@@ -448,8 +448,8 @@ fn create_mismatch_error(
         "Expected function ID: 0x{} {:?}\nCalculated function ID: 0x{} {:?}",
         hex::encode(attr_fn_id),
         attr_fn_id,
-        hex::encode(method_fn_id),
-        method_fn_id,
+        hex::encode(calculated_fn_id),
+        calculated_fn_id,
     ));
     syn::Error::new(Span::call_site(), message)
 }
