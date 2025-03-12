@@ -1,6 +1,8 @@
 #[cfg(feature = "generate-genesis")]
 mod genesis_builder {
     use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
+    use cargo_metadata::MetadataCommand;
+    use fluentbase_build::cargo_rerun_if_changed;
     use fluentbase_types::{
         address,
         Address,
@@ -15,7 +17,7 @@ mod genesis_builder {
     };
     use std::{collections::BTreeMap, env, fs::File, io::Write, path::PathBuf};
 
-    pub fn devnet_chain_config() -> ChainConfig {
+    fn devnet_chain_config() -> ChainConfig {
         ChainConfig {
             chain_id: DEVELOPER_PREVIEW_CHAIN_ID,
             homestead_block: Some(0u64),
@@ -88,7 +90,7 @@ mod genesis_builder {
         alloc.insert(address, account);
     }
 
-    pub fn devnet_genesis() -> Genesis {
+    fn devnet_genesis() -> Genesis {
         let initial_balance = U256::from(1_000_000_000000000000000000u128);
         let mut alloc = BTreeMap::from([
             // default testing accounts
@@ -156,11 +158,20 @@ mod genesis_builder {
         }
     }
 
-    pub fn write_genesis_json(genesis: Genesis, file_name: &str) {
+    pub fn generate_genesis() {
         let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+        let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
+        let mut metadata_cmd = MetadataCommand::new();
+        let metadata = metadata_cmd
+            .manifest_path(cargo_manifest_path)
+            .exec()
+            .unwrap();
+        cargo_rerun_if_changed(&metadata);
+
+        let genesis = devnet_genesis();
         let genesis_json = serde_json::to_string_pretty(&genesis).unwrap();
+        let file_name = "assets/genesis-devnet.json";
         let out_dir = cargo_manifest_dir.join(file_name);
-        println!("cargo:rerun-if-changed={}", out_dir.to_str().unwrap());
         let mut file = File::create(out_dir).unwrap();
         file.write(genesis_json.as_bytes()).unwrap();
         file.sync_all().unwrap();
@@ -171,9 +182,6 @@ mod genesis_builder {
 fn main() {
     #[cfg(feature = "generate-genesis")]
     {
-        genesis_builder::write_genesis_json(
-            genesis_builder::devnet_genesis(),
-            "assets/genesis-devnet.json",
-        );
+        genesis_builder::generate_genesis();
     }
 }

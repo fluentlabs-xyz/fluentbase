@@ -2219,6 +2219,8 @@ name = "fluentbase-genesis"
 version = "0.1.0"
 dependencies = [
  "alloy-genesis",
+ "cargo_metadata",
+ "fluentbase-build",
  "fluentbase-contracts-fairblock",
  "fluentbase-contracts-multicall",
  "fluentbase-examples-greeting",
