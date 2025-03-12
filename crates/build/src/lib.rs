@@ -31,10 +31,6 @@ pub fn cargo_rerun_if_changed(metadata: &Metadata) {
             );
         }
     }
-    println!(
-        "cargo:rerun-if-changed={}",
-        metadata.workspace_root.join("Cargo.lock").as_str()
-    );
     for dependency in &root_package.dependencies {
         if let Some(path) = &dependency.path {
             println!("cargo:rerun-if-changed={}", path.as_str());
