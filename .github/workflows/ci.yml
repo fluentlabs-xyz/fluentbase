@@ -39,15 +39,6 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
 
-      - name: Install gblend tool
-        run: cargo install gblend
-
-      #      - name: Cargo check
-      #        run: cargo check --lib
-
-      - name: Build artifacts
-        run: TERM=dumb make
-
       - name: Run tests
         run: cargo test --no-fail-fast
 
