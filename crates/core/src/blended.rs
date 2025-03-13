@@ -2,8 +2,7 @@
 mod elf;
 mod evm;
 mod svm;
-mod svm_common;
-mod svm_syscalls;
+// mod svm_common;
 mod syscall;
 mod util;
 mod wasm;
@@ -42,7 +41,6 @@ use revm_primitives::{
     MAX_INITCODE_SIZE,
     WASM_MAX_CODE_SIZE,
 };
-pub use svm::SVM_ADDRESS_PREFIX;
 pub use util::{create_rwasm_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
 
 pub struct BlendedRuntime<SDK> {
@@ -179,7 +177,6 @@ impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
                 self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
             BytecodeType::SVM => {
-                // self.exec_elf_bytecode(context, bytecode_account, input, gas, state, call_depth)
                 self.exec_svm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
             _ => unreachable!("not supported bytecode type"),

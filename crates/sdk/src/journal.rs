@@ -351,6 +351,10 @@ impl<API: NativeAPI> TxContextReader for JournalContextReader<API> {
     fn tx_value(&self) -> U256 {
         self.0.borrow().tx_context.value
     }
+
+    fn tx_access_list_addresses(&self) -> Vec<Address> {
+        self.0.borrow().tx_context.access_list_addresses.clone()
+    }
 }
 impl<API: NativeAPI> ContractContextReader for JournalContextReader<API> {
     fn contract_address(&self) -> Address {

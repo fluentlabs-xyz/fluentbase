@@ -1,210 +1,248 @@
-use crate::{
-    blended::{
-        svm_common::{Blake3Hasher, Keccak256Hasher, Sha256Hasher},
-        svm_syscalls::{
-            SyscallCreateProgramAddress,
-            SyscallHash,
-            SyscallLog,
-            SyscallMemcmp,
-            SyscallMemcpy,
-            SyscallMemmove,
-            SyscallMemset,
-            SyscallPoseidonSDK,
-            SyscallSecp256k1Recover,
-            SyscallTryFindProgramAddress,
-        },
-        BlendedRuntime,
-    },
-    helpers::evm_error_from_exit_code,
+use crate::blended::BlendedRuntime;
+use alloc::{boxed::Box, sync::Arc, vec};
+use fluentbase_sdk::{
+    Account,
+    Address,
+    Bytes,
+    ContractContext,
+    ExitCode,
+    SovereignAPI,
+    TxContextReader,
 };
-use alloc::{boxed::Box, format, vec};
-use fluentbase_sdk::{Account, Address, Bytes, ContractContext, ExitCode, SovereignAPI, B256};
-use revm_interpreter::{gas, CreateInputs, Gas, InstructionResult, InterpreterResult};
-use revm_primitives::{hex, SOLANA_MAX_CODE_SIZE};
+use revm_interpreter::{CreateInputs, Gas, InstructionResult, InterpreterResult};
 use solana_ee_core::{
-    context::ExecContextObject,
-    create_vm,
-    helpers::{exit_code_from_svm_result, SyscallAbort, INSTRUCTION_METER_BUDGET},
+    account::AccountSharedData,
+    builtins::register_builtins,
+    common::compile_accounts_for_tx_ctx,
+    compute_budget::ComputeBudget,
+    context::{InvokeContext, TransactionContext},
+    error::TransactionError,
+    feature_set::FeatureSet,
+    loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
+    message_processor::MessageProcessor,
+    native_loader,
+    system_processor,
+    sysvar_cache::SysvarCache,
+};
+use solana_program::{
+    bpf_loader,
+    bpf_loader_upgradeable,
+    clock::Clock,
+    epoch_schedule::EpochSchedule,
+    hash::Hash,
+    message::{legacy, LegacyMessage, SanitizedMessage},
+    pubkey::Pubkey,
+    rent::Rent,
+    system_program,
 };
 use solana_rbpf::{
-    ebpf,
-    elf::Executable,
-    error::ProgramResult,
-    memory_region::MemoryRegion,
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
-    verifier::RequisiteVerifier,
     vm::Config,
 };
 
-pub const SVM_ADDRESS_PREFIX: [u8; 12] = hex!("838677656868828082697088"); // SVMADDRPREFX
+pub enum SvmError {
+    TransactionError(TransactionError),
+    BincodeError(bincode::Error),
+}
 
 impl<SDK: SovereignAPI> BlendedRuntime<SDK> {
-    pub fn load_svm_bytecode(&self, address: &Address) -> (Bytes, B256) {
-        let (account, _) = self.sdk.account(&address);
-        let bytecode = self
-            .sdk
-            .preimage(address, &account.code_hash)
-            .unwrap_or_default();
-        (bytecode, account.code_hash)
+    fn init_config(&self) -> Config {
+        Config {
+            enable_instruction_tracing: false,
+            reject_broken_elfs: true,
+            sanitize_user_provided_values: true,
+            ..Default::default()
+        }
     }
 
-    pub fn store_svm_bytecode(&mut self, address: &Address, code_hash: B256, bytecode: Bytes) {
-        self.sdk.write_preimage(*address, code_hash, bytecode);
+    fn exec_svm_message(&mut self, message: &[u8]) -> Result<(), SvmError> {
+        let message: legacy::Message =
+            bincode::deserialize(message).map_err(|err| SvmError::BincodeError(err))?;
+        let message: SanitizedMessage = SanitizedMessage::Legacy(LegacyMessage::new(message));
+
+        let config = self.init_config();
+
+        let tx_access_list = self.sdk.context().tx_access_list_addresses();
+
+        let blockhash = Hash::default();
+
+        let rent = Rent::free();
+
+        let compute_budget = ComputeBudget::default();
+        let mut sysvar_cache = SysvarCache::default();
+        sysvar_cache.set_rent(rent.clone());
+        sysvar_cache.set_clock(Clock::default());
+        sysvar_cache.set_epoch_schedule(EpochSchedule::default());
+
+        let system_program_id = system_program::id();
+        let native_loader_id = native_loader::id();
+        let bpf_loader_upgradeable_id = bpf_loader_upgradeable::id();
+        let bpf_loader_id = bpf_loader::id();
+
+        let pk_exec = Pubkey::from([8; 32]);
+        let pk_9 = Pubkey::from([9; 32]);
+        let (pk_program_data, _) =
+            Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable_id);
+
+        let mut new_accs = vec![
+            (
+                pk_exec.clone(),
+                AccountSharedData::new(0, 0, &system_program_id),
+            ),
+            (
+                pk_9.clone(),
+                AccountSharedData::new(100, 0, &system_program_id),
+            ),
+            (
+                pk_program_data,
+                AccountSharedData::new(0, 0, &system_program_id),
+            ),
+        ];
+
+        let pk_payer = Pubkey::new_unique();
+        let account_payer = AccountSharedData::new(100, 0, &system_program_id);
+        let pk_buffer = Pubkey::new_unique();
+        let account_buffer = AccountSharedData::new(0, 0, &system_program_id);
+
+        let program_signers = vec![&new_accs[0].0, &new_accs[1].0];
+
+        let (accounts, working_accounts_count) = compile_accounts_for_tx_ctx(
+            vec![(pk_payer, account_payer), (pk_buffer, account_buffer)],
+            vec![
+                (
+                    system_program_id,
+                    native_loader::create_loadable_account_for_test(
+                        "system_program_id",
+                        &native_loader_id,
+                    ),
+                ),
+                (
+                    bpf_loader_upgradeable_id,
+                    native_loader::create_loadable_account_for_test(
+                        "bpf_loader_upgradeable_id",
+                        &native_loader_id,
+                    ),
+                ),
+            ],
+        );
+
+        // TODO extract accounts
+
+        let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
+
+        let mut function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
+        register_builtins(&mut function_registry);
+        let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
+        let mut programs_loaded_for_tx_batch =
+            LoadedProgramsForTxBatch::partial_default2(ProgramRuntimeEnvironments {
+                program_runtime_v1: loader.clone(),
+                program_runtime_v2: loader.clone(),
+            });
+        programs_loaded_for_tx_batch.replenish(
+            system_program_id,
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                system_processor::Entrypoint::vm,
+            )),
+        );
+        programs_loaded_for_tx_batch.replenish(
+            bpf_loader_upgradeable_id,
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                solana_ee_core::bpf_loader_upgradable::Entrypoint::vm,
+            )),
+        );
+        let programs_modified_by_tx =
+            LoadedProgramsForTxBatch::partial_default2(ProgramRuntimeEnvironments {
+                program_runtime_v1: loader.clone(),
+                program_runtime_v2: loader.clone(),
+            });
+        let mut invoke_context = InvokeContext::new(
+            transaction_context,
+            sysvar_cache.clone(),
+            &self.sdk,
+            compute_budget.clone(),
+            programs_loaded_for_tx_batch,
+            programs_modified_by_tx,
+            Arc::new(FeatureSet::all_enabled()),
+            blockhash,
+            0,
+        );
+
+        let account_keys = invoke_context.get_accounts_keys();
+
+        // TODO
+        let program_indices = vec![
+            vec![working_accounts_count],
+            vec![working_accounts_count + 1],
+        ];
+
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
+        match result {
+            Ok(_) => Ok(()),
+            Err(tx_err) => Err(SvmError::TransactionError(tx_err)),
+        }
+    }
+
+    fn process_svm_error(svm_error: SvmError) -> (Bytes, i32) {
+        match svm_error {
+            SvmError::TransactionError(err) => (Bytes::new(), ExitCode::UnknownError.into_i32()),
+            SvmError::BincodeError(err) => (Bytes::new(), ExitCode::UnknownError.into_i32()),
+        }
+    }
+
+    fn process_svm_result(result: Result<(), SvmError>) -> (Bytes, i32) {
+        match result {
+            Ok(_) => (Bytes::new(), ExitCode::Ok.into_i32()),
+            Err(err) => Self::process_svm_error(err),
+        }
     }
 
     pub fn exec_svm_bytecode(
         &mut self,
-        context: ContractContext,
+        _context: ContractContext,
         _bytecode_account: &Account,
         input: Bytes,
         _gas: &mut Gas,
         _state: u32,
         _call_depth: u32,
     ) -> (Bytes, i32) {
-        // take right bytecode depending on context params
-        let (svm_bytecode, _code_hash) = self.load_svm_bytecode(&context.bytecode_address);
-
-        // if bytecode is empty, then commit result and return empty buffer
-        if svm_bytecode.is_empty() {
-            return (Bytes::default(), ExitCode::Ok.into_i32());
-        }
-
-        let result = self.exec_svm_contract(&svm_bytecode, &input);
-        if result.is_err() {}
-        (Bytes::new(), exit_code_from_svm_result(result).into_i32())
-    }
-
-    pub fn exec_svm_contract(&mut self, svm_program: &[u8], svm_input: &[u8]) -> ProgramResult {
-        let config = Config {
-            reject_broken_elfs: true,
-            aligned_memory_mapping: true,
-            ..Config::default()
-        };
-
-        let instruction_count = 0;
-        let mut context_object = ExecContextObject::new(&mut self.sdk, instruction_count);
-
-        // Holds the function symbols of an Executable
-        let mut function_registry =
-            FunctionRegistry::<BuiltinFunction<ExecContextObject<SDK>>>::default();
-        function_registry
-            // .register_function_hashed("sol_log_", SyscallLog::vm)
-            .register_function_hashed("sol_log_", SyscallLog::vm)
-            .unwrap();
-        function_registry
-            .register_function_hashed("abort", SyscallAbort::vm)
-            .unwrap();
-
-        function_registry
-            .register_function_hashed(
-                *b"sol_create_program_address",
-                SyscallCreateProgramAddress::vm,
-            )
-            .unwrap();
-        function_registry
-            .register_function_hashed(
-                *b"sol_try_find_program_address",
-                SyscallTryFindProgramAddress::vm,
-            )
-            .unwrap();
-
-        function_registry
-            .register_function_hashed("sol_memcpy_", SyscallMemcpy::vm)
-            .unwrap();
-        function_registry
-            .register_function_hashed("sol_memmove_", SyscallMemmove::vm)
-            .unwrap();
-        function_registry
-            .register_function_hashed("sol_memcmp_", SyscallMemcmp::vm)
-            .unwrap();
-        function_registry
-            .register_function_hashed("sol_memset_", SyscallMemset::vm)
-            .unwrap();
-
-        function_registry
-            .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
-            .unwrap();
-
-        // TODO: doesn't call hash computation handle/function, returns default value (zeroes)
-        // function_registry
-        //     .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK,
-        // PoseidonHasher<SDK>>)     .unwrap();
-        function_registry
-            .register_function_hashed("sol_poseidon", SyscallPoseidonSDK::vm)
-            .unwrap();
-        function_registry
-            .register_function_hashed("sol_sha256", SyscallHash::vm::<SDK, Sha256Hasher>)
-            .unwrap();
-        function_registry
-            .register_function_hashed(
-                "sol_keccak256",
-                SyscallHash::vm::<SDK, Keccak256Hasher<SDK>>,
-            )
-            .unwrap();
-        function_registry
-            .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
-            .unwrap();
-
-        let loader = alloc::sync::Arc::new(BuiltinProgram::new_loader(config, function_registry));
-        let mut executable_elf =
-            Executable::<ExecContextObject<SDK>>::from_elf(&svm_program, loader.clone()).unwrap();
-
-        let expected_result = format!("{:?}", ProgramResult::Ok(0x0));
-        if !expected_result.contains("ExceededMaxInstructions") {
-            context_object.remaining = INSTRUCTION_METER_BUDGET;
-        }
-        executable_elf.verify::<RequisiteVerifier>().unwrap();
-
-        let mut mem = vec![0u8; 1024 * 1024];
-        mem[..svm_input.len()].copy_from_slice(svm_input);
-
-        let mem_region = MemoryRegion::new_writable(&mut mem, ebpf::MM_INPUT_START);
-
-        create_vm!(
-            vm,
-            &executable_elf,
-            &mut context_object,
-            stack,
-            heap,
-            vec![mem_region],
-            None
-        );
-        vm.registers;
-
-        let (_instruction_count, result) = vm.execute_program(&executable_elf, true);
-        result
+        let result = self.exec_svm_message(input.as_ref());
+        Self::process_svm_result(result)
     }
 
     pub fn deploy_svm_contract(
         &mut self,
-        target_address: Address,
+        _target_address: Address,
         inputs: Box<CreateInputs>,
         mut gas: Gas,
         _call_depth: u32,
     ) -> InterpreterResult {
-        let return_error = |gas: Gas, exit_code: ExitCode| -> InterpreterResult {
-            InterpreterResult::new(evm_error_from_exit_code(exit_code), Bytes::new(), gas)
-        };
+        let input = inputs.init_code;
+        let result = self.exec_svm_message(input.as_ref());
 
-        if inputs.init_code.len() > SOLANA_MAX_CODE_SIZE {
-            return return_error(gas, ExitCode::ContractSizeLimit);
-        }
-
-        // record gas for each created byte
-        let gas_for_code = inputs.init_code.len() as u64 * gas::CODEDEPOSIT;
-        if !gas.record_cost(gas_for_code) {
-            return return_error(gas, ExitCode::OutOfGas);
-        }
-
-        // write callee changes to a database (lets keep rWASM part empty for now since universal
-        // loader is not ready yet)
-        let (mut contract_account, _) = self.sdk.account(&target_address);
-        contract_account.update_bytecode(&mut self.sdk, inputs.init_code, None);
-
-        InterpreterResult {
-            result: InstructionResult::Stop,
-            output: Bytes::new(),
-            gas,
+        match result {
+            Ok(_) => InterpreterResult {
+                result: InstructionResult::Stop,
+                output: Bytes::default(),
+                gas,
+            },
+            Err(err) => match err {
+                SvmError::TransactionError(_err2) => InterpreterResult {
+                    result: InstructionResult::FatalExternalError,
+                    output: Bytes::default(),
+                    gas,
+                },
+                SvmError::BincodeError(_err2) => InterpreterResult {
+                    result: InstructionResult::FatalExternalError,
+                    output: Bytes::default(),
+                    gas,
+                },
+            },
         }
     }
 }

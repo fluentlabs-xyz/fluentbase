@@ -1,5 +1,5 @@
 use crate::byteorder::{ByteOrder, LittleEndian};
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 use core::cell::Cell;
 use fluentbase_codec::{FluentABI, FluentEncoder};
 use fluentbase_types::{
@@ -171,6 +171,10 @@ impl<'a> TxContextReader for SharedContextReaderImpl<'a> {
 
     fn tx_value(&self) -> U256 {
         self.0.tx.value
+    }
+
+    fn tx_access_list_addresses(&self) -> Vec<Address> {
+        Vec::new()
     }
 }
 impl<'a> ContractContextReader for SharedContextReaderImpl<'a> {

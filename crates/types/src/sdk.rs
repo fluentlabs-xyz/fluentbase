@@ -13,6 +13,7 @@ use crate::{
 use alloc::{vec, vec::Vec};
 use auto_impl::auto_impl;
 use fluentbase_codec::{Codec, CodecError, FluentABI};
+use revm_primitives::AccessListItem;
 
 pub trait ContextFreeNativeAPI {
     fn keccak256(data: &[u8]) -> B256;
@@ -118,6 +119,7 @@ pub struct TxContext {
     // pub blob_hashes: Vec<B256>,
     // pub max_fee_per_blob_gas: Option<U256>,
     pub value: U256,
+    pub access_list_addresses: Vec<Address>,
 }
 
 impl From<&revm_primitives::Env> for TxContext {
@@ -132,6 +134,12 @@ impl From<&revm_primitives::Env> for TxContext {
             // blob_hashes: value.tx.blob_hashes.clone(),
             // max_fee_per_blob_gas: value.tx.max_fee_per_blob_gas,
             value: value.tx.value,
+            access_list_addresses: value
+                .tx
+                .access_list
+                .iter()
+                .map(|v| v.address.clone())
+                .collect(),
         }
     }
 }
@@ -251,6 +259,7 @@ pub trait TxContextReader {
     fn tx_gas_priority_fee(&self) -> Option<U256>;
     fn tx_origin(&self) -> Address;
     fn tx_value(&self) -> U256;
+    fn tx_access_list_addresses(&self) -> Vec<Address>;
 }
 
 #[auto_impl(&)]

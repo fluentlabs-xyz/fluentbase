@@ -1,6 +1,5 @@
 use core::{mem::take, str::from_utf8};
 use fluentbase_codec::{FluentABI, SolidityABI};
-use fluentbase_core::blended::SVM_ADDRESS_PREFIX;
 use fluentbase_genesis::{
     devnet_genesis_from_file,
     Genesis,
@@ -40,7 +39,7 @@ use rwasm::{
     instruction_set,
     rwasm::{BinaryFormat, RwasmModule},
 };
-use solana_ee_core::helpers::serialize_parameters_aligned;
+use solana_ee_core::{serialization::serialize_parameters_aligned, types::SVM_ADDRESS_PREFIX};
 use solana_program::{clock::Epoch, pubkey::Pubkey, system_instruction::create_account};
 use std::u64;
 
@@ -431,43 +430,29 @@ fn test_deploy_svm_program() {
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = deploy_evm_tx(&mut ctx, DEPLOYER_ADDRESS, elf_bytes.into());
 
-    // prepare input for solana program
-    let account1_pubkey = Pubkey::new_from_array([1u8; 32]);
-    let account1_owner_pubkey = Pubkey::new_from_array([2u8; 32]);
-    let mut account1_lamports = 11;
-    let mut account1_data = vec![1, 2, 3];
-    let account1_rent_epoch = Epoch::default();
-    let instruction = create_account(
-        &account1_pubkey,
-        &account1_owner_pubkey,
-        account1_lamports,
-        20,
-        &account1_owner_pubkey,
-    );
-    let instruction_data: &[u8] = &[1, 2, 3, 4];
-    let account1 = solana_program::account_info::AccountInfo::new(
-        &account1_pubkey,
-        true,
-        false,
-        &mut account1_lamports,
-        &mut account1_data,
-        &account1_owner_pubkey,
-        false,
-        account1_rent_epoch,
-    );
-    let accounts: Vec<solana_program::account_info::AccountInfo> = vec![account1];
-    let mut program_id = Pubkey::new_from_array([0xcu8; 32]);
-    program_id.as_mut()[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
-
-    let svm_elf_program_input_bytes =
-        serialize_parameters_aligned(&accounts, &instruction_data, &program_id)
-            .expect("failed to serialize");
+    // account
+    //     /// Public key of the account
+    //     pub key: &'a Pubkey,
+    //     /// The lamports in the account.  Modifiable by programs.
+    //     pub lamports: Rc<RefCell<&'a mut u64>>,
+    //     /// The data held in this account.  Modifiable by programs.
+    //     pub data: Rc<RefCell<&'a mut [u8]>>, - keep in storage and bind by address
+    //     /// Program that owns this account
+    //     pub owner: &'a Pubkey, - hardcode constant
+    //     /// The epoch at which this account will next owe rent
+    //     pub rent_epoch: Epoch, - put 0
+    //     /// Was the transaction signed by this account's public key?
+    //     pub is_signer: bool, - check if this account
+    //     /// Is the account writable?
+    //     pub is_writable: bool, - true
+    //     /// This account's data contains a loaded program (and is now read-only)
+    //     pub executable: bool, - if there is code size (elf program in code size)
 
     let result = call_evm_tx(
         &mut ctx,
         DEPLOYER_ADDRESS,
         contract_address,
-        svm_elf_program_input_bytes.into(),
+        Bytes::new(),
         Some(100_000_000),
         None,
     );

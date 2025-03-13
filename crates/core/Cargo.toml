@@ -17,7 +17,7 @@ revm-interpreter = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
 
 solana-ee-core = { workspace = true, default-features = false }
-solana_rbpf = { workspace = true }
+solana_rbpf = { workspace = true, default-features = false }
 solana-program = { workspace = true, default-features = false }
 
 num-traits = { workspace = true }
@@ -34,6 +34,8 @@ phantom-type = { workspace = true }
 
 # sp1 executor for ELF binaries
 sp1-core-executor = { version = "2.0.0", optional = true }
+
+bincode = { workspace = true, default-features = false }
 
 [dev-dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }

@@ -1,8 +1,20 @@
 use fluentbase_sdk::SovereignAPI;
 use phantom_type::PhantomType;
+use solana_ee_core::{
+    account::{
+        Account,
+        AccountSharedData,
+        InheritableAccountFields,
+        DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+    },
+    native_loader::create_loadable_account_with_fields,
+};
 use solana_program::{
     blake3,
+    declare_id,
     hash::{Hash, Hasher},
+    pubkey,
+    pubkey::Pubkey,
 };
 
 pub trait HasherImpl {
@@ -129,4 +141,10 @@ impl HasherImpl for Blake3Hasher {
     fn result(self) -> Self::Output {
         self.0.result()
     }
+}
+
+declare_id!("NativeLoader1111111111111111111111111111111");
+
+pub fn create_loadable_account_for_test(name: &str, owner: &Pubkey) -> AccountSharedData {
+    create_loadable_account_with_fields(name, owner, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
 }
