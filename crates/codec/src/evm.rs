@@ -5,7 +5,7 @@ use crate::{
     error::{CodecError, DecodingError},
 };
 use alloc::string::String;
-use alloy_primitives::{Address, Bytes, FixedBytes, Uint};
+use alloy_primitives::{Address, Bytes, FixedBytes, Signed, Uint};
 use byteorder::ByteOrder;
 use bytes::{Buf, BytesMut};
 
@@ -418,11 +418,134 @@ impl<
     }
 }
 
+impl<
+        const BITS: usize,
+        const LIMBS: usize,
+        B: ByteOrder,
+        const ALIGN: usize,
+        const IS_STATIC: bool,
+    > Encoder<B, ALIGN, false, IS_STATIC> for Signed<BITS, LIMBS>
+{
+    const HEADER_SIZE: usize = Self::BYTES;
+    const IS_DYNAMIC: bool = false;
+
+    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+        let word_size = align_up::<ALIGN>(Self::BYTES);
+
+        let slice = get_aligned_slice::<B, ALIGN>(buf, offset, word_size);
+
+        let bytes = if is_big_endian::<B>() {
+            self.into_raw().to_be_bytes_vec()
+        } else {
+            self.into_raw().to_le_bytes_vec()
+        };
+
+        slice[..Self::BYTES].copy_from_slice(&bytes);
+
+        Ok(())
+    }
+
+    fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
+        let word_size = align_up::<ALIGN>(Self::BYTES);
+
+        if buf.remaining() < offset + word_size {
+            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
+                expected: offset + word_size,
+                found: buf.remaining(),
+                msg: "buf too small to read Signed".to_string(),
+            }));
+        }
+
+        let chunk = &buf.chunk()[offset..offset + word_size];
+        let value_slice = &chunk[..Self::BYTES];
+
+        let value = if is_big_endian::<B>() {
+            Self::from_raw(Uint::<BITS, LIMBS>::from_be_slice(value_slice))
+        } else {
+            Self::from_raw(Uint::<BITS, LIMBS>::from_le_slice(value_slice))
+        };
+
+        Ok(value)
+    }
+
+    fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
+        let word_size = align_up::<ALIGN>(Self::BYTES);
+        Ok((offset, word_size))
+    }
+}
+
+impl<
+        const BITS: usize,
+        const LIMBS: usize,
+        B: ByteOrder,
+        const ALIGN: usize,
+        const IS_STATIC: bool,
+    > Encoder<B, ALIGN, true, IS_STATIC> for Signed<BITS, LIMBS>
+{
+    const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
+    const IS_DYNAMIC: bool = false;
+
+    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+        let slice = get_aligned_slice::<B, 32>(buf, offset, 32);
+
+        let bytes = if is_big_endian::<B>() {
+            self.into_raw().to_be_bytes_vec()
+        } else {
+            self.into_raw().to_le_bytes_vec()
+        };
+
+        // For Solidity ABI, right-align the data
+        slice[32 - Self::BYTES..].copy_from_slice(&bytes);
+
+        // For signed integers, we need to sign-extend the value
+        // If the most significant bit of the value is set (negative number),
+        // fill the padding with 1s, otherwise fill with 0s
+        if self.is_negative() {
+            slice[..32 - Self::BYTES].fill(0xFF);
+        } else {
+            slice[..32 - Self::BYTES].fill(0);
+        }
+
+        Ok(())
+    }
+
+    fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
+        if buf.remaining() < offset + 32 {
+            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
+                expected: offset + 32,
+                found: buf.remaining(),
+                msg: "buf too small to read Signed".to_string(),
+            }));
+        }
+
+        let chunk = &buf.chunk()[offset..offset + 32];
+        let value_slice = &chunk[32 - Self::BYTES..];
+
+        let value = if is_big_endian::<B>() {
+            Self::from_raw(Uint::<BITS, LIMBS>::from_be_slice(value_slice))
+        } else {
+            Self::from_raw(Uint::<BITS, LIMBS>::from_le_slice(value_slice))
+        };
+
+        Ok(value)
+    }
+
+    fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
+        Ok((offset, 32))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        byteorder::{BE, LE},
+        CompactABI,
+        SolidityABI,
+    };
     #[cfg(test)]
     use alloy_primitives::{Address, U256};
+    use alloy_primitives::{I128, I256};
     use byteorder::{BigEndian, LittleEndian};
     use bytes::BytesMut;
 
@@ -563,5 +686,318 @@ mod tests {
             <String as Encoder<LittleEndian, 4, false, false>>::decode(&encoded, 0).unwrap();
 
         assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn test_i128_solidity() {
+        // Test cases with expected encodings
+        let test_cases = [
+            // Simple positive number
+            (
+                I128::try_from(42i32).unwrap(),
+                "000000000000000000000000000000000000000000000000000000000000002a",
+            ),
+            // Simple negative number
+            (
+                I128::try_from(-42i32).unwrap(),
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd6",
+            ),
+            // Zero
+            (
+                I128::try_from(0i32).unwrap(),
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            // Negative one (-1)
+            (
+                I128::try_from(-1i32).unwrap(),
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            ),
+            // Edge case: Maximum value (I128::MAX)
+            (
+                I128::MAX,
+                "000000000000000000000000000000007fffffffffffffffffffffffffffffff",
+            ),
+            // Edge case: Minimum value (I128::MIN)
+            (
+                I128::MIN,
+                "ffffffffffffffffffffffffffffffff80000000000000000000000000000000",
+            ),
+        ];
+
+        // Test each case
+        for (i, (test_value, expected_hex)) in test_cases.iter().enumerate() {
+            println!(
+                "Testing I128 encoding/decoding for case {}; {}",
+                i, test_value
+            );
+            // Encode the value
+            let mut buf = BytesMut::new();
+            SolidityABI::encode(test_value, &mut buf, 0).unwrap();
+            let encoded = buf.freeze();
+
+            // Verify encoding matches expected value
+            let expected_encoded = hex::decode(expected_hex).unwrap();
+            assert_eq!(
+                encoded.to_vec(),
+                expected_encoded,
+                "Case {}: I128 encoding doesn't match expected value",
+                i
+            );
+
+            // Verify round-trip encoding/decoding
+            let decoded = SolidityABI::<I128>::decode(&encoded, 0).unwrap();
+            assert_eq!(
+                decoded, *test_value,
+                "Case {}: Round-trip encoding/decoding failed",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i256_solidity() {
+        // Test cases with expected encodings
+        let test_cases = [
+            // Simple positive number
+            (
+                I256::try_from(42i32).unwrap(),
+                "000000000000000000000000000000000000000000000000000000000000002a",
+            ),
+            // Simple negative number
+            (
+                I256::try_from(-42i32).unwrap(),
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd6",
+            ),
+            // Zero
+            (
+                I256::try_from(0i32).unwrap(),
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            // Large positive number
+            (
+                I256::try_from(1234567890i64).unwrap(),
+                "00000000000000000000000000000000000000000000000000000000499602d2",
+            ),
+            // Large negative number
+            (
+                I256::try_from(-1234567890i64).unwrap(),
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffb669fd2e",
+            ),
+            // Edge case: Maximum value (I256::MAX)
+            (
+                I256::MAX,
+                "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            ),
+            // Edge case: Minimum value (I256::MIN)
+            (
+                I256::MIN,
+                "8000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            // Edge case: Close to maximum (I256::MAX - 1)
+            (
+                I256::MAX - I256::ONE,
+                "7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe",
+            ),
+            // Edge case: Close to minimum (I256::MIN + 1)
+            (
+                I256::MIN + I256::ONE,
+                "8000000000000000000000000000000000000000000000000000000000000001",
+            ),
+        ];
+
+        // Test each case
+        for (i, (test_value, expected_hex)) in test_cases.iter().enumerate() {
+            println!(
+                "Testing I256 encoding/decoding for case {}; {}",
+                i, test_value
+            );
+            // Encode the value
+            let mut buf = BytesMut::new();
+            SolidityABI::encode(test_value, &mut buf, 0).unwrap();
+            let encoded = buf.freeze();
+
+            // Verify encoding matches expected value
+            let expected_encoded = hex::decode(expected_hex).unwrap();
+            assert_eq!(
+                encoded.to_vec(),
+                expected_encoded,
+                "Case {}: I256 encoding doesn't match expected value",
+                i
+            );
+
+            // Verify round-trip encoding/decoding
+            let decoded = SolidityABI::<I256>::decode(&encoded, 0).unwrap();
+            assert_eq!(
+                decoded, *test_value,
+                "Case {}: Round-trip encoding/decoding failed",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i128_compact() {
+        // Test cases with expected encodings
+        // For CompactABI, I128 is encoded as 16 bytes in little-endian order
+        let test_cases = [
+            // Simple positive number
+            (
+                I128::try_from(42i32).unwrap(),
+                "2a000000000000000000000000000000",
+            ),
+            // Simple negative number
+            (
+                I128::try_from(-42i32).unwrap(),
+                "d6ffffffffffffffffffffffffffffff",
+            ),
+            // Zero
+            (
+                I128::try_from(0i32).unwrap(),
+                "00000000000000000000000000000000",
+            ),
+            // Negative one (-1)
+            (
+                I128::try_from(-1i32).unwrap(),
+                "ffffffffffffffffffffffffffffffff",
+            ),
+            // Edge case: Maximum value (I128::MAX)
+            (I128::MAX, "ffffffffffffffffffffffffffffff7f"),
+            // Edge case: Minimum value (I128::MIN)
+            (I128::MIN, "00000000000000000000000000000080"),
+        ];
+
+        // Test each case
+        for (i, (test_value, expected_hex)) in test_cases.iter().enumerate() {
+            println!(
+                "Testing I128 CompactABI encoding/decoding for case {}; {}",
+                i, test_value
+            );
+            // Encode the value
+            let mut buf = BytesMut::new();
+            CompactABI::encode(test_value, &mut buf, 0).unwrap();
+            let encoded = buf.freeze();
+
+            // Verify encoding matches expected value
+            let expected_encoded = hex::decode(expected_hex).unwrap();
+            assert_eq!(
+                encoded.to_vec(),
+                expected_encoded,
+                "Case {}: I128 CompactABI encoding doesn't match expected value",
+                i
+            );
+
+            // Verify round-trip encoding/decoding
+            let decoded = CompactABI::<I128>::decode(&encoded, 0).unwrap();
+            assert_eq!(
+                decoded, *test_value,
+                "Case {}: CompactABI round-trip encoding/decoding failed",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i256_compact() {
+        // Test cases with expected encodings
+        // For CompactABI, I256 uses little-endian byte order with 4-byte alignment
+        let test_cases = [
+            // Simple positive number
+            (
+                I256::try_from(42i32).unwrap(),
+                "2a00000000000000000000000000000000000000000000000000000000000000",
+            ),
+            // Simple negative number
+            (
+                I256::try_from(-42i32).unwrap(),
+                "d6ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            ),
+            // Zero
+            (
+                I256::try_from(0i32).unwrap(),
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            // Large positive number
+            (
+                I256::try_from(1234567890i64).unwrap(),
+                "d202964900000000000000000000000000000000000000000000000000000000",
+            ),
+            // Large negative number
+            (
+                I256::try_from(-1234567890i64).unwrap(),
+                "2efd69b6ffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            ),
+            // Edge case: Maximum value (I256::MAX)
+            (
+                I256::MAX,
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            ),
+            // Edge case: Minimum value (I256::MIN)
+            (
+                I256::MIN,
+                "0000000000000000000000000000000000000000000000000000000000000080",
+            ),
+        ];
+
+        // Test each case
+        for (i, (test_value, expected_hex)) in test_cases.iter().enumerate() {
+            println!(
+                "Testing I256 CompactABI encoding/decoding for case {}; {}",
+                i, test_value
+            );
+            // Encode the value
+            let mut buf = BytesMut::new();
+            CompactABI::encode(test_value, &mut buf, 0).unwrap();
+            let encoded = buf.freeze();
+
+            // Verify encoding matches expected value
+            let expected_encoded = hex::decode(expected_hex).unwrap();
+            assert_eq!(
+                encoded.to_vec(),
+                expected_encoded,
+                "Case {}: I256 CompactABI encoding doesn't match expected value",
+                i
+            );
+
+            // Verify round-trip encoding/decoding
+            let decoded = CompactABI::<I256>::decode(&encoded, 0).unwrap();
+            assert_eq!(
+                decoded, *test_value,
+                "Case {}: CompactABI round-trip encoding/decoding failed",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i256_error_conditions() {
+        // Test decoding from a buffer that's too small
+        let too_small_buffer = BytesMut::new().freeze();
+        let result = SolidityABI::<I256>::decode(&too_small_buffer, 0);
+        assert!(result.is_err(), "Decoding from an empty buffer should fail");
+
+        // Test decoding from a buffer that's smaller than required
+        let small_buffer = BytesMut::from(&[0u8; 16][..]).freeze();
+        let result = SolidityABI::<I256>::decode(&small_buffer, 0);
+        assert!(
+            result.is_err(),
+            "Decoding from a buffer smaller than 32 bytes should fail"
+        );
+
+        // Test decoding with an offset that would cause reading beyond the buffer
+        // (but not overflow)
+        let buffer = BytesMut::from(&[0u8; 32][..]).freeze();
+        let result = SolidityABI::<I256>::decode(&buffer, 1); // Just 1 byte offset is enough to cause an error
+        assert!(
+            result.is_err(),
+            "Decoding with an offset that would read beyond buffer should fail"
+        );
+
+        // Test CompactABI decoding from a buffer that's too small
+        let too_small_buffer = BytesMut::new().freeze();
+        let result = CompactABI::<I256>::decode(&too_small_buffer, 0);
+        assert!(
+            result.is_err(),
+            "CompactABI decoding from an empty buffer should fail"
+        );
     }
 }
