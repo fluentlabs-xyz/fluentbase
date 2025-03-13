@@ -23,6 +23,8 @@ fluentbase-types = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+fluentbase-build = { workspace = true }
+cargo_metadata = "0.19.1"
 
 # we need these deps to ensure build order when generating genesis
 fluentbase-contracts-multicall = { path = "../../contracts/multicall", optional = true }
