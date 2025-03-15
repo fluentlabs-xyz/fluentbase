@@ -3,12 +3,13 @@ mod genesis_builder {
     use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
     use fluentbase_types::{
         address,
+        compile_wasm_to_rwasm,
         Address,
         Bytes,
         B256,
         DEVELOPER_PREVIEW_CHAIN_ID,
-        EXAMPLE_FAIRBLOCK_ADDRESS,
-        EXAMPLE_GREETING_ADDRESS,
+        PRECOMPILE_EVM_RUNTIME,
+        PRECOMPILE_FAIRBLOCK_VERIFIER,
         PRECOMPILE_NATIVE_MULTICALL,
         U256,
         WASM_SIG,
@@ -66,7 +67,7 @@ mod genesis_builder {
         binary_data: &[u8],
     ) {
         let bytecode: Bytes = if binary_data.starts_with(&WASM_SIG) {
-            let result = fluentbase_types::compile_wasm_to_rwasm(binary_data).unwrap();
+            let result = compile_wasm_to_rwasm(binary_data).unwrap();
             if !result.constructor_params.is_empty() {
                 panic!(
                     "rwasm contract ({}) should not have constructor params",
@@ -124,20 +125,15 @@ mod genesis_builder {
             PRECOMPILE_NATIVE_MULTICALL,
             PRECOMPILE_MULTICALL,
         );
-        const PRECOMPILE_GREETING: &[u8] = include_bytes!("../../examples/greeting/lib.wasm");
-        init_contract(
-            &mut alloc,
-            "greeting",
-            EXAMPLE_GREETING_ADDRESS,
-            PRECOMPILE_GREETING,
-        );
         const PRECOMPILE_FAIRBLOCK: &[u8] = include_bytes!("../../contracts/fairblock/lib.wasm");
         init_contract(
             &mut alloc,
             "fairblock",
-            EXAMPLE_FAIRBLOCK_ADDRESS,
+            PRECOMPILE_FAIRBLOCK_VERIFIER,
             PRECOMPILE_FAIRBLOCK,
         );
+        const PRECOMPILE_EVM: &[u8] = include_bytes!("../../contracts/evm/lib.wasm");
+        init_contract(&mut alloc, "evm", PRECOMPILE_EVM_RUNTIME, PRECOMPILE_EVM);
 
         Genesis {
             config: devnet_chain_config(),
@@ -170,10 +166,8 @@ mod genesis_builder {
 
 fn main() {
     #[cfg(feature = "generate-genesis")]
-    {
-        genesis_builder::write_genesis_json(
-            genesis_builder::devnet_genesis(),
-            "assets/genesis-devnet.json",
-        );
-    }
+    genesis_builder::write_genesis_json(
+        genesis_builder::devnet_genesis(),
+        "assets/genesis-devnet.json",
+    );
 }
