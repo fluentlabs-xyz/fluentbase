@@ -1,6 +1,6 @@
 use core::{mem::take, str::from_utf8};
 use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
-use fluentbase_runtime::{types::NonePreimageResolver, Runtime, RuntimeContext};
+use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
     bytes::BytesMut,
     calc_create_address,
@@ -126,9 +126,18 @@ impl EvmTestingContext {
     }
 
     pub(crate) fn deploy_evm_tx(&mut self, deployer: Address, init_bytecode: Bytes) -> Address {
-        // let bytecode_type = BytecodeType::from_slice(init_bytecode.as_ref());
-        // deploy greeting EVM contract
-        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
+        let (contract_address, _) = self.deploy_evm_tx_with_gas(deployer, init_bytecode);
+        contract_address
+    }
+
+    pub(crate) fn deploy_evm_tx_with_gas(
+        &mut self,
+        deployer: Address,
+        init_bytecode: Bytes,
+    ) -> (Address, u64) {
+        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into())
+            .enable_rwasm_proxy()
+            .exec();
         if !result.is_success() {
             println!("{:?}", result);
             println!(
@@ -143,7 +152,7 @@ impl EvmTestingContext {
         assert!(result.is_success());
         let contract_address = calc_create_address::<TestingContextNativeAPI>(&deployer, 0);
         assert_eq!(contract_address, deployer.create(0));
-        contract_address
+        (contract_address, result.gas_used())
     }
 
     pub(crate) fn deploy_evm_tx_with_nonce(
@@ -254,6 +263,11 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
+    pub fn enable_rwasm_proxy(mut self) -> Self {
+        self.env.cfg.enable_rwasm_proxy = true;
+        self
+    }
+
     pub fn exec(&mut self) -> ExecutionResult {
         let db = take(&mut self.ctx.db);
         let mut evm = Evm::builder()
@@ -330,12 +344,12 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
         buf.extend_from_slice(input_data);
         buf.freeze().to_vec()
     };
-    let ctx = RuntimeContext::new(rwasm_binary)
+    let ctx = RuntimeContext::new(Bytes::from(rwasm_binary))
         .with_state(STATE_MAIN)
         .with_fuel_limit(100_000_000_000)
         .with_input(context_input);
     // .with_tracer();
-    let mut runtime = Runtime::new(ctx, &NonePreimageResolver);
+    let mut runtime = Runtime::new(ctx);
     runtime.context_mut().clear_output();
     let result = runtime.call();
     println!(

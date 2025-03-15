@@ -6,7 +6,7 @@ use fluentbase_sdk::{func_entrypoint, SharedAPI};
 
 pub fn main(sdk: impl SharedAPI) {
     // panic with some message
-    sdk.panic("it's panic time");
+    sdk.evm_panic("it's panic time");
 }
 
 func_entrypoint!(main);
