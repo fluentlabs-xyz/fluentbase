@@ -3,6 +3,7 @@ use crate::{
     alloc_vec,
     context::SharedContextReader,
     Address,
+    BytecodeOrHash,
     Bytes,
     ExitCode,
     B256,
@@ -47,14 +48,20 @@ pub trait NativeAPI {
     fn state(&self) -> u32;
     fn fuel(&self) -> u64;
     fn charge_fuel(&self, value: u64) -> u64;
-    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> (u64, i32);
+    fn exec<I: Into<BytecodeOrHash>>(
+        &self,
+        code_hash: I,
+        input: &[u8],
+        fuel_limit: u64,
+        state: u32,
+    ) -> (u32, i32);
     fn resume(
         &self,
         call_id: u32,
         return_data: &[u8],
         exit_code: i32,
-        fuel_used: u64,
-    ) -> (u64, i32);
+        fuel_consumed: u32,
+    ) -> (u32, i32);
 
     fn preimage_size(&self, hash: &B256) -> u32;
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]);
@@ -95,7 +102,7 @@ pub struct DestroyedAccountResult {
     pub previously_destroyed: bool,
 }
 
-#[derive(Codec, Clone, Default, Debug)]
+#[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct SyscallInvocationParams {
     pub code_hash: B256,
     pub input: Bytes,
@@ -126,12 +133,12 @@ impl From<i32> for SyscallStatus {
 #[derive(Debug)]
 pub struct SyscallResult<T> {
     pub data: T,
-    pub fuel_used: u64,
+    pub fuel_used: u32,
     pub status: SyscallStatus,
 }
 
 impl<T> SyscallResult<T> {
-    pub fn new<I: Into<SyscallStatus>>(data: T, fuel_used: u64, status: I) -> Self {
+    pub fn new<I: Into<SyscallStatus>>(data: T, fuel_used: u32, status: I) -> Self {
         let status: SyscallStatus = status.into();
         Self {
             data,
@@ -139,7 +146,7 @@ impl<T> SyscallResult<T> {
             status,
         }
     }
-    pub fn ok(data: T, fuel_used: u64) -> Self {
+    pub fn ok(data: T, fuel_used: u32) -> Self {
         Self {
             data,
             fuel_used,
@@ -183,8 +190,9 @@ pub trait SharedAPI {
     fn fuel(&self) -> u64;
 
     fn write(&mut self, output: &[u8]);
+    fn evm_exit(&self, exit_code: i32) -> !;
     fn exit(&self, exit_code: i32) -> !;
-    fn panic(&self, panic_message: &str) -> !;
+    fn evm_panic(&self, panic_message: &str) -> !;
 
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn storage(&self, slot: &U256) -> SyscallResult<U256>;
@@ -204,7 +212,11 @@ pub trait SharedAPI {
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]) -> SyscallResult<()>;
 
+    fn self_balance(&self) -> SyscallResult<U256>;
     fn balance(&self, address: &Address) -> SyscallResult<U256>;
+    fn code_size(&self, address: &Address) -> SyscallResult<u32>;
+    fn code_hash(&self, address: &Address) -> SyscallResult<B256>;
+    fn code_copy(&self, address: &Address, offset: u32, target: &mut [u8]) -> SyscallResult<()>;
     fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256>;
     fn create(
         &mut self,
@@ -240,4 +252,24 @@ pub trait SharedAPI {
         fuel_limit: u64,
     ) -> SyscallResult<Bytes>;
     fn destroy_account(&mut self, address: Address) -> SyscallResult<()>;
+}
+
+#[repr(transparent)]
+pub struct BindingExecutionResult(pub u64);
+
+impl BindingExecutionResult {
+    #[inline(always)]
+    pub fn new(fuel_consumed: u32, exit_code: i32) -> Self {
+        Self((fuel_consumed as u64) << 32 | (exit_code as u64))
+    }
+
+    #[inline(always)]
+    pub fn fuel_consumed(&self) -> u32 {
+        (self.0 >> 32) as u32
+    }
+
+    #[inline(always)]
+    pub fn exit_code(&self) -> i32 {
+        (self.0 & 0xffffffff) as i32
+    }
 }

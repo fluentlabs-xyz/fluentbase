@@ -1,5 +1,5 @@
-use crate::{b256, Address, Bytes, NativeAPI, B256, F254, U256};
-use revm_primitives::Eip7702Bytecode;
+use crate::{b256, Address, NativeAPI, B256, F254, U256};
+use revm_primitives::{Bytecode, Eip7702Bytecode};
 
 const POSEIDON_DOMAIN: F254 =
     b256!("0000000000000000000000000000000000000000000000010000000000000000");
@@ -54,9 +54,9 @@ pub fn calc_create2_address<API: NativeAPI>(
 
 pub const ENABLE_EVM_PROXY_CONTRACT: bool = false;
 
-fn create_eip7702_proxy_bytecode(impl_address: Address) -> Bytes {
+fn create_eip7702_proxy_bytecode(impl_address: Address) -> Bytecode {
     let eip7702_bytecode = Eip7702Bytecode::new(impl_address);
-    eip7702_bytecode.raw
+    Bytecode::Eip7702(eip7702_bytecode)
 }
 
 // #[allow(unused)]
@@ -117,14 +117,14 @@ fn create_eip7702_proxy_bytecode(impl_address: Address) -> Bytes {
 //     rwasm_bytecode.into()
 // }
 
-pub fn create_delegate_proxy_bytecode(impl_address: Address) -> Bytes {
-    // create_rwasm_proxy_bytecode(impl_address)
+pub fn create_delegate_proxy_bytecode(impl_address: Address) -> Bytecode {
     create_eip7702_proxy_bytecode(impl_address)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BytecodeOrHash;
     use alloy_primitives::{address, keccak256};
 
     struct TestContext;
@@ -194,13 +194,13 @@ mod tests {
             todo!()
         }
 
-        fn exec(
+        fn exec<I: Into<BytecodeOrHash>>(
             &self,
-            _code_hash: &F254,
+            _code_hash: I,
             _input: &[u8],
             _fuel_limit: u64,
             _state: u32,
-        ) -> (u64, i32) {
+        ) -> (u32, i32) {
             todo!()
         }
 

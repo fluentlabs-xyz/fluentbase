@@ -1,33 +1,25 @@
 use crate::{Runtime, RuntimeContext};
 use fluentbase_rwasm::{Caller, RwasmError};
-use fluentbase_types::{
-    byteorder::{ByteOrder, LittleEndian},
-    ExitCode,
-};
+use fluentbase_types::{BindingExecutionResult, ExitCode};
 
 pub struct SyscallResume;
 
 impl SyscallResume {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let [call_id, return_data_ptr, return_data_len, exit_code, fuel8_ptr] =
+        let [call_id, return_data_ptr, return_data_len, exit_code, fuel_consumed] =
             caller.stack_pop_n();
         let return_data = caller
             .memory_read_vec(return_data_ptr.as_usize(), return_data_len.as_usize())?
             .to_vec();
-        let fuel_spent =
-            LittleEndian::read_u64(&caller.memory_read_fixed::<8>(fuel8_ptr.as_usize())?);
         let (fuel_consumed, exit_code) = Self::fn_impl(
             caller.data_mut(),
             call_id.as_u32(),
             return_data,
             exit_code.as_i32(),
-            fuel_spent,
+            fuel_consumed.as_u32(),
         );
-        caller.store_mut().try_consume_fuel(fuel_consumed)?;
-        let mut fuel_buffer = [0u8; 8];
-        LittleEndian::write_u64(&mut fuel_buffer, fuel_consumed);
-        caller.memory_write(fuel8_ptr.as_usize(), &fuel_buffer)?;
-        caller.stack_push(exit_code);
+        let value = BindingExecutionResult::new(fuel_consumed as u32, exit_code);
+        caller.stack_push(value.0);
         Ok(())
     }
 
@@ -36,7 +28,7 @@ impl SyscallResume {
         call_id: u32,
         return_data: Vec<u8>,
         exit_code: i32,
-        fuel_used: u64,
+        fuel_consumed: u32,
     ) -> (u64, i32) {
         // only root can use resume function
         if ctx.call_depth > 0 {
@@ -45,15 +37,19 @@ impl SyscallResume {
 
         let mut recoverable_runtime = Runtime::recover_runtime(call_id);
 
-        // during the résumé we must clear output, otherwise collision might happen
+        // during the résumé we must-clear output, otherwise collision might happen
         recoverable_runtime.context_mut().clear_output();
 
-        // charge fuel
-        if recoverable_runtime
-            .executor
-            .store_mut()
-            .try_consume_fuel(fuel_used)
-            .is_err()
+        // we can charge fuel only if fuel is not disabled,
+        // when fuel is disabled we only pass consumed fuel amount into the contract back,
+        // and it can decide on charging
+        if !ctx.disable_fuel
+            && fuel_consumed > 0
+            && recoverable_runtime
+                .executor
+                .store_mut()
+                .try_consume_fuel(fuel_consumed as u64)
+                .is_err()
         {
             return (0, ExitCode::OutOfFuel.into_i32());
         }
@@ -77,7 +73,8 @@ impl SyscallResume {
         //     .logs
         //     .len();
 
-        let mut execution_result = recoverable_runtime.resume(exit_code, fuel_consumed_before_call);
+        let mut execution_result =
+            recoverable_runtime.resume(fuel_consumed, exit_code, fuel_consumed_before_call);
 
         // println!("\n\nRESUME, interrupted: {}", execution_result.interrupted);
         // println!(

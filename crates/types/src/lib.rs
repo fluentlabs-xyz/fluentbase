@@ -5,6 +5,7 @@
 extern crate alloc;
 extern crate core;
 
+mod address;
 mod allocator;
 mod bytecode_type;
 mod context;
@@ -15,10 +16,10 @@ mod rwasm;
 mod sdk;
 mod sys_func_idx;
 mod syscall;
-mod utils;
 
+pub use address::*;
 pub use allocator::*;
-pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
+pub use alloy_primitives::*;
 pub use bytecode_type::*;
 pub use byteorder;
 pub use context::*;
@@ -30,7 +31,6 @@ pub use rwasm::*;
 pub use sdk::*;
 pub use sys_func_idx::SysFuncIdx;
 pub use syscall::*;
-pub use utils::*;
 
 pub const KECCAK_EMPTY: B256 =
     b256!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
@@ -53,4 +53,7 @@ pub const STATE_DEPLOY: u32 = 1;
 /// - 0x01 - is a version of developer preview
 pub const DEVELOPER_PREVIEW_CHAIN_ID: u64 = 20993;
 
+/// A relation between fuel and gas,
+/// according to our benchmarks, average WebAssembly instruction is ~1000 faster than average EVM
+/// instruction
 pub const FUEL_DENOM_RATE: u64 = 1000;

@@ -1,29 +1,11 @@
 use crate::{runtime::Runtime, types::NonePreimageResolver, RuntimeContext};
-use fluentbase_rwasm::{BinaryFormat, Instruction, RwasmConfig, RwasmModule, StateRouterConfig};
-use fluentbase_types::{create_import_linker, SysFuncIdx::STATE, STATE_DEPLOY, STATE_MAIN};
+use fluentbase_types::{compile_wasm_to_rwasm, Bytes, STATE_DEPLOY, STATE_MAIN};
 use hex_literal::hex;
 
-pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
-    let import_linker = create_import_linker();
+pub(crate) fn wat2rwasm(wat: &str) -> Bytes {
     let wasm_binary = wat::parse_str(wat).unwrap();
-    let mut rwasm_config = RwasmModule::default_config(Some(import_linker));
-    rwasm_config.rwasm_config(RwasmConfig {
-        state_router: Some(StateRouterConfig {
-            states: Box::new([
-                ("deploy".to_string(), STATE_DEPLOY),
-                ("main".to_string(), STATE_MAIN),
-            ]),
-            opcode: Instruction::Call(STATE.into()),
-        }),
-        entrypoint_name: None,
-        import_linker: Some(create_import_linker()),
-        wrap_import_functions: true,
-        translate_drop_keep: false,
-    });
-    let rwasm_module = RwasmModule::compile_with_config(&wasm_binary, &rwasm_config).unwrap();
-    let mut result = Vec::new();
-    rwasm_module.write_binary_to_vec(&mut result).unwrap();
-    result
+    let result = compile_wasm_to_rwasm(&wasm_binary).unwrap();
+    result.rwasm_bytecode
 }
 
 #[test]
@@ -80,7 +62,7 @@ fn test_wrong_indirect_type() {
     let ctx = RuntimeContext::new(rwasm_bytecode)
         .with_fuel_limit(1_000_000)
         .with_state(STATE_DEPLOY);
-    let mut runtime = Runtime::new(ctx, &NonePreimageResolver);
+    let mut runtime = Runtime::new(ctx);
     let res = runtime.call();
     let ctx = runtime.take_context();
     assert_eq!(res.exit_code, 0);

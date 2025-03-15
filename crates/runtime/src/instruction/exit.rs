@@ -16,6 +16,6 @@ impl SyscallExit {
             return Err(ExitCode::NonNegativeExitCode);
         }
         ctx.execution_result.exit_code = exit_code;
-        Err(ExitCode::ExecutionHalted)
+        Err(ExitCode::Ok)
     }
 }

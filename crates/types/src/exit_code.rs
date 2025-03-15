@@ -10,7 +10,6 @@ pub enum ExitCode {
     Ok = 0,
     Panic = -71, // -71 to be wasi friendly
     // fluentbase error codes
-    ExecutionHalted = -1001,
     RootCallOnly = -1002,
     MalformedBuiltinParams = -1003,
     CallDepthOverflow = -1004,
