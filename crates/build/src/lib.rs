@@ -26,7 +26,7 @@ pub fn cargo_rerun_if_changed(metadata: &Metadata) {
     for path in watch_paths {
         if path.exists() {
             println!(
-                "cargo::rerun-if-changed={}",
+                "cargo:rerun-if-changed={}",
                 path.canonicalize().unwrap().display()
             );
         }
