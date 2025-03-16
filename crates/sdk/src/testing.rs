@@ -215,11 +215,10 @@ impl SharedAPI for TestingContext {
 
     fn create(
         &mut self,
-        _fuel_limit: u64,
         _salt: Option<U256>,
         _value: &U256,
         _init_code: &[u8],
-    ) -> SyscallResult<Address> {
+    ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }
 

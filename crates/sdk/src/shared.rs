@@ -348,14 +348,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
 
     fn create(
         &mut self,
-        mut fuel_limit: u64,
         salt: Option<U256>,
         value: &U256,
         init_code: &[u8],
-    ) -> SyscallResult<Address> {
-        if fuel_limit == 0 {
-            fuel_limit = self.native_sdk.fuel();
-        }
+    ) -> SyscallResult<Bytes> {
         let (buffer, code_hash) = if let Some(salt) = salt {
             let buffer = alloc_slice(32 + 32 + init_code.len());
             buffer[0..32].copy_from_slice(value.as_le_slice());
@@ -368,17 +364,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             buffer[32..].copy_from_slice(init_code);
             (buffer, SYSCALL_ID_CREATE)
         };
-        let (fuel_consumed, exit_code) = self
-            .native_sdk
-            .exec(code_hash, &buffer, fuel_limit, STATE_MAIN);
-        if exit_code != 0 {
-            return SyscallResult::new(Address::ZERO, fuel_consumed, exit_code);
-        }
-        assert_eq!(self.native_sdk.output_size(), 20);
-        let mut buffer = [0u8; 20];
-        self.native_sdk.read_output(&mut buffer, 0);
-        let value = Address::from(buffer);
-        SyscallResult::ok(value, fuel_consumed)
+        let (fuel_consumed, exit_code) = self.native_sdk.exec(code_hash, &buffer, 0, STATE_MAIN);
+        SyscallResult::new(self.native_sdk.return_data(), fuel_consumed, exit_code)
     }
 
     fn call(

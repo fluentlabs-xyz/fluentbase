@@ -1,8 +1,36 @@
 use core::{cmp::min, ops::Range};
-use fluentbase_sdk::{Bytes, SyscallResult, SyscallStatus, FUEL_DENOM_RATE, U256};
-use revm_interpreter::{gas, primitives::SpecId, push, InstructionResult, Interpreter};
+use fluentbase_sdk::{Address, Bytes, SyscallResult, SyscallStatus, B256, FUEL_DENOM_RATE, U256};
+use revm_interpreter::{
+    gas,
+    instructions::contract::resize_memory,
+    pop_ret,
+    primitives::SpecId,
+    push,
+    push_b256,
+    InstructionResult,
+    Interpreter,
+};
 
 pub(crate) const BASE_SPEC: SpecId = SpecId::CANCUN;
+
+pub(crate) fn insert_create_outcome(interpreter: &mut Interpreter, result: SyscallResult<Bytes>) {
+    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    // TODO(dmitry123): "add support of refunds"
+    match result.status {
+        SyscallStatus::Ok => {
+            assert_eq!(result.data.len(), 20);
+            let created_address = Address::from_slice(result.data.as_ref());
+            push_b256!(interpreter, created_address.into_word());
+        }
+        SyscallStatus::Revert => {
+            interpreter.return_data_buffer = result.data;
+            push_b256!(interpreter, B256::ZERO);
+        }
+        SyscallStatus::Error => {
+            push_b256!(interpreter, B256::ZERO);
+        }
+    }
+}
 
 pub(crate) fn insert_call_outcome(
     interpreter: &mut Interpreter,
@@ -56,6 +84,23 @@ pub(crate) fn insert_call_outcome(
         }
     }
     interpreter.instruction_result = InstructionResult::Continue;
+}
+
+#[inline]
+pub fn get_memory_input_and_out_ranges(
+    interpreter: &mut Interpreter,
+) -> Option<(Bytes, Range<usize>)> {
+    pop_ret!(interpreter, in_offset, in_len, out_offset, out_len, None);
+
+    let in_range = resize_memory(interpreter, in_offset, in_len)?;
+
+    let mut input = Bytes::new();
+    if !in_range.is_empty() {
+        input = Bytes::copy_from_slice(interpreter.shared_memory.slice_range(in_range));
+    }
+
+    let ret_range = resize_memory(interpreter, out_offset, out_len)?;
+    Some((input, ret_range))
 }
 
 pub(crate) unsafe fn read_i16(ptr: *const u8) -> i16 {

@@ -35,10 +35,9 @@ fn test_multicall() {
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
 
     // Deploy contract that we'll call through multicall
-    let (contract_address, _) = ctx.deploy_evm_tx_with_nonce(
+    let contract_address = ctx.deploy_evm_tx(
         DEPLOYER_ADDRESS,
         include_bytes!("../../examples/router-solidity/lib.wasm").into(),
-        0,
     );
     println!(
         "Solidity router contract deployed at: {:?}",
@@ -115,10 +114,9 @@ fn test_multicall_invalid_method() {
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
 
     // Deploy contract that we'll call through multicall
-    let (contract_address, _) = ctx.deploy_evm_tx_with_nonce(
+    let contract_address = ctx.deploy_evm_tx(
         DEPLOYER_ADDRESS,
         include_bytes!("../../examples/router-solidity/lib.wasm").into(),
-        0,
     );
     println!(
         "Solidity router contract deployed at: {:?}",

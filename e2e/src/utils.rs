@@ -158,7 +158,9 @@ impl EvmTestingContext {
         init_bytecode: Bytes,
         nonce: u64,
     ) -> (Address, u64) {
-        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
+        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into())
+            .enable_rwasm_proxy()
+            .exec();
         if !result.is_success() {
             println!("{:?}", result);
             println!(

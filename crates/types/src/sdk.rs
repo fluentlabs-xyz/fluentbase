@@ -220,11 +220,10 @@ pub trait SharedAPI {
     fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256>;
     fn create(
         &mut self,
-        fuel_limit: u64,
         salt: Option<U256>,
         value: &U256,
         init_code: &[u8],
-    ) -> SyscallResult<Address>;
+    ) -> SyscallResult<Bytes>;
     fn call(
         &mut self,
         address: Address,

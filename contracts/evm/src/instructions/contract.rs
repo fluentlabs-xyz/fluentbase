@@ -1,14 +1,12 @@
-mod call_helpers;
-
-use crate::utils::insert_call_outcome;
+use crate::utils::{get_memory_input_and_out_ranges, insert_call_outcome, insert_create_outcome};
 use alloc::boxed::Box;
-pub use call_helpers::{get_memory_input_and_out_ranges, resize_memory};
 use fluentbase_sdk::{SharedAPI, FUEL_DENOM_RATE};
 use revm_interpreter::{
     as_usize_or_fail,
     gas,
     gas::{cost_per_word, EOF_CREATE_GAS, KECCAK256WORD},
     gas_or_fail,
+    instructions::contract::resize_memory,
     interpreter::Interpreter,
     pop,
     pop_address,
@@ -355,8 +353,8 @@ pub fn create<const IS_CREATE2: bool, SDK: SharedAPI>(
     } else {
         None
     };
-    let _result = sdk.create(0, salt, &value, code.as_ref());
-    todo!("insert_create_outcome")
+    let result = sdk.create(salt, &value, code.as_ref());
+    insert_create_outcome(interpreter, result)
 }
 
 pub fn call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {

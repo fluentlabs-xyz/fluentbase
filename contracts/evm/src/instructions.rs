@@ -318,7 +318,7 @@ pub fn exec_evm_bytecode<SDK: SharedAPI>(
     if interpreter.next_action.is_some() {
         match interpreter.next_action {
             InterpreterAction::Return { result } => return result,
-            _ => todo!("check next action"),
+            _ => unreachable!("evm: not supported action: {:?}", interpreter.next_action),
         }
     }
     InterpreterResult {
