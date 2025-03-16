@@ -6,6 +6,7 @@ use fluentbase_types::{
     ExitCode,
     SyscallInvocationParams,
     B256,
+    CALL_STACK_LIMIT,
     FUEL_DENOM_RATE,
 };
 use std::fmt::{Debug, Display, Formatter};
@@ -19,8 +20,6 @@ pub struct SysExecResumable {
     /// A depth level of the current call, for root it's always zero
     pub is_root: bool,
 }
-
-pub const CALL_STACK_LIMIT: u32 = 1024;
 
 impl Debug for SysExecResumable {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -49,7 +48,6 @@ impl SyscallExec {
         } else {
             caller.store().remaining_fuel().unwrap_or(u64::MAX)
         };
-        let fuel_consumed = caller.store().fuel_consumed();
         // calculate gas limit as lower bounded (for charging gas, we use upper bound rounding,
         // that is why we need to do lower bound rounding for gas limit)
         let gas_limit = fuel_limit / FUEL_DENOM_RATE;

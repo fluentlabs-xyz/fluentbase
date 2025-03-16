@@ -10,6 +10,7 @@ pub struct RuntimeContext {
     pub(crate) trace: bool,
     pub(crate) input: Bytes,
     pub(crate) disable_fuel: bool,
+    // TODO(dmitry123): "check function `remember_runtime`, it's not correct"
     pub(crate) call_counter: u32,
     // context outputs
     pub(crate) execution_result: ExecutionResult,

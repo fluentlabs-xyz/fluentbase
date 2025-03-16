@@ -57,3 +57,6 @@ pub const DEVELOPER_PREVIEW_CHAIN_ID: u64 = 20993;
 /// according to our benchmarks, average WebAssembly instruction is ~1000 faster than average EVM
 /// instruction
 pub const FUEL_DENOM_RATE: u64 = 1000;
+
+/// A max rWasm call stack limit
+pub const CALL_STACK_LIMIT: u32 = 1024;

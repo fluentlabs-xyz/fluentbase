@@ -15,6 +15,13 @@ fluentbase-sdk = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
 
+rwasm = { workspace = true }
+revm = { workspace = true }
+hex-literal = { workspace = true }
+hex = { workspace = true }
+alloy-sol-types = { workspace = true }
+
+[build-dependencies]
 fluentbase-examples-constructor-params = { path = "../examples/constructor-params" }
 fluentbase-examples-erc20 = { path = "../examples/erc20" }
 fluentbase-examples-panic = { path = "../examples/panic" }
@@ -31,12 +38,6 @@ fluentbase-examples-client-solidity = { path = "../examples/client-solidity" }
 fluentbase-examples-storage = { path = "../examples/storage" }
 fluentbase-examples-json = { path = "../examples/json" }
 fluentbase-examples-nitro-verifier = { path = "../examples/nitro-verifier" }
-
-rwasm = { workspace = true }
-revm = { workspace = true }
-hex-literal = { workspace = true }
-hex = { workspace = true }
-alloy-sol-types = { workspace = true }
 
 [features]
 default = ["std", "fluentbase-runtime/debug-print"]

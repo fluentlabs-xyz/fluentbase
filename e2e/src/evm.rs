@@ -1,4 +1,4 @@
-use crate::utils::{EvmTestingContext, TxBuilder};
+use crate::utils::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use core::str::from_utf8;
 use fluentbase_sdk::{
     address,
@@ -99,7 +99,7 @@ fn test_evm_storage() {
 }
 
 #[test]
-fn test_simple_send() {
+fn test_evm_simple_send() {
     // deploy greeting EVM contract
     let mut ctx = EvmTestingContext::default();
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
@@ -119,7 +119,7 @@ fn test_simple_send() {
 }
 
 #[test]
-fn test_create_send() {
+fn test_evm_create_and_send() {
     // deploy greeting EVM contract
     let mut ctx = EvmTestingContext::default();
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
@@ -223,13 +223,11 @@ fn test_evm_self_destruct() {
         SENDER_ADDRESS,
         hex!("6000600060006000600073f91c20c0cafbfdc150adff51bbfc5808edde7cb561FFFFF1").into(),
     )
+    .enable_rwasm_proxy()
     .exec();
     if !result.is_success() {
         println!("status: {:?}", result);
-        println!(
-            "utf8-output: {}",
-            from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
-        );
+        try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref());
     }
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 61128);

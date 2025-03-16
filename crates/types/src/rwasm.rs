@@ -11,16 +11,8 @@ pub struct RwasmCompilationResult {
     pub constructor_params: Bytes,
 }
 
-#[inline(always)]
-pub fn compile_wasm_to_rwasm_gasless(
-    wasm_binary: &[u8],
-    gasless: bool,
-) -> Result<RwasmCompilationResult, Error> {
-    let mut config = RwasmModule::default_config(None);
-    if gasless {
-        config.consume_fuel(false);
-    }
-    config.rwasm_config(RwasmConfig {
+pub fn rwasm_config() -> RwasmConfig {
+    RwasmConfig {
         state_router: Some(StateRouterConfig {
             states: Box::new([
                 ("deploy".to_string(), STATE_DEPLOY),
@@ -32,7 +24,19 @@ pub fn compile_wasm_to_rwasm_gasless(
         import_linker: Some(create_import_linker()),
         wrap_import_functions: true,
         translate_drop_keep: false,
-    });
+        allow_malformed_entrypoint_func_type: false,
+    }
+}
+
+pub fn compile_wasm_to_rwasm_gasless(
+    wasm_binary: &[u8],
+    gasless: bool,
+) -> Result<RwasmCompilationResult, Error> {
+    let mut config = RwasmModule::default_config(None);
+    if gasless {
+        config.consume_fuel(false);
+    }
+    config.rwasm_config(rwasm_config());
     let (rwasm_module, constructor_params) =
         RwasmModule::compile_and_retrieve_input(wasm_binary, &config)?;
     let length = rwasm_module.encoded_length();

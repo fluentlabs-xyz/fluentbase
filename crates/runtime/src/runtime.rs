@@ -18,7 +18,12 @@ use fluentbase_rwasm::{
 };
 use fluentbase_types::{BindingExecutionResult, BytecodeOrHash, Bytes, ExitCode, SysFuncIdx, F254};
 use hashbrown::{hash_map::Entry, HashMap};
-use std::{cell::RefCell, fmt::Debug, mem::take};
+use std::{
+    cell::RefCell,
+    fmt::Debug,
+    mem::take,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 #[derive(Default, Clone, Debug)]
 pub struct ExecutionResult {
@@ -178,29 +183,28 @@ impl Runtime {
     }
 
     pub fn call(&mut self) -> ExecutionResult {
-        let fuel_consumed_before_call = self.executor.store().fuel_consumed();
+        let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
         let result = self.executor.run();
-        self.handle_execution_result(result, fuel_consumed_before_call)
+        self.handle_execution_result(result, fuel_consumed_before_the_call)
     }
 
-    pub fn resume(
-        &mut self,
-        fuel_consumed: u32,
-        exit_code: i32,
-        fuel_consumed_before_call: u64,
-    ) -> ExecutionResult {
+    pub fn resume(&mut self, fuel_consumed: u32, exit_code: i32) -> ExecutionResult {
+        let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
         let mut caller = Caller::new(self.executor.store_mut());
         let value = BindingExecutionResult::new(fuel_consumed, exit_code);
         caller.stack_push(value.0);
         let result = self.executor.run();
-        self.handle_execution_result(result, fuel_consumed_before_call)
+        self.handle_execution_result(result, fuel_consumed_before_the_call)
     }
 
-    pub(crate) fn remember_runtime(self, root_ctx: &mut RuntimeContext) -> i32 {
+    pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
+        static CALL_COUNT: AtomicU32 = AtomicU32::new(1);
         // save the current runtime state for future recovery
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
-            root_ctx.call_counter += 1;
-            let call_id = root_ctx.call_counter;
+            // TODO(dmitry123): "don't use global call counter"
+            let call_id = CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+            // root_ctx.call_counter += 1;
+            // let call_id = root_ctx.call_counter;
             caching_runtime.recoverable_runtimes.insert(call_id, self);
             call_id as i32
         })
@@ -218,16 +222,15 @@ impl Runtime {
     fn handle_execution_result(
         &mut self,
         mut next_result: Result<i32, RwasmError>,
-        fuel_consumed_before_call: u64,
+        fuel_consumed_before_the_call: u64,
     ) -> ExecutionResult {
         let mut execution_result =
             take(&mut self.executor.store_mut().context_mut().execution_result);
-        execution_result.fuel_consumed =
-            self.executor.store().fuel_consumed() - fuel_consumed_before_call;
         // once fuel is calculated, we must adjust our fuel limit,
         // because we don't know what gas conversion policy is used,
         // if there is rounding then it can cause miscalculations
-        // self.executor.store_mut().adjust_fuel_limit();
+        execution_result.fuel_consumed =
+            self.executor.store().fuel_consumed() - fuel_consumed_before_the_call;
         loop {
             match next_result {
                 Ok(exit_code) => {

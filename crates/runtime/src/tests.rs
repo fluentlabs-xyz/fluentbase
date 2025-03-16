@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, types::NonePreimageResolver, RuntimeContext};
+use crate::{runtime::Runtime, RuntimeContext};
 use fluentbase_types::{compile_wasm_to_rwasm, Bytes, STATE_DEPLOY, STATE_MAIN};
 use hex_literal::hex;
 

@@ -5,16 +5,14 @@ use fluentbase_sdk::{
     bytes::BytesMut,
     calc_create_address,
     codec::CompactABI,
-    create_import_linker,
+    rwasm_config,
     testing::{TestingContext, TestingContextNativeAPI},
     Address,
     Bytes,
     ExitCode,
     HashMap,
     SharedContextInputV1,
-    SysFuncIdx,
     KECCAK_EMPTY,
-    STATE_DEPLOY,
     STATE_MAIN,
     U256,
 };
@@ -25,7 +23,6 @@ use revm::{
     InMemoryDB,
 };
 use rwasm::{
-    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{instruction::InstructionExtra, BinaryFormat, BinaryFormatWriter, RwasmModule},
     Error,
 };
@@ -295,19 +292,7 @@ pub(crate) fn try_print_utf8_error(mut output: &[u8]) {
 
 fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
     let mut config = RwasmModule::default_config(None);
-    config.rwasm_config(RwasmConfig {
-        state_router: Some(StateRouterConfig {
-            states: Box::new([
-                ("deploy".to_string(), STATE_DEPLOY),
-                ("main".to_string(), STATE_MAIN),
-            ]),
-            opcode: Instruction::Call(SysFuncIdx::STATE.into()),
-        }),
-        entrypoint_name: None,
-        import_linker: Some(create_import_linker()),
-        wrap_import_functions: true,
-        translate_drop_keep: false,
-    });
+    config.rwasm_config(rwasm_config());
     RwasmModule::compile_with_config(wasm_binary, &config)
 }
 

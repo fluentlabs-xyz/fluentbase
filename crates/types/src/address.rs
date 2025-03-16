@@ -209,8 +209,8 @@ mod tests {
             _call_id: u32,
             _return_data: &[u8],
             _exit_code: i32,
-            _fuel_used: u64,
-        ) -> (u64, i32) {
+            _fuel_used: u32,
+        ) -> (u32, i32) {
             todo!()
         }
 

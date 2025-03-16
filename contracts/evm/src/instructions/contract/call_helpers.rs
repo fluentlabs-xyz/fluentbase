@@ -1,12 +1,10 @@
-use core::{cmp::min, ops::Range};
+use core::ops::Range;
 use revm_interpreter::{
     as_usize_or_fail_ret,
-    gas,
     interpreter::Interpreter,
     pop_ret,
-    primitives::{Bytes, Spec, SpecId::*, U256},
+    primitives::{Bytes, U256},
     resize_memory,
-    AccountLoad,
 };
 
 #[inline]
@@ -43,28 +41,4 @@ pub fn resize_memory(
         usize::MAX //unrealistic value so we are sure it is not used
     };
     Some(offset..offset + len)
-}
-
-#[inline]
-pub fn calc_call_gas<SPEC: Spec>(
-    interpreter: &mut Interpreter,
-    account_load: AccountLoad,
-    has_transfer: bool,
-    local_gas_limit: u64,
-) -> Option<u64> {
-    let call_cost = gas::call_cost(SPEC::SPEC_ID, has_transfer, account_load);
-    gas!(interpreter, call_cost, None);
-
-    // EIP-150: Gas cost changes for IO-heavy operations
-    let gas_limit = if SPEC::enabled(TANGERINE) {
-        // take l64 part of gas_limit
-        min(
-            interpreter.gas().remaining_63_of_64_parts(),
-            local_gas_limit,
-        )
-    } else {
-        local_gas_limit
-    };
-
-    Some(gas_limit)
 }

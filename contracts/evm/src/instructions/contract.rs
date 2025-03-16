@@ -1,8 +1,9 @@
 mod call_helpers;
 
+use crate::utils::insert_call_outcome;
 use alloc::boxed::Box;
 pub use call_helpers::{get_memory_input_and_out_ranges, resize_memory};
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{SharedAPI, FUEL_DENOM_RATE};
 use revm_interpreter::{
     as_usize_or_fail,
     gas,
@@ -29,8 +30,6 @@ use revm_interpreter::{
     CallInputs,
     CallScheme,
     CallValue,
-    CreateInputs,
-    CreateScheme,
     EOFCreateInputs,
     InstructionResult,
     InterpreterAction,
@@ -326,112 +325,56 @@ pub fn create<const IS_CREATE2: bool, SDK: SharedAPI>(
     sdk: &mut SDK,
 ) {
     require_non_staticcall!(interpreter);
-
     pop!(interpreter, value, code_offset, len);
-    let len = as_usize_or_fail!(interpreter, len);
-
+    let code_len = as_usize_or_fail!(interpreter, len);
     let mut code = Bytes::new();
-    if len != 0 {
+    if code_len != 0 {
         let code_offset = as_usize_or_fail!(interpreter, code_offset);
-        // The limit is set as double of max contract bytecode size
-        let max_initcode_size = if len >= 4
+        let max_initcode_size = if code_len >= 4
             && interpreter.shared_memory.try_slice(code_offset, 4) == Some(&WASM_MAGIC_BYTES)
         {
             WASM_MAX_CODE_SIZE
         } else {
             MAX_INITCODE_SIZE
         };
-        if len > max_initcode_size {
+        if code_len > max_initcode_size {
             interpreter.instruction_result = InstructionResult::CreateInitCodeSizeLimit;
             return;
         }
-        gas!(interpreter, gas::initcode_cost(len as u64));
-
-        resize_memory!(interpreter, code_offset, len);
-        code = Bytes::copy_from_slice(interpreter.shared_memory.slice(code_offset, len));
+        let gas_cost = gas::initcode_cost(code_len as u64);
+        if gas_cost > interpreter.gas.remaining() {
+            interpreter.instruction_result = InstructionResult::OutOfGas;
+            return;
+        }
+        resize_memory!(interpreter, code_offset, code_len);
+        code = Bytes::copy_from_slice(interpreter.shared_memory.slice(code_offset, code_len));
     }
-
-    // EIP-1014: Skinny CREATE2
-    let scheme = if IS_CREATE2 {
+    let salt: Option<U256> = if IS_CREATE2 {
         pop!(interpreter, salt);
-        // SAFETY: len is reasonable as gas for it is already deducted.
-        gas_or_fail!(interpreter, gas::create2_cost(len.try_into().unwrap()));
-        CreateScheme::Create2 { salt }
+        Some(salt)
     } else {
-        gas!(interpreter, gas::CREATE);
-        CreateScheme::Create
+        None
     };
-
-    let mut gas_limit = interpreter.gas().remaining();
-
-    // take the remaining gas and deduce l64 part of it.
-    gas_limit -= gas_limit / 64;
-    gas!(interpreter, gas_limit);
-
-    // Call host to interact with target contract
-    interpreter.next_action = InterpreterAction::Create {
-        inputs: Box::new(CreateInputs {
-            caller: interpreter.contract.target_address,
-            scheme,
-            value,
-            init_code: code,
-            gas_limit,
-        }),
-    };
-    interpreter.instruction_result = InstructionResult::CallOrCreate;
+    let _result = sdk.create(0, salt, &value, code.as_ref());
+    todo!("insert_create_outcome")
 }
 
 pub fn call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop!(interpreter, local_gas_limit);
     pop_address!(interpreter, to);
-    // max gas limit is not possible in real ethereum situation.
+    // max gas limit is not possible in a real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
-
     pop!(interpreter, value);
     let has_transfer = !value.is_zero();
     if interpreter.is_static && has_transfer {
         interpreter.instruction_result = InstructionResult::CallNotAllowedInsideStatic;
         return;
     }
-
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
-
-    todo!("not implemented");
-    // let Some(account_load) = host.load_account_delegated(to) else {
-    //     interpreter.instruction_result = InstructionResult::FatalExternalError;
-    //     return;
-    // };
-    // let Some(mut gas_limit) =
-    //     calc_call_gas::<SPEC>(interpreter, account_load, has_transfer, local_gas_limit)
-    // else {
-    //     return;
-    // };
-    //
-    // gas!(interpreter, gas_limit);
-    //
-    // // add call stipend if there is value to be transferred.
-    // if has_transfer {
-    //     gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
-    // }
-    //
-    // // Call host to interact with target contract
-    // interpreter.next_action = InterpreterAction::Call {
-    //     inputs: Box::new(CallInputs {
-    //         input,
-    //         gas_limit,
-    //         target_address: to,
-    //         caller: interpreter.contract.target_address,
-    //         bytecode_address: to,
-    //         value: CallValue::Transfer(value),
-    //         scheme: CallScheme::Call,
-    //         is_static: interpreter.is_static,
-    //         is_eof: false,
-    //         return_memory_offset,
-    //     }),
-    // };
-    // interpreter.instruction_result = InstructionResult::CallOrCreate;
+    let result = sdk.call(to, value, input.as_ref(), local_gas_limit * FUEL_DENOM_RATE);
+    insert_call_outcome(interpreter, result, return_memory_offset);
 }
 
 pub fn call_code<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
@@ -439,48 +382,12 @@ pub fn call_code<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, to);
     // max gas limit is not possible in real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
-
     pop!(interpreter, value);
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
-
-    todo!("not implemented");
-    // let Some(mut load) = host.load_account_delegated(to) else {
-    //     interpreter.instruction_result = InstructionResult::FatalExternalError;
-    //     return;
-    // };
-    // // set is_empty to false as we are not creating this account.
-    // load.is_empty = false;
-    // let Some(mut gas_limit) =
-    //     calc_call_gas::<SPEC>(interpreter, load, !value.is_zero(), local_gas_limit)
-    // else {
-    //     return;
-    // };
-    //
-    // gas!(interpreter, gas_limit);
-    //
-    // // add call stipend if there is value to be transferred.
-    // if !value.is_zero() {
-    //     gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
-    // }
-    //
-    // // Call host to interact with target contract
-    // interpreter.next_action = InterpreterAction::Call {
-    //     inputs: Box::new(CallInputs {
-    //         input,
-    //         gas_limit,
-    //         target_address: interpreter.contract.target_address,
-    //         caller: interpreter.contract.target_address,
-    //         bytecode_address: to,
-    //         value: CallValue::Transfer(value),
-    //         scheme: CallScheme::CallCode,
-    //         is_static: interpreter.is_static,
-    //         is_eof: false,
-    //         return_memory_offset,
-    //     }),
-    // };
-    // interpreter.instruction_result = InstructionResult::CallOrCreate;
+    let result = sdk.call_code(to, value, input.as_ref(), local_gas_limit * FUEL_DENOM_RATE);
+    insert_call_outcome(interpreter, result, return_memory_offset);
 }
 
 pub fn delegate_call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
@@ -488,79 +395,21 @@ pub fn delegate_call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SD
     pop_address!(interpreter, to);
     // max gas limit is not possible in real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
-
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
-
-    todo!("not implemented");
-    // let Some(mut load) = host.load_account_delegated(to) else {
-    //     interpreter.instruction_result = InstructionResult::FatalExternalError;
-    //     return;
-    // };
-    // // set is_empty to false as we are not creating this account.
-    // load.is_empty = false;
-    // let Some(gas_limit) = calc_call_gas::<SPEC>(interpreter, load, false, local_gas_limit) else {
-    //     return;
-    // };
-    //
-    // gas!(interpreter, gas_limit);
-    //
-    // // Call host to interact with target contract
-    // interpreter.next_action = InterpreterAction::Call {
-    //     inputs: Box::new(CallInputs {
-    //         input,
-    //         gas_limit,
-    //         target_address: interpreter.contract.target_address,
-    //         caller: interpreter.contract.caller,
-    //         bytecode_address: to,
-    //         value: CallValue::Apparent(interpreter.contract.call_value),
-    //         scheme: CallScheme::DelegateCall,
-    //         is_static: interpreter.is_static,
-    //         is_eof: false,
-    //         return_memory_offset,
-    //     }),
-    // };
-    // interpreter.instruction_result = InstructionResult::CallOrCreate;
+    let result = sdk.delegate_call(to, input.as_ref(), local_gas_limit * FUEL_DENOM_RATE);
+    insert_call_outcome(interpreter, result, return_memory_offset);
 }
 
 pub fn static_call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop!(interpreter, local_gas_limit);
     pop_address!(interpreter, to);
-    // max gas limit is not possible in real ethereum situation.
+    // max gas limit is not possible in a real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
-
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
-
-    todo!("not implemented");
-
-    // let Some(mut load) = host.load_account_delegated(to) else {
-    //     interpreter.instruction_result = InstructionResult::FatalExternalError;
-    //     return;
-    // };
-    // // set is_empty to false as we are not creating this account.
-    // load.is_empty = false;
-    // let Some(gas_limit) = calc_call_gas::<SPEC>(interpreter, load, false, local_gas_limit) else {
-    //     return;
-    // };
-    // gas!(interpreter, gas_limit);
-    //
-    // // Call host to interact with target contract
-    // interpreter.next_action = InterpreterAction::Call {
-    //     inputs: Box::new(CallInputs {
-    //         input,
-    //         gas_limit,
-    //         target_address: to,
-    //         caller: interpreter.contract.target_address,
-    //         bytecode_address: to,
-    //         value: CallValue::Transfer(U256::ZERO),
-    //         scheme: CallScheme::StaticCall,
-    //         is_static: true,
-    //         is_eof: false,
-    //         return_memory_offset,
-    //     }),
-    // };
-    // interpreter.instruction_result = InstructionResult::CallOrCreate;
+    let result = sdk.static_call(to, input.as_ref(), local_gas_limit * FUEL_DENOM_RATE);
+    insert_call_outcome(interpreter, result, return_memory_offset);
 }

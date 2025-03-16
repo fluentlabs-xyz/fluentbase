@@ -43,18 +43,14 @@ impl SyscallResume {
         // we can charge fuel only if fuel is not disabled,
         // when fuel is disabled we only pass consumed fuel amount into the contract back,
         // and it can decide on charging
-        if !ctx.disable_fuel
-            && fuel_consumed > 0
-            && recoverable_runtime
-                .executor
-                .store_mut()
-                .try_consume_fuel(fuel_consumed as u64)
-                .is_err()
-        {
-            return (0, ExitCode::OutOfFuel.into_i32());
+        if !ctx.disable_fuel && fuel_consumed > 0 {
+            let store = recoverable_runtime.executor.store_mut();
+            // charge fuel that was spent during the interruption
+            // to make sure our fuel calculations are aligned
+            if let Err(_) = store.try_consume_fuel(fuel_consumed as u64) {
+                return (0, ExitCode::OutOfFuel.into_i32());
+            }
         }
-
-        let fuel_consumed_before_call = recoverable_runtime.executor.store().fuel_consumed();
 
         // copy return data into return data
         let return_data_mut = recoverable_runtime
@@ -73,8 +69,7 @@ impl SyscallResume {
         //     .logs
         //     .len();
 
-        let mut execution_result =
-            recoverable_runtime.resume(fuel_consumed, exit_code, fuel_consumed_before_call);
+        let mut execution_result = recoverable_runtime.resume(fuel_consumed, exit_code);
 
         // println!("\n\nRESUME, interrupted: {}", execution_result.interrupted);
         // println!(
