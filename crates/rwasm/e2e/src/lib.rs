@@ -90,6 +90,7 @@ fn make_config(rwasm_mode: bool) -> Config {
             import_linker: None,
             wrap_import_functions: false,
             translate_drop_keep: false,
+            allow_malformed_entrypoint_func_type: true,
         });
     }
     config

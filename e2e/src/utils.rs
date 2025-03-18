@@ -293,6 +293,7 @@ fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
         import_linker: Some(create_import_linker()),
         wrap_import_functions: true,
         translate_drop_keep: false,
+        allow_malformed_entrypoint_func_type: false,
     });
     RwasmModule::compile_with_config(wasm_binary, &config)
 }

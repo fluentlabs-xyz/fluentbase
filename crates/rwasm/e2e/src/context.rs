@@ -197,6 +197,7 @@ impl TestContext<'_> {
                 import_linker: Some(self.import_linker.clone()),
                 wrap_import_functions: true,
                 translate_drop_keep: false,
+                allow_malformed_entrypoint_func_type: true,
             }
         };
 
