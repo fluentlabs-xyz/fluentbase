@@ -76,15 +76,16 @@ pub fn build_wasm_program_from_env() {
 
     let target = env::var("TARGET").unwrap();
     if target.contains("wasm32") {
-        let root_package = metadata.root_package();
-        let root_package_name = root_package
-            .as_ref()
-            .map(|p| p.name.as_str())
-            .unwrap_or("program");
         println!(
-            "cargo:warning=build skipped for {} due to wasm32 compilation target ({})",
-            root_package_name, target,
+            "cargo:warning=build skipped due to wasm32 compilation target ({})",
+            target,
         );
+        return;
+    }
+
+    let is_tarpaulin_build = env::var("CARGO_CFG_TARPAULIN").is_ok();
+    if is_tarpaulin_build {
+        println!("cargo:warning=build skipped due to the tarpaulin build",);
         return;
     }
 
