@@ -16,7 +16,14 @@ use fluentbase_rwasm::{
     RwasmModuleInstance,
     SyscallHandler,
 };
-use fluentbase_types::{BindingExecutionResult, BytecodeOrHash, Bytes, ExitCode, SysFuncIdx, F254};
+use fluentbase_types::{
+    byteorder::{ByteOrder, LittleEndian},
+    BytecodeOrHash,
+    Bytes,
+    ExitCode,
+    SysFuncIdx,
+    F254,
+};
 use hashbrown::{hash_map::Entry, HashMap};
 use std::{
     cell::RefCell,
@@ -188,11 +195,25 @@ impl Runtime {
         self.handle_execution_result(result, fuel_consumed_before_the_call)
     }
 
-    pub fn resume(&mut self, fuel_consumed: u32, exit_code: i32) -> ExecutionResult {
+    pub fn resume(
+        &mut self,
+        fuel16_ptr: u32,
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+        exit_code: i32,
+    ) -> ExecutionResult {
         let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
         let mut caller = Caller::new(self.executor.store_mut());
-        let value = BindingExecutionResult::new(fuel_consumed, exit_code);
-        caller.stack_push(value.0);
+        if fuel16_ptr > 0 {
+            let mut buffer = [0u8; 16];
+            LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
+            LittleEndian::write_i64(&mut buffer[8..], fuel_refunded);
+            // if we can't write a result into memory, then process it as an error
+            if let Err(err) = caller.memory_write(fuel16_ptr as usize, &buffer) {
+                return self.handle_execution_result(Err(err), fuel_consumed_before_the_call);
+            }
+        }
+        caller.stack_push(exit_code);
         let result = self.executor.run();
         self.handle_execution_result(result, fuel_consumed_before_the_call)
     }
@@ -270,7 +291,7 @@ impl Runtime {
 
                         if resumable_state.is_root {
                             // TODO(dmitry123): "validate this logic, might not be ok in STF mode"
-                            let (_, exit_code) = SyscallExec::fn_continue(
+                            let (_, _, exit_code) = SyscallExec::fn_continue(
                                 Caller::new(self.executor.store_mut()),
                                 resumable_state,
                             );

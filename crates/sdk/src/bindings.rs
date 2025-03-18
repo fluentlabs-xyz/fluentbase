@@ -1,5 +1,3 @@
-use fluentbase_types::BindingExecutionResult;
-
 #[link(wasm_import_module = "fluentbase_v1preview")]
 extern "C" {
 
@@ -43,7 +41,7 @@ extern "C" {
     /// - `hash32_ptr`: A pointer to a 254-bit poseidon hash of a contract to be called.
     /// - `input_ptr`: A pointer to the input data (const u8).
     /// - `input_len`: The length of the input data (u32).
-    /// - `fuel_limit`: A fuel limit assigned to this call.
+    /// - `fuel16_ptr`: A 16 byte array of elements where [fuel_limit/fuel_used, fuel_refunded]
     /// - `state`: A state value (u32), used internally to maintain function state.
     ///
     /// Fuel ptr can be set to zero if you want to delegate all remaining gas.
@@ -57,9 +55,9 @@ extern "C" {
         hash32_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,
-        fuel_limit: u64,
+        fuel16_ptr: *mut [i64; 2],
         state: u32,
-    ) -> BindingExecutionResult;
+    ) -> i32;
 
     /// Resumes the execution of a previously suspended function call.
     ///
@@ -84,8 +82,8 @@ extern "C" {
         return_data_ptr: *const u8,
         return_data_len: u32,
         exit_code: i32,
-        fuel_consumed: u32,
-    ) -> BindingExecutionResult;
+        fuel16_ptr: *mut [i64; 2],
+    ) -> i32;
 
     pub fn _charge_fuel(delta: u64) -> u64;
     pub fn _fuel() -> u64;

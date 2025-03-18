@@ -54,14 +54,15 @@ pub trait NativeAPI {
         input: &[u8],
         fuel_limit: u64,
         state: u32,
-    ) -> (u32, i32);
+    ) -> (u64, i64, i32);
     fn resume(
         &self,
         call_id: u32,
         return_data: &[u8],
         exit_code: i32,
-        fuel_consumed: u32,
-    ) -> (u32, i32);
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+    ) -> (u64, i64, i32);
 
     fn preimage_size(&self, hash: &B256) -> u32;
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]);
@@ -103,28 +104,30 @@ pub struct DestroyedAccountResult {
 }
 
 #[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SyscallInvocationParams {
     pub code_hash: B256,
     pub input: Bytes,
-    pub gas_limit: u64,
+    pub fuel_limit: u64,
     pub state: u32,
+    pub fuel16_ptr: u32,
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(u8)]
+#[repr(i8)]
 pub enum SyscallStatus {
     #[default]
     Ok = 0,
-    Revert = 1,
-    Error = 2,
+    Revert = -1,
+    Err = -2,
 }
 
 impl From<i32> for SyscallStatus {
     fn from(value: i32) -> Self {
         match value {
             0 => Self::Ok,
-            1 => Self::Revert,
-            2 => Self::Error,
+            -1 => Self::Revert,
+            -2 => Self::Err,
             _ => unreachable!("invalid syscall status: {}", value),
         }
     }
@@ -133,23 +136,31 @@ impl From<i32> for SyscallStatus {
 #[derive(Debug)]
 pub struct SyscallResult<T> {
     pub data: T,
-    pub fuel_used: u32,
+    pub fuel_consumed: u64,
+    pub fuel_refunded: i64,
     pub status: SyscallStatus,
 }
 
 impl<T> SyscallResult<T> {
-    pub fn new<I: Into<SyscallStatus>>(data: T, fuel_used: u32, status: I) -> Self {
+    pub fn new<I: Into<SyscallStatus>>(
+        data: T,
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+        status: I,
+    ) -> Self {
         let status: SyscallStatus = status.into();
         Self {
             data,
-            fuel_used,
+            fuel_consumed,
+            fuel_refunded,
             status,
         }
     }
-    pub fn ok(data: T, fuel_used: u32) -> Self {
+    pub fn ok(data: T, fuel_consumed: u64, fuel_refunded: i64) -> Self {
         Self {
             data,
-            fuel_used,
+            fuel_consumed,
+            fuel_refunded,
             status: SyscallStatus::Ok,
         }
     }
@@ -251,24 +262,4 @@ pub trait SharedAPI {
         fuel_limit: u64,
     ) -> SyscallResult<Bytes>;
     fn destroy_account(&mut self, address: Address) -> SyscallResult<()>;
-}
-
-#[repr(transparent)]
-pub struct BindingExecutionResult(pub u64);
-
-impl BindingExecutionResult {
-    #[inline(always)]
-    pub fn new(fuel_consumed: u32, exit_code: i32) -> Self {
-        Self((fuel_consumed as u64) << 32 | (exit_code as u64))
-    }
-
-    #[inline(always)]
-    pub fn fuel_consumed(&self) -> u32 {
-        (self.0 >> 32) as u32
-    }
-
-    #[inline(always)]
-    pub fn exit_code(&self) -> i32 {
-        (self.0 & 0xffffffff) as i32
-    }
 }

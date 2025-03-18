@@ -13,6 +13,7 @@ use revm_interpreter::{
     primitives::{Bytes, B256, BLOCK_HASH_HISTORY, U256},
     push,
     push_b256,
+    refund,
     require_non_staticcall,
     resize_memory,
     InstructionResult,
@@ -21,21 +22,21 @@ use revm_interpreter::{
 pub fn balance<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
     let result = sdk.balance(&address);
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
     push!(interpreter, result.data);
 }
 
 /// EIP-1884: Repricing for trie-size-dependent opcodes
 pub fn selfbalance<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     let result = sdk.self_balance();
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
     push!(interpreter, result.data);
 }
 
 pub fn extcodesize<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
     let result = sdk.code_size(&address);
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
     push!(interpreter, U256::from(result.data));
 }
 
@@ -43,7 +44,7 @@ pub fn extcodesize<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
 pub fn extcodehash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
     let result = sdk.code_hash(&address);
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
     push_b256!(interpreter, result.data);
 }
 
@@ -56,7 +57,7 @@ pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
     let len = as_usize_or_fail!(interpreter, len_u256);
     let mut buffer = vec![0u8; len];
     let result = sdk.code_copy(&address, code_offset as u32, &mut buffer);
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
     if len == 0 {
         return;
     }
@@ -87,7 +88,7 @@ pub fn blockhash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
 pub fn sload<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_top!(interpreter, index);
     let result = sdk.storage(&index);
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
     *index = result.data;
 }
 
@@ -95,8 +96,8 @@ pub fn sstore<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     require_non_staticcall!(interpreter);
     pop!(interpreter, index, value);
     let result = sdk.write_storage(index, value);
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
-    // refund!(interpreter, gas::sstore_refund(BASE_SPEC, &state_load.data));
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
+    refund!(interpreter, result.fuel_refunded / FUEL_DENOM_RATE as i64);
 }
 
 /// EIP-1153: Transient storage opcodes
@@ -105,7 +106,7 @@ pub fn tstore<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     require_non_staticcall!(interpreter);
     pop!(interpreter, index, value);
     let result = sdk.write_transient_storage(index, value);
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
 }
 
 /// EIP-1153: Transient storage opcodes
@@ -113,7 +114,7 @@ pub fn tstore<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
 pub fn tload<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_top!(interpreter, index);
     let result = sdk.transient_storage(index);
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
     *index = result.data;
 }
 
@@ -139,13 +140,13 @@ pub fn log<const N: usize, SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &
         topics.push(B256::from(unsafe { interpreter.stack.pop_unsafe() }));
     }
     let result = sdk.emit_log(data, &topics);
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
 }
 
 pub fn selfdestruct<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     require_non_staticcall!(interpreter);
     pop_address!(interpreter, target);
     let result = sdk.destroy_account(target);
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
     interpreter.instruction_result = InstructionResult::SelfDestruct;
 }

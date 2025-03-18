@@ -1,13 +1,13 @@
 use crate::{Runtime, RuntimeContext};
 use fluentbase_rwasm::{Caller, HostError, RwasmError, TrapCode};
 use fluentbase_types::{
+    byteorder::{ByteOrder, LittleEndian},
     BytecodeOrHash,
     Bytes,
     ExitCode,
     SyscallInvocationParams,
     B256,
     CALL_STACK_LIMIT,
-    FUEL_DENOM_RATE,
 };
 use std::fmt::{Debug, Display, Formatter};
 
@@ -37,20 +37,25 @@ impl HostError for SysExecResumable {}
 
 impl SyscallExec {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let [hash32_ptr, input_ptr, input_len, fuel_limit, state] = caller.stack_pop_n();
+        let [hash32_ptr, input_ptr, input_len, fuel16_ptr, state] = caller.stack_pop_n();
         // make sure we have enough fuel for this call
-        let fuel_limit = fuel_limit.as_u64();
-        let fuel_limit = if fuel_limit > 0 {
-            if fuel_limit > caller.store().remaining_fuel().unwrap_or(u64::MAX) {
-                return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
+        let fuel16_ptr = fuel16_ptr.as_usize();
+        let fuel_limit = if fuel16_ptr > 0 {
+            let mut fuel_buffer = [0u8; 16];
+            caller.memory_read(fuel16_ptr, &mut fuel_buffer)?;
+            let fuel_limit = LittleEndian::read_i64(&fuel_buffer[..8]) as u64;
+            let _fuel_refund = LittleEndian::read_i64(&fuel_buffer[8..]);
+            if fuel_limit > 0 {
+                if fuel_limit > caller.store().remaining_fuel().unwrap_or(u64::MAX) {
+                    return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
+                }
+                fuel_limit
+            } else {
+                caller.store().remaining_fuel().unwrap_or(u64::MAX)
             }
-            fuel_limit
         } else {
             caller.store().remaining_fuel().unwrap_or(u64::MAX)
         };
-        // calculate gas limit as lower bounded (for charging gas, we use upper bound rounding,
-        // that is why we need to do lower bound rounding for gas limit)
-        let gas_limit = fuel_limit / FUEL_DENOM_RATE;
         // return resumable error
         Err(RwasmError::HostInterruption(Box::new(SysExecResumable {
             params: SyscallInvocationParams {
@@ -58,8 +63,9 @@ impl SyscallExec {
                 input: Bytes::from(
                     caller.memory_read_vec(input_ptr.as_usize(), input_len.as_usize())?,
                 ),
-                gas_limit,
+                fuel_limit,
                 state: state.as_u32(),
+                fuel16_ptr: fuel16_ptr as u32,
             },
             is_root: caller.store().context().call_depth == 0,
         })))
@@ -68,16 +74,16 @@ impl SyscallExec {
     pub fn fn_continue(
         mut caller: Caller<'_, RuntimeContext>,
         context: &SysExecResumable,
-    ) -> (u32, i32) {
-        let fuel_limit = context.params.gas_limit * FUEL_DENOM_RATE;
-        let (fuel_consumed, exit_code) = Self::fn_impl(
+    ) -> (u64, i64, i32) {
+        let fuel_limit = context.params.fuel_limit;
+        let (fuel_consumed, fuel_refunded, exit_code) = Self::fn_impl(
             caller.store_mut().context_mut(),
             context.params.code_hash,
             context.params.input.as_ref(),
             fuel_limit,
             context.params.state,
         );
-        (fuel_consumed as u32, exit_code)
+        (fuel_consumed, fuel_refunded, exit_code)
     }
 
     pub fn fn_impl<I: Into<BytecodeOrHash>>(
@@ -86,10 +92,10 @@ impl SyscallExec {
         input: &[u8],
         fuel_limit: u64,
         state: u32,
-    ) -> (u64, i32) {
+    ) -> (u64, i64, i32) {
         // check call depth overflow
         if ctx.call_depth >= CALL_STACK_LIMIT {
-            return (fuel_limit, ExitCode::CallDepthOverflow.into_i32());
+            return (fuel_limit, 0, ExitCode::CallDepthOverflow.into_i32());
         }
 
         // create a new runtime instance with the context
@@ -164,6 +170,10 @@ impl SyscallExec {
 
         ctx.execution_result.return_data = execution_result.output.clone();
 
-        (execution_result.fuel_consumed, execution_result.exit_code)
+        (
+            execution_result.fuel_consumed,
+            0,
+            execution_result.exit_code,
+        )
     }
 }

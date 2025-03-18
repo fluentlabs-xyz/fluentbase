@@ -129,6 +129,10 @@ impl RuntimeContext {
         &self.execution_result.return_data
     }
 
+    pub fn into_return_data(self) -> Vec<u8> {
+        self.execution_result.return_data
+    }
+
     pub fn return_data_mut(&mut self) -> &mut Vec<u8> {
         &mut self.execution_result.return_data
     }

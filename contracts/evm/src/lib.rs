@@ -31,15 +31,13 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     let gas_limit = sdk.fuel() / FUEL_DENOM_RATE;
     debug_log!("gas_limit: {:?}", gas_limit);
 
-    let result = exec_evm_bytecode(&mut sdk, evm_bytecode, Bytes::default(), gas_limit);
+    let mut result = exec_evm_bytecode(&mut sdk, evm_bytecode, Bytes::default(), gas_limit);
 
     debug_log!("result: {:?}", result.result);
     debug_log!("gas: {:?}", result.gas);
     debug_log!("gas_spent: {:?}", result.gas.spent());
     debug_log!("output: {:?}", result.output);
     debug_log!("output_len: {:?}", result.output.len());
-
-    sdk.charge_fuel(result.gas.spent() * FUEL_DENOM_RATE);
 
     if !result.is_ok() {
         sdk.write(result.output.as_ref());
@@ -60,7 +58,19 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
 
     let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
     debug_log!("gas_for_code: {}", gas_for_code);
-    sdk.charge_fuel(gas_for_code * FUEL_DENOM_RATE);
+    if !result.gas.record_cost(gas_for_code) {
+        sdk.charge_fuel(u64::MAX);
+    }
+
+    // calculate the final gas charge for the call
+    debug_log!("refund: {}", result.gas.refunded());
+    // result.gas.set_final_refund(true);
+    // debug_log!("final_refund: {}", result.gas.refunded());
+    debug_log!(
+        "final_gas: {}",
+        result.gas.spent() - result.gas.refunded() as u64
+    );
+    sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
 
     // we intentionally don't charge gas for these opcodes
     // to keep full compatibility with an EVM deployment process
@@ -73,21 +83,32 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     let code_hash = sdk.storage(&Into::<U256>::into(CODE_HASH_SLOT));
     assert!(code_hash.is_ok(), "evm: can't retrieve evm code hash");
 
+    debug_log!("code_hash: {:?}", code_hash.data);
     let evm_bytecode = sdk.preimage(&code_hash.data.into());
+    debug_log!("preimage_size: {:?}", evm_bytecode.len());
     let evm_bytecode = Bytecode::new_raw(evm_bytecode);
     let input: Bytes = sdk.input().into();
+    debug_log!("input_size: {:?}", input.len());
 
     let gas_limit = sdk.fuel() / FUEL_DENOM_RATE;
     debug_log!("gas_limit: {:?}", gas_limit);
 
-    let result = exec_evm_bytecode(&mut sdk, evm_bytecode, input, gas_limit);
+    let mut result = exec_evm_bytecode(&mut sdk, evm_bytecode, input, gas_limit);
 
     debug_log!("result: {:?}", result.result);
     debug_log!("gas: {:?}", result.gas);
     debug_log!("gas_spent: {:?}", result.gas.spent());
     debug_log!("output: {:?}", result.output);
 
-    sdk.charge_fuel(result.gas.spent() * FUEL_DENOM_RATE);
+    // calculate the final gas charge for the call
+    debug_log!("refund: {}", result.gas.refunded());
+    // result.gas.set_final_refund(true);
+    // debug_log!("final_refund: {}", result.gas.refunded());
+    debug_log!(
+        "final_gas: {}",
+        result.gas.spent() - result.gas.refunded() as u64
+    );
+    sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
 
     if !result.is_ok() {
         sdk.write(result.output.as_ref());

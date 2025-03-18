@@ -149,17 +149,18 @@ impl NativeAPI for RwasmContext {
         input: &[u8],
         fuel_limit: u64,
         state: u32,
-    ) -> (u32, i32) {
+    ) -> (u64, i64, i32) {
         let code_hash: BytecodeOrHash = code_hash.into();
         unsafe {
-            let exec_result = _exec(
+            let mut fuel_info: [i64; 2] = [fuel_limit as i64, 0];
+            let exit_code = _exec(
                 code_hash.resolve_hash().as_ptr(),
                 input.as_ptr(),
                 input.len() as u32,
-                fuel_limit,
+                &mut fuel_info as *mut [i64; 2],
                 state,
             );
-            (exec_result.fuel_consumed(), exec_result.exit_code())
+            (fuel_info[0] as u64, fuel_info[1], exit_code)
         }
     }
 
@@ -169,17 +170,19 @@ impl NativeAPI for RwasmContext {
         call_id: u32,
         return_data: &[u8],
         exit_code: i32,
-        fuel_consumed: u32,
-    ) -> (u32, i32) {
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+    ) -> (u64, i64, i32) {
         unsafe {
-            let exec_result = _resume(
+            let mut fuel_info: [i64; 2] = [fuel_consumed as i64, fuel_refunded];
+            let exit_code = _resume(
                 call_id,
                 return_data.as_ptr(),
                 return_data.len() as u32,
                 exit_code,
-                fuel_consumed,
+                &mut fuel_info as *mut [i64; 2],
             );
-            (exec_result.fuel_consumed(), exec_result.exit_code())
+            (fuel_info[0] as u64, fuel_info[1], exit_code)
         }
     }
 

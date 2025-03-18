@@ -7,6 +7,7 @@ use revm_interpreter::{
     primitives::SpecId,
     push,
     push_b256,
+    refund,
     InstructionResult,
     Interpreter,
 };
@@ -14,8 +15,8 @@ use revm_interpreter::{
 pub(crate) const BASE_SPEC: SpecId = SpecId::CANCUN;
 
 pub(crate) fn insert_create_outcome(interpreter: &mut Interpreter, result: SyscallResult<Bytes>) {
-    gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
-    // TODO(dmitry123): "add support of refunds"
+    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
+    refund!(interpreter, result.fuel_refunded / FUEL_DENOM_RATE as i64);
     match result.status {
         SyscallStatus::Ok => {
             assert_eq!(result.data.len(), 20);
@@ -26,7 +27,7 @@ pub(crate) fn insert_create_outcome(interpreter: &mut Interpreter, result: Sysca
             interpreter.return_data_buffer = result.data;
             push_b256!(interpreter, B256::ZERO);
         }
-        SyscallStatus::Error => {
+        SyscallStatus::Err => {
             push_b256!(interpreter, B256::ZERO);
         }
     }
@@ -43,8 +44,8 @@ pub(crate) fn insert_call_outcome(
     let target_len = min(out_len, interpreter.return_data_buffer.len());
     match result.status {
         SyscallStatus::Ok => {
-            gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
-            // TODO(dmitry123): "add support of refunds"
+            gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
+            refund!(interpreter, result.fuel_refunded / FUEL_DENOM_RATE as i64);
             interpreter
                 .shared_memory
                 .set(out_offset, &interpreter.return_data_buffer[..target_len]);
@@ -58,7 +59,7 @@ pub(crate) fn insert_call_outcome(
             );
         }
         SyscallStatus::Revert => {
-            gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+            gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
             interpreter
                 .shared_memory
                 .set(out_offset, &interpreter.return_data_buffer[..target_len]);
@@ -71,8 +72,8 @@ pub(crate) fn insert_call_outcome(
                 }
             );
         }
-        SyscallStatus::Error => {
-            gas!(interpreter, result.fuel_used as u64 / FUEL_DENOM_RATE);
+        SyscallStatus::Err => {
+            gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
             push!(
                 interpreter,
                 if interpreter.is_eof {

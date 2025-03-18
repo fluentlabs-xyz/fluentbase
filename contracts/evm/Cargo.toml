@@ -22,4 +22,5 @@ std = [
     "fluentbase-sdk/std",
     "revm-interpreter/std",
 ]
+# just to disable warning from revm interpreter
 memory_limit = []
