@@ -53,6 +53,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
       - name: Cargo check
         run: cargo check
       - name: Generate code coverage
