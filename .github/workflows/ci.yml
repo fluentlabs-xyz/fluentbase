@@ -52,6 +52,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
       - name: Run cargo check
         run: cargo check
       - name: Generate code coverage
