@@ -1,4 +1,6 @@
-# Introduction to Fluentbase
+# Fluentbase Framework
+
+[![codecov](https://codecov.io/github/fluentlabs-xyz/fluentbase/graph/badge.svg?token=FCA43Y60LW)](https://codecov.io/github/fluentlabs-xyz/fluentbase)
 
 Fluentbase is a framework that introduces an SDK and a proving system for Fluent State Transition Functions (STF). The
 framework can be used by developers to create shared applications (aka smart contracts), dedicated applications, system
