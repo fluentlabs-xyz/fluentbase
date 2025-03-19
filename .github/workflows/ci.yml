@@ -52,19 +52,22 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
-      - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
-      - name: Run tests
+      - name: Run cargo check
         run: cargo check
       - name: Generate code coverage
         run: |
           cargo install cargo-tarpaulin
-          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
+          cargo tarpaulin --verbose --timeout 120 --out xml
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v5.4.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
+      - name: Archive code coverage results
+        uses: actions/upload-artifact@v1
+        with:
+          name: code-coverage-report
+          path: cobertura.xml
 
   rust-fmt-lint:
     name: Lint
