@@ -18,8 +18,14 @@ jobs:
         with:
           toolchain: nightly
           override: true
-      - name: Build
-        run: cargo build --verbose
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Run tests
         run: cargo test --verbose
         env:
