@@ -53,6 +53,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
+      - name: Cargo check
+        run: cargo check
       - name: Generate code coverage
         run: |
           cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
@@ -82,7 +84,7 @@ jobs:
         continue-on-error: true
 
   evm-e2e-tests:
-    name: REVM E2E Tests
+    name: EVM Testing Suite
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 40
