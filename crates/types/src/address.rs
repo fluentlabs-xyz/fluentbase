@@ -198,7 +198,7 @@ mod tests {
             _input: &[u8],
             _fuel_limit: u64,
             _state: u32,
-        ) -> (u32, i32) {
+        ) -> (u64, i64, i32) {
             todo!()
         }
 
@@ -207,8 +207,9 @@ mod tests {
             _call_id: u32,
             _return_data: &[u8],
             _exit_code: i32,
-            _fuel_used: u32,
-        ) -> (u32, i32) {
+            _fuel_consumed: u64,
+            _fuel_refunded: i64,
+        ) -> (u64, i64, i32) {
             todo!()
         }
 
