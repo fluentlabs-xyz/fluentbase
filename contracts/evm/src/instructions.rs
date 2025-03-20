@@ -314,14 +314,14 @@ pub fn exec_evm_bytecode<SDK: SharedAPI>(
     while interpreter.instruction_result == InstructionResult::Continue {
         let opcode = unsafe { *interpreter.instruction_pointer };
         interpreter.instruction_pointer = unsafe { interpreter.instruction_pointer.offset(1) };
-        let opcode_info = OPCODE_INFO_JUMPTABLE[opcode as usize]
-            .unwrap_or_else(|| unreachable!("unknown opcode: ({:?})", opcode));
-        debug_log!(
-            "({:04X}) {} (0x{:02X})",
-            interpreter.program_counter() - 1,
-            opcode_info.name(),
-            opcode
-        );
+        // let opcode_info = OPCODE_INFO_JUMPTABLE[opcode as usize]
+        //     .unwrap_or_else(|| unreachable!("unknown opcode: ({:?})", opcode));
+        // debug_log!(
+        //     "({:04X}) {} (0x{:02X})",
+        //     interpreter.program_counter() - 1,
+        //     opcode_info.name(),
+        //     opcode
+        // );
         instruction_table[opcode as usize](&mut interpreter, sdk)
     }
     if interpreter.next_action.is_some() {

@@ -40,6 +40,15 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log!("output_len: {:?}", result.output.len());
 
     if !result.is_ok() {
+        // calculate the final gas charge for the call
+        debug_log!("refund: {}", result.gas.refunded());
+        // result.gas.set_final_refund(true);
+        // debug_log!("final_refund: {}", result.gas.refunded());
+        debug_log!(
+            "final_gas: {}",
+            result.gas.spent() - result.gas.refunded() as u64
+        );
+        sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
         sdk.write(result.output.as_ref());
         // we encode EVM error as negative from our error code
         debug_log!("result_code: {:?}", result.result);
@@ -111,6 +120,15 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
 
     if !result.is_ok() {
+        // calculate the final gas charge for the call
+        debug_log!("refund: {}", result.gas.refunded());
+        // result.gas.set_final_refund(true);
+        // debug_log!("final_refund: {}", result.gas.refunded());
+        debug_log!(
+            "final_gas: {}",
+            result.gas.spent() - result.gas.refunded() as u64
+        );
+        sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
         sdk.write(result.output.as_ref());
         // we encode EVM error as negative from our error code
         debug_log!("result_code: {:?}", result.result);

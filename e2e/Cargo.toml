@@ -40,7 +40,7 @@ fluentbase-examples-json = { path = "../examples/json" }
 fluentbase-examples-nitro-verifier = { path = "../examples/nitro-verifier" }
 
 [features]
-default = ["std", "fluentbase-runtime/debug-print"]
+default = ["std"]
 std = [
     "fluentbase-runtime/std",
     "fluentbase-sdk/std",
