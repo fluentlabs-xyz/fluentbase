@@ -117,7 +117,7 @@ impl SharedAPI for TestingContext {
             .borrow_mut()
             .persistent_storage
             .insert((target_address, slot), value);
-        SyscallResult::ok((), 0, 0)
+        SyscallResult::new((), 0, 0, 0)
     }
 
     fn storage(&self, slot: &U256) -> SyscallResult<U256> {
@@ -129,7 +129,7 @@ impl SharedAPI for TestingContext {
             .get(&(target_address, *slot))
             .cloned()
             .unwrap_or_default();
-        SyscallResult::ok(value, 0, 0)
+        SyscallResult::new(value, 0, 0, 0)
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
@@ -138,7 +138,7 @@ impl SharedAPI for TestingContext {
             .borrow_mut()
             .transient_storage
             .insert((target_address, slot), value);
-        SyscallResult::ok((), 0, 0)
+        SyscallResult::new((), 0, 0, 0)
     }
 
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256> {
@@ -150,7 +150,7 @@ impl SharedAPI for TestingContext {
             .get(&(target_address, *slot))
             .cloned()
             .unwrap_or_default();
-        SyscallResult::ok(value, 0, 0)
+        SyscallResult::new(value, 0, 0, 0)
     }
 
     fn ext_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256> {
@@ -161,14 +161,14 @@ impl SharedAPI for TestingContext {
             .get(&(*address, *slot))
             .cloned()
             .unwrap_or_default();
-        SyscallResult::ok(value, 0, 0)
+        SyscallResult::new(value, 0, 0, 0)
     }
 
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) -> SyscallResult<()> {
         if let Some(preimage) = self.inner.borrow().preimages.get(hash) {
             target.copy_from_slice(preimage.as_ref());
         }
-        SyscallResult::ok((), 0, 0)
+        SyscallResult::new((), 0, 0, 0)
     }
 
     fn preimage_size(&self, hash: &B256) -> SyscallResult<u32> {
@@ -179,12 +179,12 @@ impl SharedAPI for TestingContext {
             .get(hash)
             .map(|v| v.len() as u32)
             .unwrap_or_default();
-        SyscallResult::ok(preimage_size, 0, 0)
+        SyscallResult::new(preimage_size, 0, 0, 0)
     }
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]) -> SyscallResult<()> {
         self.inner.borrow_mut().logs.push((data, topics.to_vec()));
-        SyscallResult::ok((), 0, 0)
+        SyscallResult::new((), 0, 0, 0)
     }
 
     fn self_balance(&self) -> SyscallResult<U256> {
@@ -210,7 +210,7 @@ impl SharedAPI for TestingContext {
     fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256> {
         let hash = self.keccak256(preimage.as_ref());
         self.inner.borrow_mut().preimages.insert(hash, preimage);
-        SyscallResult::ok(hash, 0, 0)
+        SyscallResult::new(hash, 0, 0, 0)
     }
 
     fn create(

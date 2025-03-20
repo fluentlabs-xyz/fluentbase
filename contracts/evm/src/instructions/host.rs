@@ -1,6 +1,7 @@
+use crate::unwrap_syscall;
 use alloc::{vec, vec::Vec};
 use core::cmp::min;
-use fluentbase_sdk::{BlockContextReader, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::{BlockContextReader, SharedAPI, SyscallStatus, FUEL_DENOM_RATE};
 use revm_interpreter::{
     as_u64_saturated,
     as_usize_or_fail,
@@ -21,43 +22,41 @@ use revm_interpreter::{
 
 pub fn balance<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
-    let result = sdk.balance(&address);
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
-    push!(interpreter, result.data);
+    let result = unwrap_syscall!(interpreter, sdk.balance(&address));
+    push!(interpreter, result);
 }
 
 /// EIP-1884: Repricing for trie-size-dependent opcodes
 pub fn selfbalance<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
-    let result = sdk.self_balance();
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
-    push!(interpreter, result.data);
+    let result = unwrap_syscall!(interpreter, sdk.self_balance());
+    push!(interpreter, result);
 }
 
 pub fn extcodesize<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
-    let result = sdk.code_size(&address);
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
-    push!(interpreter, U256::from(result.data));
+    let result = unwrap_syscall!(interpreter, sdk.code_size(&address));
+    push!(interpreter, U256::from(result));
 }
 
 /// EIP-1052: EXTCODEHASH opcode
 pub fn extcodehash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
-    let result = sdk.code_hash(&address);
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
-    push_b256!(interpreter, result.data);
+    let result = unwrap_syscall!(interpreter, sdk.code_hash(&address));
+    push_b256!(interpreter, result);
 }
 
 pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
     pop!(interpreter, memory_offset, code_offset, len_u256);
-    let result = sdk.code_size(&address);
+    let result = unwrap_syscall!(interpreter, sdk.code_size(&address));
     let memory_offset = as_usize_or_fail!(interpreter, memory_offset);
-    let code_offset = min(as_usize_saturated!(code_offset), result.data as usize);
+    let code_offset = min(as_usize_saturated!(code_offset), result as usize);
     let len = as_usize_or_fail!(interpreter, len_u256);
     let mut buffer = vec![0u8; len];
-    let result = sdk.code_copy(&address, code_offset as u32, &mut buffer);
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
+    unwrap_syscall!(
+        interpreter,
+        sdk.code_copy(&address, code_offset as u32, &mut buffer)
+    );
     if len == 0 {
         return;
     }
@@ -87,17 +86,14 @@ pub fn blockhash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
 
 pub fn sload<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_top!(interpreter, index);
-    let result = sdk.storage(&index);
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
-    *index = result.data;
+    let result = unwrap_syscall!(interpreter, sdk.storage(&index));
+    *index = result;
 }
 
 pub fn sstore<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     require_non_staticcall!(interpreter);
     pop!(interpreter, index, value);
-    let result = sdk.write_storage(index, value);
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
-    refund!(interpreter, result.fuel_refunded / FUEL_DENOM_RATE as i64);
+    unwrap_syscall!(interpreter, sdk.write_storage(index, value));
 }
 
 /// EIP-1153: Transient storage opcodes
@@ -105,17 +101,15 @@ pub fn sstore<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
 pub fn tstore<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     require_non_staticcall!(interpreter);
     pop!(interpreter, index, value);
-    let result = sdk.write_transient_storage(index, value);
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
+    unwrap_syscall!(interpreter, sdk.write_transient_storage(index, value));
 }
 
 /// EIP-1153: Transient storage opcodes
 /// Load value from transient storage
 pub fn tload<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_top!(interpreter, index);
-    let result = sdk.transient_storage(index);
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
-    *index = result.data;
+    let result = unwrap_syscall!(interpreter, sdk.transient_storage(index));
+    *index = result;
 }
 
 pub fn log<const N: usize, SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
@@ -139,14 +133,12 @@ pub fn log<const N: usize, SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &
         // SAFETY: stack bounds already checked few lines above
         topics.push(B256::from(unsafe { interpreter.stack.pop_unsafe() }));
     }
-    let result = sdk.emit_log(data, &topics);
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
+    unwrap_syscall!(interpreter, sdk.emit_log(data.clone(), &topics));
 }
 
 pub fn selfdestruct<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     require_non_staticcall!(interpreter);
     pop_address!(interpreter, target);
-    let result = sdk.destroy_account(target);
-    gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
+    unwrap_syscall!(interpreter, sdk.destroy_account(target));
     interpreter.instruction_result = InstructionResult::SelfDestruct;
 }

@@ -93,7 +93,7 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     let gas_limit = sdk.fuel() / FUEL_DENOM_RATE;
     debug_log!("gas_limit: {:?}", gas_limit);
 
-    let mut result = exec_evm_bytecode(&mut sdk, evm_bytecode, input, gas_limit);
+    let result = exec_evm_bytecode(&mut sdk, evm_bytecode, input, gas_limit);
 
     debug_log!("result: {:?}", result.result);
     debug_log!("gas: {:?}", result.gas);

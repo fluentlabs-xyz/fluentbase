@@ -27,7 +27,7 @@ pub(crate) fn insert_create_outcome(interpreter: &mut Interpreter, result: Sysca
             interpreter.return_data_buffer = result.data;
             push_b256!(interpreter, B256::ZERO);
         }
-        SyscallStatus::Err => {
+        _ => {
             push_b256!(interpreter, B256::ZERO);
         }
     }
@@ -72,7 +72,7 @@ pub(crate) fn insert_call_outcome(
                 }
             );
         }
-        SyscallStatus::Err => {
+        SyscallStatus::Err | SyscallStatus::OutOfGas => {
             gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
             push!(
                 interpreter,
@@ -110,4 +110,36 @@ pub(crate) unsafe fn read_i16(ptr: *const u8) -> i16 {
 
 pub(crate) unsafe fn read_u16(ptr: *const u8) -> u16 {
     u16::from_be_bytes(core::slice::from_raw_parts(ptr, 2).try_into().unwrap())
+}
+
+#[macro_export]
+macro_rules! unwrap_syscall {
+    ($interpreter:expr, $result:expr) => {{
+        gas!(
+            $interpreter,
+            $result.fuel_consumed / fluentbase_sdk::FUEL_DENOM_RATE
+        );
+        if $result.fuel_refunded > 0 {
+            refund!(
+                $interpreter,
+                $result.fuel_refunded / fluentbase_sdk::FUEL_DENOM_RATE as i64
+            );
+        }
+        match $result.status {
+            SyscallStatus::Ok => {}
+            SyscallStatus::Revert => {
+                $interpreter.instruction_result = InstructionResult::Revert;
+                return;
+            }
+            SyscallStatus::Err => {
+                $interpreter.instruction_result = InstructionResult::FatalExternalError;
+                return;
+            }
+            SyscallStatus::OutOfGas => {
+                $interpreter.instruction_result = InstructionResult::OutOfGas;
+                return;
+            }
+        }
+        $result.data
+    }};
 }

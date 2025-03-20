@@ -114,12 +114,13 @@ pub struct SyscallInvocationParams {
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(i8)]
+#[repr(i32)]
 pub enum SyscallStatus {
     #[default]
     Ok = 0,
     Revert = -1,
     Err = -2,
+    OutOfGas = -3,
 }
 
 impl From<i32> for SyscallStatus {
@@ -128,6 +129,7 @@ impl From<i32> for SyscallStatus {
             0 => Self::Ok,
             -1 => Self::Revert,
             -2 => Self::Err,
+            -3 => Self::OutOfGas,
             _ => unreachable!("invalid syscall status: {}", value),
         }
     }
@@ -156,14 +158,7 @@ impl<T> SyscallResult<T> {
             status,
         }
     }
-    pub fn ok(data: T, fuel_consumed: u64, fuel_refunded: i64) -> Self {
-        Self {
-            data,
-            fuel_consumed,
-            fuel_refunded,
-            status: SyscallStatus::Ok,
-        }
-    }
+
     pub fn is_ok(&self) -> bool {
         self.status == SyscallStatus::Ok
     }
@@ -216,8 +211,10 @@ pub trait SharedAPI {
 
     fn preimage(&self, hash: &B256) -> Bytes {
         let preimage_size = self.preimage_size(hash);
+        assert!(preimage_size.is_ok(), "sdk: preimage size is not ok");
         let mut buffer = alloc_vec(preimage_size.data as usize);
-        self.preimage_copy(hash, &mut buffer);
+        let result = self.preimage_copy(hash, &mut buffer);
+        assert!(result.is_ok(), "sdk: preimage copy is not ok");
         buffer.into()
     }
 
