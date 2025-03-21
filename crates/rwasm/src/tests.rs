@@ -1,5 +1,4 @@
 use crate::{RwasmExecutor, SimpleCallContext, SimpleCallHandler};
-use core::str::from_utf8;
 use rwasm::rwasm::RwasmModule;
 
 #[allow(unused)]
@@ -34,11 +33,11 @@ fn trace_rwasm(rwasm_bytecode: &[u8]) {
 
 #[test]
 fn test_execute_rwasm_bytecode() {
-    let greeting_rwasm = include_bytes!("../../../examples/greeting/lib.rwasm");
+    let greeting_rwasm = include_bytes!("../../../examples/greeting/lib.wasm");
     trace_rwasm(greeting_rwasm);
     let mut executor = RwasmExecutor::<SimpleCallHandler, SimpleCallContext>::parse(
         greeting_rwasm,
-        None,
+        crate::ExecutorConfig::default(),
         SimpleCallContext::default(),
     )
     .unwrap();

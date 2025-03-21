@@ -373,6 +373,7 @@ impl Runtime {
                     .fuel_limit(runtime_context.fuel_limit)
                     .tracer_enabled(runtime_context.trace),
                 runtime_context,
+                false,
             );
             Self { executor }
         })

@@ -265,6 +265,7 @@ impl TestContext<'_> {
             rwasm_module.instantiate(),
             ExecutorConfig::new().floats_enabled(false),
             TestingContext::default(),
+            false,
         );
         executor.store_mut().context_mut().state = ENTRYPOINT_FUNC_IDX;
         println!(" --- entrypoint ---");

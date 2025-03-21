@@ -32,9 +32,36 @@ use rwasm::{
 pub struct RwasmExecutor<E: SyscallHandler<T>, T> {
     pub(crate) store: RwasmContext<T>,
     phantom_data: PhantomData<E>,
+    pub(crate) dtc_table: Option<[fn(&mut RwasmExecutor<E, T>) -> !; 256]>,
 }
 
 impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
+
+    pub(crate) fn next_instr(exec: &mut RwasmExecutor<E, T>) -> ! {
+        let instr_idx = exec.store.dtc_code[exec.store.dtc_ip];
+        let handler = exec.dtc_table.as_ref().unwrap()[instr_idx];
+        handler(exec)
+    }
+
+    fn dtc_unimplemented_instr(_exec: &mut RwasmExecutor<E, T>) -> ! {
+        panic!("Unimplemented instruction");
+    }
+
+    fn build_dtc_table() -> [fn(&mut RwasmExecutor<E, T>) -> !; 256] {
+        let mut table: [fn(&mut RwasmExecutor<E, T>) -> !; 256] = [Self::dtc_unimplemented_instr; 256];
+        table[0x03] = Self::dtc_local_tee;
+        // [TODO:gmm] ...
+        table
+    }
+
+    fn dtc_local_tee(exec: &mut RwasmExecutor<E, T>) -> ! {
+        let local_depth = exec.store.dtc_code[exec.store.dtc_ip + 1];
+        let new_value = exec.store.sp.last();
+        exec.store.sp.set_nth_back(local_depth, new_value);
+        exec.store.dtc_ip += 2;
+        Self::next_instr(exec);
+    }
+
     pub fn parse(
         rwasm_bytecode: &[u8],
         config: ExecutorConfig,
@@ -44,14 +71,16 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             RwasmModule::new_or_empty(rwasm_bytecode)?.instantiate(),
             config,
             context,
+            true,
         ))
     }
 
-    pub fn new(rwasm_module: RwasmModuleInstance, config: ExecutorConfig, context: T) -> Self {
-        let store = RwasmContext::new(rwasm_module, config, context);
+    pub fn new(rwasm_module: RwasmModuleInstance, config: ExecutorConfig, context: T, use_dtc: bool) -> Self {
+        let store = RwasmContext::new(rwasm_module, config, context, use_dtc);
         Self {
             store,
             phantom_data: Default::default(),
+            dtc_table: if use_dtc { Some(Self::build_dtc_table()) } else { None },
         }
     }
 

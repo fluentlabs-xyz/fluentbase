@@ -9,6 +9,8 @@ mod handler;
 mod opcodes;
 mod types;
 mod utils;
+mod tests;
+mod dtc;
 
 extern crate alloc;
 extern crate core;

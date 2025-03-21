@@ -22,6 +22,8 @@ use rwasm::{
     table::{ElementSegmentEntity, TableEntity},
     MemoryType,
 };
+use rwasm::engine::bytecode::Instruction;
+use rwasm::rwasm::instruction::InstructionExtra;
 
 pub struct RwasmContext<T> {
     // function segments
@@ -45,10 +47,14 @@ pub struct RwasmContext<T> {
     pub(crate) call_stack: Vec<InstructionPtr>,
     // the last used signature (needed for indirect calls type checks)
     pub(crate) last_signature: Option<SignatureIdx>,
+    // DTC
+    pub(crate) use_dtc: bool,           // Флаг для переключения на DTC
+    pub(crate) dtc_code: Vec<usize>,    // Массив DTC-кода
+    pub(crate) dtc_ip: usize,           // Указатель на текущую позицию в dtc_code
 }
 
 impl<T> RwasmContext<T> {
-    pub fn new(instance: RwasmModuleInstance, config: ExecutorConfig, context: T) -> Self {
+    pub fn new(instance: RwasmModuleInstance, config: ExecutorConfig, context: T, use_dtc: bool) -> Self {
         // create stack with sp
         let mut value_stack = ValueStack::new(N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE);
         let sp = value_stack.stack_ptr();
@@ -92,7 +98,7 @@ impl<T> RwasmContext<T> {
             None
         };
 
-        Self {
+        let mut context = Self {
             instance,
             config,
             consumed_fuel: 0,
@@ -109,7 +115,41 @@ impl<T> RwasmContext<T> {
             elements: element_segments,
             call_stack: vec![],
             last_signature: None,
+            use_dtc,
+            dtc_code: vec![],
+            dtc_ip: 0,
+        };
+
+        // Если DTC включен, преобразуем инструкции в dtc_code
+        if use_dtc {
+            context.instantiate_dtc();
         }
+
+        context
+    }
+
+    // Метод для преобразования инструкций в DTC-код
+    fn instantiate_dtc(&mut self) {
+        self.dtc_code = Vec::with_capacity(self.instance.module.code_section.instr.len());
+        for instr in &self.instance.module.code_section.instr {
+            // Добавляем код инструкции как индекс в таблицe диспетчеризации
+            self.dtc_code.push(instr.code_value() as usize);
+            // Добавляем immediate-значения, если они есть
+            match instr {
+                Instruction::Br(offset) => self.dtc_code.push((*offset).to_i32() as usize),
+                Instruction::I32Const(value) => self.dtc_code.push((*value).as_u32() as usize),
+                Instruction::I64Const(value) => {
+                    // Для 64-битных значений разбиваем на два 32-битных слова
+                    let low = ((*value).as_u64() & 0xFFFFFFFF) as usize;
+                    let high = ((*value).as_u64() >> 32) as usize;
+                    self.dtc_code.push(low);
+                    self.dtc_code.push(high);
+                }
+                // [TODO:gmm] Другие инструкции с immediate-значениями добавить
+                _ => {}
+            }
+        }
+        self.dtc_ip = self.instance.start as usize; // Устан. начальную позицию
     }
 
     pub fn program_counter(&self) -> u32 {
