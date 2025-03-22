@@ -147,12 +147,12 @@ impl NativeAPI for RwasmContext {
         &self,
         code_hash: I,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32) {
         let code_hash: BytecodeOrHash = code_hash.into();
         unsafe {
-            let mut fuel_info: [i64; 2] = [fuel_limit as i64, 0];
+            let mut fuel_info: [i64; 2] = [fuel_limit.unwrap_or(u64::MAX) as i64, 0];
             let exit_code = _exec(
                 code_hash.resolve_hash().as_ptr(),
                 input.as_ptr(),

@@ -153,12 +153,18 @@ impl SharedAPI for TestingContext {
         SyscallResult::new(value, 0, 0, 0)
     }
 
-    fn ext_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256> {
+    fn ext_storage(&self, slot: &U256) -> SyscallResult<U256> {
+        let bytecode_address = self
+            .inner
+            .borrow()
+            .shared_context_input_v1
+            .contract
+            .bytecode_address;
         let value = self
             .inner
             .borrow()
             .persistent_storage
-            .get(&(*address, *slot))
+            .get(&(bytecode_address, *slot))
             .cloned()
             .unwrap_or_default();
         SyscallResult::new(value, 0, 0, 0)
@@ -203,7 +209,12 @@ impl SharedAPI for TestingContext {
         panic!("not supported for testing context")
     }
 
-    fn code_copy(&self, _address: &Address, _offset: u32, _target: &mut [u8]) -> SyscallResult<()> {
+    fn code_copy(
+        &self,
+        _address: &Address,
+        _code_offset: u64,
+        _target: &mut [u8],
+    ) -> SyscallResult<()> {
         panic!("not supported for testing context")
     }
 
@@ -227,7 +238,7 @@ impl SharedAPI for TestingContext {
         _address: Address,
         _value: U256,
         _input: &[u8],
-        _fuel_limit: u64,
+        _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }
@@ -237,7 +248,7 @@ impl SharedAPI for TestingContext {
         _address: Address,
         _value: U256,
         _input: &[u8],
-        _fuel_limit: u64,
+        _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }
@@ -246,7 +257,7 @@ impl SharedAPI for TestingContext {
         &mut self,
         _address: Address,
         _input: &[u8],
-        _fuel_limit: u64,
+        _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }
@@ -255,7 +266,7 @@ impl SharedAPI for TestingContext {
         &mut self,
         _address: Address,
         _input: &[u8],
-        _fuel_limit: u64,
+        _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }

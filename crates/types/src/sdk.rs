@@ -52,7 +52,7 @@ pub trait NativeAPI {
         &self,
         code_hash: I,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32);
     fn resume(
@@ -204,7 +204,7 @@ pub trait SharedAPI {
     fn storage(&self, slot: &U256) -> SyscallResult<U256>;
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;
-    fn ext_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256>;
+    fn ext_storage(&self, slot: &U256) -> SyscallResult<U256>;
 
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) -> SyscallResult<()>;
     fn preimage_size(&self, hash: &B256) -> SyscallResult<u32>;
@@ -224,7 +224,12 @@ pub trait SharedAPI {
     fn balance(&self, address: &Address) -> SyscallResult<U256>;
     fn code_size(&self, address: &Address) -> SyscallResult<u32>;
     fn code_hash(&self, address: &Address) -> SyscallResult<B256>;
-    fn code_copy(&self, address: &Address, offset: u32, target: &mut [u8]) -> SyscallResult<()>;
+    fn code_copy(
+        &self,
+        address: &Address,
+        code_offset: u64,
+        target: &mut [u8],
+    ) -> SyscallResult<()>;
     fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256>;
     fn create(
         &mut self,
@@ -237,26 +242,26 @@ pub trait SharedAPI {
         address: Address,
         value: U256,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes>;
     fn call_code(
         &mut self,
         address: Address,
         value: U256,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes>;
     fn delegate_call(
         &mut self,
         address: Address,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes>;
     fn static_call(
         &mut self,
         address: Address,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes>;
     fn destroy_account(&mut self, address: Address) -> SyscallResult<()>;
 }

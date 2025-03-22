@@ -371,7 +371,12 @@ pub fn call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
-    let result = sdk.call(to, value, input.as_ref(), local_gas_limit * FUEL_DENOM_RATE);
+    let result = sdk.call(
+        to,
+        value,
+        input.as_ref(),
+        Some(local_gas_limit * FUEL_DENOM_RATE),
+    );
     insert_call_outcome(interpreter, result, return_memory_offset);
 }
 
@@ -384,7 +389,12 @@ pub fn call_code<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
-    let result = sdk.call_code(to, value, input.as_ref(), local_gas_limit * FUEL_DENOM_RATE);
+    let result = sdk.call_code(
+        to,
+        value,
+        input.as_ref(),
+        Some(local_gas_limit * FUEL_DENOM_RATE),
+    );
     insert_call_outcome(interpreter, result, return_memory_offset);
 }
 
@@ -396,7 +406,7 @@ pub fn delegate_call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SD
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
-    let result = sdk.delegate_call(to, input.as_ref(), local_gas_limit * FUEL_DENOM_RATE);
+    let result = sdk.delegate_call(to, input.as_ref(), Some(local_gas_limit * FUEL_DENOM_RATE));
     insert_call_outcome(interpreter, result, return_memory_offset);
 }
 
@@ -408,6 +418,6 @@ pub fn static_call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
-    let result = sdk.static_call(to, input.as_ref(), local_gas_limit * FUEL_DENOM_RATE);
+    let result = sdk.static_call(to, input.as_ref(), Some(local_gas_limit * FUEL_DENOM_RATE));
     insert_call_outcome(interpreter, result, return_memory_offset);
 }

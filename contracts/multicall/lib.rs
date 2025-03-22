@@ -41,7 +41,7 @@ pub fn main(mut sdk: impl SharedAPI) {
     // Execute each call
     for call_data in data {
         let chunk = call_data.chunk();
-        let result = sdk.delegate_call(target_addr, chunk, 0);
+        let result = sdk.delegate_call(target_addr, chunk, None);
         if !result.is_ok() {
             panic!("multicall: delegate call failed");
         }

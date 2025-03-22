@@ -1,7 +1,7 @@
 use crate::unwrap_syscall;
 use alloc::{vec, vec::Vec};
 use core::cmp::min;
-use fluentbase_sdk::{BlockContextReader, SharedAPI, SyscallStatus, FUEL_DENOM_RATE};
+use fluentbase_sdk::{BlockContextReader, SharedAPI, SyscallStatus};
 use revm_interpreter::{
     as_u64_saturated,
     as_usize_or_fail,
@@ -48,14 +48,15 @@ pub fn extcodehash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
 pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
     pop!(interpreter, memory_offset, code_offset, len_u256);
-    let result = unwrap_syscall!(interpreter, sdk.code_size(&address));
+    // TODO(dmitry123): "what if `code_size` fails with OutOfFuel?"
+    let result = unwrap_syscall!(@gasless interpreter, sdk.code_size(&address));
     let memory_offset = as_usize_or_fail!(interpreter, memory_offset);
     let code_offset = min(as_usize_saturated!(code_offset), result as usize);
     let len = as_usize_or_fail!(interpreter, len_u256);
     let mut buffer = vec![0u8; len];
     unwrap_syscall!(
         interpreter,
-        sdk.code_copy(&address, code_offset as u32, &mut buffer)
+        sdk.code_copy(&address, code_offset as u64, &mut buffer)
     );
     if len == 0 {
         return;
@@ -116,7 +117,6 @@ pub fn log<const N: usize, SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &
     require_non_staticcall!(interpreter);
     pop!(interpreter, offset, len);
     let len = as_usize_or_fail!(interpreter, len);
-    // gas_or_fail!(interpreter, gas::log_cost(N as u8, len as u64));
     let data = if len != 0 {
         let offset = as_usize_or_fail!(interpreter, offset);
         resize_memory!(interpreter, offset, len);

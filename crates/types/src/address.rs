@@ -196,7 +196,7 @@ mod tests {
             &self,
             _code_hash: I,
             _input: &[u8],
-            _fuel_limit: u64,
+            _fuel_limit: Option<u64>,
             _state: u32,
         ) -> (u64, i64, i32) {
             todo!()

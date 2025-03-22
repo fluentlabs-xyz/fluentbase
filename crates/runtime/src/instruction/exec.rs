@@ -9,7 +9,10 @@ use fluentbase_types::{
     B256,
     CALL_STACK_LIMIT,
 };
-use std::fmt::{Debug, Display, Formatter};
+use std::{
+    cmp::min,
+    fmt::{Debug, Display, Formatter},
+};
 
 pub struct SyscallExec;
 
@@ -37,6 +40,7 @@ impl HostError for SysExecResumable {}
 
 impl SyscallExec {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let remaining_fuel = caller.store().remaining_fuel().unwrap_or(u64::MAX);
         let [hash32_ptr, input_ptr, input_len, fuel16_ptr, state] = caller.stack_pop_n();
         // make sure we have enough fuel for this call
         let fuel16_ptr = fuel16_ptr.as_usize();
@@ -46,15 +50,15 @@ impl SyscallExec {
             let fuel_limit = LittleEndian::read_i64(&fuel_buffer[..8]) as u64;
             let _fuel_refund = LittleEndian::read_i64(&fuel_buffer[8..]);
             if fuel_limit > 0 {
-                if fuel_limit > caller.store().remaining_fuel().unwrap_or(u64::MAX) {
+                if fuel_limit != u64::MAX && fuel_limit > remaining_fuel {
                     return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
                 }
-                fuel_limit
+                min(fuel_limit, remaining_fuel)
             } else {
-                caller.store().remaining_fuel().unwrap_or(u64::MAX)
+                0
             }
         } else {
-            caller.store().remaining_fuel().unwrap_or(u64::MAX)
+            remaining_fuel
         };
         // return resumable error
         Err(RwasmError::HostInterruption(Box::new(SysExecResumable {

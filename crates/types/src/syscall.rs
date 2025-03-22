@@ -22,4 +22,4 @@ pub const SYSCALL_ID_TRANSIENT_WRITE: B256 = B256::with_last_byte(0x12);
 pub const SYSCALL_ID_WRITE_PREIMAGE: B256 = B256::with_last_byte(0x30);
 pub const SYSCALL_ID_PREIMAGE_COPY: B256 = B256::with_last_byte(0x31);
 pub const SYSCALL_ID_PREIMAGE_SIZE: B256 = B256::with_last_byte(0x32);
-pub const SYSCALL_ID_EXT_STORAGE_READ: B256 = B256::with_last_byte(0x33);
+pub const SYSCALL_ID_DELEGATED_STORAGE: B256 = B256::with_last_byte(0x33);

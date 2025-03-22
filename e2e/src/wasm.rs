@@ -195,3 +195,24 @@ fn test_wasm_erc20() {
     transfer_coin(&mut ctx);
     check_balance(&mut ctx, U256::from(2));
 }
+
+#[test]
+fn test_wasm_simple_storage() {
+    // deploy greeting WASM contract
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/simple-storage/lib.wasm").into(),
+    );
+    // call greeting WASM contract
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::default(),
+        None,
+        None,
+    );
+    println!("{:?}", result);
+    assert!(result.is_success());
+}

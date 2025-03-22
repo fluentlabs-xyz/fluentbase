@@ -11,18 +11,42 @@ use crate::instructions::exec_evm_bytecode;
 use core::ops::Neg;
 use fluentbase_sdk::{
     debug_log,
-    derive::derive_keccak256,
     func_entrypoint,
     Bytes,
+    ContractContextReader,
     ExitCode,
     SharedAPI,
-    B256,
+    CODE_HASH_SLOT,
     FUEL_DENOM_RATE,
+    KECCAK_EMPTY,
     U256,
 };
-use revm_interpreter::{gas, primitives::Bytecode, InstructionResult, MAX_CODE_SIZE};
+use revm_interpreter::{
+    gas,
+    primitives::Bytecode,
+    InstructionResult,
+    InterpreterResult,
+    MAX_CODE_SIZE,
+};
 
-const CODE_HASH_SLOT: B256 = B256::new(derive_keccak256!("_evm_code_hash"));
+fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult) {
+    // calculate the final gas charge for the call
+    debug_log!("refund: {}", result.gas.refunded());
+    // result.gas.set_final_refund(true);
+    // debug_log!("final_refund: {}", result.gas.refunded());
+    debug_log!(
+        "final_gas: {}",
+        result.gas.spent() - result.gas.refunded() as u64
+    );
+    sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
+    sdk.write(result.output.as_ref());
+    // we encode EVM error as negative from our error code
+    debug_log!("result_code: {:?}", result.result);
+    if result.is_revert() {
+        sdk.exit(ExitCode::Panic.into_i32());
+    }
+    sdk.exit((result.result as i32).neg());
+}
 
 pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     let input: Bytes = sdk.input().into();
@@ -40,22 +64,7 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log!("output_len: {:?}", result.output.len());
 
     if !result.is_ok() {
-        // calculate the final gas charge for the call
-        debug_log!("refund: {}", result.gas.refunded());
-        // result.gas.set_final_refund(true);
-        // debug_log!("final_refund: {}", result.gas.refunded());
-        debug_log!(
-            "final_gas: {}",
-            result.gas.spent() - result.gas.refunded() as u64
-        );
-        sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
-        sdk.write(result.output.as_ref());
-        // we encode EVM error as negative from our error code
-        debug_log!("result_code: {:?}", result.result);
-        if result.is_revert() {
-            sdk.exit(ExitCode::Panic.into_i32());
-        }
-        sdk.exit((result.result as i32).neg());
+        return handle_not_ok_result(sdk, result);
     }
 
     // EIP-3541 and EIP-170 checks
@@ -89,9 +98,15 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
 }
 
 pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
-    let code_hash = sdk.storage(&Into::<U256>::into(CODE_HASH_SLOT));
-    assert!(code_hash.is_ok(), "evm: can't retrieve evm code hash");
-
+    debug_log!("contract_address: {:?}", sdk.context().contract_address());
+    debug_log!(
+        "contract_bytecode_address: {:?}",
+        sdk.context().contract_bytecode_address()
+    );
+    let code_hash = sdk.ext_storage(&Into::<U256>::into(CODE_HASH_SLOT));
+    if code_hash.data == U256::ZERO || Into::<U256>::into(KECCAK_EMPTY) == code_hash.data {
+        return;
+    }
     debug_log!("code_hash: {:?}", code_hash.data);
     let evm_bytecode = sdk.preimage(&code_hash.data.into());
     debug_log!("preimage_size: {:?}", evm_bytecode.len());
@@ -120,22 +135,7 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
 
     if !result.is_ok() {
-        // calculate the final gas charge for the call
-        debug_log!("refund: {}", result.gas.refunded());
-        // result.gas.set_final_refund(true);
-        // debug_log!("final_refund: {}", result.gas.refunded());
-        debug_log!(
-            "final_gas: {}",
-            result.gas.spent() - result.gas.refunded() as u64
-        );
-        sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
-        sdk.write(result.output.as_ref());
-        // we encode EVM error as negative from our error code
-        debug_log!("result_code: {:?}", result.result);
-        if result.is_revert() {
-            sdk.exit(ExitCode::Panic.into_i32());
-        }
-        sdk.exit((result.result as i32).neg());
+        return handle_not_ok_result(sdk, result);
     }
 
     sdk.write(result.output.as_ref());

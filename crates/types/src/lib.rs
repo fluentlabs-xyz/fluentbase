@@ -60,3 +60,7 @@ pub const FUEL_DENOM_RATE: u64 = 1000;
 
 /// A max rWasm call stack limit
 pub const CALL_STACK_LIMIT: u32 = 1024;
+
+/// EVM code hash slot: `hash=keccak256("_evm_code_hash")`
+pub const CODE_HASH_SLOT: B256 =
+    b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113b");

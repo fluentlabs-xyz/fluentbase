@@ -125,7 +125,7 @@ impl ClientMethod {
                     contract_address,
                     value,
                     &input,
-                    gas_limit
+                    Some(gas_limit),
                 );
 
                 if !result.is_ok() {

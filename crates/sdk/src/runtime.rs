@@ -115,12 +115,17 @@ impl NativeAPI for RuntimeContextWrapper {
         &self,
         code_hash: I,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32) {
         let mut ctx = self.ctx.borrow_mut();
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            SyscallExec::fn_impl(&mut ctx, code_hash, input, fuel_limit, state);
+        let (fuel_consumed, fuel_refunded, exit_code) = SyscallExec::fn_impl(
+            &mut ctx,
+            code_hash,
+            input,
+            fuel_limit.unwrap_or(u64::MAX),
+            state,
+        );
         (fuel_consumed, fuel_refunded, exit_code)
     }
 

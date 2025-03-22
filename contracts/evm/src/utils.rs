@@ -115,17 +115,18 @@ pub(crate) unsafe fn read_u16(ptr: *const u8) -> u16 {
 #[macro_export]
 macro_rules! unwrap_syscall {
     ($interpreter:expr, $result:expr) => {{
+        let result = $result;
         gas!(
             $interpreter,
-            $result.fuel_consumed / fluentbase_sdk::FUEL_DENOM_RATE
+            result.fuel_consumed / fluentbase_sdk::FUEL_DENOM_RATE
         );
-        if $result.fuel_refunded > 0 {
+        if result.fuel_refunded > 0 {
             refund!(
                 $interpreter,
-                $result.fuel_refunded / fluentbase_sdk::FUEL_DENOM_RATE as i64
+                result.fuel_refunded / fluentbase_sdk::FUEL_DENOM_RATE as i64
             );
         }
-        match $result.status {
+        match result.status {
             SyscallStatus::Ok => {}
             SyscallStatus::Revert => {
                 $interpreter.instruction_result = InstructionResult::Revert;
@@ -140,6 +141,25 @@ macro_rules! unwrap_syscall {
                 return;
             }
         }
-        $result.data
+        result.data
+    }};
+    (@gasless $interpreter:expr, $result:expr) => {{
+        let result = $result;
+        match result.status {
+            SyscallStatus::Ok => {}
+            SyscallStatus::Revert => {
+                $interpreter.instruction_result = InstructionResult::Revert;
+                return;
+            }
+            SyscallStatus::Err => {
+                $interpreter.instruction_result = InstructionResult::FatalExternalError;
+                return;
+            }
+            SyscallStatus::OutOfGas => {
+                $interpreter.instruction_result = InstructionResult::OutOfGas;
+                return;
+            }
+        }
+        result.data
     }};
 }
