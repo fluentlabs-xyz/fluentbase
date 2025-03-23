@@ -104,6 +104,7 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
         sdk.context().contract_bytecode_address()
     );
     let code_hash = sdk.ext_storage(&Into::<U256>::into(CODE_HASH_SLOT));
+    // TODO(dmitry123): "do we want to have this optimized during the creation of the frame?"
     if code_hash.data == U256::ZERO || Into::<U256>::into(KECCAK_EMPTY) == code_hash.data {
         return;
     }
@@ -124,6 +125,10 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log!("gas_spent: {:?}", result.gas.spent());
     debug_log!("output: {:?}", result.output);
 
+    if !result.is_ok() {
+        return handle_not_ok_result(sdk, result);
+    }
+
     // calculate the final gas charge for the call
     debug_log!("refund: {}", result.gas.refunded());
     // result.gas.set_final_refund(true);
@@ -132,12 +137,8 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
         "final_gas: {}",
         result.gas.spent() - result.gas.refunded() as u64
     );
+
     sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
-
-    if !result.is_ok() {
-        return handle_not_ok_result(sdk, result);
-    }
-
     sdk.write(result.output.as_ref());
 }
 

@@ -4,15 +4,12 @@ use revm_interpreter::{
     gas,
     instructions::contract::resize_memory,
     pop_ret,
-    primitives::SpecId,
     push,
     push_b256,
     refund,
     InstructionResult,
     Interpreter,
 };
-
-pub(crate) const BASE_SPEC: SpecId = SpecId::CANCUN;
 
 pub(crate) fn insert_create_outcome(interpreter: &mut Interpreter, result: SyscallResult<Bytes>) {
     gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);

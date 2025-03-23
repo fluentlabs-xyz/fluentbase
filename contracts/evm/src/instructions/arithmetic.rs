@@ -1,5 +1,4 @@
-use crate::utils::BASE_SPEC;
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{SharedAPI, EVM_BASE_SPEC};
 use revm_interpreter::{
     gas,
     gas_or_fail,
@@ -69,7 +68,7 @@ pub fn mulmod<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
 
 pub fn exp<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
     pop_top!(interpreter, op1, op2);
-    gas_or_fail!(interpreter, gas::exp_cost(BASE_SPEC, *op2));
+    gas_or_fail!(interpreter, gas::exp_cost(EVM_BASE_SPEC, *op2));
     *op2 = op1.pow(*op2);
 }
 

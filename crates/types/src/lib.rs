@@ -27,6 +27,7 @@ pub use contracts::*;
 pub use exit_code::*;
 pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use linker::*;
+use revm_primitives::SpecId;
 pub use rwasm::*;
 pub use sdk::*;
 pub use sys_func_idx::SysFuncIdx;
@@ -64,3 +65,6 @@ pub const CALL_STACK_LIMIT: u32 = 1024;
 /// EVM code hash slot: `hash=keccak256("_evm_code_hash")`
 pub const CODE_HASH_SLOT: B256 =
     b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113b");
+
+/// A basic SPEC that Fluent supports
+pub const EVM_BASE_SPEC: SpecId = SpecId::CANCUN;

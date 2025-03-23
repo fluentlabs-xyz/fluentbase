@@ -29,16 +29,16 @@ pub mod testing;
 unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
     use crate::{evm::write_evm_panic_message, rwasm::RwasmContext};
     let native_sdk = RwasmContext {};
-    if cfg!(feature = "more-panic") {
-        let panic_message = alloc::format!("{}", info).replace("\n", " ");
-        write_evm_panic_message(&native_sdk, &panic_message);
-    } else {
-        let panic_message = info
-            .message()
-            .as_str()
-            .unwrap_or_else(|| &"can't resolve panic message");
-        write_evm_panic_message(&native_sdk, &panic_message);
-    }
+    // if cfg!(feature = "more-panic") {
+    let panic_message = alloc::format!("{}", info).replace("\n", " ");
+    write_evm_panic_message(&native_sdk, &panic_message);
+    // } else {
+    //     let panic_message = info
+    //         .message()
+    //         .as_str()
+    //         .unwrap_or_else(|| &"can't resolve panic message");
+    //     write_evm_panic_message(&native_sdk, &panic_message);
+    // }
     native_sdk.exit(ExitCode::Panic.into_i32());
 }
 
