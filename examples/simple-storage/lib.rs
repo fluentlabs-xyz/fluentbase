@@ -3,15 +3,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{
-    alloc_slice,
-    derive::solidity_storage,
-    func_entrypoint,
-    Address,
-    ContractContextReader,
-    SharedAPI,
-    U256,
-};
+use fluentbase_sdk::{derive::solidity_storage, func_entrypoint, Address, SharedAPI, U256};
 
 solidity_storage! {
     mapping(Address => U256) Values;

@@ -371,6 +371,9 @@ pub fn call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
+    // we should sync gas before doing call
+    // to make sure gas is synchronized between different runtimes
+    sdk.yield_sync_gas();
     let result = sdk.call(
         to,
         value,

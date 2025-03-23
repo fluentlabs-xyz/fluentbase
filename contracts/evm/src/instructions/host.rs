@@ -1,7 +1,7 @@
 use crate::unwrap_syscall;
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use core::cmp::min;
-use fluentbase_sdk::{BlockContextReader, SharedAPI, SyscallStatus};
+use fluentbase_sdk::{BlockContextReader, SharedAPI};
 use revm_interpreter::{
     as_u64_saturated,
     as_usize_or_fail,
@@ -48,23 +48,25 @@ pub fn extcodehash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
 pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
     pop!(interpreter, memory_offset, code_offset, len_u256);
-    // TODO(dmitry123): "what if `code_size` fails with OutOfFuel?"
-    let result = unwrap_syscall!(@gasless interpreter, sdk.code_size(&address));
-    let memory_offset = as_usize_or_fail!(interpreter, memory_offset);
-    let code_offset = min(as_usize_saturated!(code_offset), result as usize);
-    let len = as_usize_or_fail!(interpreter, len_u256);
-    let mut buffer = vec![0u8; len];
-    unwrap_syscall!(
+    let code = unwrap_syscall!(
         interpreter,
-        sdk.code_copy(&address, code_offset as u64, &mut buffer)
+        sdk.code_copy(
+            &address,
+            as_usize_or_fail!(interpreter, code_offset) as u64,
+            as_usize_or_fail!(interpreter, len_u256) as u64
+        )
     );
+    let len = as_usize_or_fail!(interpreter, len_u256);
     if len == 0 {
         return;
     }
+    let memory_offset = as_usize_or_fail!(interpreter, memory_offset);
+    let code_offset = min(as_usize_saturated!(code_offset), code.len());
     resize_memory!(interpreter, memory_offset, len);
+    // Note: this can't panic because we resized memory to fit.
     interpreter
         .shared_memory
-        .set_data(memory_offset, 0, len, &buffer);
+        .set_data(memory_offset, code_offset, len, &code);
 }
 
 pub fn blockhash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {

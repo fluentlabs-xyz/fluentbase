@@ -11,6 +11,7 @@ use fluentbase_sdk::{
     Bytes,
     ContractContextReader,
     SharedAPI,
+    SyscallResult,
 };
 
 /// A selector for "multicall(bytes[])" - 0xac9650d8
@@ -42,7 +43,7 @@ pub fn main(mut sdk: impl SharedAPI) {
     for call_data in data {
         let chunk = call_data.chunk();
         let result = sdk.delegate_call(target_addr, chunk, None);
-        if !result.is_ok() {
+        if !SyscallResult::is_ok(result.status) {
             panic!("multicall: delegate call failed");
         }
         results.push(result.data);

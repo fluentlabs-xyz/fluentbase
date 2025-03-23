@@ -103,9 +103,17 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
         "contract_bytecode_address: {:?}",
         sdk.context().contract_bytecode_address()
     );
+    debug_log!(
+        "contract_is_static: {:?}",
+        sdk.context().contract_is_static()
+    );
     let code_hash = sdk.ext_storage(&Into::<U256>::into(CODE_HASH_SLOT));
     // TODO(dmitry123): "do we want to have this optimized during the creation of the frame?"
     if code_hash.data == U256::ZERO || Into::<U256>::into(KECCAK_EMPTY) == code_hash.data {
+        debug_log!(
+            "skipping EVM execution due to empty code: {}",
+            code_hash.data
+        );
         return;
     }
     debug_log!("code_hash: {:?}", code_hash.data);

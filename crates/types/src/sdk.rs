@@ -126,11 +126,12 @@ pub enum SyscallStatus {
 impl From<i32> for SyscallStatus {
     fn from(value: i32) -> Self {
         match value {
-            0 => Self::Ok,
-            -1 => Self::Revert,
-            -2 => Self::Err,
-            -3 => Self::OutOfGas,
-            _ => unreachable!("invalid syscall status: {}", value),
+            // TODO(dmitry123): "use enum for EVM error codes?"
+            d if d >= 0 && d < 0x10 => Self::Ok,
+            d if d >= 0x10 && d < 0x20 => Self::Revert,
+            0x20 => unreachable!("sdk: action returned from revert syscall"),
+            0x50 => Self::OutOfGas,
+            _ => Self::Err,
         }
     }
 }
@@ -140,17 +141,18 @@ pub struct SyscallResult<T> {
     pub data: T,
     pub fuel_consumed: u64,
     pub fuel_refunded: i64,
-    pub status: SyscallStatus,
+    pub status: i32,
+}
+
+impl SyscallResult<()> {
+    pub fn is_ok(status: i32) -> bool {
+        // TODO(dmitry123): "use enum for EVM error codes?"
+        status >= 0 && status < 0x10
+    }
 }
 
 impl<T> SyscallResult<T> {
-    pub fn new<I: Into<SyscallStatus>>(
-        data: T,
-        fuel_consumed: u64,
-        fuel_refunded: i64,
-        status: I,
-    ) -> Self {
-        let status: SyscallStatus = status.into();
+    pub fn new(data: T, fuel_consumed: u64, fuel_refunded: i64, status: i32) -> Self {
         Self {
             data,
             fuel_consumed,
@@ -158,9 +160,8 @@ impl<T> SyscallResult<T> {
             status,
         }
     }
-
-    pub fn is_ok(&self) -> bool {
-        self.status == SyscallStatus::Ok
+    pub fn status(&self) -> SyscallStatus {
+        SyscallStatus::from(self.status)
     }
 }
 
@@ -205,17 +206,18 @@ pub trait SharedAPI {
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;
     fn ext_storage(&self, slot: &U256) -> SyscallResult<U256>;
+    fn yield_sync_gas(&self) -> SyscallResult<()>;
 
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) -> SyscallResult<()>;
+    fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes>;
     fn preimage_size(&self, hash: &B256) -> SyscallResult<u32>;
 
     fn preimage(&self, hash: &B256) -> Bytes {
-        let preimage_size = self.preimage_size(hash);
-        assert!(preimage_size.is_ok(), "sdk: preimage size is not ok");
-        let mut buffer = alloc_vec(preimage_size.data as usize);
-        let result = self.preimage_copy(hash, &mut buffer);
-        assert!(result.is_ok(), "sdk: preimage copy is not ok");
-        buffer.into()
+        let result = self.preimage_copy(hash);
+        assert!(
+            SyscallResult::is_ok(result.status),
+            "sdk: failed reading preimage"
+        );
+        result.data
     }
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]) -> SyscallResult<()>;
@@ -228,8 +230,8 @@ pub trait SharedAPI {
         &self,
         address: &Address,
         code_offset: u64,
-        target: &mut [u8],
-    ) -> SyscallResult<()>;
+        code_length: u64,
+    ) -> SyscallResult<Bytes>;
     fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256>;
     fn create(
         &mut self,

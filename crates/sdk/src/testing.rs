@@ -170,11 +170,19 @@ impl SharedAPI for TestingContext {
         SyscallResult::new(value, 0, 0, 0)
     }
 
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) -> SyscallResult<()> {
-        if let Some(preimage) = self.inner.borrow().preimages.get(hash) {
-            target.copy_from_slice(preimage.as_ref());
-        }
+    fn yield_sync_gas(&self) -> SyscallResult<()> {
         SyscallResult::new((), 0, 0, 0)
+    }
+
+    fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes> {
+        let value = self
+            .inner
+            .borrow()
+            .preimages
+            .get(hash)
+            .cloned()
+            .unwrap_or_default();
+        SyscallResult::new(value, 0, 0, 0)
     }
 
     fn preimage_size(&self, hash: &B256) -> SyscallResult<u32> {
@@ -213,8 +221,8 @@ impl SharedAPI for TestingContext {
         &self,
         _address: &Address,
         _code_offset: u64,
-        _target: &mut [u8],
-    ) -> SyscallResult<()> {
+        _code_length: u64,
+    ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }
 

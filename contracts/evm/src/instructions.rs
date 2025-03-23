@@ -306,7 +306,8 @@ pub fn exec_evm_bytecode<SDK: SharedAPI>(
         sdk.context().contract_caller(),
         sdk.context().contract_value(),
     );
-    let mut interpreter = Interpreter::new(contract, gas_limit, false);
+    let is_static = sdk.context().contract_is_static();
+    let mut interpreter = Interpreter::new(contract, gas_limit, is_static);
     let shared_memory = SharedMemory::new();
     let instruction_table = make_instruction_table::<SDK>();
     interpreter.next_action = InterpreterAction::None;
@@ -314,12 +315,10 @@ pub fn exec_evm_bytecode<SDK: SharedAPI>(
     while interpreter.instruction_result == InstructionResult::Continue {
         let opcode = unsafe { *interpreter.instruction_pointer };
         interpreter.instruction_pointer = unsafe { interpreter.instruction_pointer.offset(1) };
-        let opcode_info = OPCODE_INFO_JUMPTABLE[opcode as usize]
-            .unwrap_or_else(|| unreachable!("unknown opcode: ({:?})", opcode));
         debug_log!(
             "({:04X}) {} (0x{:02X})",
             interpreter.program_counter() - 1,
-            opcode_info.name(),
+            unsafe { core::mem::transmute::<u8, OpCode>(opcode) },,
             opcode,
         );
         instruction_table[opcode as usize](&mut interpreter, sdk);
