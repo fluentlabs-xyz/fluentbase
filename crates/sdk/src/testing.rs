@@ -20,6 +20,10 @@ pub struct TestingContext {
 pub type TestingContextNativeAPI = RuntimeContextWrapper<'static, NonePreimageResolver>;
 
 impl TestingContext {
+    pub fn with_shared_context_input(self, ctx: SharedContextInputV1) -> Self {
+        self.inner.borrow_mut().shared_context_input_v1 = ctx;
+        self
+    }
     pub fn with_contract_context(self, contract_context: ContractContextV1) -> Self {
         self.inner.borrow_mut().shared_context_input_v1.contract = contract_context;
         self

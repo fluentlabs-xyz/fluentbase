@@ -190,7 +190,7 @@ impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
     }
 }
 
-type TestingContext = RuntimeContextWrapper<'static, NonePreimageResolver>;
+pub type TestingContext = RuntimeContextWrapper<'static, NonePreimageResolver>;
 
 impl TestingContext {
     pub fn empty() -> Self {

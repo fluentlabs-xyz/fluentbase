@@ -36,6 +36,10 @@ fluentbase-rwasm = { path = "./crates/rwasm", default-features = false, features
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
+solana-ee-core = { path = "../solana-ee/crates/core", default-features = false }
+solana-program = { path = "../solana/sdk/program", default-features = false }
+solana_rbpf = { path = "../rbpf", default-features = false }
+
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1", default-features = false }
@@ -68,6 +72,11 @@ anyhow = { version = "1.0.86", default-features = false }
 syn = "2.0"
 clap = { version = "4.5", features = ["derive"] }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+
+#bincode = { git = "https://github.com/fluentlabs-xyz/bincode", branch = "feat/svm-1.3.3", default-features = false, features = [] }
+bincode = { path = "../bincode", default-features = false }
+num-derive = { version = "0.4" }
+num-traits = { version = "0.2" }
 
 [profile.bench]
 lto = "fat"
