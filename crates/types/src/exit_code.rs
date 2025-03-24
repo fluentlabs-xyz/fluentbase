@@ -1,6 +1,6 @@
 use rwasm::core::{Trap, TrapCode};
 use strum_macros::{Display, FromRepr};
-use std::error::Error;
+use core::error::Error as StdError;
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Display, FromRepr)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -32,7 +32,7 @@ pub enum ExitCode {
     UnresolvedFunction = -2013,
 }
 
-impl Error for ExitCode {}
+impl StdError for ExitCode {} // required to use in anyhow::new()
 
 pub trait UnwrapExitCode<T> {
     fn unwrap_exit_code(self) -> T;
