@@ -170,7 +170,7 @@ impl SharedAPI for TestingContext {
         SyscallResult::new(value, 0, 0, 0)
     }
 
-    fn yield_sync_gas(&self) -> SyscallResult<()> {
+    fn sync_evm_gas(&self, _gas_remaining: u64, _gas_refunded: i64) -> SyscallResult<()> {
         SyscallResult::new((), 0, 0, 0)
     }
 

@@ -13,7 +13,7 @@ use fluentbase_sdk::{
 };
 use hex_literal::hex;
 use revm::primitives::{ExecutionResult, Output};
-use rwasm::{instruction_set, rwasm::RwasmModule};
+use rwasm::{engine::DropKeep, instruction_set, rwasm::RwasmModule};
 
 #[test]
 fn test_simple_nested_call() {
@@ -305,7 +305,8 @@ fn test_blended_gas_spend_evm_from_wasm() {
         I32Const(0) // fuel_ptr
         I32Const(STATE_MAIN) // state
         Call(SysFuncIdx::EXEC)
-        Call(SysFuncIdx::EXIT)
+        // what's on the stack?
+        Return(DropKeep::none())
     };
     let code_section_len = code_section.len() as u32;
     ctx.add_wasm_contract(

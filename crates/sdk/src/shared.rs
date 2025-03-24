@@ -38,10 +38,10 @@ use fluentbase_types::{
     SYSCALL_ID_STATIC_CALL,
     SYSCALL_ID_STORAGE_READ,
     SYSCALL_ID_STORAGE_WRITE,
+    SYSCALL_ID_SYNC_EVM_GAS,
     SYSCALL_ID_TRANSIENT_READ,
     SYSCALL_ID_TRANSIENT_WRITE,
     SYSCALL_ID_WRITE_PREIMAGE,
-    SYSCALL_ID_YIELD_SYNC_GAS,
     U256,
 };
 
@@ -133,7 +133,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn exit(&self, exit_code: i32) -> ! {
-        debug_assert!(exit_code <= 0, "exit code must be non-positive");
+        assert!(exit_code <= 0, "exit code must be non-positive");
         self.native_sdk.exit(exit_code)
     }
 
@@ -221,10 +221,13 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
-    fn yield_sync_gas(&self) -> SyscallResult<()> {
+    fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()> {
+        let mut input = [0u8; 16];
+        LittleEndian::write_u64(&mut input[..8], gas_remaining);
+        LittleEndian::write_i64(&mut input[8..], gas_refunded);
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk
-                .exec(SYSCALL_ID_YIELD_SYNC_GAS, &[], None, STATE_MAIN);
+                .exec(SYSCALL_ID_SYNC_EVM_GAS, &input, None, STATE_MAIN);
         assert!(SyscallResult::is_ok(exit_code), "sdk: yield can't fail");
         SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }

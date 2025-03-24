@@ -206,7 +206,7 @@ pub trait SharedAPI {
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;
     fn ext_storage(&self, slot: &U256) -> SyscallResult<U256>;
-    fn yield_sync_gas(&self) -> SyscallResult<()>;
+    fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()>;
 
     fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes>;
     fn preimage_size(&self, hash: &B256) -> SyscallResult<u32>;

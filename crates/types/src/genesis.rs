@@ -1,11 +1,21 @@
 use alloy_primitives::{address, Address};
 
 /// An address of EVM runtime that is used to execute EVM program
-pub const PRECOMPILE_EVM_RUNTIME: Address = address!("5200000000000000000000000000000000000001");
+pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0000000000000000000000000000000000005201");
 
 /// A verifier for Fairblock attestations
 pub const PRECOMPILE_FAIRBLOCK_VERIFIER: Address =
-    address!("5200000000000000000000000000000000000002");
+    address!("0000000000000000000000000000000000005202");
+
+/// An address for SVM runtime
+pub const PRECOMPILE_SVM_RUNTIME: Address = address!("0000000000000000000000000000000000005203");
+
+pub const PRECOMPILE_WRAPPED_ETH: Address = address!("0000000000000000000000000000000000005204");
+pub const PRECOMPILE_WEBAUTHN_VERIFIER: Address =
+    address!("0000000000000000000000000000000000005205");
+pub const PRECOMPILE_OAUTH2_VERIFIER: Address =
+    address!("0000000000000000000000000000000000005206");
+pub const PRECOMPILE_NITRO_VERIFIER: Address = address!("0000000000000000000000000000000000005207");
 
 const fn evm_address(value: u8) -> Address {
     Address::with_last_byte(value)
