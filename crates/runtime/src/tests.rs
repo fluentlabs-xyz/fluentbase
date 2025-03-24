@@ -19,6 +19,7 @@ pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
         import_linker: Some(create_import_linker()),
         wrap_import_functions: true,
         translate_drop_keep: false,
+        allow_malformed_entrypoint_func_type: false,
     });
     let rwasm_module = RwasmModule::compile_with_config(&wasm_binary, &rwasm_config).unwrap();
     let mut result = Vec::new();

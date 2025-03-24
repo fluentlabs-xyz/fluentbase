@@ -18,7 +18,7 @@ mod syscall;
 mod utils;
 
 pub use allocator::*;
-pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
+pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256, I256};
 pub use bytecode_type::*;
 pub use byteorder;
 pub use context::*;

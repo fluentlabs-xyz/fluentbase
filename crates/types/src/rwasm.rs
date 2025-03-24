@@ -25,6 +25,7 @@ pub fn compile_wasm_to_rwasm(wasm_binary: &[u8]) -> Option<RwasmCompilationResul
         import_linker: Some(create_import_linker()),
         wrap_import_functions: true,
         translate_drop_keep: false,
+        allow_malformed_entrypoint_func_type: false,
     });
     let (rwasm_module, constructor_params) =
         RwasmModule::compile_and_retrieve_input(wasm_binary, &config).ok()?;
