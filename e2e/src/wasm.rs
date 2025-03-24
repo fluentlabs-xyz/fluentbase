@@ -28,6 +28,29 @@ fn test_wasm_greeting() {
 }
 
 #[test]
+fn test_wasm_identity() {
+    // deploy greeting WASM contract
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../examples/identity/lib.wasm").into(),
+    );
+    // call greeting WASM contract
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::from(vec![1, 2, 3, 4, 5, 6]),
+        None,
+        None,
+    );
+    let output = result.output().unwrap_or_default();
+    println!("Result: {:?}", result);
+    assert!(result.is_success());
+    assert_eq!(vec![1, 2, 3, 4, 5, 6], output.as_ref());
+}
+
+#[test]
 fn test_wasm_keccak256() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
