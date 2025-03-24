@@ -197,7 +197,7 @@ gblend deploy --rpc https://your-node.network --chain-id 1234 path/to/contract.w
 > Using environment files is recommended for managing private keys securely. Create a `.env` file in your project root:
 >
 > ```
-> DEPLOY_PRIVATE_KEY=0x...
+> DEPLOY_PRIVATE_KEY=<your-key>
 > ```
 
 > [!NOTE]
