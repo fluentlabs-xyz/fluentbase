@@ -353,6 +353,9 @@ pub fn create<const IS_CREATE2: bool, SDK: SharedAPI>(
     } else {
         None
     };
+    // we should sync gas before doing call
+    // to make sure gas is synchronized between different runtimes
+    sdk.sync_evm_gas(interpreter.gas.remaining(), interpreter.gas.refunded());
     let result = sdk.create(salt, &value, code.as_ref());
     insert_create_outcome(interpreter, result)
 }
@@ -373,7 +376,7 @@ pub fn call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     };
     // we should sync gas before doing call
     // to make sure gas is synchronized between different runtimes
-    sdk.yield_sync_gas();
+    sdk.sync_evm_gas(interpreter.gas.remaining(), interpreter.gas.refunded());
     let result = sdk.call(
         to,
         value,
@@ -392,6 +395,9 @@ pub fn call_code<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
+    // we should sync gas before doing call
+    // to make sure gas is synchronized between different runtimes
+    sdk.sync_evm_gas(interpreter.gas.remaining(), interpreter.gas.refunded());
     let result = sdk.call_code(
         to,
         value,
@@ -409,6 +415,9 @@ pub fn delegate_call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SD
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
+    // we should sync gas before doing call
+    // to make sure gas is synchronized between different runtimes
+    sdk.sync_evm_gas(interpreter.gas.remaining(), interpreter.gas.refunded());
     let result = sdk.delegate_call(to, input.as_ref(), Some(local_gas_limit * FUEL_DENOM_RATE));
     insert_call_outcome(interpreter, result, return_memory_offset);
 }
@@ -421,6 +430,9 @@ pub fn static_call<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
     let Some((input, return_memory_offset)) = get_memory_input_and_out_ranges(interpreter) else {
         return;
     };
+    // we should sync gas before doing call
+    // to make sure gas is synchronized between different runtimes
+    sdk.sync_evm_gas(interpreter.gas.remaining(), interpreter.gas.refunded());
     let result = sdk.static_call(to, input.as_ref(), Some(local_gas_limit * FUEL_DENOM_RATE));
     insert_call_outcome(interpreter, result, return_memory_offset);
 }

@@ -6,8 +6,8 @@ use revm_interpreter::{
     Interpreter,
     InterpreterAction,
     InterpreterResult,
+    OpCode,
     SharedMemory,
-    OPCODE_INFO_JUMPTABLE,
 };
 
 mod arithmetic;
@@ -318,7 +318,7 @@ pub fn exec_evm_bytecode<SDK: SharedAPI>(
         debug_log!(
             "({:04X}) {} (0x{:02X})",
             interpreter.program_counter() - 1,
-            unsafe { core::mem::transmute::<u8, OpCode>(opcode) },,
+            unsafe { core::mem::transmute::<u8, OpCode>(opcode) },
             opcode,
         );
         instruction_table[opcode as usize](&mut interpreter, sdk);

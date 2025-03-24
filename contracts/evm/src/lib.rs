@@ -38,7 +38,8 @@ fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult)
         "final_gas: {}",
         result.gas.spent() - result.gas.refunded() as u64
     );
-    sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
+    sdk.sync_evm_gas(result.gas.remaining(), result.gas.refunded());
+    // sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
     sdk.write(result.output.as_ref());
     // we encode EVM error as negative from our error code
     debug_log!("result_code: {:?}", result.result);
@@ -88,7 +89,8 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
         "final_gas: {}",
         result.gas.spent() - result.gas.refunded() as u64
     );
-    sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
+    sdk.sync_evm_gas(result.gas.remaining(), result.gas.refunded());
+    // sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
 
     // we intentionally don't charge gas for these opcodes
     // to keep full compatibility with an EVM deployment process
@@ -146,7 +148,8 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
         result.gas.spent() - result.gas.refunded() as u64
     );
 
-    sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
+    sdk.sync_evm_gas(result.gas.remaining(), result.gas.refunded());
+    // sdk.charge_fuel((result.gas.spent() - result.gas.refunded() as u64) * FUEL_DENOM_RATE);
     sdk.write(result.output.as_ref());
 }
 
