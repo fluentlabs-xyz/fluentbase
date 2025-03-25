@@ -1,117 +1,98 @@
-use crate::{
-    instruction::{
-        charge_fuel::SyscallChargeFuel,
-        debug_log::SyscallDebugLog,
-        ec_recover::SyscallEcrecover,
-        ed_add::SyscallEdwardsAddAssign,
-        ed_decompress::SyscallEdwardsDecompress,
-        exec::SyscallExec,
-        exit::SyscallExit,
-        forward_output::SyscallForwardOutput,
-        fp2_addsub::SyscallFp2AddSub,
-        fp2_mul::SyscallFp2Mul,
-        fp_op::SyscallFpOp,
-        fuel::SyscallFuel,
-        input_size::SyscallInputSize,
-        keccak256::SyscallKeccak256,
-        keccak256_permute::SyscallKeccak256Permute,
-        output_size::SyscallOutputSize,
-        poseidon::SyscallPoseidon,
-        poseidon_hash::SyscallPoseidonHash,
-        preimage_copy::SyscallPreimageCopy,
-        preimage_size::SyscallPreimageSize,
-        read::SyscallRead,
-        read_output::SyscallReadOutput,
-        resume::SyscallResume,
-        sha256_compress::SyscallSha256Compress,
-        sha256_extend::SyscallSha256Extend,
-        state::SyscallState,
-        uint256_mul::SyscallUint256Mul,
-        weierstrass_add::SyscallWeierstrassAddAssign,
-        weierstrass_decompress::SyscallWeierstrassDecompressAssign,
-        weierstrass_double::SyscallWeierstrassDoubleAssign,
-        write::SyscallWrite,
-    },
-    RuntimeContext,
-};
+use crate::RuntimeContext;
 use fluentbase_types::{SharedContextInput, SharedContextInputV1};
 use wasmtime::*;
 
-pub fn exec_in_wasmtime_runtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, Vec<u8>) {
-    let runtime_context = RuntimeContext::root(0).with_input(input);
+const MODULE: &str = "fluentbase_v1preview";
 
+mod builtins {
+    use crate::{
+        instruction::{
+            charge_fuel::SyscallChargeFuel,
+            debug_log::SyscallDebugLog,
+            ec_recover::SyscallEcrecover,
+            ed_add::SyscallEdwardsAddAssign,
+            ed_decompress::SyscallEdwardsDecompress,
+            exec::SyscallExec,
+            exit::SyscallExit,
+            forward_output::SyscallForwardOutput,
+            fp2_addsub::SyscallFp2AddSub,
+            fp2_mul::SyscallFp2Mul,
+            fp_op::SyscallFpOp,
+            fuel::SyscallFuel,
+            input_size::SyscallInputSize,
+            keccak256::SyscallKeccak256,
+            keccak256_permute::SyscallKeccak256Permute,
+            output_size::SyscallOutputSize,
+            poseidon::SyscallPoseidon,
+            poseidon_hash::SyscallPoseidonHash,
+            preimage_copy::SyscallPreimageCopy,
+            preimage_size::SyscallPreimageSize,
+            read::SyscallRead,
+            read_output::SyscallReadOutput,
+            resume::SyscallResume,
+            sha256_compress::SyscallSha256Compress,
+            sha256_extend::SyscallSha256Extend,
+            state::SyscallState,
+            uint256_mul::SyscallUint256Mul,
+            weierstrass_add::SyscallWeierstrassAddAssign,
+            weierstrass_decompress::SyscallWeierstrassDecompressAssign,
+            weierstrass_double::SyscallWeierstrassDoubleAssign,
+            write::SyscallWrite,
+        },
+        RuntimeContext,
+    };
+    use wasmtime::{Caller, Extern};
+    pub fn write(mut caller: Caller<'_, RuntimeContext>, offset: u32, length: u32) {
+        let memory = match caller.get_export("memory") {
+            Some(Extern::Memory(memory)) => memory,
+            _ => panic!("failed to find host memory"),
+        };
+        let data: Vec<u8> = memory
+            .data(&caller)
+            .get(offset as usize..)
+            .and_then(|arr| arr.get(..length as usize))
+            .unwrap()
+            .into();
+        let ctx = caller.data_mut();
+        SyscallWrite::fn_impl(ctx, &data);
+    }
+
+    pub fn read(mut caller: Caller<'_, RuntimeContext>, target_ptr: u32, offset: u32, length: u32) {
+        let buffer = SyscallRead::fn_impl(caller.data(), offset, length).unwrap();
+        let memory = match caller.get_export("memory") {
+            Some(Extern::Memory(memory)) => memory,
+            _ => panic!("failed to find host memory"),
+        };
+        let _ = memory.write(caller, target_ptr as usize, &buffer);
+    }
+
+    pub fn input_size(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u32> {
+        let size = SyscallInputSize::fn_impl(caller.data());
+        println!("_input_size syscall was executed with size={}", size);
+        Ok(size)
+    }
+
+    pub fn exit(mut caller: Caller<'_, RuntimeContext>, exit_code: i32) -> anyhow::Result<()> {
+        let exit_code = SyscallExit::fn_impl(caller.data_mut(), exit_code).unwrap_err();
+        println!("_exit syscall was executed with exit code {}", exit_code);
+        Err(anyhow::Error::new(exit_code))
+    }
+}
+
+fn exec_internal(wasm_bytecode: &[u8], input: Vec<u8>) -> anyhow::Result<(i32, Vec<u8>)> {
+    let runtime_context = RuntimeContext::root(0).with_input(input);
     let engine = Engine::default();
-    let module = Module::new(&engine, wasm_bytecode).unwrap();
+    let module = Module::new(&engine, wasm_bytecode)?;
     let mut store = Store::new(&engine, runtime_context);
 
     let mut linker = Linker::new(&engine);
-    linker
-        .func_wrap(
-            "fluentbase_v1preview",
-            "_write",
-            |mut caller: Caller<'_, RuntimeContext>, offset: u32, length: u32| {
-                let memory = match caller.get_export("memory") {
-                    Some(Extern::Memory(memory)) => memory,
-                    _ => panic!("failed to find host memory"),
-                };
-                let data: Vec<u8> = memory
-                    .data(&caller)
-                    .get(offset as usize..)
-                    .and_then(|arr| arr.get(..length as usize))
-                    .unwrap()
-                    .into();
-                let ctx = caller.data_mut();
-                SyscallWrite::fn_impl(ctx, &data);
-            },
-        )
-        .unwrap();
+    linker.func_wrap(MODULE, "_write", builtins::write)?;
+    linker.func_wrap(MODULE, "_read", builtins::read)?;
+    linker.func_wrap(MODULE, "_input_size", builtins::input_size)?;
+    linker.func_wrap(MODULE, "_exit", builtins::exit)?;
 
-    linker
-        .func_wrap(
-            "fluentbase_v1preview",
-            "_input_size",
-            |caller: Caller<'_, RuntimeContext>| -> anyhow::Result<u32> {
-                let size = SyscallInputSize::fn_impl(caller.data());
-                println!("_input_size syscall was executed with size={}", size);
-                Ok(size)
-            },
-        )
-        .unwrap();
-
-    linker
-        .func_wrap(
-            "fluentbase_v1preview",
-            "_read",
-            |mut caller: Caller<'_, RuntimeContext>, target_ptr: u32, offset: u32, length: u32| {
-                // memory.write(caller.data_mut())
-
-                let buffer = SyscallRead::fn_impl(caller.data(), offset, length).unwrap();
-                let memory = match caller.get_export("memory") {
-                    Some(Extern::Memory(memory)) => memory,
-                    _ => panic!("failed to find host memory"),
-                };
-                let _ = memory.write(caller, target_ptr as usize, &buffer);
-            },
-        )
-        .unwrap();
-
-    linker
-        .func_wrap(
-            "fluentbase_v1preview",
-            "_exit",
-            |mut caller: Caller<'_, RuntimeContext>, exit_code: i32| -> anyhow::Result<()> {
-                let exit_code = SyscallExit::fn_impl(caller.data_mut(), exit_code).unwrap_err();
-                println!("_exit syscall was executed with exit code {}", exit_code);
-                Err(anyhow::Error::new(exit_code))
-            },
-        )
-        .unwrap();
-
-    let instance = linker.instantiate(&mut store, &module).unwrap();
-
-    let main = instance
-        .get_typed_func::<(), ()>(&mut store, "main")
-        .unwrap();
+    let instance = linker.instantiate(&mut store, &module)?;
+    let main = instance.get_typed_func::<(), ()>(&mut store, "main")?;
     match main.call(&mut store, ()) {
         Ok(_) => {}
         Err(exit_code) => {
@@ -119,8 +100,11 @@ pub fn exec_in_wasmtime_runtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, V
             println!("{:?}", store.data().output());
         }
     }
+    return Ok((0, store.data().output().clone().into()));
+}
 
-    return (0, store.data().output().clone().into());
+pub fn exec_in_wasmtime_runtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, Vec<u8>) {
+    exec_internal(wasm_bytecode, input).unwrap()
 }
 
 #[cfg(test)]

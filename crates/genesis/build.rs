@@ -177,6 +177,5 @@ mod genesis_builder {
 
 fn main() {
     #[cfg(feature = "generate-genesis")]
-    genesis_builder::generate_genesis(
-    );
+    genesis_builder::generate_genesis();
 }
