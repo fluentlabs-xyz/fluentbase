@@ -8,7 +8,8 @@ pub enum ExitCode {
     // warning: when adding new codes doesn't forget to add them to impls below
     #[default]
     Ok = 0,
-    Panic = -71, // -71 to be wasi friendly
+    Panic = -1,
+    Err = -2,
     // fluentbase error codes
     RootCallOnly = -1002,
     MalformedBuiltinParams = -1003,
@@ -29,6 +30,48 @@ pub enum ExitCode {
     OutOfFuel = -2010,
     GrowthOperationLimited = -2011,
     UnresolvedFunction = -2013,
+    // Continue = 0x00,
+    // Stop,
+    // Return,
+    // SelfDestruct,
+    // ReturnContract,
+    //
+    // // Revert Codes
+    // Revert = 0x10,
+    // CallTooDeep,
+    // OutOfFunds,
+    // CreateInitCodeStartingEF00,
+    // InvalidEOFInitCode,
+    // InvalidExtDelegateCallTarget,
+    //
+    // // Error Codes
+    // OutOfGas = 0x50,
+    // MemoryOOG,
+    // MemoryLimitOOG,
+    // PrecompileOOG,
+    // InvalidOperandOOG,
+    // OpcodeNotFound,
+    // CallNotAllowedInsideStatic,
+    // StateChangeDuringStaticCall,
+    // InvalidFEOpcode,
+    // InvalidJump,
+    // NotActivated,
+    // StackUnderflow,
+    // OutOfOffset,
+    // CreateCollision,
+    // OverflowPayment,
+    // PrecompileError,
+    // NonceOverflow,
+    // CreateContractSizeLimit,
+    // CreateContractStartingWithEF,
+    // CreateInitCodeSizeLimit,
+    // FatalExternalError,
+    // ReturnContractInNotInitEOF,
+    // EOFOpcodeDisabledInLegacy,
+    // EOFFunctionStackOverflow,
+    // EofAuxDataOverflow,
+    // EofAuxDataTooSmall,
+    // InvalidEXTCALLTarget,
 }
 
 pub trait UnwrapExitCode<T> {

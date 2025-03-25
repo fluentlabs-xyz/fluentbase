@@ -113,55 +113,33 @@ pub struct SyscallInvocationParams {
     pub fuel16_ptr: u32,
 }
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(i32)]
-pub enum SyscallStatus {
-    #[default]
-    Ok = 0,
-    Revert = -1,
-    Err = -2,
-    OutOfGas = -3,
-}
-
-impl From<i32> for SyscallStatus {
-    fn from(value: i32) -> Self {
-        match value {
-            // TODO(dmitry123): "use enum for EVM error codes?"
-            d if d >= 0 && d < 0x10 => Self::Ok,
-            d if d >= 0x10 && d < 0x20 => Self::Revert,
-            0x20 => unreachable!("sdk: action returned from revert syscall"),
-            0x50 => Self::OutOfGas,
-            _ => Self::Err,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct SyscallResult<T> {
     pub data: T,
     pub fuel_consumed: u64,
     pub fuel_refunded: i64,
-    pub status: i32,
+    pub status: ExitCode,
 }
 
 impl SyscallResult<()> {
-    pub fn is_ok(status: i32) -> bool {
-        // TODO(dmitry123): "use enum for EVM error codes?"
-        status >= 0 && status < 0x10
+    pub fn is_ok<I: Into<ExitCode>>(status: I) -> bool {
+        Into::<ExitCode>::into(status) == ExitCode::Ok
     }
 }
 
 impl<T> SyscallResult<T> {
-    pub fn new(data: T, fuel_consumed: u64, fuel_refunded: i64, status: i32) -> Self {
+    pub fn new<I: Into<ExitCode>>(
+        data: T,
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+        status: I,
+    ) -> Self {
         Self {
             data,
             fuel_consumed,
             fuel_refunded,
-            status,
+            status: Into::<ExitCode>::into(status),
         }
-    }
-    pub fn status(&self) -> SyscallStatus {
-        SyscallStatus::from(self.status)
     }
 }
 
