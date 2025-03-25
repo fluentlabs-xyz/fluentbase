@@ -116,9 +116,8 @@ pub(crate) unsafe fn read_u16(ptr: *const u8) -> u16 {
 #[macro_export]
 macro_rules! unwrap_syscall {
     ($interpreter:expr, $result:expr) => {{
-        use fluentbase_sdk::{debug_log, SyscallResult};
+        use fluentbase_sdk::SyscallResult;
         let result = $result;
-        debug_log!("syscall_result: {:?}", result);
         gas!(
             $interpreter,
             result.fuel_consumed / fluentbase_sdk::FUEL_DENOM_RATE
@@ -131,6 +130,7 @@ macro_rules! unwrap_syscall {
         }
         if !SyscallResult::is_ok(result.status) {
             $interpreter.instruction_result = InstructionResult::from(result.status);
+            return;
         }
         result.data
     }};
@@ -138,6 +138,7 @@ macro_rules! unwrap_syscall {
         let result = $result;
         if !SyscallResult::is_ok(result.status) {
             $interpreter.instruction_result = InstructionResult::from(result.status);
+            return;
         }
         result.data
     }};
