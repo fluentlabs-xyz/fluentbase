@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::{SharedContextInput, SharedContextInputV1};
-use wasmtime::*;
+use wasmtime::{Engine, Linker, Module, Store};
 
 const MODULE: &str = "fluentbase_v1preview";
 
@@ -59,6 +59,7 @@ mod builtins {
 
     pub fn read(mut caller: Caller<'_, RuntimeContext>, target_ptr: u32, offset: u32, length: u32) {
         let buffer = SyscallRead::fn_impl(caller.data(), offset, length).unwrap();
+        // TODO(khasan) Handle the result of memory.write and get rid of panic here
         let memory = match caller.get_export("memory") {
             Some(Extern::Memory(memory)) => memory,
             _ => panic!("failed to find host memory"),
@@ -77,6 +78,47 @@ mod builtins {
         println!("_exit syscall was executed with exit code {}", exit_code);
         Err(anyhow::Error::new(exit_code))
     }
+
+    pub fn read_output(
+        mut caller: Caller<'_, RuntimeContext>,
+        target_ptr: u32,
+        offset: u32,
+        length: u32,
+    ) {
+        let buffer = SyscallReadOutput::fn_impl(caller.data(), offset, length).unwrap();
+        // TODO(khasan) Handle the result of memory.write and get rid of panic here
+        let memory = match caller.get_export("memory") {
+            Some(Extern::Memory(memory)) => memory,
+            _ => panic!("failed to find host memory"),
+        };
+        let _ = memory.write(caller, target_ptr as usize, &buffer);
+    }
+
+    pub fn output_size(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u32> {
+        let size = SyscallOutputSize::fn_impl(caller.data());
+        println!("_input_size syscall was executed with size={}", size);
+        Ok(size)
+    }
+
+    pub fn debug_log(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    pub fn exec(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    pub fn keccak256(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    pub fn charge_fuel(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    pub fn fuel(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 fn exec_internal(wasm_bytecode: &[u8], input: Vec<u8>) -> anyhow::Result<(i32, Vec<u8>)> {
@@ -90,6 +132,13 @@ fn exec_internal(wasm_bytecode: &[u8], input: Vec<u8>) -> anyhow::Result<(i32, V
     linker.func_wrap(MODULE, "_read", builtins::read)?;
     linker.func_wrap(MODULE, "_input_size", builtins::input_size)?;
     linker.func_wrap(MODULE, "_exit", builtins::exit)?;
+    linker.func_wrap(MODULE, "_output_size", builtins::output_size)?;
+    linker.func_wrap(MODULE, "_read_output", builtins::read_output)?;
+    linker.func_wrap(MODULE, "_exec", builtins::exec)?;
+    linker.func_wrap(MODULE, "_debug_log", builtins::debug_log)?;
+    linker.func_wrap(MODULE, "_keccak256", builtins::keccak256)?;
+    linker.func_wrap(MODULE, "_fuel", builtins::fuel)?;
+    linker.func_wrap(MODULE, "_charge_fuel", builtins::charge_fuel)?;
 
     let instance = linker.instantiate(&mut store, &module)?;
     let main = instance.get_typed_func::<(), ()>(&mut store, "main")?;
