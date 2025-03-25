@@ -10,6 +10,7 @@ mod storage;
 #[cfg(test)]
 mod tests;
 pub mod types;
+mod wasmtime_runtime;
 
 pub use context::*;
 pub use runtime::*;

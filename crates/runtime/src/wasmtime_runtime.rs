@@ -1,14 +1,44 @@
+use crate::{
+    instruction::{
+        charge_fuel::SyscallChargeFuel,
+        debug_log::SyscallDebugLog,
+        ec_recover::SyscallEcrecover,
+        ed_add::SyscallEdwardsAddAssign,
+        ed_decompress::SyscallEdwardsDecompress,
+        exec::SyscallExec,
+        exit::SyscallExit,
+        forward_output::SyscallForwardOutput,
+        fp2_addsub::SyscallFp2AddSub,
+        fp2_mul::SyscallFp2Mul,
+        fp_op::SyscallFpOp,
+        fuel::SyscallFuel,
+        input_size::SyscallInputSize,
+        keccak256::SyscallKeccak256,
+        keccak256_permute::SyscallKeccak256Permute,
+        output_size::SyscallOutputSize,
+        poseidon::SyscallPoseidon,
+        poseidon_hash::SyscallPoseidonHash,
+        preimage_copy::SyscallPreimageCopy,
+        preimage_size::SyscallPreimageSize,
+        read::SyscallRead,
+        read_output::SyscallReadOutput,
+        resume::SyscallResume,
+        sha256_compress::SyscallSha256Compress,
+        sha256_extend::SyscallSha256Extend,
+        state::SyscallState,
+        uint256_mul::SyscallUint256Mul,
+        weierstrass_add::SyscallWeierstrassAddAssign,
+        weierstrass_decompress::SyscallWeierstrassDecompressAssign,
+        weierstrass_double::SyscallWeierstrassDoubleAssign,
+        write::SyscallWrite,
+    },
+    RuntimeContext,
+};
+use fluentbase_types::{SharedContextInput, SharedContextInputV1};
 use wasmtime::*;
-use crate::RuntimeContext;
 
-pub fn exec_in_wasmtime_runtime(
-    &self,
-    wasm_bytecode: &[u8],
-    input: &[u8],
-) -> (i32, Vec<8>) {
-    let runtime_context = RuntimeContext::root(fuel_limit)
-        .with_input(input);
-    let wasm_bytecode = include_bytes!("../../../../../examples/identity/lib.wasm");
+pub fn exec_in_wasmtime_runtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, Vec<u8>) {
+    let runtime_context = RuntimeContext::root(0).with_input(input);
 
     let engine = Engine::default();
     let module = Module::new(&engine, wasm_bytecode).unwrap();
@@ -44,7 +74,7 @@ pub fn exec_in_wasmtime_runtime(
                 let size = SyscallInputSize::fn_impl(caller.data());
                 println!("_input_size syscall was executed with size={}", size);
                 Ok(size)
-            }
+            },
         )
         .unwrap();
 
@@ -52,10 +82,7 @@ pub fn exec_in_wasmtime_runtime(
         .func_wrap(
             "fluentbase_v1preview",
             "_read",
-            |mut caller: Caller<'_, RuntimeContext>,
-             target_ptr: u32,
-             offset: u32,
-             length: u32| {
+            |mut caller: Caller<'_, RuntimeContext>, target_ptr: u32, offset: u32, length: u32| {
                 // memory.write(caller.data_mut())
 
                 let buffer = SyscallRead::fn_impl(caller.data(), offset, length).unwrap();
@@ -76,8 +103,6 @@ pub fn exec_in_wasmtime_runtime(
                 let exit_code = SyscallExit::fn_impl(caller.data_mut(), exit_code).unwrap_err();
                 println!("_exit syscall was executed with exit code {}", exit_code);
                 Err(anyhow::Error::new(exit_code))
-
-
             },
         )
         .unwrap();
@@ -88,13 +113,33 @@ pub fn exec_in_wasmtime_runtime(
         .get_typed_func::<(), ()>(&mut store, "main")
         .unwrap();
     match main.call(&mut store, ()) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(exit_code) => {
             println!("hey here is error code {:?}", exit_code);
             println!("{:?}", store.data().output());
-        },
+        }
     }
 
     return (0, store.data().output().clone().into());
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn add_shared_context(input: &[u8]) -> Vec<u8> {
+        let result = SharedContextInput::V1(SharedContextInputV1::default());
+        let mut result = result.encode().unwrap().to_vec();
+        result.extend_from_slice(input);
+        return result;
+    }
+
+    #[test]
+    fn wasmtime_identity() {
+        let wasm_bytecode = include_bytes!("../../../examples/identity/lib.wasm");
+        let input = vec![1, 2, 3, 4, 5, 6];
+        let (exit_code, output) =
+            exec_in_wasmtime_runtime(wasm_bytecode, add_shared_context(&input));
+        assert_eq!(input, output);
+    }
+}

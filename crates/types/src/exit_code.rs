@@ -1,6 +1,6 @@
+use core::error::Error as StdError;
 use rwasm::core::{Trap, TrapCode};
 use strum_macros::{Display, FromRepr};
-use core::error::Error as StdError;
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Display, FromRepr)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
