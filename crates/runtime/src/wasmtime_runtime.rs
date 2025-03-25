@@ -9,67 +9,63 @@ mod builtins {
         instruction::{
             charge_fuel::SyscallChargeFuel,
             debug_log::SyscallDebugLog,
-            ec_recover::SyscallEcrecover,
-            ed_add::SyscallEdwardsAddAssign,
-            ed_decompress::SyscallEdwardsDecompress,
             exec::SyscallExec,
             exit::SyscallExit,
-            forward_output::SyscallForwardOutput,
-            fp2_addsub::SyscallFp2AddSub,
-            fp2_mul::SyscallFp2Mul,
-            fp_op::SyscallFpOp,
             fuel::SyscallFuel,
             input_size::SyscallInputSize,
             keccak256::SyscallKeccak256,
-            keccak256_permute::SyscallKeccak256Permute,
             output_size::SyscallOutputSize,
-            poseidon::SyscallPoseidon,
-            poseidon_hash::SyscallPoseidonHash,
-            preimage_copy::SyscallPreimageCopy,
-            preimage_size::SyscallPreimageSize,
             read::SyscallRead,
             read_output::SyscallReadOutput,
-            resume::SyscallResume,
-            sha256_compress::SyscallSha256Compress,
-            sha256_extend::SyscallSha256Extend,
-            state::SyscallState,
-            uint256_mul::SyscallUint256Mul,
-            weierstrass_add::SyscallWeierstrassAddAssign,
-            weierstrass_decompress::SyscallWeierstrassDecompressAssign,
-            weierstrass_double::SyscallWeierstrassDoubleAssign,
             write::SyscallWrite,
         },
         RuntimeContext,
     };
-    use wasmtime::{Caller, Extern};
-    pub fn write(mut caller: Caller<'_, RuntimeContext>, offset: u32, length: u32) {
+    use wasmtime::{Caller, Extern, Memory};
+
+    fn get_memory_export(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
         let memory = match caller.get_export("memory") {
             Some(Extern::Memory(memory)) => memory,
-            _ => panic!("failed to find host memory"),
+            _ => panic!("failed to find host memory"), // TODO(khasan) Get rid of panic here
         };
-        let data: Vec<u8> = memory
+        return memory;
+    }
+
+    fn write_memory(
+        caller: &mut Caller<'_, RuntimeContext>,
+        offset: u32,
+        buffer: &[u8],
+    ) -> anyhow::Result<()> {
+        let memory = get_memory_export(caller);
+        return memory.write(caller, offset as usize, &buffer);
+    }
+
+    fn read_memory( // TODO(khasan) use read/write memory functions in syscalls
+        caller: &mut Caller<'_, RuntimeContext>,
+        offset: u32,
+        length: u32,
+    ) -> anyhow::Result<Vec<u8>> {
+        let memory = get_memory_export(&mut caller);
+        return memory
             .data(&caller)
             .get(offset as usize..)
             .and_then(|arr| arr.get(..length as usize))
-            .unwrap()
             .into();
+    }
+
+    pub fn write(mut caller: Caller<'_, RuntimeContext>, offset: u32, length: u32) {
         let ctx = caller.data_mut();
         SyscallWrite::fn_impl(ctx, &data);
     }
 
     pub fn read(mut caller: Caller<'_, RuntimeContext>, target_ptr: u32, offset: u32, length: u32) {
         let buffer = SyscallRead::fn_impl(caller.data(), offset, length).unwrap();
-        // TODO(khasan) Handle the result of memory.write and get rid of panic here
-        let memory = match caller.get_export("memory") {
-            Some(Extern::Memory(memory)) => memory,
-            _ => panic!("failed to find host memory"),
-        };
-        let _ = memory.write(caller, target_ptr as usize, &buffer);
+        let memory = get_memory_export(&mut caller);
+        // TODO(khasan) Handle error returned from
     }
 
     pub fn input_size(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u32> {
         let size = SyscallInputSize::fn_impl(caller.data());
-        println!("_input_size syscall was executed with size={}", size);
         Ok(size)
     }
 
@@ -86,38 +82,49 @@ mod builtins {
         length: u32,
     ) {
         let buffer = SyscallReadOutput::fn_impl(caller.data(), offset, length).unwrap();
-        // TODO(khasan) Handle the result of memory.write and get rid of panic here
-        let memory = match caller.get_export("memory") {
-            Some(Extern::Memory(memory)) => memory,
-            _ => panic!("failed to find host memory"),
-        };
+        let memory = get_memory_export(&mut caller);
         let _ = memory.write(caller, target_ptr as usize, &buffer);
     }
 
     pub fn output_size(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u32> {
-        let size = SyscallOutputSize::fn_impl(caller.data());
-        println!("_input_size syscall was executed with size={}", size);
-        Ok(size)
+        let context = caller.data();
+        return Ok(SyscallOutputSize::fn_impl(context));
     }
 
-    pub fn debug_log(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<()> {
+    pub fn debug_log(caller: Caller<'_, RuntimeContext>, message_ptr: u32, message_length: u32) {
+        todo!();
+    }
+
+    pub fn exec(
+        caller: Caller<'_, RuntimeContext>,
+        hash32_ptr: u32,
+        input_ptr: u32,
+        input_len: u32,
+        fuel16_ptr: u32,
+        state: u32,
+    ) -> anyhow::Result<i32> {
+        todo!();
+        Ok(0)
+    }
+
+    pub fn keccak256(
+        caller: Caller<'_, RuntimeContext>,
+        data_ptr: u32,
+        data_len: u32,
+        output32_ptr: u32,
+    ) -> anyhow::Result<()> {
+        todo!();
         Ok(())
     }
 
-    pub fn exec(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<()> {
-        Ok(())
+    pub fn charge_fuel(caller: Caller<'_, RuntimeContext>, _delta: u64) -> anyhow::Result<u64> {
+        let context = caller.data();
+        return Ok(SyscallFuel::fn_impl(context));
     }
 
-    pub fn keccak256(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    pub fn charge_fuel(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    pub fn fuel(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<()> {
-        Ok(())
+    pub fn fuel(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u64> {
+        let context = caller.data();
+        return Ok(SyscallFuel::fn_impl(context));
     }
 }
 
@@ -160,7 +167,7 @@ pub fn exec_in_wasmtime_runtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, V
 mod tests {
     use super::*;
 
-    fn add_shared_context(input: &[u8]) -> Vec<u8> {
+    fn insert_default_shared_context(input: &[u8]) -> Vec<u8> {
         let result = SharedContextInput::V1(SharedContextInputV1::default());
         let mut result = result.encode().unwrap().to_vec();
         result.extend_from_slice(input);
@@ -172,7 +179,7 @@ mod tests {
         let wasm_bytecode = include_bytes!("../../../examples/identity/lib.wasm");
         let input = vec![1, 2, 3, 4, 5, 6];
         let (exit_code, output) =
-            exec_in_wasmtime_runtime(wasm_bytecode, add_shared_context(&input));
+            exec_in_wasmtime_runtime(wasm_bytecode, insert_default_shared_context(&input));
         assert_eq!(input, output);
     }
 }
