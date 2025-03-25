@@ -325,8 +325,8 @@ pub fn create<const IS_CREATE2: bool, SDK: SharedAPI>(
     require_non_staticcall!(interpreter);
     pop!(interpreter, value, code_offset, len);
     let code_len = as_usize_or_fail!(interpreter, len);
-    let mut code = Bytes::new();
-    if code_len != 0 {
+    let mut init_code = Bytes::new();
+    let init_gas_cost = if code_len != 0 {
         let code_offset = as_usize_or_fail!(interpreter, code_offset);
         let max_initcode_size = if code_len >= 4
             && interpreter.shared_memory.try_slice(code_offset, 4) == Some(&WASM_MAGIC_BYTES)
@@ -339,13 +339,29 @@ pub fn create<const IS_CREATE2: bool, SDK: SharedAPI>(
             interpreter.instruction_result = InstructionResult::CreateInitCodeSizeLimit;
             return;
         }
-        let gas_cost = gas::initcode_cost(code_len as u64);
-        if gas_cost > interpreter.gas.remaining() {
+        let init_gas_cost = gas::initcode_cost(code_len as u64);
+        if init_gas_cost > interpreter.gas.remaining() {
             interpreter.instruction_result = InstructionResult::OutOfGas;
             return;
         }
         resize_memory!(interpreter, code_offset, code_len);
-        code = Bytes::copy_from_slice(interpreter.shared_memory.slice(code_offset, code_len));
+        init_code = Bytes::copy_from_slice(interpreter.shared_memory.slice(code_offset, code_len));
+        init_gas_cost
+    } else {
+        0
+    };
+    let gas_cost = if IS_CREATE2 {
+        let Some(gas) = gas::create2_cost(init_code.len().try_into().unwrap()) else {
+            interpreter.instruction_result = InstructionResult::OutOfGas;
+            return;
+        };
+        gas
+    } else {
+        gas::CREATE
+    };
+    if init_gas_cost + gas_cost > interpreter.gas.remaining() {
+        interpreter.instruction_result = InstructionResult::OutOfGas;
+        return;
     }
     let salt: Option<U256> = if IS_CREATE2 {
         pop!(interpreter, salt);
@@ -356,7 +372,7 @@ pub fn create<const IS_CREATE2: bool, SDK: SharedAPI>(
     // we should sync gas before doing call
     // to make sure gas is synchronized between different runtimes
     sdk.sync_evm_gas(interpreter.gas.remaining(), interpreter.gas.refunded());
-    let result = sdk.create(salt, &value, code.as_ref());
+    let result = sdk.create(salt, &value, init_code.as_ref());
     insert_create_outcome(interpreter, result)
 }
 
