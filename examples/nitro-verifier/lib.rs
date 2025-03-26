@@ -21,6 +21,7 @@ func_entrypoint!(main);
 mod tests {
     use super::*;
     use fluentbase_sdk::testing::TestingContext;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn test_nitro_attestation_verification() {
@@ -29,8 +30,15 @@ mod tests {
         let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
             .unwrap()
             .into();
+        let time = Instant::now();
+
         let doc = attestation::parse_and_verify(&data);
         assert_eq!(doc.digest, "SHA384");
+
+        let now = Instant::now();
+        let elapsed = now.duration_since(time);
+        println!("{}: {:?} since last checkpoint", "NATIVE EXEC:", elapsed);
+
         let sdk = TestingContext::default().with_input(data);
         main(sdk);
     }
