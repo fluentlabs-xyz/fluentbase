@@ -103,6 +103,8 @@ pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
         "evm: delegated storage failed with error ({:?})",
         evm_code_hash.status
     );
+    let is_delegated = evm_code_hash.status.is_ok();
+    let is_cold_accessed = evm_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
     let preimage_address = if evm_code_hash.status.is_ok() {
         calc_preimage_address(&evm_code_hash.data.into())
     } else {
@@ -112,6 +114,12 @@ pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
         interpreter,
         sdk.code_copy(&preimage_address, code_offset, code_length)
     );
+    if !is_delegated && is_cold_accessed {
+        gas!(
+            interpreter,
+            COLD_ACCOUNT_ACCESS_COST - WARM_STORAGE_READ_COST
+        );
+    }
     if code_length == 0 {
         return;
     }
