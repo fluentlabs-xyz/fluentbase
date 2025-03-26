@@ -100,17 +100,17 @@ impl Into<i32> for ExitCode {
 }
 
 impl ExitCode {
-    pub const fn is_ok(&self) -> bool {
-        self.into_i32() == Self::Ok.into_i32()
-    }
-
-    pub const fn is_error(&self) -> bool {
-        self.into_i32() != Self::Ok.into_i32()
+    pub fn is_ok(&self) -> bool {
+        self == &Self::Ok
     }
 
     /// Returns whether the result is a revert.
-    pub const fn is_revert(self) -> bool {
-        self.into_i32() != Self::Ok.into_i32()
+    pub fn is_revert(&self) -> bool {
+        self == &Self::Panic
+    }
+
+    pub fn is_error(&self) -> bool {
+        !self.is_ok() && !self.is_revert()
     }
 
     pub const fn into_i32(self) -> i32 {

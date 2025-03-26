@@ -208,8 +208,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
-    fn ext_storage(&self, slot: &U256) -> SyscallResult<U256> {
-        let input = slot.to_le_bytes::<32>();
+    fn delegated_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256> {
+        let mut input = [0u8; 20 + 32];
+        input[..20].copy_from_slice(address.as_slice());
+        input[20..].copy_from_slice(slot.as_le_slice());
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk
                 .exec(SYSCALL_ID_DELEGATED_STORAGE, &input, None, STATE_MAIN);

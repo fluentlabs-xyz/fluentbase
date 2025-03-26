@@ -153,18 +153,12 @@ impl SharedAPI for TestingContext {
         SyscallResult::new(value, 0, 0, 0)
     }
 
-    fn ext_storage(&self, slot: &U256) -> SyscallResult<U256> {
-        let bytecode_address = self
-            .inner
-            .borrow()
-            .shared_context_input_v1
-            .contract
-            .bytecode_address;
+    fn delegated_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256> {
         let value = self
             .inner
             .borrow()
             .persistent_storage
-            .get(&(bytecode_address, *slot))
+            .get(&(*address, *slot))
             .cloned()
             .unwrap_or_default();
         SyscallResult::new(value, 0, 0, 0)
