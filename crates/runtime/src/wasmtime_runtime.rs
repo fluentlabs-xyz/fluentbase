@@ -21,14 +21,14 @@ mod builtins {
         },
         RuntimeContext,
     };
+    use fluentbase_types::ExitCode;
     use wasmtime::{Caller, Extern, Memory};
 
-    fn get_memory_export(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
-        let memory = match caller.get_export("memory") {
-            Some(Extern::Memory(memory)) => memory,
-            _ => panic!("failed to find host memory"), // TODO(khasan) Get rid of panic here
-        };
-        return memory;
+    fn get_memory_export(caller: &mut Caller<'_, RuntimeContext>) -> anyhow::Result<Memory> {
+        match caller.get_export("memory") {
+            Some(Extern::Memory(memory)) => Ok(memory),
+            _ => Err(anyhow::Error::new(ExitCode::MemoryOutOfBounds)),
+        }
     }
 
     fn write_memory(
@@ -36,32 +36,50 @@ mod builtins {
         offset: u32,
         buffer: &[u8],
     ) -> anyhow::Result<()> {
-        let memory = get_memory_export(caller);
-        return memory.write(caller, offset as usize, &buffer);
+        let memory = get_memory_export(caller)?;
+        // TODO(khasan) this error is not ExitCode, should we map it?
+        memory.write(caller, offset as usize, &buffer)?;
+        Ok(())
     }
 
-    fn read_memory( // TODO(khasan) use read/write memory functions in syscalls
+    fn read_memory(
         caller: &mut Caller<'_, RuntimeContext>,
         offset: u32,
         length: u32,
     ) -> anyhow::Result<Vec<u8>> {
-        let memory = get_memory_export(&mut caller);
-        return memory
+        let memory = get_memory_export(caller)?;
+        let data = memory
             .data(&caller)
             .get(offset as usize..)
-            .and_then(|arr| arr.get(..length as usize))
-            .into();
+            .and_then(|arr| arr.get(..length as usize));
+        if data.is_none() {
+            Err(anyhow::Error::new(ExitCode::MemoryOutOfBounds))
+        } else {
+            Ok(Vec::from(data.unwrap()))
+        }
     }
 
-    pub fn write(mut caller: Caller<'_, RuntimeContext>, offset: u32, length: u32) {
+    pub fn write(
+        mut caller: Caller<'_, RuntimeContext>,
+        offset: u32,
+        length: u32,
+    ) -> anyhow::Result<()> {
+        let data = read_memory(&mut caller, offset, length)?;
         let ctx = caller.data_mut();
         SyscallWrite::fn_impl(ctx, &data);
+        Ok(())
     }
 
-    pub fn read(mut caller: Caller<'_, RuntimeContext>, target_ptr: u32, offset: u32, length: u32) {
-        let buffer = SyscallRead::fn_impl(caller.data(), offset, length).unwrap();
-        let memory = get_memory_export(&mut caller);
-        // TODO(khasan) Handle error returned from
+    pub fn read(
+        mut caller: Caller<'_, RuntimeContext>,
+        target_ptr: u32,
+        offset: u32,
+        length: u32,
+    ) -> anyhow::Result<()> {
+        let buffer = SyscallRead::fn_impl(caller.data(), offset, length)
+            .map_err(|err| anyhow::Error::new(err))?;
+        write_memory(&mut caller, target_ptr, &buffer)?;
+        Ok(())
     }
 
     pub fn input_size(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u32> {
@@ -71,7 +89,6 @@ mod builtins {
 
     pub fn exit(mut caller: Caller<'_, RuntimeContext>, exit_code: i32) -> anyhow::Result<()> {
         let exit_code = SyscallExit::fn_impl(caller.data_mut(), exit_code).unwrap_err();
-        println!("_exit syscall was executed with exit code {}", exit_code);
         Err(anyhow::Error::new(exit_code))
     }
 
@@ -80,10 +97,11 @@ mod builtins {
         target_ptr: u32,
         offset: u32,
         length: u32,
-    ) {
-        let buffer = SyscallReadOutput::fn_impl(caller.data(), offset, length).unwrap();
-        let memory = get_memory_export(&mut caller);
-        let _ = memory.write(caller, target_ptr as usize, &buffer);
+    ) -> anyhow::Result<()> {
+        let buffer = SyscallReadOutput::fn_impl(caller.data(), offset, length)
+            .map_err(|err| anyhow::Error::new(err))?;
+        write_memory(&mut caller, target_ptr, &buffer)?;
+        Ok(())
     }
 
     pub fn output_size(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u32> {
