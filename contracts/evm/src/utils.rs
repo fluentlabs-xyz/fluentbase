@@ -1,5 +1,5 @@
 use core::{cmp::min, ops::Range};
-use fluentbase_sdk::{Address, Bytes, SyscallResult, B256, FUEL_DENOM_RATE, U256};
+use fluentbase_sdk::{Address, Bytes, ExitCode, SyscallResult, B256, FUEL_DENOM_RATE, U256};
 use revm_interpreter::{
     gas,
     instructions::contract::resize_memory,
@@ -7,29 +7,38 @@ use revm_interpreter::{
     push,
     push_b256,
     refund,
-    return_ok,
-    return_revert,
     InstructionResult,
     Interpreter,
 };
 
+pub(crate) fn instruction_result_from_exit_code(exit_code: ExitCode) -> InstructionResult {
+    match exit_code {
+        ExitCode::OutOfFuel => InstructionResult::OutOfGas,
+        _ => unreachable!(
+            "unexpected return err: {:?} ({})",
+            exit_code,
+            exit_code.into_i32()
+        ),
+    }
+}
+
 pub(crate) fn insert_create_outcome(interpreter: &mut Interpreter, result: SyscallResult<Bytes>) {
     gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
     refund!(interpreter, result.fuel_refunded / FUEL_DENOM_RATE as i64);
-    let status = InstructionResult::from(result.status);
-    match status {
-        return_ok!() => {
+    match result.status {
+        ExitCode::Ok => {
             assert_eq!(result.data.len(), 20);
             let created_address = Address::from_slice(result.data.as_ref());
             push_b256!(interpreter, created_address.into_word());
         }
-        return_revert!() => {
+        ExitCode::Panic => {
             interpreter.return_data_buffer = result.data;
             push_b256!(interpreter, B256::ZERO);
         }
-        _ => {
+        ExitCode::Err => {
             push_b256!(interpreter, B256::ZERO);
         }
+        _ => interpreter.instruction_result = instruction_result_from_exit_code(result.status),
     }
 }
 
@@ -42,9 +51,8 @@ pub(crate) fn insert_call_outcome(
     let out_len = return_memory_offset.len();
     interpreter.return_data_buffer = result.data;
     let target_len = min(out_len, interpreter.return_data_buffer.len());
-    let status = InstructionResult::from(result.status);
-    match status {
-        return_ok!() => {
+    match result.status {
+        ExitCode::Ok => {
             gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
             refund!(interpreter, result.fuel_refunded / FUEL_DENOM_RATE as i64);
             interpreter
@@ -59,7 +67,7 @@ pub(crate) fn insert_call_outcome(
                 }
             );
         }
-        return_revert!() => {
+        ExitCode::Panic => {
             gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
             interpreter
                 .shared_memory
@@ -73,7 +81,7 @@ pub(crate) fn insert_call_outcome(
                 }
             );
         }
-        _ => {
+        ExitCode::Err => {
             gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
             push!(
                 interpreter,
@@ -84,8 +92,8 @@ pub(crate) fn insert_call_outcome(
                 }
             );
         }
+        _ => interpreter.instruction_result = instruction_result_from_exit_code(result.status),
     }
-    interpreter.instruction_result = InstructionResult::Continue;
 }
 
 #[inline]
@@ -116,9 +124,7 @@ pub(crate) unsafe fn read_u16(ptr: *const u8) -> u16 {
 #[macro_export]
 macro_rules! unwrap_syscall {
     ($interpreter:expr, $result:expr) => {{
-        use fluentbase_sdk::{debug_log, SyscallResult};
         let result = $result;
-        debug_log!("syscall_result: {:?}", result);
         gas!(
             $interpreter,
             result.fuel_consumed / fluentbase_sdk::FUEL_DENOM_RATE
@@ -129,15 +135,19 @@ macro_rules! unwrap_syscall {
                 result.fuel_refunded / fluentbase_sdk::FUEL_DENOM_RATE as i64
             );
         }
-        if !SyscallResult::is_ok(result.status) {
-            $interpreter.instruction_result = InstructionResult::from(result.status);
+        if !result.status.is_ok() {
+            $interpreter.instruction_result =
+                $crate::utils::instruction_result_from_exit_code(result.status);
+            return;
         }
         result.data
     }};
     (@gasless $interpreter:expr, $result:expr) => {{
         let result = $result;
-        if !SyscallResult::is_ok(result.status) {
-            $interpreter.instruction_result = InstructionResult::from(result.status);
+        if !result.status.is_ok() {
+            $interpreter.instruction_result =
+                $crate::utils::instruction_result_from_exit_code(result.status);
+            return;
         }
         result.data
     }};

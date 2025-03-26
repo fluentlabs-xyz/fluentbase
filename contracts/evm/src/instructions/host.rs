@@ -1,12 +1,19 @@
 use crate::unwrap_syscall;
 use alloc::vec::Vec;
 use core::cmp::min;
-use fluentbase_sdk::{BlockContextReader, SharedAPI};
+use fluentbase_sdk::{
+    calc_preimage_address,
+    debug_log,
+    BlockContextReader,
+    SharedAPI,
+    EVM_CODE_HASH_SLOT,
+    FUEL_DENOM_RATE,
+};
 use revm_interpreter::{
     as_u64_saturated,
     as_usize_or_fail,
-    as_usize_saturated,
     gas,
+    gas::{COLD_ACCOUNT_ACCESS_COST, COLD_SLOAD_COST, WARM_STORAGE_READ_COST},
     interpreter::Interpreter,
     pop,
     pop_address,
@@ -34,39 +41,94 @@ pub fn selfbalance<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
 
 pub fn extcodesize<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
-    let result = unwrap_syscall!(interpreter, sdk.code_size(&address));
-    push!(interpreter, U256::from(result));
+    let evm_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+    assert!(
+        !evm_code_hash.status.is_error(),
+        "evm: delegated storage failed with error ({:?})",
+        evm_code_hash.status
+    );
+    let is_delegated = evm_code_hash.status.is_ok();
+    let is_cold_accessed = evm_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
+    let preimage_address = if is_delegated {
+        calc_preimage_address(&evm_code_hash.data.into())
+    } else {
+        address
+    };
+    let code_size = unwrap_syscall!(interpreter, sdk.code_size(&preimage_address));
+    if !is_delegated && is_cold_accessed {
+        gas!(
+            interpreter,
+            COLD_ACCOUNT_ACCESS_COST - WARM_STORAGE_READ_COST
+        );
+    }
+    push!(interpreter, U256::from(code_size));
 }
 
 /// EIP-1052: EXTCODEHASH opcode
 pub fn extcodehash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
-    let result = unwrap_syscall!(interpreter, sdk.code_hash(&address));
-    push_b256!(interpreter, result);
+    let evm_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+    assert!(
+        !evm_code_hash.status.is_error(),
+        "evm: delegated storage failed with error ({:?})",
+        evm_code_hash.status
+    );
+    let is_delegated = evm_code_hash.status.is_ok();
+    let is_cold_accessed = evm_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
+    let preimage_address = if is_delegated {
+        calc_preimage_address(&evm_code_hash.data.into())
+    } else {
+        address
+    };
+    debug_log!("preimage_address: {}", preimage_address);
+    let code_hash = unwrap_syscall!(interpreter, sdk.code_hash(&preimage_address));
+    if !is_delegated && is_cold_accessed {
+        gas!(
+            interpreter,
+            COLD_ACCOUNT_ACCESS_COST - WARM_STORAGE_READ_COST
+        );
+    }
+    push_b256!(interpreter, code_hash);
 }
 
 pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
     pop!(interpreter, memory_offset, code_offset, len_u256);
+    let code_offset = as_usize_or_fail!(interpreter, code_offset) as u64;
+    let code_length = as_usize_or_fail!(interpreter, len_u256) as u64;
+    let evm_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+    assert!(
+        !evm_code_hash.status.is_error(),
+        "evm: delegated storage failed with error ({:?})",
+        evm_code_hash.status
+    );
+    let is_delegated = evm_code_hash.status.is_ok();
+    let is_cold_accessed = evm_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
+    let preimage_address = if evm_code_hash.status.is_ok() {
+        calc_preimage_address(&evm_code_hash.data.into())
+    } else {
+        address
+    };
     let code = unwrap_syscall!(
         interpreter,
-        sdk.code_copy(
-            &address,
-            as_usize_or_fail!(interpreter, code_offset) as u64,
-            as_usize_or_fail!(interpreter, len_u256) as u64
-        )
+        sdk.code_copy(&preimage_address, code_offset, code_length)
     );
-    let len = as_usize_or_fail!(interpreter, len_u256);
-    if len == 0 {
+    if !is_delegated && is_cold_accessed {
+        gas!(
+            interpreter,
+            COLD_ACCOUNT_ACCESS_COST - WARM_STORAGE_READ_COST
+        );
+    }
+    if code_length == 0 {
         return;
     }
     let memory_offset = as_usize_or_fail!(interpreter, memory_offset);
-    let code_offset = min(as_usize_saturated!(code_offset), code.len());
-    resize_memory!(interpreter, memory_offset, len);
+    let code_offset = min(code_offset as usize, code.len());
+    resize_memory!(interpreter, memory_offset, code_length as usize);
     // Note: this can't panic because we resized memory to fit.
     interpreter
         .shared_memory
-        .set_data(memory_offset, code_offset, len, &code);
+        .set_data(memory_offset, code_offset, code_length as usize, &code);
 }
 
 pub fn blockhash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {

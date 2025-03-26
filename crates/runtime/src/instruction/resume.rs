@@ -74,18 +74,12 @@ impl SyscallResume {
         return_data_mut.clear();
         return_data_mut.extend(&return_data);
 
-        // let _skip_trace_logs = recoverable_runtime
-        //     .runtime
-        //     .store
-        //     .tracer()
-        //     .unwrap()
-        //     .logs
-        //     .len();
+        // let skip_trace_logs = recoverable_runtime.store().tracer().unwrap().logs.len();
 
         let mut execution_result =
             recoverable_runtime.resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code);
 
-        // println!("\n\nRESUME, interrupted: {}", execution_result.interrupted);
+        // println!("RESUME, interrupted: {}", execution_result.interrupted);
         // println!(
         //     "exit_code: {} ({})",
         //     execution_result.exit_code,
@@ -93,17 +87,17 @@ impl SyscallResume {
         // );
         // println!(
         //     "output: 0x{} ({})",
-        //     hex::encode(&execution_result.output),
+        //     fluentbase_types::hex::encode(&execution_result.output),
         //     std::str::from_utf8(&execution_result.output).unwrap_or("can't decode utf-8")
         // );
         // println!("fuel consumed: {}", execution_result.fuel_consumed);
-        // let logs = &recoverable_runtime.runtime.store().tracer().unwrap().logs;
+        // let logs = &recoverable_runtime.store().tracer().unwrap().logs;
         // println!("execution trace ({} steps):", logs.len());
         // for log in logs.iter().skip(skip_trace_logs).rev().take(100).rev() {
-        //     use rwasm::rwasm::instruction::InstructionExtra;
+        //     use fluentbase_rwasm::InstructionExtra;
         //     if let Some(value) = log.opcode.aux_value() {
         //         println!(
-        //             " - pc={} opcode={}({}) gas={} stack={:?}",
+        //             " - pc={} opcode={:?}({}) gas={} stack={:?}",
         //             log.program_counter,
         //             log.opcode,
         //             value,
@@ -118,7 +112,7 @@ impl SyscallResume {
         //         );
         //     } else {
         //         println!(
-        //             " - pc={} opcode={} gas={} stack={:?}",
+        //             " - pc={} opcode={:?} gas={} stack={:?}",
         //             log.program_counter,
         //             log.opcode,
         //             log.consumed_fuel,

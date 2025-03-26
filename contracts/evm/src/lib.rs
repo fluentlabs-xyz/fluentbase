@@ -16,7 +16,7 @@ use fluentbase_sdk::{
     ContractContextReader,
     ExitCode,
     SharedAPI,
-    CODE_HASH_SLOT,
+    EVM_CODE_HASH_SLOT,
     FUEL_DENOM_RATE,
     KECCAK_EMPTY,
     U256,
@@ -96,20 +96,19 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     // to keep full compatibility with an EVM deployment process
     let result = sdk.write_preimage(result.output);
     let code_hash = result.data;
-    _ = sdk.write_storage(CODE_HASH_SLOT.into(), code_hash.into());
+    _ = sdk.write_storage(EVM_CODE_HASH_SLOT.into(), code_hash.into());
 }
 
 pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log!("contract_address: {:?}", sdk.context().contract_address());
-    debug_log!(
-        "contract_bytecode_address: {:?}",
-        sdk.context().contract_bytecode_address()
-    );
+    let bytecode_address = sdk.context().contract_bytecode_address();
+    debug_log!("contract_bytecode_address: {:?}", bytecode_address);
     debug_log!(
         "contract_is_static: {:?}",
         sdk.context().contract_is_static()
     );
-    let code_hash = sdk.ext_storage(&Into::<U256>::into(CODE_HASH_SLOT));
+    let code_hash =
+        sdk.delegated_storage(&bytecode_address, &Into::<U256>::into(EVM_CODE_HASH_SLOT));
     // TODO(dmitry123): "do we want to have this optimized during the creation of the frame?"
     if code_hash.data == U256::ZERO || Into::<U256>::into(KECCAK_EMPTY) == code_hash.data {
         debug_log!(

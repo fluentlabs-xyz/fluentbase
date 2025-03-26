@@ -12,6 +12,7 @@ mod context;
 mod exit_code;
 mod genesis;
 mod linker;
+mod preimage;
 mod rwasm;
 mod sdk;
 mod sys_func_idx;
@@ -27,6 +28,7 @@ pub use exit_code::*;
 pub use genesis::*;
 pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use linker::*;
+pub use preimage::*;
 use revm_primitives::SpecId;
 pub use rwasm::*;
 pub use sdk::*;
@@ -63,7 +65,7 @@ pub const FUEL_DENOM_RATE: u64 = 1000;
 pub const CALL_STACK_LIMIT: u32 = 1024;
 
 /// EVM code hash slot: `hash=keccak256("_evm_code_hash")`
-pub const CODE_HASH_SLOT: B256 =
+pub const EVM_CODE_HASH_SLOT: B256 =
     b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113b");
 
 /// A basic SPEC that Fluent supports

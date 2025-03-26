@@ -9,7 +9,8 @@ pub enum ExitCode {
     // warning: when adding new codes doesn't forget to add them to impls below
     #[default]
     Ok = 0,
-    Panic = -71, // -71 to be wasi friendly
+    Panic = -1,
+    Err = -2,
     // fluentbase error codes
     RootCallOnly = -1002,
     MalformedBuiltinParams = -1003,
@@ -30,6 +31,48 @@ pub enum ExitCode {
     OutOfFuel = -2010,
     GrowthOperationLimited = -2011,
     UnresolvedFunction = -2013,
+    // Continue = 0x00,
+    // Stop,
+    // Return,
+    // SelfDestruct,
+    // ReturnContract,
+    //
+    // // Revert Codes
+    // Revert = 0x10,
+    // CallTooDeep,
+    // OutOfFunds,
+    // CreateInitCodeStartingEF00,
+    // InvalidEOFInitCode,
+    // InvalidExtDelegateCallTarget,
+    //
+    // // Error Codes
+    // OutOfGas = 0x50,
+    // MemoryOOG,
+    // MemoryLimitOOG,
+    // PrecompileOOG,
+    // InvalidOperandOOG,
+    // OpcodeNotFound,
+    // CallNotAllowedInsideStatic,
+    // StateChangeDuringStaticCall,
+    // InvalidFEOpcode,
+    // InvalidJump,
+    // NotActivated,
+    // StackUnderflow,
+    // OutOfOffset,
+    // CreateCollision,
+    // OverflowPayment,
+    // PrecompileError,
+    // NonceOverflow,
+    // CreateContractSizeLimit,
+    // CreateContractStartingWithEF,
+    // CreateInitCodeSizeLimit,
+    // FatalExternalError,
+    // ReturnContractInNotInitEOF,
+    // EOFOpcodeDisabledInLegacy,
+    // EOFFunctionStackOverflow,
+    // EofAuxDataOverflow,
+    // EofAuxDataTooSmall,
+    // InvalidEXTCALLTarget,
 }
 
 impl StdError for ExitCode {} // required to use in anyhow::new()
@@ -60,17 +103,17 @@ impl Into<i32> for ExitCode {
 }
 
 impl ExitCode {
-    pub const fn is_ok(&self) -> bool {
-        self.into_i32() == Self::Ok.into_i32()
-    }
-
-    pub const fn is_error(&self) -> bool {
-        self.into_i32() != Self::Ok.into_i32()
+    pub fn is_ok(&self) -> bool {
+        self == &Self::Ok
     }
 
     /// Returns whether the result is a revert.
-    pub const fn is_revert(self) -> bool {
-        self.into_i32() != Self::Ok.into_i32()
+    pub fn is_revert(&self) -> bool {
+        self == &Self::Panic
+    }
+
+    pub fn is_error(&self) -> bool {
+        !self.is_ok() && !self.is_revert()
     }
 
     pub const fn into_i32(self) -> i32 {

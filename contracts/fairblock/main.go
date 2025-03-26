@@ -86,5 +86,5 @@ func print_err(err error) {
 	resultPtr := (*C.char)(unsafe.Pointer(&errBytes[0]))
 
 	_write(resultPtr, resultLen)
-	_exit(-71)
+	_exit(-1)
 }
