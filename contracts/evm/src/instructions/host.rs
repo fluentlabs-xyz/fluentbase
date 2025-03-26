@@ -48,9 +48,8 @@ pub fn extcodesize<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
         evm_code_hash.status
     );
     let is_delegated = evm_code_hash.status.is_ok();
-    let is_cold_accessed =
-        evm_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_ACCOUNT_ACCESS_COST;
-    let preimage_address = if evm_code_hash.status.is_ok() {
+    let is_cold_accessed = evm_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
+    let preimage_address = if is_delegated {
         calc_preimage_address(&evm_code_hash.data.into())
     } else {
         address
