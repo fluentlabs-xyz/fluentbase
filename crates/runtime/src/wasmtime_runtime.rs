@@ -1,5 +1,4 @@
 use crate::RuntimeContext;
-use fluentbase_types::{SharedContextInput, SharedContextInputV1};
 use wasmtime::{Engine, Linker, Module, Store};
 
 const MODULE: &str = "fluentbase_v1preview";
@@ -129,7 +128,6 @@ mod builtins {
         state: u32,
     ) -> anyhow::Result<i32> {
         todo!();
-        Ok(0)
     }
 
     pub fn keccak256(
@@ -144,9 +142,9 @@ mod builtins {
         Ok(())
     }
 
-    pub fn charge_fuel(caller: Caller<'_, RuntimeContext>, _delta: u64) -> anyhow::Result<u64> {
-        let context = caller.data();
-        return Ok(SyscallFuel::fn_impl(context));
+    pub fn charge_fuel(mut caller: Caller<'_, RuntimeContext>, delta: u64) -> anyhow::Result<u64> {
+        let context = caller.data_mut();
+        return Ok(SyscallChargeFuel::fn_impl(context, delta));
     }
 
     pub fn fuel(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u64> {
@@ -183,6 +181,7 @@ fn exec_internal(wasm_bytecode: &[u8], input: Vec<u8>) -> anyhow::Result<(i32, V
             println!("{:?}", store.data().output());
         }
     }
+
     return Ok((0, store.data().output().clone().into()));
 }
 
@@ -193,6 +192,7 @@ pub fn exec_in_wasmtime_runtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fluentbase_types::{SharedContextInput, SharedContextInputV1};
 
     fn insert_default_shared_context(input: &[u8]) -> Vec<u8> {
         let result = SharedContextInput::V1(SharedContextInputV1::default());
@@ -202,11 +202,24 @@ mod tests {
     }
 
     #[test]
-    fn wasmtime_identity() {
+    fn run_identity_in_wasmtime() {
         let wasm_bytecode = include_bytes!("../../../examples/identity/lib.wasm");
         let input = vec![1, 2, 3, 4, 5, 6];
-        let (exit_code, output) =
+        let (_, output) =
             exec_in_wasmtime_runtime(wasm_bytecode, insert_default_shared_context(&input));
         assert_eq!(input, output);
+    }
+
+    #[test]
+    fn run_nitro_verifier_in_wasmtime() {
+        let attestation_doc: Vec<u8> = hex::decode(include_bytes!(
+            "../../../examples/nitro-verifier/attestation-example.hex"
+        ))
+        .unwrap()
+        .into();
+        let wasm_bytecode = include_bytes!("../../../examples/nitro-verifier/lib.wasm");
+        let input = attestation_doc;
+        let (_, _) =
+            exec_in_wasmtime_runtime(wasm_bytecode, insert_default_shared_context(&input));
     }
 }

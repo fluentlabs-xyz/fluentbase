@@ -21,7 +21,7 @@ func_entrypoint!(main);
 mod tests {
     use super::*;
     use fluentbase_sdk::testing::TestingContext;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     #[test]
     fn test_nitro_attestation_verification() {
