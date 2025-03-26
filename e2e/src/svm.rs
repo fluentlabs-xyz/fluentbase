@@ -1,40 +1,8 @@
-#![cfg_attr(target_arch = "wasm32", no_std)]
-extern crate alloc;
-extern crate core;
-extern crate fluentbase_sdk;
-
-use fluentbase_sdk::{debug_log, func_entrypoint, ExitCode, SharedAPI};
-use solana_ee_core::fluentbase_helpers::{exec_encoded_svm_batch_message, process_svm_result};
-
-func_entrypoint!(main);
-
-pub fn main(mut sdk: impl SharedAPI) {
-    let input = sdk.input();
-
-    let result = exec_encoded_svm_batch_message(&mut sdk, input);
-    debug_log!(
-        "input.len {} input '{:?}' result: {:?}",
-        input.len(),
-        input,
-        &result
-    );
-    let (output, exit_code) = process_svm_result(result);
-    if exit_code != ExitCode::Ok.into_i32() {
-        panic!(
-            "svm_exec error '{}' output '{:?}'",
-            exit_code,
-            output.as_ref()
-        );
-    }
-
-    let out = output.as_ref();
-    sdk.write(out);
-}
-
-#[cfg(test)]
 mod tests {
-    use crate::main;
-    use fluentbase_sdk::testing::TestingContext;
+    use crate::utils::{try_print_utf8_error, EvmTestingContext};
+    use fluentbase_sdk::{address, Address, Bytes, SVM_EE_ADDRESS};
+    use hex_literal::hex;
+    use revm::primitives::ExecutionResult;
     use solana_ee_core::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bincode,
@@ -68,7 +36,9 @@ mod tests {
 
     #[test]
     fn test_svm_deploy_exec() {
-        let mut sdk = TestingContext::default();
+        let mut ctx = EvmTestingContext::default();
+
+        // setup
 
         // setup
 
@@ -95,36 +65,36 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &bpf_loader_upgradeable_id,
-            "../../../solana-ee/crates/examples/hello-world/assets/solana_ee_hello_world.so",
+            "../../solana-ee/crates/examples/hello-world/assets/solana_ee_hello_world.so",
         );
 
         let program_len = account_with_program.data().len();
 
-        sdk_storage_write_account_data(&mut sdk, &pk_payer, &account_payer).unwrap();
-        sdk_storage_write_account_data(&mut sdk, &pk_9, &pk_9_account).unwrap();
-        sdk_storage_write_account_data(&mut sdk, &pk_exec, &pk_exec_account).unwrap();
-        sdk_storage_write_account_data(&mut sdk, &pk_program_data, &pk_program_data_account)
+        sdk_storage_write_account_data(&mut ctx.sdk, &pk_payer, &account_payer).unwrap();
+        sdk_storage_write_account_data(&mut ctx.sdk, &pk_9, &pk_9_account).unwrap();
+        sdk_storage_write_account_data(&mut ctx.sdk, &pk_exec, &pk_exec_account).unwrap();
+        sdk_storage_write_account_data(&mut ctx.sdk, &pk_program_data, &pk_program_data_account)
             .unwrap();
         sdk_storage_write_account_data(
-            &mut sdk,
+            &mut ctx.sdk,
             &system_program_id,
             &create_loadable_account_for_test("system_program_id", &native_loader_id),
         )
         .unwrap();
         sdk_storage_write_account_data(
-            &mut sdk,
+            &mut ctx.sdk,
             &bpf_loader_upgradeable_id,
             &create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
         )
         .unwrap();
         sdk_storage_write_account_data(
-            &mut sdk,
+            &mut ctx.sdk,
             &sysvar_clock_id,
             &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
         )
         .unwrap();
         sdk_storage_write_account_data(
-            &mut sdk,
+            &mut ctx.sdk,
             &sysvar_rent_id,
             &create_loadable_account_for_test("sysvar_rent_id", &system_program_id),
         )
@@ -138,11 +108,40 @@ mod tests {
         let message = Message::new(&instructions, Some(&pk_payer));
         batch_message.append_one(message);
 
+        const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
         let input = bincode::serialize(&batch_message).unwrap();
-        println!("input.len {}", input.len());
-
-        sdk = sdk.with_input(input);
-
-        main(sdk);
+        let input: Bytes = input.into();
+        println!("input.len {} input '{:?}'", input.len(), input.as_ref());
+        let result: ExecutionResult = ctx.call_evm_tx(
+            DEPLOYER_ADDRESS,
+            SVM_EE_ADDRESS,
+            input,
+            Some(300_000_000),
+            None,
+        );
+        let output = result.output().unwrap_or_default();
+        match result {
+            ExecutionResult::Success { .. } => {}
+            ExecutionResult::Revert {
+                ref gas_used,
+                ref output,
+            } => {
+                println!(
+                    "Execution reverted. gas_used {} output '{}'",
+                    gas_used,
+                    hex::encode(output.as_ref())
+                );
+                try_print_utf8_error(output.as_ref());
+            }
+            ExecutionResult::Halt {
+                ref reason,
+                ref gas_used,
+            } => {
+                println!("Execution halted. reason '{:?}'", reason);
+            }
+        }
+        assert!(result.is_success());
+        let expected_output = hex!("");
+        assert_eq!(hex::encode(expected_output), hex::encode(output));
     }
 }

@@ -25,6 +25,8 @@ mod router;
 #[cfg(test)]
 mod stateless;
 #[cfg(test)]
+mod svm;
+#[cfg(test)]
 mod utils;
 #[cfg(test)]
 mod wasm;

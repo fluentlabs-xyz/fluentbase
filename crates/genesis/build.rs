@@ -12,6 +12,7 @@ mod genesis_builder {
         EXAMPLE_FAIRBLOCK_ADDRESS,
         EXAMPLE_GREETING_ADDRESS,
         PRECOMPILE_NATIVE_MULTICALL,
+        SVM_EE_ADDRESS,
         U256,
         WASM_SIG,
     };
@@ -140,6 +141,8 @@ mod genesis_builder {
             EXAMPLE_FAIRBLOCK_ADDRESS,
             PRECOMPILE_FAIRBLOCK,
         );
+        const PRECOMPILE_SVM: &[u8] = include_bytes!("../../contracts/svm/lib.wasm");
+        init_contract(&mut alloc, "svm", SVM_EE_ADDRESS, PRECOMPILE_SVM);
 
         Genesis {
             config: devnet_chain_config(),

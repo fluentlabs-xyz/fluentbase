@@ -28,6 +28,9 @@ pub const PRECOMPILE_BLS12_381_MAP_FP2_TO_G2: Address = evm_address(0x13);
 pub const PRECOMPILE_NATIVE_MULTICALL: Address =
     address!("52206e61746976650000000000000000ac9650d8");
 
+// keccak256("_svm")[..12]
+pub const SVM_EE_ADDRESS: Address = address!("9f7f2a4373a3d89a8500e80195683b6f140690cd");
+
 /// Checks if the function call should be redirected to a native precompiled contract.
 ///
 /// When the first four bytes of the input (function selector) match a precompile's address

@@ -4,14 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true }
-revm-precompile = { workspace = true }
-
+fluentbase-sdk = { workspace = true, default-features = false }
 solana-ee-core = { workspace = true, default-features = false }
-solana-program = { workspace = true, default-features = false }
-solana_rbpf = { workspace = true, default-features = false }
-
-bincode = { workspace = true, default-features = false }
 
 [dev-dependencies]
 
@@ -28,5 +22,5 @@ path = "lib.rs"
 default = ["std"]
 std = [
     "fluentbase-sdk/std",
-    "revm-precompile/std",
+    "solana-ee-core/std",
 ]
