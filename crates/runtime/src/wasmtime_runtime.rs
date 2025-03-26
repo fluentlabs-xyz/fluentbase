@@ -37,8 +37,9 @@ mod builtins {
         buffer: &[u8],
     ) -> anyhow::Result<()> {
         let memory = get_memory_export(caller)?;
-        // TODO(khasan) this error is not ExitCode, should we map it?
-        memory.write(caller, offset as usize, &buffer)?;
+        memory
+            .write(caller, offset as usize, &buffer)
+            .map_err(|_| anyhow::Error::new(ExitCode::MemoryOutOfBounds))?;
         Ok(())
     }
 
@@ -109,8 +110,14 @@ mod builtins {
         return Ok(SyscallOutputSize::fn_impl(context));
     }
 
-    pub fn debug_log(caller: Caller<'_, RuntimeContext>, message_ptr: u32, message_length: u32) {
-        todo!();
+    pub fn debug_log(
+        mut caller: Caller<'_, RuntimeContext>,
+        message_ptr: u32,
+        message_length: u32,
+    ) -> anyhow::Result<()> {
+        let message = read_memory(&mut caller, message_ptr, message_length)?;
+        SyscallDebugLog::fn_impl(&message);
+        Ok(())
     }
 
     pub fn exec(
@@ -126,12 +133,14 @@ mod builtins {
     }
 
     pub fn keccak256(
-        caller: Caller<'_, RuntimeContext>,
+        mut caller: Caller<'_, RuntimeContext>,
         data_ptr: u32,
         data_len: u32,
         output32_ptr: u32,
     ) -> anyhow::Result<()> {
-        todo!();
+        let data = read_memory(&mut caller, data_ptr, data_len)?;
+        let hash = SyscallKeccak256::fn_impl(&data);
+        write_memory(&mut caller, output32_ptr, hash.as_slice())?;
         Ok(())
     }
 
