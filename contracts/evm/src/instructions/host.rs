@@ -8,13 +8,12 @@ use fluentbase_sdk::{
     SharedAPI,
     EVM_BASE_SPEC,
     EVM_CODE_HASH_SLOT,
-    FUEL_DENOM_RATE,
 };
 use revm_interpreter::{
     as_u64_saturated,
     as_usize_or_fail,
     gas,
-    gas::{warm_cold_cost, COLD_SLOAD_COST, WARM_STORAGE_READ_COST},
+    gas::warm_cold_cost,
     interpreter::Interpreter,
     pop,
     pop_address,
@@ -42,15 +41,16 @@ pub fn selfbalance<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
 
 pub fn extcodesize<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
-    let code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+    let delegated_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
     assert!(
-        !code_hash.status.is_error(),
+        !delegated_code_hash.status.is_error(),
         "evm: delegated storage failed with error ({:?})",
-        code_hash.status
+        delegated_code_hash.status
     );
-    let is_delegated = code_hash.status.is_ok();
+    let is_delegated = delegated_code_hash.status.is_ok();
+    let (delegated_code_hash, is_cold_accessed) = delegated_code_hash.data;
     let preimage_address = if is_delegated {
-        calc_preimage_address(&code_hash.data.into())
+        calc_preimage_address(&delegated_code_hash.into())
     } else {
         address
     };
@@ -59,7 +59,6 @@ pub fn extcodesize<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
         interpreter.instruction_result = instruction_result_from_exit_code(code_size.status);
         return;
     }
-    let is_cold_accessed = code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
     gas!(interpreter, warm_cold_cost(is_cold_accessed));
     push!(interpreter, U256::from(code_size.data));
 }
@@ -75,20 +74,21 @@ pub fn extcodehash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
         delegated_code_hash.status
     );
     let is_delegated = delegated_code_hash.status.is_ok();
-    let preimage_address = if is_delegated {
-        calc_preimage_address(&delegated_code_hash.data.into())
-    } else {
-        address
+    let (delegated_code_hash, is_cold_accessed) = delegated_code_hash.data;
+    // for delegated accounts, we can instantly return code hash
+    // since the account is managed by the same runtime and store EVM code hash in this field
+    if is_delegated {
+        gas!(interpreter, warm_cold_cost(is_cold_accessed));
+        push!(interpreter, delegated_code_hash);
+        return;
     };
-    debug_log!("preimage_address: {}", preimage_address);
-    let evm_code_hash = sdk.code_hash(&preimage_address);
-    if !evm_code_hash.status.is_ok() {
-        interpreter.instruction_result = instruction_result_from_exit_code(evm_code_hash.status);
+    let code_hash = sdk.code_hash(&address);
+    if !code_hash.status.is_ok() {
+        interpreter.instruction_result = instruction_result_from_exit_code(code_hash.status);
         return;
     }
-    let is_cold_accessed = delegated_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
     gas!(interpreter, warm_cold_cost(is_cold_accessed));
-    push_b256!(interpreter, evm_code_hash.data);
+    push_b256!(interpreter, code_hash.data);
 }
 
 pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
@@ -103,13 +103,17 @@ pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
         delegated_code_hash.status
     );
     let is_delegated = delegated_code_hash.status.is_ok();
-    let is_cold_accessed = delegated_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
+    let (delegated_code_hash, is_cold_accessed) = delegated_code_hash.data;
     let preimage_address = if is_delegated {
-        calc_preimage_address(&delegated_code_hash.data.into())
+        calc_preimage_address(&delegated_code_hash.into())
     } else {
         address
     };
     let code = sdk.code_copy(&preimage_address, code_offset, code_length);
+    if !code.status.is_ok() {
+        interpreter.instruction_result = instruction_result_from_exit_code(code.status);
+        return;
+    }
     let Some(gas_cost) = gas::extcodecopy_cost(EVM_BASE_SPEC, code_length, is_cold_accessed) else {
         interpreter.instruction_result = InstructionResult::OutOfGas;
         return;
