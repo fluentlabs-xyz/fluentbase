@@ -1,20 +1,18 @@
 use core::{mem::take, str::from_utf8};
 use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
-use fluentbase_runtime::{types::NonePreimageResolver, Runtime, RuntimeContext};
+use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
     bytes::BytesMut,
     calc_create_address,
     codec::CompactABI,
-    create_import_linker,
+    rwasm_config,
     testing::{TestingContext, TestingContextNativeAPI},
     Address,
     Bytes,
     ExitCode,
     HashMap,
     SharedContextInputV1,
-    SysFuncIdx,
     KECCAK_EMPTY,
-    STATE_DEPLOY,
     STATE_MAIN,
     U256,
 };
@@ -25,7 +23,6 @@ use revm::{
     InMemoryDB,
 };
 use rwasm::{
-    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{instruction::InstructionExtra, BinaryFormat, BinaryFormatWriter, RwasmModule},
     Error,
 };
@@ -69,6 +66,15 @@ impl EvmTestingContext {
             genesis,
             db,
         }
+    }
+
+    pub fn commit_storage(&mut self) {
+        let storage = self.sdk.dump_storage();
+        storage.iter().for_each(|((address, slot), value)| {
+            self.db
+                .insert_account_storage(*address, *slot, *value)
+                .unwrap();
+        })
     }
 
     pub(crate) fn add_wasm_contract<I: Into<RwasmModule>>(
@@ -126,9 +132,18 @@ impl EvmTestingContext {
     }
 
     pub(crate) fn deploy_evm_tx(&mut self, deployer: Address, init_bytecode: Bytes) -> Address {
-        // let bytecode_type = BytecodeType::from_slice(init_bytecode.as_ref());
-        // deploy greeting EVM contract
-        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
+        let (contract_address, _) = self.deploy_evm_tx_with_gas(deployer, init_bytecode);
+        contract_address
+    }
+
+    pub(crate) fn deploy_evm_tx_with_gas(
+        &mut self,
+        deployer: Address,
+        init_bytecode: Bytes,
+    ) -> (Address, u64) {
+        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into())
+            .enable_rwasm_proxy()
+            .exec();
         if !result.is_success() {
             println!("{:?}", result);
             println!(
@@ -143,7 +158,7 @@ impl EvmTestingContext {
         assert!(result.is_success());
         let contract_address = calc_create_address::<TestingContextNativeAPI>(&deployer, 0);
         assert_eq!(contract_address, deployer.create(0));
-        contract_address
+        (contract_address, result.gas_used())
     }
 
     pub(crate) fn deploy_evm_tx_with_nonce(
@@ -152,7 +167,9 @@ impl EvmTestingContext {
         init_bytecode: Bytes,
         nonce: u64,
     ) -> (Address, u64) {
-        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
+        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into())
+            .enable_rwasm_proxy()
+            .exec();
         if !result.is_success() {
             println!("{:?}", result);
             println!(
@@ -254,6 +271,11 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
+    pub fn enable_rwasm_proxy(mut self) -> Self {
+        self.env.cfg.enable_rwasm_proxy = true;
+        self
+    }
+
     pub fn exec(&mut self) -> ExecutionResult {
         let db = take(&mut self.ctx.db);
         let mut evm = Evm::builder()
@@ -281,20 +303,7 @@ pub(crate) fn try_print_utf8_error(mut output: &[u8]) {
 
 fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
     let mut config = RwasmModule::default_config(None);
-    config.rwasm_config(RwasmConfig {
-        state_router: Some(StateRouterConfig {
-            states: Box::new([
-                ("deploy".to_string(), STATE_DEPLOY),
-                ("main".to_string(), STATE_MAIN),
-            ]),
-            opcode: Instruction::Call(SysFuncIdx::STATE.into()),
-        }),
-        entrypoint_name: None,
-        import_linker: Some(create_import_linker()),
-        wrap_import_functions: true,
-        translate_drop_keep: false,
-        allow_malformed_entrypoint_func_type: false,
-    });
+    config.rwasm_config(rwasm_config());
     RwasmModule::compile_with_config(wasm_binary, &config)
 }
 
@@ -331,12 +340,12 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
         buf.extend_from_slice(input_data);
         buf.freeze().to_vec()
     };
-    let ctx = RuntimeContext::new(rwasm_binary)
+    let ctx = RuntimeContext::new(Bytes::from(rwasm_binary))
         .with_state(STATE_MAIN)
         .with_fuel_limit(100_000_000_000)
         .with_input(context_input);
     // .with_tracer();
-    let mut runtime = Runtime::new(ctx, &NonePreimageResolver);
+    let mut runtime = Runtime::new(ctx);
     runtime.context_mut().clear_output();
     let result = runtime.call();
     println!(

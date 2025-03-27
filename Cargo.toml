@@ -4,7 +4,7 @@ members = [
     "crates/*",
     "revm/crates/*",
     "crates/rwasm/e2e",
-    "examples/*",
+    #    "examples/*",
     "e2e",
 ]
 exclude = [
@@ -86,7 +86,7 @@ codegen-units = 1
 panic = "abort"
 lto = true
 opt-level = 3
-strip = true
+strip = false
 debug = false
 debug-assertions = false
 rpath = false

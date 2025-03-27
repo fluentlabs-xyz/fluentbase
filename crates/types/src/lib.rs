@@ -5,32 +5,35 @@
 extern crate alloc;
 extern crate core;
 
+mod address;
 mod allocator;
 mod bytecode_type;
 mod context;
-mod contracts;
 mod exit_code;
+mod genesis;
 mod linker;
+mod preimage;
 mod rwasm;
 mod sdk;
 mod sys_func_idx;
 mod syscall;
-mod utils;
 
+pub use address::*;
 pub use allocator::*;
-pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256, I256};
+pub use alloy_primitives::*;
 pub use bytecode_type::*;
 pub use byteorder;
 pub use context::*;
-pub use contracts::*;
 pub use exit_code::*;
+pub use genesis::*;
 pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use linker::*;
+pub use preimage::*;
+use revm_primitives::SpecId;
 pub use rwasm::*;
 pub use sdk::*;
 pub use sys_func_idx::SysFuncIdx;
 pub use syscall::*;
-pub use utils::*;
 
 pub const KECCAK_EMPTY: B256 =
     b256!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
@@ -53,4 +56,17 @@ pub const STATE_DEPLOY: u32 = 1;
 /// - 0x01 - is a version of developer preview
 pub const DEVELOPER_PREVIEW_CHAIN_ID: u64 = 20993;
 
+/// A relation between fuel and gas,
+/// according to our benchmarks, average WebAssembly instruction is ~1000 faster than average EVM
+/// instruction
 pub const FUEL_DENOM_RATE: u64 = 1000;
+
+/// A max rWasm call stack limit
+pub const CALL_STACK_LIMIT: u32 = 1024;
+
+/// EVM code hash slot: `hash=keccak256("_evm_code_hash")`
+pub const EVM_CODE_HASH_SLOT: B256 =
+    b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113b");
+
+/// A basic SPEC that Fluent supports
+pub const EVM_BASE_SPEC: SpecId = SpecId::CANCUN;

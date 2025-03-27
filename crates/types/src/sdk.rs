@@ -3,6 +3,7 @@ use crate::{
     alloc_vec,
     context::SharedContextReader,
     Address,
+    BytecodeOrHash,
     Bytes,
     ExitCode,
     B256,
@@ -47,14 +48,21 @@ pub trait NativeAPI {
     fn state(&self) -> u32;
     fn fuel(&self) -> u64;
     fn charge_fuel(&self, value: u64) -> u64;
-    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> (u64, i32);
+    fn exec<I: Into<BytecodeOrHash>>(
+        &self,
+        code_hash: I,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32);
     fn resume(
         &self,
         call_id: u32,
         return_data: &[u8],
         exit_code: i32,
-        fuel_used: u64,
-    ) -> (u64, i32);
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+    ) -> (u64, i64, i32);
 
     fn preimage_size(&self, hash: &B256) -> u32;
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]);
@@ -95,59 +103,43 @@ pub struct DestroyedAccountResult {
     pub previously_destroyed: bool,
 }
 
-#[derive(Codec, Clone, Default, Debug)]
+#[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SyscallInvocationParams {
     pub code_hash: B256,
     pub input: Bytes,
-    pub gas_limit: u64,
+    pub fuel_limit: u64,
     pub state: u32,
-}
-
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(u8)]
-pub enum SyscallStatus {
-    #[default]
-    Ok = 0,
-    Revert = 1,
-    Error = 2,
-}
-
-impl From<i32> for SyscallStatus {
-    fn from(value: i32) -> Self {
-        match value {
-            0 => Self::Ok,
-            1 => Self::Revert,
-            2 => Self::Error,
-            _ => unreachable!("invalid syscall status: {}", value),
-        }
-    }
+    pub fuel16_ptr: u32,
 }
 
 #[derive(Debug)]
 pub struct SyscallResult<T> {
     pub data: T,
-    pub fuel_used: u64,
-    pub status: SyscallStatus,
+    pub fuel_consumed: u64,
+    pub fuel_refunded: i64,
+    pub status: ExitCode,
+}
+
+impl SyscallResult<()> {
+    pub fn is_ok<I: Into<ExitCode>>(status: I) -> bool {
+        Into::<ExitCode>::into(status) == ExitCode::Ok
+    }
 }
 
 impl<T> SyscallResult<T> {
-    pub fn new<I: Into<SyscallStatus>>(data: T, fuel_used: u64, status: I) -> Self {
-        let status: SyscallStatus = status.into();
+    pub fn new<I: Into<ExitCode>>(
+        data: T,
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+        status: I,
+    ) -> Self {
         Self {
             data,
-            fuel_used,
-            status,
+            fuel_consumed,
+            fuel_refunded,
+            status: Into::<ExitCode>::into(status),
         }
-    }
-    pub fn ok(data: T, fuel_used: u64) -> Self {
-        Self {
-            data,
-            fuel_used,
-            status: SyscallStatus::Ok,
-        }
-    }
-    pub fn is_ok(&self) -> bool {
-        self.status == SyscallStatus::Ok
     }
 }
 
@@ -183,61 +175,74 @@ pub trait SharedAPI {
     fn fuel(&self) -> u64;
 
     fn write(&mut self, output: &[u8]);
+    fn evm_exit(&self, exit_code: i32) -> !;
     fn exit(&self, exit_code: i32) -> !;
-    fn panic(&self, panic_message: &str) -> !;
+    fn evm_panic(&self, panic_message: &str) -> !;
 
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn storage(&self, slot: &U256) -> SyscallResult<U256>;
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;
-    fn ext_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256>;
+    fn delegated_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256>;
 
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) -> SyscallResult<()>;
+    fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()>;
+
+    fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes>;
     fn preimage_size(&self, hash: &B256) -> SyscallResult<u32>;
 
     fn preimage(&self, hash: &B256) -> Bytes {
-        let preimage_size = self.preimage_size(hash);
-        let mut buffer = alloc_vec(preimage_size.data as usize);
-        self.preimage_copy(hash, &mut buffer);
-        buffer.into()
+        let result = self.preimage_copy(hash);
+        assert!(
+            SyscallResult::is_ok(result.status),
+            "sdk: failed reading preimage"
+        );
+        result.data
     }
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]) -> SyscallResult<()>;
 
+    fn self_balance(&self) -> SyscallResult<U256>;
     fn balance(&self, address: &Address) -> SyscallResult<U256>;
+    fn code_size(&self, address: &Address) -> SyscallResult<u32>;
+    fn code_hash(&self, address: &Address) -> SyscallResult<B256>;
+    fn code_copy(
+        &self,
+        address: &Address,
+        code_offset: u64,
+        code_length: u64,
+    ) -> SyscallResult<Bytes>;
     fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256>;
     fn create(
         &mut self,
-        fuel_limit: u64,
         salt: Option<U256>,
         value: &U256,
         init_code: &[u8],
-    ) -> SyscallResult<Address>;
+    ) -> SyscallResult<Bytes>;
     fn call(
         &mut self,
         address: Address,
         value: U256,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes>;
     fn call_code(
         &mut self,
         address: Address,
         value: U256,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes>;
     fn delegate_call(
         &mut self,
         address: Address,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes>;
     fn static_call(
         &mut self,
         address: Address,
         input: &[u8],
-        fuel_limit: u64,
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes>;
     fn destroy_account(&mut self, address: Address) -> SyscallResult<()>;
 }

@@ -86,7 +86,7 @@ impl<T> RwasmContext<T> {
             }),
         );
 
-        let tracer = if config.tracer_enabled {
+        let tracer = if config.trace_enabled {
             Some(Tracer::default())
         } else {
             None
@@ -142,6 +142,15 @@ impl<T> RwasmContext<T> {
         }
         self.consumed_fuel += fuel;
         Ok(())
+    }
+
+    pub fn adjust_fuel_limit(&mut self) -> u64 {
+        let consumed_fuel = self.consumed_fuel;
+        if let Some(fuel_limit) = self.config.fuel_limit.as_mut() {
+            *fuel_limit -= self.consumed_fuel;
+        }
+        self.consumed_fuel = 0;
+        consumed_fuel
     }
 
     pub fn remaining_fuel(&self) -> Option<u64> {

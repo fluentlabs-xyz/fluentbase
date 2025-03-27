@@ -2284,6 +2284,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "revm-interpreter",
 ]
 
 [[package]]
@@ -2374,6 +2375,7 @@ dependencies = [
  "fluentbase-sdk",
  "hex",
  "hex-literal 0.4.1",
+ "paste",
  "revm",
  "rwasm",
  "solana-ee-core",
@@ -5164,6 +5166,9 @@ name = "revm-interpreter"
 version = "15.1.0"
 dependencies = [
  "bincode 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fluentbase-types",
+ "num-derive",
+ "num-traits",
  "paste",
  "phf",
  "revm-primitives",

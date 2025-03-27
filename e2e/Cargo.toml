@@ -19,9 +19,10 @@ solana-ee-core = { workspace = true }
 
 rwasm = { workspace = true }
 revm = { workspace = true }
-hex-literal = { workspace = true }
 hex = { workspace = true }
+hex-literal = { workspace = true }
 alloy-sol-types = { workspace = true }
+paste = { workspace = true }
 
 [build-dependencies]
 fluentbase-examples-constructor-params = { path = "../examples/constructor-params" }

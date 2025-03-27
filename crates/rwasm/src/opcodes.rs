@@ -404,7 +404,9 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
 
     #[inline(always)]
     pub(crate) fn visit_consume_fuel(&mut self, block_fuel: BlockFuel) -> Result<(), RwasmError> {
-        self.store.try_consume_fuel(block_fuel.to_u64())?;
+        if self.store.config.fuel_enabled {
+            self.store.try_consume_fuel(block_fuel.to_u64())?;
+        }
         self.store.ip.add(1);
         Ok(())
     }
@@ -694,7 +696,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
                 return Ok(());
             }
         };
-        if let Some(_) = self.store.config.fuel_limit {
+        if self.store.config.fuel_enabled {
             let delta_in_bytes = delta.to_bytes().unwrap_or(0) as u64;
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(delta_in_bytes))?;
@@ -716,7 +718,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let n = i32::from(n) as usize;
         let offset = i32::from(d) as usize;
         let byte = u8::from(val);
-        if let Some(_) = self.store.config.fuel_limit {
+        if self.store.config.fuel_enabled {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
         }
@@ -741,7 +743,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let n = i32::from(n) as usize;
         let src_offset = i32::from(s) as usize;
         let dst_offset = i32::from(d) as usize;
-        if let Some(_) = self.store.config.fuel_limit {
+        if self.store.config.fuel_enabled {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
         }
@@ -775,7 +777,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let n = i32::from(n) as usize;
         let src_offset = i32::from(s) as usize;
         let dst_offset = i32::from(d) as usize;
-        if let Some(_) = self.store.config.fuel_limit {
+        if self.store.config.fuel_enabled {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
         }
@@ -829,7 +831,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     ) -> Result<(), RwasmError> {
         let (init, delta) = self.store.sp.pop2();
         let delta: u32 = delta.into();
-        if let Some(_) = self.store.config.fuel_limit {
+        if self.store.config.fuel_enabled {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(delta as u64))?;
         }
@@ -852,7 +854,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     #[inline(always)]
     pub(crate) fn visit_table_fill(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
         let (i, val, n) = self.store.sp.pop3();
-        if let Some(_) = self.store.config.fuel_limit {
+        if self.store.config.fuel_enabled {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
         }
@@ -894,7 +896,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let len = u32::from(n);
         let src_index = u32::from(s);
         let dst_index = u32::from(d);
-        if let Some(_) = self.store.config.fuel_limit {
+        if self.store.config.fuel_enabled {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
         }
@@ -929,7 +931,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         let src_index = u32::from(s);
         let dst_index = u32::from(d);
 
-        if let Some(_) = self.store.config.fuel_limit {
+        if self.store.config.fuel_enabled {
             self.store
                 .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(len as u64))?;
         }

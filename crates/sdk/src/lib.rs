@@ -55,7 +55,7 @@ pub use fluentbase_types::*;
 macro_rules! debug_log {
     ($msg:tt) => {{
         #[cfg(target_arch = "wasm32")]
-        unsafe { fluentbase_sdk::rwasm::_debug_log($msg.as_ptr(), $msg.len() as u32) }
+        unsafe { $crate::rwasm::_debug_log($msg.as_ptr(), $msg.len() as u32) }
         #[cfg(feature = "std")]
         println!("{}", $msg);
     }};

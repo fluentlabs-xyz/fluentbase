@@ -1,7 +1,7 @@
 use crate::{runtime::RuntimeContextWrapper, Address, Bytes, B256, U256};
 use alloc::{rc::Rc, vec::Vec};
 use core::cell::RefCell;
-use fluentbase_runtime::{types::NonePreimageResolver, RuntimeContext};
+use fluentbase_runtime::RuntimeContext;
 use fluentbase_types::{
     ContractContextV1,
     NativeAPI,
@@ -17,7 +17,7 @@ pub struct TestingContext {
     inner: Rc<RefCell<TestingContextInner>>,
 }
 
-pub type TestingContextNativeAPI = RuntimeContextWrapper<'static, NonePreimageResolver>;
+pub type TestingContextNativeAPI = RuntimeContextWrapper;
 
 impl TestingContext {
     pub fn with_shared_context_input(self, ctx: SharedContextInputV1) -> Self {
@@ -47,14 +47,18 @@ impl TestingContext {
     pub fn exit_code(&self) -> i32 {
         self.inner.borrow_mut().native_sdk.exit_code()
     }
+    pub fn dump_storage(&self) -> HashMap<(Address, U256), U256> {
+        self.inner.borrow().persistent_storage.clone()
+    }
 }
 
 struct TestingContextInner {
     shared_context_input_v1: SharedContextInputV1,
-    native_sdk: RuntimeContextWrapper<'static, NonePreimageResolver>,
+    native_sdk: RuntimeContextWrapper,
     persistent_storage: HashMap<(Address, U256), U256>,
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
+    preimages: HashMap<B256, Bytes>,
 }
 
 impl Default for TestingContext {
@@ -66,6 +70,7 @@ impl Default for TestingContext {
                 persistent_storage: Default::default(),
                 transient_storage: Default::default(),
                 logs: vec![],
+                preimages: Default::default(),
             })),
         }
     }
@@ -77,7 +82,7 @@ impl SharedAPI for TestingContext {
     }
 
     fn keccak256(&self, data: &[u8]) -> B256 {
-        RuntimeContextWrapper::<'static, NonePreimageResolver>::keccak256(data)
+        RuntimeContextWrapper::keccak256(data)
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
@@ -100,11 +105,16 @@ impl SharedAPI for TestingContext {
         self.inner.borrow().native_sdk.write(output);
     }
 
+    fn evm_exit(&self, _exit_code: i32) -> ! {
+        todo!("not implemented")
+    }
+
     fn exit(&self, exit_code: i32) -> ! {
+        assert!(exit_code <= 0, "exit code must be non-positive");
         self.inner.borrow().native_sdk.exit(exit_code);
     }
 
-    fn panic(&self, panic_message: &str) -> ! {
+    fn evm_panic(&self, panic_message: &str) -> ! {
         panic!("panic with message: {}", panic_message);
     }
 
@@ -114,7 +124,7 @@ impl SharedAPI for TestingContext {
             .borrow_mut()
             .persistent_storage
             .insert((target_address, slot), value);
-        SyscallResult::ok((), 0)
+        SyscallResult::new((), 0, 0, 0)
     }
 
     fn storage(&self, slot: &U256) -> SyscallResult<U256> {
@@ -126,7 +136,7 @@ impl SharedAPI for TestingContext {
             .get(&(target_address, *slot))
             .cloned()
             .unwrap_or_default();
-        SyscallResult::ok(value, 0)
+        SyscallResult::new(value, 0, 0, 0)
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
@@ -135,7 +145,7 @@ impl SharedAPI for TestingContext {
             .borrow_mut()
             .transient_storage
             .insert((target_address, slot), value);
-        SyscallResult::ok((), 0)
+        SyscallResult::new((), 0, 0, 0)
     }
 
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256> {
@@ -147,10 +157,10 @@ impl SharedAPI for TestingContext {
             .get(&(target_address, *slot))
             .cloned()
             .unwrap_or_default();
-        SyscallResult::ok(value, 0)
+        SyscallResult::new(value, 0, 0, 0)
     }
 
-    fn ext_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256> {
+    fn delegated_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256> {
         let value = self
             .inner
             .borrow()
@@ -158,37 +168,77 @@ impl SharedAPI for TestingContext {
             .get(&(*address, *slot))
             .cloned()
             .unwrap_or_default();
-        SyscallResult::ok(value, 0)
+        SyscallResult::new(value, 0, 0, 0)
     }
 
-    fn preimage_copy(&self, _hash: &B256, _target: &mut [u8]) -> SyscallResult<()> {
-        panic!("not supported for testing context")
+    fn sync_evm_gas(&self, _gas_remaining: u64, _gas_refunded: i64) -> SyscallResult<()> {
+        SyscallResult::new((), 0, 0, 0)
     }
 
-    fn preimage_size(&self, _hash: &B256) -> SyscallResult<u32> {
-        panic!("not supported for testing context")
+    fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes> {
+        let value = self
+            .inner
+            .borrow()
+            .preimages
+            .get(hash)
+            .cloned()
+            .unwrap_or_default();
+        SyscallResult::new(value, 0, 0, 0)
+    }
+
+    fn preimage_size(&self, hash: &B256) -> SyscallResult<u32> {
+        let preimage_size = self
+            .inner
+            .borrow()
+            .preimages
+            .get(hash)
+            .map(|v| v.len() as u32)
+            .unwrap_or_default();
+        SyscallResult::new(preimage_size, 0, 0, 0)
     }
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]) -> SyscallResult<()> {
         self.inner.borrow_mut().logs.push((data, topics.to_vec()));
-        SyscallResult::ok((), 0)
+        SyscallResult::new((), 0, 0, 0)
+    }
+
+    fn self_balance(&self) -> SyscallResult<U256> {
+        panic!("not supported for testing context")
     }
 
     fn balance(&self, _address: &Address) -> SyscallResult<U256> {
         panic!("not supported for testing context")
     }
 
-    fn write_preimage(&mut self, _preimage: Bytes) -> SyscallResult<B256> {
+    fn code_size(&self, _address: &Address) -> SyscallResult<u32> {
         panic!("not supported for testing context")
+    }
+
+    fn code_hash(&self, _address: &Address) -> SyscallResult<B256> {
+        panic!("not supported for testing context")
+    }
+
+    fn code_copy(
+        &self,
+        _address: &Address,
+        _code_offset: u64,
+        _code_length: u64,
+    ) -> SyscallResult<Bytes> {
+        panic!("not supported for testing context")
+    }
+
+    fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256> {
+        let hash = self.keccak256(preimage.as_ref());
+        self.inner.borrow_mut().preimages.insert(hash, preimage);
+        SyscallResult::new(hash, 0, 0, 0)
     }
 
     fn create(
         &mut self,
-        _fuel_limit: u64,
         _salt: Option<U256>,
         _value: &U256,
         _init_code: &[u8],
-    ) -> SyscallResult<Address> {
+    ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }
 
@@ -197,7 +247,7 @@ impl SharedAPI for TestingContext {
         _address: Address,
         _value: U256,
         _input: &[u8],
-        _fuel_limit: u64,
+        _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }
@@ -207,7 +257,7 @@ impl SharedAPI for TestingContext {
         _address: Address,
         _value: U256,
         _input: &[u8],
-        _fuel_limit: u64,
+        _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }
@@ -216,7 +266,7 @@ impl SharedAPI for TestingContext {
         &mut self,
         _address: Address,
         _input: &[u8],
-        _fuel_limit: u64,
+        _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }
@@ -225,7 +275,7 @@ impl SharedAPI for TestingContext {
         &mut self,
         _address: Address,
         _input: &[u8],
-        _fuel_limit: u64,
+        _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
         panic!("not supported for testing context")
     }

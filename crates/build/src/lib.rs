@@ -26,7 +26,7 @@ pub fn cargo_rerun_if_changed(metadata: &Metadata) {
     for path in watch_paths {
         if path.exists() {
             println!(
-                "cargo::rerun-if-changed={}",
+                "cargo:rerun-if-changed={}",
                 path.canonicalize().unwrap().display()
             );
         }
@@ -137,7 +137,7 @@ pub fn build_wasm_program_from_env() {
     }
 }
 
-pub fn build_go_program_from_env() {
+pub fn build_go_program_from_env(program_name: &'static str) {
     let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
 
     println!("cargo:rerun-if-changed=go.mod");
@@ -152,7 +152,7 @@ pub fn build_go_program_from_env() {
             "lib.wasm",
             "--target",
             "wasm-unknown",
-            "github.com/fluentlabs-xyz/fluentbase/examples/fairblock",
+            program_name,
         ])
         .status()
         .ok()

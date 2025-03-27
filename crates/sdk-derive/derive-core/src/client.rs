@@ -107,7 +107,7 @@ impl ClientMethod {
                 gas_limit: u64,
                 #(#param_names: #param_types,)*
             ) -> (#(#return_types,)*) {
-                use fluentbase_sdk::TxContextReader;
+                use fluentbase_sdk::{TxContextReader, SyscallResult};
 
                 let input = self.#encode_name(#(#param_names,)*);
 
@@ -125,10 +125,10 @@ impl ClientMethod {
                     contract_address,
                     value,
                     &input,
-                    gas_limit
+                    Some(gas_limit),
                 );
 
-                if !result.is_ok() {
+                if !SyscallResult::is_ok(result.status) {
                     ::core::panic!("client: call failed");
                 }
 

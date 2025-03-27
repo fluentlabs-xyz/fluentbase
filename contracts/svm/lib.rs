@@ -4,12 +4,30 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{debug_log, func_entrypoint, ExitCode, SharedAPI};
-use solana_ee_core::fluentbase_helpers::{exec_encoded_svm_batch_message, process_svm_result};
+use solana_ee_core::{
+    account::ReadableAccount,
+    fluentbase_helpers::{exec_encoded_svm_batch_message, process_svm_result},
+    helpers::sdk_storage_read_account_data,
+    solana_program::system_program,
+};
 
 func_entrypoint!(main);
 
 pub fn main(mut sdk: impl SharedAPI) {
     let input = sdk.input();
+
+    let pk_system_program = system_program::id();
+    let system_program_account = sdk_storage_read_account_data(&sdk, &pk_system_program);
+    match system_program_account {
+        Ok(v) => {
+            if v.lamports() <= 0 {
+                panic!("not enough lamports");
+            }
+        }
+        Err(_) => {
+            panic!("cannot get system program account");
+        }
+    }
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input);
     debug_log!(

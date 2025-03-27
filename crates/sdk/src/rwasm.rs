@@ -22,7 +22,7 @@ pub use crate::{
     },
     B256,
 };
-use fluentbase_types::{NativeAPI, F254};
+use fluentbase_types::{BytecodeOrHash, NativeAPI, F254};
 
 #[derive(Default)]
 pub struct RwasmContext;
@@ -143,17 +143,24 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn exec(&self, code_hash: &F254, input: &[u8], mut fuel_limit: u64, state: u32) -> (u64, i32) {
+    fn exec<I: Into<BytecodeOrHash>>(
+        &self,
+        code_hash: I,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32) {
+        let code_hash: BytecodeOrHash = code_hash.into();
         unsafe {
+            let mut fuel_info: [i64; 2] = [fuel_limit.unwrap_or(u64::MAX) as i64, 0];
             let exit_code = _exec(
-                code_hash.as_ptr(),
+                code_hash.resolve_hash().as_ptr(),
                 input.as_ptr(),
                 input.len() as u32,
-                &mut fuel_limit as *mut u64,
+                &mut fuel_info as *mut [i64; 2],
                 state,
             );
-            // fuel limit now contains consumed fuel
-            (fuel_limit, exit_code)
+            (fuel_info[0] as u64, fuel_info[1], exit_code)
         }
     }
 
@@ -163,17 +170,19 @@ impl NativeAPI for RwasmContext {
         call_id: u32,
         return_data: &[u8],
         exit_code: i32,
-        mut fuel_used: u64,
-    ) -> (u64, i32) {
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+    ) -> (u64, i64, i32) {
         unsafe {
+            let mut fuel_info: [i64; 2] = [fuel_consumed as i64, fuel_refunded];
             let exit_code = _resume(
                 call_id,
                 return_data.as_ptr(),
                 return_data.len() as u32,
                 exit_code,
-                &mut fuel_used as *mut u64,
+                &mut fuel_info as *mut [i64; 2],
             );
-            (fuel_used, exit_code)
+            (fuel_info[0] as u64, fuel_info[1], exit_code)
         }
     }
 
