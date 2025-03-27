@@ -8,6 +8,7 @@ use fluentbase_sdk::{
     SharedAPI,
     EVM_BASE_SPEC,
     EVM_CODE_HASH_SLOT,
+    KECCAK_EMPTY,
 };
 use revm_interpreter::{
     as_u64_saturated,
@@ -48,7 +49,7 @@ pub fn extcodesize<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
         delegated_code_hash.status
     );
     let is_delegated = delegated_code_hash.status.is_ok();
-    let (delegated_code_hash, is_cold_accessed) = delegated_code_hash.data;
+    let (delegated_code_hash, is_cold_accessed, _is_empty) = delegated_code_hash.data;
     let preimage_address = if is_delegated {
         calc_preimage_address(&delegated_code_hash.into())
     } else {
@@ -74,11 +75,19 @@ pub fn extcodehash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
         delegated_code_hash.status
     );
     let is_delegated = delegated_code_hash.status.is_ok();
-    let (delegated_code_hash, is_cold_accessed) = delegated_code_hash.data;
+    let (mut delegated_code_hash, is_cold_accessed, is_empty) = delegated_code_hash.data;
     // for delegated accounts, we can instantly return code hash
     // since the account is managed by the same runtime and store EVM code hash in this field
     if is_delegated {
+        // if delegated code hash is zero, then it might be a contract deployment stage,
+        // for non-empty account return KECCAK_EMPTY
+        if delegated_code_hash == U256::ZERO && !is_empty {
+            delegated_code_hash = Into::<U256>::into(KECCAK_EMPTY);
+        }
+        // charge the gas according to the cold/warm access to the account
         gas!(interpreter, warm_cold_cost(is_cold_accessed));
+        // there is no need to request code hash for a delegated account
+        // since we already know the result and can safely push it
         push!(interpreter, delegated_code_hash);
         return;
     };
@@ -103,7 +112,7 @@ pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
         delegated_code_hash.status
     );
     let is_delegated = delegated_code_hash.status.is_ok();
-    let (delegated_code_hash, is_cold_accessed) = delegated_code_hash.data;
+    let (delegated_code_hash, is_cold_accessed, _) = delegated_code_hash.data;
     let preimage_address = if is_delegated {
         calc_preimage_address(&delegated_code_hash.into())
     } else {

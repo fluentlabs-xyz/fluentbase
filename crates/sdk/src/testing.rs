@@ -4,6 +4,7 @@ use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContext;
 use fluentbase_types::{
     ContractContextV1,
+    IsAccountEmpty,
     IsColdAccess,
     NativeAPI,
     SharedAPI,
@@ -158,7 +159,7 @@ impl SharedAPI for TestingContext {
         &self,
         address: &Address,
         slot: &U256,
-    ) -> SyscallResult<(U256, IsColdAccess)> {
+    ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)> {
         let value = self
             .inner
             .borrow()
@@ -166,7 +167,7 @@ impl SharedAPI for TestingContext {
             .get(&(*address, *slot))
             .cloned()
             .unwrap_or_default();
-        SyscallResult::new((value, false), 0, 0, 0)
+        SyscallResult::new((value, false, false), 0, 0, 0)
     }
 
     fn sync_evm_gas(&self, _gas_remaining: u64, _gas_refunded: i64) -> SyscallResult<()> {

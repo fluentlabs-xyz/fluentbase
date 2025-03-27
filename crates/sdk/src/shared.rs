@@ -13,6 +13,7 @@ use fluentbase_types::{
     Address,
     Bytes,
     ExitCode,
+    IsAccountEmpty,
     IsColdAccess,
     NativeAPI,
     SharedAPI,
@@ -213,21 +214,22 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         &self,
         address: &Address,
         slot: &U256,
-    ) -> SyscallResult<(U256, IsColdAccess)> {
+    ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)> {
         let mut input = [0u8; 20 + 32];
         input[..20].copy_from_slice(address.as_slice());
         input[20..].copy_from_slice(slot.as_le_slice());
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk
                 .exec(SYSCALL_ID_DELEGATED_STORAGE, &input, None, STATE_MAIN);
-        let mut output = [0u8; U256::BYTES + 1];
+        let mut output = [0u8; U256::BYTES + 1 + 1];
         if !SyscallResult::is_err(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
         };
         let value = U256::from_le_slice(&output[..32]);
         let is_cold_access = output[32] != 0x0;
+        let is_empty = output[33] != 0x0;
         SyscallResult::new(
-            (value, is_cold_access),
+            (value, is_cold_access, is_empty),
             fuel_consumed,
             fuel_refunded,
             exit_code,

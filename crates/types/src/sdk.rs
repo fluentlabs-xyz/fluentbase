@@ -83,6 +83,7 @@ pub trait NativeAPI {
 }
 
 pub type IsColdAccess = bool;
+pub type IsAccountEmpty = bool;
 
 pub struct CallPrecompileResult {
     pub output: Bytes,
@@ -193,7 +194,7 @@ pub trait SharedAPI {
         &self,
         address: &Address,
         slot: &U256,
-    ) -> SyscallResult<(U256, IsColdAccess)>;
+    ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)>;
 
     fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()>;
 
