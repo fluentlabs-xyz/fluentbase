@@ -1,32 +1,36 @@
-use crate::RuntimeContext;
-use wasmtime::{Engine, Linker, Module, Store};
+use crate::{
+    instruction::{debug_log::SyscallDebugLog, keccak256::SyscallKeccak256},
+    RuntimeContext,
+};
+use anyhow::Result;
+use core::{error::Error as StdError, fmt};
+use fluentbase_codec::{bytes::BytesMut, CompactABI};
+use fluentbase_types::{Bytes, FixedBytes, SyscallInvocationParams, B256};
+use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store, Trap};
 
 const MODULE: &str = "fluentbase_v1preview";
 
-mod builtins {
-    use crate::{
-        instruction::{
-            charge_fuel::SyscallChargeFuel,
-            debug_log::SyscallDebugLog,
-            exec::SyscallExec,
-            exit::SyscallExit,
-            fuel::SyscallFuel,
-            input_size::SyscallInputSize,
-            keccak256::SyscallKeccak256,
-            output_size::SyscallOutputSize,
-            read::SyscallRead,
-            read_output::SyscallReadOutput,
-            write::SyscallWrite,
-        },
-        RuntimeContext,
-    };
-    use fluentbase_types::ExitCode;
-    use wasmtime::{Caller, Extern, Memory};
+#[derive(Debug)]
+enum HostTermination {
+    Exit,
+    Interrupt,
+    MemoryOutOfBounds,
+}
 
-    fn get_memory_export(caller: &mut Caller<'_, RuntimeContext>) -> anyhow::Result<Memory> {
+impl fmt::Display for HostTermination {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl StdError for HostTermination {}
+
+mod builtins {
+    use super::*;
+    fn get_memory_export(caller: &mut Caller<'_, RuntimeContext>) -> Result<Memory> {
         match caller.get_export("memory") {
             Some(Extern::Memory(memory)) => Ok(memory),
-            _ => Err(anyhow::Error::new(ExitCode::MemoryOutOfBounds)),
+            _ => Err(HostTermination::MemoryOutOfBounds.into()),
         }
     }
 
@@ -34,11 +38,11 @@ mod builtins {
         caller: &mut Caller<'_, RuntimeContext>,
         offset: u32,
         buffer: &[u8],
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let memory = get_memory_export(caller)?;
         memory
             .write(caller, offset as usize, &buffer)
-            .map_err(|_| anyhow::Error::new(ExitCode::MemoryOutOfBounds))?;
+            .map_err(|_| HostTermination::MemoryOutOfBounds)?;
         Ok(())
     }
 
@@ -46,27 +50,23 @@ mod builtins {
         caller: &mut Caller<'_, RuntimeContext>,
         offset: u32,
         length: u32,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
         let memory = get_memory_export(caller)?;
         let data = memory
             .data(&caller)
             .get(offset as usize..)
             .and_then(|arr| arr.get(..length as usize));
         if data.is_none() {
-            Err(anyhow::Error::new(ExitCode::MemoryOutOfBounds))
+            Err(HostTermination::MemoryOutOfBounds.into())
         } else {
             Ok(Vec::from(data.unwrap()))
         }
     }
 
-    pub fn write(
-        mut caller: Caller<'_, RuntimeContext>,
-        offset: u32,
-        length: u32,
-    ) -> anyhow::Result<()> {
+    pub fn write(mut caller: Caller<'_, RuntimeContext>, offset: u32, length: u32) -> Result<()> {
         let data = read_memory(&mut caller, offset, length)?;
-        let ctx = caller.data_mut();
-        SyscallWrite::fn_impl(ctx, &data);
+        let context = caller.data_mut();
+        context.execution_result.output.extend_from_slice(&data);
         Ok(())
     }
 
@@ -75,21 +75,25 @@ mod builtins {
         target_ptr: u32,
         offset: u32,
         length: u32,
-    ) -> anyhow::Result<()> {
-        let buffer = SyscallRead::fn_impl(caller.data(), offset, length)
-            .map_err(|err| anyhow::Error::new(err))?;
-        write_memory(&mut caller, target_ptr, &buffer)?;
-        Ok(())
+    ) -> Result<()> {
+        let context = caller.data();
+        if offset + length <= context.input.len() as u32 {
+            let buffer =
+                context.input[(offset as usize)..(offset as usize + length as usize)].to_vec();
+            write_memory(&mut caller, target_ptr, &buffer)?;
+            Ok(())
+        } else {
+            Err(HostTermination::MemoryOutOfBounds.into())
+        }
     }
 
-    pub fn input_size(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u32> {
-        let size = SyscallInputSize::fn_impl(caller.data());
-        Ok(size)
+    pub fn input_size(caller: Caller<'_, RuntimeContext>) -> Result<u32> {
+        Ok(caller.data().input_size())
     }
 
-    pub fn exit(mut caller: Caller<'_, RuntimeContext>, exit_code: i32) -> anyhow::Result<()> {
-        let exit_code = SyscallExit::fn_impl(caller.data_mut(), exit_code).unwrap_err();
-        Err(anyhow::Error::new(exit_code))
+    pub fn exit(mut caller: Caller<'_, RuntimeContext>, exit_code: i32) -> Result<()> {
+        caller.data_mut().execution_result.exit_code = exit_code;
+        Err(HostTermination::Exit.into())
     }
 
     pub fn read_output(
@@ -97,37 +101,62 @@ mod builtins {
         target_ptr: u32,
         offset: u32,
         length: u32,
-    ) -> anyhow::Result<()> {
-        let buffer = SyscallReadOutput::fn_impl(caller.data(), offset, length)
-            .map_err(|err| anyhow::Error::new(err))?;
-        write_memory(&mut caller, target_ptr, &buffer)?;
-        Ok(())
+    ) -> Result<()> {
+        let context = caller.data();
+        let return_data = &context.execution_result.return_data;
+        if offset + length <= return_data.len() as u32 {
+            let buffer =
+                return_data[(offset as usize)..(offset as usize + length as usize)].to_vec();
+            write_memory(&mut caller, target_ptr, &buffer)?;
+            Ok(())
+        } else {
+            Err(HostTermination::MemoryOutOfBounds.into())
+        }
     }
 
-    pub fn output_size(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u32> {
+    pub fn output_size(caller: Caller<'_, RuntimeContext>) -> Result<u32> {
         let context = caller.data();
-        return Ok(SyscallOutputSize::fn_impl(context));
+        Ok(context.execution_result.return_data.len() as u32)
     }
 
     pub fn debug_log(
         mut caller: Caller<'_, RuntimeContext>,
         message_ptr: u32,
         message_length: u32,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let message = read_memory(&mut caller, message_ptr, message_length)?;
         SyscallDebugLog::fn_impl(&message);
         Ok(())
     }
 
     pub fn exec(
-        caller: Caller<'_, RuntimeContext>,
+        mut caller: Caller<'_, RuntimeContext>,
         hash32_ptr: u32,
         input_ptr: u32,
         input_len: u32,
         fuel16_ptr: u32,
         state: u32,
-    ) -> anyhow::Result<i32> {
-        todo!();
+    ) -> Result<i32> {
+        let mut encoded_state = BytesMut::new();
+        let fuel_limit = u64::MAX;
+        let code_hash = read_memory(&mut caller, hash32_ptr, 32)?;
+        let code_hash: [u8; 32] = code_hash.as_slice().try_into().unwrap();
+        let input = read_memory(&mut caller, input_ptr, input_len)?;
+        let params = SyscallInvocationParams {
+            code_hash: B256::new(code_hash),
+            input: Bytes::from(input),
+            fuel_limit,
+            state: state,
+            fuel16_ptr: fuel16_ptr,
+        };
+        CompactABI::encode(&params, &mut encoded_state, 0).unwrap();
+
+        let output = &mut caller.data_mut().execution_result.output;
+        output.clear();
+        assert!(output.is_empty());
+        output.extend(encoded_state.freeze().to_vec());
+        //Err(HostTermination::Interrupt.into())
+        Err(Trap::Interrupt.into())
     }
 
     pub fn keccak256(
@@ -135,27 +164,28 @@ mod builtins {
         data_ptr: u32,
         data_len: u32,
         output32_ptr: u32,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let data = read_memory(&mut caller, data_ptr, data_len)?;
         let hash = SyscallKeccak256::fn_impl(&data);
         write_memory(&mut caller, output32_ptr, hash.as_slice())?;
         Ok(())
     }
 
-    pub fn charge_fuel(mut caller: Caller<'_, RuntimeContext>, delta: u64) -> anyhow::Result<u64> {
-        let context = caller.data_mut();
-        return Ok(SyscallChargeFuel::fn_impl(context, delta));
+    pub fn charge_fuel(mut caller: Caller<'_, RuntimeContext>, delta: u64) -> Result<u64> {
+        Ok(u64::MAX)
     }
 
-    pub fn fuel(caller: Caller<'_, RuntimeContext>) -> anyhow::Result<u64> {
-        let context = caller.data();
-        return Ok(SyscallFuel::fn_impl(context));
+    pub fn fuel(caller: Caller<'_, RuntimeContext>) -> Result<u64> {
+        Ok(u64::MAX)
     }
 }
 
-fn exec_internal(wasm_bytecode: &[u8], input: Vec<u8>) -> anyhow::Result<(i32, Vec<u8>)> {
+fn exec_internal(wasm_bytecode: &[u8], input: Vec<u8>) -> Result<(i32, Vec<u8>)> {
     let runtime_context = RuntimeContext::root(0).with_input(input);
-    let engine = Engine::default();
+    let mut config = Config::new();
+    config.consume_fuel(true);
+    config.async_support(true);
+    let engine = Engine::new(&config)?;
     let module = Module::new(&engine, wasm_bytecode)?;
     let mut store = Store::new(&engine, runtime_context);
 
@@ -181,6 +211,7 @@ fn exec_internal(wasm_bytecode: &[u8], input: Vec<u8>) -> anyhow::Result<(i32, V
             println!("{:?}", store.data().output());
         }
     }
+    main.call(&mut store, ());
 
     return Ok((0, store.data().output().clone().into()));
 }
@@ -219,7 +250,14 @@ mod tests {
         .into();
         let wasm_bytecode = include_bytes!("../../../examples/nitro-verifier/lib.wasm");
         let input = attestation_doc;
-        let (_, _) =
-            exec_in_wasmtime_runtime(wasm_bytecode, insert_default_shared_context(&input));
+        let (_, _) = exec_in_wasmtime_runtime(wasm_bytecode, insert_default_shared_context(&input));
+    }
+
+    #[test]
+    fn wasmtime_simple_storage() {
+        let wasm_bytecode = include_bytes!("../../../examples/simple-storage/lib.wasm");
+        let input = Vec::new();
+        let (_, _) = exec_in_wasmtime_runtime(wasm_bytecode, insert_default_shared_context(&input));
+        panic!("FINISHED");
     }
 }

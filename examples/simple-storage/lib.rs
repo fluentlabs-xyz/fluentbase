@@ -3,7 +3,14 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{derive::solidity_storage, func_entrypoint, Address, SharedAPI, U256};
+use fluentbase_sdk::{
+    debug_log,
+    derive::solidity_storage,
+    func_entrypoint,
+    Address,
+    SharedAPI,
+    U256,
+};
 
 solidity_storage! {
     mapping(Address => U256) Values;
@@ -14,7 +21,9 @@ pub fn deploy(mut sdk: impl SharedAPI) {
 }
 
 pub fn main(sdk: impl SharedAPI) {
+    debug_log!("Message - 1");
     let value = sdk.storage(&U256::from(1));
+    debug_log!("Message - 2"); // This is used to test wasmtime interrupts
     assert_eq!(value.data, U256::from(2));
 }
 

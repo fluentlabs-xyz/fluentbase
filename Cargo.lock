@@ -2463,6 +2463,7 @@ dependencies = [
  "anyhow",
  "eth_trie",
  "fluentbase-codec",
+ "fluentbase-examples-simple-storage",
  "fluentbase-poseidon",
  "fluentbase-rwasm",
  "fluentbase-types",
