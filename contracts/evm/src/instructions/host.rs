@@ -13,8 +13,10 @@ use fluentbase_sdk::{
 use revm_interpreter::{
     as_u64_saturated,
     as_usize_or_fail,
+    as_usize_saturated,
     gas,
     gas::warm_cold_cost,
+    gas_or_fail,
     interpreter::Interpreter,
     pop,
     pop_address,
@@ -103,8 +105,14 @@ pub fn extcodehash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
 pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
     pop!(interpreter, memory_offset, code_offset, len_u256);
-    let code_offset = as_usize_or_fail!(interpreter, code_offset) as u64;
-    let code_length = as_usize_or_fail!(interpreter, len_u256) as u64;
+    debug_log!(
+        "EXTCODECOPY: address={} memory_offset={} code_offset={} len_u256={}",
+        address,
+        memory_offset,
+        code_offset,
+        len_u256
+    );
+
     let delegated_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
     assert!(
         !delegated_code_hash.status.is_error(),
@@ -113,31 +121,31 @@ pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
     );
     let is_delegated = delegated_code_hash.status.is_ok();
     let (delegated_code_hash, is_cold_accessed, _) = delegated_code_hash.data;
+
+    let code_length = as_usize_or_fail!(interpreter, len_u256);
+    gas_or_fail!(
+        interpreter,
+        gas::extcodecopy_cost(EVM_BASE_SPEC, code_length as u64, is_cold_accessed)
+    );
+    if code_length == 0 {
+        return;
+    }
+
+    let memory_offset = as_usize_or_fail!(interpreter, memory_offset);
+    let code_offset = as_usize_saturated!(code_offset);
+
     let preimage_address = if is_delegated {
         calc_preimage_address(&delegated_code_hash.into())
     } else {
         address
     };
-    let code = sdk.code_copy(&preimage_address, code_offset, code_length);
-    if !code.status.is_ok() {
-        interpreter.instruction_result = instruction_result_from_exit_code(code.status);
-        return;
-    }
-    let Some(gas_cost) = gas::extcodecopy_cost(EVM_BASE_SPEC, code_length, is_cold_accessed) else {
-        interpreter.instruction_result = InstructionResult::OutOfGas;
-        return;
-    };
-    gas!(interpreter, gas_cost);
-    if code_length == 0 {
-        return;
-    }
-    let memory_offset = as_usize_or_fail!(interpreter, memory_offset);
-    let code_offset = min(code_offset as usize, code.len());
+    let code = unwrap_syscall!(@gasless interpreter, sdk.code_copy(&preimage_address, code_offset as u64, code_length as u64));
+    let code_offset = min(code_offset, code.len());
     resize_memory!(interpreter, memory_offset, code_length as usize);
     // Note: this can't panic because we resized memory to fit.
     interpreter
         .shared_memory
-        .set_data(memory_offset, code_offset, code_length as usize, &code);
+        .set_data(memory_offset, code_offset, code_length, &code);
 }
 
 pub fn blockhash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
