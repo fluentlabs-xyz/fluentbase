@@ -13,6 +13,8 @@ use fluentbase_types::{
     Address,
     Bytes,
     ExitCode,
+    IsAccountEmpty,
+    IsColdAccess,
     NativeAPI,
     SharedAPI,
     SharedContextInputV1,
@@ -208,19 +210,30 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
-    fn delegated_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256> {
+    fn delegated_storage(
+        &self,
+        address: &Address,
+        slot: &U256,
+    ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)> {
         let mut input = [0u8; 20 + 32];
         input[..20].copy_from_slice(address.as_slice());
         input[20..].copy_from_slice(slot.as_le_slice());
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk
                 .exec(SYSCALL_ID_DELEGATED_STORAGE, &input, None, STATE_MAIN);
-        let mut output = [0u8; U256::BYTES];
-        if SyscallResult::is_ok(exit_code) {
+        let mut output = [0u8; U256::BYTES + 1 + 1];
+        if !SyscallResult::is_err(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
         };
-        let value = U256::from_le_slice(&output);
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+        let value = U256::from_le_slice(&output[..32]);
+        let is_cold_access = output[32] != 0x0;
+        let is_empty = output[33] != 0x0;
+        SyscallResult::new(
+            (value, is_cold_access, is_empty),
+            fuel_consumed,
+            fuel_refunded,
+            exit_code,
+        )
     }
 
     fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()> {

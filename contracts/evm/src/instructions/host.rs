@@ -1,4 +1,4 @@
-use crate::unwrap_syscall;
+use crate::{unwrap_syscall, utils::instruction_result_from_exit_code};
 use alloc::vec::Vec;
 use core::cmp::min;
 use fluentbase_sdk::{
@@ -6,14 +6,17 @@ use fluentbase_sdk::{
     debug_log,
     BlockContextReader,
     SharedAPI,
+    EVM_BASE_SPEC,
     EVM_CODE_HASH_SLOT,
-    FUEL_DENOM_RATE,
+    KECCAK_EMPTY,
 };
 use revm_interpreter::{
     as_u64_saturated,
     as_usize_or_fail,
+    as_usize_saturated,
     gas,
-    gas::{COLD_ACCOUNT_ACCESS_COST, COLD_SLOAD_COST, WARM_STORAGE_READ_COST},
+    gas::warm_cold_cost,
+    gas_or_fail,
     interpreter::Interpreter,
     pop,
     pop_address,
@@ -41,94 +44,108 @@ pub fn selfbalance<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK)
 
 pub fn extcodesize<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
-    let evm_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+    let delegated_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
     assert!(
-        !evm_code_hash.status.is_error(),
+        !delegated_code_hash.status.is_error(),
         "evm: delegated storage failed with error ({:?})",
-        evm_code_hash.status
+        delegated_code_hash.status
     );
-    let is_delegated = evm_code_hash.status.is_ok();
-    let is_cold_accessed = evm_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
+    let is_delegated = delegated_code_hash.status.is_ok();
+    let (delegated_code_hash, is_cold_accessed, _is_empty) = delegated_code_hash.data;
     let preimage_address = if is_delegated {
-        calc_preimage_address(&evm_code_hash.data.into())
+        calc_preimage_address(&delegated_code_hash.into())
     } else {
         address
     };
-    let code_size = unwrap_syscall!(interpreter, sdk.code_size(&preimage_address));
-    if !is_delegated && is_cold_accessed {
-        gas!(
-            interpreter,
-            COLD_ACCOUNT_ACCESS_COST - WARM_STORAGE_READ_COST
-        );
+    let code_size = sdk.code_size(&preimage_address);
+    if !code_size.status.is_ok() {
+        interpreter.instruction_result = instruction_result_from_exit_code(code_size.status);
+        return;
     }
-    push!(interpreter, U256::from(code_size));
+    gas!(interpreter, warm_cold_cost(is_cold_accessed));
+    push!(interpreter, U256::from(code_size.data));
 }
 
 /// EIP-1052: EXTCODEHASH opcode
 pub fn extcodehash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
-    let evm_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+    debug_log!("extcodehash address={}", address);
+    let delegated_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
     assert!(
-        !evm_code_hash.status.is_error(),
+        !delegated_code_hash.status.is_error(),
         "evm: delegated storage failed with error ({:?})",
-        evm_code_hash.status
+        delegated_code_hash.status
     );
-    let is_delegated = evm_code_hash.status.is_ok();
-    let is_cold_accessed = evm_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
-    let preimage_address = if is_delegated {
-        calc_preimage_address(&evm_code_hash.data.into())
-    } else {
-        address
+    let is_delegated = delegated_code_hash.status.is_ok();
+    let (mut delegated_code_hash, is_cold_accessed, is_empty) = delegated_code_hash.data;
+    // for delegated accounts, we can instantly return code hash
+    // since the account is managed by the same runtime and store EVM code hash in this field
+    if is_delegated {
+        // if delegated code hash is zero, then it might be a contract deployment stage,
+        // for non-empty account return KECCAK_EMPTY
+        if delegated_code_hash == U256::ZERO && !is_empty {
+            delegated_code_hash = Into::<U256>::into(KECCAK_EMPTY);
+        }
+        // charge the gas according to the cold/warm access to the account
+        gas!(interpreter, warm_cold_cost(is_cold_accessed));
+        // there is no need to request code hash for a delegated account
+        // since we already know the result and can safely push it
+        push!(interpreter, delegated_code_hash);
+        return;
     };
-    debug_log!("preimage_address: {}", preimage_address);
-    let code_hash = unwrap_syscall!(interpreter, sdk.code_hash(&preimage_address));
-    if !is_delegated && is_cold_accessed {
-        gas!(
-            interpreter,
-            COLD_ACCOUNT_ACCESS_COST - WARM_STORAGE_READ_COST
-        );
+    let code_hash = sdk.code_hash(&address);
+    if !code_hash.status.is_ok() {
+        interpreter.instruction_result = instruction_result_from_exit_code(code_hash.status);
+        return;
     }
-    push_b256!(interpreter, code_hash);
+    gas!(interpreter, warm_cold_cost(is_cold_accessed));
+    push_b256!(interpreter, code_hash.data);
 }
 
 pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     pop_address!(interpreter, address);
     pop!(interpreter, memory_offset, code_offset, len_u256);
-    let code_offset = as_usize_or_fail!(interpreter, code_offset) as u64;
-    let code_length = as_usize_or_fail!(interpreter, len_u256) as u64;
-    let evm_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+    debug_log!(
+        "EXTCODECOPY: address={} memory_offset={} code_offset={} len_u256={}",
+        address,
+        memory_offset,
+        code_offset,
+        len_u256
+    );
+
+    let delegated_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
     assert!(
-        !evm_code_hash.status.is_error(),
+        !delegated_code_hash.status.is_error(),
         "evm: delegated storage failed with error ({:?})",
-        evm_code_hash.status
+        delegated_code_hash.status
     );
-    let is_delegated = evm_code_hash.status.is_ok();
-    let is_cold_accessed = evm_code_hash.fuel_consumed / FUEL_DENOM_RATE == COLD_SLOAD_COST;
-    let preimage_address = if evm_code_hash.status.is_ok() {
-        calc_preimage_address(&evm_code_hash.data.into())
-    } else {
-        address
-    };
-    let code = unwrap_syscall!(
+    let is_delegated = delegated_code_hash.status.is_ok();
+    let (delegated_code_hash, is_cold_accessed, _) = delegated_code_hash.data;
+
+    let code_length = as_usize_or_fail!(interpreter, len_u256);
+    gas_or_fail!(
         interpreter,
-        sdk.code_copy(&preimage_address, code_offset, code_length)
+        gas::extcodecopy_cost(EVM_BASE_SPEC, code_length as u64, is_cold_accessed)
     );
-    if !is_delegated && is_cold_accessed {
-        gas!(
-            interpreter,
-            COLD_ACCOUNT_ACCESS_COST - WARM_STORAGE_READ_COST
-        );
-    }
     if code_length == 0 {
         return;
     }
+
     let memory_offset = as_usize_or_fail!(interpreter, memory_offset);
-    let code_offset = min(code_offset as usize, code.len());
+    let code_offset = as_usize_saturated!(code_offset);
+
+    let preimage_address = if is_delegated {
+        calc_preimage_address(&delegated_code_hash.into())
+    } else {
+        address
+    };
+    let code = unwrap_syscall!(@gasless interpreter, sdk.code_copy(&preimage_address, code_offset as u64, code_length as u64));
+    let code_offset = min(code_offset, code.len());
     resize_memory!(interpreter, memory_offset, code_length as usize);
     // Note: this can't panic because we resized memory to fit.
     interpreter
         .shared_memory
-        .set_data(memory_offset, code_offset, code_length as usize, &code);
+        .set_data(memory_offset, code_offset, code_length, &code);
 }
 
 pub fn blockhash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
@@ -158,6 +175,8 @@ pub fn sload<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
 pub fn sstore<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     require_non_staticcall!(interpreter);
     pop!(interpreter, index, value);
+    // TODO(dmitry123): "try to avoid syncing gas before every state access"
+    sdk.sync_evm_gas(interpreter.gas.remaining(), interpreter.gas.refunded());
     unwrap_syscall!(interpreter, sdk.write_storage(index, value));
 }
 

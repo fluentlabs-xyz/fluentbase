@@ -110,15 +110,15 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     let code_hash =
         sdk.delegated_storage(&bytecode_address, &Into::<U256>::into(EVM_CODE_HASH_SLOT));
     // TODO(dmitry123): "do we want to have this optimized during the creation of the frame?"
-    if code_hash.data == U256::ZERO || Into::<U256>::into(KECCAK_EMPTY) == code_hash.data {
+    if code_hash.data.0 == U256::ZERO || code_hash.data.0 == Into::<U256>::into(KECCAK_EMPTY) {
         debug_log!(
             "skipping EVM execution due to empty code: {}",
-            code_hash.data
+            code_hash.data.0
         );
         return;
     }
     debug_log!("code_hash: {:?}", code_hash.data);
-    let evm_bytecode = sdk.preimage(&code_hash.data.into());
+    let evm_bytecode = sdk.preimage(&code_hash.data.0.into());
     debug_log!("preimage_size: {:?}", evm_bytecode.len());
     let evm_bytecode = Bytecode::new_raw(evm_bytecode);
     let input: Bytes = sdk.input().into();
