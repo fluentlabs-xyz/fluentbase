@@ -175,6 +175,8 @@ pub fn sload<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
 pub fn sstore<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
     require_non_staticcall!(interpreter);
     pop!(interpreter, index, value);
+    // TODO(dmitry123): "try to avoid syncing gas before every state access"
+    sdk.sync_evm_gas(interpreter.gas.remaining(), interpreter.gas.refunded());
     unwrap_syscall!(interpreter, sdk.write_storage(index, value));
 }
 

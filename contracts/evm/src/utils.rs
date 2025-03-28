@@ -25,6 +25,7 @@ pub(crate) fn instruction_result_from_exit_code(exit_code: ExitCode) -> Instruct
 pub(crate) fn insert_create_outcome(interpreter: &mut Interpreter, result: SyscallResult<Bytes>) {
     gas!(interpreter, result.fuel_consumed / FUEL_DENOM_RATE);
     refund!(interpreter, result.fuel_refunded / FUEL_DENOM_RATE as i64);
+    interpreter.return_data_buffer = Bytes::new();
     match result.status {
         ExitCode::Ok => {
             assert_eq!(result.data.len(), 20);
@@ -129,7 +130,7 @@ macro_rules! unwrap_syscall {
             $interpreter,
             result.fuel_consumed / fluentbase_sdk::FUEL_DENOM_RATE
         );
-        if result.fuel_refunded > 0 {
+        if result.fuel_refunded != 0 {
             refund!(
                 $interpreter,
                 result.fuel_refunded / fluentbase_sdk::FUEL_DENOM_RATE as i64
