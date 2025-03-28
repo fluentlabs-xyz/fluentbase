@@ -1,4 +1,4 @@
-use fluentbase_sdk::{debug_log, Bytes, ContractContextReader, SharedAPI};
+use fluentbase_sdk::{Bytes, ContractContextReader, SharedAPI};
 use revm_interpreter::{
     primitives::Bytecode,
     Contract,
@@ -6,7 +6,6 @@ use revm_interpreter::{
     Interpreter,
     InterpreterAction,
     InterpreterResult,
-    OpCode,
     SharedMemory,
 };
 
@@ -291,6 +290,18 @@ pub const fn make_instruction_table<SDK: SharedAPI>() -> InstructionTable<SDK> {
     }
 }
 
+#[allow(dead_code)]
+fn trace_opcode(interpreter: &Interpreter, opcode: u8) {
+    use fluentbase_sdk::debug_log;
+    use revm_interpreter::OpCode;
+    debug_log!(
+        "({:04X}) {} (0x{:02X})",
+        interpreter.program_counter() - 1,
+        unsafe { core::mem::transmute::<u8, OpCode>(opcode) },
+        opcode,
+    );
+}
+
 pub fn exec_evm_bytecode<SDK: SharedAPI>(
     sdk: &mut SDK,
     bytecode: Bytecode,
@@ -315,12 +326,7 @@ pub fn exec_evm_bytecode<SDK: SharedAPI>(
     while interpreter.instruction_result == InstructionResult::Continue {
         let opcode = unsafe { *interpreter.instruction_pointer };
         interpreter.instruction_pointer = unsafe { interpreter.instruction_pointer.offset(1) };
-        debug_log!(
-            "({:04X}) {} (0x{:02X})",
-            interpreter.program_counter() - 1,
-            unsafe { core::mem::transmute::<u8, OpCode>(opcode) },
-            opcode,
-        );
+        // trace_opcode(&interpreter, opcode);
         instruction_table[opcode as usize](&mut interpreter, sdk);
     }
     if interpreter.next_action.is_some() {

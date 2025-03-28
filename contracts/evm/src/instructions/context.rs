@@ -1,5 +1,14 @@
 use fluentbase_sdk::{BlockContextReader, SharedAPI, TxContextReader};
-use revm_interpreter::{gas, primitives::U256, push, push_b256, try_push, Interpreter};
+use revm_interpreter::{
+    as_usize_saturated,
+    gas,
+    pop_top,
+    primitives::U256,
+    push,
+    push_b256,
+    try_push,
+    Interpreter,
+};
 
 /// EIP-1344: ChainID opcode
 pub fn chainid<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
@@ -49,8 +58,12 @@ pub fn origin<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
 }
 
 // EIP-4844: Shard Blob Transactions
-pub fn blob_hash<SDK: SharedAPI>(_interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    todo!("not supported")
+pub fn blob_hash<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
+    gas!(interpreter, gas::VERYLOW);
+    pop_top!(interpreter, index);
+    let _i = as_usize_saturated!(index);
+    // TODO(dmitry123): "we don't support blob hashes"
+    *index = U256::ZERO;
 }
 
 /// EIP-7516: BLOBBASEFEE opcode

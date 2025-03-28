@@ -124,7 +124,7 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     let input: Bytes = sdk.input().into();
     debug_log!("input_size: {:?}", input.len());
 
-    let gas_limit = sdk.fuel() / FUEL_DENOM_RATE;
+    let gas_limit = sdk.context().contract_gas_limit();
     debug_log!("gas_limit: {:?}", gas_limit);
 
     let result = exec_evm_bytecode(&mut sdk, evm_bytecode, input, gas_limit);
@@ -172,6 +172,7 @@ mod tests {
             caller: Address::ZERO,
             is_static: false,
             value: U256::ZERO,
+            gas_limit: 0,
         });
         // deploy
         {

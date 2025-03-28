@@ -102,6 +102,10 @@ impl ContractContextReader for SharedContextInputV1 {
     fn contract_value(&self) -> U256 {
         self.contract.value
     }
+
+    fn contract_gas_limit(&self) -> u64 {
+        self.contract.gas_limit
+    }
 }
 
 impl SharedContextReader for SharedContextInputV1 {}

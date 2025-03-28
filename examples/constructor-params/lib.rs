@@ -36,6 +36,7 @@ mod tests {
             caller: address!("3333333333333333333333333333333333333333"),
             is_static: false,
             value: U256::ZERO,
+            gas_limit: 0,
         };
         let sdk = TestingContext::default()
             .with_input(U256::from(123).to_le_bytes::<32>())
