@@ -163,16 +163,17 @@ mod tests {
 
     #[test]
     fn test_deploy_greeting() {
+        const CONTRACT_ADDRESS: Address = Address::new([
+            189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111, 164, 142,
+            177,
+        ]);
         let mut sdk = TestingContext::default().with_contract_context(ContractContextV1 {
-            address: Address::from([
-                189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111, 164,
-                142, 177,
-            ]),
-            bytecode_address: Default::default(),
+            address: CONTRACT_ADDRESS,
+            bytecode_address: CONTRACT_ADDRESS,
             caller: Address::ZERO,
             is_static: false,
             value: U256::ZERO,
-            gas_limit: 0,
+            gas_limit: 1_000_000,
         });
         // deploy
         {
