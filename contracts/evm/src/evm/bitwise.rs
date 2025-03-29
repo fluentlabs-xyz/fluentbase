@@ -121,7 +121,7 @@ pub fn sar<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
 
 #[cfg(test)]
 mod tests {
-    use crate::instructions::bitwise::{byte, sar, shl, shr};
+    use crate::evm::bitwise::{byte, sar, shl, shr};
     use fluentbase_sdk::testing::TestingContext;
     use revm_interpreter::{
         pop,
