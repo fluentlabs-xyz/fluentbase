@@ -2023,7 +2023,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-kzg-point-evaluation"
+name = "fluentbase-contracts-kzg"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2046,6 +2046,21 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+]
+
+[[package]]
+name = "fluentbase-contracts-nitro"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "coset",
+ "der",
+ "ecdsa",
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "hex",
+ "p384",
+ "x509-cert",
 ]
 
 [[package]]
@@ -2072,16 +2087,15 @@ version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
  "fluentbase-codec",
+ "fluentbase-contracts-nitro",
  "fluentbase-examples-abi-solidity",
  "fluentbase-examples-checkmate",
  "fluentbase-examples-client-solidity",
  "fluentbase-examples-constructor-params",
- "fluentbase-examples-echo",
  "fluentbase-examples-erc20",
  "fluentbase-examples-greeting",
  "fluentbase-examples-json",
  "fluentbase-examples-keccak256",
- "fluentbase-examples-nitro-verifier",
  "fluentbase-examples-panic",
  "fluentbase-examples-router-solidity",
  "fluentbase-examples-rwasm",
@@ -2133,16 +2147,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-examples-echo"
-version = "0.1.0"
-dependencies = [
- "fluentbase-build",
- "fluentbase-sdk",
- "hex",
- "hex-literal 0.4.1",
-]
-
-[[package]]
 name = "fluentbase-examples-erc20"
 version = "0.1.0"
 dependencies = [
@@ -2180,22 +2184,6 @@ dependencies = [
  "hex",
  "hex-literal 0.4.1",
  "tiny-keccak",
-]
-
-[[package]]
-name = "fluentbase-examples-nitro-verifier"
-version = "0.1.0"
-dependencies = [
- "ciborium",
- "coset",
- "der",
- "ecdsa",
- "fluentbase-build",
- "fluentbase-sdk",
- "hex",
- "hex-literal 0.4.1",
- "p384",
- "x509-cert",
 ]
 
 [[package]]
