@@ -39,6 +39,9 @@ impl TestingContext {
             .change_input(input.into());
         self
     }
+    pub fn synced_gas(&self) -> (u64, i64) {
+        self.inner.borrow_mut().synced_evm_gas
+    }
     pub fn take_output(&self) -> Vec<u8> {
         self.inner.borrow_mut().native_sdk.take_output()
     }
@@ -54,6 +57,7 @@ struct TestingContextInner {
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     preimages: HashMap<B256, Bytes>,
+    synced_evm_gas: (u64, i64),
 }
 
 impl Default for TestingContext {
@@ -66,6 +70,7 @@ impl Default for TestingContext {
                 transient_storage: Default::default(),
                 logs: vec![],
                 preimages: Default::default(),
+                synced_evm_gas: (0, 0),
             })),
         }
     }
@@ -170,7 +175,10 @@ impl SharedAPI for TestingContext {
         SyscallResult::new((value, false, false), 0, 0, 0)
     }
 
-    fn sync_evm_gas(&self, _gas_remaining: u64, _gas_refunded: i64) -> SyscallResult<()> {
+    fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        ctx.synced_evm_gas.0 += gas_remaining;
+        ctx.synced_evm_gas.1 += gas_refunded;
         SyscallResult::new((), 0, 0, 0)
     }
 

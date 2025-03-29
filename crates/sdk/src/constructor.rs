@@ -10,7 +10,7 @@ fn encode_wasm_custom_section(name: &str, payload: &[u8]) -> Vec<u8> {
         leb128::write::unsigned((name_length.len() + name.len() + payload.len()) as u64);
 
     section.push(0x00); // Section ID 0x00 for custom sections.
-    section.extend(content_length); // Size of all following data in section encoded as leb128
+    section.extend(content_length); // Size of all following data in a section encoded as leb128
     section.extend(name_length); // Size of utf-8 encoded name, encoded as leb128
     section.extend_from_slice(name.as_bytes()); // Name encoded as utf-8
     section.extend(payload); // Provided payload
