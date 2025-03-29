@@ -22,7 +22,6 @@ use solana_ee_core::{
         exec_svm_batch_message,
         process_svm_result,
         BatchMessage,
-        SvmError,
     },
     helpers::sdk_storage_read_account_data,
     solana_program::{
@@ -44,16 +43,16 @@ pub fn deploy(mut sdk: impl SharedAPI) {
     // TODO form this Pubkeys:
     //  pk_payer - caller
     //  pk_exec - (becomes executable account key)
-    //  pk_buffer - just generate
+    //  pk_buffer - generate some random
     //  pk_authority - (who can modify the program)
     // debug_log!("elf_program_bytes.len {}", program_len);
     // panic!("elf_program_bytes.len {}", program_len);
 
     // TODO generate inter-dependant pubkey
-    let pk_payer = Pubkey::new_unique(); // must exist
-    let pk_exec = Pubkey::new_unique(); // may not exist
+    let pk_payer = Pubkey::new_unique(); // must exist // caller
+    let pk_exec = Pubkey::new_unique(); // may not exist // contract_address
     let pk_buffer = Pubkey::new_unique(); // must not exist
-    let pk_authority = Pubkey::new_unique(); // must exist
+    let pk_authority = Pubkey::new_unique(); // must exist // caller
 
     debug_log!("deploy.contract_caller {}", sdk.context().contract_caller());
     debug_log!("deploy.block_coinbase {}", sdk.context().block_coinbase());
