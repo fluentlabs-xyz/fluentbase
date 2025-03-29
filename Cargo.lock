@@ -1962,7 +1962,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-blake2"
+name = "fluentbase-contracts-blake2f"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-bls12381"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -1997,6 +2015,15 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-contracts-identity"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-kzg-point-evaluation"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
