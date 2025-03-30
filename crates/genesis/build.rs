@@ -108,7 +108,7 @@ mod genesis_builder {
         alloc.insert(address, account);
     }
 
-    fn enable_system_contracts(alloc: &mut BTreeMap<Address, GenesisAccount>) {
+    fn enable_evm_precompiled_contracts(alloc: &mut BTreeMap<Address, GenesisAccount>) {
         const WASM_ECRECOVER: &[u8] = include_bytes!("../../contracts/ecrecover/lib.wasm");
         init_contract(
             alloc,
@@ -180,23 +180,6 @@ mod genesis_builder {
             PRECOMPILE_BLS12_381_MAP_G2,
             WASM_BLS12381,
         );
-
-        // const WASM_MULTICALL: &[u8] = include_bytes!("../../contracts/multicall/lib.wasm");
-        // init_contract(
-        //     alloc,
-        //     "multicall",
-        //     PRECOMPILE_NATIVE_MULTICALL,
-        //     WASM_MULTICALL,
-        // );
-        // const WASM_FAIRBLOCK: &[u8] = include_bytes!("../../contracts/fairblock/lib.wasm");
-        // init_contract(
-        //     alloc,
-        //     "fairblock",
-        //     PRECOMPILE_FAIRBLOCK_VERIFIER,
-        //     WASM_FAIRBLOCK,
-        // );
-        // const WASM_EVM: &[u8] = include_bytes!("../../contracts/evm/lib.wasm");
-        // init_contract(alloc, "evm", PRECOMPILE_EVM_RUNTIME, WASM_EVM);
     }
 
     fn devnet_genesis() -> Genesis {
@@ -228,7 +211,7 @@ mod genesis_builder {
             initial_balance!("Ba8AB429Ff0AaA5f1Bb8f19f1f9974fFC82Ff161", U256::ZERO),
         ]);
 
-        enable_system_contracts(&mut alloc);
+        enable_evm_precompiled_contracts(&mut alloc);
 
         const PRECOMPILE_MULTICALL: &[u8] = include_bytes!("../../contracts/multicall/lib.wasm");
         init_contract(

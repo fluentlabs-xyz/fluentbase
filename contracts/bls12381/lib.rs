@@ -8,6 +8,7 @@ use fluentbase_sdk::{
     func_entrypoint,
     Bytes,
     ContractContextReader,
+    ExitCode,
     SharedAPI,
     PRECOMPILE_BLS12_381_G1_ADD,
     PRECOMPILE_BLS12_381_G1_MSM,
@@ -17,18 +18,17 @@ use fluentbase_sdk::{
     PRECOMPILE_BLS12_381_MAP_G2,
     PRECOMPILE_BLS12_381_PAIRING,
 };
-use revm_precompile::{PrecompileError, PrecompileErrors};
 
 pub fn main(mut sdk: impl SharedAPI) {
     // read full input data
-    let contract_address = sdk.context().contract_address();
+    let bytecode_address = sdk.context().contract_bytecode_address();
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
     // call precompiled function
-    let precompile_func = match contract_address {
+    let precompile_func = match bytecode_address {
         PRECOMPILE_BLS12_381_G1_ADD => revm_precompile::bls12_381::g1_add::g1_add,
         PRECOMPILE_BLS12_381_G1_MSM => revm_precompile::bls12_381::g1_msm::g1_msm,
         PRECOMPILE_BLS12_381_G2_ADD => revm_precompile::bls12_381::g2_add::g2_add,
@@ -38,18 +38,8 @@ pub fn main(mut sdk: impl SharedAPI) {
         PRECOMPILE_BLS12_381_MAP_G2 => revm_precompile::bls12_381::map_fp2_to_g2::map_fp2_to_g2,
         _ => unreachable!("bls12381: unsupported contract address"),
     };
-    let result = precompile_func(&input, gas_limit).unwrap_or_else(|err| {
-        match err {
-            PrecompileErrors::Error(err) => match err {
-                PrecompileError::OutOfGas => {
-                    sdk.charge_fuel(u64::MAX);
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-        panic!("bls12381: precompile execution failed")
-    });
+    let result = precompile_func(&input, gas_limit)
+        .unwrap_or_else(|err| sdk.exit(ExitCode::from(err).into_i32()));
     sdk.sync_evm_gas(gas_limit - result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());

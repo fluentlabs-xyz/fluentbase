@@ -3,8 +3,14 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, func_entrypoint, Bytes, ContractContextReader, SharedAPI};
-use revm_precompile::{PrecompileError, PrecompileErrors};
+use fluentbase_sdk::{
+    alloc_slice,
+    func_entrypoint,
+    Bytes,
+    ContractContextReader,
+    ExitCode,
+    SharedAPI,
+};
 
 pub fn main(mut sdk: impl SharedAPI) {
     // read full input data
@@ -14,19 +20,8 @@ pub fn main(mut sdk: impl SharedAPI) {
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
     // call identity function
-    let result =
-        revm_precompile::secp256k1::ec_recover_run(&input, gas_limit).unwrap_or_else(|err| {
-            match err {
-                PrecompileErrors::Error(err) => match err {
-                    PrecompileError::OutOfGas => {
-                        sdk.charge_fuel(u64::MAX);
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-            panic!("identity: precompile execution failed")
-        });
+    let result = revm_precompile::secp256k1::ec_recover_run(&input, gas_limit)
+        .unwrap_or_else(|err| sdk.exit(ExitCode::from(err).into_i32()));
     sdk.sync_evm_gas(gas_limit - result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());

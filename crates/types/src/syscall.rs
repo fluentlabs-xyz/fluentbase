@@ -24,4 +24,5 @@ pub const SYSCALL_ID_PREIMAGE_COPY: B256 = B256::with_last_byte(0x31);
 pub const SYSCALL_ID_PREIMAGE_SIZE: B256 = B256::with_last_byte(0x32);
 pub const SYSCALL_ID_DELEGATED_STORAGE: B256 = B256::with_last_byte(0x33);
 
+// TODO(dmitry): "this syscall will be removed"
 pub const SYSCALL_ID_SYNC_EVM_GAS: B256 = B256::with_last_byte(0xf0);

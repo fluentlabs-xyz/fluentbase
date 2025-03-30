@@ -47,7 +47,7 @@ pub const PRECOMPILE_NATIVE_MULTICALL: Address =
 
 /// Checks is contract has self-gas management
 pub fn is_self_gas_management_contract(address: &Address) -> bool {
-    address == &PRECOMPILE_EVM_RUNTIME
+    is_system_precompile(address)
 }
 
 lazy_static! {

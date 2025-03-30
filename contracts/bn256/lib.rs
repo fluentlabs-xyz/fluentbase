@@ -8,31 +8,28 @@ use fluentbase_sdk::{
     func_entrypoint,
     Bytes,
     ContractContextReader,
+    ExitCode,
     SharedAPI,
     PRECOMPILE_BN256_ADD,
     PRECOMPILE_BN256_MUL,
     PRECOMPILE_BN256_PAIR,
 };
-use revm_precompile::{
-    bn128::{
-        add::BYZANTIUM_ADD_GAS_COST,
-        mul::BYZANTIUM_MUL_GAS_COST,
-        pair::{BYZANTIUM_PAIR_BASE, BYZANTIUM_PAIR_PER_POINT},
-    },
-    PrecompileError,
-    PrecompileErrors,
+use revm_precompile::bn128::{
+    add::BYZANTIUM_ADD_GAS_COST,
+    mul::BYZANTIUM_MUL_GAS_COST,
+    pair::{BYZANTIUM_PAIR_BASE, BYZANTIUM_PAIR_PER_POINT},
 };
 
 pub fn main(mut sdk: impl SharedAPI) {
     // read full input data
-    let contract_address = sdk.context().contract_address();
+    let bytecode_address = sdk.context().contract_bytecode_address();
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
     // call precompiled function
-    let result = match contract_address {
+    let result = match bytecode_address {
         PRECOMPILE_BN256_ADD => {
             revm_precompile::bn128::run_add(&input, BYZANTIUM_ADD_GAS_COST, gas_limit)
         }
@@ -47,18 +44,7 @@ pub fn main(mut sdk: impl SharedAPI) {
         ),
         _ => unreachable!("bn128: unsupported contract address"),
     };
-    let result = result.unwrap_or_else(|err| {
-        match err {
-            PrecompileErrors::Error(err) => match err {
-                PrecompileError::OutOfGas => {
-                    sdk.charge_fuel(u64::MAX);
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-        panic!("bn128: precompile execution failed")
-    });
+    let result = result.unwrap_or_else(|err| sdk.exit(ExitCode::from(err).into_i32()));
     sdk.sync_evm_gas(gas_limit - result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());

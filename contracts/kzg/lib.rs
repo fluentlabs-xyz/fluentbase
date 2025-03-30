@@ -2,8 +2,15 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, func_entrypoint, Bytes, ContractContextReader, SharedAPI};
-use revm_precompile::{primitives::Env, PrecompileError, PrecompileErrors};
+use fluentbase_sdk::{
+    alloc_slice,
+    func_entrypoint,
+    Bytes,
+    ContractContextReader,
+    ExitCode,
+    SharedAPI,
+};
+use revm_precompile::primitives::Env;
 
 pub fn main(mut sdk: impl SharedAPI) {
     // read full input data
@@ -14,18 +21,7 @@ pub fn main(mut sdk: impl SharedAPI) {
     let input = Bytes::copy_from_slice(input);
     // call blake2 function
     let result = revm_precompile::kzg_point_evaluation::run(&input, gas_limit, &Env::default())
-        .unwrap_or_else(|err| {
-            match err {
-                PrecompileErrors::Error(err) => match err {
-                    PrecompileError::OutOfGas => {
-                        sdk.charge_fuel(u64::MAX);
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-            panic!("kzg-point-evaluation: precompile execution failed")
-        });
+        .unwrap_or_else(|err| sdk.exit(ExitCode::from(err).into_i32()));
     sdk.sync_evm_gas(gas_limit - result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());
