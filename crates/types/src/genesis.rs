@@ -1,4 +1,6 @@
 use alloy_primitives::{address, Address};
+use hashbrown::HashSet;
+use lazy_static::lazy_static;
 
 /// An address of EVM runtime that is used to execute EVM program
 pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0000000000000000000000000000000000005201");
@@ -21,7 +23,7 @@ const fn evm_address(value: u8) -> Address {
     Address::with_last_byte(value)
 }
 
-pub const PRECOMPILE_SECP256K1_ECRECOVER: Address = evm_address(0x01);
+pub const PRECOMPILE_SECP256K1_RECOVER: Address = evm_address(0x01);
 pub const PRECOMPILE_SHA256: Address = evm_address(0x02);
 pub const PRECOMPILE_RIPEMD160: Address = evm_address(0x03);
 pub const PRECOMPILE_IDENTITY: Address = evm_address(0x04);
@@ -46,6 +48,55 @@ pub const PRECOMPILE_NATIVE_MULTICALL: Address =
 /// Checks is contract has self-gas management
 pub fn is_self_gas_management_contract(address: &Address) -> bool {
     address == &PRECOMPILE_EVM_RUNTIME
+}
+
+lazy_static! {
+    static ref SYSTEM_PRECOMPILES: HashSet<Address> = {
+        let mut m = HashSet::new();
+        m.insert(PRECOMPILE_EVM_RUNTIME);
+        m.insert(PRECOMPILE_FAIRBLOCK_VERIFIER);
+        m.insert(PRECOMPILE_SVM_RUNTIME);
+        m.insert(PRECOMPILE_WRAPPED_ETH);
+        m.insert(PRECOMPILE_WEBAUTHN_VERIFIER);
+        m.insert(PRECOMPILE_OAUTH2_VERIFIER);
+        m.insert(PRECOMPILE_NITRO_VERIFIER);
+        m.insert(PRECOMPILE_SECP256K1_RECOVER);
+        m.insert(PRECOMPILE_SHA256);
+        m.insert(PRECOMPILE_RIPEMD160);
+        m.insert(PRECOMPILE_IDENTITY);
+        m.insert(PRECOMPILE_BIG_MODEXP);
+        m.insert(PRECOMPILE_BN256_ADD);
+        m.insert(PRECOMPILE_BN256_MUL);
+        m.insert(PRECOMPILE_BN256_PAIR);
+        m.insert(PRECOMPILE_BLAKE2F);
+        m.insert(PRECOMPILE_KZG_POINT_EVALUATION);
+        m.insert(PRECOMPILE_BLS12_381_G1_ADD);
+        m.insert(PRECOMPILE_BLS12_381_G1_MSM);
+        m.insert(PRECOMPILE_BLS12_381_G2_ADD);
+        m.insert(PRECOMPILE_BLS12_381_G2_MSM);
+        m.insert(PRECOMPILE_BLS12_381_PAIRING);
+        m.insert(PRECOMPILE_BLS12_381_MAP_G1);
+        m.insert(PRECOMPILE_BLS12_381_MAP_G2);
+        m
+    };
+}
+
+/// Determines if a given address belongs to the system precompiled set.
+///
+/// This function checks if the provided `address` exists in the collection
+/// of system precompile addresses (`SYSTEM_PRECOMPILES`).
+/// This is typically used to differentiate between user-defined addresses and those reserved
+/// for EVM precompile contracts.
+///
+/// # Arguments
+/// * `address` - A reference to the `Address` being checked.
+///
+/// # Returns
+/// * `true` - If the `address` is recognized as a system precompile.
+/// * `false` - Otherwise.
+pub fn is_system_precompile(address: &Address) -> bool {
+    // TODO(dmitry123): "add spec verification"
+    SYSTEM_PRECOMPILES.contains(address)
 }
 
 /// Checks if the function call should be redirected to a native precompiled contract.
