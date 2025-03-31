@@ -1,5 +1,6 @@
 use crate::{
     instruction::{debug_log::SyscallDebugLog, keccak256::SyscallKeccak256},
+    ExecutionResult,
     RuntimeContext,
 };
 use anyhow::Result;
@@ -22,14 +23,13 @@ struct AsyncExecutor {
     store: Store,
     func: Func,
     future: Pin<Box<dyn Future<Output = Result<()>>>>,
-
     waker: Waker,
 }
 
 impl AsyncExecutor {
     fn new(store: Store, func: Func) -> Result<Self> {
         // The code is not yet running after call_async(). Only future is created.
-        // Actual execution is happeinng when Future::poll() is executed.
+        // Actual execution is happeinng when Future::poll() is called.
         let future = func.call_async(&mut store, ());
         Self {
             store: store,
@@ -39,13 +39,33 @@ impl AsyncExecutor {
         }
     }
 
-    fn step(&self) {
-        let context = Context::from_waker(&self.waker);
-        let exit_code = match Future::poll(self.future, &mut context) {
-            Poll::Ready(value) => {
-                println!("Future completed with: {:?}", value);
-                0
-            }
+    fn step(&self) -> ExecutionResult {
+        let poll_context = Context::from_waker(&self.waker);
+        let execution_result = self.store.data().execution_result.clone();
+        match Future::poll(self.future, &mut poll_context) {
+            Poll::Ready(value) => match value {
+                Ok(()) => {}
+                Err(HostTermination::Exit) => {}
+                Err(HostTermination::MemoryOutOfBounds) => {
+                    execution_result.exit_code = ExitCode::MemoryOutOfBounds.into_i32();
+                }
+                Err(Trap(trap)) => {
+                    let code = match trap {
+                        Trap::Unreachable => ExitCode::UnreachableCodeReached,
+                        Trap::MemoryOutOfBounds => ExitCode::MemoryOutOfBounds,
+                        Trap::TableOutOfBounds => ExitCode::TableOutOfBounds,
+                        Trap::IndirectCallToNull => ExitCode::IndirectCallToNull,
+                        Trap::IntegerDivisionByZero => ExitCode::IntegerDivisionByZero,
+                        Trap::IntegerOverflow => ExitCode::IntegerOverflow,
+                        Trap::BadConversionToInteger => ExitCode::BadConversionToInteger,
+                        Trap::StackOverflow => ExitCode::StackOverflow,
+                        Trap::BadSignature => ExitCode::BadSignature,
+                        Trap::OutOfFuel => ExitCode::OutOfFuel,
+                        _ => ExitCode::UnknownError,
+                    };
+                    execution_result.exit_code = code.into_i32();
+                }
+            },
             Poll::Pending => {
                 unsafe {
                     (*store_ref).fuel_async_yield_interval(None)?;
