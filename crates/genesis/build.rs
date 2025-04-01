@@ -108,7 +108,10 @@ mod genesis_builder {
         alloc.insert(address, account);
     }
 
-    fn enable_evm_precompiled_contracts(alloc: &mut BTreeMap<Address, GenesisAccount>) {
+    fn enable_evm_precompiled_contracts(
+        alloc: &mut BTreeMap<Address, GenesisAccount>,
+        with_bls12: bool,
+    ) {
         const WASM_ECRECOVER: &[u8] = include_bytes!("../../contracts/ecrecover/lib.wasm");
         init_contract(
             alloc,
@@ -137,49 +140,51 @@ mod genesis_builder {
             PRECOMPILE_KZG_POINT_EVALUATION,
             WASM_KZG_POINT_EVALUATION,
         );
-        const WASM_BLS12381: &[u8] = include_bytes!("../../contracts/bls12381/lib.wasm");
-        init_contract(
-            alloc,
-            "bls12381_g1_add",
-            PRECOMPILE_BLS12_381_G1_ADD,
-            WASM_BLS12381,
-        );
-        init_contract(
-            alloc,
-            "bls12381_g1_msm",
-            PRECOMPILE_BLS12_381_G1_MSM,
-            WASM_BLS12381,
-        );
-        init_contract(
-            alloc,
-            "bls12381_g2_add",
-            PRECOMPILE_BLS12_381_G2_ADD,
-            WASM_BLS12381,
-        );
-        init_contract(
-            alloc,
-            "bls12381_g2_msm",
-            PRECOMPILE_BLS12_381_G2_MSM,
-            WASM_BLS12381,
-        );
-        init_contract(
-            alloc,
-            "bls12381_pairing",
-            PRECOMPILE_BLS12_381_PAIRING,
-            WASM_BLS12381,
-        );
-        init_contract(
-            alloc,
-            "bls12381_map_g1",
-            PRECOMPILE_BLS12_381_MAP_G1,
-            WASM_BLS12381,
-        );
-        init_contract(
-            alloc,
-            "bls12381_map_g2",
-            PRECOMPILE_BLS12_381_MAP_G2,
-            WASM_BLS12381,
-        );
+        if with_bls12 {
+            const WASM_BLS12381: &[u8] = include_bytes!("../../contracts/bls12381/lib.wasm");
+            init_contract(
+                alloc,
+                "bls12381_g1_add",
+                PRECOMPILE_BLS12_381_G1_ADD,
+                WASM_BLS12381,
+            );
+            init_contract(
+                alloc,
+                "bls12381_g1_msm",
+                PRECOMPILE_BLS12_381_G1_MSM,
+                WASM_BLS12381,
+            );
+            init_contract(
+                alloc,
+                "bls12381_g2_add",
+                PRECOMPILE_BLS12_381_G2_ADD,
+                WASM_BLS12381,
+            );
+            init_contract(
+                alloc,
+                "bls12381_g2_msm",
+                PRECOMPILE_BLS12_381_G2_MSM,
+                WASM_BLS12381,
+            );
+            init_contract(
+                alloc,
+                "bls12381_pairing",
+                PRECOMPILE_BLS12_381_PAIRING,
+                WASM_BLS12381,
+            );
+            init_contract(
+                alloc,
+                "bls12381_map_g1",
+                PRECOMPILE_BLS12_381_MAP_G1,
+                WASM_BLS12381,
+            );
+            init_contract(
+                alloc,
+                "bls12381_map_g2",
+                PRECOMPILE_BLS12_381_MAP_G2,
+                WASM_BLS12381,
+            );
+        }
     }
 
     fn devnet_genesis() -> Genesis {
@@ -211,7 +216,7 @@ mod genesis_builder {
             initial_balance!("Ba8AB429Ff0AaA5f1Bb8f19f1f9974fFC82Ff161", U256::ZERO),
         ]);
 
-        enable_evm_precompiled_contracts(&mut alloc);
+        enable_evm_precompiled_contracts(&mut alloc, false);
 
         const PRECOMPILE_MULTICALL: &[u8] = include_bytes!("../../contracts/multicall/lib.wasm");
         init_contract(
