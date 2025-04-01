@@ -9,8 +9,15 @@ use fluentbase_types::{Bytes, FixedBytes, SyscallInvocationParams, B256};
 use futures::{executor::block_on, task::noop_waker};
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{
+        hash_map::{
+            DefaultHasher,
+            Entry::{Occupied, Vacant},
+        },
+        HashMap,
+    },
     future::Future,
+    hash::{Hash, Hasher},
     mem::drop,
     pin::Pin,
     sync::mpsc,
@@ -30,10 +37,9 @@ struct WorkerContext {
 
 #[derive(Debug, Clone)]
 enum TerminationReason {
-    Exit(i32), // Volonteer exit
+    Exit(i32), // TODO: rename to VolonteerExit
     InputOutputOutOfBounds,
     Trap(wasmtime::Trap),
-    ChannelError,
 }
 
 impl fmt::Display for TerminationReason {
@@ -64,19 +70,91 @@ enum Message {
     },
 }
 
-struct ThreadedExecutor {
-    main_sender: mpsc::Sender<()>,
-    main_receiver: mpsc::Receiver<()>,
-    // worker_thread: JoinHandle,
+struct AsyncExecutor {
+    sender: mpsc::Sender<Message>,
+    receiver: mpsc::Receiver<Message>,
+    worker_join_handle: JoinHandle<()>,
 }
 
-impl ThreadedExecutor {
-    fn step() {}
+impl AsyncExecutor {
+    pub fn launch(module: &Module, input: Vec<u8>) -> anyhow::Result<Self> {
+        let (executor_sender, worker_receiver) = mpsc::channel();
+        let (worker_sender, executor_receiver) = mpsc::channel();
+        let worker_context = WorkerContext {
+            sender: worker_sender,
+            receiver: worker_receiver,
+            input: input,
+            output: Vec::new(),
+        };
+        let engine = module.engine();
+        let linker = new_linker_with_builtins(engine)?;
+        let mut store = Store::new(engine, worker_context);
+
+        let instance = linker.instantiate(&mut store, &module)?;
+        let main = instance.get_typed_func::<(), ()>(&mut store, "main")?;
+
+        let worker = thread::spawn(move || {
+            let reason = match main.call(&mut store, ()) {
+                Ok(()) => TerminationReason::Exit(0),
+                Err(e) => {
+                    if let Some(reason) = e.downcast_ref::<TerminationReason>() {
+                        reason.clone()
+                    } else if let Some(trap) = e.downcast_ref::<wasmtime::Trap>() {
+                        TerminationReason::Trap(trap.clone())
+                    } else {
+                        panic!("unexpected error occured during wasm guest execution");
+                    }
+                }
+            };
+            let message = Message::WasmTerminated {
+                reason,
+                output: store.data().output.clone(),
+            };
+            store
+                .data()
+                .sender
+                .send(message)
+                .expect("failed to send termination info to channel");
+        });
+
+        Ok(Self {
+            sender: executor_sender,
+            receiver: executor_receiver,
+            worker_join_handle: worker,
+        })
+    }
+    pub fn receive_message(&self) -> anyhow::Result<Message> {
+        let message = self.receiver.recv()?;
+        Ok(message)
+    }
+    pub fn send_message(&self, message: Message) -> anyhow::Result<()> {
+        let _ = self.sender.send(message)?;
+        Ok(())
+    }
+}
+
+thread_local! {
+    static RUNTIME_STATE: RefCell<RuntimeState> = RefCell::new(RuntimeState::new());
+}
+struct RuntimeState {
+    modules_cache: HashMap<u64, Module>,
+    suspended_executors: HashMap<u64, AsyncExecutor>,
+}
+impl RuntimeState {
+    fn new() -> Self {
+        // let config = Config::new();
+        // let engine = Engine::new(&config).unwrap();
+        // let linker = new_linker_with_builtins(&engine).unwrap();
+        Self {
+            modules_cache: HashMap::new(),
+            suspended_executors: HashMap::new(),
+        }
+    }
 }
 
 mod builtins {
     use super::*;
-    fn get_memory_export(caller: &mut Caller<'_, WorkerContext>) -> Result<Memory> {
+    fn get_memory_export(caller: &mut Caller<'_, WorkerContext>) -> anyhow::Result<Memory> {
         match caller.get_export("memory") {
             Some(Extern::Memory(memory)) => Ok(memory),
             _ => Err(wasmtime::Trap::MemoryOutOfBounds.into()),
@@ -87,7 +165,7 @@ mod builtins {
         caller: &mut Caller<'_, WorkerContext>,
         offset: u32,
         buffer: &[u8],
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let memory = get_memory_export(caller)?;
         memory
             .write(caller, offset as usize, &buffer)
@@ -99,7 +177,7 @@ mod builtins {
         caller: &mut Caller<'_, WorkerContext>,
         offset: u32,
         length: u32,
-    ) -> Result<Vec<u8>> {
+    ) -> anyhow::Result<Vec<u8>> {
         let memory = get_memory_export(caller)?;
         let data = memory
             .data(&caller)
@@ -112,7 +190,11 @@ mod builtins {
         }
     }
 
-    pub fn write(mut caller: Caller<'_, WorkerContext>, offset: u32, length: u32) -> Result<()> {
+    pub fn write(
+        mut caller: Caller<'_, WorkerContext>,
+        offset: u32,
+        length: u32,
+    ) -> anyhow::Result<()> {
         let data = read_memory(&mut caller, offset, length)?;
         let context = caller.data_mut();
         context.output.extend_from_slice(&data);
@@ -124,7 +206,7 @@ mod builtins {
         target_ptr: u32,
         offset: u32,
         length: u32,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let context = caller.data();
         if offset + length <= context.input.len() as u32 {
             let buffer =
@@ -136,11 +218,11 @@ mod builtins {
         }
     }
 
-    pub fn input_size(caller: Caller<'_, WorkerContext>) -> Result<u32> {
+    pub fn input_size(caller: Caller<'_, WorkerContext>) -> anyhow::Result<u32> {
         Ok(caller.data().input.len() as u32)
     }
 
-    pub fn exit(mut caller: Caller<'_, WorkerContext>, exit_code: i32) -> Result<()> {
+    pub fn exit(mut caller: Caller<'_, WorkerContext>, exit_code: i32) -> anyhow::Result<()> {
         Err(TerminationReason::Exit(exit_code).into())
     }
 
@@ -149,7 +231,7 @@ mod builtins {
         target_ptr: u32,
         offset: u32,
         length: u32,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         println!("builtin::read_output()");
         let context = caller.data();
         let output = &context.output;
@@ -162,7 +244,7 @@ mod builtins {
         }
     }
 
-    pub fn output_size(caller: Caller<'_, WorkerContext>) -> Result<u32> {
+    pub fn output_size(caller: Caller<'_, WorkerContext>) -> anyhow::Result<u32> {
         let context = caller.data();
         Ok(context.output.len() as u32)
     }
@@ -171,7 +253,7 @@ mod builtins {
         mut caller: Caller<'_, WorkerContext>,
         message_ptr: u32,
         message_length: u32,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let message = read_memory(&mut caller, message_ptr, message_length)?;
         SyscallDebugLog::fn_impl(&message);
         Ok(())
@@ -184,7 +266,7 @@ mod builtins {
         input_len: u32,
         fuel16_ptr: u32,
         state: u32,
-    ) -> Result<i32> {
+    ) -> anyhow::Result<i32> {
         println!("builtin::exec()");
         let mut encoded_state = BytesMut::new();
         let fuel_limit = u32::MAX;
@@ -227,23 +309,23 @@ mod builtins {
         data_ptr: u32,
         data_len: u32,
         output32_ptr: u32,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let data = read_memory(&mut caller, data_ptr, data_len)?;
         let hash = SyscallKeccak256::fn_impl(&data);
         write_memory(&mut caller, output32_ptr, hash.as_slice())?;
         Ok(())
     }
 
-    pub fn charge_fuel(mut caller: Caller<'_, WorkerContext>, delta: u64) -> Result<u64> {
+    pub fn charge_fuel(mut caller: Caller<'_, WorkerContext>, delta: u64) -> anyhow::Result<u64> {
         Ok(u64::MAX)
     }
 
-    pub fn fuel(caller: Caller<'_, WorkerContext>) -> Result<u64> {
+    pub fn fuel(caller: Caller<'_, WorkerContext>) -> anyhow::Result<u64> {
         Ok(u64::MAX)
     }
 }
 
-fn linker_with_builtins(engine: &Engine) -> Result<Linker<WorkerContext>> {
+fn new_linker_with_builtins(engine: &Engine) -> anyhow::Result<Linker<WorkerContext>> {
     let mut linker = Linker::new(engine);
     let module = "fluentbase_v1preview";
     linker.func_wrap(module, "_write", builtins::write)?;
@@ -259,93 +341,70 @@ fn linker_with_builtins(engine: &Engine) -> Result<Linker<WorkerContext>> {
     linker.func_wrap(module, "_charge_fuel", builtins::charge_fuel)?;
     Ok(linker)
 }
-fn resume_inner(call_id: u32, input: Vec<u8>) -> Result<(i32, Vec<u8>)> {
+fn resume_inner(call_id: u32, input: Vec<u8>) -> anyhow::Result<(i32, Vec<u8>)> {
     Ok((0, Vec::new()))
 }
 
-fn exec_inner(wasm_bytecode: &[u8], input: Vec<u8>) -> Result<(i32, Vec<u8>)> {
-    let (main_sender, worker_receiver) = mpsc::channel();
-    let (worker_sender, main_receiver) = mpsc::channel();
-    let worker_context = WorkerContext {
-        sender: worker_sender,
-        receiver: worker_receiver,
-        input: input,
-        output: Vec::new(),
-    };
-    let mut config = Config::new();
-    let engine = Engine::new(&config)?;
-    let module = Module::new(&engine, wasm_bytecode)?;
-    let linker = linker_with_builtins(&engine)?;
-    let mut store = Store::new(&engine, worker_context);
+fn exec_inner(wasm_bytecode: &[u8], input: Vec<u8>) -> anyhow::Result<(i32, Vec<u8>)> {
+    Ok((0, vec![]))
 
-    let instance = linker.instantiate(&mut store, &module)?;
-    let main = instance.get_typed_func::<(), ()>(&mut store, "main")?;
-
-    let start = Instant::now();
-
-    let worker = thread::spawn(move || {
-        let reason = match main.call(&mut store, ()) {
-            Ok(()) => TerminationReason::Exit(0),
-            Err(e) => {
-                if let Some(reason) = e.downcast_ref::<TerminationReason>() {
-                    reason.clone()
-                } else if let Some(trap) = e.downcast_ref::<wasmtime::Trap>() {
-                    TerminationReason::Trap(trap.clone())
-                } else {
-                    panic!("unexpected error occured during wasm guest execution");
-                }
-            }
-        };
-        let message = Message::WasmTerminated {
-            reason,
-            output: store.data().output.clone(),
-        };
-        store
-            .data()
-            .sender
-            .send(message)
-            .expect("failed to send termination info to channel");
-    });
-
-    let message = main_receiver.recv();
-    match message {
-        Ok(message) => match message {
-            Message::ExecutionRequest {
-                code_hash,
-                input,
-                fuel_limit,
-                state,
-            } => {
-                println!("Executing contract:");
-                println!("Code Hash: {:?}", code_hash);
-                println!("Input: {:?}", input);
-                println!("Fuel Limit: {}", fuel_limit);
-                println!("State: {}", state);
-                Ok((0, vec![]))
-            }
-            Message::WasmTerminated { reason, output } => {
-                println!("WASM Terminated:");
-                println!("Reason: {:?}", reason);
-                println!("Output: {:?}", output);
-                worker
-                    .join()
-                    .expect("worker should exit successfully after termination message");
-                Ok((0, vec![]))
-            }
-            _ => panic!("unexpected message type received from worker"),
-        },
-        Err(err) => {
-            let worker_result = worker.join();
-            match worker_result {
-                Ok(()) => panic!("worker finished execution without sending termination reason"),
-                Err(_) => Err(anyhow::Error::msg("worker panicked")),
-            }
-        }
-    }
+    // let message = main_receiver.recv();
+    // match message {
+    //     Ok(message) => match message {
+    //         Message::ExecutionRequest {
+    //             code_hash,
+    //             input,
+    //             fuel_limit,
+    //             state,
+    //         } => {
+    //             println!("Executing contract:");
+    //             println!("Code Hash: {:?}", code_hash);
+    //             println!("Input: {:?}", input);
+    //             println!("Fuel Limit: {}", fuel_limit);
+    //             println!("State: {}", state);
+    //             Ok((0, vec![]))
+    //         }
+    //         Message::WasmTerminated { reason, output } => {
+    //             println!("WASM Terminated:");
+    //             println!("Reason: {:?}", reason);
+    //             println!("Output: {:?}", output);
+    //             worker
+    //                 .join()
+    //                 .expect("worker should exit successfully after termination message");
+    //             Ok((0, vec![]))
+    //         }
+    //         _ => panic!("unexpected message type received from worker"),
+    //     },
+    //     Err(err) => {
+    //         let worker_result = worker.join();
+    //         match worker_result {
+    //             Ok(()) => panic!("worker finished execution without sending termination reason"),
+    //             Err(_) => Err(anyhow::Error::msg("worker panicked")),
+    //         }
+    //     }
+    // }
 }
 
 pub fn exec_in_wasmtime_runtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, Vec<u8>) {
-    exec_inner(wasm_bytecode, input).unwrap()
+    let result: anyhow::Result<AsyncExecutor> = RUNTIME_STATE.with_borrow_mut(|runtime_state| {
+        let mut hasher = DefaultHasher::new();
+        wasm_bytecode.hash(&mut hasher);
+        let hash = hasher.finish();
+        let module: &Module = match runtime_state.modules_cache.get(&hash) {
+            Some(value) => value,
+            None => {
+                let mut config = Config::new();
+                let engine = Engine::new(&config)?;
+                let module = Module::new(&engine, wasm_bytecode)?;
+                // I'll remove this 3 lookups once I get more experience in rust (never)
+                let _ = runtime_state.modules_cache.insert(hash.clone(), module);
+                runtime_state.modules_cache.get(&hash).unwrap()
+            }
+        };
+        let executor = AsyncExecutor::launch(module, input)?;
+        Ok(executor)
+    });
+    (0, vec![])
 }
 
 #[cfg(test)]
