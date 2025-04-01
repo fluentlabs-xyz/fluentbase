@@ -1,4 +1,4 @@
-use core::error::Error as StdError;
+use revm_primitives::{PrecompileError, PrecompileErrors};
 use rwasm::core::{Trap, TrapCode};
 use strum_macros::{Display, FromRepr};
 
@@ -18,6 +18,7 @@ pub enum ExitCode {
     NonNegativeExitCode = -1005,
     UnknownError = -1006,
     InputOutputOutOfBounds = -1007,
+    PrecompileError = -1008,
     // trap error codes
     UnreachableCodeReached = -2001,
     MemoryOutOfBounds = -2002,
@@ -32,8 +33,6 @@ pub enum ExitCode {
     GrowthOperationLimited = -2011,
     UnresolvedFunction = -2013,
 }
-
-impl StdError for ExitCode {} // required to use in anyhow::new()
 
 pub trait UnwrapExitCode<T> {
     fn unwrap_exit_code(self) -> T;
@@ -129,5 +128,32 @@ impl From<&Trap> for ExitCode {
             return ExitCode::from(exit_code);
         }
         ExitCode::UnknownError
+    }
+}
+
+impl From<PrecompileError> for ExitCode {
+    fn from(err: PrecompileError) -> Self {
+        Self::from(&err)
+    }
+}
+impl From<&PrecompileError> for ExitCode {
+    fn from(err: &PrecompileError) -> Self {
+        match err {
+            PrecompileError::OutOfGas => ExitCode::OutOfFuel,
+            _ => ExitCode::PrecompileError,
+        }
+    }
+}
+impl From<PrecompileErrors> for ExitCode {
+    fn from(err: PrecompileErrors) -> Self {
+        Self::from(&err)
+    }
+}
+impl From<&PrecompileErrors> for ExitCode {
+    fn from(err: &PrecompileErrors) -> Self {
+        match err {
+            PrecompileErrors::Error(err) => ExitCode::from(err),
+            PrecompileErrors::Fatal { .. } => ExitCode::PrecompileError,
+        }
     }
 }

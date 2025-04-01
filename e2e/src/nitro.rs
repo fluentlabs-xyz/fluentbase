@@ -8,7 +8,7 @@ use std::time::Instant;
 #[test]
 fn test_nitro_verifier_wasm_version() {
     let caller = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    let bytecode = include_bytes!("../../examples/nitro-verifier/lib.wasm");
+    let bytecode = include_bytes!("../../contracts/nitro/lib.wasm");
     let mut ctx = EvmTestingContext::default();
     let address = ctx.deploy_evm_tx(caller, bytecode.into());
 
@@ -16,7 +16,7 @@ fn test_nitro_verifier_wasm_version() {
     let mut total_gas = 0;
 
     let attestation_doc: Vec<u8> = hex::decode(include_bytes!(
-        "../../examples/nitro-verifier/attestation-example.hex"
+        "../../contracts/nitro/attestation-example.hex"
     ))
     .unwrap()
     .into();
@@ -67,7 +67,7 @@ fn test_nitro_verifier_solidity_version() {
         function decodeAttestationTbs(bytes memory attestation) external pure returns (bytes memory attestationTbs, bytes memory signature);
     }
     let attestation_bytes = hex::decode(include_bytes!(
-        "../../examples/nitro-verifier/attestation-example.hex"
+        "../../contracts/nitro/attestation-example.hex"
     ))
     .unwrap();
     let input = decodeAttestationTbsCall {

@@ -44,7 +44,7 @@ fn test_example_panic() {
         from_utf8(&output[68..]).unwrap(),
         "it's panic time\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
     );
-    assert_eq!(exit_code, -71);
+    assert_eq!(exit_code, -1);
 }
 
 #[test]

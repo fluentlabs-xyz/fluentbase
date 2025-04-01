@@ -116,7 +116,7 @@ impl SyscallExec {
         // let trace = runtime.store().tracer().unwrap().logs.len();
         // println!("execution trace ({} steps):", trace);
 
-        // println!("\n\nEXEC, interrupted: {}", execution_result.interrupted);
+        // println!("EXEC, interrupted: {}", execution_result.interrupted);
         // println!(
         //     "exit_code: {} ({})",
         //     execution_result.exit_code,
@@ -124,17 +124,17 @@ impl SyscallExec {
         // );
         // println!(
         //     "output: 0x{} ({})",
-        //     hex::encode(&execution_result.output),
+        //     fluentbase_types::hex::encode(&execution_result.output),
         //     std::str::from_utf8(&execution_result.output).unwrap_or("can't decode utf-8")
         // );
         // println!("fuel consumed: {}", execution_result.fuel_consumed);
         // let logs = &runtime.store().tracer().unwrap().logs;
         // println!("execution trace ({} steps):", logs.len());
         // for log in logs.iter().rev().take(100).rev() {
-        //     use rwasm::rwasm::instruction::InstructionExtra;
+        //     use fluentbase_rwasm::InstructionExtra;
         //     if let Some(value) = log.opcode.aux_value() {
         //         println!(
-        //             " - pc={} opcode={}({}) gas={} stack={:?}",
+        //             " - pc={} opcode={:?}({}) gas={} stack={:?}",
         //             log.program_counter,
         //             log.opcode,
         //             value,
@@ -149,7 +149,7 @@ impl SyscallExec {
         //         );
         //     } else {
         //         println!(
-        //             " - pc={} opcode={} gas={} stack={:?}",
+        //             " - pc={} opcode={:?} gas={} stack={:?}",
         //             log.program_counter,
         //             log.opcode,
         //             log.consumed_fuel,

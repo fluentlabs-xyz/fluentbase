@@ -135,12 +135,13 @@ impl<T> RwasmContext<T> {
     }
 
     pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), RwasmError> {
+        let consumed_fuel = self.consumed_fuel.checked_add(fuel).unwrap_or(u64::MAX);
         if let Some(fuel_limit) = self.config.fuel_limit {
-            if self.consumed_fuel + fuel >= fuel_limit {
+            if consumed_fuel > fuel_limit {
                 return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
             }
         }
-        self.consumed_fuel += fuel;
+        self.consumed_fuel = consumed_fuel;
         Ok(())
     }
 

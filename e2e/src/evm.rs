@@ -286,7 +286,7 @@ fn test_evm_erc20() {
 
 #[test]
 fn test_evm_balance() {
-    const OWNER_ADDRESS: Address = Address::with_last_byte(1);
+    const OWNER_ADDRESS: Address = address!("1111111111111111111111111111111111111111");
     let mut bytecode = Vec::new();
     bytecode.push(opcode::PUSH20);
     bytecode.extend_from_slice(OWNER_ADDRESS.as_slice());

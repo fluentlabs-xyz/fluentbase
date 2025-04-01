@@ -1,4 +1,7 @@
+mod config;
+
 use cargo_metadata::{camino::Utf8PathBuf, CrateType, Metadata, MetadataCommand, TargetKind};
+pub use config::*;
 use std::{
     env,
     fs,
@@ -7,10 +10,8 @@ use std::{
     str::from_utf8,
 };
 
-const WASM32_TARGET: &str = "wasm32-unknown-unknown";
-
-/// forces cargo to rerun the build script when any source file in the package or its
-/// dependencies change.
+/// Forces cargo to rerun the build script when any source file in the package or its
+/// dependency change.
 pub fn cargo_rerun_if_changed(metadata: &Metadata) {
     let root_package = &metadata
         .root_package()
@@ -38,7 +39,10 @@ pub fn cargo_rerun_if_changed(metadata: &Metadata) {
     }
 }
 
-pub fn calc_wasm_artefact_paths(metadata: &Metadata) -> Vec<(String, Utf8PathBuf)> {
+pub fn calc_wasm_artefact_paths(
+    metadata: &Metadata,
+    config: &WasmBuildConfig,
+) -> Vec<(String, Utf8PathBuf)> {
     let mut result = vec![];
     let packages_to_iterate = metadata.workspace_default_members.to_vec();
     for program_crate in packages_to_iterate {
@@ -53,7 +57,7 @@ pub fn calc_wasm_artefact_paths(metadata: &Metadata) -> Vec<(String, Utf8PathBuf
             let bin_name = bin_target.name.clone() + ".wasm";
             let wasm_path = metadata
                 .target_directory
-                .join(WASM32_TARGET)
+                .join(config.target.clone())
                 .join("release")
                 .join(&bin_name);
             result.push((bin_name.to_owned(), wasm_path));
@@ -63,9 +67,13 @@ pub fn calc_wasm_artefact_paths(metadata: &Metadata) -> Vec<(String, Utf8PathBuf
 }
 
 pub fn build_wasm_program_from_env() {
-    // Define output paths
-    let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    build_wasm_program(WasmBuildConfig::default())
+}
+
+pub fn build_wasm_program(config: WasmBuildConfig) {
+    let cargo_manifest_dir = PathBuf::from(config.cargo_manifest_dir.clone());
     let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
+
     let mut metadata_cmd = MetadataCommand::new();
     let metadata = metadata_cmd
         .manifest_path(cargo_manifest_path)
@@ -74,22 +82,19 @@ pub fn build_wasm_program_from_env() {
 
     cargo_rerun_if_changed(&metadata);
 
-    let target = env::var("TARGET").unwrap();
-    if target.contains("wasm32") {
+    if config.current_target.contains("wasm32") {
         println!(
             "cargo:warning=build skipped due to wasm32 compilation target ({})",
-            target,
+            config.current_target
         );
         return;
     }
-
-    let is_tarpaulin_build = env::var("CARGO_CFG_TARPAULIN").is_ok();
-    if is_tarpaulin_build {
-        println!("cargo:warning=build skipped due to the tarpaulin build",);
+    if config.is_tarpaulin_build {
+        println!("cargo:warning=build skipped due to the tarpaulin build");
         return;
     }
 
-    let artefact_paths = calc_wasm_artefact_paths(&metadata);
+    let artefact_paths = calc_wasm_artefact_paths(&metadata, &config);
     if artefact_paths.is_empty() {
         panic!("there is no WASM artefact to build");
     } else if artefact_paths.len() > 1 {
@@ -97,17 +102,27 @@ pub fn build_wasm_program_from_env() {
     }
 
     // Build the project as a WASM binary
+    let mut arguments = vec![
+        "build".to_string(),
+        "--target".to_string(),
+        config.target,
+        "--release".to_string(),
+    ];
+    if config.no_default_features {
+        arguments.push("--no-default-features".to_string());
+    }
+    if !config.features.is_empty() {
+        arguments.push("--features".to_string());
+        arguments.extend_from_slice(&config.features);
+    }
     let status = Command::new("cargo")
-        .args([
-            "build",
-            "--target",
-            WASM32_TARGET,
-            "--release",
-            "--no-default-features",
-        ])
+        .args(arguments)
         .env(
             "RUSTFLAGS",
-            "-C link-arg=-zstack-size=262144 -C target-feature=+bulk-memory",
+            format!(
+                "-C link-arg=-zstack-size={} -C target-feature=+bulk-memory",
+                config.stack_size
+            ),
         )
         .status()
         .expect("WASM compilation failure");
@@ -118,8 +133,7 @@ pub fn build_wasm_program_from_env() {
         );
     }
 
-    let wasm_output = cargo_manifest_dir.join("lib.wasm");
-    let wast_output = cargo_manifest_dir.join("lib.wat");
+    let wasm_output = cargo_manifest_dir.join(config.output_file_name.clone());
 
     for (_target_name, wasm_path) in artefact_paths.iter() {
         println!("cargo:rustc-env=FLUENTBASE_WASM_BINARY_PATH={}", wasm_path);
@@ -129,6 +143,7 @@ pub fn build_wasm_program_from_env() {
     // Build the project as a WASM binary
     let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
     if wasm_to_wat.is_ok() {
+        let wast_output = cargo_manifest_dir.join(config.output_file_name.replace(".wasm", ".wat"));
         fs::write(
             wast_output,
             from_utf8(&wasm_to_wat.unwrap().stdout).unwrap(),
