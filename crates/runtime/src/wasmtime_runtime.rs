@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn run_nitro_verifier_in_wasmtime() {
         let attestation_doc: Vec<u8> = hex::decode(include_bytes!(
-            "../../../examples/nitro-verifier/attestation-example.hex"
+            "../../../contracts/nitro/attestation-example.hex"
         ))
         .unwrap()
         .into();
