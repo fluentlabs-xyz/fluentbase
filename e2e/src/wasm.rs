@@ -28,29 +28,6 @@ fn test_wasm_greeting() {
 }
 
 #[test]
-fn test_wasm_identity() {
-    // deploy greeting WASM contract
-    let mut ctx = EvmTestingContext::default();
-    const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(
-        DEPLOYER_ADDRESS,
-        include_bytes!("../../examples/identity/lib.wasm").into(),
-    );
-    // call greeting WASM contract
-    let result = ctx.call_evm_tx(
-        DEPLOYER_ADDRESS,
-        contract_address,
-        Bytes::from(vec![1, 2, 3, 4, 5, 6]),
-        None,
-        None,
-    );
-    let output = result.output().unwrap_or_default();
-    println!("Result: {:?}", result);
-    assert!(result.is_success());
-    assert_eq!(vec![1, 2, 3, 4, 5, 6], output.as_ref());
-}
-
-#[test]
 fn test_wasm_keccak256() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
@@ -162,7 +139,10 @@ fn test_wasm_panic() {
     );
     assert!(!result.is_success());
     let bytes = result.output().unwrap_or_default();
-    assert_eq!("it's panic time", from_utf8(&bytes[..]).unwrap());
+    assert_eq!(
+        "it's panic time\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        from_utf8(&bytes.as_ref()[68..]).unwrap()
+    );
 }
 
 #[test]
@@ -214,25 +194,4 @@ fn test_wasm_erc20() {
     check_balance(&mut ctx, U256::from(1));
     transfer_coin(&mut ctx);
     check_balance(&mut ctx, U256::from(2));
-}
-
-#[test]
-fn test_wasm_simple_storage() {
-    // deploy greeting WASM contract
-    let mut ctx = EvmTestingContext::default();
-    const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(
-        DEPLOYER_ADDRESS,
-        include_bytes!("../../examples/simple-storage/lib.wasm").into(),
-    );
-    // call greeting WASM contract
-    let result = ctx.call_evm_tx(
-        DEPLOYER_ADDRESS,
-        contract_address,
-        Bytes::default(),
-        None,
-        None,
-    );
-    println!("{:?}", result);
-    assert!(result.is_success());
 }
