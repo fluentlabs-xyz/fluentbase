@@ -1,5 +1,5 @@
 use crate::ExecutionResult;
-use fluentbase_types::{BytecodeOrHash, Bytes, F254};
+use fluentbase_types::{BytecodeOrHash, Bytes, B256};
 
 pub struct RuntimeContext {
     // context inputs
@@ -46,7 +46,7 @@ impl RuntimeContext {
         }
     }
 
-    pub fn new_with_hash(bytecode_hash: F254) -> Self {
+    pub fn new_with_hash(bytecode_hash: B256) -> Self {
         Self {
             bytecode: BytecodeOrHash::Hash(bytecode_hash),
             ..Default::default()

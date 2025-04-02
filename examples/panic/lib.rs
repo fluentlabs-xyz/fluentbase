@@ -4,9 +4,9 @@ extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{func_entrypoint, SharedAPI};
 
-pub fn main(sdk: impl SharedAPI) {
+pub fn main(mut sdk: impl SharedAPI) {
     // panic with some message
-    sdk.evm_panic("it's panic time");
+    panic!("it's panic time");
 }
 
 func_entrypoint!(main);

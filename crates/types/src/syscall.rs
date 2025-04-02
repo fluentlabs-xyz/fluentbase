@@ -1,4 +1,65 @@
-use crate::B256;
+use crate::{ExitCode, B256};
+use alloy_primitives::Bytes;
+use fluentbase_codec::Codec;
+
+#[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SyscallInvocationParams {
+    pub code_hash: B256,
+    pub input: Bytes,
+    pub fuel_limit: u64,
+    pub state: u32,
+    pub fuel16_ptr: u32,
+}
+
+#[derive(Debug)]
+pub struct SyscallResult<T> {
+    pub data: T,
+    pub fuel_consumed: u64,
+    pub fuel_refunded: i64,
+    pub status: ExitCode,
+}
+
+impl SyscallResult<()> {
+    pub fn is_ok<I: Into<ExitCode>>(status: I) -> bool {
+        Into::<ExitCode>::into(status) == ExitCode::Ok
+    }
+    pub fn is_panic<I: Into<ExitCode>>(status: I) -> bool {
+        Into::<ExitCode>::into(status) == ExitCode::Panic
+    }
+    pub fn is_err<I: Into<ExitCode>>(status: I) -> bool {
+        Into::<ExitCode>::into(status) == ExitCode::Err
+    }
+}
+
+impl<T> SyscallResult<T> {
+    pub fn new<I: Into<ExitCode>>(
+        data: T,
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+        status: I,
+    ) -> Self {
+        Self {
+            data,
+            fuel_consumed,
+            fuel_refunded,
+            status: Into::<ExitCode>::into(status),
+        }
+    }
+}
+
+impl<T> core::ops::Deref for SyscallResult<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+impl<T> core::ops::DerefMut for SyscallResult<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
 
 pub const SYSCALL_ID_STORAGE_READ: B256 = B256::with_last_byte(0x01);
 pub const SYSCALL_ID_STORAGE_WRITE: B256 = B256::with_last_byte(0x02);

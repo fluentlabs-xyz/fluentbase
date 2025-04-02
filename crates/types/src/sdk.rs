@@ -1,167 +1,17 @@
 use crate::{
     alloc_slice,
-    alloc_vec,
     context::SharedContextReader,
+    evm::{write_evm_exit_message, write_evm_panic_message},
     Address,
-    BytecodeOrHash,
     Bytes,
     ExitCode,
+    SyscallResult,
     B256,
-    F254,
     U256,
 };
-use fluentbase_codec::Codec;
-
-/// A trait for providing shared API functionality.
-pub trait NativeAPI {
-    fn keccak256(data: &[u8]) -> B256;
-    fn sha256(data: &[u8]) -> B256;
-
-    /// Computes a quick hash of the given data using the Keccak256 algorithm or another specified
-    /// hashing method.
-    ///
-    /// The hashing result produced by this function is not standardized and can vary depending on
-    /// the proving system used.
-    ///
-    /// # Parameters
-    /// - `data`: A byte slice representing the input data to be hashed.
-    ///
-    /// # Returns
-    /// - `B256`: A 256-bit hash of the input data.
-    fn hash256(data: &[u8]) -> B256 {
-        // TODO(dmitry123): "use the best hashing function here for our proving system"
-        Self::keccak256(data)
-    }
-
-    fn poseidon(data: &[u8]) -> F254;
-    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254;
-    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65];
-    fn debug_log(message: &str);
-
-    fn read(&self, target: &mut [u8], offset: u32);
-    fn input_size(&self) -> u32;
-    fn write(&self, value: &[u8]);
-    fn forward_output(&self, offset: u32, len: u32);
-    fn exit(&self, exit_code: i32) -> !;
-    fn output_size(&self) -> u32;
-    fn read_output(&self, target: &mut [u8], offset: u32);
-    fn state(&self) -> u32;
-    fn fuel(&self) -> u64;
-    fn charge_fuel(&self, value: u64) -> u64;
-    fn exec<I: Into<BytecodeOrHash>>(
-        &self,
-        code_hash: I,
-        input: &[u8],
-        fuel_limit: Option<u64>,
-        state: u32,
-    ) -> (u64, i64, i32);
-    fn resume(
-        &self,
-        call_id: u32,
-        return_data: &[u8],
-        exit_code: i32,
-        fuel_consumed: u64,
-        fuel_refunded: i64,
-    ) -> (u64, i64, i32);
-
-    fn preimage_size(&self, hash: &B256) -> u32;
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8]);
-
-    fn input(&self) -> Bytes {
-        let input_size = self.input_size();
-        let mut buffer = alloc_vec(input_size as usize);
-        self.read(&mut buffer, 0);
-        buffer.into()
-    }
-
-    fn return_data(&self) -> Bytes {
-        let output_size = self.output_size();
-        let mut buffer = alloc_vec(output_size as usize);
-        self.read_output(&mut buffer, 0);
-        buffer.into()
-    }
-}
 
 pub type IsColdAccess = bool;
 pub type IsAccountEmpty = bool;
-
-pub struct CallPrecompileResult {
-    pub output: Bytes,
-    pub exit_code: ExitCode,
-    pub gas_remaining: u64,
-    pub gas_refund: i64,
-}
-
-pub struct WriteStorageResult {
-    pub original_value: U256,
-    pub present_value: U256,
-}
-
-pub struct DestroyedAccountResult {
-    pub had_value: bool,
-    pub target_exists: bool,
-    pub is_cold: bool,
-    pub previously_destroyed: bool,
-}
-
-#[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SyscallInvocationParams {
-    pub code_hash: B256,
-    pub input: Bytes,
-    pub fuel_limit: u64,
-    pub state: u32,
-    pub fuel16_ptr: u32,
-}
-
-#[derive(Debug)]
-pub struct SyscallResult<T> {
-    pub data: T,
-    pub fuel_consumed: u64,
-    pub fuel_refunded: i64,
-    pub status: ExitCode,
-}
-
-impl SyscallResult<()> {
-    pub fn is_ok<I: Into<ExitCode>>(status: I) -> bool {
-        Into::<ExitCode>::into(status) == ExitCode::Ok
-    }
-    pub fn is_panic<I: Into<ExitCode>>(status: I) -> bool {
-        Into::<ExitCode>::into(status) == ExitCode::Panic
-    }
-    pub fn is_err<I: Into<ExitCode>>(status: I) -> bool {
-        Into::<ExitCode>::into(status) == ExitCode::Err
-    }
-}
-
-impl<T> SyscallResult<T> {
-    pub fn new<I: Into<ExitCode>>(
-        data: T,
-        fuel_consumed: u64,
-        fuel_refunded: i64,
-        status: I,
-    ) -> Self {
-        Self {
-            data,
-            fuel_consumed,
-            fuel_refunded,
-            status: Into::<ExitCode>::into(status),
-        }
-    }
-}
-
-impl<T> core::ops::Deref for SyscallResult<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-impl<T> core::ops::DerefMut for SyscallResult<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data
-    }
-}
 
 pub trait SharedAPI {
     fn context(&self) -> impl SharedContextReader;
@@ -182,9 +32,30 @@ pub trait SharedAPI {
     fn fuel(&self) -> u64;
 
     fn write(&mut self, output: &[u8]);
-    fn evm_exit(&self, exit_code: i32) -> !;
-    fn exit(&self, exit_code: i32) -> !;
-    fn evm_panic(&self, panic_message: &str) -> !;
+
+    fn evm_exit(&mut self, exit_code: u32) -> ! {
+        // write an EVM-compatible exit message (only if exit code is not zero)
+        write_evm_exit_message(exit_code, |slice| {
+            self.write(slice);
+        });
+        // exit with the exit code specified
+        self.exit(if exit_code != 0 {
+            ExitCode::Panic
+        } else {
+            ExitCode::Ok
+        })
+    }
+
+    fn exit(&self, exit_code: ExitCode) -> !;
+
+    fn evm_panic(&mut self, panic_message: &str) -> ! {
+        // write an EVM-compatible panic message
+        write_evm_panic_message(panic_message, |slice| {
+            self.write(slice);
+        });
+        // exit with panic exit code
+        self.exit(ExitCode::Panic)
+    }
 
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn storage(&self, slot: &U256) -> SyscallResult<U256>;

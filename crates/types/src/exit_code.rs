@@ -2,6 +2,72 @@ use revm_primitives::{PrecompileError, PrecompileErrors};
 use rwasm::core::{Trap, TrapCode};
 use strum_macros::{Display, FromRepr};
 
+/// Exit codes representing various execution outcomes and error conditions.
+///
+/// This enum defines the possible exit codes that can be returned by the execution
+/// environment.
+///
+/// The codes are grouped into several categories:
+/// - Basic status codes (0 to -2)
+/// - Fluentbase-specific error codes (-1000 and below)
+/// - Trap error codes (-2000 and below)
+///
+/// **Note**: Exit codes cannot be positive, as positive values are used to represent
+/// call indices in interrupted executions.
+///
+/// Exit codes are used to represent the outcome of execution across different
+/// environments.
+/// This makes their interpretation somewhat nuanced.
+///
+/// Within applications, developers can use any exit code, but there are conventions:
+/// 1. `Ok` (0) — Indicates successful execution.
+/// 2. `Panic` (-1) — Controlled application revert (intended error, no gas penalty).
+/// 3. Any other code is treated as an error with a gas penalty and is mapped to `Err` (-2).
+///
+/// Technically, developers *can* return trap codes, but it's generally pointless:
+/// they are replaced by the `Err` (-2) code and still incur gas penalties.
+/// If the error code cannot be determined, it is mapped to `UnknownError` (-1006),
+/// which also results in a gas fine.
+///
+/// The SDK provides helper functions such as `evm_exit` and `evm_panic` to simplify
+/// returning error codes.
+/// These produce Solidity-compatible error outputs.
+///
+/// The `exit` function remains available to all developers.
+/// In some cases, an application may want to simulate trap behavior or explicitly exit with a gas
+/// penalty to comply with gas consumption standards (for instance, EVM runtime).
+///
+/// This behavior is similar to Solidity, where only three exit codes are supported:
+/// - For legacy contracts: `Ok = 1`, `Revert = 0`, `Err = 2`
+/// - For EOF contracts: `Ok = 0`, `Revert = 1`, `Err = 2`
+///
+/// ## Basic Status Codes
+/// * `Ok` (0) - Successful execution
+/// * `Panic` (-1) - Execution panic
+/// * `Err` (-2) - General error
+///
+/// ## Fluentbase Error Codes
+/// * `RootCallOnly` - Operation restricted to root-level calls
+/// * `MalformedBuiltinParams` - Invalid parameters passed to builtin function
+/// * `CallDepthOverflow` - Call stack depth exceeded limit
+/// * `NonNegativeExitCode` - Exit code must be negative
+/// * `UnknownError` - Unspecified error condition
+/// * `InputOutputOutOfBounds` - I/O operation exceeded bounds
+/// * `PrecompileError` - Error in precompiled contract execution
+///
+/// ## Trap Error Codes
+/// * `UnreachableCodeReached` - Execution reached unreachable code
+/// * `MemoryOutOfBounds` - Memory access violation
+/// * `TableOutOfBounds` - Table access violation
+/// * `IndirectCallToNull` - Attempted call to null function pointer
+/// * `IntegerDivisionByZero` - Division by zero
+/// * `IntegerOverflow` - Integer overflow occurred
+/// * `BadConversionToInteger` - Invalid integer conversion
+/// * `StackOverflow` - Stack limit exceeded
+/// * `BadSignature` - Invalid function signature
+/// * `OutOfFuel` - Insufficient gas/fuel for execution
+/// * `GrowthOperationLimited` - Growth operation exceeded limits
+/// * `UnresolvedFunction` - Function not found
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Display, FromRepr)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(i32)]

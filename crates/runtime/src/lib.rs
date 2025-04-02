@@ -9,7 +9,6 @@ mod runtime;
 mod storage;
 #[cfg(test)]
 mod tests;
-pub mod types;
 
 pub use context::*;
 pub use runtime::*;

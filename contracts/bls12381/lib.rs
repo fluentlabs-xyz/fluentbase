@@ -38,8 +38,8 @@ pub fn main(mut sdk: impl SharedAPI) {
         PRECOMPILE_BLS12_381_MAP_G2 => revm_precompile::bls12_381::map_fp2_to_g2::map_fp2_to_g2,
         _ => unreachable!("bls12381: unsupported contract address"),
     };
-    let result = precompile_func(&input, gas_limit)
-        .unwrap_or_else(|err| sdk.exit(ExitCode::from(err).into_i32()));
+    let result =
+        precompile_func(&input, gas_limit).unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
     sdk.sync_evm_gas(gas_limit - result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());
@@ -58,6 +58,7 @@ mod tests {
             .with_input(Bytes::copy_from_slice(inputs))
             .with_contract_context(ContractContextV1 {
                 address,
+                bytecode_address: address,
                 gas_limit,
                 ..Default::default()
             });
@@ -70,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn bls_g1add__2_g1_3_g1_5_g1_() {
+    fn bls_g1add__2_g1_3_g1_5_g1() {
         exec_evm_precompile(
             PRECOMPILE_BLS12_381_G1_ADD,
             &hex!("000000000000000000000000000000000572cbea904d67468808c8eb50a9450c9721db309128012543902d0ac358a62ae28f75bb8f1c7c42c39a8c5529bf0f4e00000000000000000000000000000000166a9d8cabc673a322fda673779d8e3822ba3ecb8670e461f73bb9021d5fd76a4c56d9d4cd16bd1bba86881979749d280000000000000000000000000000000009ece308f9d1f0131765212deca99697b112d61f9be9a5f1f3780a51335b3ff981747a0b2ca2179b96d2c0c9024e522400000000000000000000000000000000032b80d3a6f5b09f8a84623389c5f80ca69a0cddabc3097f9d9c27310fd43be6e745256c634af45ca3473b0590ae30d1"),

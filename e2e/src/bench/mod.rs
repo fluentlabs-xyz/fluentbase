@@ -91,7 +91,7 @@ mod multicall;
 //     let (output_sp1, report) = client.execute(FIBONACCI_ELF, stdin).run().unwrap();
 //
 //     let (output, exit_code) = run_with_default_context(input_data.to_vec(), &[]);
-//     assert_eq!(exit_code, -71);
+//     assert_eq!(exit_code, -1);
 //
 //     assert_eq!(output_sp1.to_vec(), output);
 //

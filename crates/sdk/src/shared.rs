@@ -2,7 +2,6 @@ mod context;
 
 use crate::{
     byteorder::{ByteOrder, LittleEndian},
-    evm::{write_evm_exit_message, write_evm_panic_message},
     shared::context::SharedContextReaderImpl,
 };
 use alloc::vec;
@@ -10,12 +9,12 @@ use core::cell::RefCell;
 use fluentbase_codec::{CompactABI, FluentEncoder};
 use fluentbase_types::{
     alloc_slice,
+    native_api::NativeAPI,
     Address,
     Bytes,
     ExitCode,
     IsAccountEmpty,
     IsColdAccess,
-    NativeAPI,
     SharedAPI,
     SharedContextInputV1,
     SharedContextReader,
@@ -121,29 +120,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.write(output);
     }
 
-    fn evm_exit(&self, exit_code: i32) -> ! {
-        // write an EVM-compatible exit message (only if exit code is not zero)
-        if exit_code != 0 {
-            write_evm_exit_message(&self.native_sdk, exit_code);
-        }
-        // exit with the exit code specified
-        self.native_sdk.exit(if exit_code != 0 {
-            ExitCode::Panic as i32
-        } else {
-            ExitCode::Ok as i32
-        })
-    }
-
-    fn exit(&self, exit_code: i32) -> ! {
-        assert!(exit_code <= 0, "exit code must be non-positive");
-        self.native_sdk.exit(exit_code)
-    }
-
-    fn evm_panic(&self, panic_message: &str) -> ! {
-        // write an EVM-compatible panic message
-        write_evm_panic_message(&self.native_sdk, panic_message);
-        // exit with panic exit code (-71 is a WASMI constant, we use the same)
-        self.native_sdk.exit(ExitCode::Panic as i32)
+    fn exit(&self, exit_code: ExitCode) -> ! {
+        self.native_sdk.exit(exit_code.into_i32())
     }
 
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {

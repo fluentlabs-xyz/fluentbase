@@ -198,7 +198,7 @@ fn test_blended_gas_spend_wasm_from_evm() {
         ACCOUNT1_ADDRESS,
         instruction_set! {
             ConsumeFuel(1000)
-            I32Const(-71)
+            I32Const(-1)
             Call(SysFuncIdx::EXIT)
         },
     );

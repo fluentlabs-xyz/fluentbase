@@ -378,11 +378,8 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
 
 #[allow(dead_code)]
 pub(crate) fn catch_panic(ctx: &fluentbase_runtime::ExecutionResult) {
-    if ctx.exit_code != -71 {
+    if ctx.exit_code != -1 {
         return;
     }
-    println!(
-        "panic with err: {}",
-        std::str::from_utf8(&ctx.output).unwrap()
-    );
+    println!("panic with err: {}", from_utf8(&ctx.output).unwrap());
 }

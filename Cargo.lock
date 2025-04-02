@@ -1707,20 +1707,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "eth_trie"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec3aeb0284b473041df2419a28e3cdf0c64a78d2b9511af4b6e40bad3964b172"
-dependencies = [
- "ethereum-types",
- "hashbrown 0.14.5",
- "keccak-hash 0.10.0",
- "log",
- "parking_lot",
- "rlp",
-]
-
-[[package]]
 name = "ethabi"
 version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2272,7 +2258,6 @@ dependencies = [
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
- "eth_trie",
  "fluentbase-codec",
  "fluentbase-poseidon",
  "fluentbase-rwasm",
@@ -2282,7 +2267,7 @@ dependencies = [
  "hex",
  "hex-literal 0.4.1",
  "k256",
- "keccak-hash 0.11.0",
+ "keccak-hash",
  "num",
  "sha2 0.10.8",
  "sp1-curves",
@@ -2322,7 +2307,6 @@ dependencies = [
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.15.2",
- "hex",
 ]
 
 [[package]]
@@ -3348,16 +3332,6 @@ checksum = "505d1856a39b200489082f90d897c3f07c455563880bc5952e38eabf731c83b6"
 dependencies = [
  "digest 0.10.7",
  "sha3-asm",
-]
-
-[[package]]
-name = "keccak-hash"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b286e6b663fb926e1eeb68528e69cb70ed46c6d65871a21b2215ae8154c6d3c"
-dependencies = [
- "primitive-types 0.12.2",
- "tiny-keccak",
 ]
 
 [[package]]
