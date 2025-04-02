@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Result;
 use core::{error::Error as StdError, fmt};
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
-use fluentbase_types::{Bytes, ExitCode, FixedBytes, SyscallInvocationParams, B256};
+use fluentbase_types::{Bytes, ExitCode, FixedBytes, SyscallInvocationParams, B256, U256};
 use futures::{executor::block_on, task::noop_waker};
 use std::{
     cell::RefCell,
@@ -501,7 +501,12 @@ mod tests {
     fn wasmtime_simple_storage() {
         let wasm_bytecode = include_bytes!("../../../examples/simple-storage/lib.wasm");
         let input = Vec::new();
-        let (_, _) = exec_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+        let (exit_code, output) =
+            exec_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+        dbg!(exit_code);
+        let value = Vec::from(U256::from(2).to_le_bytes::<32>());
+        let (exit_code, output) = resume_wasmtime(exit_code, value, 0, 0, 0, 0);
+        assert_eq!(exit_code, 0);
         panic!("FINISHED");
     }
 }
