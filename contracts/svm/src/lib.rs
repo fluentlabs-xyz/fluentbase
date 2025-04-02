@@ -13,20 +13,26 @@ use fluentbase_sdk::{
     ExitCode,
     SharedAPI,
     TxContextReader,
+    B256,
+    EVM_CODE_HASH_SLOT,
 };
 use solana_ee_core::{
-    account::ReadableAccount,
-    common::calculate_max_chunk_size,
+    account::{AccountSharedData, ReadableAccount, WritableAccount},
+    bincode,
+    common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_address},
     fluentbase_helpers::{
         exec_encoded_svm_batch_message,
         exec_svm_batch_message,
         process_svm_result,
         BatchMessage,
+        MemStorage,
     },
-    helpers::sdk_storage_read_account_data,
+    helpers::{storage_read_account_data, storage_write_account_data},
+    native_loader,
+    native_loader::create_loadable_account_for_test,
     solana_program::{
         bpf_loader_upgradeable,
-        bpf_loader_upgradeable::create_buffer,
+        bpf_loader_upgradeable::{create_buffer, UpgradeableLoaderState},
         message::Message,
         pubkey::Pubkey,
         system_program,
@@ -34,37 +40,103 @@ use solana_ee_core::{
 };
 
 func_entrypoint!(main, deploy);
+fn write_protected_preimage(sdk: &mut impl SharedAPI, preimage: Bytes) -> B256 {
+    let result = sdk.write_preimage(preimage);
+    let code_hash = result.data;
+    debug_log!("write_protected_preimage.code_hash: {:?}", &code_hash);
+    let result = sdk.write_storage(EVM_CODE_HASH_SLOT.into(), code_hash.into());
+    assert!(
+        result.status.is_ok(),
+        "write_protected_preimage failed with error"
+    );
+    code_hash
+}
+fn read_protected_preimage(sdk: &impl SharedAPI) -> Bytes {
+    let bytecode_address = sdk.context().contract_bytecode_address();
+    debug_log!(
+        "read_protected_preimage.bytecode_address: {:?}",
+        &bytecode_address
+    );
+    let code_hash: B256 = sdk
+        .delegated_storage(&bytecode_address, &EVM_CODE_HASH_SLOT.into())
+        .data
+        .into();
+    debug_log!("read_protected_preimage.code_hash: {:?}", &code_hash);
+    sdk.preimage(&code_hash)
+}
 
 pub fn deploy(mut sdk: impl SharedAPI) {
+    debug_log!("deploy: block_number: {:?}", sdk.context().block_number());
+    let mut mem_storage = MemStorage::new();
     // input must be solana elf bytes
     let elf_program_bytes: Bytes = sdk.input().into();
     let program_len = elf_program_bytes.len();
     // TODO form deploy messages and exec them
     // TODO form this Pubkeys:
     //  pk_payer - caller
-    //  pk_exec - (becomes executable account key)
+    //  pk_exec - program account (becomes executable account key)
     //  pk_buffer - generate some random
     //  pk_authority - (who can modify the program)
     // debug_log!("elf_program_bytes.len {}", program_len);
     // panic!("elf_program_bytes.len {}", program_len);
 
-    // TODO generate inter-dependant pubkey
-    let pk_payer = Pubkey::new_unique(); // must exist // caller
-    let pk_exec = Pubkey::new_unique(); // may not exist // contract_address
-    let pk_buffer = Pubkey::new_unique(); // must not exist
-    let pk_authority = Pubkey::new_unique(); // must exist // caller
+    // program ->
+    // programdata -> write to preimage and save it code hash
+    let contract_caller = sdk.context().contract_caller();
+    let contract_address = sdk.context().contract_address();
 
-    debug_log!("deploy.contract_caller {}", sdk.context().contract_caller());
-    debug_log!("deploy.block_coinbase {}", sdk.context().block_coinbase());
+    // TODO generate inter-dependant pubkey
+    let pk_payer = pubkey_from_address(contract_caller.clone()); // must exist // caller
+    let pk_exec = pubkey_from_address(contract_address.clone()); // may not exist // contract_address
+    let pk_buffer = Pubkey::new_unique(); // must not exist
+    let pk_authority = pubkey_from_address(contract_caller.clone()); // must exist // caller
+
+    // TODO extract payer and authority accounts data and save them into mem_storage
+    let contract_caller_balance = sdk.balance(&contract_caller);
+    let mut payer_account_data = AccountSharedData::new(
+        lamports_from_evm_balance(contract_caller_balance.data),
+        0,
+        &system_program::id(),
+    );
     debug_log!(
-        "deploy.contract_address {}",
+        "deploy: contract_caller_balance {:?}",
+        contract_caller_balance
+    );
+    debug_log!(
+        "deploy: payer_account_data.lamports {:?}",
+        payer_account_data.lamports()
+    );
+
+    debug_log!(
+        "deploy: contract_caller {}",
+        sdk.context().contract_caller()
+    );
+    debug_log!("deploy: block_coinbase {}", sdk.context().block_coinbase());
+    debug_log!(
+        "deploy: contract_address {}",
         sdk.context().contract_address()
     );
-    debug_log!("deploy.tx_origin {}", sdk.context().tx_origin());
+    debug_log!("deploy: tx_origin {}", sdk.context().tx_origin());
     debug_log!(
-        "deploy.contract_bytecode_address {}",
+        "deploy: contract_bytecode_address {}",
         sdk.context().contract_bytecode_address()
     );
+
+    // setup storage
+    storage_write_account_data(
+        &mut mem_storage,
+        &system_program::id(),
+        &create_loadable_account_for_test("system_program_id", &native_loader::id()),
+    )
+    .unwrap();
+    storage_write_account_data(
+        &mut mem_storage,
+        &bpf_loader_upgradeable::id(),
+        &create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader::id()),
+    )
+    .unwrap();
+    storage_write_account_data(&mut mem_storage, &pk_payer, &payer_account_data).unwrap();
+    debug_log!("deploy: mem_storage fill: done");
 
     let mut batch_message = BatchMessage::new(None);
 
@@ -92,201 +164,150 @@ pub fn deploy(mut sdk: impl SharedAPI) {
         &pk_buffer,
         &pk_authority,
         // TODO compute
-        10,
+        0,
         program_len,
     )
     .unwrap();
     let message = Message::new(&instructions, Some(&pk_payer));
     batch_message.append_one(message);
 
-    let result = exec_svm_batch_message(&mut sdk, batch_message);
-    let (output, exit_code) = process_svm_result(result);
+    let result = exec_svm_batch_message(&mut sdk, batch_message, true, &mut Some(&mut mem_storage));
+    match &result {
+        Err(e) => {
+            debug_log!("deploy: result error: {:?}", e)
+        }
+        _ => {}
+    }
+    let (result_accounts, exit_code) = process_svm_result(result);
     if exit_code != ExitCode::Ok.into_i32() {
         panic!(
-            "svm_exec error exit_code '{}' output '{:?}'",
+            "svm_exec error exit_code '{}' result_accounts.len '{}'",
             exit_code,
-            output.as_ref()
+            result_accounts.len()
         );
     }
 
-    let out = output.as_ref();
-    sdk.write(out);
+    let (pk_programdata, _) =
+        Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable::id());
+
+    // TODO save updated accounts (from result_accounts): payer, exec, program_data
+    let payer_account_data =
+        storage_read_account_data(&mem_storage, &pk_payer).expect("no payer account"); // caller
+    debug_log!(
+        "deploy: payer_account_data.lamports {}",
+        payer_account_data.lamports()
+    );
+    let exec_account_data =
+        storage_read_account_data(&mem_storage, &pk_exec).expect("no exec account"); // contract itself
+    let programdata_account_data =
+        storage_read_account_data(&mem_storage, &pk_programdata).expect("no programdata account");
+    debug_log!(
+        "deploy: pk_exec {:x?} exec_account_data {} {:x?}",
+        &pk_exec.as_ref(),
+        exec_account_data.data().len(),
+        &exec_account_data
+    );
+    debug_log!(
+        "deploy: pk_programdata {:x?} programdata_account_data {} {:x?}",
+        &pk_programdata.as_ref(),
+        programdata_account_data.data().len(),
+        &programdata_account_data
+    );
+    let preimage: Bytes = bincode::serialize(&programdata_account_data)
+        .unwrap()
+        .into();
+    debug_log!("deploy: preimage.len: {}", preimage.len());
+    let _ = write_protected_preimage(&mut sdk, preimage);
 }
 
 pub fn main(mut sdk: impl SharedAPI) {
+    debug_log!("main: block_number: {:?}", sdk.context().block_number());
     let input = sdk.input();
+    let preimage = read_protected_preimage(&sdk);
 
-    let pk_system_program = system_program::id();
-    let system_program_account = sdk_storage_read_account_data(&sdk, &pk_system_program);
-    match system_program_account {
-        Ok(v) => {
-            if v.lamports() <= 0 {
-                panic!("not enough lamports");
-            }
-        }
-        Err(_) => {
-            panic!("cannot get system program account");
-        }
-    }
+    let mut mem_storage = MemStorage::new();
 
-    let result = exec_encoded_svm_batch_message(&mut sdk, input);
+    let pk_exec = pubkey_from_address(sdk.context().contract_address());
+    let (pk_programdata, _) =
+        Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable::id());
+    let programdata_account_data: AccountSharedData =
+        bincode::deserialize(preimage.as_ref()).expect("preimage must contain account shared data");
+    let state = UpgradeableLoaderState::Program {
+        programdata_address: pk_programdata,
+    };
+    let exec_account_data = AccountSharedData::create(
+        lamports_from_evm_balance(sdk.self_balance().data),
+        bincode::serialize(&state).unwrap(),
+        bpf_loader_upgradeable::id(),
+        true,
+        Default::default(),
+    );
+    debug_log!(
+        "main: exec_account_data {} {:x?}",
+        exec_account_data.data().len(),
+        &exec_account_data
+    );
+    debug_log!(
+        "main: programdata_account_data {} {:x?}",
+        programdata_account_data.data().len(),
+        &programdata_account_data
+    );
+
+    storage_write_account_data(
+        &mut mem_storage,
+        &system_program::id(),
+        &create_loadable_account_for_test("system_program_id", &native_loader::id()),
+    )
+    .unwrap();
+    storage_write_account_data(
+        &mut mem_storage,
+        &bpf_loader_upgradeable::id(),
+        &create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader::id()),
+    )
+    .unwrap();
+
+    storage_write_account_data(&mut mem_storage, &pk_exec, &exec_account_data)
+        .expect("failed to write exec account");
+    storage_write_account_data(&mut mem_storage, &pk_programdata, &programdata_account_data)
+        .expect("failed to write programdata account");
+
+    debug_log!("main: pk_exec {:x?}", &pk_exec.as_ref());
+    debug_log!("main: pk_programdata {:x?}", &pk_programdata.as_ref());
+
+    debug_log!("main: contract_caller {}", sdk.context().contract_caller());
+    debug_log!("main: block_coinbase {}", sdk.context().block_coinbase());
+    debug_log!(
+        "main: contract_address {}",
+        sdk.context().contract_address()
+    );
+    debug_log!("main1: tx_origin {}", sdk.context().tx_origin());
+    debug_log!(
+        "main: contract_bytecode_address {}",
+        sdk.context().contract_bytecode_address()
+    );
+
+    let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
     debug_log!(
         "input.len {} input '{:?}' result: {:?}",
-        input.len(),
-        input,
+        preimage.len(),
+        preimage,
         &result
     );
-    let (output, exit_code) = process_svm_result(result);
+    match &result {
+        Err(e) => {
+            debug_log!("main: result error: {:?}", e)
+        }
+        _ => {}
+    }
+    let (result_accounts, exit_code) = process_svm_result(result);
     if exit_code != ExitCode::Ok.into_i32() {
         panic!(
-            "svm_exec error '{}' output '{:?}'",
+            "svm_exec error '{}' result_accounts.len '{}'",
             exit_code,
-            output.as_ref()
+            result_accounts.len()
         );
     }
 
-    let out = output.as_ref();
-    sdk.write(out);
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::main;
-    use fluentbase_sdk::testing::TestingContext;
-    use solana_ee_core::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bincode,
-        common::calculate_max_chunk_size,
-        fluentbase_helpers::BatchMessage,
-        helpers::sdk_storage_write_account_data,
-        native_loader,
-        native_loader::create_loadable_account_for_test,
-        solana_program::{
-            bpf_loader_upgradeable,
-            bpf_loader_upgradeable::create_buffer,
-            message::Message,
-            pubkey::Pubkey,
-            rent::Rent,
-            system_program,
-            sysvar,
-        },
-    };
-    use std::{fs::File, io::Read};
-
-    pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
-        let mut file = File::open(path).expect("file open failed");
-        let mut elf = Vec::new();
-        file.read_to_end(&mut elf).unwrap();
-        let rent = Rent::default();
-        let minimum_balance = rent.minimum_balance(elf.len());
-        let mut program_account = AccountSharedData::new(minimum_balance, 0, loader_id);
-        program_account.set_data(elf);
-        program_account.set_executable(true);
-        program_account
-    }
-
-    #[test]
-    fn test_svm_deploy_exec() {
-        let mut sdk = TestingContext::default();
-
-        // setup
-
-        let system_program_id = system_program::id();
-        let native_loader_id = native_loader::id();
-        let bpf_loader_upgradeable_id = bpf_loader_upgradeable::id();
-        let sysvar_clock_id = sysvar::clock::id();
-        let sysvar_rent_id = sysvar::rent::id();
-
-        let pk_payer = Pubkey::new_unique();
-        let account_payer = AccountSharedData::new(100, 0, &system_program_id);
-
-        let pk_buffer = Pubkey::new_unique();
-
-        let pk_exec = Pubkey::from([8; 32]);
-
-        let pk_authority = Pubkey::from([9; 32]);
-        let pk_authority_account = AccountSharedData::new(100, 0, &system_program_id);
-
-        let (pk_program_data, _) =
-            Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable_id);
-        let pk_program_data_account = AccountSharedData::new(0, 0, &system_program_id);
-
-        let account_with_program = load_program_account_from_elf_file(
-            &bpf_loader_upgradeable_id,
-            "../../../solana-ee/crates/examples/hello-world/assets/solana_ee_hello_world.so",
-        );
-
-        let program_len = account_with_program.data().len();
-
-        sdk_storage_write_account_data(&mut sdk, &pk_payer, &account_payer).unwrap();
-        sdk_storage_write_account_data(&mut sdk, &pk_program_data, &pk_program_data_account)
-            .unwrap();
-        sdk_storage_write_account_data(
-            &mut sdk,
-            &system_program_id,
-            &create_loadable_account_for_test("system_program_id", &native_loader_id),
-        )
-        .unwrap();
-        sdk_storage_write_account_data(
-            &mut sdk,
-            &bpf_loader_upgradeable_id,
-            &create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
-        )
-        .unwrap();
-        sdk_storage_write_account_data(
-            &mut sdk,
-            &sysvar_clock_id,
-            &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
-        )
-        .unwrap();
-        sdk_storage_write_account_data(
-            &mut sdk,
-            &sysvar_rent_id,
-            &create_loadable_account_for_test("sysvar_rent_id", &system_program_id),
-        )
-        .unwrap();
-
-        // init buffer, fill buffer, deploy
-
-        let mut batch_message = BatchMessage::new(None);
-
-        let instructions =
-            create_buffer(&pk_payer, &pk_buffer, &pk_authority, 0, program_len).unwrap();
-        let message = Message::new(&instructions, Some(&pk_payer));
-        batch_message.append_one(message);
-
-        let create_msg = |offset: u32, bytes: Vec<u8>| {
-            let instruction =
-                bpf_loader_upgradeable::write(&pk_buffer, &pk_authority, offset, bytes);
-            let instructions = vec![instruction];
-            Message::new(&instructions, Some(&pk_payer))
-        };
-        let mut write_messages = vec![];
-        let chunk_size = calculate_max_chunk_size(&create_msg);
-        for (chunk, i) in account_with_program.data().chunks(chunk_size).zip(0..) {
-            let offset = i * chunk_size;
-            let msg = create_msg(offset as u32, chunk.to_vec());
-            write_messages.push(msg);
-        }
-        batch_message.append_many(write_messages);
-
-        let instructions = bpf_loader_upgradeable::deploy_with_max_program_len(
-            &pk_payer,
-            &pk_exec,
-            &pk_buffer,
-            &pk_authority,
-            10,
-            account_with_program.data().len(),
-        )
-        .unwrap();
-        let message = Message::new(&instructions, Some(&pk_payer));
-        batch_message.append_one(message);
-
-        let input = bincode::serialize(&batch_message).unwrap();
-        println!("input.len {}", input.len());
-
-        sdk = sdk.with_input(input);
-
-        main(sdk);
-    }
+    let out = Bytes::new();
+    sdk.write(out.as_ref());
 }

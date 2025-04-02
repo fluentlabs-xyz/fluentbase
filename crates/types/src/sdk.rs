@@ -156,7 +156,12 @@ impl<T> core::ops::DerefMut for SyscallResult<T> {
     }
 }
 
-pub trait SharedAPI {
+pub trait StorageAPI {
+    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
+    fn storage(&self, slot: &U256) -> SyscallResult<U256>;
+}
+
+pub trait SharedAPI: StorageAPI {
     fn context(&self) -> impl SharedContextReader;
 
     fn keccak256(&self, data: &[u8]) -> B256;
@@ -178,9 +183,6 @@ pub trait SharedAPI {
     fn evm_exit(&self, exit_code: i32) -> !;
     fn exit(&self, exit_code: i32) -> !;
     fn evm_panic(&self, panic_message: &str) -> !;
-
-    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
-    fn storage(&self, slot: &U256) -> SyscallResult<U256>;
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;
     fn delegated_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256>;

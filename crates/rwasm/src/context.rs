@@ -63,7 +63,7 @@ impl<T> RwasmContext<T> {
         // create global memory
         let mut resource_limiter_ref = ResourceLimiterRef::default();
         let global_memory = MemoryEntity::new(
-            MemoryType::new(0, Some(N_MAX_MEMORY_PAGES)).expect("rwasm: bad initial memory"),
+            MemoryType::new(0, Some(N_MAX_MEMORY_PAGES * 2)).expect("rwasm: bad initial memory"),
             &mut resource_limiter_ref,
         )
         .expect("rwasm: bad initial memory");

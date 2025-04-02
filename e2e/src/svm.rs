@@ -1,11 +1,12 @@
 mod tests {
-    use crate::utils::{EvmTestingContext, TxBuilder};
+    use crate::utils::EvmTestingContext;
     use fluentbase_sdk::{
         address,
-        bytes,
         Address,
+        BlockContextReader,
         Bytes,
         ContractContextV1,
+        SharedAPI,
         PRECOMPILE_SVM_RUNTIME,
         U256,
     };
@@ -14,14 +15,15 @@ mod tests {
     use solana_ee_core::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bincode,
-        common::calculate_max_chunk_size,
+        common::pubkey_from_address,
         fluentbase_helpers::BatchMessage,
-        helpers::{sdk_storage_read_account_data, sdk_storage_write_account_data},
+        helpers::{storage_read_account_data, storage_write_account_data},
         native_loader,
         native_loader::create_loadable_account_for_test,
         solana_program::{
             bpf_loader_upgradeable,
             bpf_loader_upgradeable::create_buffer,
+            instruction::Instruction,
             message::Message,
             pubkey::Pubkey,
             rent::Rent,
@@ -98,36 +100,33 @@ mod tests {
         macro_rules! validate_account_exists {
             ($core: tt) => {
                 paste::paste! {
-                    let account_read = sdk_storage_read_account_data(&mut ctx.sdk, &[<pk_ $core>]).unwrap();
+                    let account_read = storage_read_account_data(&mut ctx.sdk, &[<pk_ $core>]).unwrap();
                     assert_eq!(&account_read, &[<$core _account>]);
                 }
             };
         }
 
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_payer, &payer_account).unwrap();
+        storage_write_account_data(&mut ctx.sdk, &pk_payer, &payer_account).unwrap();
         validate_account_exists!(payer);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_nine, &nine_account).unwrap();
+        storage_write_account_data(&mut ctx.sdk, &pk_nine, &nine_account).unwrap();
         validate_account_exists!(nine);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_exec, &exec_account).unwrap();
+        storage_write_account_data(&mut ctx.sdk, &pk_exec, &exec_account).unwrap();
         validate_account_exists!(exec);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_program_data, &program_data_account)
-            .unwrap();
+        storage_write_account_data(&mut ctx.sdk, &pk_program_data, &program_data_account).unwrap();
         validate_account_exists!(program_data);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_system_program, &system_program_account)
+        storage_write_account_data(&mut ctx.sdk, &pk_system_program, &system_program_account)
             .unwrap();
         validate_account_exists!(system_program);
-        sdk_storage_write_account_data(
+        storage_write_account_data(
             &mut ctx.sdk,
             &pk_bpf_loader_upgradeable,
             &bpf_loader_upgradeable_account,
         )
         .unwrap();
         validate_account_exists!(bpf_loader_upgradeable);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_sysvar_clock, &sysvar_clock_account)
-            .unwrap();
+        storage_write_account_data(&mut ctx.sdk, &pk_sysvar_clock, &sysvar_clock_account).unwrap();
         validate_account_exists!(sysvar_clock);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_sysvar_rent, &sysvar_rent_account)
-            .unwrap();
+        storage_write_account_data(&mut ctx.sdk, &pk_sysvar_rent, &sysvar_rent_account).unwrap();
         validate_account_exists!(sysvar_rent);
         ctx.commit_storage();
 
@@ -182,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn test_svm_deploy_exec() {
+    fn test_svm_deploy() {
         let mut ctx = EvmTestingContext::default();
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
         ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
@@ -192,94 +191,61 @@ mod tests {
 
         // setup
 
-        let pk_system_program = system_program::id();
-        let pk_native_loader = native_loader::id();
         let pk_bpf_loader_upgradeable = bpf_loader_upgradeable::id();
-        let pk_sysvar_clock = sysvar::clock::id();
-        let pk_sysvar_rent = sysvar::rent::id();
-
-        let system_program_account =
-            create_loadable_account_for_test("system_program_id", &pk_native_loader);
-        let bpf_loader_upgradeable_account =
-            create_loadable_account_for_test("bpf_loader_upgradeable_id", &pk_native_loader);
-        let sysvar_clock_account =
-            create_loadable_account_for_test("sysvar_clock_id", &pk_system_program);
-        let sysvar_rent_account =
-            create_loadable_account_for_test("sysvar_rent_id", &pk_system_program);
-
-        let pk_payer = Pubkey::new_unique();
-        let payer_account = AccountSharedData::new(100, 0, &pk_system_program);
-
-        let pk_buffer = Pubkey::new_unique();
-
-        let pk_exec = Pubkey::from([8; 32]);
-
-        let pk_nine = Pubkey::from([9; 32]);
-        let nine_account = AccountSharedData::new(100, 0, &pk_system_program);
-
-        let (pk_program_data, _) =
-            Pubkey::find_program_address(&[pk_exec.as_ref()], &pk_bpf_loader_upgradeable);
-        let program_data_account = AccountSharedData::new(0, 0, &pk_system_program);
 
         let account_with_program = load_program_account_from_elf_file(
             &pk_bpf_loader_upgradeable,
             "../../solana-ee/crates/examples/hello-world/assets/solana_ee_hello_world.so",
         );
-        let program_len = account_with_program.data().len();
 
-        macro_rules! validate_account_exists {
-            ($core: tt) => {
-                paste::paste! {
-                    let account_read = sdk_storage_read_account_data(&mut ctx.sdk, &[<pk_ $core>]).unwrap();
-                    assert_eq!(&account_read, &[<$core _account>]);
-                }
-            };
-        }
+        let program_bytes = account_with_program.data().to_vec();
+        ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1e18));
+        let (contract_address, gas_used) =
+            ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
+        println!("contract_addr {:x?}", contract_address);
+    }
 
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_payer, &payer_account).unwrap();
-        validate_account_exists!(payer);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_nine, &nine_account).unwrap();
-        validate_account_exists!(nine);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_program_data, &program_data_account)
-            .unwrap();
-        validate_account_exists!(program_data);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_system_program, &system_program_account)
-            .unwrap();
-        validate_account_exists!(system_program);
-        sdk_storage_write_account_data(
-            &mut ctx.sdk,
+    #[test]
+    fn test_svm_deploy_exec() {
+        let mut ctx = EvmTestingContext::default();
+        assert_eq!(ctx.sdk.context().block_number(), 0);
+        const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+
+        // setup
+
+        let pk_bpf_loader_upgradeable = bpf_loader_upgradeable::id();
+
+        let account_with_program = load_program_account_from_elf_file(
             &pk_bpf_loader_upgradeable,
-            &bpf_loader_upgradeable_account,
-        )
-        .unwrap();
-        validate_account_exists!(bpf_loader_upgradeable);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_sysvar_clock, &sysvar_clock_account)
-            .unwrap();
-        validate_account_exists!(sysvar_clock);
-        sdk_storage_write_account_data(&mut ctx.sdk, &pk_sysvar_rent, &sysvar_rent_account)
-            .unwrap();
-        validate_account_exists!(sysvar_rent);
-        ctx.commit_storage();
+            // "../../solana-ee/crates/examples/hello-world/assets/solana_ee_hello_world.so",
+            "../../solana-ee/crates/core/test_elfs/out/noop_aligned.so",
+        );
 
         // init buffer, fill buffer, deploy
 
         let program_bytes = account_with_program.data().to_vec();
-        let (contract_address, gas_used) =
-            ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
-
-        let mut batch_message = BatchMessage::new(None);
-
-        let instructions = create_buffer(&pk_payer, &pk_buffer, &pk_nine, 0, program_len).unwrap();
-        let message = Message::new(&instructions, Some(&pk_payer));
-        batch_message.append_one(message);
-
-        let input = bincode::serialize(&batch_message).unwrap();
-        let input: Bytes = input.into();
-        println!("input.len {} input '{:?}'", input.len(), input.as_ref());
         ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1e18));
-        let result = TxBuilder::call(&mut ctx, DEPLOYER_ADDRESS, contract_address, None)
-            .input(input)
-            .exec();
+        let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, program_bytes.into());
+        println!("contract_address {:x?}", contract_address);
+
+        // exec
+
+        let pk_exec = pubkey_from_address(contract_address);
+        println!("test: pk_exec {:x?}", &pk_exec.as_ref());
+
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_exec.clone(),
+            &[0u8; 0],
+            vec![],
+        )];
+        let message = Message::new(&instructions, Some(&pk_exec));
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = bincode::serialize(&batch_message).unwrap();
+        println!("input.len {} input '{:?}'", input.len(), input.as_slice());
+        ctx.sdk = ctx.sdk.with_block_number(1);
+        assert_eq!(ctx.sdk.context().block_number(), 1);
+        let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
         let output = result.output().unwrap_or_default();
         assert!(result.is_success());
         let expected_output = hex!("");

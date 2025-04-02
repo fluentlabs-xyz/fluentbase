@@ -41,7 +41,6 @@ fluentbase-examples-client-solidity = { path = "../examples/client-solidity" }
 fluentbase-examples-storage = { path = "../examples/storage" }
 fluentbase-examples-json = { path = "../examples/json" }
 fluentbase-examples-nitro-verifier = { path = "../examples/nitro-verifier" }
-fluentbase-contracts-svm = { path = "../contracts/svm" }
 
 [features]
 default = ["std", "fluentbase-runtime/debug-print"]

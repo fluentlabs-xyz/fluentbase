@@ -3,14 +3,17 @@ use alloc::{rc::Rc, vec::Vec};
 use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContext;
 use fluentbase_types::{
+    ContractContextReader,
     ContractContextV1,
     NativeAPI,
     SharedAPI,
     SharedContextInputV1,
     SharedContextReader,
+    StorageAPI,
     SyscallResult,
 };
 use hashbrown::HashMap;
+use std::ops::AddAssign;
 
 #[derive(Clone)]
 pub struct TestingContext {
@@ -22,6 +25,10 @@ pub type TestingContextNativeAPI = RuntimeContextWrapper;
 impl TestingContext {
     pub fn with_shared_context_input(self, ctx: SharedContextInputV1) -> Self {
         self.inner.borrow_mut().shared_context_input_v1 = ctx;
+        self
+    }
+    pub fn with_block_number(self, block_number: u64) -> Self {
+        self.inner.borrow_mut().shared_context_input_v1.block.number = block_number;
         self
     }
     pub fn with_contract_context(self, contract_context: ContractContextV1) -> Self {
@@ -59,6 +66,27 @@ struct TestingContextInner {
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     preimages: HashMap<B256, Bytes>,
+    balances: HashMap<Address, U256>,
+}
+
+impl TestingContext {
+    pub fn set_balance(&mut self, address: Address, balance: U256) {
+        self.inner.borrow_mut().balances.insert(address, balance);
+    }
+    pub fn add_balance(&mut self, address: Address, balance: U256) {
+        if balance.is_zero() {
+            return;
+        }
+        let mut current = self
+            .inner
+            .borrow()
+            .balances
+            .get(&address)
+            .unwrap_or(&U256::ZERO)
+            .clone();
+        current.add_assign(balance);
+        self.set_balance(address, current);
+    }
 }
 
 impl Default for TestingContext {
@@ -71,8 +99,31 @@ impl Default for TestingContext {
                 transient_storage: Default::default(),
                 logs: vec![],
                 preimages: Default::default(),
+                balances: Default::default(),
             })),
         }
+    }
+}
+impl StorageAPI for TestingContext {
+    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
+        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
+        self.inner
+            .borrow_mut()
+            .persistent_storage
+            .insert((target_address, slot), value);
+        SyscallResult::new((), 0, 0, 0)
+    }
+
+    fn storage(&self, slot: &U256) -> SyscallResult<U256> {
+        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
+        let value = self
+            .inner
+            .borrow()
+            .persistent_storage
+            .get(&(target_address, *slot))
+            .cloned()
+            .unwrap_or_default();
+        SyscallResult::new(value, 0, 0, 0)
     }
 }
 
@@ -116,27 +167,6 @@ impl SharedAPI for TestingContext {
 
     fn evm_panic(&self, panic_message: &str) -> ! {
         panic!("panic with message: {}", panic_message);
-    }
-
-    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
-        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
-        self.inner
-            .borrow_mut()
-            .persistent_storage
-            .insert((target_address, slot), value);
-        SyscallResult::new((), 0, 0, 0)
-    }
-
-    fn storage(&self, slot: &U256) -> SyscallResult<U256> {
-        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
-        let value = self
-            .inner
-            .borrow()
-            .persistent_storage
-            .get(&(target_address, *slot))
-            .cloned()
-            .unwrap_or_default();
-        SyscallResult::new(value, 0, 0, 0)
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
@@ -203,11 +233,13 @@ impl SharedAPI for TestingContext {
     }
 
     fn self_balance(&self) -> SyscallResult<U256> {
-        panic!("not supported for testing context")
+        self.balance(&self.context().contract_address())
     }
 
-    fn balance(&self, _address: &Address) -> SyscallResult<U256> {
-        panic!("not supported for testing context")
+    fn balance(&self, address: &Address) -> SyscallResult<U256> {
+        let binding = self.inner.borrow();
+        let res = binding.balances.get(address);
+        SyscallResult::new(res.unwrap_or(&U256::ZERO).clone(), 0, 0, 0)
     }
 
     fn code_size(&self, _address: &Address) -> SyscallResult<u32> {

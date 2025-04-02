@@ -8,9 +8,11 @@ use fluentbase_sdk::{
     rwasm_config,
     testing::{TestingContext, TestingContextNativeAPI},
     Address,
+    BlockContextReader,
     Bytes,
     ExitCode,
     HashMap,
+    SharedAPI,
     SharedContextInputV1,
     KECCAK_EMPTY,
     STATE_MAIN,
@@ -243,6 +245,7 @@ impl<'a> TxBuilder<'a> {
         env.tx.caller = caller;
         env.tx.transact_to = TransactTo::Call(callee);
         env.tx.gas_limit = 3_000_000;
+        env.block.number = U256::from(ctx.sdk.context().block_number());
         Self { ctx, env }
     }
 
