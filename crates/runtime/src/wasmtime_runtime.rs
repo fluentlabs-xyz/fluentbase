@@ -6,7 +6,6 @@ use anyhow::Result;
 use core::{error::Error as StdError, fmt};
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{Bytes, ExitCode, FixedBytes, SyscallInvocationParams, B256, U256};
-use futures::{executor::block_on, task::noop_waker};
 use std::{
     cell::RefCell,
     collections::{
@@ -37,7 +36,7 @@ struct WorkerContext {
 
 #[derive(Debug, Clone)]
 enum TerminationReason {
-    Exit(i32), // TODO: rename to VolonteerExit
+    Exit(i32),
     InputOutputOutOfBounds,
     Trap(wasmtime::Trap),
 }
@@ -416,7 +415,7 @@ fn handle_one_step(executor: AsyncExecutor) -> (i32, Vec<u8>) {
                     TerminationReason::Exit(value) => match value {
                         0 => ExitCode::Ok.into_i32(),
                         _ => ExitCode::Panic.into_i32(),
-                    },
+                    }, // TODO(khasan) map wasmtime::Trap into ExitCode
                     _ => ExitCode::Err.into_i32(),
                 };
                 (final_exit_code, output)

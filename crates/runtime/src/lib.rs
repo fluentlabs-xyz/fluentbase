@@ -8,9 +8,9 @@ mod context;
 mod runtime;
 mod storage;
 
-mod wasmtime_runtime;
 #[cfg(test)]
 mod tests;
+mod wasmtime_runtime;
 
 pub use context::*;
 pub use runtime::*;
