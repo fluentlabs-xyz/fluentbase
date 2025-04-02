@@ -7,10 +7,10 @@ pub mod instruction;
 mod context;
 mod runtime;
 mod storage;
+
+mod wasmtime_runtime;
 #[cfg(test)]
 mod tests;
-pub mod types;
-mod wasmtime_runtime;
 
 pub use context::*;
 pub use runtime::*;

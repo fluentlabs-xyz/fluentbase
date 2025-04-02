@@ -14,7 +14,6 @@ use crate::{
     bytecode::{commit_evm_bytecode, load_evm_bytecode},
     evm::exec_evm_bytecode,
 };
-use core::ops::Neg;
 use fluentbase_sdk::{func_entrypoint, Bytes, ContractContextReader, ExitCode, SharedAPI};
 use revm_interpreter::{
     gas,
@@ -50,14 +49,14 @@ fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult)
     sdk.sync_evm_gas(result.gas.remaining(), result.gas.refunded());
     sdk.write(result.output.as_ref());
     if result.is_revert() {
-        sdk.exit(ExitCode::Panic.into_i32());
+        sdk.exit(ExitCode::Panic);
     }
     let exit_code = match result.result {
         return_ok!() => ExitCode::Ok,
         return_revert!() => ExitCode::Panic,
         _ => ExitCode::Err,
     };
-    sdk.exit(exit_code.into_i32());
+    sdk.exit(exit_code);
 }
 
 /// Deploys an EVM smart contract using the provided bytecode input.
@@ -130,13 +129,13 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
 
     // EIP-3541 and EIP-170 checks
     if result.output.first() == Some(&0xEF) {
-        sdk.exit((InstructionResult::CreateContractStartingWithEF as i32).neg());
+        sdk.exit(ExitCode::PrecompileError);
     } else if result.output.len() > MAX_CODE_SIZE {
-        sdk.exit((InstructionResult::CreateContractSizeLimit as i32).neg());
+        sdk.exit(ExitCode::PrecompileError);
     }
     let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
     if !result.gas.record_cost(gas_for_code) {
-        sdk.charge_fuel(u64::MAX);
+        sdk.exit(ExitCode::OutOfFuel);
     }
 
     sdk.sync_evm_gas(result.gas.remaining(), result.gas.refunded());

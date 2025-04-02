@@ -11,7 +11,6 @@ mod bindings;
 #[macro_use]
 pub mod entrypoint;
 pub mod constructor;
-mod evm;
 pub mod leb128;
 #[cfg(feature = "std")]
 pub mod runtime;
@@ -27,19 +26,11 @@ pub mod testing;
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
-    use crate::{evm::write_evm_panic_message, rwasm::RwasmContext};
+    use crate::{native_api::NativeAPI, rwasm::RwasmContext};
+    let panic_message = alloc::format!("{}", info.message());
     let native_sdk = RwasmContext {};
-    // if cfg!(feature = "more-panic") {
-    let panic_message = alloc::format!("{}", info).replace("\n", " ");
-    write_evm_panic_message(&native_sdk, &panic_message);
-    // } else {
-    //     let panic_message = info
-    //         .message()
-    //         .as_str()
-    //         .unwrap_or_else(|| &"can't resolve panic message");
-    //     write_evm_panic_message(&native_sdk, &panic_message);
-    // }
-    native_sdk.exit(ExitCode::Panic.into_i32());
+    native_sdk.write(panic_message.as_bytes());
+    native_sdk.exit(ExitCode::Panic.into_i32())
 }
 
 #[cfg(not(feature = "std"))]

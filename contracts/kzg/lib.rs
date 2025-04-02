@@ -21,7 +21,7 @@ pub fn main(mut sdk: impl SharedAPI) {
     let input = Bytes::copy_from_slice(input);
     // call blake2 function
     let result = revm_precompile::kzg_point_evaluation::run(&input, gas_limit, &Env::default())
-        .unwrap_or_else(|err| sdk.exit(ExitCode::from(err).into_i32()));
+        .unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
     sdk.sync_evm_gas(gas_limit - result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());

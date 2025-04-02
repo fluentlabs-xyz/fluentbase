@@ -20,7 +20,7 @@ pub fn main(mut sdk: impl SharedAPI) {
     let input = Bytes::copy_from_slice(input);
     // call sha256 function
     let result = revm_precompile::hash::sha256_run(&input, gas_limit)
-        .unwrap_or_else(|err| sdk.exit(ExitCode::from(err).into_i32()));
+        .unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
     sdk.sync_evm_gas(gas_limit - result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());

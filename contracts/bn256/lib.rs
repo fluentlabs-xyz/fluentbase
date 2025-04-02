@@ -44,7 +44,7 @@ pub fn main(mut sdk: impl SharedAPI) {
         ),
         _ => unreachable!("bn128: unsupported contract address"),
     };
-    let result = result.unwrap_or_else(|err| sdk.exit(ExitCode::from(err).into_i32()));
+    let result = result.unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
     sdk.sync_evm_gas(gas_limit - result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());
@@ -63,6 +63,7 @@ mod tests {
             .with_input(Bytes::copy_from_slice(inputs))
             .with_contract_context(ContractContextV1 {
                 address,
+                bytecode_address: address,
                 gas_limit,
                 ..Default::default()
             });

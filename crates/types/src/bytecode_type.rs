@@ -1,5 +1,5 @@
-use crate::{F254, KECCAK_EMPTY};
-use alloy_primitives::{keccak256, Bytes};
+use crate::KECCAK_EMPTY;
+use alloy_primitives::{keccak256, Bytes, B256};
 
 pub const EIP7702_SIG_LEN: usize = 2;
 /// rWASM binary format signature:
@@ -41,8 +41,8 @@ impl BytecodeType {
 
 #[derive(Clone, Debug)]
 pub enum BytecodeOrHash {
-    Bytecode(Bytes, Option<F254>),
-    Hash(F254),
+    Bytecode(Bytes, Option<B256>),
+    Hash(B256),
 }
 
 impl From<Bytes> for BytecodeOrHash {
@@ -51,15 +51,15 @@ impl From<Bytes> for BytecodeOrHash {
         Self::Bytecode(value, None)
     }
 }
-impl From<F254> for BytecodeOrHash {
+impl From<B256> for BytecodeOrHash {
     #[inline(always)]
-    fn from(value: F254) -> Self {
+    fn from(value: B256) -> Self {
         Self::Hash(value)
     }
 }
-impl From<(Bytes, F254)> for BytecodeOrHash {
+impl From<(Bytes, B256)> for BytecodeOrHash {
     #[inline(always)]
-    fn from(value: (Bytes, F254)) -> Self {
+    fn from(value: (Bytes, B256)) -> Self {
         Self::Bytecode(value.0, Some(value.1))
     }
 }
@@ -83,7 +83,7 @@ impl BytecodeOrHash {
         }
     }
 
-    pub fn resolve_hash(&self) -> F254 {
+    pub fn resolve_hash(&self) -> B256 {
         match self {
             BytecodeOrHash::Bytecode(_, hash) => hash.expect("hash must be resolved"),
             BytecodeOrHash::Hash(hash) => *hash,

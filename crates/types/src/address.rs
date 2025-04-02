@@ -1,26 +1,4 @@
-use crate::{b256, Address, NativeAPI, B256, F254, U256};
-use revm_primitives::{Bytecode, Eip7702Bytecode};
-
-const POSEIDON_DOMAIN: F254 =
-    b256!("0000000000000000000000000000000000000000000000010000000000000000");
-
-#[inline(always)]
-pub fn calc_storage_key<API: NativeAPI>(address: &Address, slot32_le_ptr: *const u8) -> B256 {
-    let mut slot0 = B256::ZERO;
-    let mut slot1 = B256::ZERO;
-    // split slot32 into two 16 byte values (slot is always 32 bytes)
-    unsafe {
-        core::ptr::copy(slot32_le_ptr.offset(0), slot0.as_mut_ptr(), 16);
-        core::ptr::copy(slot32_le_ptr.offset(16), slot1.as_mut_ptr(), 16);
-    }
-    // pad address to 32 bytes value (11 bytes to avoid 254-bit overflow)
-    let mut address32 = B256::ZERO;
-    address32[11..31].copy_from_slice(address.as_slice());
-    // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
-    let storage_key = API::poseidon_hash(&slot0, &slot1, &POSEIDON_DOMAIN);
-    let storage_key = API::poseidon_hash(&address32, &storage_key, &POSEIDON_DOMAIN);
-    storage_key
-}
+use crate::{native_api::NativeAPI, Address, B256, U256};
 
 #[inline(always)]
 pub fn calc_create_address<API: NativeAPI>(deployer: &Address, nonce: u64) -> Address {
@@ -52,78 +30,11 @@ pub fn calc_create2_address<API: NativeAPI>(
     Address::from_word(hash)
 }
 
-fn create_eip7702_proxy_bytecode(impl_address: Address) -> Bytecode {
-    let eip7702_bytecode = Eip7702Bytecode::new(impl_address);
-    Bytecode::Eip7702(eip7702_bytecode)
-}
-
-// #[allow(unused)]
-// fn create_rwasm_proxy_bytecode(impl_address: Address) -> Bytes {
-//     let mut memory_section = vec![0u8; 32 + 20];
-//     //  0..32: code hash
-//     // 32..52: precompile address
-//     memory_section[0..32].copy_from_slice(SYSCALL_ID_DELEGATE_CALL.as_slice()); // 32 bytes
-//     memory_section[32..52].copy_from_slice(impl_address.as_slice()); // 20 bytes
-//     debug_assert_eq!(memory_section.len(), 52);
-//     let code_section = instruction_set! {
-//         // alloc default memory
-//         I32Const(1) // number of pages (64kB memory in total)
-//         MemoryGrow // grow memory
-//         Drop // drop exit code (it can't fail here)
-//         // initializes a memory segment
-//         I32Const(0) // destination
-//         I32Const(0) // source
-//         I32Const(memory_section.len() as u32) // length
-//         MemoryInit(0) // initialize 0 segment
-//         DataDrop(0) // mark 0 segment as dropped (required to satisfy WASM standards)
-//         // copy input (EVM bytecode can't exceed 2*24kB, so this op is safe)
-//         I32Const(52) // target
-//         I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as u32) // offset
-//         Call(SysFuncIdx::INPUT_SIZE) // length=input_size-header_size
-//         I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as u32)
-//         I32Sub
-//         Call(SysFuncIdx::READ_INPUT)
-//         // delegate call
-//         I32Const(0) // hash32_ptr
-//         I32Const(32) // input_ptr
-//         Call(SysFuncIdx::INPUT_SIZE) // input_len=input_size-header_size+20
-//         I32Const(SharedContextInputV1::FLUENT_HEADER_SIZE as u32)
-//         I32Sub
-//         I32Const(20)
-//         I32Add
-//         I32Const(0) // fuel_limit
-//         Call(SysFuncIdx::STATE) // state
-//         Call(SysFuncIdx::EXEC)
-//         // forward return data into output
-//         I32Const(0) // offset
-//         Call(SysFuncIdx::OUTPUT_SIZE) // length
-//         Call(SysFuncIdx::FORWARD_OUTPUT)
-//         // exit with the resulting exit code
-//         Call(SysFuncIdx::EXIT)
-//     };
-//     let func_section = vec![code_section.len() as u32];
-//     let evm_loader_module = RwasmModule {
-//         code_section,
-//         memory_section,
-//         func_section,
-//         ..Default::default()
-//     };
-//     let mut rwasm_bytecode = Vec::new();
-//     evm_loader_module
-//         .write_binary_to_vec(&mut rwasm_bytecode)
-//         .unwrap();
-//     rwasm_bytecode.into()
-// }
-
-pub fn create_delegate_proxy_bytecode(impl_address: Address) -> Bytecode {
-    create_eip7702_proxy_bytecode(impl_address)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::BytecodeOrHash;
-    use alloy_primitives::{address, keccak256};
+    use alloy_primitives::{address, b256, keccak256};
 
     struct TestContext;
 
@@ -133,14 +44,6 @@ mod tests {
         }
 
         fn sha256(_data: &[u8]) -> B256 {
-            todo!()
-        }
-
-        fn poseidon(_data: &[u8]) -> F254 {
-            todo!()
-        }
-
-        fn poseidon_hash(_fa: &F254, _fb: &F254, _fd: &F254) -> F254 {
             todo!()
         }
 

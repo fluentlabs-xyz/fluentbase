@@ -9,6 +9,7 @@ macro_rules! import_func {
     };
 }
 
+// TODO(dmitry123): "add type checks to avoid stack overflow/underflow"
 const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 19] = [
     import_func!("_keccak256", KECCAK256),
     import_func!("_poseidon", KECCAK256),

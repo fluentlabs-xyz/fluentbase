@@ -3,10 +3,11 @@ use alloc::{rc::Rc, vec::Vec};
 use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContext;
 use fluentbase_types::{
+    native_api::NativeAPI,
     ContractContextV1,
+    ExitCode,
     IsAccountEmpty,
     IsColdAccess,
-    NativeAPI,
     SharedAPI,
     SharedContextInputV1,
     SharedContextReader,
@@ -105,17 +106,8 @@ impl SharedAPI for TestingContext {
         self.inner.borrow().native_sdk.write(output);
     }
 
-    fn evm_exit(&self, _exit_code: i32) -> ! {
-        todo!("not implemented")
-    }
-
-    fn exit(&self, exit_code: i32) -> ! {
-        assert!(exit_code <= 0, "exit code must be non-positive");
-        self.inner.borrow().native_sdk.exit(exit_code);
-    }
-
-    fn evm_panic(&self, panic_message: &str) -> ! {
-        panic!("panic with message: {}", panic_message);
+    fn exit(&self, exit_code: ExitCode) -> ! {
+        self.inner.borrow().native_sdk.exit(exit_code.into_i32());
     }
 
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
