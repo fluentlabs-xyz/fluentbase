@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Result;
 use core::{error::Error as StdError, fmt};
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
-use fluentbase_types::{Bytes, FixedBytes, SyscallInvocationParams, B256};
+use fluentbase_types::{Bytes, ExitCode, FixedBytes, SyscallInvocationParams, B256};
 use futures::{executor::block_on, task::noop_waker};
 use std::{
     cell::RefCell,
@@ -57,8 +57,9 @@ enum Message {
         input: Vec<u8>,
         fuel_limit: u32,
         state: u32,
+        fuel16_ptr: u32,
     },
-    ExecutionResponse {
+    ExecutionResult {
         fuel_consumed: u64,
         fuel_refunded: i64,
         exit_code: i32,
@@ -69,15 +70,16 @@ enum Message {
         output: Vec<u8>,
     },
 }
-
 struct AsyncExecutor {
     sender: mpsc::Sender<Message>,
     receiver: mpsc::Receiver<Message>,
-    worker_join_handle: JoinHandle<()>,
+    worker: JoinHandle<()>,
 }
 
 impl AsyncExecutor {
-    pub fn launch(module: &Module, input: Vec<u8>) -> anyhow::Result<Self> {
+    /* module is expected to be preferified somewhere before.
+     * So in this function we should never get errors during initialization of wasm instance */
+    pub fn launch(module: &Module, input: Vec<u8>) -> Self {
         let (executor_sender, worker_receiver) = mpsc::channel();
         let (worker_sender, executor_receiver) = mpsc::channel();
         let worker_context = WorkerContext {
@@ -87,11 +89,15 @@ impl AsyncExecutor {
             output: Vec::new(),
         };
         let engine = module.engine();
-        let linker = new_linker_with_builtins(engine)?;
+        let linker = new_linker_with_builtins(engine).unwrap();
         let mut store = Store::new(engine, worker_context);
 
-        let instance = linker.instantiate(&mut store, &module)?;
-        let main = instance.get_typed_func::<(), ()>(&mut store, "main")?;
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .expect("bytecode should be preverified");
+        let main = instance
+            .get_typed_func::<(), ()>(&mut store, "main")
+            .expect("bytecode should be preferified");
 
         let worker = thread::spawn(move || {
             let reason = match main.call(&mut store, ()) {
@@ -117,19 +123,17 @@ impl AsyncExecutor {
                 .expect("failed to send termination info to channel");
         });
 
-        Ok(Self {
+        Self {
             sender: executor_sender,
             receiver: executor_receiver,
-            worker_join_handle: worker,
-        })
+            worker,
+        }
     }
-    pub fn receive_message(&self) -> anyhow::Result<Message> {
-        let message = self.receiver.recv()?;
-        Ok(message)
+    pub fn receive_message(&self) -> Message {
+        self.receiver.recv().expect("maybe worker is dead")
     }
-    pub fn send_message(&self, message: Message) -> anyhow::Result<()> {
-        let _ = self.sender.send(message)?;
-        Ok(())
+    pub fn send_message(&self, message: Message) -> () {
+        self.sender.send(message).expect("maybe worker is dead")
     }
 }
 
@@ -138,17 +142,49 @@ thread_local! {
 }
 struct RuntimeState {
     modules_cache: HashMap<u64, Module>,
-    suspended_executors: HashMap<u64, AsyncExecutor>,
+    suspended_executors: HashMap<i32, AsyncExecutor>,
+    prev_call_id: i32,
 }
+
 impl RuntimeState {
     fn new() -> Self {
-        // let config = Config::new();
-        // let engine = Engine::new(&config).unwrap();
-        // let linker = new_linker_with_builtins(&engine).unwrap();
         Self {
             modules_cache: HashMap::new(),
             suspended_executors: HashMap::new(),
+            prev_call_id: 0,
         }
+    }
+
+    fn suspend_executor(&mut self, executor: AsyncExecutor) -> i32 {
+        if self.prev_call_id == i32::MAX {
+            self.prev_call_id = 0; // wrap value around to prevent non-positive call ids
+        }
+        let call_id = self.prev_call_id + 1;
+        self.prev_call_id = call_id;
+        let existing = self.suspended_executors.insert(call_id, executor);
+        assert!(existing.is_none());
+        call_id
+    }
+
+    fn init_module_cached(&mut self, wasm_bytecode: &[u8]) -> &Module {
+        let mut hasher = DefaultHasher::new();
+        wasm_bytecode.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        if !self.modules_cache.contains_key(&hash) {
+            let config = Config::new();
+            let engine = Engine::new(&config).unwrap();
+            let module =
+                Module::new(&engine, wasm_bytecode).expect("bytecode should be preverified");
+            self.modules_cache.insert(hash, module);
+        }
+
+        self.modules_cache.get(&hash).unwrap()
+    }
+
+    fn take_suspended_executor(&mut self, call_id: i32) -> AsyncExecutor {
+        let executor = self.suspended_executors.remove(&call_id);
+        executor.expect("executor should exist")
     }
 }
 
@@ -197,6 +233,8 @@ mod builtins {
     ) -> anyhow::Result<()> {
         let data = read_memory(&mut caller, offset, length)?;
         let context = caller.data_mut();
+        println!("builtins::write(offset={}, length={})", offset, length);
+        dbg!(&data);
         context.output.extend_from_slice(&data);
         Ok(())
     }
@@ -279,6 +317,7 @@ mod builtins {
             input,
             fuel_limit,
             state,
+            fuel16_ptr,
         };
         context
             .sender
@@ -289,7 +328,7 @@ mod builtins {
             .recv()
             .expect("failed to receive execution result");
         match response {
-            Message::ExecutionResponse {
+            Message::ExecutionResult {
                 fuel_consumed,
                 fuel_refunded,
                 exit_code,
@@ -341,70 +380,76 @@ fn new_linker_with_builtins(engine: &Engine) -> anyhow::Result<Linker<WorkerCont
     linker.func_wrap(module, "_charge_fuel", builtins::charge_fuel)?;
     Ok(linker)
 }
-fn resume_inner(call_id: u32, input: Vec<u8>) -> anyhow::Result<(i32, Vec<u8>)> {
-    Ok((0, Vec::new()))
-}
 
-fn exec_inner(wasm_bytecode: &[u8], input: Vec<u8>) -> anyhow::Result<(i32, Vec<u8>)> {
-    Ok((0, vec![]))
+fn handle_one_step(executor: AsyncExecutor) -> (i32, Vec<u8>) {
+    RUNTIME_STATE.with_borrow_mut(|runtime_state| {
+        let next_message = executor.receive_message();
+        dbg!(&next_message);
+        match next_message {
+            Message::ExecutionRequest {
+                code_hash,
+                input,
+                fuel_limit,
+                state,
+                fuel16_ptr,
+            } => {
+                let call_id = runtime_state.suspend_executor(executor);
+                assert!(call_id > 0);
 
-    // let message = main_receiver.recv();
-    // match message {
-    //     Ok(message) => match message {
-    //         Message::ExecutionRequest {
-    //             code_hash,
-    //             input,
-    //             fuel_limit,
-    //             state,
-    //         } => {
-    //             println!("Executing contract:");
-    //             println!("Code Hash: {:?}", code_hash);
-    //             println!("Input: {:?}", input);
-    //             println!("Fuel Limit: {}", fuel_limit);
-    //             println!("State: {}", state);
-    //             Ok((0, vec![]))
-    //         }
-    //         Message::WasmTerminated { reason, output } => {
-    //             println!("WASM Terminated:");
-    //             println!("Reason: {:?}", reason);
-    //             println!("Output: {:?}", output);
-    //             worker
-    //                 .join()
-    //                 .expect("worker should exit successfully after termination message");
-    //             Ok((0, vec![]))
-    //         }
-    //         _ => panic!("unexpected message type received from worker"),
-    //     },
-    //     Err(err) => {
-    //         let worker_result = worker.join();
-    //         match worker_result {
-    //             Ok(()) => panic!("worker finished execution without sending termination reason"),
-    //             Err(_) => Err(anyhow::Error::msg("worker panicked")),
-    //         }
-    //     }
-    // }
-}
+                let params = SyscallInvocationParams {
+                    code_hash: B256::from(code_hash),
+                    input: Bytes::from(input),
+                    fuel_limit: fuel_limit.into(),
+                    state,
+                    fuel16_ptr,
+                };
+                let mut encoded_state = BytesMut::new();
+                CompactABI::encode(&params, &mut encoded_state, 0)
+                    .expect("failed to encode syscall invocation params");
+                let output = encoded_state.freeze().to_vec();
 
-pub fn exec_in_wasmtime_runtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, Vec<u8>) {
-    let result: anyhow::Result<AsyncExecutor> = RUNTIME_STATE.with_borrow_mut(|runtime_state| {
-        let mut hasher = DefaultHasher::new();
-        wasm_bytecode.hash(&mut hasher);
-        let hash = hasher.finish();
-        let module: &Module = match runtime_state.modules_cache.get(&hash) {
-            Some(value) => value,
-            None => {
-                let mut config = Config::new();
-                let engine = Engine::new(&config)?;
-                let module = Module::new(&engine, wasm_bytecode)?;
-                // I'll remove this 3 lookups once I get more experience in rust (never)
-                let _ = runtime_state.modules_cache.insert(hash.clone(), module);
-                runtime_state.modules_cache.get(&hash).unwrap()
+                (call_id, output)
             }
-        };
-        let executor = AsyncExecutor::launch(module, input)?;
-        Ok(executor)
+            Message::WasmTerminated { reason, output } => {
+                executor.worker.join().expect("worker should never panic");
+                let final_exit_code = match reason {
+                    TerminationReason::Exit(value) => match value {
+                        0 => ExitCode::Ok.into_i32(),
+                        _ => ExitCode::Panic.into_i32(),
+                    },
+                    _ => ExitCode::Err.into_i32(),
+                };
+                (final_exit_code, output)
+            }
+            _ => panic!("unexpected message type received"),
+        }
+    })
+}
+pub fn exec_wasmtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, Vec<u8>) {
+    let executor = RUNTIME_STATE.with_borrow_mut(|runtime_state| {
+        let module = runtime_state.init_module_cached(wasm_bytecode);
+        AsyncExecutor::launch(module, input)
     });
-    (0, vec![])
+    handle_one_step(executor)
+}
+
+pub fn resume_wasmtime(
+    call_id: i32,
+    output: Vec<u8>,
+    exit_code: i32,
+    fuel_consumed: u64,
+    fuel_refunded: i64,
+    fuel16_ptr: i32,
+) -> (i32, Vec<u8>) {
+    let executor = RUNTIME_STATE
+        .with_borrow_mut(|runtime_state| runtime_state.take_suspended_executor(call_id));
+    executor.send_message(Message::ExecutionResult {
+        fuel_consumed,
+        fuel_refunded,
+        exit_code,
+        output,
+    });
+    handle_one_step(executor)
 }
 
 #[cfg(test)]
@@ -421,10 +466,11 @@ mod tests {
 
     #[test]
     fn run_identity_in_wasmtime() {
-        let wasm_bytecode = include_bytes!("../../../examples/identity/lib.wasm");
+        let wasm_bytecode = include_bytes!("../../../contracts/identity/lib.wasm");
         let input = vec![1, 2, 3, 4, 5, 6];
-        let (_, output) =
-            exec_in_wasmtime_runtime(wasm_bytecode, insert_default_shared_context(&input));
+        let (exit_code, output) =
+            exec_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+        assert_eq!(exit_code, 0);
         assert_eq!(input, output);
     }
 
@@ -435,17 +481,27 @@ mod tests {
         ))
         .unwrap()
         .into();
-        let wasm_bytecode = include_bytes!("../../../examples/nitro-verifier/lib.wasm");
+        let wasm_bytecode = include_bytes!("../../../contracts/identity/lib.wasm");
         let input = attestation_doc;
-        let (_, _) = exec_in_wasmtime_runtime(wasm_bytecode, insert_default_shared_context(&input));
+        let (_, _) = exec_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
         panic!("FINISHED Successfully");
+    }
+
+    #[test]
+    fn wasmtime_greeting() {
+        let wasm_bytecode = include_bytes!("../../../examples/greeting/lib.wasm");
+        let input = Vec::new();
+        let (exit_code, output) =
+            exec_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+        assert_eq!(exit_code, 0);
+        panic!("FINISHED");
     }
 
     #[test]
     fn wasmtime_simple_storage() {
         let wasm_bytecode = include_bytes!("../../../examples/simple-storage/lib.wasm");
         let input = Vec::new();
-        let (_, _) = exec_in_wasmtime_runtime(wasm_bytecode, insert_default_shared_context(&input));
+        let (_, _) = exec_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
         panic!("FINISHED");
     }
 }
