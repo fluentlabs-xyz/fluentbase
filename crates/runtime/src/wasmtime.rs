@@ -32,6 +32,7 @@ struct WorkerContext {
     receiver: mpsc::Receiver<Message>,
     input: Vec<u8>,
     output: Vec<u8>,
+    // TODO(khasan) add return_data buffer and use it in bindings::read_output()
 }
 
 #[derive(Debug, Clone)]
