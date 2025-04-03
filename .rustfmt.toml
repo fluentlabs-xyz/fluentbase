@@ -1,6 +1,6 @@
 edition = "2021"
 group_imports = "One"
-ignore = ["revm"]
+ignore = ["revm/*"]
 imports_granularity = "Crate"
 imports_layout = "HorizontalVertical"
 

@@ -1987,9 +1987,9 @@ dependencies = [
 name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
+ "bitvec",
  "fluentbase-build",
  "fluentbase-sdk",
- "revm-interpreter",
 ]
 
 [[package]]

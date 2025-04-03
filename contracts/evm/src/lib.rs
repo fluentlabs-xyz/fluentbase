@@ -2,9 +2,9 @@
 
 mod bytecode;
 mod evm;
+mod instruction_table;
 #[cfg(test)]
 mod tests;
-mod utils;
 
 extern crate alloc;
 extern crate core;
@@ -12,18 +12,19 @@ extern crate fluentbase_sdk;
 
 use crate::{
     bytecode::{commit_evm_bytecode, load_evm_bytecode},
-    evm::exec_evm_bytecode,
+    evm::{gas, result::InterpreterResult, EVM},
 };
-use fluentbase_sdk::{func_entrypoint, Bytes, ContractContextReader, ExitCode, SharedAPI};
-use revm_interpreter::{
-    gas,
-    primitives::Bytecode,
-    return_ok,
-    return_revert,
-    InstructionResult,
-    InterpreterResult,
-    MAX_CODE_SIZE,
+use fluentbase_sdk::{
+    func_entrypoint,
+    Bytes,
+    ContractContextReader,
+    ExitCode,
+    SharedAPI,
+    EVM_MAX_CODE_SIZE,
 };
+
+/// Number of block hashes that EVM can access in the past (pre-Prague).
+pub const BLOCK_HASH_HISTORY: u64 = 256;
 
 /// Handles non-OK results from the EVM interpreter.
 ///
@@ -51,6 +52,7 @@ fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult)
     if result.is_revert() {
         sdk.exit(ExitCode::Panic);
     }
+    debug_assert!(result.is_error(), "evm: result must be error");
     let exit_code = match result.result {
         return_ok!() => ExitCode::Ok,
         return_revert!() => ExitCode::Panic,
@@ -117,12 +119,7 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     let input: Bytes = sdk.input().into();
     let gas_limit = sdk.context().contract_gas_limit();
 
-    let mut result = exec_evm_bytecode(
-        &mut sdk,
-        Bytecode::new_raw(input),
-        Bytes::default(),
-        gas_limit,
-    );
+    let mut result = EVM::new(&mut sdk, &input[..], &[], gas_limit).exec();
     if !result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }
@@ -130,7 +127,7 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     // EIP-3541 and EIP-170 checks
     if result.output.first() == Some(&0xEF) {
         sdk.exit(ExitCode::PrecompileError);
-    } else if result.output.len() > MAX_CODE_SIZE {
+    } else if result.output.len() > EVM_MAX_CODE_SIZE {
         sdk.exit(ExitCode::PrecompileError);
     }
     let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
@@ -186,7 +183,7 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     let input: Bytes = sdk.input().into();
     let gas_limit = sdk.context().contract_gas_limit();
 
-    let result = exec_evm_bytecode(&mut sdk, evm_bytecode, input, gas_limit);
+    let result = EVM::new(&mut sdk, &evm_bytecode[..], &input[..], gas_limit).exec();
     if !result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }

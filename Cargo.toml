@@ -4,7 +4,7 @@ members = [
     "crates/*",
     "revm/crates/*",
     "crates/rwasm/e2e",
-    #    "examples/*",
+    "examples/*",
     "e2e",
 ]
 exclude = [

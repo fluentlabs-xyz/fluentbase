@@ -1,7 +1,6 @@
 use super::*;
 use core::str::from_utf8;
-use fluentbase_sdk::{testing::TestingContext, Address, ContractContextV1, U256};
-use revm_interpreter::primitives::hex;
+use fluentbase_sdk::{hex, testing::TestingContext, Address, ContractContextV1, U256};
 
 #[test]
 fn test_deploy_greeting() {

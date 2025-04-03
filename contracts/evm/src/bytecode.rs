@@ -7,7 +7,6 @@ use fluentbase_sdk::{
     KECCAK_EMPTY,
     U256,
 };
-use revm_interpreter::{analysis::to_analysed, primitives::Bytecode};
 
 /// Commits EVM bytecode to persistent storage and updates the corresponding code hash.
 ///
@@ -45,7 +44,7 @@ pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: B
 /// An `Option<Bytecode>`.
 /// - `Some(Bytecode)`: If valid bytecode exists and is successfully retrieved.
 /// - `None`: If the bytecode is empty or not present in the storage.
-pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<Bytecode> {
+pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<Bytes> {
     let bytecode_address = sdk.context().contract_bytecode_address();
     let evm_code_hash =
         sdk.delegated_storage(&bytecode_address, &Into::<U256>::into(EVM_CODE_HASH_SLOT));
@@ -62,6 +61,6 @@ pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<Bytecode> {
         SyscallResult::is_ok(evm_bytecode.status),
         "sdk: failed reading evm bytecode"
     );
-    let evm_bytecode = to_analysed(Bytecode::new_raw(evm_bytecode.data));
+    let evm_bytecode = evm_bytecode.data;
     Some(evm_bytecode)
 }
