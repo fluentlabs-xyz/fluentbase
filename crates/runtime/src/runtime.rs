@@ -22,7 +22,7 @@ use fluentbase_types::{
     Bytes,
     ExitCode,
     SysFuncIdx,
-    F254,
+    B256,
 };
 use hashbrown::{hash_map::Entry, HashMap};
 use std::{
@@ -52,8 +52,8 @@ impl ExecutionResult {
 
 pub struct CachingRuntime {
     // TODO(dmitry123): "add LRU cache to this map to avoid memory leak"
-    cached_bytecode: HashMap<F254, Bytes>,
-    modules: HashMap<F254, RwasmModuleInstance>,
+    cached_bytecode: HashMap<B256, Bytes>,
+    modules: HashMap<B256, RwasmModuleInstance>,
     recoverable_runtimes: HashMap<u32, Runtime>,
 }
 
@@ -68,7 +68,7 @@ impl CachingRuntime {
 
     pub fn insert_module(
         &mut self,
-        rwasm_hash: F254,
+        rwasm_hash: B256,
         instance: RwasmModuleInstance,
         bytecode: Bytes,
     ) -> &RwasmModuleInstance {
@@ -80,7 +80,7 @@ impl CachingRuntime {
         entry.insert(instance)
     }
 
-    pub fn init_module(&mut self, rwasm_hash: F254) -> &RwasmModuleInstance {
+    pub fn init_module(&mut self, rwasm_hash: B256) -> &RwasmModuleInstance {
         let rwasm_bytecode = self
             .cached_bytecode
             .get(&rwasm_hash)
@@ -94,7 +94,7 @@ impl CachingRuntime {
         entry.insert(reduced_module.instantiate())
     }
 
-    pub fn resolve_module(&self, rwasm_hash: &F254) -> Option<&RwasmModuleInstance> {
+    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<&RwasmModuleInstance> {
         self.modules.get(rwasm_hash)
     }
 }
@@ -178,12 +178,12 @@ impl Runtime {
         })
     }
 
-    pub fn is_warm_bytecode(hash: &F254) -> bool {
+    pub fn is_warm_bytecode(hash: &B256) -> bool {
         CACHING_RUNTIME
             .with_borrow(|caching_runtime| caching_runtime.cached_bytecode.contains_key(hash))
     }
 
-    pub fn warmup_bytecode(hash: F254, bytecode: Bytes) {
+    pub fn warmup_bytecode(hash: B256, bytecode: Bytes) {
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             caching_runtime.cached_bytecode.insert(hash, bytecode);
         });

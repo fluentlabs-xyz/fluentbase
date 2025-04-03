@@ -3,9 +3,12 @@ use alloc::{rc::Rc, vec::Vec};
 use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContext;
 use fluentbase_types::{
+    native_api::NativeAPI,
     ContractContextReader,
     ContractContextV1,
-    NativeAPI,
+    ExitCode,
+    IsAccountEmpty,
+    IsColdAccess,
     SharedAPI,
     SharedContextInputV1,
     SharedContextReader,
@@ -48,6 +51,9 @@ impl TestingContext {
             .change_input(input.into());
         self
     }
+    pub fn synced_gas(&self) -> (u64, i64) {
+        self.inner.borrow_mut().synced_evm_gas
+    }
     pub fn take_output(&self) -> Vec<u8> {
         self.inner.borrow_mut().native_sdk.take_output()
     }
@@ -66,6 +72,7 @@ struct TestingContextInner {
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     preimages: HashMap<B256, Bytes>,
+    synced_evm_gas: (u64, i64),
     balances: HashMap<Address, U256>,
 }
 
@@ -99,6 +106,7 @@ impl Default for TestingContext {
                 transient_storage: Default::default(),
                 logs: vec![],
                 preimages: Default::default(),
+                synced_evm_gas: (0, 0),
                 balances: Default::default(),
             })),
         }
@@ -156,19 +164,9 @@ impl SharedAPI for TestingContext {
         self.inner.borrow().native_sdk.write(output);
     }
 
-    fn evm_exit(&self, _exit_code: i32) -> ! {
-        todo!("not implemented")
+    fn exit(&self, exit_code: ExitCode) -> ! {
+        self.inner.borrow().native_sdk.exit(exit_code.into_i32());
     }
-
-    fn exit(&self, exit_code: i32) -> ! {
-        assert!(exit_code <= 0, "exit code must be non-positive");
-        self.inner.borrow().native_sdk.exit(exit_code);
-    }
-
-    fn evm_panic(&self, panic_message: &str) -> ! {
-        panic!("panic with message: {}", panic_message);
-    }
-
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
         let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
         self.inner
@@ -190,7 +188,11 @@ impl SharedAPI for TestingContext {
         SyscallResult::new(value, 0, 0, 0)
     }
 
-    fn delegated_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256> {
+    fn delegated_storage(
+        &self,
+        address: &Address,
+        slot: &U256,
+    ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)> {
         let value = self
             .inner
             .borrow()
@@ -198,10 +200,13 @@ impl SharedAPI for TestingContext {
             .get(&(*address, *slot))
             .cloned()
             .unwrap_or_default();
-        SyscallResult::new(value, 0, 0, 0)
+        SyscallResult::new((value, false, false), 0, 0, 0)
     }
 
-    fn sync_evm_gas(&self, _gas_remaining: u64, _gas_refunded: i64) -> SyscallResult<()> {
+    fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        ctx.synced_evm_gas.0 += gas_remaining;
+        ctx.synced_evm_gas.1 += gas_refunded;
         SyscallResult::new((), 0, 0, 0)
     }
 

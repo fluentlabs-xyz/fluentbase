@@ -1984,20 +1984,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "eth_trie"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec3aeb0284b473041df2419a28e3cdf0c64a78d2b9511af4b6e40bad3964b172"
-dependencies = [
- "ethereum-types",
- "hashbrown 0.14.5",
- "keccak-hash 0.10.0",
- "log",
- "parking_lot",
- "rlp",
-]
-
-[[package]]
 name = "ethabi"
 version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2261,7 +2247,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-blake2"
+name = "fluentbase-contracts-blake2f"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-bls12381"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2304,6 +2308,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-kzg"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "revm-precompile",
+]
+
+[[package]]
 name = "fluentbase-contracts-modexp"
 version = "0.1.0"
 dependencies = [
@@ -2318,6 +2331,21 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+]
+
+[[package]]
+name = "fluentbase-contracts-nitro"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "coset",
+ "der",
+ "ecdsa",
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "hex",
+ "p384",
+ "x509-cert",
 ]
 
 [[package]]
@@ -2353,16 +2381,15 @@ version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
  "fluentbase-codec",
+ "fluentbase-contracts-nitro",
  "fluentbase-examples-abi-solidity",
  "fluentbase-examples-checkmate",
  "fluentbase-examples-client-solidity",
  "fluentbase-examples-constructor-params",
- "fluentbase-examples-echo",
  "fluentbase-examples-erc20",
  "fluentbase-examples-greeting",
  "fluentbase-examples-json",
  "fluentbase-examples-keccak256",
- "fluentbase-examples-nitro-verifier",
  "fluentbase-examples-panic",
  "fluentbase-examples-router-solidity",
  "fluentbase-examples-rwasm",
@@ -2416,16 +2443,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-examples-echo"
-version = "0.1.0"
-dependencies = [
- "fluentbase-build",
- "fluentbase-sdk",
- "hex",
- "hex-literal 0.4.1",
-]
-
-[[package]]
 name = "fluentbase-examples-erc20"
 version = "0.1.0"
 dependencies = [
@@ -2463,22 +2480,6 @@ dependencies = [
  "hex",
  "hex-literal 0.4.1",
  "tiny-keccak",
-]
-
-[[package]]
-name = "fluentbase-examples-nitro-verifier"
-version = "0.1.0"
-dependencies = [
- "ciborium",
- "coset",
- "der",
- "ecdsa",
- "fluentbase-build",
- "fluentbase-sdk",
- "hex",
- "hex-literal 0.4.1",
- "p384",
- "x509-cert",
 ]
 
 [[package]]
@@ -2567,7 +2568,6 @@ dependencies = [
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
- "eth_trie",
  "fluentbase-codec",
  "fluentbase-poseidon",
  "fluentbase-rwasm",
@@ -2577,7 +2577,7 @@ dependencies = [
  "hex",
  "hex-literal 0.4.1",
  "k256",
- "keccak-hash 0.11.0",
+ "keccak-hash",
  "num",
  "sha2 0.10.8",
  "sp1-curves",
@@ -2617,7 +2617,6 @@ dependencies = [
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.15.2",
- "hex",
 ]
 
 [[package]]
@@ -2659,6 +2658,7 @@ dependencies = [
  "byteorder",
  "fluentbase-codec",
  "hashbrown 0.15.2",
+ "lazy_static",
  "revm-primitives",
  "rwasm",
  "serde",
@@ -3687,16 +3687,6 @@ checksum = "505d1856a39b200489082f90d897c3f07c455563880bc5952e38eabf731c83b6"
 dependencies = [
  "digest 0.10.7",
  "sha3-asm",
-]
-
-[[package]]
-name = "keccak-hash"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b286e6b663fb926e1eeb68528e69cb70ed46c6d65871a21b2215ae8154c6d3c"
-dependencies = [
- "primitive-types 0.12.2",
- "tiny-keccak",
 ]
 
 [[package]]
@@ -5973,7 +5963,7 @@ dependencies = [
  "hex",
  "hex-literal 0.4.1",
  "itertools 0.10.5",
- "keccak-hash 0.11.0",
+ "keccak-hash",
  "lazy_static",
  "num-traits",
  "rand",

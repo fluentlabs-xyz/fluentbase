@@ -60,6 +60,7 @@ fn read_protected_preimage(sdk: &impl SharedAPI) -> Bytes {
     let code_hash: B256 = sdk
         .delegated_storage(&bytecode_address, &EVM_CODE_HASH_SLOT.into())
         .data
+        .0
         .into();
     debug_log!("read_protected_preimage.code_hash: {:?}", &code_hash);
     sdk.preimage(&code_hash)

@@ -9,9 +9,11 @@ mod address;
 mod allocator;
 mod bytecode_type;
 mod context;
+pub mod evm;
 mod exit_code;
 mod genesis;
 mod linker;
+pub mod native_api;
 mod preimage;
 mod rwasm;
 mod sdk;
@@ -37,10 +39,8 @@ pub use syscall::*;
 
 pub const KECCAK_EMPTY: B256 =
     b256!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
-pub const POSEIDON_EMPTY: F254 =
+pub const POSEIDON_EMPTY: B256 =
     b256!("2098f5fb9e239eab3ceac3f27b81e481dc3124d55ffed523a839ee8446b64864");
-
-pub type F254 = B256;
 
 /// keccak256 of "Transfer(address,address,uint256)" that notifies
 /// about native transfer of eth

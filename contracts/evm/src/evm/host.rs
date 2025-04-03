@@ -1,0 +1,227 @@
+use crate::{unwrap_syscall, utils::instruction_result_from_exit_code};
+use alloc::vec::Vec;
+use core::cmp::min;
+use fluentbase_sdk::{
+    calc_preimage_address,
+    debug_log,
+    BlockContextReader,
+    SharedAPI,
+    EVM_BASE_SPEC,
+    EVM_CODE_HASH_SLOT,
+    KECCAK_EMPTY,
+};
+use revm_interpreter::{
+    as_u64_saturated,
+    as_usize_or_fail,
+    as_usize_saturated,
+    gas,
+    gas::warm_cold_cost,
+    gas_or_fail,
+    interpreter::Interpreter,
+    pop,
+    pop_address,
+    pop_top,
+    primitives::{Bytes, B256, BLOCK_HASH_HISTORY, U256},
+    push,
+    push_b256,
+    refund,
+    require_non_staticcall,
+    resize_memory,
+    InstructionResult,
+};
+
+pub fn balance<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    pop_address!(interpreter, address);
+    let result = unwrap_syscall!(interpreter, sdk.balance(&address));
+    push!(interpreter, result);
+}
+
+/// EIP-1884: Repricing for trie-size-dependent opcodes
+pub fn selfbalance<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    let result = unwrap_syscall!(interpreter, sdk.self_balance());
+    push!(interpreter, result);
+}
+
+pub fn extcodesize<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    pop_address!(interpreter, address);
+    let delegated_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+    assert!(
+        !delegated_code_hash.status.is_error(),
+        "evm: delegated storage failed with error ({:?})",
+        delegated_code_hash.status
+    );
+    let is_delegated = delegated_code_hash.status.is_ok();
+    let (delegated_code_hash, is_cold_accessed, _is_empty) = delegated_code_hash.data;
+    let preimage_address = if is_delegated {
+        calc_preimage_address(&delegated_code_hash.into())
+    } else {
+        address
+    };
+    let code_size = sdk.code_size(&preimage_address);
+    if !code_size.status.is_ok() {
+        interpreter.instruction_result = instruction_result_from_exit_code(code_size.status);
+        return;
+    }
+    gas!(interpreter, warm_cold_cost(is_cold_accessed));
+    push!(interpreter, U256::from(code_size.data));
+}
+
+/// EIP-1052: EXTCODEHASH opcode
+pub fn extcodehash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    pop_address!(interpreter, address);
+    debug_log!("extcodehash address={}", address);
+    let delegated_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+    assert!(
+        !delegated_code_hash.status.is_error(),
+        "evm: delegated storage failed with error ({:?})",
+        delegated_code_hash.status
+    );
+    let is_delegated = delegated_code_hash.status.is_ok();
+    let (mut delegated_code_hash, is_cold_accessed, is_empty) = delegated_code_hash.data;
+    // for delegated accounts, we can instantly return code hash
+    // since the account is managed by the same runtime and store EVM code hash in this field
+    if is_delegated {
+        // if delegated code hash is zero, then it might be a contract deployment stage,
+        // for non-empty account return KECCAK_EMPTY
+        if delegated_code_hash == U256::ZERO && !is_empty {
+            delegated_code_hash = Into::<U256>::into(KECCAK_EMPTY);
+        }
+        // charge the gas according to the cold/warm access to the account
+        gas!(interpreter, warm_cold_cost(is_cold_accessed));
+        // there is no need to request code hash for a delegated account
+        // since we already know the result and can safely push it
+        push!(interpreter, delegated_code_hash);
+        return;
+    };
+    let code_hash = sdk.code_hash(&address);
+    if !code_hash.status.is_ok() {
+        interpreter.instruction_result = instruction_result_from_exit_code(code_hash.status);
+        return;
+    }
+    gas!(interpreter, warm_cold_cost(is_cold_accessed));
+    push_b256!(interpreter, code_hash.data);
+}
+
+pub fn extcodecopy<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    pop_address!(interpreter, address);
+    pop!(interpreter, memory_offset, code_offset, len_u256);
+    debug_log!(
+        "EXTCODECOPY: address={} memory_offset={} code_offset={} len_u256={}",
+        address,
+        memory_offset,
+        code_offset,
+        len_u256
+    );
+
+    let delegated_code_hash = sdk.delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+    assert!(
+        !delegated_code_hash.status.is_error(),
+        "evm: delegated storage failed with error ({:?})",
+        delegated_code_hash.status
+    );
+    let is_delegated = delegated_code_hash.status.is_ok();
+    let (delegated_code_hash, is_cold_accessed, _) = delegated_code_hash.data;
+
+    let code_length = as_usize_or_fail!(interpreter, len_u256);
+    gas_or_fail!(
+        interpreter,
+        gas::extcodecopy_cost(EVM_BASE_SPEC, code_length as u64, is_cold_accessed)
+    );
+    if code_length == 0 {
+        return;
+    }
+
+    let memory_offset = as_usize_or_fail!(interpreter, memory_offset);
+    let code_offset = as_usize_saturated!(code_offset);
+
+    let preimage_address = if is_delegated {
+        calc_preimage_address(&delegated_code_hash.into())
+    } else {
+        address
+    };
+    let code = unwrap_syscall!(@gasless interpreter, sdk.code_copy(&preimage_address, code_offset as u64, code_length as u64));
+    let code_offset = min(code_offset, code.len());
+    resize_memory!(interpreter, memory_offset, code_length as usize);
+    // Note: this can't panic because we resized memory to fit.
+    interpreter
+        .shared_memory
+        .set_data(memory_offset, code_offset, code_length, &code);
+}
+
+pub fn blockhash<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    gas!(interpreter, gas::BLOCKHASH);
+    pop_top!(interpreter, number);
+    let number_u64 = as_u64_saturated!(number);
+    let block_number = sdk.context().block_number();
+    let hash = match block_number.checked_sub(number_u64) {
+        Some(diff) => {
+            if diff > 0 && diff <= BLOCK_HASH_HISTORY {
+                todo!("implement block hash history")
+            } else {
+                B256::ZERO
+            }
+        }
+        None => B256::ZERO,
+    };
+    *number = U256::from_be_bytes(hash.0);
+}
+
+pub fn sload<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    pop_top!(interpreter, index);
+    let result = unwrap_syscall!(interpreter, sdk.storage(&index));
+    *index = result;
+}
+
+pub fn sstore<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    require_non_staticcall!(interpreter);
+    pop!(interpreter, index, value);
+    // TODO(dmitry123): "try to avoid syncing gas before every state access"
+    sdk.sync_evm_gas(interpreter.gas.remaining(), interpreter.gas.refunded());
+    unwrap_syscall!(interpreter, sdk.write_storage(index, value));
+}
+
+/// EIP-1153: Transient storage opcodes
+/// Store value to transient storage
+pub fn tstore<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    require_non_staticcall!(interpreter);
+    pop!(interpreter, index, value);
+    unwrap_syscall!(interpreter, sdk.write_transient_storage(index, value));
+}
+
+/// EIP-1153: Transient storage opcodes
+/// Load value from transient storage
+pub fn tload<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    pop_top!(interpreter, index);
+    let result = unwrap_syscall!(interpreter, sdk.transient_storage(index));
+    *index = result;
+}
+
+pub fn log<const N: usize, SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    require_non_staticcall!(interpreter);
+    pop!(interpreter, offset, len);
+    let len = as_usize_or_fail!(interpreter, len);
+    let data = if len != 0 {
+        let offset = as_usize_or_fail!(interpreter, offset);
+        resize_memory!(interpreter, offset, len);
+        Bytes::copy_from_slice(interpreter.shared_memory.slice(offset, len))
+    } else {
+        Bytes::new()
+    };
+    if interpreter.stack.len() < N {
+        interpreter.instruction_result = InstructionResult::StackUnderflow;
+        return;
+    }
+    let mut topics = Vec::with_capacity(N);
+    for _ in 0..N {
+        // SAFETY: stack bounds already checked few lines above
+        topics.push(B256::from(unsafe { interpreter.stack.pop_unsafe() }));
+    }
+    unwrap_syscall!(interpreter, sdk.emit_log(data.clone(), &topics));
+}
+
+pub fn selfdestruct<SDK: SharedAPI>(interpreter: &mut Interpreter, sdk: &mut SDK) {
+    require_non_staticcall!(interpreter);
+    pop_address!(interpreter, target);
+    unwrap_syscall!(interpreter, sdk.destroy_account(target));
+    interpreter.instruction_result = InstructionResult::SelfDestruct;
+}

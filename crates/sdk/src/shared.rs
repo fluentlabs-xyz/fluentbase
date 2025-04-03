@@ -2,7 +2,6 @@ mod context;
 
 use crate::{
     byteorder::{ByteOrder, LittleEndian},
-    evm::{write_evm_exit_message, write_evm_panic_message},
     shared::context::SharedContextReaderImpl,
 };
 use alloc::vec;
@@ -10,10 +9,12 @@ use core::cell::RefCell;
 use fluentbase_codec::{CompactABI, FluentEncoder};
 use fluentbase_types::{
     alloc_slice,
+    native_api::NativeAPI,
     Address,
     Bytes,
     ExitCode,
-    NativeAPI,
+    IsAccountEmpty,
+    IsColdAccess,
     SharedAPI,
     SharedContextInputV1,
     SharedContextReader,
@@ -157,29 +158,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.write(output);
     }
 
-    fn evm_exit(&self, exit_code: i32) -> ! {
-        // write an EVM-compatible exit message (only if exit code is not zero)
-        if exit_code != 0 {
-            write_evm_exit_message(&self.native_sdk, exit_code);
-        }
-        // exit with the exit code specified
-        self.native_sdk.exit(if exit_code != 0 {
-            ExitCode::Panic as i32
-        } else {
-            ExitCode::Ok as i32
-        })
-    }
-
-    fn exit(&self, exit_code: i32) -> ! {
-        assert!(exit_code <= 0, "exit code must be non-positive");
-        self.native_sdk.exit(exit_code)
-    }
-
-    fn evm_panic(&self, panic_message: &str) -> ! {
-        // write an EVM-compatible panic message
-        write_evm_panic_message(&self.native_sdk, panic_message);
-        // exit with panic exit code (-71 is a WASMI constant, we use the same)
-        self.native_sdk.exit(ExitCode::Panic as i32)
+    fn exit(&self, exit_code: ExitCode) -> ! {
+        self.native_sdk.exit(exit_code.into_i32())
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
@@ -211,19 +191,30 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
-    fn delegated_storage(&self, address: &Address, slot: &U256) -> SyscallResult<U256> {
+    fn delegated_storage(
+        &self,
+        address: &Address,
+        slot: &U256,
+    ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)> {
         let mut input = [0u8; 20 + 32];
         input[..20].copy_from_slice(address.as_slice());
         input[20..].copy_from_slice(slot.as_le_slice());
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk
                 .exec(SYSCALL_ID_DELEGATED_STORAGE, &input, None, STATE_MAIN);
-        let mut output = [0u8; U256::BYTES];
-        if SyscallResult::is_ok(exit_code) {
+        let mut output = [0u8; U256::BYTES + 1 + 1];
+        if !SyscallResult::is_err(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
         };
-        let value = U256::from_le_slice(&output);
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+        let value = U256::from_le_slice(&output[..32]);
+        let is_cold_access = output[32] != 0x0;
+        let is_empty = output[33] != 0x0;
+        SyscallResult::new(
+            (value, is_cold_access, is_empty),
+            fuel_consumed,
+            fuel_refunded,
+            exit_code,
+        )
     }
 
     fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()> {

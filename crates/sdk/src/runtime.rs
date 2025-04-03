@@ -11,8 +11,6 @@ use fluentbase_runtime::{
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
         output_size::SyscallOutputSize,
-        poseidon::SyscallPoseidon,
-        poseidon_hash::SyscallPoseidonHash,
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
@@ -23,7 +21,7 @@ use fluentbase_runtime::{
     },
     RuntimeContext,
 };
-use fluentbase_types::{BytecodeOrHash, Bytes, NativeAPI, UnwrapExitCode, B256, F254};
+use fluentbase_types::{native_api::NativeAPI, BytecodeOrHash, Bytes, UnwrapExitCode, B256};
 use std::{cell::RefCell, mem::take};
 
 #[derive(Default, Clone)]
@@ -46,14 +44,6 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn sha256(_data: &[u8]) -> B256 {
         todo!("not implemented")
-    }
-
-    fn poseidon(data: &[u8]) -> F254 {
-        SyscallPoseidon::fn_impl(data)
-    }
-
-    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
-        SyscallPoseidonHash::fn_impl(fa, fb, fd).unwrap_exit_code()
     }
 
     fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {

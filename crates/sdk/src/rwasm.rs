@@ -22,7 +22,7 @@ pub use crate::{
     },
     B256,
 };
-use fluentbase_types::{BytecodeOrHash, NativeAPI, F254};
+use fluentbase_types::{native_api::NativeAPI, BytecodeOrHash};
 
 #[derive(Default)]
 pub struct RwasmContext;
@@ -44,33 +44,6 @@ impl NativeAPI for RwasmContext {
     #[inline(always)]
     fn sha256(_data: &[u8]) -> B256 {
         todo!("not implemented")
-    }
-
-    #[inline(always)]
-    fn poseidon(data: &[u8]) -> F254 {
-        unsafe {
-            let mut res = B256::ZERO;
-            _poseidon(
-                data.as_ptr(),
-                data.len() as u32,
-                res.as_mut_slice().as_mut_ptr(),
-            );
-            res
-        }
-    }
-
-    #[inline(always)]
-    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
-        let mut res = B256::ZERO;
-        unsafe {
-            _poseidon_hash(
-                fa.as_ptr(),
-                fb.as_ptr(),
-                fd.as_ptr(),
-                res.as_mut_slice().as_mut_ptr(),
-            )
-        }
-        res
     }
 
     #[inline(always)]
