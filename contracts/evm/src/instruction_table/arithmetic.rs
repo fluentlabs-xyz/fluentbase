@@ -1,74 +1,75 @@
-use fluentbase_sdk::{SharedAPI, EVM_BASE_SPEC};
-use revm_interpreter::{
+use crate::{
+    evm::{
+        i256::{i256_div, i256_mod},
+        EVM,
+    },
     gas,
     gas_or_fail,
-    instructions::i256::{i256_div, i256_mod},
     pop_top,
-    primitives::U256,
-    Interpreter,
 };
+use fluentbase_sdk::{SharedAPI, U256};
 
-pub fn add<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn add<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     *op2 = op1.wrapping_add(*op2);
 }
 
-pub fn mul<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::LOW);
-    pop_top!(interpreter, op1, op2);
+pub fn mul<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::LOW);
+    pop_top!(evm, op1, op2);
     *op2 = op1.wrapping_mul(*op2);
 }
 
-pub fn sub<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn sub<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     *op2 = op1.wrapping_sub(*op2);
 }
 
-pub fn div<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::LOW);
-    pop_top!(interpreter, op1, op2);
+pub fn div<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::LOW);
+    pop_top!(evm, op1, op2);
     if !op2.is_zero() {
         *op2 = op1.wrapping_div(*op2);
     }
 }
 
-pub fn sdiv<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::LOW);
-    pop_top!(interpreter, op1, op2);
+pub fn sdiv<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::LOW);
+    pop_top!(evm, op1, op2);
     *op2 = i256_div(op1, *op2);
 }
 
-pub fn rem<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::LOW);
-    pop_top!(interpreter, op1, op2);
+pub fn rem<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::LOW);
+    pop_top!(evm, op1, op2);
     if !op2.is_zero() {
         *op2 = op1.wrapping_rem(*op2);
     }
 }
 
-pub fn smod<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::LOW);
-    pop_top!(interpreter, op1, op2);
+pub fn smod<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::LOW);
+    pop_top!(evm, op1, op2);
     *op2 = i256_mod(op1, *op2)
 }
 
-pub fn addmod<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::MID);
-    pop_top!(interpreter, op1, op2, op3);
+pub fn addmod<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::MID);
+    pop_top!(evm, op1, op2, op3);
     *op3 = op1.add_mod(op2, *op3)
 }
 
-pub fn mulmod<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::MID);
-    pop_top!(interpreter, op1, op2, op3);
+pub fn mulmod<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::MID);
+    pop_top!(evm, op1, op2, op3);
     *op3 = op1.mul_mod(op2, *op3)
 }
 
-pub fn exp<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    pop_top!(interpreter, op1, op2);
-    gas_or_fail!(interpreter, gas::exp_cost(EVM_BASE_SPEC, *op2));
+pub fn exp<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    pop_top!(evm, op1, op2);
+    gas_or_fail!(evm, gas::exp_cost(*op2));
     *op2 = op1.pow(*op2);
 }
 
@@ -89,9 +90,9 @@ pub fn exp<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
 /// `y | !mask` where `|` is the bitwise `OR` and `!` is bitwise negation. Similarly, if
 /// `b == 0` then the yellow paper says the output should start with all zeros, then end with
 /// bits from `b`; this is equal to `y & mask` where `&` is bitwise `AND`.
-pub fn signextend<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::LOW);
-    pop_top!(interpreter, ext, x);
+pub fn signextend<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::LOW);
+    pop_top!(evm, ext, x);
     // For 31 we also don't need to do anything.
     if ext < U256::from(31) {
         let ext = ext.as_limbs()[0];

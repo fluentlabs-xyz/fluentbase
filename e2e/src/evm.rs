@@ -317,3 +317,25 @@ fn test_evm_balance() {
         U256::from_str_radix("999999999997000000", 10).unwrap()
     );
 }
+
+#[test]
+fn test_wasm_erc20() {
+    let mut ctx = EvmTestingContext::default();
+    const OWNER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(
+        OWNER_ADDRESS,
+        include_bytes!("../../examples/erc20/lib.wasm").into(),
+    );
+    let transfer_coin = |ctx: &mut EvmTestingContext| {
+        let result = ctx.call_evm_tx(
+            OWNER_ADDRESS,
+            contract_address,
+            hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into(),
+            None,
+            None,
+        );
+        assert!(result.is_success());
+        println!("{:?}", result);
+    };
+    transfer_coin(&mut ctx);
+}
