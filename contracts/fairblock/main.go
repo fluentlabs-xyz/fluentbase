@@ -62,11 +62,11 @@ func main() {
 		return
 	}
 
-	chiperData := C.GoBytes(unsafe.Pointer(&input[headerLen+pkLen+skLen]), C.int(inputSize)-C.int(pkLen)-C.int(skLen)-C.int(headerLen))
+	cipherData := C.GoBytes(unsafe.Pointer(&input[headerLen+pkLen+skLen]), C.int(inputSize)-C.int(pkLen)-C.int(skLen)-C.int(headerLen))
 
 	var plainData bytes.Buffer
 
-	err = enc.Decrypt(pk, sk, &plainData, bytes.NewReader(chiperData))
+	err = enc.Decrypt(pk, sk, &plainData, bytes.NewReader(cipherData))
 	if err != nil {
 		print_err(err)
 		return
