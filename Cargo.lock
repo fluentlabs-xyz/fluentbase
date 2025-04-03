@@ -916,6 +916,8 @@ checksum = "89e25b6adfb930f02d1981565a6e5d9c547ac15a96606256d3b59040e5cd4ca3"
 [[package]]
 name = "bincode"
 version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
 dependencies = [
  "serde",
 ]
@@ -923,8 +925,7 @@ dependencies = [
 [[package]]
 name = "bincode"
 version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+source = "git+https://github.com/fluentlabs-xyz/bincode?branch=feat%2Fsvm-v1.3.3#5410841d8c9cd33bdde1837a36bf2e9e3a82475b"
 dependencies = [
  "serde",
 ]
@@ -1040,6 +1041,7 @@ dependencies = [
 [[package]]
 name = "borsh"
 version = "0.9.3"
+source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.9.3#4f4dac5b4dc994f3fc37354f2c546901ca70ed28"
 dependencies = [
  "borsh-derive 0.9.3",
  "hashbrown 0.15.2",
@@ -1048,6 +1050,7 @@ dependencies = [
 [[package]]
 name = "borsh"
 version = "0.10.3"
+source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.10.3#ae520a78ef7bead149750c94e53a59a99d3b2151"
 dependencies = [
  "borsh-derive 0.10.3",
  "hashbrown 0.15.2",
@@ -1056,6 +1059,7 @@ dependencies = [
 [[package]]
 name = "borsh"
 version = "1.2.1"
+source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-borsh-derive-v1.2.1#b2c83629add52f852967469c65ac1b0375574a0e"
 dependencies = [
  "borsh-derive 1.2.1",
  "cfg_aliases",
@@ -1065,6 +1069,7 @@ dependencies = [
 [[package]]
 name = "borsh-derive"
 version = "0.9.3"
+source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.9.3#4f4dac5b4dc994f3fc37354f2c546901ca70ed28"
 dependencies = [
  "borsh-derive-internal 0.9.3",
  "borsh-schema-derive-internal 0.9.3",
@@ -1076,6 +1081,7 @@ dependencies = [
 [[package]]
 name = "borsh-derive"
 version = "0.10.3"
+source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.10.3#ae520a78ef7bead149750c94e53a59a99d3b2151"
 dependencies = [
  "borsh-derive-internal 0.10.3",
  "borsh-schema-derive-internal 0.10.3",
@@ -1087,6 +1093,7 @@ dependencies = [
 [[package]]
 name = "borsh-derive"
 version = "1.2.1"
+source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-borsh-derive-v1.2.1#b2c83629add52f852967469c65ac1b0375574a0e"
 dependencies = [
  "once_cell",
  "proc-macro-crate",
@@ -1099,6 +1106,7 @@ dependencies = [
 [[package]]
 name = "borsh-derive-internal"
 version = "0.9.3"
+source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.9.3#4f4dac5b4dc994f3fc37354f2c546901ca70ed28"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1108,6 +1116,7 @@ dependencies = [
 [[package]]
 name = "borsh-derive-internal"
 version = "0.10.3"
+source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.10.3#ae520a78ef7bead149750c94e53a59a99d3b2151"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1117,6 +1126,7 @@ dependencies = [
 [[package]]
 name = "borsh-schema-derive-internal"
 version = "0.9.3"
+source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.9.3#4f4dac5b4dc994f3fc37354f2c546901ca70ed28"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1126,6 +1136,7 @@ dependencies = [
 [[package]]
 name = "borsh-schema-derive-internal"
 version = "0.10.3"
+source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.10.3#ae520a78ef7bead149750c94e53a59a99d3b2151"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1156,6 +1167,7 @@ checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 [[package]]
 name = "bv"
 version = "0.11.1"
+source = "git+https://github.com/fluentlabs-xyz/bv-rs?branch=feat%2Fsvm-0.11.1#f8ce6481356162e86b2daf9860077f737290a06c"
 dependencies = [
  "feature-probe",
  "serde",
@@ -1351,6 +1363,7 @@ checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 [[package]]
 name = "combine"
 version = "3.8.1"
+source = "git+https://github.com/fluentlabs-xyz/combine?branch=feat%2Fsvm-3.8.1#b7400760f97c381a59d55fce59bbf6461e748820"
 dependencies = [
  "ascii",
  "byteorder",
@@ -2224,7 +2237,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "casey",
- "fluentbase-codec-derive",
+ "fluentbase-codec-derive 0.1.0",
  "hashbrown 0.15.2",
  "hex",
  "hex-literal 0.4.1",
@@ -2232,6 +2245,21 @@ dependencies = [
  "serde",
  "strum 0.26.3",
  "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "fluentbase-codec"
+version = "0.1.0"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm#dbd6de0552d5ac2f8d7e7b80ce7db1b1715ca7ad"
+dependencies = [
+ "alloy-primitives",
+ "byteorder",
+ "bytes",
+ "casey",
+ "fluentbase-codec-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
+ "hashbrown 0.15.2",
+ "paste",
+ "serde",
 ]
 
 [[package]]
@@ -2247,11 +2275,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-codec-derive"
+version = "0.1.0"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm#dbd6de0552d5ac2f8d7e7b80ce7db1b1715ca7ad"
+dependencies = [
+ "convert_case",
+ "crypto-hashes",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "fluentbase-contracts-blake2f"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "revm-precompile",
 ]
 
@@ -2260,7 +2301,7 @@ name = "fluentbase-contracts-bls12381"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "revm-precompile",
 ]
 
@@ -2269,7 +2310,7 @@ name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "revm-precompile",
 ]
 
@@ -2278,7 +2319,7 @@ name = "fluentbase-contracts-ecrecover"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "revm-precompile",
 ]
 
@@ -2287,7 +2328,7 @@ name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "revm-interpreter",
 ]
 
@@ -2303,7 +2344,7 @@ name = "fluentbase-contracts-identity"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "revm-precompile",
 ]
 
@@ -2312,7 +2353,7 @@ name = "fluentbase-contracts-kzg"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "revm-precompile",
 ]
 
@@ -2321,7 +2362,7 @@ name = "fluentbase-contracts-modexp"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "revm-precompile",
 ]
 
@@ -2330,7 +2371,7 @@ name = "fluentbase-contracts-multicall"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
 ]
 
 [[package]]
@@ -2342,7 +2383,7 @@ dependencies = [
  "der",
  "ecdsa",
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "hex",
  "p384",
  "x509-cert",
@@ -2353,7 +2394,7 @@ name = "fluentbase-contracts-ripemd160"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "revm-precompile",
 ]
 
@@ -2362,7 +2403,7 @@ name = "fluentbase-contracts-sha256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "revm-precompile",
 ]
 
@@ -2371,7 +2412,7 @@ name = "fluentbase-contracts-svm"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "solana-ee-core",
 ]
 
@@ -2380,7 +2421,7 @@ name = "fluentbase-e2e"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
- "fluentbase-codec",
+ "fluentbase-codec 0.1.0",
  "fluentbase-contracts-nitro",
  "fluentbase-examples-abi-solidity",
  "fluentbase-examples-checkmate",
@@ -2397,8 +2438,8 @@ dependencies = [
  "fluentbase-examples-simple-storage",
  "fluentbase-examples-storage",
  "fluentbase-genesis",
- "fluentbase-runtime",
- "fluentbase-sdk",
+ "fluentbase-runtime 0.1.0",
+ "fluentbase-sdk 0.1.0",
  "hex",
  "hex-literal 0.4.1",
  "paste",
@@ -2412,7 +2453,7 @@ name = "fluentbase-examples-abi-solidity"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "hex-literal 0.4.1",
 ]
 
@@ -2421,7 +2462,7 @@ name = "fluentbase-examples-checkmate"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "shakmaty",
 ]
 
@@ -2430,7 +2471,7 @@ name = "fluentbase-examples-client-solidity"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "hex",
 ]
 
@@ -2439,7 +2480,7 @@ name = "fluentbase-examples-constructor-params"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
 ]
 
 [[package]]
@@ -2448,7 +2489,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "hex-literal 0.4.1",
  "serial_test",
 ]
@@ -2458,7 +2499,7 @@ name = "fluentbase-examples-greeting"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
 ]
 
 [[package]]
@@ -2466,7 +2507,7 @@ name = "fluentbase-examples-json"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "serde",
  "serde-json-core",
 ]
@@ -2476,7 +2517,7 @@ name = "fluentbase-examples-keccak256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "hex",
  "hex-literal 0.4.1",
  "tiny-keccak",
@@ -2487,7 +2528,7 @@ name = "fluentbase-examples-panic"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
 ]
 
 [[package]]
@@ -2496,7 +2537,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "hex",
 ]
 
@@ -2505,7 +2546,7 @@ name = "fluentbase-examples-rwasm"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "rwasm",
 ]
 
@@ -2514,7 +2555,7 @@ name = "fluentbase-examples-secp256k1"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "hex",
  "hex-literal 1.0.0",
  "libsecp256k1 0.7.2",
@@ -2527,7 +2568,7 @@ name = "fluentbase-examples-simple-storage"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "hex-literal 0.4.1",
 ]
 
@@ -2536,7 +2577,7 @@ name = "fluentbase-examples-storage"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0",
  "hex-literal 0.4.1",
  "serial_test",
 ]
@@ -2551,7 +2592,7 @@ dependencies = [
  "fluentbase-contracts-fairblock",
  "fluentbase-contracts-multicall",
  "fluentbase-examples-greeting",
- "fluentbase-types",
+ "fluentbase-types 0.1.0",
  "serde",
  "serde_json",
 ]
@@ -2565,13 +2606,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-poseidon"
+version = "0.1.0"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm#dbd6de0552d5ac2f8d7e7b80ce7db1b1715ca7ad"
+dependencies = [
+ "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
+ "poseidon",
+]
+
+[[package]]
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
- "fluentbase-codec",
- "fluentbase-poseidon",
- "fluentbase-rwasm",
- "fluentbase-types",
+ "fluentbase-codec 0.1.0",
+ "fluentbase-poseidon 0.1.0",
+ "fluentbase-rwasm 0.1.0",
+ "fluentbase-types 0.1.0",
  "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
  "hashbrown 0.15.2",
  "hex",
@@ -2587,8 +2637,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-runtime"
+version = "0.1.0"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm#dbd6de0552d5ac2f8d7e7b80ce7db1b1715ca7ad"
+dependencies = [
+ "fluentbase-codec 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
+ "fluentbase-poseidon 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
+ "fluentbase-rwasm 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
+ "fluentbase-types 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
+ "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
+ "hashbrown 0.15.2",
+ "k256",
+ "keccak-hash",
+ "num",
+ "sp1-curves",
+ "sp1-primitives",
+ "tiny-keccak",
+]
+
+[[package]]
 name = "fluentbase-rwasm"
 version = "0.1.0"
+dependencies = [
+ "hashbrown 0.15.2",
+ "rwasm",
+ "tiny-keccak",
+]
+
+[[package]]
+name = "fluentbase-rwasm"
+version = "0.1.0"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm#dbd6de0552d5ac2f8d7e7b80ce7db1b1715ca7ad"
 dependencies = [
  "hashbrown 0.15.2",
  "rwasm",
@@ -2601,7 +2680,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "byteorder",
- "fluentbase-rwasm",
+ "fluentbase-rwasm 0.1.0",
  "rwasm",
  "serial_test",
  "wast 62.0.1",
@@ -2612,10 +2691,22 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
- "fluentbase-codec",
- "fluentbase-runtime",
- "fluentbase-sdk-derive",
- "fluentbase-types",
+ "fluentbase-codec 0.1.0",
+ "fluentbase-runtime 0.1.0",
+ "fluentbase-sdk-derive 0.1.0",
+ "fluentbase-types 0.1.0",
+ "hashbrown 0.15.2",
+]
+
+[[package]]
+name = "fluentbase-sdk"
+version = "0.1.0"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm#dbd6de0552d5ac2f8d7e7b80ce7db1b1715ca7ad"
+dependencies = [
+ "fluentbase-codec 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
+ "fluentbase-runtime 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
+ "fluentbase-sdk-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
+ "fluentbase-types 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
  "hashbrown 0.15.2",
 ]
 
@@ -2624,7 +2715,19 @@ name = "fluentbase-sdk-derive"
 version = "0.1.0"
 dependencies = [
  "crypto-hashes",
- "fluentbase-sdk-derive-core",
+ "fluentbase-sdk-derive-core 0.0.0",
+ "proc-macro-error",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "fluentbase-sdk-derive"
+version = "0.1.0"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm#dbd6de0552d5ac2f8d7e7b80ce7db1b1715ca7ad"
+dependencies = [
+ "crypto-hashes",
+ "fluentbase-sdk-derive-core 0.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
  "proc-macro-error",
  "quote",
  "syn 2.0.100",
@@ -2638,7 +2741,25 @@ dependencies = [
  "convert_case",
  "crypto-hashes",
  "darling",
- "fluentbase-codec",
+ "fluentbase-codec 0.1.0",
+ "hex",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+ "syn-solidity 0.7.7",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "fluentbase-sdk-derive-core"
+version = "0.0.0"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm#dbd6de0552d5ac2f8d7e7b80ce7db1b1715ca7ad"
+dependencies = [
+ "convert_case",
+ "crypto-hashes",
+ "darling",
+ "fluentbase-codec 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
  "hex",
  "proc-macro2",
  "quote",
@@ -2656,12 +2777,29 @@ dependencies = [
  "alloy-rlp",
  "auto_impl",
  "byteorder",
- "fluentbase-codec",
+ "fluentbase-codec 0.1.0",
  "hashbrown 0.15.2",
  "lazy_static",
- "revm-primitives",
+ "revm-primitives 15.1.0",
  "rwasm",
  "serde",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "fluentbase-types"
+version = "0.1.0"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm#dbd6de0552d5ac2f8d7e7b80ce7db1b1715ca7ad"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "auto_impl",
+ "byteorder",
+ "fluentbase-codec 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
+ "hashbrown 0.15.2",
+ "lazy_static",
+ "revm-primitives 15.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
+ "rwasm",
  "strum_macros 0.26.4",
 ]
 
@@ -3748,15 +3886,20 @@ checksum = "8355be11b20d696c8f18f6cc018c4e372165b1fa8126cef092399c9951984ffa"
 [[package]]
 name = "libsecp256k1"
 version = "0.7.0"
+source = "git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0#7058a6a560192cf0c1c630327de38178fbe81bbe"
 dependencies = [
  "arrayref",
  "base64 0.13.1",
  "digest 0.9.0",
- "libsecp256k1-core 0.3.0",
- "libsecp256k1-gen-ecmult 0.3.0",
- "libsecp256k1-gen-genmult 0.3.0",
+ "hmac-drbg",
+ "lazy_static",
+ "libsecp256k1-core 0.3.0 (git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0)",
+ "libsecp256k1-gen-ecmult 0.3.0 (git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0)",
+ "libsecp256k1-gen-genmult 0.3.0 (git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0)",
  "rand",
  "serde",
+ "sha2 0.9.9",
+ "typenum",
 ]
 
 [[package]]
@@ -3781,15 +3924,6 @@ dependencies = [
 [[package]]
 name = "libsecp256k1-core"
 version = "0.3.0"
-dependencies = [
- "crunchy",
- "digest 0.9.0",
- "subtle 2.4.1",
-]
-
-[[package]]
-name = "libsecp256k1-core"
-version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5be9b9bb642d8522a44d533eab56c16c738301965504753b03ad1de3425d5451"
 dependencies = [
@@ -3799,10 +3933,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "libsecp256k1-gen-ecmult"
+name = "libsecp256k1-core"
 version = "0.3.0"
+source = "git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0#7058a6a560192cf0c1c630327de38178fbe81bbe"
 dependencies = [
- "libsecp256k1-core 0.3.0",
+ "crunchy",
+ "digest 0.9.0",
+ "subtle 2.4.1",
 ]
 
 [[package]]
@@ -3815,10 +3952,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "libsecp256k1-gen-genmult"
+name = "libsecp256k1-gen-ecmult"
 version = "0.3.0"
+source = "git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0#7058a6a560192cf0c1c630327de38178fbe81bbe"
 dependencies = [
- "libsecp256k1-core 0.3.0",
+ "libsecp256k1-core 0.3.0 (git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0)",
 ]
 
 [[package]]
@@ -3831,8 +3969,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsecp256k1-gen-genmult"
+version = "0.3.0"
+source = "git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0#7058a6a560192cf0c1c630327de38178fbe81bbe"
+dependencies = [
+ "libsecp256k1-core 0.3.0 (git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0)",
+]
+
+[[package]]
 name = "light-poseidon"
 version = "0.2.0"
+source = "git+https://github.com/fluentlabs-xyz/light-poseidon?branch=feat%2Fsvm-0.2.0#43b0d9caae01f007091338e86f798258dba8d594"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.4.2",
@@ -5137,8 +5284,8 @@ dependencies = [
  "ethers-contract",
  "ethers-core",
  "ethers-providers",
- "fluentbase-runtime",
- "fluentbase-sdk",
+ "fluentbase-runtime 0.1.0",
+ "fluentbase-sdk 0.1.0",
  "indicatif",
  "once_cell",
  "reqwest 0.12.15",
@@ -5155,12 +5302,12 @@ name = "revm-interpreter"
 version = "15.1.0"
 dependencies = [
  "bincode 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "fluentbase-types",
+ "fluentbase-types 0.1.0",
  "num-derive",
  "num-traits",
  "paste",
  "phf",
- "revm-primitives",
+ "revm-primitives 15.1.0",
  "serde",
  "serde_json",
  "walkdir",
@@ -5181,7 +5328,7 @@ dependencies = [
  "once_cell",
  "p256",
  "rand",
- "revm-primitives",
+ "revm-primitives 15.1.0",
  "ripemd",
  "rstest",
  "secp256k1",
@@ -5209,6 +5356,23 @@ dependencies = [
  "hex",
  "kzg-rs",
  "serde",
+]
+
+[[package]]
+name = "revm-primitives"
+version = "15.1.0"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm#dbd6de0552d5ac2f8d7e7b80ce7db1b1715ca7ad"
+dependencies = [
+ "alloy-eip2930",
+ "alloy-eip7702 0.5.1",
+ "alloy-primitives",
+ "auto_impl",
+ "bitflags 2.9.0",
+ "bitvec",
+ "cfg-if",
+ "dyn-clone",
+ "enumn",
+ "hex",
 ]
 
 [[package]]
@@ -5955,10 +6119,11 @@ dependencies = [
 [[package]]
 name = "solana-ee-core"
 version = "0.1.0"
+source = "git+https://github.com/fluentlabs-xyz/solana-ee?branch=feat%2Fsvm#833102caab4f5f0a4fa97c118a2597dfc9890220"
 dependencies = [
- "bincode 1.3.3",
+ "bincode 1.3.3 (git+https://github.com/fluentlabs-xyz/bincode?branch=feat%2Fsvm-v1.3.3)",
  "byteorder",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
  "hashbrown 0.15.2",
  "hex",
  "hex-literal 0.4.1",
@@ -5975,13 +6140,14 @@ dependencies = [
 [[package]]
 name = "solana-program"
 version = "1.18.26"
+source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#8fcce98c9facf0c55773b4a6eef7e092215c94c4"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.4.2",
  "ark-serialize 0.4.2",
  "base64 0.21.7",
- "bincode 1.3.3",
+ "bincode 1.3.3 (git+https://github.com/fluentlabs-xyz/bincode?branch=feat%2Fsvm-v1.3.3)",
  "bitflags 2.9.0",
  "blake3",
  "borsh 0.10.3",
@@ -5992,7 +6158,7 @@ dependencies = [
  "bytemuck",
  "cc",
  "curve25519-dalek",
- "fluentbase-sdk",
+ "fluentbase-sdk 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat%2Fsvm)",
  "getrandom 0.2.15",
  "hashbrown 0.15.2",
  "itertools 0.13.0",
@@ -6022,6 +6188,7 @@ dependencies = [
 [[package]]
 name = "solana-sdk-macro"
 version = "1.18.26"
+source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#8fcce98c9facf0c55773b4a6eef7e092215c94c4"
 dependencies = [
  "bs58",
  "proc-macro2",
@@ -6033,6 +6200,7 @@ dependencies = [
 [[package]]
 name = "solana_rbpf"
 version = "0.8.3"
+source = "git+https://github.com/fluentlabs-xyz/rbpf?branch=feat%2Fsvm#2de13c3a381fe8220c636677c5ace81060c0d217"
 dependencies = [
  "byteorder",
  "combine",
@@ -6268,6 +6436,7 @@ dependencies = [
 [[package]]
 name = "subtle"
 version = "2.4.1"
+source = "git+https://github.com/fluentlabs-xyz/subtle?branch=feat%2Fsvm-2.4.1#1c5526d6c5725b75a14de599899a386fcad7ebb6"
 
 [[package]]
 name = "subtle"
