@@ -1,5 +1,5 @@
 use alloy_primitives::{address, Address};
-use hashbrown::HashSet;
+use hashbrown::HashMap;
 use lazy_static::lazy_static;
 
 /// An address of EVM runtime that is used to execute EVM program
@@ -51,32 +51,32 @@ pub fn is_self_gas_management_contract(address: &Address) -> bool {
 }
 
 lazy_static! {
-    static ref SYSTEM_PRECOMPILES: HashSet<Address> = {
-        let mut m = HashSet::new();
-        m.insert(PRECOMPILE_EVM_RUNTIME);
-        m.insert(PRECOMPILE_FAIRBLOCK_VERIFIER);
-        m.insert(PRECOMPILE_SVM_RUNTIME);
-        m.insert(PRECOMPILE_WRAPPED_ETH);
-        m.insert(PRECOMPILE_WEBAUTHN_VERIFIER);
-        m.insert(PRECOMPILE_OAUTH2_VERIFIER);
-        m.insert(PRECOMPILE_NITRO_VERIFIER);
-        m.insert(PRECOMPILE_SECP256K1_RECOVER);
-        m.insert(PRECOMPILE_SHA256);
-        m.insert(PRECOMPILE_RIPEMD160);
-        m.insert(PRECOMPILE_IDENTITY);
-        m.insert(PRECOMPILE_BIG_MODEXP);
-        m.insert(PRECOMPILE_BN256_ADD);
-        m.insert(PRECOMPILE_BN256_MUL);
-        m.insert(PRECOMPILE_BN256_PAIR);
-        m.insert(PRECOMPILE_BLAKE2F);
-        m.insert(PRECOMPILE_KZG_POINT_EVALUATION);
-        m.insert(PRECOMPILE_BLS12_381_G1_ADD);
-        m.insert(PRECOMPILE_BLS12_381_G1_MSM);
-        m.insert(PRECOMPILE_BLS12_381_G2_ADD);
-        m.insert(PRECOMPILE_BLS12_381_G2_MSM);
-        m.insert(PRECOMPILE_BLS12_381_PAIRING);
-        m.insert(PRECOMPILE_BLS12_381_MAP_G1);
-        m.insert(PRECOMPILE_BLS12_381_MAP_G2);
+    static ref SYSTEM_PRECOMPILES: HashMap<Address, Vec<u8>> = {
+        let mut m = HashMap::new();
+        m.insert(PRECOMPILE_EVM_RUNTIME, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_FAIRBLOCK_VERIFIER, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_SVM_RUNTIME, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_WRAPPED_ETH, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_WEBAUTHN_VERIFIER, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_OAUTH2_VERIFIER, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_NITRO_VERIFIER, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_SECP256K1_RECOVER, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_SHA256, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_RIPEMD160, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_IDENTITY, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BIG_MODEXP, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BN256_ADD, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BN256_MUL, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BN256_PAIR, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BLAKE2F, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_KZG_POINT_EVALUATION, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BLS12_381_G1_ADD, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BLS12_381_G1_MSM, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BLS12_381_G2_ADD, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BLS12_381_G2_MSM, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BLS12_381_PAIRING, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BLS12_381_MAP_G1, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
+        m.insert(PRECOMPILE_BLS12_381_MAP_G2, Vec::from(include_bytes!("../../../contracts/evm/lib.wasm")));
         m
     };
 }
@@ -96,7 +96,11 @@ lazy_static! {
 /// * `false` - Otherwise.
 pub fn is_system_precompile(address: &Address) -> bool {
     // TODO(dmitry123): "add spec verification"
-    SYSTEM_PRECOMPILES.contains(address)
+    SYSTEM_PRECOMPILES.contains_key(address)
+}
+
+pub fn try_resolve_precompile_wasm_bytecode(address: &Address) -> Option<&[u8]> {
+    SYSTEM_PRECOMPILES.get(address).map(Vec::as_ref)
 }
 
 /// Checks if the function call should be redirected to a native precompiled contract.
@@ -120,3 +124,5 @@ pub fn try_resolve_precompile_account_from_input(input: &[u8]) -> Option<Address
         None
     }
 }
+
+

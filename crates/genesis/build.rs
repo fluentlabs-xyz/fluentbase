@@ -25,6 +25,7 @@ mod genesis_builder {
         PRECOMPILE_EVM_RUNTIME,
         PRECOMPILE_FAIRBLOCK_VERIFIER,
         PRECOMPILE_IDENTITY,
+        PRECOMPILE_NITRO_VERIFIER,
         PRECOMPILE_KZG_POINT_EVALUATION,
         PRECOMPILE_NATIVE_MULTICALL,
         PRECOMPILE_RIPEMD160,
@@ -125,6 +126,8 @@ mod genesis_builder {
         init_contract(alloc, "ripemd160", PRECOMPILE_RIPEMD160, WASM_RIPEMD160);
         const WASM_IDENTITY: &[u8] = include_bytes!("../../contracts/identity/lib.wasm");
         init_contract(alloc, "identity", PRECOMPILE_IDENTITY, WASM_IDENTITY);
+        const WASM_NITRO: &[u8] = include_bytes!("../../contracts/nitro/lib.wasm");
+        init_contract(alloc, "identity", PRECOMPILE_NITRO_VERIFIER, WASM_NITRO);
         const WASM_MODEXP: &[u8] = include_bytes!("../../contracts/modexp/lib.wasm");
         init_contract(alloc, "big_modexp", PRECOMPILE_BIG_MODEXP, WASM_MODEXP);
         const WASM_BN256: &[u8] = include_bytes!("../../contracts/bn256/lib.wasm");

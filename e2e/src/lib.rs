@@ -26,3 +26,5 @@ mod stateless;
 mod utils;
 #[cfg(test)]
 mod wasm;
+#[cfg(test)]
+mod precompile;

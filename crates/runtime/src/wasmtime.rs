@@ -425,7 +425,7 @@ fn handle_one_step(executor: AsyncExecutor) -> (i32, Vec<u8>) {
         }
     })
 }
-pub fn exec_wasmtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, Vec<u8>) {
+pub fn execute_wasmtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, Vec<u8>) {
     let executor = RUNTIME_STATE.with_borrow_mut(|runtime_state| {
         let module = runtime_state.init_module_cached(wasm_bytecode);
         AsyncExecutor::launch(module, input)
@@ -469,7 +469,7 @@ mod tests {
         let wasm_bytecode = include_bytes!("../../../contracts/identity/lib.wasm");
         let input = vec![1, 2, 3, 4, 5, 6];
         let (exit_code, output) =
-            exec_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
         assert_eq!(exit_code, 0);
         assert_eq!(input, output);
     }
@@ -483,7 +483,7 @@ mod tests {
         .into();
         let wasm_bytecode = include_bytes!("../../../contracts/identity/lib.wasm");
         let input = attestation_doc;
-        let (_, _) = exec_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+        let (_, _) = execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
         panic!("FINISHED Successfully");
     }
 
@@ -492,7 +492,7 @@ mod tests {
         let wasm_bytecode = include_bytes!("../../../examples/greeting/lib.wasm");
         let input = Vec::new();
         let (exit_code, output) =
-            exec_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
         assert_eq!(exit_code, 0);
         panic!("FINISHED");
     }
@@ -502,7 +502,7 @@ mod tests {
         let wasm_bytecode = include_bytes!("../../../examples/simple-storage/lib.wasm");
         let input = Vec::new();
         let (exit_code, output) =
-            exec_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
         dbg!(exit_code);
         let value = Vec::from(U256::from(2).to_le_bytes::<32>());
         let (exit_code, output) = resume_wasmtime(exit_code, value, 0, 0, 0, 0);
