@@ -25,13 +25,26 @@ mod genesis_builder {
         PRECOMPILE_EVM_RUNTIME,
         PRECOMPILE_FAIRBLOCK_VERIFIER,
         PRECOMPILE_IDENTITY,
-        PRECOMPILE_NITRO_VERIFIER,
         PRECOMPILE_KZG_POINT_EVALUATION,
         PRECOMPILE_NATIVE_MULTICALL,
+        PRECOMPILE_NITRO_VERIFIER,
         PRECOMPILE_RIPEMD160,
         PRECOMPILE_SECP256K1_RECOVER,
         PRECOMPILE_SHA256,
         U256,
+        WASM_BLAKE2F,
+        WASM_BLS12381,
+        WASM_BN256,
+        WASM_ECRECOVER,
+        WASM_EVM_RUNTIME,
+        WASM_FAIRBLOCK_VERIFIER,
+        WASM_IDENTITY,
+        WASM_KZG_POINT_EVALUATION,
+        WASM_MODEXP,
+        WASM_MULTICALL,
+        WASM_NITRO_VERIFIER,
+        WASM_RIPEMD160,
+        WASM_SHA256,
         WASM_SIG,
     };
     use std::{collections::BTreeMap, env, fs::File, io::Write, path::PathBuf};
@@ -113,30 +126,26 @@ mod genesis_builder {
         alloc: &mut BTreeMap<Address, GenesisAccount>,
         with_bls12: bool,
     ) {
-        const WASM_ECRECOVER: &[u8] = include_bytes!("../../contracts/ecrecover/lib.wasm");
         init_contract(
             alloc,
             "secp256k1_recover",
             PRECOMPILE_SECP256K1_RECOVER,
             WASM_ECRECOVER,
         );
-        const WASM_SHA256: &[u8] = include_bytes!("../../contracts/sha256/lib.wasm");
         init_contract(alloc, "sha256", PRECOMPILE_SHA256, WASM_SHA256);
-        const WASM_RIPEMD160: &[u8] = include_bytes!("../../contracts/ripemd160/lib.wasm");
         init_contract(alloc, "ripemd160", PRECOMPILE_RIPEMD160, WASM_RIPEMD160);
-        const WASM_IDENTITY: &[u8] = include_bytes!("../../contracts/identity/lib.wasm");
         init_contract(alloc, "identity", PRECOMPILE_IDENTITY, WASM_IDENTITY);
-        const WASM_NITRO: &[u8] = include_bytes!("../../contracts/nitro/lib.wasm");
-        init_contract(alloc, "identity", PRECOMPILE_NITRO_VERIFIER, WASM_NITRO);
-        const WASM_MODEXP: &[u8] = include_bytes!("../../contracts/modexp/lib.wasm");
+        init_contract(
+            alloc,
+            "nitro",
+            PRECOMPILE_NITRO_VERIFIER,
+            WASM_NITRO_VERIFIER,
+        );
         init_contract(alloc, "big_modexp", PRECOMPILE_BIG_MODEXP, WASM_MODEXP);
-        const WASM_BN256: &[u8] = include_bytes!("../../contracts/bn256/lib.wasm");
         init_contract(alloc, "bn256_add", PRECOMPILE_BN256_ADD, WASM_BN256);
         init_contract(alloc, "bn256_mul", PRECOMPILE_BN256_MUL, WASM_BN256);
         init_contract(alloc, "bn256_pairing", PRECOMPILE_BN256_PAIR, WASM_BN256);
-        const WASM_BLAKE2F: &[u8] = include_bytes!("../../contracts/blake2f/lib.wasm");
         init_contract(alloc, "blake2f", PRECOMPILE_BLAKE2F, WASM_BLAKE2F);
-        const WASM_KZG_POINT_EVALUATION: &[u8] = include_bytes!("../../contracts/kzg/lib.wasm");
         init_contract(
             alloc,
             "blake2f",
@@ -144,7 +153,6 @@ mod genesis_builder {
             WASM_KZG_POINT_EVALUATION,
         );
         if with_bls12 {
-            const WASM_BLS12381: &[u8] = include_bytes!("../../contracts/bls12381/lib.wasm");
             init_contract(
                 alloc,
                 "bls12381_g1_add",
@@ -221,22 +229,19 @@ mod genesis_builder {
 
         enable_evm_precompiled_contracts(&mut alloc, false);
 
-        const PRECOMPILE_MULTICALL: &[u8] = include_bytes!("../../contracts/multicall/lib.wasm");
         init_contract(
             &mut alloc,
             "multicall",
             PRECOMPILE_NATIVE_MULTICALL,
-            PRECOMPILE_MULTICALL,
+            WASM_MULTICALL,
         );
-        const PRECOMPILE_FAIRBLOCK: &[u8] = include_bytes!("../../contracts/fairblock/lib.wasm");
         init_contract(
             &mut alloc,
             "fairblock",
             PRECOMPILE_FAIRBLOCK_VERIFIER,
-            PRECOMPILE_FAIRBLOCK,
+            WASM_FAIRBLOCK_VERIFIER,
         );
-        const PRECOMPILE_EVM: &[u8] = include_bytes!("../../contracts/evm/lib.wasm");
-        init_contract(&mut alloc, "evm", PRECOMPILE_EVM_RUNTIME, PRECOMPILE_EVM);
+        init_contract(&mut alloc, "evm", PRECOMPILE_EVM_RUNTIME, WASM_EVM_RUNTIME);
 
         Genesis {
             config: devnet_chain_config(),

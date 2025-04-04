@@ -7,9 +7,9 @@ pub mod instruction;
 mod context;
 mod runtime;
 mod storage;
-mod wasmtime;
 #[cfg(test)]
 mod tests;
+mod wasmtime;
 
 pub use context::*;
 pub use runtime::*;

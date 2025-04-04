@@ -6,6 +6,9 @@ use anyhow::Result;
 use core::{error::Error as StdError, fmt};
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{Bytes, ExitCode, FixedBytes, SyscallInvocationParams, B256, U256};
+
+use fluentbase_types::{
+    byteorder::{ByteOrder, LittleEndian}};
 use std::{
     cell::RefCell,
     collections::{
@@ -64,6 +67,7 @@ enum Message {
         fuel_refunded: i64,
         exit_code: i32,
         output: Vec<u8>,
+        fuel16_ptr: u32,
     },
     WasmTerminated {
         reason: TerminationReason,
@@ -333,10 +337,17 @@ mod builtins {
                 fuel_refunded,
                 exit_code,
                 output,
+                fuel16_ptr,
             } => {
                 let context_output = &mut caller.data_mut().output;
                 context_output.clear();
                 context_output.extend_from_slice(&output);
+                if fuel16_ptr > 0 {
+                    let mut buffer = [0u8; 16];
+                    LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
+                    LittleEndian::write_i64(&mut buffer[8..], fuel_refunded);
+                    write_memory(&mut caller, fuel16_ptr, &buffer)?;
+                }
                 Ok(exit_code)
             }
             _ => panic!("unexpected message type received by the worker"),
@@ -439,7 +450,7 @@ pub fn resume_wasmtime(
     exit_code: i32,
     fuel_consumed: u64,
     fuel_refunded: i64,
-    fuel16_ptr: i32,
+    fuel16_ptr: u32,
 ) -> (i32, Vec<u8>) {
     let executor = RUNTIME_STATE
         .with_borrow_mut(|runtime_state| runtime_state.take_suspended_executor(call_id));
@@ -448,6 +459,7 @@ pub fn resume_wasmtime(
         fuel_refunded,
         exit_code,
         output,
+        fuel16_ptr,
     });
     handle_one_step(executor)
 }
