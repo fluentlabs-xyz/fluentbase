@@ -311,12 +311,8 @@ mod builtins {
     ) -> anyhow::Result<i32> {
         println!("builtin::exec()");
         let mut encoded_state = BytesMut::new();
-        assert!(fuel16_ptr > 0);
 
-        let fuel_buffer = read_memory(&mut caller, fuel16_ptr, 16)?;
-        let fuel_limit = LittleEndian::read_i64(&fuel_buffer[..8]) as u64;
-        //let _fuel_refund = LittleEndian::read_i64(&fuel_buffer[8..]);
-        //let fuel_limit = u32::MAX;
+        let fuel_limit = u64::MAX; // TODO(khasan) what should we put here?
         let code_hash = read_memory(&mut caller, hash32_ptr, 32)?;
         let code_hash: [u8; 32] = code_hash.as_slice().try_into().unwrap();
         let input = read_memory(&mut caller, input_ptr, input_len)?;
