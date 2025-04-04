@@ -1,4 +1,4 @@
-use crate::evm::gas::Gas;
+use crate::gas::Gas;
 use fluentbase_sdk::Bytes;
 
 #[repr(u8)]
@@ -98,57 +98,57 @@ pub enum InstructionResult {
 #[macro_export]
 macro_rules! return_ok {
     () => {
-        $crate::evm::result::InstructionResult::Continue
-            | $crate::evm::result::InstructionResult::Stop
-            | $crate::evm::result::InstructionResult::Return
-            | $crate::evm::result::InstructionResult::SelfDestruct
-            | $crate::evm::result::InstructionResult::ReturnContract
+        $crate::result::InstructionResult::Continue
+            | $crate::result::InstructionResult::Stop
+            | $crate::result::InstructionResult::Return
+            | $crate::result::InstructionResult::SelfDestruct
+            | $crate::result::InstructionResult::ReturnContract
     };
 }
 
 #[macro_export]
 macro_rules! return_revert {
     () => {
-        $crate::evm::result::InstructionResult::Revert
-            | $crate::evm::result::InstructionResult::CallTooDeep
-            | $crate::evm::result::InstructionResult::OutOfFunds
-            | $crate::evm::result::InstructionResult::InvalidEOFInitCode
-            | $crate::evm::result::InstructionResult::CreateInitCodeStartingEF00
-            | $crate::evm::result::InstructionResult::InvalidExtDelegateCallTarget
+        $crate::result::InstructionResult::Revert
+            | $crate::result::InstructionResult::CallTooDeep
+            | $crate::result::InstructionResult::OutOfFunds
+            | $crate::result::InstructionResult::InvalidEOFInitCode
+            | $crate::result::InstructionResult::CreateInitCodeStartingEF00
+            | $crate::result::InstructionResult::InvalidExtDelegateCallTarget
     };
 }
 
 #[macro_export]
 macro_rules! return_error {
     () => {
-        $crate::evm::result::InstructionResult::OutOfGas
-            | $crate::evm::result::InstructionResult::MemoryOOG
-            | $crate::evm::result::InstructionResult::MemoryLimitOOG
-            | $crate::evm::result::InstructionResult::PrecompileOOG
-            | $crate::evm::result::InstructionResult::InvalidOperandOOG
-            | $crate::evm::result::InstructionResult::OpcodeNotFound
-            | $crate::evm::result::InstructionResult::CallNotAllowedInsideStatic
-            | $crate::evm::result::InstructionResult::StateChangeDuringStaticCall
-            | $crate::evm::result::InstructionResult::InvalidFEOpcode
-            | $crate::evm::result::InstructionResult::InvalidJump
-            | $crate::evm::result::InstructionResult::NotActivated
-            | $crate::evm::result::InstructionResult::StackUnderflow
-            | $crate::evm::result::InstructionResult::StackOverflow
-            | $crate::evm::result::InstructionResult::OutOfOffset
-            | $crate::evm::result::InstructionResult::CreateCollision
-            | $crate::evm::result::InstructionResult::OverflowPayment
-            | $crate::evm::result::InstructionResult::PrecompileError
-            | $crate::evm::result::InstructionResult::NonceOverflow
-            | $crate::evm::result::InstructionResult::CreateContractSizeLimit
-            | $crate::evm::result::InstructionResult::CreateContractStartingWithEF
-            | $crate::evm::result::InstructionResult::CreateInitCodeSizeLimit
-            | $crate::evm::result::InstructionResult::FatalExternalError
-            | $crate::evm::result::InstructionResult::ReturnContractInNotInitEOF
-            | $crate::evm::result::InstructionResult::EOFOpcodeDisabledInLegacy
-            | $crate::evm::result::InstructionResult::EOFFunctionStackOverflow
-            | $crate::evm::result::InstructionResult::EofAuxDataTooSmall
-            | $crate::evm::result::InstructionResult::EofAuxDataOverflow
-            | $crate::evm::result::InstructionResult::InvalidEXTCALLTarget
+        $crate::result::InstructionResult::OutOfGas
+            | $crate::result::InstructionResult::MemoryOOG
+            | $crate::result::InstructionResult::MemoryLimitOOG
+            | $crate::result::InstructionResult::PrecompileOOG
+            | $crate::result::InstructionResult::InvalidOperandOOG
+            | $crate::result::InstructionResult::OpcodeNotFound
+            | $crate::result::InstructionResult::CallNotAllowedInsideStatic
+            | $crate::result::InstructionResult::StateChangeDuringStaticCall
+            | $crate::result::InstructionResult::InvalidFEOpcode
+            | $crate::result::InstructionResult::InvalidJump
+            | $crate::result::InstructionResult::NotActivated
+            | $crate::result::InstructionResult::StackUnderflow
+            | $crate::result::InstructionResult::StackOverflow
+            | $crate::result::InstructionResult::OutOfOffset
+            | $crate::result::InstructionResult::CreateCollision
+            | $crate::result::InstructionResult::OverflowPayment
+            | $crate::result::InstructionResult::PrecompileError
+            | $crate::result::InstructionResult::NonceOverflow
+            | $crate::result::InstructionResult::CreateContractSizeLimit
+            | $crate::result::InstructionResult::CreateContractStartingWithEF
+            | $crate::result::InstructionResult::CreateInitCodeSizeLimit
+            | $crate::result::InstructionResult::FatalExternalError
+            | $crate::result::InstructionResult::ReturnContractInNotInitEOF
+            | $crate::result::InstructionResult::EOFOpcodeDisabledInLegacy
+            | $crate::result::InstructionResult::EOFFunctionStackOverflow
+            | $crate::result::InstructionResult::EofAuxDataTooSmall
+            | $crate::result::InstructionResult::EofAuxDataOverflow
+            | $crate::result::InstructionResult::InvalidEXTCALLTarget
     };
 }
 
@@ -156,13 +156,13 @@ impl InstructionResult {
     /// Returns whether the result is a success.
     #[inline]
     pub const fn is_ok(self) -> bool {
-        matches!(self, crate::return_ok!())
+        matches!(self, return_ok!())
     }
 
     /// Returns whether the result is a revert.
     #[inline]
     pub const fn is_revert(self) -> bool {
-        matches!(self, crate::return_revert!())
+        matches!(self, return_revert!())
     }
 
     /// Returns whether the result is an error.

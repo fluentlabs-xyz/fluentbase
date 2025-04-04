@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-examples-storage"
+name = "fluentbase-evm"
 version = "0.1.0"
 authors.workspace = true
 repository.workspace = true
@@ -10,20 +10,11 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-sdk = { workspace = true }
-
-[dev-dependencies]
-serial_test = "3.0.0"
-
-[build-dependencies]
-fluentbase-build = { workspace = true }
-
-[lib]
-crate-type = ["cdylib"]
-path = "lib.rs"
+fluentbase-sdk = { workspace = true, default-features = false }
+bitvec = { version = "1", default-features = false, features = ["alloc"] }
 
 [features]
 default = ["std"]
 std = [
-    "fluentbase-sdk/std"
+    "fluentbase-sdk/std",
 ]

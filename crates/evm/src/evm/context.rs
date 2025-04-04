@@ -1,4 +1,4 @@
-use crate::{as_usize_saturated, evm::EVM, gas, pop_top, push, push_b256, try_push};
+use crate::{as_usize_saturated, gas, pop_top, push, push_b256, try_push, EVM};
 use fluentbase_sdk::{BlockContextReader, SharedAPI, TxContextReader, U256};
 
 /// EIP-1344: ChainID opcode

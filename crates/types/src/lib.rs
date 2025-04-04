@@ -6,7 +6,6 @@ extern crate alloc;
 extern crate core;
 
 mod address;
-mod allocator;
 mod bytecode_type;
 mod context;
 pub mod evm;
@@ -21,7 +20,6 @@ mod sys_func_idx;
 mod syscall;
 
 pub use address::*;
-pub use allocator::*;
 pub use alloy_primitives::*;
 pub use bytecode_type::*;
 pub use byteorder;

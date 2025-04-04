@@ -1,6 +1,6 @@
 use crate::{
-    evm::gas::{memory_gas, Gas},
     gas,
+    gas::{memory_gas, Gas},
 };
 use alloc::vec::Vec;
 use core::{cmp::min, ops::Range};

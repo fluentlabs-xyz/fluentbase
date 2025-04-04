@@ -1,13 +1,11 @@
 use crate::{
     as_usize_or_fail,
-    evm::{
-        result::{InstructionResult, InterpreterResult},
-        EVM,
-    },
     gas,
     pop,
     push,
     resize_memory,
+    result::{InstructionResult, InterpreterResult},
+    EVM,
 };
 use fluentbase_sdk::{Bytes, SharedAPI, U256};
 

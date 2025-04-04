@@ -1,30 +1,79 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 
-mod bytecode;
-mod evm;
-mod instruction_table;
-#[cfg(test)]
-mod tests;
-
 extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use crate::{
-    bytecode::{commit_evm_bytecode, load_evm_bytecode},
-    evm::{gas, result::InterpreterResult, EVM},
-};
+use fluentbase_evm::{gas, result::InterpreterResult, return_ok, return_revert, EVM};
 use fluentbase_sdk::{
     func_entrypoint,
     Bytes,
     ContractContextReader,
     ExitCode,
     SharedAPI,
+    SyscallResult,
+    EVM_CODE_HASH_SLOT,
     EVM_MAX_CODE_SIZE,
+    KECCAK_EMPTY,
+    U256,
 };
 
-/// Number of block hashes that EVM can access in the past (pre-Prague).
-pub const BLOCK_HASH_HISTORY: u64 = 256;
+/// Commits EVM bytecode to persistent storage and updates the corresponding code hash.
+///
+/// This function performs the following operations:
+/// 1. Write the provided bytecode (`evm_bytecode`) to preimage storage using the SDK, which returns
+///    a hash of the preimage.
+/// 2. Takes the resulting code hash and writes it to a predefined storage slot identified by
+///    `EVM_CODE_HASH_SLOT`.
+///
+/// # Arguments
+/// - `sdk`: A mutable reference to the SDK instance implementing the `SharedAPI` trait, which
+///   provides the methods required for interactions with storage.
+/// - `evm_bytecode`: A `Bytes` object containing the EVM bytecode to be stored.
+pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: Bytes) {
+    // TODO(dmitry123): "here we can store pre-analyzed bytecode"
+    let result = sdk.write_preimage(evm_bytecode);
+    let code_hash = result.data;
+    // TODO(dmitry123): "instead of protected slots use metadata storage"
+    _ = sdk.write_storage(EVM_CODE_HASH_SLOT.into(), code_hash.into());
+}
+
+/// Loads the EVM bytecode associated with the contract using the provided SDK.
+///
+/// This function retrieves the EVM bytecode for a contract from the state storage
+/// using a delegated storage mechanism. The process involves fetching the contract's
+/// bytecode address, locating the storage slot for its EVM code hash, and verifying
+/// if the bytecode exists (i.e., it is not empty). If valid bytecode is found, it is loaded
+/// and returned as a `Bytecode` object.
+///
+/// # Arguments
+/// - `sdk`: A reference to an implementation of the `SharedAPI` trait that provides access to
+///   storage, context, and pre-image retrieval methods required for handling contract data.
+///
+/// # Returns
+/// An `Option<Bytecode>`.
+/// - `Some(Bytecode)`: If valid bytecode exists and is successfully retrieved.
+/// - `None`: If the bytecode is empty or not present in the storage.
+pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<Bytes> {
+    let bytecode_address = sdk.context().contract_bytecode_address();
+    let evm_code_hash =
+        sdk.delegated_storage(&bytecode_address, &Into::<U256>::into(EVM_CODE_HASH_SLOT));
+    let (evm_code_hash, _, _) = evm_code_hash.data;
+    // TODO(dmitry123): "do we want to have this optimized during the creation of the frame?"
+    let is_empty_bytecode =
+        evm_code_hash == U256::ZERO || evm_code_hash == Into::<U256>::into(KECCAK_EMPTY);
+    if is_empty_bytecode {
+        return None;
+    }
+    // TODO(dmitry123): "instead of preimages use metadata storage"
+    let evm_bytecode = sdk.preimage_copy(&evm_code_hash.into());
+    assert!(
+        SyscallResult::is_ok(evm_bytecode.status),
+        "sdk: failed reading evm bytecode"
+    );
+    let evm_bytecode = evm_bytecode.data;
+    Some(evm_bytecode)
+}
 
 /// Handles non-OK results from the EVM interpreter.
 ///
@@ -193,3 +242,38 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
 }
 
 func_entrypoint!(main, deploy);
+
+#[cfg(test)]
+mod tests {
+    use crate::{deploy, main};
+    use core::str::from_utf8;
+    use fluentbase_sdk::{hex, testing::TestingContext, Address, ContractContextV1, U256};
+
+    #[test]
+    fn test_deploy_greeting() {
+        const CONTRACT_ADDRESS: Address = Address::new([
+            189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111, 164, 142,
+            177,
+        ]);
+        let mut sdk = TestingContext::default().with_contract_context(ContractContextV1 {
+            address: CONTRACT_ADDRESS,
+            bytecode_address: CONTRACT_ADDRESS,
+            caller: Address::ZERO,
+            is_static: false,
+            value: U256::ZERO,
+            gas_limit: 1_000_000,
+        });
+        // deploy
+        {
+            sdk = sdk.with_input(hex!("60806040526105ae806100115f395ff3fe608060405234801561000f575f80fd5b506004361061003f575f3560e01c80633b2e97481461004357806345773e4e1461007357806348b8bcc314610091575b5f80fd5b61005d600480360381019061005891906102e5565b6100af565b60405161006a919061039a565b60405180910390f35b61007b6100dd565b604051610088919061039a565b60405180910390f35b61009961011a565b6040516100a6919061039a565b60405180910390f35b60605f8273ffffffffffffffffffffffffffffffffffffffff163190506100d58161012f565b915050919050565b60606040518060400160405280600b81526020017f48656c6c6f20576f726c64000000000000000000000000000000000000000000815250905090565b60605f4790506101298161012f565b91505090565b60605f8203610175576040518060400160405280600181526020017f30000000000000000000000000000000000000000000000000000000000000008152509050610282565b5f8290505f5b5f82146101a457808061018d906103f0565b915050600a8261019d9190610464565b915061017b565b5f8167ffffffffffffffff8111156101bf576101be610494565b5b6040519080825280601f01601f1916602001820160405280156101f15781602001600182028036833780820191505090505b5090505b5f851461027b578180610207906104c1565b925050600a8561021791906104e8565b60306102239190610518565b60f81b8183815181106102395761023861054b565b5b60200101907effffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff191690815f1a905350600a856102749190610464565b94506101f5565b8093505050505b919050565b5f80fd5b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f6102b48261028b565b9050919050565b6102c4816102aa565b81146102ce575f80fd5b50565b5f813590506102df816102bb565b92915050565b5f602082840312156102fa576102f9610287565b5b5f610307848285016102d1565b91505092915050565b5f81519050919050565b5f82825260208201905092915050565b5f5b8381101561034757808201518184015260208101905061032c565b5f8484015250505050565b5f601f19601f8301169050919050565b5f61036c82610310565b610376818561031a565b935061038681856020860161032a565b61038f81610352565b840191505092915050565b5f6020820190508181035f8301526103b28184610362565b905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f819050919050565b5f6103fa826103e7565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff820361042c5761042b6103ba565b5b600182019050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601260045260245ffd5b5f61046e826103e7565b9150610479836103e7565b92508261048957610488610437565b5b828204905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b5f6104cb826103e7565b91505f82036104dd576104dc6103ba565b5b600182039050919050565b5f6104f2826103e7565b91506104fd836103e7565b92508261050d5761050c610437565b5b828206905092915050565b5f610522826103e7565b915061052d836103e7565b9250828201905080821115610545576105446103ba565b5b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffdfea2646970667358221220feebf5ace29c3c3146cb63bf7ca9009c2005f349075639d267cfbd817adde3e564736f6c63430008180033"));
+            deploy(sdk.clone());
+        }
+        // main
+        {
+            let sdk = sdk.with_input(hex!("45773e4e"));
+            main(sdk.clone());
+            let bytes = &sdk.take_output()[64..75];
+            assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
+        }
+    }
+}

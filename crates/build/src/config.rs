@@ -32,4 +32,9 @@ impl WasmBuildConfig {
         self.features.push(feature.into());
         self
     }
+
+    pub fn with_taget(mut self, target: impl Into<String>) -> Self {
+        self.target = target.into();
+        self
+    }
 }

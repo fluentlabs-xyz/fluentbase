@@ -1,9 +1,4 @@
-use crate::{
-    as_usize_saturated,
-    evm::{i256::i256_cmp, EVM},
-    gas,
-    pop_top,
-};
+use crate::{as_usize_saturated, evm::i256::i256_cmp, gas, pop_top, EVM};
 use core::cmp::Ordering;
 use fluentbase_sdk::{SharedAPI, U256};
 
@@ -120,8 +115,10 @@ pub fn sar<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
 #[cfg(test)]
 mod tests {
     use crate::{
-        evm::EVM,
-        instruction_table::bitwise::{byte, sar, shl, shr},
+        evm::{
+            bitwise::{byte, sar, shl, shr},
+            EVM,
+        },
         pop,
         push,
     };
