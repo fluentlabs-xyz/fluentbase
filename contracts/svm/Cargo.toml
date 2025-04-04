@@ -8,7 +8,6 @@ fluentbase-sdk = { workspace = true, default-features = false }
 solana-ee-core = { workspace = true, default-features = false }
 
 [dev-dependencies]
-
 solana-ee-core = { workspace = true }
 
 [build-dependencies]

@@ -2217,9 +2217,9 @@ dependencies = [
 
 [[package]]
 name = "flagset"
-version = "0.4.6"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3ea1ec5f8307826a5b71094dd91fc04d4ae75d5709b20ad351c7fb4815c86ec"
+checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "fluentbase-build"
@@ -3962,9 +3962,9 @@ checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
 name = "miniz_oxide"
-version = "0.8.5"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e3e04debbb59698c15bacbb6d93584a8c0ca9cc3213cb423d31f760d8843ce5"
+checksum = "ff70ce3e48ae43fa075863cef62e8b43b71a4f2382229920e0df362592919430"
 dependencies = [
  "adler2",
 ]
@@ -6037,7 +6037,7 @@ dependencies = [
 [[package]]
 name = "solana-program"
 version = "1.18.26"
-source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#177971d8171085b7a1aebeda6ad03fe577ff3740"
+source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#f94c4005b314844397867573d3e472b0772a8b81"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -6084,7 +6084,7 @@ dependencies = [
 [[package]]
 name = "solana-sdk-macro"
 version = "1.18.26"
-source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#177971d8171085b7a1aebeda6ad03fe577ff3740"
+source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#f94c4005b314844397867573d3e472b0772a8b81"
 dependencies = [
  "bs58",
  "proc-macro2",
