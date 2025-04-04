@@ -3,8 +3,8 @@ members = [
     "contracts/*",
     "crates/*",
     "revm/crates/*",
-    "solana-ee-core/crates/*",
-    "solana-ee-core/crates/examples/hello-world",
+    #    "solana-ee-core/crates/*",
+    #    "solana-ee-core/crates/examples/hello-world",
     "crates/rwasm/e2e",
     #    "examples/*",
     "e2e",
@@ -12,7 +12,6 @@ members = [
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
-    "solana-ee-core/crates/examples"
 ]
 resolver = "2"
 
@@ -39,8 +38,9 @@ fluentbase-rwasm = { path = "./crates/rwasm", default-features = false, features
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
-solana-ee-core = { path = "./solana-ee-core/crates/core", default-features = false }
+fluentbase-svm = { path = "./crates/svm", default-features = false }
 solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
+solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana-program = { path = "../solana/sdk/program", default-features = false }
 
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
@@ -51,8 +51,8 @@ alloy-primitives = { version = "=0.8.21", default-features = false, features = [
 alloy-rlp = { version = "0.3.10", default-features = false, features = ["derive"] }
 alloy-genesis = { version = "0.11.1", default-features = false }
 alloy-sol-types = { version = "0.8.20", default-features = false }
-hashbrown = { version = "0.15.0" }
-serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
+hashbrown = { version = "0.15", default-features = false, features = ["alloc"] }
+serde = { version = "1.0.203", default-features = false, features = ["alloc", "derive", "rc"] }
 serde_json = { version = "1.0", default-features = false }
 casey = { version = "0.4" }
 paste = { version = "1.0", default-features = false }
@@ -76,10 +76,13 @@ syn = "2.0"
 clap = { version = "4.5", features = ["derive"] }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
+keccak-hash = { version = "0.11.0" }
+itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
+
 #bincode = { git = "https://github.com/fluentlabs-xyz/bincode", branch = "feat/svm-1.3.3", default-features = false, features = [] }
 #bincode = { path = "../bincode", default-features = false }
 num-derive = { version = "0.4" }
-num-traits = { version = "0.2" }
+num-traits = { version = "0.2", features = ["i128"], default-features = false }
 
 [profile.bench]
 lto = "fat"

@@ -4,6 +4,3 @@
 [submodule "crates/rwasm/e2e/testsuite"]
 	path = crates/rwasm/e2e/testsuite
 	url = https://github.com/fluentlabs-xyz/testsuite-rwasm.git
-[submodule "solana-ee-core"]
-	path = solana-ee-core
-	url = git@github.com:fluentlabs-xyz/solana-ee.git

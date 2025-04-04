@@ -5,10 +5,10 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
-solana-ee-core = { workspace = true, default-features = false }
+fluentbase-svm = { workspace = true, default-features = false }
 
 [dev-dependencies]
-solana-ee-core = { workspace = true }
+fluentbase-svm = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
@@ -21,5 +21,5 @@ path = "src/lib.rs"
 default = ["std"]
 std = [
     "fluentbase-sdk/std",
-    "solana-ee-core/std",
+    "fluentbase-svm/std",
 ]

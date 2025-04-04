@@ -15,7 +15,7 @@ fluentbase-sdk = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
 
-solana-ee-core = { workspace = true }
+fluentbase-svm = { workspace = true }
 
 rwasm = { workspace = true }
 revm = { workspace = true }
@@ -50,5 +50,5 @@ std = [
     "fluentbase-genesis/std",
     "rwasm/std",
     "revm/std",
-    "solana-ee-core/std",
+    "fluentbase-svm/std",
 ]

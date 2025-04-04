@@ -1,0 +1,47 @@
+[package]
+name = "fluentbase-svm"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+fluentbase-sdk = { workspace = true, default-features = false }
+
+num-traits = { workspace = true, default-features = false }
+byteorder = { workspace = true, default-features = false }
+hashbrown = { workspace = true, default-features = false }
+
+solana-program = { workspace = true, default-features = false }
+solana_rbpf = { workspace = true, default-features = false }
+
+hex = { workspace = true, default-features = false }
+hex-literal = { workspace = true, default-features = false }
+
+serde = { workspace = true, default-features = false }
+bincode = { git = "https://github.com/fluentlabs-xyz/bincode", branch = "feat/svm-v1.3.3", default-features = false }
+lazy_static = { workspace = true, default-features = false }
+keccak-hash = { workspace = true }
+itertools = { workspace = true, default-features = false }
+
+[dev-dependencies]
+rand = { version = "0.9.0", default-features = false, features = ["alloc"] }
+
+[lib]
+crate-type = [
+    "cdylib",
+]
+
+[features]
+default = [
+    "std",
+    "debug-print",
+]
+std = [
+    "fluentbase-sdk/std",
+]
+debug-print = []
