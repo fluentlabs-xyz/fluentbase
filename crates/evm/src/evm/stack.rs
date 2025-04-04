@@ -1,4 +1,4 @@
-use crate::{evm::EVM, gas};
+use crate::{gas, EVM};
 use fluentbase_sdk::{SharedAPI, U256};
 
 pub fn pop<SDK: SharedAPI>(evm: &mut EVM<SDK>) {

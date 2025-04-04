@@ -1,8 +1,4 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
-#![allow(dead_code)]
-extern crate alloc;
-extern crate fluentbase_sdk;
-
 use fluentbase_sdk::{derive::solidity_storage, func_entrypoint, Address, SharedAPI, U256};
 
 solidity_storage! {

@@ -1,5 +1,4 @@
 use crate::{
-    alloc_slice,
     context::SharedContextReader,
     evm::{write_evm_exit_message, write_evm_panic_message},
     Address,
@@ -23,7 +22,14 @@ pub trait SharedAPI {
 
     fn input<'a>(&self) -> &'a [u8] {
         let input_size = self.input_size();
-        let mut buffer = alloc_slice(input_size as usize);
+        let pointer = unsafe {
+            alloc::alloc::alloc(core::alloc::Layout::from_size_align_unchecked(
+                input_size as usize,
+                8,
+            ))
+        };
+        let mut buffer =
+            unsafe { &mut *core::ptr::slice_from_raw_parts_mut(pointer, input_size as usize) };
         self.read(&mut buffer, 0);
         buffer
     }

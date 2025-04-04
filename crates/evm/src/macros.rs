@@ -5,7 +5,7 @@
 macro_rules! require_non_staticcall {
     ($interp:expr) => {
         if $interp.is_static {
-            $interp.state = $crate::evm::result::InstructionResult::StateChangeDuringStaticCall;
+            $interp.state = $crate::result::InstructionResult::StateChangeDuringStaticCall;
             return;
         }
     };
@@ -19,7 +19,7 @@ macro_rules! gas {
     };
     ($interp:expr, $gas:expr, $ret:expr) => {
         if !$interp.gas.record_cost($gas) {
-            $interp.state = $crate::evm::result::InstructionResult::OutOfGas;
+            $interp.state = $crate::result::InstructionResult::OutOfGas;
             return $ret;
         }
     };
@@ -40,7 +40,7 @@ macro_rules! gas_or_fail {
         match $gas {
             Some(gas_used) => $crate::gas!($interp, gas_used),
             None => {
-                $interp.state = $crate::evm::result::InstructionResult::OutOfGas;
+                $interp.state = $crate::result::InstructionResult::OutOfGas;
                 return;
             }
         }
@@ -58,9 +58,8 @@ macro_rules! resize_memory {
         let new_size = $offset.saturating_add($len);
         if new_size > $interp.memory.len() {
             // Note: we can't use `Interpreter` directly here because of potential double-borrows.
-            if !$crate::evm::memory::resize_memory(&mut $interp.memory, &mut $interp.gas, new_size)
-            {
-                $interp.state = $crate::evm::result::InstructionResult::MemoryOOG;
+            if !$crate::memory::resize_memory(&mut $interp.memory, &mut $interp.gas, new_size) {
+                $interp.state = $crate::result::InstructionResult::MemoryOOG;
                 return $ret;
             }
         }
@@ -83,26 +82,26 @@ macro_rules! pop_address {
 macro_rules! pop_address_ret {
     ($interp:expr, $x1:ident, $ret:expr) => {
         if $interp.stack.len() < 1 {
-            $interp.state = $crate::evm::result::InstructionResult::StackUnderflow;
+            $interp.state = $crate::result::InstructionResult::StackUnderflow;
             return $ret;
         }
         // SAFETY: Length is checked above.
-        let $x1 = $crate::fluentbase_sdk::Address::from_word($crate::fluentbase_sdk::B256::from(
-            unsafe { $interp.stack.pop_unsafe() },
-        ));
+        let $x1 = ::fluentbase_sdk::Address::from_word(::fluentbase_sdk::B256::from(unsafe {
+            $interp.stack.pop_unsafe()
+        }));
     };
     ($interp:expr, $x1:ident, $x2:ident, $ret:expr) => {
         if $interp.stack.len() < 2 {
-            $interp.state = $crate::evm::result::InstructionResult::StackUnderflow;
+            $interp.state = $crate::result::InstructionResult::StackUnderflow;
             return $ret;
         }
         // SAFETY: Length is checked above.
-        let $x1 = $crate::fluentbase_sdk::Address::from_word($crate::fluentbase_sdk::B256::from(
-            unsafe { $interp.stack.pop_unsafe() },
-        ));
-        let $x2 = $crate::fluentbase_sdk::Address::from_word($crate::fluentbase_sdk::B256::from(
-            unsafe { $interp.stack.pop_unsafe() },
-        ));
+        let $x1 = ::fluentbase_sdk::Address::from_word(::fluentbase_sdk::B256::from(unsafe {
+            $interp.stack.pop_unsafe()
+        }));
+        let $x2 = ::fluentbase_sdk::Address::from_word(::fluentbase_sdk::B256::from(unsafe {
+            $interp.stack.pop_unsafe()
+        }));
     };
 }
 
@@ -132,7 +131,7 @@ macro_rules! pop {
 macro_rules! pop_ret {
     ($interp:expr, $x1:ident, $ret:expr) => {
         if $interp.stack.len() < 1 {
-            $interp.state = $crate::evm::result::InstructionResult::StackUnderflow;
+            $interp.state = $crate::result::InstructionResult::StackUnderflow;
             return $ret;
         }
         // SAFETY: Length is checked above.
@@ -140,7 +139,7 @@ macro_rules! pop_ret {
     };
     ($interp:expr, $x1:ident, $x2:ident, $ret:expr) => {
         if $interp.stack.len() < 2 {
-            $interp.state = $crate::evm::result::InstructionResult::StackUnderflow;
+            $interp.state = $crate::result::InstructionResult::StackUnderflow;
             return $ret;
         }
         // SAFETY: Length is checked above.
@@ -148,7 +147,7 @@ macro_rules! pop_ret {
     };
     ($interp:expr, $x1:ident, $x2:ident, $x3:ident, $ret:expr) => {
         if $interp.stack.len() < 3 {
-            $interp.state = $crate::evm::result::InstructionResult::StackUnderflow;
+            $interp.state = $crate::result::InstructionResult::StackUnderflow;
             return $ret;
         }
         // SAFETY: Length is checked above.
@@ -156,7 +155,7 @@ macro_rules! pop_ret {
     };
     ($interp:expr, $x1:ident, $x2:ident, $x3:ident, $x4:ident, $ret:expr) => {
         if $interp.stack.len() < 4 {
-            $interp.state = $crate::evm::result::InstructionResult::StackUnderflow;
+            $interp.state = $crate::result::InstructionResult::StackUnderflow;
             return $ret;
         }
         // SAFETY: Length is checked above.
@@ -164,7 +163,7 @@ macro_rules! pop_ret {
     };
     ($interp:expr, $x1:ident, $x2:ident, $x3:ident, $x4:ident, $x5:ident, $ret:expr) => {
         if $interp.stack.len() < 5 {
-            $interp.state = $crate::evm::result::InstructionResult::StackUnderflow;
+            $interp.state = $crate::result::InstructionResult::StackUnderflow;
             return $ret;
         }
         // SAFETY: Length is checked above.
@@ -178,7 +177,7 @@ macro_rules! pop_ret {
 macro_rules! pop_top {
     ($interp:expr, $x1:ident) => {
         if $interp.stack.len() < 1 {
-            $interp.state = $crate::evm::result::InstructionResult::StackUnderflow;
+            $interp.state = $crate::result::InstructionResult::StackUnderflow;
             return;
         }
         // SAFETY: Length is checked above.
@@ -186,7 +185,7 @@ macro_rules! pop_top {
     };
     ($interp:expr, $x1:ident, $x2:ident) => {
         if $interp.stack.len() < 2 {
-            $interp.state = $crate::evm::result::InstructionResult::StackUnderflow;
+            $interp.state = $crate::result::InstructionResult::StackUnderflow;
             return;
         }
         // SAFETY: Length is checked above.
@@ -194,7 +193,7 @@ macro_rules! pop_top {
     };
     ($interp:expr, $x1:ident, $x2:ident, $x3:ident) => {
         if $interp.stack.len() < 3 {
-            $interp.state = $crate::evm::result::InstructionResult::StackUnderflow;
+            $interp.state = $crate::result::InstructionResult::StackUnderflow;
             return;
         }
         // SAFETY: Length is checked above.
@@ -296,7 +295,7 @@ macro_rules! as_usize_or_fail_ret {
         $crate::as_usize_or_fail_ret!(
             $interp,
             $v,
-            $crate::evm::result::InstructionResult::InvalidOperandOOG,
+            $crate::result::InstructionResult::InvalidOperandOOG,
             $ret
         )
     };
@@ -312,4 +311,34 @@ macro_rules! as_usize_or_fail_ret {
             }
         }
     };
+}
+
+#[macro_export]
+macro_rules! unwrap_syscall {
+    ($interpreter:expr, $result:expr) => {{
+        let result = $result;
+        gas!(
+            $interpreter,
+            result.fuel_consumed / fluentbase_sdk::FUEL_DENOM_RATE
+        );
+        if result.fuel_refunded != 0 {
+            $crate::refund!(
+                $interpreter,
+                result.fuel_refunded / fluentbase_sdk::FUEL_DENOM_RATE as i64
+            );
+        }
+        if !result.status.is_ok() {
+            $interpreter.state = $crate::utils::instruction_result_from_exit_code(result.status);
+            return;
+        }
+        result.data
+    }};
+    (@gasless $interpreter:expr, $result:expr) => {{
+        let result = $result;
+        if !result.status.is_ok() {
+            $interpreter.state = $crate::utils::instruction_result_from_exit_code(result.status);
+            return;
+        }
+        result.data
+    }};
 }

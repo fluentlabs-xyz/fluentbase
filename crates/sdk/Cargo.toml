@@ -15,9 +15,6 @@ fluentbase-runtime = { workspace = true, optional = true }
 
 [dev-dependencies]
 
-[lib]
-crate-type = ["rlib"]
-
 [features]
 default = ["std"]
 std = [

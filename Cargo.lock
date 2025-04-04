@@ -2221,8 +2221,8 @@ dependencies = [
 name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
- "bitvec",
  "fluentbase-build",
+ "fluentbase-evm",
  "fluentbase-sdk",
 ]
 
@@ -2329,6 +2329,14 @@ dependencies = [
  "hex-literal 0.4.1",
  "revm",
  "rwasm",
+]
+
+[[package]]
+name = "fluentbase-evm"
+version = "0.1.0"
+dependencies = [
+ "bitvec",
+ "fluentbase-sdk",
 ]
 
 [[package]]
@@ -2461,7 +2469,6 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
- "hex-literal 0.4.1",
  "serial_test",
 ]
 
