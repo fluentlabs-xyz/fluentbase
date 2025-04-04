@@ -72,17 +72,7 @@ pub fn deploy(mut sdk: impl SharedAPI) {
     // input must be solana elf bytes
     let elf_program_bytes: Bytes = sdk.input().into();
     let program_len = elf_program_bytes.len();
-    // TODO form deploy messages and exec them
-    // TODO form this Pubkeys:
-    //  pk_payer - caller
-    //  pk_exec - program account (becomes executable account key)
-    //  pk_buffer - generate some random
-    //  pk_authority - (who can modify the program)
-    // debug_log!("elf_program_bytes.len {}", program_len);
-    // panic!("elf_program_bytes.len {}", program_len);
 
-    // program ->
-    // programdata -> write to preimage and save it code hash
     let contract_caller = sdk.context().contract_caller();
     let contract_address = sdk.context().contract_address();
 
