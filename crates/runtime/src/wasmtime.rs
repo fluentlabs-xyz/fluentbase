@@ -35,7 +35,7 @@ struct WorkerContext {
     receiver: mpsc::Receiver<Message>,
     input: Vec<u8>,
     output: Vec<u8>,
-    // TODO(khasan) add return_data buffer and use it in bindings::read_output()
+    return_data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +58,7 @@ enum Message {
     ExecutionRequest {
         code_hash: [u8; 32],
         input: Vec<u8>,
-        fuel_limit: u32,
+        fuel_limit: u64,
         state: u32,
         fuel16_ptr: u32,
     },
@@ -91,6 +91,7 @@ impl AsyncExecutor {
             receiver: worker_receiver,
             input: input,
             output: Vec::new(),
+            return_data: Vec::new(),
         };
         let engine = module.engine();
         let linker = new_linker_with_builtins(engine).unwrap();
@@ -238,7 +239,6 @@ mod builtins {
         let data = read_memory(&mut caller, offset, length)?;
         let context = caller.data_mut();
         println!("builtins::write(offset={}, length={})", offset, length);
-        dbg!(&data);
         context.output.extend_from_slice(&data);
         Ok(())
     }
@@ -276,9 +276,9 @@ mod builtins {
     ) -> anyhow::Result<()> {
         println!("builtin::read_output()");
         let context = caller.data();
-        let output = &context.output;
-        if offset + length <= output.len() as u32 {
-            let buffer = output[(offset as usize)..(offset as usize + length as usize)].to_vec();
+        let return_data = &context.return_data;
+        if offset + length <= return_data.len() as u32 {
+            let buffer = return_data[(offset as usize)..(offset as usize + length as usize)].to_vec();
             write_memory(&mut caller, target_ptr, &buffer)?;
             Ok(())
         } else {
@@ -288,7 +288,7 @@ mod builtins {
 
     pub fn output_size(caller: Caller<'_, WorkerContext>) -> anyhow::Result<u32> {
         let context = caller.data();
-        Ok(context.output.len() as u32)
+        Ok(context.return_data.len() as u32)
     }
 
     pub fn debug_log(
@@ -311,7 +311,12 @@ mod builtins {
     ) -> anyhow::Result<i32> {
         println!("builtin::exec()");
         let mut encoded_state = BytesMut::new();
-        let fuel_limit = u32::MAX;
+        assert!(fuel16_ptr > 0);
+
+        let fuel_buffer = read_memory(&mut caller, fuel16_ptr, 16)?;
+        let fuel_limit = LittleEndian::read_i64(&fuel_buffer[..8]) as u64;
+        //let _fuel_refund = LittleEndian::read_i64(&fuel_buffer[8..]);
+        //let fuel_limit = u32::MAX;
         let code_hash = read_memory(&mut caller, hash32_ptr, 32)?;
         let code_hash: [u8; 32] = code_hash.as_slice().try_into().unwrap();
         let input = read_memory(&mut caller, input_ptr, input_len)?;
@@ -339,9 +344,9 @@ mod builtins {
                 output,
                 fuel16_ptr,
             } => {
-                let context_output = &mut caller.data_mut().output;
-                context_output.clear();
-                context_output.extend_from_slice(&output);
+                let context_return_data = &mut caller.data_mut().return_data;
+                context_return_data.clear();
+                context_return_data.extend_from_slice(&output);
                 if fuel16_ptr > 0 {
                     let mut buffer = [0u8; 16];
                     LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
@@ -395,7 +400,6 @@ fn new_linker_with_builtins(engine: &Engine) -> anyhow::Result<Linker<WorkerCont
 fn handle_one_step(executor: AsyncExecutor) -> (i32, Vec<u8>) {
     RUNTIME_STATE.with_borrow_mut(|runtime_state| {
         let next_message = executor.receive_message();
-        dbg!(&next_message);
         match next_message {
             Message::ExecutionRequest {
                 code_hash,
@@ -410,7 +414,7 @@ fn handle_one_step(executor: AsyncExecutor) -> (i32, Vec<u8>) {
                 let params = SyscallInvocationParams {
                     code_hash: B256::from(code_hash),
                     input: Bytes::from(input),
-                    fuel_limit: fuel_limit.into(),
+                    fuel_limit: fuel_limit,
                     state,
                     fuel16_ptr,
                 };
