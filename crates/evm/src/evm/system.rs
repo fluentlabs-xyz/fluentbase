@@ -1,7 +1,6 @@
 use crate::{
     as_usize_or_fail,
     as_usize_saturated,
-    evm::result::InstructionResult,
     gas,
     gas_or_fail,
     pop,
@@ -9,6 +8,7 @@ use crate::{
     push,
     push_b256,
     resize_memory,
+    result::InstructionResult,
     EVM,
 };
 use core::ptr;

@@ -1,6 +1,7 @@
 mod context;
 
 use crate::{
+    alloc_slice,
     byteorder::{ByteOrder, LittleEndian},
     shared::context::SharedContextReaderImpl,
 };
@@ -8,7 +9,6 @@ use alloc::vec;
 use core::cell::RefCell;
 use fluentbase_codec::{CompactABI, FluentEncoder};
 use fluentbase_types::{
-    alloc_slice,
     native_api::NativeAPI,
     Address,
     Bytes,

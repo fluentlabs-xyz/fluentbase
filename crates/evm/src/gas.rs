@@ -1,4 +1,4 @@
-use crate::evm::memory::num_words;
+use crate::memory::num_words;
 use fluentbase_sdk::U256;
 
 pub const BASE: u64 = 2;

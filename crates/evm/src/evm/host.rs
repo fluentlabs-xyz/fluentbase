@@ -2,13 +2,8 @@ use crate::{
     as_u64_saturated,
     as_usize_or_fail,
     as_usize_saturated,
-    evm::{
-        gas::warm_cold_cost,
-        result::InstructionResult,
-        utils::instruction_result_from_exit_code,
-        EVM,
-    },
     gas,
+    gas::warm_cold_cost,
     gas_or_fail,
     pop,
     pop_address,
@@ -17,8 +12,11 @@ use crate::{
     push_b256,
     require_non_staticcall,
     resize_memory,
+    result::InstructionResult,
     unwrap_syscall,
+    utils::instruction_result_from_exit_code,
     BLOCK_HASH_HISTORY,
+    EVM,
 };
 use alloc::vec::Vec;
 use core::cmp::min;
@@ -75,7 +73,6 @@ pub fn extcodesize<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
 /// EIP-1052: EXTCODEHASH opcode
 pub fn extcodehash<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
-    debug_log!("extcodehash address={}", address);
     let delegated_code_hash = evm
         .sdk
         .delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());

@@ -1,12 +1,13 @@
 use crate::{
     as_usize_or_fail_ret,
-    evm::{result::InstructionResult, EVM},
     gas,
     pop_ret,
     push,
     push_b256,
     refund,
     resize_memory,
+    result::InstructionResult,
+    EVM,
 };
 use core::{cmp::min, ops::Range};
 use fluentbase_sdk::{
@@ -120,36 +121,4 @@ pub fn get_memory_input_and_out_ranges<SDK: SharedAPI>(
 
     let ret_range = resize_memory(evm, out_offset, out_len)?;
     Some((input, ret_range))
-}
-
-#[macro_export]
-macro_rules! unwrap_syscall {
-    ($interpreter:expr, $result:expr) => {{
-        let result = $result;
-        gas!(
-            $interpreter,
-            result.fuel_consumed / fluentbase_sdk::FUEL_DENOM_RATE
-        );
-        if result.fuel_refunded != 0 {
-            $crate::refund!(
-                $interpreter,
-                result.fuel_refunded / fluentbase_sdk::FUEL_DENOM_RATE as i64
-            );
-        }
-        if !result.status.is_ok() {
-            $interpreter.state =
-                $crate::evm::utils::instruction_result_from_exit_code(result.status);
-            return;
-        }
-        result.data
-    }};
-    (@gasless $interpreter:expr, $result:expr) => {{
-        let result = $result;
-        if !result.status.is_ok() {
-            $interpreter.state =
-                $crate::evm::utils::instruction_result_from_exit_code(result.status);
-            return;
-        }
-        result.data
-    }};
 }

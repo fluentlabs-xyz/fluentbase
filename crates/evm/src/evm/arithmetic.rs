@@ -1,11 +1,9 @@
 use crate::{
-    evm::{
-        i256::{i256_div, i256_mod},
-        EVM,
-    },
+    evm::i256::{i256_div, i256_mod},
     gas,
     gas_or_fail,
     pop_top,
+    EVM,
 };
 use fluentbase_sdk::{SharedAPI, U256};
 

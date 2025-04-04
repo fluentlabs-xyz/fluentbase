@@ -1,4 +1,4 @@
-use crate::evm::result::InstructionResult;
+use crate::result::InstructionResult;
 use alloc::vec::Vec;
 use core::{fmt, ptr};
 use fluentbase_sdk::{B256, U256};

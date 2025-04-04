@@ -1,15 +1,13 @@
 use crate::{
     as_usize_or_fail,
-    evm::{
-        result::InstructionResult,
-        utils::{get_memory_input_and_out_ranges, insert_call_outcome, insert_create_outcome},
-        EVM,
-    },
     gas,
     pop,
     pop_address,
     require_non_staticcall,
     resize_memory,
+    result::InstructionResult,
+    utils::{get_memory_input_and_out_ranges, insert_call_outcome, insert_create_outcome},
+    EVM,
 };
 use fluentbase_sdk::{
     Bytes,

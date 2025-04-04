@@ -1,9 +1,14 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
-extern crate alloc;
-extern crate core;
-extern crate fluentbase_sdk;
-
-use fluentbase_sdk::{codec::Codec, derive::solidity_storage, Address, Bytes, U256};
+use fluentbase_sdk::{
+    codec::Codec,
+    derive::solidity_storage,
+    func_entrypoint,
+    Address,
+    Bytes,
+    ExitCode,
+    SharedAPI,
+    U256,
+};
 
 #[derive(Codec, Debug, Default, Clone, PartialEq)]
 pub struct MyStruct {
@@ -24,11 +29,16 @@ solidity_storage! {
     mapping(Address => MyStruct) MyStructMap;
 }
 
+pub fn main(sdk: impl SharedAPI) {
+    sdk.exit(ExitCode::Ok);
+}
+
+func_entrypoint!(main);
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use fluentbase_sdk::{testing::TestingContext, ContractContextV1};
-    use hex_literal::hex;
+    use fluentbase_sdk::{hex, testing::TestingContext, ContractContextV1};
     use serial_test::serial;
 
     fn with_test_input<T: Into<Bytes>>(input: T, caller: Option<Address>) -> TestingContext {

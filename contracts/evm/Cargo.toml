@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true }
-bitvec = { version = "1", default-features = false, features = ["alloc"] }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-evm = { workspace = true, default-features = false }
 
 [dev-dependencies]
 
@@ -20,4 +20,5 @@ path = "src/lib.rs"
 default = ["std"]
 std = [
     "fluentbase-sdk/std",
+    "fluentbase-evm/std",
 ]

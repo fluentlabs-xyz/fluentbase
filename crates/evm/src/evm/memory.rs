@@ -1,4 +1,4 @@
-use crate::{as_usize_or_fail, evm::EVM, gas, gas_or_fail, pop, pop_top, push, resize_memory};
+use crate::{as_usize_or_fail, gas, gas_or_fail, pop, pop_top, push, resize_memory, EVM};
 use core::cmp::max;
 use fluentbase_sdk::{SharedAPI, U256};
 
