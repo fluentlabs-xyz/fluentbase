@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Result;
 use core::{error::Error as StdError, fmt};
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
-use fluentbase_types::{Bytes, ExitCode, FixedBytes, SyscallInvocationParams, B256, U256};
+use fluentbase_types::{Bytes, ExitCode, FixedBytes, SyscallInvocationParams, B256, U256, STATE_MAIN, STATE_DEPLOY};
 
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian}};
@@ -83,7 +83,7 @@ struct AsyncExecutor {
 impl AsyncExecutor {
     /* module is expected to be preferified somewhere before.
      * So in this function we should never get errors during initialization of wasm instance */
-    pub fn launch(module: &Module, input: Vec<u8>) -> Self {
+    pub fn launch(module: &Module, input: Vec<u8>, state: u32) -> Self {
         let (executor_sender, worker_receiver) = mpsc::channel();
         let (worker_sender, executor_receiver) = mpsc::channel();
         let worker_context = WorkerContext {
@@ -100,12 +100,15 @@ impl AsyncExecutor {
         let instance = linker
             .instantiate(&mut store, &module)
             .expect("bytecode should be preverified");
-        let main = instance
-            .get_typed_func::<(), ()>(&mut store, "main")
-            .expect("bytecode should be preferified");
+        let func = match state {
+            STATE_MAIN => instance.get_typed_func::<(), ()>(&mut store, "main"),
+            STATE_DEPLOY => instance.get_typed_func::<(), ()>(&mut store, "deploy"),
+            _ => panic!("unknown state, only main and deploy states are supported"),
+        };
+        let func = func.expect("wasm bytecode should have main and deploy exports");
 
         let worker = thread::spawn(move || {
-            let reason = match main.call(&mut store, ()) {
+            let reason = match func.call(&mut store, ()) {
                 Ok(()) => TerminationReason::Exit(0),
                 Err(e) => {
                     if let Some(reason) = e.downcast_ref::<TerminationReason>() {
@@ -436,10 +439,10 @@ fn handle_one_step(executor: AsyncExecutor) -> (i32, Vec<u8>) {
         }
     })
 }
-pub fn execute_wasmtime(wasm_bytecode: &[u8], input: Vec<u8>) -> (i32, Vec<u8>) {
+pub fn execute_wasmtime(wasm_bytecode: &[u8], input: Vec<u8>, state: u32) -> (i32, Vec<u8>) {
     let executor = RUNTIME_STATE.with_borrow_mut(|runtime_state| {
         let module = runtime_state.init_module_cached(wasm_bytecode);
-        AsyncExecutor::launch(module, input)
+        AsyncExecutor::launch(module, input, state)
     });
     handle_one_step(executor)
 }
@@ -481,7 +484,7 @@ mod tests {
         let wasm_bytecode = include_bytes!("../../../contracts/identity/lib.wasm");
         let input = vec![1, 2, 3, 4, 5, 6];
         let (exit_code, output) =
-            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input), STATE_MAIN);
         assert_eq!(exit_code, 0);
         assert_eq!(input, output);
     }
@@ -495,7 +498,7 @@ mod tests {
         .into();
         let wasm_bytecode = include_bytes!("../../../contracts/identity/lib.wasm");
         let input = attestation_doc;
-        let (_, _) = execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+        let (_, _) = execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input), STATE_MAIN);
         panic!("FINISHED Successfully");
     }
 
@@ -504,7 +507,7 @@ mod tests {
         let wasm_bytecode = include_bytes!("../../../examples/greeting/lib.wasm");
         let input = Vec::new();
         let (exit_code, output) =
-            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input), STATE_MAIN);
         assert_eq!(exit_code, 0);
         panic!("FINISHED");
     }
@@ -514,7 +517,7 @@ mod tests {
         let wasm_bytecode = include_bytes!("../../../examples/simple-storage/lib.wasm");
         let input = Vec::new();
         let (exit_code, output) =
-            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input));
+            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input), STATE_MAIN);
         dbg!(exit_code);
         let value = Vec::from(U256::from(2).to_le_bytes::<32>());
         let (exit_code, output) = resume_wasmtime(exit_code, value, 0, 0, 0, 0);
