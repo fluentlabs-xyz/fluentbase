@@ -6035,6 +6035,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-ee-hello-world"
+version = "0.1.0"
+dependencies = [
+ "solana-program",
+]
+
+[[package]]
 name = "solana-program"
 version = "1.18.26"
 source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#5aa234b830aef308a639efb08483e776ac28f674"

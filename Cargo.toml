@@ -4,6 +4,7 @@ members = [
     "crates/*",
     "revm/crates/*",
     "solana-ee-core/crates/core",
+    "solana-ee-core/crates/examples/hello-world",
     "crates/rwasm/e2e",
     "e2e",
 ]
