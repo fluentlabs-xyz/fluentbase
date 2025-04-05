@@ -52,8 +52,8 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &pk_bpf_loader_upgradeable,
-            "../crates/svm/test_elfs/out/noop_aligned.so",
-            // "../crates/svm/test_elfs/out/solana_ee_hello_world.so",
+            // "../crates/svm/test_elfs/out/noop_aligned.so",
+            "../crates/svm/test_elfs/out/solana_ee_hello_world.so",
         );
 
         let program_bytes = account_with_program.data().to_vec();
