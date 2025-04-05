@@ -1,7 +1,7 @@
+// #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate alloc;
 extern crate core;
-extern crate fluentbase_sdk;
 
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
@@ -16,7 +16,7 @@ use fluentbase_sdk::{
     B256,
     EVM_CODE_HASH_SLOT,
 };
-use solana_ee_core::{
+use fluentbase_svm::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     bincode,
     common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_address},
@@ -221,8 +221,11 @@ pub fn main(mut sdk: impl SharedAPI) {
     let pk_exec = pubkey_from_address(sdk.context().contract_address());
     let (pk_programdata, _) =
         Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account_data: AccountSharedData =
-        bincode::deserialize(preimage.as_ref()).expect("preimage must contain account shared data");
+    let programdata_account_data: AccountSharedData = bincode::deserialize(preimage.as_ref())
+        .expect(
+            "preimage must contain account shared
+    data",
+        );
     let state = UpgradeableLoaderState::Program {
         programdata_address: pk_programdata,
     };

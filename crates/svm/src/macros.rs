@@ -1,6 +1,7 @@
 use crate::{
     account::WritableAccount,
     context::{IndexOfAccount, InvokeContext},
+    declare_builtin_function,
     helpers::{
         create_memory_mapping,
         BpfAllocator,
@@ -198,7 +199,7 @@ macro_rules! declare_builtin_function {
 #[macro_export]
 macro_rules! declare_process_instruction {
     ($process_instruction:ident <$($generic_ident:ident : $generic_type:tt),+>, $cu_to_consume:expr, |$invoke_context:ident| $inner:tt) => {
-        declare_builtin_function!(
+        $crate::declare_builtin_function!(
             $process_instruction <$($generic_ident : $generic_type),+>,
             fn rust(
                 invoke_context: &mut $crate::context::InvokeContext <$($generic_ident),+>,

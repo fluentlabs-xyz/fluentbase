@@ -1,20 +1,42 @@
 mod tests {
-    use crate::account::{AccountSharedData, ReadableAccount};
-    use crate::common::{calculate_max_chunk_size, pubkey_from_address};
-    use crate::fluentbase_helpers::{exec_encoded_svm_batch_message, exec_encoded_svm_message, process_svm_result, BatchMessage, MemStorage};
-    use crate::native_loader;
-    use crate::native_loader::create_loadable_account_for_test;
-    use crate::test_helpers::{load_program_account_from_elf_file, };
+    use crate::{
+        account::{AccountSharedData, ReadableAccount},
+        common::{calculate_max_chunk_size, pubkey_from_address},
+        fluentbase_helpers::{
+            exec_encoded_svm_batch_message,
+            exec_encoded_svm_message,
+            process_svm_result,
+            BatchMessage,
+            MemStorage,
+        },
+        helpers::{storage_read_account_data, storage_write_account_data},
+        native_loader,
+        native_loader::create_loadable_account_for_test,
+        test_helpers::load_program_account_from_elf_file,
+    };
     use core::str::from_utf8;
-    use fluentbase_sdk::testing::TestingContext;
-    use fluentbase_sdk::{address, Address, BlockContextV1, Bytes, ContractContextV1, SharedAPI, SharedContextInputV1, StorageAPI, U256};
-    use solana_program::bpf_loader_upgradeable::{create_buffer, UpgradeableLoaderState};
-    use solana_program::hash::Hash;
-    use solana_program::instruction::Instruction;
-    use solana_program::message::Message;
-    use solana_program::pubkey::Pubkey;
-    use solana_program::{bpf_loader_upgradeable, system_program, sysvar};
-    use crate::helpers::{storage_read_account_data, storage_write_account_data};
+    use fluentbase_sdk::{
+        address,
+        testing::TestingContext,
+        Address,
+        BlockContextV1,
+        Bytes,
+        ContractContextV1,
+        SharedAPI,
+        SharedContextInputV1,
+        StorageAPI,
+        U256,
+    };
+    use solana_program::{
+        bpf_loader_upgradeable,
+        bpf_loader_upgradeable::{create_buffer, UpgradeableLoaderState},
+        hash::Hash,
+        instruction::Instruction,
+        message::Message,
+        pubkey::Pubkey,
+        system_program,
+        sysvar,
+    };
 
     fn main_single_message<SAPI: StorageAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
         let input = sdk.input();
@@ -63,10 +85,14 @@ mod tests {
         let pk_9 = Pubkey::from([9; 32]);
         let pk_9_account = AccountSharedData::new(100, 0, &system_program_id);
 
-        let (pk_program_data, _) = Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable_id);
+        let (pk_program_data, _) =
+            Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable_id);
         let pk_program_data_account = AccountSharedData::new(0, 0, &system_program_id);
 
-        let account_with_program = load_program_account_from_elf_file(&bpf_loader_upgradeable_id, "../examples/hello-world/assets/solana_ee_hello_world.so");
+        let account_with_program = load_program_account_from_elf_file(
+            &bpf_loader_upgradeable_id,
+            "./test_elfs/out/solana_ee_hello_world.so",
+        );
 
         let blockhash = Hash::default();
 
@@ -85,8 +111,7 @@ mod tests {
                 gas_limit: 0,
             },
         };
-        let mut sdk = TestingContext::default()
-            .with_shared_context_input(shared_context);
+        let mut sdk = TestingContext::default().with_shared_context_input(shared_context);
         let mut sapi = MemStorage::new();
 
         storage_write_account_data(&mut sapi, &pk_payer, &account_payer).unwrap();
@@ -96,33 +121,31 @@ mod tests {
         storage_write_account_data(
             &mut sapi,
             &system_program_id,
-            &create_loadable_account_for_test("system_program_id", &native_loader_id)
-        ).unwrap();
+            &create_loadable_account_for_test("system_program_id", &native_loader_id),
+        )
+        .unwrap();
         storage_write_account_data(
             &mut sapi,
             &bpf_loader_upgradeable_id,
-            &create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id)
-        ).unwrap();
+            &create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
+        )
+        .unwrap();
         storage_write_account_data(
             &mut sapi,
             &sysvar_clock_id,
-            &create_loadable_account_for_test("sysvar_clock_id", &system_program_id)
-        ).unwrap();
+            &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
+        )
+        .unwrap();
         storage_write_account_data(
             &mut sapi,
             &sysvar_rent_id,
-            &create_loadable_account_for_test("sysvar_rent_id", &system_program_id)
-        ).unwrap();
+            &create_loadable_account_for_test("sysvar_rent_id", &system_program_id),
+        )
+        .unwrap();
 
         // init buffer
 
-        let instructions = create_buffer(
-            &pk_payer,
-            &pk_buffer,
-            &pk_9,
-            0,
-            program_len,
-        ).unwrap();
+        let instructions = create_buffer(&pk_payer, &pk_buffer, &pk_9, 0, program_len).unwrap();
         let message = Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash);
         let mut sdk = sdk.with_input(bincode::serialize(&message).unwrap());
         main_single_message::<MemStorage>(sdk.clone(), Some(&mut sapi));
@@ -144,12 +167,14 @@ mod tests {
         assert_eq!(account_data.data().len(), buffer_space);
         assert_eq!(account_data.executable(), false);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &system_program_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &system_program_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &bpf_loader_upgradeable_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &bpf_loader_upgradeable_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), 25);
         assert_eq!(account_data.executable(), true);
@@ -183,12 +208,14 @@ mod tests {
         assert_eq!(account_data.data().len(), buffer_space);
         assert_eq!(account_data.executable(), false);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &system_program_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &system_program_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &bpf_loader_upgradeable_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &bpf_loader_upgradeable_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), 25);
         assert_eq!(account_data.executable(), true);
@@ -202,7 +229,8 @@ mod tests {
             &pk_9,
             10,
             account_with_program.data().len(),
-        ).unwrap();
+        )
+        .unwrap();
         let message = Message::new(&instructions, Some(&pk_payer));
         sdk = sdk.with_input(bincode::serialize(&message).unwrap());
         main_single_message::<MemStorage>(sdk.clone(), Some(&mut sapi));
@@ -227,48 +255,53 @@ mod tests {
         assert_eq!(account_data.data().len(), 37);
         assert_eq!(account_data.executable(), false);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_program_data).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &pk_program_data).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), 72805);
         assert_eq!(account_data.executable(), false);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &system_program_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &system_program_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &bpf_loader_upgradeable_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &bpf_loader_upgradeable_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), 25);
         assert_eq!(account_data.executable(), true);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &sysvar_clock_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &sysvar_clock_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), "sysvar_clock_id".len());
         assert_eq!(account_data.executable(), true);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &sysvar_rent_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &sysvar_rent_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), "sysvar_rent_id".len());
         assert_eq!(account_data.executable(), true);
 
         // exec
 
-        let instructions = vec![
-            Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &[0u8; 0],
-                vec![],
-            ),
-        ];
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_exec.clone(),
+            &[0u8; 0],
+            vec![],
+        )];
         let message = Message::new_with_blockhash(&instructions, Some(&pk_exec), &blockhash);
-        sdk = sdk.with_shared_context_input(SharedContextInputV1 {
-            block: BlockContextV1 {
-                number: 1,
+        sdk = sdk
+            .with_shared_context_input(SharedContextInputV1 {
+                block: BlockContextV1 {
+                    number: 1,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        }).with_input(bincode::serialize(&message).unwrap());
+            })
+            .with_input(bincode::serialize(&message).unwrap());
         main_single_message::<MemStorage>(sdk.clone(), Some(&mut sapi));
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
@@ -298,11 +331,12 @@ mod tests {
 
         let pk_authority = pk_payer.clone();
 
-        let (pk_programdata, _) = Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable_id);
+        let (pk_programdata, _) =
+            Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable_id);
 
         let account_with_program = load_program_account_from_elf_file(
             &bpf_loader_upgradeable_id,
-            "../examples/hello-world/assets/solana_ee_hello_world.so",
+            "./test_elfs/out/solana_ee_hello_world.so",
             // "./test_elfs/out/noop_aligned.so",
         );
 
@@ -315,30 +349,28 @@ mod tests {
         storage_write_account_data(
             &mut sapi,
             &system_program_id,
-            &create_loadable_account_for_test("system_program_id", &native_loader_id)
-        ).unwrap();
+            &create_loadable_account_for_test("system_program_id", &native_loader_id),
+        )
+        .unwrap();
         storage_write_account_data(
             &mut sapi,
             &bpf_loader_upgradeable_id,
-            &create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id)
-        ).unwrap();
+            &create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
+        )
+        .unwrap();
 
         // init buffer, fill buffer, deploy
 
         let mut batch_message = BatchMessage::new(None);
 
-        let instructions = create_buffer(
-            &pk_payer,
-            &pk_buffer,
-            &pk_authority,
-            0,
-            program_len,
-        ).unwrap();
+        let instructions =
+            create_buffer(&pk_payer, &pk_buffer, &pk_authority, 0, program_len).unwrap();
         let message = Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash);
         batch_message.append_one(message);
 
         let create_msg = |offset: u32, bytes: Vec<u8>| {
-            let instruction = bpf_loader_upgradeable::write(&pk_buffer, &pk_authority, offset, bytes);
+            let instruction =
+                bpf_loader_upgradeable::write(&pk_buffer, &pk_authority, offset, bytes);
             let instructions = vec![instruction];
             Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash)
         };
@@ -359,7 +391,8 @@ mod tests {
             &pk_authority,
             lamports_to_transfer_on_deploy,
             account_with_program.data().len(),
-        ).unwrap();
+        )
+        .unwrap();
         let message = Message::new(&instructions, Some(&pk_payer));
         batch_message.append_one(message);
 
@@ -367,50 +400,45 @@ mod tests {
         main_batch_message::<MemStorage>(sdk.clone(), Some(&mut sapi));
 
         // exec
-        // we recreate storage to test if we need only specific accounts (other accounts dropped from storage)
+        // we recreate storage to test if we need only specific accounts (other accounts dropped
+        // from storage)
 
         let exec_account = storage_read_account_data(&mut sapi, &pk_exec).unwrap();
         let programdata_account = storage_read_account_data(&mut sapi, &pk_programdata).unwrap();
 
         let mut sapi = MemStorage::new();
 
-        storage_write_account_data(
-            &mut sapi,
-            &pk_exec,
-            &exec_account
-        ).unwrap();
-        storage_write_account_data(
-            &mut sapi,
-            &pk_programdata,
-            &programdata_account
-        ).unwrap();
+        storage_write_account_data(&mut sapi, &pk_exec, &exec_account).unwrap();
+        storage_write_account_data(&mut sapi, &pk_programdata, &programdata_account).unwrap();
         storage_write_account_data(
             &mut sapi,
             &system_program_id,
-            &create_loadable_account_for_test("system_program_id", &native_loader_id)
-        ).unwrap();
+            &create_loadable_account_for_test("system_program_id", &native_loader_id),
+        )
+        .unwrap();
         storage_write_account_data(
             &mut sapi,
             &bpf_loader_upgradeable_id,
-            &create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id)
-        ).unwrap();
+            &create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
+        )
+        .unwrap();
 
-        let instructions = vec![
-            Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &[0u8; 0],
-                vec![],
-            ),
-        ];
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_exec.clone(),
+            &[0u8; 0],
+            vec![],
+        )];
         let message = Message::new_with_blockhash(&instructions, Some(&pk_exec), &blockhash);
         batch_message.clear().append_one(message);
-        sdk = sdk.with_shared_context_input(SharedContextInputV1 {
-            block: BlockContextV1 {
-                number: 1,
+        sdk = sdk
+            .with_shared_context_input(SharedContextInputV1 {
+                block: BlockContextV1 {
+                    number: 1,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        }).with_input(bincode::serialize(&batch_message).unwrap());
+            })
+            .with_input(bincode::serialize(&batch_message).unwrap());
         main_batch_message::<MemStorage>(sdk.clone(), Some(&mut sapi));
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
@@ -419,7 +447,8 @@ mod tests {
         assert_eq!(account_data.executable(), true);
         assert_eq!(account_data.owner(), &bpf_loader_upgradeable_id);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_programdata).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &pk_programdata).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), programdata_len);
         assert_eq!(account_data.executable(), false);

@@ -9,8 +9,7 @@ mod tests {
         PRECOMPILE_SVM_RUNTIME,
         U256,
     };
-    use hex_literal::hex;
-    use solana_ee_core::{
+    use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bincode,
         common::pubkey_from_address,
@@ -23,6 +22,7 @@ mod tests {
             rent::Rent,
         },
     };
+    use hex_literal::hex;
     use std::{fs::File, io::Read};
 
     pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
@@ -52,8 +52,8 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &pk_bpf_loader_upgradeable,
-            // "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
-            "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
+            "../crates/svm/test_elfs/out/noop_aligned.so",
+            // "../crates/svm/test_elfs/out/solana_ee_hello_world.so",
         );
 
         let program_bytes = account_with_program.data().to_vec();
@@ -76,8 +76,8 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &pk_bpf_loader_upgradeable,
             // TODO fix Err(TransactionError(InstructionError(0, ProgramFailedToComplete)))
-            // "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
-            "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
+            // "../crates/svm/test_elfs/out/solana_ee_hello_world.so",
+            "../crates/svm/test_elfs/out/noop_aligned.so",
         );
 
         // init buffer, fill buffer, deploy

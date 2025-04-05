@@ -3,10 +3,7 @@ members = [
     "contracts/*",
     "crates/*",
     "revm/crates/*",
-    #    "solana-ee-core/crates/*",
-    #    "solana-ee-core/crates/examples/hello-world",
     "crates/rwasm/e2e",
-    #    "examples/*",
     "e2e",
 ]
 exclude = [
@@ -39,9 +36,10 @@ fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
 fluentbase-svm = { path = "./crates/svm", default-features = false }
-solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
+#solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
+solana-program = { path = "../solana/sdk/program", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
-#solana-program = { path = "../solana/sdk/program", default-features = false }
+#solana_rbpf = { path = "../rbpf", default-features = false }
 
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 
@@ -76,11 +74,11 @@ syn = "2.0"
 clap = { version = "4.5", features = ["derive"] }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
-keccak-hash = { version = "0.11.0" }
+keccak-hash = { version = "0.11.0", default-features = false }
 itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
 
-#bincode = { git = "https://github.com/fluentlabs-xyz/bincode", branch = "feat/svm-1.3.3", default-features = false, features = [] }
 #bincode = { path = "../bincode", default-features = false }
+bincode = { git = "https://github.com/fluentlabs-xyz/bincode", branch = "feat/svm-v1.3.3", default-features = false }
 num-derive = { version = "0.4" }
 num-traits = { version = "0.2", features = ["i128"], default-features = false }
 

@@ -1,35 +1,51 @@
 #[cfg(test)]
 pub mod tests {
-    use crate::account::{AccountSharedData, ReadableAccount, WritableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS};
-    use crate::builtins::register_builtins;
-    use crate::common::{calculate_max_chunk_size, compile_accounts_for_tx_ctx, TestSdkType};
-    use crate::context::{IndexOfAccount, InvokeContext, TransactionContext};
-    use crate::error::{InstructionError, TransactionError};
-    use crate::feature_set::FeatureSet;
-    use crate::loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments};
-    use crate::message_processor::MessageProcessor;
-    use crate::native_loader::create_loadable_account_for_test;
-    use crate::sysvar_cache::SysvarCache;
-    use crate::test_helpers::{journal_state, load_program_account_from_elf_file};
-    use crate::{declare_process_instruction, native_loader, system_processor};
-    use alloc::sync::Arc;
-    use alloc::vec;
-    use alloc::vec::Vec;
+    use crate::{
+        account::{
+            AccountSharedData,
+            ReadableAccount,
+            WritableAccount,
+            DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+        },
+        builtins::register_builtins,
+        common::{calculate_max_chunk_size, compile_accounts_for_tx_ctx, TestSdkType},
+        context::{IndexOfAccount, InvokeContext, TransactionContext},
+        declare_process_instruction,
+        error::{InstructionError, TransactionError},
+        feature_set::FeatureSet,
+        loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
+        message_processor::MessageProcessor,
+        native_loader,
+        native_loader::create_loadable_account_for_test,
+        system_processor,
+        sysvar_cache::SysvarCache,
+        test_helpers::{journal_state, load_program_account_from_elf_file},
+    };
+    use alloc::{sync::Arc, vec, vec::Vec};
     use fluentbase_sdk::SharedAPI;
     use serde::{Deserialize, Serialize};
-    use solana_program::bpf_loader_upgradeable::{create_buffer, UpgradeableLoaderState};
-    use solana_program::clock::Clock;
-    use solana_program::epoch_schedule::EpochSchedule;
-    use solana_program::hash::Hash;
-    use solana_program::instruction::{AccountMeta, Instruction};
-    use solana_program::loader_upgradeable_instruction::UpgradeableLoaderInstruction;
-    use solana_program::message::{AccountKeys, LegacyMessage, Message, SanitizedMessage};
-    use solana_program::pubkey::Pubkey;
-    use solana_program::rent::Rent;
-    use solana_program::system_instruction::{SystemError, SystemInstruction};
-    use solana_program::{bpf_loader, bpf_loader_upgradeable, pubkey, system_program, sysvar};
-    use solana_rbpf::program::{BuiltinFunction, BuiltinProgram, FunctionRegistry};
-    use solana_rbpf::vm::Config;
+    use solana_program::{
+        bpf_loader,
+        bpf_loader_upgradeable,
+        bpf_loader_upgradeable::{create_buffer, UpgradeableLoaderState},
+        clock::Clock,
+        epoch_schedule::EpochSchedule,
+        hash::Hash,
+        instruction::{AccountMeta, Instruction},
+        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
+        message::{AccountKeys, LegacyMessage, Message, SanitizedMessage},
+        pubkey,
+        pubkey::Pubkey,
+        rent::Rent,
+        system_instruction::{SystemError, SystemInstruction},
+        system_program,
+        sysvar,
+    };
+    use solana_rbpf::{
+        declare_builtin_function,
+        program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
+        vm::Config,
+    };
 
     #[test]
     fn test_process_message_readonly_handling_mocked() {
@@ -62,12 +78,7 @@ pub mod tests {
                 create_loadable_account_for_test("mock_system_program", &native_loader::id()),
             ),
         ];
-        let mut transaction_context = TransactionContext::new(
-            accounts,
-            Default::default(),
-            1,
-            3,
-        );
+        let mut transaction_context = TransactionContext::new(accounts, Default::default(), 1, 3);
         let program_indices = vec![vec![2]];
 
         let account_keys = (0..transaction_context.get_number_of_accounts())
@@ -82,7 +93,8 @@ pub mod tests {
             AccountMeta::new_readonly(readonly_pubkey, false),
         ];
 
-        let function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+        let function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -169,14 +181,12 @@ pub mod tests {
             blockhash,
             0,
         );
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert!(result.is_ok());
         assert_eq!(
-            invoke_context.transaction_context
+            invoke_context
+                .transaction_context
                 .get_account_at_index(0)
                 .unwrap()
                 .borrow()
@@ -184,7 +194,8 @@ pub mod tests {
             100
         );
         assert_eq!(
-            invoke_context.transaction_context
+            invoke_context
+                .transaction_context
                 .get_account_at_index(1)
                 .unwrap()
                 .borrow()
@@ -207,11 +218,8 @@ pub mod tests {
                     ),
                 ]),
             )));
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
@@ -235,11 +243,8 @@ pub mod tests {
                     ),
                 ]),
             )));
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
@@ -257,11 +262,12 @@ pub mod tests {
             sanitize_user_provided_values: true,
             ..Default::default()
         };
-        let sdk = journal_state();;
+        let sdk = journal_state();
 
         let blockhash = Hash::default();
 
-        let function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+        let function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -335,12 +341,7 @@ pub mod tests {
                 create_loadable_account_for_test("mock_system_program", &native_loader::id()),
             ),
         ];
-        let mut transaction_context = TransactionContext::new(
-            accounts,
-            Rent::default(),
-            1,
-            3,
-        );
+        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3);
         let program_indices = vec![vec![2]];
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -408,11 +409,8 @@ pub mod tests {
             blockhash,
             0,
         );
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
@@ -427,7 +425,12 @@ pub mod tests {
                 &MockSystemInstruction::MultiBorrowMut,
                 account_metas.clone(),
             )],
-            Some(invoke_context.transaction_context.get_key_of_account_at_index(0).unwrap()),
+            Some(
+                invoke_context
+                    .transaction_context
+                    .get_key_of_account_at_index(0)
+                    .unwrap(),
+            ),
         )));
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -440,11 +443,8 @@ pub mod tests {
             mock_program_id,
             Arc::new(LoadedProgram::new_builtin(0, 0, MockBuiltin::vm)),
         );
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert!(result.is_ok());
 
         let message = SanitizedMessage::Legacy(LegacyMessage::new(Message::new(
@@ -456,7 +456,12 @@ pub mod tests {
                 },
                 account_metas,
             )],
-            Some(invoke_context.transaction_context.get_key_of_account_at_index(0).unwrap()),
+            Some(
+                invoke_context
+                    .transaction_context
+                    .get_key_of_account_at_index(0)
+                    .unwrap(),
+            ),
         )));
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -469,14 +474,12 @@ pub mod tests {
             mock_program_id,
             Arc::new(LoadedProgram::new_builtin(0, 0, MockBuiltin::vm)),
         );
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert!(result.is_ok());
         assert_eq!(
-            invoke_context.transaction_context
+            invoke_context
+                .transaction_context
                 .get_account_at_index(0)
                 .unwrap()
                 .borrow()
@@ -484,7 +487,8 @@ pub mod tests {
             80
         );
         assert_eq!(
-            invoke_context.transaction_context
+            invoke_context
+                .transaction_context
                 .get_account_at_index(1)
                 .unwrap()
                 .borrow()
@@ -492,7 +496,8 @@ pub mod tests {
             20
         );
         assert_eq!(
-            invoke_context.transaction_context
+            invoke_context
+                .transaction_context
                 .get_account_at_index(0)
                 .unwrap()
                 .borrow()
@@ -512,7 +517,7 @@ pub mod tests {
 
         let blockhash = Hash::default();
 
-        let sdk = journal_state();;
+        let sdk = journal_state();
 
         let new_owner = Pubkey::from([9; 32]);
         let from = Pubkey::new_unique();
@@ -526,25 +531,14 @@ pub mod tests {
         let native_loader_id = native_loader::id();
 
         let accounts = vec![
-            (
-                from,
-                from_account,
-            ),
-            (
-                to,
-                to_account,
-            ),
+            (from, from_account),
+            (to, to_account),
             (
                 system_program_id,
                 create_loadable_account_for_test("system_program_id", &native_loader_id),
             ),
         ];
-        let mut transaction_context = TransactionContext::new(
-            accounts,
-            Default::default(),
-            1,
-            3,
-        );
+        let mut transaction_context = TransactionContext::new(accounts, Default::default(), 1, 3);
         let program_indices = vec![vec![non_program_accounts_count]];
 
         let account_keys = (0..transaction_context.get_number_of_accounts())
@@ -554,12 +548,10 @@ pub mod tests {
                     .unwrap()
             })
             .collect::<Vec<_>>();
-        let account_metas = vec![
-            AccountMeta::new(from, true),
-            AccountMeta::new(to, true),
-        ];
+        let account_metas = vec![AccountMeta::new(from, true), AccountMeta::new(to, true)];
 
-        let function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+        let function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -572,7 +564,11 @@ pub mod tests {
         );
         programs_loaded_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, system_processor::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                system_processor::Entrypoint::vm,
+            )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -596,45 +592,49 @@ pub mod tests {
             0,
         );
 
-        let message = SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
-            2,
-            0,
-            0,
-            account_keys.clone(),
-            blockhash,
-            AccountKeys::new(&account_keys, None).compile_instructions(&[
-                Instruction::new_with_bincode(
-                    system_program_id,
-                    &SystemInstruction::CreateAccount {
-                        lamports: 50,
-                        space: 2,
-                        owner: new_owner,
-                    },
-                    account_metas.clone(),
-                ),
-            ]),
-        )));
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let message =
+            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+                2,
+                0,
+                0,
+                account_keys.clone(),
+                blockhash,
+                AccountKeys::new(&account_keys, None).compile_instructions(&[
+                    Instruction::new_with_bincode(
+                        system_program_id,
+                        &SystemInstruction::CreateAccount {
+                            lamports: 50,
+                            space: 2,
+                            owner: new_owner,
+                        },
+                        account_metas.clone(),
+                    ),
+                ]),
+            )));
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             // println!("result1: {:?}", result);
             assert!(result.is_ok());
             let accounts_count = invoke_context.transaction_context.get_number_of_accounts();
             assert_eq!(accounts_count, 3);
-            let account1 = invoke_context.transaction_context
+            let account1 = invoke_context
+                .transaction_context
                 .get_account_at_index(0)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(50, account1.lamports());
-            let account2 = invoke_context.transaction_context
+            let account2 = invoke_context
+                .transaction_context
                 .get_account_at_index(1)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(50, account2.lamports());
-            let account3 = invoke_context.transaction_context
+            let account3 = invoke_context
+                .transaction_context
                 .get_account_at_index(2)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account3.lamports());
         }
     }
@@ -650,7 +650,7 @@ pub mod tests {
 
         let blockhash = Hash::default();
 
-        let sdk = journal_state();;
+        let sdk = journal_state();
 
         let from = Pubkey::new_unique();
         let to = Pubkey::from([3; 32]);
@@ -659,25 +659,14 @@ pub mod tests {
         let program_id = Pubkey::new_unique();
 
         let accounts = vec![
-            (
-                from,
-                AccountSharedData::new(100, 0, &system_program_id),
-            ),
-            (
-                to,
-                AccountSharedData::new(1, 0, &system_program_id),
-            ),
+            (from, AccountSharedData::new(100, 0, &system_program_id)),
+            (to, AccountSharedData::new(1, 0, &system_program_id)),
             (
                 system_program_id,
                 create_loadable_account_for_test("system_program_id", &native_loader_id),
             ),
         ];
-        let mut transaction_context = TransactionContext::new(
-            accounts,
-            Default::default(),
-            1,
-            3,
-        );
+        let mut transaction_context = TransactionContext::new(accounts, Default::default(), 1, 3);
         let program_indices = vec![vec![2]];
 
         let account_keys = (0..transaction_context.get_number_of_accounts())
@@ -687,12 +676,10 @@ pub mod tests {
                     .unwrap()
             })
             .collect::<Vec<_>>();
-        let account_metas = vec![
-            AccountMeta::new(from, true),
-            AccountMeta::new(to, false),
-        ];
+        let account_metas = vec![AccountMeta::new(from, true), AccountMeta::new(to, false)];
 
-        let function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+        let function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -705,7 +692,11 @@ pub mod tests {
         );
         programs_loaded_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, system_processor::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                system_processor::Entrypoint::vm,
+            )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -729,117 +720,132 @@ pub mod tests {
             0,
         );
 
-        let message = SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
-            1,
-            0,
-            1,
-            account_keys.clone(),
-            blockhash,
-            AccountKeys::new(&account_keys, None).compile_instructions(&[
-                Instruction::new_with_bincode(
-                    system_program_id,
-                    &SystemInstruction::Transfer { lamports: 50 },
-                    account_metas.clone(),
-                ),
-            ]),
-        )));
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let message =
+            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+                1,
+                0,
+                1,
+                account_keys.clone(),
+                blockhash,
+                AccountKeys::new(&account_keys, None).compile_instructions(&[
+                    Instruction::new_with_bincode(
+                        system_program_id,
+                        &SystemInstruction::Transfer { lamports: 50 },
+                        account_metas.clone(),
+                    ),
+                ]),
+            )));
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             // println!("result1: {:?}", result);
             assert!(result.is_ok());
             assert_eq!(result, Ok(()));
-            let account1 = invoke_context.transaction_context
+            let account1 = invoke_context
+                .transaction_context
                 .get_account_at_index(0)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(50, account1.lamports());
-            let account2 = invoke_context.transaction_context
+            let account2 = invoke_context
+                .transaction_context
                 .get_account_at_index(1)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(51, account2.lamports());
-            let account3 = invoke_context.transaction_context
+            let account3 = invoke_context
+                .transaction_context
                 .get_account_at_index(2)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account3.lamports());
         }
 
-        let message = SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
-            1,
-            0,
-            1,
-            account_keys.clone(),
-            blockhash,
-            AccountKeys::new(&account_keys, None).compile_instructions(&[
-                Instruction::new_with_bincode(
-                    system_program_id,
-                    &SystemInstruction::Transfer { lamports: 10 },
-                    account_metas.clone(),
-                ),
-            ]),
-        )));
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let message =
+            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+                1,
+                0,
+                1,
+                account_keys.clone(),
+                blockhash,
+                AccountKeys::new(&account_keys, None).compile_instructions(&[
+                    Instruction::new_with_bincode(
+                        system_program_id,
+                        &SystemInstruction::Transfer { lamports: 10 },
+                        account_metas.clone(),
+                    ),
+                ]),
+            )));
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             // println!("result2: {:?}", result);
             assert!(result.is_ok());
             assert_eq!(result, Ok(()));
-            let account1 = invoke_context.transaction_context
+            let account1 = invoke_context
+                .transaction_context
                 .get_account_at_index(0)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(40, account1.lamports());
-            let account2 = invoke_context.transaction_context
+            let account2 = invoke_context
+                .transaction_context
                 .get_account_at_index(1)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(61, account2.lamports());
-            let account3 = invoke_context.transaction_context
+            let account3 = invoke_context
+                .transaction_context
                 .get_account_at_index(2)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account3.lamports());
         }
 
-        let message = SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
-            1,
-            0,
-            1,
-            account_keys.clone(),
-            blockhash,
-            AccountKeys::new(&account_keys, None).compile_instructions(&[
-                Instruction::new_with_bincode(
-                    system_program_id,
-                    &SystemInstruction::Transfer { lamports: 101 },
-                    account_metas.clone(),
-                ),
-            ]),
-        )));
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let message =
+            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+                1,
+                0,
+                1,
+                account_keys.clone(),
+                blockhash,
+                AccountKeys::new(&account_keys, None).compile_instructions(&[
+                    Instruction::new_with_bincode(
+                        system_program_id,
+                        &SystemInstruction::Transfer { lamports: 101 },
+                        account_metas.clone(),
+                    ),
+                ]),
+            )));
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             // println!("result3: {:?}", result);
             assert!(result.is_err());
             assert_eq!(
                 result.err().unwrap(),
-                TransactionError::InstructionError(0, SystemError::ResultWithNegativeLamports.into())
+                TransactionError::InstructionError(
+                    0,
+                    SystemError::ResultWithNegativeLamports.into()
+                )
             );
-            let account1 = invoke_context.transaction_context
+            let account1 = invoke_context
+                .transaction_context
                 .get_account_at_index(0)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(40, account1.lamports());
-            let account2 = invoke_context.transaction_context
+            let account2 = invoke_context
+                .transaction_context
                 .get_account_at_index(1)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(61, account2.lamports());
-            let account3 = invoke_context.transaction_context
+            let account3 = invoke_context
+                .transaction_context
                 .get_account_at_index(2)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account3.lamports());
         }
     }
@@ -855,7 +861,7 @@ pub mod tests {
 
         let blockhash = Hash::default();
 
-        let sdk = journal_state();;
+        let sdk = journal_state();
 
         let native_loader_id = native_loader::id();
         let bpf_loader_id = solana_program::bpf_loader::id();
@@ -866,32 +872,23 @@ pub mod tests {
         let account_from = AccountSharedData::new(100, 0, &system_program_id);
         let account_to = AccountSharedData::new(0, 0, &system_program_id);
         // let mut account_with_elf =
-        //     load_program_account_from_elf(&bpf_loader_id, "../examples/hello-world/assets/solana_ee_hello_world.so");
-        // account_with_elf.set_lamports(0);
+        //     load_program_account_from_elf(&bpf_loader_id,
+        // "../examples/hello-world/assets/solana_ee_hello_world.so"); account_with_elf.
+        // set_lamports(0);
 
         let accounts = vec![
-            (
-                from,
-                account_from,
-            ),
-            (
-                to,
-                account_to,
-            ),
+            (from, account_from),
+            (to, account_to),
             (
                 system_program_id,
                 create_loadable_account_for_test("system_program_id", &native_loader_id),
             ),
         ];
-        let transaction_context = TransactionContext::new(
-            accounts,
-            Default::default(),
-            1,
-            3,
-        );
+        let transaction_context = TransactionContext::new(accounts, Default::default(), 1, 3);
         let program_indices = vec![vec![2]];
 
-        let function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+        let function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -904,7 +901,11 @@ pub mod tests {
         );
         programs_loaded_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, system_processor::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                system_processor::Entrypoint::vm,
+            )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -931,60 +932,63 @@ pub mod tests {
         let number_of_accounts = invoke_context.transaction_context.get_number_of_accounts();
         let account_keys = (0..number_of_accounts)
             .map(|index| {
-                *invoke_context.transaction_context
+                *invoke_context
+                    .transaction_context
                     .get_key_of_account_at_index(index)
                     .unwrap()
             })
             .collect::<Vec<_>>();
-        let account_metas = vec![
-            AccountMeta::new(from, true),
-            AccountMeta::new(to, true),
-        ];
-        let message = SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
-            2,
-            0,
-            0,
-            account_keys.clone(),
-            blockhash,
-            AccountKeys::new(&account_keys, None).compile_instructions(&[
-                Instruction::new_with_bincode(
-                    system_program_id,
-                    &SystemInstruction::CreateAccount {
-                        lamports: 30,
-                        space: 0,
-                        owner: system_program_id,
-                    },
-                    account_metas.clone(),
-                ),
-            ]),
-        )));
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let account_metas = vec![AccountMeta::new(from, true), AccountMeta::new(to, true)];
+        let message =
+            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+                2,
+                0,
+                0,
+                account_keys.clone(),
+                blockhash,
+                AccountKeys::new(&account_keys, None).compile_instructions(&[
+                    Instruction::new_with_bincode(
+                        system_program_id,
+                        &SystemInstruction::CreateAccount {
+                            lamports: 30,
+                            space: 0,
+                            owner: system_program_id,
+                        },
+                        account_metas.clone(),
+                    ),
+                ]),
+            )));
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         // println!("result1: {:?}", result);
         assert!(result.is_ok());
-        let account1 = invoke_context.transaction_context
+        let account1 = invoke_context
+            .transaction_context
             .get_account_at_index(0)
-            .unwrap().borrow().clone();
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(70, account1.lamports());
         assert_eq!(0, account1.data().len());
-        let account2 = invoke_context.transaction_context
+        let account2 = invoke_context
+            .transaction_context
             .get_account_at_index(1)
-            .unwrap().borrow().clone();
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(30, account2.lamports());
         assert_eq!(0, account2.data().len());
-        let account3 = invoke_context.transaction_context
+        let account3 = invoke_context
+            .transaction_context
             .get_account_at_index(2)
-            .unwrap().borrow().clone();
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account3.lamports());
 
         // allocate more account data for 2nd account
 
-        let account_metas = vec![
-            AccountMeta::new(to, true),
-        ];
+        let account_metas = vec![AccountMeta::new(to, true)];
         let message = Message::new_with_compiled_instructions(
             2,
             0,
@@ -994,47 +998,46 @@ pub mod tests {
             AccountKeys::new(&account_keys, None).compile_instructions(&[
                 Instruction::new_with_bincode(
                     system_program_id,
-                    &SystemInstruction::Allocate {
-                        space: 3,
-                    },
+                    &SystemInstruction::Allocate { space: 3 },
                     account_metas.clone(),
                 ),
             ]),
         );
         let message = LegacyMessage::new(message);
         let message = SanitizedMessage::Legacy(message);
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             // println!("result2: {:?}", result);
             assert!(result.is_ok());
-            let account1 = invoke_context.transaction_context
+            let account1 = invoke_context
+                .transaction_context
                 .get_account_at_index(0)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(70, account1.lamports());
             assert_eq!(0, account1.data().len());
             assert_eq!(&system_program_id, account1.owner());
-            let account2 = invoke_context.transaction_context
+            let account2 = invoke_context
+                .transaction_context
                 .get_account_at_index(1)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(30, account2.lamports());
             assert_eq!(3, account2.data().len() as u64);
             assert_eq!(&[0, 0, 0], account2.data());
             assert_eq!(&system_program_id, account2.owner());
-            let account3 = invoke_context.transaction_context
+            let account3 = invoke_context
+                .transaction_context
                 .get_account_at_index(2)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account3.lamports());
         }
 
         // assign ownership of the 2nd account to some new owner
 
-        let account_metas = vec![
-            AccountMeta::new(to, true),
-        ];
+        let account_metas = vec![AccountMeta::new(to, true)];
         let message = Message::new_with_compiled_instructions(
             2,
             0,
@@ -1044,37 +1047,38 @@ pub mod tests {
             AccountKeys::new(&account_keys, None).compile_instructions(&[
                 Instruction::new_with_bincode(
                     system_program_id,
-                    &SystemInstruction::Assign {
-                        owner: new_owner,
-                    },
+                    &SystemInstruction::Assign { owner: new_owner },
                     account_metas.clone(),
                 ),
             ]),
         );
         let message = LegacyMessage::new(message);
         let message = SanitizedMessage::Legacy(message);
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             // println!("result2: {:?}", result);
             assert!(result.is_ok());
-            let account1 = invoke_context.transaction_context
+            let account1 = invoke_context
+                .transaction_context
                 .get_account_at_index(0)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(70, account1.lamports());
             assert_eq!(0, account1.data().len());
-            let account2 = invoke_context.transaction_context
+            let account2 = invoke_context
+                .transaction_context
                 .get_account_at_index(1)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(30, account2.lamports());
             assert_eq!(3, account2.data().len() as u64);
             assert_eq!(&[0, 0, 0], account2.data());
-            let account3 = invoke_context.transaction_context
+            let account3 = invoke_context
+                .transaction_context
                 .get_account_at_index(2)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account3.lamports());
         }
     }
@@ -1090,7 +1094,7 @@ pub mod tests {
 
         let blockhash = Hash::default();
 
-        let sdk = journal_state();;
+        let sdk = journal_state();
 
         let native_loader_id = native_loader::id();
         let bpf_loader_id = solana_program::bpf_loader::id();
@@ -1102,32 +1106,23 @@ pub mod tests {
         let account_from = AccountSharedData::new(100, 0, &system_program_id);
         let account_to = AccountSharedData::new(0, 0, &system_program_id);
         // let mut account_with_elf =
-        //     load_program_account_from_elf(&bpf_loader_id, "../examples/hello-world/assets/solana_ee_hello_world.so");
-        // account_with_elf.set_lamports(0);
+        //     load_program_account_from_elf(&bpf_loader_id,
+        // "../examples/hello-world/assets/solana_ee_hello_world.so"); account_with_elf.
+        // set_lamports(0);
 
         let accounts = vec![
-            (
-                from,
-                account_from,
-            ),
-            (
-                to,
-                account_to,
-            ),
+            (from, account_from),
+            (to, account_to),
             (
                 system_program_id,
                 create_loadable_account_for_test("system_program_id", &native_loader_id),
             ),
         ];
-        let transaction_context = TransactionContext::new(
-            accounts,
-            Default::default(),
-            1,
-            3,
-        );
+        let transaction_context = TransactionContext::new(accounts, Default::default(), 1, 3);
         let mut program_indices = vec![];
 
-        let function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+        let function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -1140,7 +1135,11 @@ pub mod tests {
         );
         programs_loaded_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, system_processor::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                system_processor::Entrypoint::vm,
+            )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -1167,7 +1166,8 @@ pub mod tests {
         let number_of_accounts = invoke_context.transaction_context.get_number_of_accounts();
         let account_keys = (0..number_of_accounts)
             .map(|index| {
-                *invoke_context.transaction_context
+                *invoke_context
+                    .transaction_context
                     .get_key_of_account_at_index(index)
                     .unwrap()
             })
@@ -1175,67 +1175,60 @@ pub mod tests {
         program_indices.push(vec![2]);
         program_indices.push(vec![2]);
         program_indices.push(vec![2]);
-        let message = SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
-            2,
-            0,
-            0,
-            account_keys.clone(),
-            blockhash,
-            AccountKeys::new(&account_keys, None).compile_instructions(&[
-                Instruction::new_with_bincode(
-                    system_program_id,
-                    &SystemInstruction::CreateAccount {
-                        lamports: 30,
-                        space: 0,
-                        owner: system_program_id,
-                    },
-                    vec![
-                        AccountMeta::new(from, true),
-                        AccountMeta::new(to, true),
-                    ],
-                ),
-                Instruction::new_with_bincode(
-                    system_program_id,
-                    &SystemInstruction::Allocate {
-                        space: 3,
-                    },
-                    vec![
-                        AccountMeta::new(to, true),
-                    ],
-                ),
-                Instruction::new_with_bincode(
-                    system_program_id,
-                    &SystemInstruction::Assign {
-                        owner: new_owner,
-                    },
-                    vec![
-                        AccountMeta::new(to, true),
-                    ],
-                ),
-            ]),
-        )));
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let message =
+            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+                2,
+                0,
+                0,
+                account_keys.clone(),
+                blockhash,
+                AccountKeys::new(&account_keys, None).compile_instructions(&[
+                    Instruction::new_with_bincode(
+                        system_program_id,
+                        &SystemInstruction::CreateAccount {
+                            lamports: 30,
+                            space: 0,
+                            owner: system_program_id,
+                        },
+                        vec![AccountMeta::new(from, true), AccountMeta::new(to, true)],
+                    ),
+                    Instruction::new_with_bincode(
+                        system_program_id,
+                        &SystemInstruction::Allocate { space: 3 },
+                        vec![AccountMeta::new(to, true)],
+                    ),
+                    Instruction::new_with_bincode(
+                        system_program_id,
+                        &SystemInstruction::Assign { owner: new_owner },
+                        vec![AccountMeta::new(to, true)],
+                    ),
+                ]),
+            )));
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             // println!("result1: {:?}", result);
             assert!(result.is_ok());
-            let account1 = invoke_context.transaction_context
+            let account1 = invoke_context
+                .transaction_context
                 .get_account_at_index(0)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(70, account1.lamports());
             assert_eq!(0, account1.data().len());
-            let account2 = invoke_context.transaction_context
+            let account2 = invoke_context
+                .transaction_context
                 .get_account_at_index(1)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(30, account2.lamports());
             assert_eq!(3, account2.data().len() as u64);
             assert_eq!(&[0, 0, 0], account2.data());
-            let account3 = invoke_context.transaction_context
+            let account3 = invoke_context
+                .transaction_context
                 .get_account_at_index(2)
-                .unwrap().borrow();
+                .unwrap()
+                .borrow();
             assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account3.lamports());
         }
     }
@@ -1251,7 +1244,7 @@ pub mod tests {
 
         let blockhash = Hash::default();
 
-        let sdk = journal_state();;
+        let sdk = journal_state();
 
         let rent = Rent::free();
 
@@ -1269,20 +1262,18 @@ pub mod tests {
         let pk_exec = Pubkey::from([8; 32]);
         let pk_9 = Pubkey::from([9; 32]);
         let mut pk_9_account = AccountSharedData::new(100, 0, &system_program_id);
-        let (pk_program_data, _) = Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable_id);
+        let (pk_program_data, _) =
+            Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable_id);
 
         let mut new_accs = vec![
             (
                 pk_exec.clone(),
-                AccountSharedData::new(0, 0, &system_program_id)
+                AccountSharedData::new(0, 0, &system_program_id),
             ),
-            (
-                pk_9.clone(),
-                pk_9_account.clone(),
-            ),
+            (pk_9.clone(), pk_9_account.clone()),
             (
                 pk_program_data,
-                AccountSharedData::new(0, 0, &system_program_id)
+                AccountSharedData::new(0, 0, &system_program_id),
             ),
         ];
 
@@ -1290,21 +1281,15 @@ pub mod tests {
         let account_payer = AccountSharedData::new(100, 0, &system_program_id);
         let pk_buffer = Pubkey::new_unique();
         let account_buffer = AccountSharedData::new(0, 0, &system_program_id);
-        let account_with_program = load_program_account_from_elf_file(&bpf_loader_upgradeable_id, "../examples/hello-world/assets/solana_ee_hello_world.so");
+        let account_with_program = load_program_account_from_elf_file(
+            &bpf_loader_upgradeable_id,
+            "./test_elfs/out/solana_ee_hello_world.so",
+        );
 
         let program_signers = vec![&new_accs[0].0, &new_accs[1].0];
 
         let (accounts, working_accounts_count) = compile_accounts_for_tx_ctx(
-            vec![
-                (
-                    pk_payer,
-                    account_payer,
-                ),
-                (
-                    pk_buffer,
-                    account_buffer,
-                ),
-            ],
+            vec![(pk_payer, account_payer), (pk_buffer, account_buffer)],
             vec![
                 (
                     system_program_id,
@@ -1312,18 +1297,17 @@ pub mod tests {
                 ),
                 (
                     bpf_loader_upgradeable_id,
-                    create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
+                    create_loadable_account_for_test(
+                        "bpf_loader_upgradeable_id",
+                        &native_loader_id,
+                    ),
                 ),
             ],
         );
-        let transaction_context = TransactionContext::new(
-            accounts,
-            rent.clone(),
-            10,
-            200,
-        );
+        let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
 
-        let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+        let mut function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
@@ -1335,11 +1319,19 @@ pub mod tests {
         );
         programs_loaded_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, system_processor::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                system_processor::Entrypoint::vm,
+            )),
         );
         programs_loaded_for_tx_batch.replenish(
             bpf_loader_upgradeable_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, crate::bpf_loader_upgradable::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                crate::bpf_loader_upgradable::Entrypoint::vm,
+            )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -1362,20 +1354,21 @@ pub mod tests {
 
         // INIT BUFFER
 
-        let account_payer = invoke_context.transaction_context.get_account_at_index(0).unwrap().borrow().clone();
-        let account_buffer = invoke_context.transaction_context.get_account_at_index(1).unwrap().borrow().clone();
+        let account_payer = invoke_context
+            .transaction_context
+            .get_account_at_index(0)
+            .unwrap()
+            .borrow()
+            .clone();
+        let account_buffer = invoke_context
+            .transaction_context
+            .get_account_at_index(1)
+            .unwrap()
+            .borrow()
+            .clone();
 
         let (accounts, working_accounts_count) = compile_accounts_for_tx_ctx(
-            vec![
-                (
-                    pk_payer,
-                    account_payer,
-                ),
-                (
-                    pk_buffer,
-                    account_buffer,
-                ),
-            ],
+            vec![(pk_payer, account_payer), (pk_buffer, account_buffer)],
             vec![
                 (
                     system_program_id,
@@ -1383,22 +1376,18 @@ pub mod tests {
                 ),
                 (
                     bpf_loader_upgradeable_id,
-                    create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
+                    create_loadable_account_for_test(
+                        "bpf_loader_upgradeable_id",
+                        &native_loader_id,
+                    ),
                 ),
-                (
-                    pk_9,
-                    pk_9_account.clone(),
-                ),
+                (pk_9, pk_9_account.clone()),
             ],
         );
-        let transaction_context = TransactionContext::new(
-            accounts,
-            rent.clone(),
-            10,
-            200,
-        );
+        let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
 
-        let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+        let mut function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
@@ -1410,11 +1399,19 @@ pub mod tests {
         );
         programs_loaded_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, system_processor::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                system_processor::Entrypoint::vm,
+            )),
         );
         programs_loaded_for_tx_batch.replenish(
             bpf_loader_upgradeable_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, crate::bpf_loader_upgradable::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                crate::bpf_loader_upgradable::Entrypoint::vm,
+            )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -1435,112 +1432,135 @@ pub mod tests {
             0,
         );
 
-        let program_indices = vec![vec![working_accounts_count], vec![working_accounts_count + 1]];
+        let program_indices = vec![
+            vec![working_accounts_count],
+            vec![working_accounts_count + 1],
+        ];
 
         let program_len = account_with_program.data().len();
         let buffer_space = UpgradeableLoaderState::size_of_buffer(program_len);
 
-        let instructions = create_buffer(
-            &pk_payer,
-            &pk_buffer,
-            &pk_9,
-            0,
-            program_len,
-        ).unwrap();
+        let instructions = create_buffer(&pk_payer, &pk_buffer, &pk_9, 0, program_len).unwrap();
         let message = Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash);
         let message = SanitizedMessage::Legacy(LegacyMessage::new(message));
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert!(result.is_ok());
-        assert_eq!(invoke_context.transaction_context.get_number_of_accounts(), 5);
+        assert_eq!(
+            invoke_context.transaction_context.get_number_of_accounts(),
+            5
+        );
 
         let mut idx = 0;
-        let pk = invoke_context.transaction_context
-            .get_key_of_account_at_index(idx).unwrap();
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
+            .unwrap();
         assert_eq!(pk, &pk_payer);
-        let account_data = invoke_context.transaction_context
-            .get_account_at_index(idx).unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(100, account_data.lamports());
         assert_eq!(0, account_data.data().len());
         assert_eq!(false, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context
-            .get_key_of_account_at_index(idx).unwrap();
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
+            .unwrap();
         assert_eq!(pk, &pk_buffer);
-        let account_data = invoke_context.transaction_context
-            .get_account_at_index(idx).unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(0, account_data.lamports());
         assert_eq!(buffer_space, account_data.data().len());
         assert_eq!(false, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context
-            .get_key_of_account_at_index(idx).unwrap();
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
+            .unwrap();
         assert_eq!(pk, &system_program_id);
-        let account_data = invoke_context.transaction_context
-            .get_account_at_index(idx).unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account_data.lamports());
         assert_eq!(17, account_data.data().len());
         assert_eq!(true, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context
-            .get_key_of_account_at_index(idx).unwrap();
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
+            .unwrap();
         assert_eq!(pk, &bpf_loader_upgradeable_id);
-        let account_data = invoke_context.transaction_context
-            .get_account_at_index(idx).unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account_data.lamports());
         assert_eq!(25, account_data.data().len());
         assert_eq!(true, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context
-            .get_key_of_account_at_index(idx).unwrap();
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
+            .unwrap();
         assert_eq!(pk, &pk_9);
-        let account_data = invoke_context.transaction_context
-            .get_account_at_index(idx).unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(100, account_data.lamports());
         assert_eq!(0, account_data.data().len());
         assert_eq!(false, account_data.executable());
 
         // FILL BUFFER
 
-        let account_payer = invoke_context.transaction_context.get_account_at_index(0).unwrap().borrow();
-        let account_buffer = invoke_context.transaction_context.get_account_at_index(1).unwrap().borrow();
-        let pk_9_account = invoke_context.transaction_context.get_account_at_index(4).unwrap().borrow();
+        let account_payer = invoke_context
+            .transaction_context
+            .get_account_at_index(0)
+            .unwrap()
+            .borrow();
+        let account_buffer = invoke_context
+            .transaction_context
+            .get_account_at_index(1)
+            .unwrap()
+            .borrow();
+        let pk_9_account = invoke_context
+            .transaction_context
+            .get_account_at_index(4)
+            .unwrap()
+            .borrow();
         let (accounts, working_accounts_count) = compile_accounts_for_tx_ctx(
             vec![
-                (
-                    pk_payer,
-                    account_payer.clone(),
-                ),
-                (
-                    pk_9,
-                    pk_9_account.clone(),
-                ),
-                (
-                    pk_buffer,
-                    account_buffer.clone(),
-                ),
+                (pk_payer, account_payer.clone()),
+                (pk_9, pk_9_account.clone()),
+                (pk_buffer, account_buffer.clone()),
             ],
-            vec![
-                (
-                    bpf_loader_upgradeable_id,
-                    create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
-                ),
-            ],
+            vec![(
+                bpf_loader_upgradeable_id,
+                create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
+            )],
         );
         let accounts_count = accounts.len();
-        let transaction_context = TransactionContext::new(
-            accounts,
-            rent.clone(),
-            10,
-            200,
-        );
+        let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
             ProgramRuntimeEnvironments {
@@ -1550,11 +1570,19 @@ pub mod tests {
         );
         programs_loaded_for_tx_batch.replenish(
             system_program::id(),
-            Arc::new(LoadedProgram::new_builtin(0, 0, system_processor::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                system_processor::Entrypoint::vm,
+            )),
         );
         programs_loaded_for_tx_batch.replenish(
             bpf_loader_upgradeable::id(),
-            Arc::new(LoadedProgram::new_builtin(0, 0, crate::bpf_loader_upgradable::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                crate::bpf_loader_upgradable::Entrypoint::vm,
+            )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -1576,7 +1604,8 @@ pub mod tests {
         );
 
         let program_indices = vec![vec![working_accounts_count]];
-        let buffer_space = UpgradeableLoaderState::size_of_buffer(account_with_program.data().len());
+        let buffer_space =
+            UpgradeableLoaderState::size_of_buffer(account_with_program.data().len());
         let create_msg = |offset: u32, bytes: Vec<u8>| {
             let instruction = bpf_loader_upgradeable::write(&pk_buffer, &pk_9, offset, bytes);
             let instructions = vec![instruction];
@@ -1592,63 +1621,94 @@ pub mod tests {
         }
         for (mn, m) in write_messages.iter().enumerate() {
             let message = SanitizedMessage::Legacy(LegacyMessage::new(m.clone()));
-            let result = MessageProcessor::process_message(
-                &message,
-                &program_indices,
-                &mut invoke_context,
-            );
+            let result =
+                MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
             // println!("result2_{}: {:?}", mn, result);
             assert!(result.is_ok());
         }
-        assert_eq!(invoke_context.transaction_context.get_number_of_accounts(), 4);
+        assert_eq!(
+            invoke_context.transaction_context.get_number_of_accounts(),
+            4
+        );
 
         let mut idx = 0;
-        let account = invoke_context.transaction_context
-            .get_account_at_index(idx).unwrap().borrow().clone();
+        let account = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(100, account.lamports());
         assert_eq!(0, account.data().len());
         assert!(!account.executable());
 
         idx += 1;
-        let account = invoke_context.transaction_context
-            .get_account_at_index(idx).unwrap().borrow().clone();
+        let account = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(100, account.lamports());
         assert_eq!(0, account.data().len());
         assert!(!account.executable());
 
         idx += 1;
-        let account = invoke_context.transaction_context
-            .get_account_at_index(idx).unwrap().borrow().clone();
+        let account = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(0, account.lamports());
         assert_eq!(buffer_space, account.data().len());
         assert!(!account.executable());
 
         idx += 1;
-        let account = invoke_context.transaction_context
-            .get_account_at_index(idx).unwrap().borrow().clone();
+        let account = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(1, account.lamports());
         assert_eq!("bpf_loader_upgradeable_id".len(), account.data().len());
         assert!(account.executable());
 
         // DEPLOY
 
-        let account_payer = invoke_context.transaction_context.get_account_at_index(0).unwrap().borrow();
-        let account_9 = invoke_context.transaction_context.get_account_at_index(1).unwrap().borrow().clone();
-        let account_buffer = invoke_context.transaction_context.get_account_at_index(2).unwrap().borrow();
+        let account_payer = invoke_context
+            .transaction_context
+            .get_account_at_index(0)
+            .unwrap()
+            .borrow();
+        let account_9 = invoke_context
+            .transaction_context
+            .get_account_at_index(1)
+            .unwrap()
+            .borrow()
+            .clone();
+        let account_buffer = invoke_context
+            .transaction_context
+            .get_account_at_index(2)
+            .unwrap()
+            .borrow();
         let (accounts, working_accounts_count) = compile_accounts_for_tx_ctx(
             vec![
-                (  // 0 // authority_address
-                   pk_payer,
-                   account_payer.clone(),
+                (
+                    // 0 // authority_address
+                    pk_payer,
+                    account_payer.clone(),
                 ),
                 new_accs[0].clone(), // 1 // acc 8... // becomes executable
-                ( // 2 // acc 9...
-                  pk_9,
-                  account_9,
+                (
+                    // 2 // acc 9...
+                    pk_9, account_9,
                 ),
-                ( // 3
-                  pk_buffer,
-                  account_buffer.clone(),
+                (
+                    // 3
+                    pk_buffer,
+                    account_buffer.clone(),
                 ),
                 new_accs[2].clone(), // 4 // program data account
             ],
@@ -1659,7 +1719,10 @@ pub mod tests {
                 ),
                 (
                     bpf_loader_upgradeable_id,
-                    create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
+                    create_loadable_account_for_test(
+                        "bpf_loader_upgradeable_id",
+                        &native_loader_id,
+                    ),
                 ),
                 (
                     sysvar::clock::id(),
@@ -1672,12 +1735,7 @@ pub mod tests {
             ],
         );
         let accounts_count = accounts.len();
-        let transaction_context = TransactionContext::new(
-            accounts,
-            rent.clone(),
-            10,
-            200,
-        );
+        let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
             ProgramRuntimeEnvironments {
@@ -1687,11 +1745,19 @@ pub mod tests {
         );
         programs_loaded_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, system_processor::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                system_processor::Entrypoint::vm,
+            )),
         );
         programs_loaded_for_tx_batch.replenish(
             bpf_loader_upgradeable_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, crate::bpf_loader_upgradable::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                crate::bpf_loader_upgradable::Entrypoint::vm,
+            )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -1719,112 +1785,188 @@ pub mod tests {
             program_signers[1],
             10,
             account_with_program.data().len(),
-        ).unwrap();
+        )
+        .unwrap();
         let message = Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash);
         let message = LegacyMessage::new(message);
         let message = SanitizedMessage::Legacy(message);
-        let program_indices = vec![vec![working_accounts_count], vec![working_accounts_count + 1], ];
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let program_indices = vec![
+            vec![working_accounts_count],
+            vec![working_accounts_count + 1],
+        ];
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         println!("result3: {:?}", result);
         assert!(result.is_ok());
 
         let mut idx = 0;
-        let pk = invoke_context.transaction_context.get_key_of_account_at_index(idx)
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
             .unwrap();
-        let account_data = invoke_context.transaction_context.get_account_at_index(idx)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(89, account_data.lamports());
         assert_eq!(0, account_data.data().len());
         assert_eq!(true, account.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context.get_key_of_account_at_index(idx)
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
             .unwrap();
-        let account_data = invoke_context.transaction_context.get_account_at_index(idx)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(10, account_data.lamports());
         assert_eq!(36, account_data.data().len());
         assert_eq!(true, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context.get_key_of_account_at_index(idx)
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
             .unwrap();
-        let account_data = invoke_context.transaction_context.get_account_at_index(idx)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(100, account_data.lamports());
         assert_eq!(0, account_data.data().len());
         assert_eq!(false, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context.get_key_of_account_at_index(idx)
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
             .unwrap();
-        let account_data = invoke_context.transaction_context.get_account_at_index(idx)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(0, account_data.lamports());
         assert_eq!(37, account_data.data().len());
         assert_eq!(false, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context.get_key_of_account_at_index(idx)
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
             .unwrap();
-        let account_data = invoke_context.transaction_context.get_account_at_index(idx)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(1, account_data.lamports());
         assert_eq!(72805, account_data.data().len());
         assert_eq!(&bpf_loader_upgradeable_id, account_data.owner());
         assert_eq!(false, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context.get_key_of_account_at_index(idx)
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
             .unwrap();
-        let account_data = invoke_context.transaction_context.get_account_at_index(idx)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(1, account_data.lamports());
         assert_eq!(17, account_data.data().len());
         assert_eq!(true, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context.get_key_of_account_at_index(idx)
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
             .unwrap();
-        let account_data = invoke_context.transaction_context.get_account_at_index(idx)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(1, account_data.lamports());
         assert_eq!(25, account_data.data().len());
         assert_eq!(true, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context.get_key_of_account_at_index(idx)
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
             .unwrap();
-        let account_data = invoke_context.transaction_context.get_account_at_index(idx)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(1, account_data.lamports());
         assert_eq!("sysvar_clock_id".len(), account_data.data().len());
         assert_eq!(true, account_data.executable());
 
         idx += 1;
-        let pk = invoke_context.transaction_context.get_key_of_account_at_index(idx)
+        let pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(idx)
             .unwrap();
-        let account_data = invoke_context.transaction_context.get_account_at_index(idx)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(idx)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(1, account_data.lamports());
         assert_eq!("sysvar_rent_id".len(), account_data.data().len());
         assert_eq!(true, account_data.executable());
 
-        assert_eq!(invoke_context.transaction_context.get_number_of_accounts(), idx + 1);
+        assert_eq!(
+            invoke_context.transaction_context.get_number_of_accounts(),
+            idx + 1
+        );
 
         // EXEC
 
-        let mut account_exec_pk = invoke_context.transaction_context.get_key_of_account_at_index(1).unwrap().clone();
-        let mut account_exec = invoke_context.transaction_context.get_account_at_index(1).unwrap().borrow().clone();
+        let mut account_exec_pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(1)
+            .unwrap()
+            .clone();
+        let mut account_exec = invoke_context
+            .transaction_context
+            .get_account_at_index(1)
+            .unwrap()
+            .borrow()
+            .clone();
         // account_exec.set_owner(bpf_loader_id.clone());
         // assert_eq!(&bpf_loader_id, account_exec.owner());
         assert_eq!(&bpf_loader_upgradeable_id, account_exec.owner());
-        let mut account_program_data_pk = invoke_context.transaction_context.get_key_of_account_at_index(4).unwrap().clone();
-        let mut account_program_data = invoke_context.transaction_context.get_account_at_index(4).unwrap().borrow().clone();
+        let mut account_program_data_pk = invoke_context
+            .transaction_context
+            .get_key_of_account_at_index(4)
+            .unwrap()
+            .clone();
+        let mut account_program_data = invoke_context
+            .transaction_context
+            .get_account_at_index(4)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(&bpf_loader_upgradeable_id, account_program_data.owner());
         let (accounts, working_accounts_count) = compile_accounts_for_tx_ctx(
             vec![
@@ -1836,21 +1978,16 @@ pub mod tests {
             vec![
                 (
                     bpf_loader_upgradeable_id,
-                    create_loadable_account_for_test("bpf_loader_upgradeable_id", &native_loader_id),
+                    create_loadable_account_for_test(
+                        "bpf_loader_upgradeable_id",
+                        &native_loader_id,
+                    ),
                 ),
-                (
-                    account_exec_pk.clone(),
-                    account_exec.clone(),
-                ), // acc exec
+                (account_exec_pk.clone(), account_exec.clone()), // acc exec
             ],
         );
         let accounts_count = accounts.len();
-        let transaction_context = TransactionContext::new(
-            accounts,
-            rent.clone(),
-            10,
-            200,
-        );
+        let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
             ProgramRuntimeEnvironments {
@@ -1860,15 +1997,27 @@ pub mod tests {
         );
         programs_loaded_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, system_processor::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                system_processor::Entrypoint::vm,
+            )),
         );
         programs_loaded_for_tx_batch.replenish(
             bpf_loader_upgradeable_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, crate::bpf_loader_upgradable::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                crate::bpf_loader_upgradable::Entrypoint::vm,
+            )),
         );
         programs_loaded_for_tx_batch.replenish(
             bpf_loader_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, crate::bpf_loader_upgradable::Entrypoint::vm)),
+            Arc::new(LoadedProgram::new_builtin(
+                0,
+                0,
+                crate::bpf_loader_upgradable::Entrypoint::vm,
+            )),
         );
 
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
@@ -1891,44 +2040,53 @@ pub mod tests {
         );
         let loaded_program = invoke_context.load_program(&account_exec_pk, false);
         if let Some(v) = loaded_program {
-            invoke_context.programs_loaded_for_tx_batch.replenish(account_exec_pk.clone(), v);
+            invoke_context
+                .programs_loaded_for_tx_batch
+                .replenish(account_exec_pk.clone(), v);
         };
 
         invoke_context.inc_slots(1);
 
-        let instructions = vec![
-            Instruction::new_with_bincode(
-                account_exec_pk.clone(),
-                &[0u8; 0],
-                vec![],
-            ),
-        ];
+        let instructions = vec![Instruction::new_with_bincode(
+            account_exec_pk.clone(),
+            &[0u8; 0],
+            vec![],
+        )];
         let message = Message::new_with_blockhash(&instructions, Some(&pk_exec), &blockhash);
         let message = LegacyMessage::new(message);
         let message = SanitizedMessage::Legacy(message);
-        let program_indices = vec![vec![working_accounts_count, working_accounts_count + 1], ];
-        let result = MessageProcessor::process_message(
-            &message,
-            &program_indices,
-            &mut invoke_context,
-        );
+        let program_indices = vec![vec![working_accounts_count, working_accounts_count + 1]];
+        let result =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         println!("result3: {:?}", result);
         assert!(result.is_ok());
         let number_of_accounts = invoke_context.transaction_context.get_number_of_accounts();
         assert_eq!(number_of_accounts, accounts_count as IndexOfAccount);
 
-        let account_data = invoke_context.transaction_context.get_account_at_index(0)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(0)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(1, account_data.lamports());
         assert_eq!(72805, account_data.data().len());
 
-        let account_data = invoke_context.transaction_context.get_account_at_index(1)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(1)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(1, account_data.lamports());
         assert_eq!(25, account_data.data().len());
 
-        let account_data = invoke_context.transaction_context.get_account_at_index(2)
-            .unwrap().borrow().clone();
+        let account_data = invoke_context
+            .transaction_context
+            .get_account_at_index(2)
+            .unwrap()
+            .borrow()
+            .clone();
         assert_eq!(10, account_data.lamports());
         assert_eq!(36, account_data.data().len());
     }

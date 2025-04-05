@@ -16,6 +16,7 @@ num-traits = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
 hashbrown = { workspace = true, default-features = false }
 
+
 solana-program = { workspace = true, default-features = false }
 solana_rbpf = { workspace = true, default-features = false }
 
@@ -25,23 +26,18 @@ hex-literal = { workspace = true, default-features = false }
 serde = { workspace = true, default-features = false }
 bincode = { git = "https://github.com/fluentlabs-xyz/bincode", branch = "feat/svm-v1.3.3", default-features = false }
 lazy_static = { workspace = true, default-features = false }
-keccak-hash = { workspace = true }
+keccak-hash = { workspace = true, default-features = false }
 itertools = { workspace = true, default-features = false }
 
 [dev-dependencies]
-rand = { version = "0.9.0", default-features = false, features = ["alloc"] }
-
-[lib]
-crate-type = [
-    "cdylib",
-]
+rand = { version = "0.9.0", default-features = false, features = ["alloc", "thread_rng"] }
 
 [features]
 default = [
     "std",
-    "debug-print",
 ]
 std = [
     "fluentbase-sdk/std",
+    "solana-program/std",
 ]
 debug-print = []

@@ -13,7 +13,7 @@ repository.workspace = true
 [dependencies]
 convert_case = "0.6.0"
 crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
-darling = "0.20.10"
+darling = { version = "0.20.10", default-features = false }
 hex = "0.4.3"
 fluentbase-codec = { workspace = true }
 proc-macro2 = "1.0"
@@ -25,3 +25,9 @@ tracing = { version = "0.1.40", default-features = false }
 
 [dev-dependencies]
 bytes = "1.0"
+
+[features]
+default = ["std"]
+std = [
+    #    "darling/default"
+]
