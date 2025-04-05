@@ -16,7 +16,7 @@ use fluentbase_sdk::{
     B256,
     EVM_CODE_HASH_SLOT,
 };
-use fluentbase_svm::{
+use solana_ee_core::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     bincode,
     common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_address},
