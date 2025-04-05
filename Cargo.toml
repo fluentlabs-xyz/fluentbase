@@ -36,8 +36,8 @@ fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
 fluentbase-svm = { path = "./crates/svm", default-features = false }
-#solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
-solana-program = { path = "../solana/sdk/program", default-features = false }
+solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
+#solana-program = { path = "../solana/sdk/program", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
