@@ -15,7 +15,7 @@ examples:
 clean:
 	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE) clean; fi
 	cargo clean
-	find . -type f | grep -iP "lib\.wa(sm|t)" | xargs rm
+	find . -type f | grep -iP "lib\.wa(sm|t)"|grep -viP "fairblock" | xargs rm
 
 .PHONY: test
 test:
