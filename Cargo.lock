@@ -1795,9 +1795,9 @@ dependencies = [
 
 [[package]]
 name = "deranged"
-version = "0.4.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28cfac68e08048ae1883171632c2aef3ebc555621ae56fbccce1cbf22dd7f058"
+checksum = "9c9e6a11ca8224451684bc0d7d5a7adbf8f2fd6887261a1cfc3c0432f9d4068e"
 dependencies = [
  "powerfmt",
 ]
@@ -6044,7 +6044,7 @@ dependencies = [
 [[package]]
 name = "solana-program"
 version = "1.18.26"
-source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#5aa234b830aef308a639efb08483e776ac28f674"
+source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#d6b658612fff46c973f22d596abb501f4ae8ff50"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -6091,7 +6091,7 @@ dependencies = [
 [[package]]
 name = "solana-sdk-macro"
 version = "1.18.26"
-source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#5aa234b830aef308a639efb08483e776ac28f674"
+source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#d6b658612fff46c973f22d596abb501f4ae8ff50"
 dependencies = [
  "bs58",
  "proc-macro2",
