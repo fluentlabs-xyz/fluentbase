@@ -339,3 +339,38 @@ fn test_wasm_erc20() {
     };
     transfer_coin(&mut ctx);
 }
+
+#[test]
+fn test_blake2fcaller() {
+    let mut ctx = EvmTestingContext::default();
+    const OWNER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(
+        OWNER_ADDRESS,
+        hex::decode(include_bytes!("../assets/Blake2fCaller.bin"))
+            .unwrap()
+            .into(),
+    );
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        contract_address,
+        hex!("feac3789").into(), // keccak256("callBlake2f()")
+        None,
+        None,
+    );
+    if !result.is_success() {
+        println!("status: {:?}", result);
+        try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref());
+    }
+    assert!(result.is_success());
+    dbg!(result);
+
+    // WITH WASMTIME
+    // gas_used: 22125,
+    // gas_refunded: 0,
+
+    // WITHOUT WASMTIME
+    // gas_used: 22125,
+    // gas_refunded: 0,
+
+
+}
