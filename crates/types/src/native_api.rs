@@ -1,4 +1,5 @@
-use crate::{alloc_vec, BytecodeOrHash};
+use crate::BytecodeOrHash;
+use alloc::vec;
 use alloy_primitives::{Bytes, B256};
 
 /// A trait for providing shared API functionality.
@@ -41,14 +42,14 @@ pub trait NativeAPI {
 
     fn input(&self) -> Bytes {
         let input_size = self.input_size();
-        let mut buffer = alloc_vec(input_size as usize);
+        let mut buffer = vec![0u8; input_size as usize];
         self.read(&mut buffer, 0);
         buffer.into()
     }
 
     fn return_data(&self) -> Bytes {
         let output_size = self.output_size();
-        let mut buffer = alloc_vec(output_size as usize);
+        let mut buffer = vec![0u8; output_size as usize];
         self.read_output(&mut buffer, 0);
         buffer.into()
     }

@@ -1,11 +1,10 @@
 [package]
-name = "fluentbase-contracts-evm"
+name = "fluentbase-contracts-oauth2"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-evm = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true }
 
 [dev-dependencies]
 
@@ -14,11 +13,10 @@ fluentbase-build = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
-path = "src/lib.rs"
+path = "lib.rs"
 
 [features]
 default = ["std"]
 std = [
     "fluentbase-sdk/std",
-    "fluentbase-evm/std",
 ]

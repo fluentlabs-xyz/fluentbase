@@ -6,7 +6,6 @@ extern crate alloc;
 extern crate core;
 
 mod address;
-mod allocator;
 mod bytecode_type;
 mod context;
 pub mod evm;
@@ -21,7 +20,6 @@ mod sys_func_idx;
 mod syscall;
 
 pub use address::*;
-pub use allocator::*;
 pub use alloy_primitives::*;
 pub use bytecode_type::*;
 pub use byteorder;
@@ -67,6 +65,27 @@ pub const CALL_STACK_LIMIT: u32 = 1024;
 /// EVM code hash slot: `hash=keccak256("_evm_code_hash")`
 pub const EVM_CODE_HASH_SLOT: B256 =
     b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113b");
+
+/// rWASM max code size
+///
+/// This value is temporary for testing purposes, requires recalculation.
+/// The limit is equal to 1Mb.
+pub const WASM_MAX_CODE_SIZE: usize = 0x200000;
+
+/// WebAssembly magic bytes
+///
+/// These values are equal to \0ASM
+pub const WASM_MAGIC_BYTES: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
+
+/// EIP-170: Contract code size limit
+///
+/// By default, the limit is `0x6000` (~25kb)
+pub const EVM_MAX_CODE_SIZE: usize = 0x6000;
+
+/// EIP-3860: Limit and meter initcode
+///
+/// Limit of maximum initcode size is `2 * WASM_MAX_CODE_SIZE`.
+pub const EVM_MAX_INITCODE_SIZE: usize = 2 * EVM_MAX_CODE_SIZE;
 
 /// A basic SPEC that Fluent supports
 pub const EVM_BASE_SPEC: SpecId = SpecId::CANCUN;

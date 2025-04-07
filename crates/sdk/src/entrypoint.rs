@@ -17,12 +17,17 @@ macro_rules! basic_entrypoint {
             let mut app = $struct_typ::new(sdk);
             app.main();
         }
+        #[cfg(target_arch = "wasm32")]
+        $crate::define_panic_handler!();
+        #[cfg(target_arch = "wasm32")]
+        $crate::define_allocator!();
     };
 }
 
 #[macro_export]
 macro_rules! func_entrypoint {
     ($main_func:ident, $deploy_func:ident) => {
+        #[cfg(target_arch = "wasm32")]
         mod _fluentbase_entrypoint {
             use fluentbase_sdk::SharedAPI;
             #[inline(always)]
@@ -33,39 +38,40 @@ macro_rules! func_entrypoint {
             fn __deploy_entry(sdk: impl SharedAPI) {
                 super::$deploy_func(sdk);
             }
-            #[cfg(target_arch = "wasm32")]
             #[no_mangle]
             extern "C" fn main() {
                 use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
                 let sdk = SharedContextImpl::new(RwasmContext {});
                 __main_entry(sdk);
             }
-            #[cfg(target_arch = "wasm32")]
             #[no_mangle]
             extern "C" fn deploy() {
                 use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
                 let sdk = SharedContextImpl::new(RwasmContext {});
                 __deploy_entry(sdk);
             }
+            $crate::define_panic_handler!();
+            $crate::define_allocator!();
         }
     };
     ($main_func:ident) => {
+        #[cfg(target_arch = "wasm32")]
         mod _fluentbase_entrypoint {
             use fluentbase_sdk::SharedAPI;
             #[inline(always)]
             fn __main_entry(sdk: impl SharedAPI) {
                 super::$main_func(sdk);
             }
-            #[cfg(target_arch = "wasm32")]
             #[no_mangle]
             extern "C" fn main() {
                 use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
                 let sdk = SharedContextImpl::new(RwasmContext {});
                 __main_entry(sdk);
             }
-            #[cfg(target_arch = "wasm32")]
             #[no_mangle]
             extern "C" fn deploy() {}
+            $crate::define_panic_handler!();
+            $crate::define_allocator!();
         }
     };
 }

@@ -1,77 +1,70 @@
+use crate::{as_usize_saturated, evm::i256::i256_cmp, gas, pop_top, EVM};
 use core::cmp::Ordering;
-use fluentbase_sdk::SharedAPI;
-use revm_interpreter::{
-    as_usize_saturated,
-    gas,
-    instructions::i256::i256_cmp,
-    pop_top,
-    primitives::U256,
-    Interpreter,
-};
+use fluentbase_sdk::{SharedAPI, U256};
 
-pub fn lt<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn lt<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     *op2 = U256::from(op1 < *op2);
 }
 
-pub fn gt<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn gt<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     *op2 = U256::from(op1 > *op2);
 }
 
-pub fn slt<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn slt<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     *op2 = U256::from(i256_cmp(&op1, op2) == Ordering::Less);
 }
 
-pub fn sgt<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn sgt<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     *op2 = U256::from(i256_cmp(&op1, op2) == Ordering::Greater);
 }
 
-pub fn eq<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn eq<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     *op2 = U256::from(op1 == *op2);
 }
 
-pub fn iszero<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1);
+pub fn iszero<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1);
     *op1 = U256::from(op1.is_zero());
 }
 
-pub fn bitand<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn bitand<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     *op2 = op1 & *op2;
 }
 
-pub fn bitor<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn bitor<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     *op2 = op1 | *op2;
 }
 
-pub fn bitxor<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn bitxor<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     *op2 = op1 ^ *op2;
 }
 
-pub fn not<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1);
+pub fn not<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1);
     *op1 = !*op1;
 }
 
-pub fn byte<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn byte<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     let o1 = as_usize_saturated!(op1);
     *op2 = if o1 < 32 {
         // `31 - o1` because `byte` returns LE, while we want BE
@@ -82,9 +75,9 @@ pub fn byte<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
-pub fn shl<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn shl<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     let shift = as_usize_saturated!(op1);
     *op2 = if shift < 256 {
         *op2 << shift
@@ -94,9 +87,9 @@ pub fn shl<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
-pub fn shr<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn shr<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     let shift = as_usize_saturated!(op1);
     *op2 = if shift < 256 {
         *op2 >> shift
@@ -106,9 +99,9 @@ pub fn shr<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
-pub fn sar<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
-    gas!(interpreter, gas::VERYLOW);
-    pop_top!(interpreter, op1, op2);
+pub fn sar<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
+    gas!(evm, gas::VERY_LOW);
+    pop_top!(evm, op1, op2);
     let shift = as_usize_saturated!(op1);
     *op2 = if shift < 256 {
         op2.arithmetic_shr(shift)
@@ -121,20 +114,20 @@ pub fn sar<SDK: SharedAPI>(interpreter: &mut Interpreter, _sdk: &mut SDK) {
 
 #[cfg(test)]
 mod tests {
-    use crate::evm::bitwise::{byte, sar, shl, shr};
-    use fluentbase_sdk::testing::TestingContext;
-    use revm_interpreter::{
+    use crate::{
+        evm::{
+            bitwise::{byte, sar, shl, shr},
+            EVM,
+        },
         pop,
-        primitives::{uint, U256},
         push,
-        Contract,
-        Interpreter,
     };
+    use fluentbase_sdk::{testing::TestingContext, uint, U256};
 
     #[test]
     fn test_shift_left() {
-        let mut interpreter = Interpreter::new(Contract::default(), u64::MAX, false);
         let mut sdk = TestingContext::default();
+        let mut evm = EVM::new(&mut sdk, &[], &[], u64::MAX);
 
         struct TestCase {
             value: U256,
@@ -203,18 +196,18 @@ mod tests {
         }
 
         for test in test_cases {
-            push!(interpreter, test.value);
-            push!(interpreter, test.shift);
-            shl(&mut interpreter, &mut sdk);
-            pop!(interpreter, res);
+            push!(evm, test.value);
+            push!(evm, test.shift);
+            shl(&mut evm);
+            pop!(evm, res);
             assert_eq!(res, test.expected);
         }
     }
 
     #[test]
     fn test_logical_shift_right() {
-        let mut interpreter = Interpreter::new(Contract::default(), u64::MAX, false);
         let mut sdk = TestingContext::default();
+        let mut evm = EVM::new(&mut sdk, &[], &[], u64::MAX);
 
         struct TestCase {
             value: U256,
@@ -283,18 +276,18 @@ mod tests {
         }
 
         for test in test_cases {
-            push!(interpreter, test.value);
-            push!(interpreter, test.shift);
-            shr(&mut interpreter, &mut sdk);
-            pop!(interpreter, res);
+            push!(evm, test.value);
+            push!(evm, test.shift);
+            shr(&mut evm);
+            pop!(evm, res);
             assert_eq!(res, test.expected);
         }
     }
 
     #[test]
     fn test_arithmetic_shift_right() {
-        let mut interpreter = Interpreter::new(Contract::default(), u64::MAX, false);
         let mut sdk = TestingContext::default();
+        let mut evm = EVM::new(&mut sdk, &[], &[], u64::MAX);
 
         struct TestCase {
             value: U256,
@@ -388,10 +381,10 @@ mod tests {
             }
 
         for test in test_cases {
-            push!(interpreter, test.value);
-            push!(interpreter, test.shift);
-            sar(&mut interpreter, &mut sdk);
-            pop!(interpreter, res);
+            push!(evm, test.value);
+            push!(evm, test.shift);
+            sar(&mut evm);
+            pop!(evm, res);
             assert_eq!(res, test.expected);
         }
     }
@@ -404,8 +397,8 @@ mod tests {
             expected: U256,
         }
 
-        let mut interpreter = Interpreter::new(Contract::default(), u64::MAX, false);
         let mut sdk = TestingContext::default();
+        let mut evm = EVM::new(&mut sdk, &[], &[], u64::MAX);
 
         let input_value = U256::from(0x1234567890abcdef1234567890abcdef_u128);
         let test_cases = (0..32)
@@ -423,10 +416,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         for test in test_cases.iter() {
-            push!(interpreter, test.input);
-            push!(interpreter, U256::from(test.index));
-            byte(&mut interpreter, &mut sdk);
-            pop!(interpreter, res);
+            push!(evm, test.input);
+            push!(evm, U256::from(test.index));
+            byte(&mut evm);
+            pop!(evm, res);
             assert_eq!(res, test.expected, "Failed at index: {}", test.index);
         }
     }

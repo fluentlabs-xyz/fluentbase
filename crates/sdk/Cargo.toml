@@ -5,21 +5,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-codec = { workspace = true, default-features = false }
-fluentbase-types = { workspace = true, default-features = false }
-fluentbase-sdk-derive = { workspace = true, default-features = false }
+fluentbase-codec = { workspace = true }
+fluentbase-types = { workspace = true }
+fluentbase-sdk-derive = { workspace = true }
 hashbrown = { workspace = true }
 
 # runtime mode
-fluentbase-runtime = { workspace = true, default-features = false, optional = true }
+fluentbase-runtime = { workspace = true, optional = true }
 
 [dev-dependencies]
-
-[lib]
-crate-type = [
-    "rlib",
-    #    "cdylib",
-]
 
 [features]
 default = ["std"]

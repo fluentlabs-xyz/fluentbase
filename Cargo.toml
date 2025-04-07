@@ -6,6 +6,7 @@ members = [
     "solana-ee-core/crates/core",
     "solana-ee-core/crates/examples/hello-world",
     "crates/rwasm/e2e",
+    #    "examples/*",
     "e2e",
 ]
 exclude = [
@@ -31,6 +32,7 @@ fluentbase-build = { path = "./crates/build", default-features = false }
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"] }
 fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
+fluentbase-evm = { path = "./crates/evm", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
