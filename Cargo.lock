@@ -1984,6 +1984,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-erc20"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+]
+
+[[package]]
 name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
@@ -2050,6 +2058,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-oauth2"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+]
+
+[[package]]
 name = "fluentbase-contracts-ripemd160"
 version = "0.1.0"
 dependencies = [
@@ -2065,6 +2081,14 @@ dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
  "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-webauthn"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
 ]
 
 [[package]]
@@ -2245,9 +2269,22 @@ dependencies = [
  "alloy-genesis",
  "cargo_metadata",
  "fluentbase-build",
+ "fluentbase-contracts-blake2f",
+ "fluentbase-contracts-bls12381",
+ "fluentbase-contracts-bn256",
+ "fluentbase-contracts-ecrecover",
+ "fluentbase-contracts-erc20",
+ "fluentbase-contracts-evm",
  "fluentbase-contracts-fairblock",
+ "fluentbase-contracts-identity",
+ "fluentbase-contracts-kzg",
+ "fluentbase-contracts-modexp",
  "fluentbase-contracts-multicall",
- "fluentbase-examples-greeting",
+ "fluentbase-contracts-nitro",
+ "fluentbase-contracts-oauth2",
+ "fluentbase-contracts-ripemd160",
+ "fluentbase-contracts-sha256",
+ "fluentbase-contracts-webauthn",
  "fluentbase-types",
  "serde",
  "serde_json",

@@ -18,6 +18,7 @@ pub const PRECOMPILE_WEBAUTHN_VERIFIER: Address =
 pub const PRECOMPILE_OAUTH2_VERIFIER: Address =
     address!("0000000000000000000000000000000000520006");
 pub const PRECOMPILE_NITRO_VERIFIER: Address = address!("0000000000000000000000000000000000520007");
+pub const PRECOMPILE_ERC20: Address = address!("0000000000000000000000000000000000520008");
 
 const fn evm_address(value: u8) -> Address {
     Address::with_last_byte(value)
