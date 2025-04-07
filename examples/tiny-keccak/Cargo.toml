@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-examples-keccak256"
+name = "fluentbase-examples-tiny-keccak"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,8 +8,6 @@ fluentbase-sdk = { workspace = true }
 tiny-keccak = { workspace = true }
 
 [dev-dependencies]
-hex-literal = "0.4.1"
-hex = "0.4.3"
 
 [build-dependencies]
 fluentbase-build = { workspace = true }

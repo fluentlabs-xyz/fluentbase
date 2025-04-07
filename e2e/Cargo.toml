@@ -26,7 +26,7 @@ fluentbase-examples-constructor-params = { path = "../examples/constructor-param
 fluentbase-examples-erc20 = { path = "../examples/erc20" }
 fluentbase-examples-panic = { path = "../examples/panic" }
 fluentbase-examples-greeting = { path = "../examples/greeting" }
-fluentbase-examples-keccak256 = { path = "../examples/keccak256" }
+fluentbase-examples-tiny-keccak = { path = "../examples/tiny-keccak" }
 fluentbase-examples-router-solidity = { path = "../examples/router-solidity" }
 fluentbase-examples-rwasm = { path = "../examples/rwasm" }
 fluentbase-examples-simple-storage = { path = "../examples/simple-storage" }

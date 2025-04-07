@@ -34,7 +34,7 @@ fn test_wasm_keccak256() {
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(
         DEPLOYER_ADDRESS,
-        include_bytes!("../../examples/keccak256/lib.wasm").into(),
+        include_bytes!("../../examples/tiny-keccak/lib.wasm").into(),
     );
     // call greeting WASM contract
     let result = ctx.call_evm_tx(
