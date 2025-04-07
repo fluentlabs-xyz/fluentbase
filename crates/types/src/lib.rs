@@ -5,39 +5,40 @@
 extern crate alloc;
 extern crate core;
 
-mod allocator;
+mod address;
 mod bytecode_type;
 mod context;
-mod contracts;
+pub mod evm;
 mod exit_code;
+mod genesis;
 mod linker;
+pub mod native_api;
+mod preimage;
 mod rwasm;
 mod sdk;
 mod sys_func_idx;
 mod syscall;
-mod utils;
 
-pub use allocator::*;
-pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256, I256};
+pub use address::*;
+pub use alloy_primitives::*;
 pub use bytecode_type::*;
 pub use byteorder;
 pub use context::*;
-pub use contracts::*;
 pub use exit_code::*;
+pub use genesis::*;
 pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use linker::*;
+pub use preimage::*;
+use revm_primitives::SpecId;
 pub use rwasm::*;
 pub use sdk::*;
 pub use sys_func_idx::SysFuncIdx;
 pub use syscall::*;
-pub use utils::*;
 
 pub const KECCAK_EMPTY: B256 =
     b256!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
-pub const POSEIDON_EMPTY: F254 =
+pub const POSEIDON_EMPTY: B256 =
     b256!("2098f5fb9e239eab3ceac3f27b81e481dc3124d55ffed523a839ee8446b64864");
-
-pub type F254 = B256;
 
 /// keccak256 of "Transfer(address,address,uint256)" that notifies
 /// about native transfer of eth
@@ -53,4 +54,38 @@ pub const STATE_DEPLOY: u32 = 1;
 /// - 0x01 - is a version of developer preview
 pub const DEVELOPER_PREVIEW_CHAIN_ID: u64 = 20993;
 
+/// A relation between fuel and gas,
+/// according to our benchmarks, average WebAssembly instruction is ~1000 faster than average EVM
+/// instruction
 pub const FUEL_DENOM_RATE: u64 = 1000;
+
+/// A max rWasm call stack limit
+pub const CALL_STACK_LIMIT: u32 = 1024;
+
+/// EVM code hash slot: `hash=keccak256("_evm_code_hash")`
+pub const EVM_CODE_HASH_SLOT: B256 =
+    b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113b");
+
+/// rWASM max code size
+///
+/// This value is temporary for testing purposes, requires recalculation.
+/// The limit is equal to 1Mb.
+pub const WASM_MAX_CODE_SIZE: usize = 0x200000;
+
+/// WebAssembly magic bytes
+///
+/// These values are equal to \0ASM
+pub const WASM_MAGIC_BYTES: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
+
+/// EIP-170: Contract code size limit
+///
+/// By default, the limit is `0x6000` (~25kb)
+pub const EVM_MAX_CODE_SIZE: usize = 0x6000;
+
+/// EIP-3860: Limit and meter initcode
+///
+/// Limit of maximum initcode size is `2 * WASM_MAX_CODE_SIZE`.
+pub const EVM_MAX_INITCODE_SIZE: usize = 2 * EVM_MAX_CODE_SIZE;
+
+/// A basic SPEC that Fluent supports
+pub const EVM_BASE_SPEC: SpecId = SpecId::CANCUN;

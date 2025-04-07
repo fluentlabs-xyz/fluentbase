@@ -4,13 +4,12 @@ extern crate core;
 
 pub mod instruction;
 
-mod macros;
+mod context;
 mod runtime;
 mod storage;
-pub mod types;
-
-pub use runtime::*;
-pub use storage::*;
-
 #[cfg(test)]
 mod tests;
+
+pub use context::*;
+pub use runtime::*;
+pub use storage::*;

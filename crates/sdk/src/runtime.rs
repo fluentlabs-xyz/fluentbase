@@ -11,8 +11,6 @@ use fluentbase_runtime::{
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
         output_size::SyscallOutputSize,
-        poseidon::SyscallPoseidon,
-        poseidon_hash::SyscallPoseidonHash,
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
@@ -21,67 +19,31 @@ use fluentbase_runtime::{
         state::SyscallState,
         write::SyscallWrite,
     },
-    types::{NonePreimageResolver, PreimageResolver},
     RuntimeContext,
 };
-use fluentbase_types::{Bytes, NativeAPI, UnwrapExitCode, B256, F254};
+use fluentbase_types::{native_api::NativeAPI, BytecodeOrHash, Bytes, UnwrapExitCode, B256};
 use std::{cell::RefCell, mem::take};
 
-pub struct RuntimeContextWrapper<'a, PR: PreimageResolver> {
+#[derive(Default, Clone)]
+pub struct RuntimeContextWrapper {
     pub ctx: Rc<RefCell<RuntimeContext>>,
-    pub preimage_resolver: &'a PR,
 }
 
-impl Default for RuntimeContextWrapper<'static, NonePreimageResolver> {
-    fn default() -> Self {
-        Self::new(RuntimeContext::default())
-    }
-}
-
-impl RuntimeContextWrapper<'static, NonePreimageResolver> {
+impl RuntimeContextWrapper {
     pub fn new(ctx: RuntimeContext) -> Self {
-        static EMPTY_PREIMAGE_RESOLVER: NonePreimageResolver = NonePreimageResolver;
         Self {
             ctx: Rc::new(RefCell::new(ctx)),
-            preimage_resolver: &EMPTY_PREIMAGE_RESOLVER,
-        }
-    }
-
-    pub fn with_preimage_resolver<'a, PR: PreimageResolver>(
-        self,
-        preimage_resolver: &'a PR,
-    ) -> RuntimeContextWrapper<'a, PR> {
-        RuntimeContextWrapper::<'a, PR> {
-            ctx: self.ctx,
-            preimage_resolver,
         }
     }
 }
 
-impl Clone for RuntimeContextWrapper<'static, NonePreimageResolver> {
-    fn clone(&self) -> Self {
-        Self {
-            ctx: self.ctx.clone(),
-            preimage_resolver: self.preimage_resolver,
-        }
-    }
-}
-
-impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
+impl NativeAPI for RuntimeContextWrapper {
     fn keccak256(data: &[u8]) -> B256 {
         SyscallKeccak256::fn_impl(data)
     }
 
     fn sha256(_data: &[u8]) -> B256 {
         todo!("not implemented")
-    }
-
-    fn poseidon(data: &[u8]) -> F254 {
-        SyscallPoseidon::fn_impl(data)
-    }
-
-    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
-        SyscallPoseidonHash::fn_impl(fa, fb, fd).unwrap_exit_code()
     }
 
     fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
@@ -139,17 +101,22 @@ impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
         SyscallChargeFuel::fn_impl(&mut ctx, value)
     }
 
-    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> (u64, i32) {
+    fn exec<I: Into<BytecodeOrHash>>(
+        &self,
+        code_hash: I,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32) {
         let mut ctx = self.ctx.borrow_mut();
-        let (fuel_consumed, exit_code) = SyscallExec::fn_impl_ex(
+        let (fuel_consumed, fuel_refunded, exit_code) = SyscallExec::fn_impl(
             &mut ctx,
-            &code_hash,
+            code_hash,
             input,
-            fuel_limit,
+            fuel_limit.unwrap_or(u64::MAX),
             state,
-            self.preimage_resolver,
         );
-        (fuel_consumed, exit_code)
+        (fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn resume(
@@ -157,30 +124,27 @@ impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
         call_id: u32,
         return_data: &[u8],
         exit_code: i32,
-        fuel_used: u64,
-    ) -> (u64, i32) {
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+    ) -> (u64, i64, i32) {
         let mut ctx = self.ctx.borrow_mut();
-        SyscallResume::fn_impl(
+        let (fuel_consumed, fuel_refunded, exit_code) = SyscallResume::fn_impl(
             &mut ctx,
             call_id,
             return_data.to_vec(),
             exit_code,
-            fuel_used,
-        )
+            fuel_consumed,
+            fuel_refunded,
+            0,
+        );
+        (fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn preimage_size(&self, hash: &B256) -> u32 {
-        if let Some(preimage_size) = self.preimage_resolver.preimage_size(&hash.0) {
-            return preimage_size;
-        }
         SyscallPreimageSize::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap()
     }
 
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
-        if let Some(preimage) = self.preimage_resolver.preimage(&hash.0) {
-            target.copy_from_slice(&preimage);
-            return;
-        }
         let preimage = SyscallPreimageCopy::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap();
         target.copy_from_slice(&preimage);
     }
@@ -190,7 +154,7 @@ impl<'a, PR: PreimageResolver> NativeAPI for RuntimeContextWrapper<'a, PR> {
     }
 }
 
-type TestingContext = RuntimeContextWrapper<'static, NonePreimageResolver>;
+type TestingContext = RuntimeContextWrapper;
 
 impl TestingContext {
     pub fn empty() -> Self {

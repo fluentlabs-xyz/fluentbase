@@ -13,7 +13,7 @@ impl SyscallChargeFuel {
     }
 
     pub fn fn_impl(_ctx: &mut RuntimeContext, _delta: u64) -> u64 {
-        // TODO(dmitry123): "we can't charge fuel in runtime context, what to do?"
+        // TODO(dmitry123): "we can't charge fuel in the runtime context, what to do?"
         u64::MAX
     }
 }

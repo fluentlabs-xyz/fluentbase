@@ -1707,20 +1707,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "eth_trie"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec3aeb0284b473041df2419a28e3cdf0c64a78d2b9511af4b6e40bad3964b172"
-dependencies = [
- "ethereum-types",
- "hashbrown 0.14.5",
- "keccak-hash 0.10.0",
- "log",
- "parking_lot",
- "rlp",
-]
-
-[[package]]
 name = "ethabi"
 version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1962,7 +1948,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-blake2"
+name = "fluentbase-contracts-blake2f"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-bls12381"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -1980,10 +1984,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-erc20"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+]
+
+[[package]]
 name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
+ "fluentbase-evm",
  "fluentbase-sdk",
 ]
 
@@ -1996,6 +2009,15 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-contracts-identity"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-kzg"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
@@ -2021,6 +2043,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-nitro"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "coset",
+ "der",
+ "ecdsa",
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "hex",
+ "p384",
+ "x509-cert",
+]
+
+[[package]]
+name = "fluentbase-contracts-oauth2"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+]
+
+[[package]]
 name = "fluentbase-contracts-ripemd160"
 version = "0.1.0"
 dependencies = [
@@ -2039,21 +2084,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-webauthn"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+]
+
+[[package]]
 name = "fluentbase-e2e"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
  "fluentbase-codec",
+ "fluentbase-contracts-nitro",
  "fluentbase-examples-abi-solidity",
  "fluentbase-examples-checkmate",
  "fluentbase-examples-client-solidity",
  "fluentbase-examples-constructor-params",
- "fluentbase-examples-echo",
  "fluentbase-examples-erc20",
  "fluentbase-examples-greeting",
  "fluentbase-examples-json",
  "fluentbase-examples-keccak256",
- "fluentbase-examples-nitro-verifier",
  "fluentbase-examples-panic",
  "fluentbase-examples-router-solidity",
  "fluentbase-examples-rwasm",
@@ -2067,6 +2119,14 @@ dependencies = [
  "hex-literal 0.4.1",
  "revm",
  "rwasm",
+]
+
+[[package]]
+name = "fluentbase-evm"
+version = "0.1.0"
+dependencies = [
+ "bitvec",
+ "fluentbase-sdk",
 ]
 
 [[package]]
@@ -2102,16 +2162,6 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
-]
-
-[[package]]
-name = "fluentbase-examples-echo"
-version = "0.1.0"
-dependencies = [
- "fluentbase-build",
- "fluentbase-sdk",
- "hex",
- "hex-literal 0.4.1",
 ]
 
 [[package]]
@@ -2152,22 +2202,6 @@ dependencies = [
  "hex",
  "hex-literal 0.4.1",
  "tiny-keccak",
-]
-
-[[package]]
-name = "fluentbase-examples-nitro-verifier"
-version = "0.1.0"
-dependencies = [
- "ciborium",
- "coset",
- "der",
- "ecdsa",
- "fluentbase-build",
- "fluentbase-sdk",
- "hex",
- "hex-literal 0.4.1",
- "p384",
- "x509-cert",
 ]
 
 [[package]]
@@ -2225,7 +2259,6 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
- "hex-literal 0.4.1",
  "serial_test",
 ]
 
@@ -2236,9 +2269,22 @@ dependencies = [
  "alloy-genesis",
  "cargo_metadata",
  "fluentbase-build",
+ "fluentbase-contracts-blake2f",
+ "fluentbase-contracts-bls12381",
+ "fluentbase-contracts-bn256",
+ "fluentbase-contracts-ecrecover",
+ "fluentbase-contracts-erc20",
+ "fluentbase-contracts-evm",
  "fluentbase-contracts-fairblock",
+ "fluentbase-contracts-identity",
+ "fluentbase-contracts-kzg",
+ "fluentbase-contracts-modexp",
  "fluentbase-contracts-multicall",
- "fluentbase-examples-greeting",
+ "fluentbase-contracts-nitro",
+ "fluentbase-contracts-oauth2",
+ "fluentbase-contracts-ripemd160",
+ "fluentbase-contracts-sha256",
+ "fluentbase-contracts-webauthn",
  "fluentbase-types",
  "serde",
  "serde_json",
@@ -2256,7 +2302,6 @@ dependencies = [
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
- "eth_trie",
  "fluentbase-codec",
  "fluentbase-poseidon",
  "fluentbase-rwasm",
@@ -2266,7 +2311,7 @@ dependencies = [
  "hex",
  "hex-literal 0.4.1",
  "k256",
- "keccak-hash 0.11.0",
+ "keccak-hash",
  "num",
  "sha2 0.10.8",
  "sp1-curves",
@@ -2306,7 +2351,6 @@ dependencies = [
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.15.2",
- "hex",
 ]
 
 [[package]]
@@ -2348,6 +2392,7 @@ dependencies = [
  "byteorder",
  "fluentbase-codec",
  "hashbrown 0.15.2",
+ "lazy_static",
  "revm-primitives",
  "rwasm",
  "serde",
@@ -3335,16 +3380,6 @@ dependencies = [
 
 [[package]]
 name = "keccak-hash"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b286e6b663fb926e1eeb68528e69cb70ed46c6d65871a21b2215ae8154c6d3c"
-dependencies = [
- "primitive-types 0.12.2",
- "tiny-keccak",
-]
-
-[[package]]
-name = "keccak-hash"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e1b8590eb6148af2ea2d75f38e7d29f5ca970d5a4df456b3ef19b8b415d0264"
@@ -3383,9 +3418,9 @@ checksum = "884e2677b40cc8c339eaefcb701c32ef1fd2493d71118dc0ca4b6a736c93bd67"
 
 [[package]]
 name = "libc"
-version = "0.2.167"
+version = "0.2.171"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09d6582e104315a817dff97f75133544b2e094ee22447d2acf4a74e189ba06fc"
+checksum = "c19937216e9d3aa9956d9bb8dfc0b0c8beb6058fc4f7a4dc4d850edf86a237d6"
 
 [[package]]
 name = "libm"
@@ -3395,12 +3430,12 @@ checksum = "8355be11b20d696c8f18f6cc018c4e372165b1fa8126cef092399c9951984ffa"
 
 [[package]]
 name = "libsecp256k1"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95b09eff1b35ed3b33b877ced3a691fc7a481919c7e29c53c906226fcf55e2a1"
+checksum = "e79019718125edc905a079a70cfa5f3820bc76139fc91d6f9abc27ea2a887139"
 dependencies = [
  "arrayref",
- "base64 0.13.1",
+ "base64 0.22.1",
  "digest 0.9.0",
  "hmac-drbg",
  "libsecp256k1-core",
@@ -3520,9 +3555,9 @@ checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
 name = "miniz_oxide"
-version = "0.8.0"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2d80299ef12ff69b16a84bb182e3b9df68b5a91574d3d4fa6e41b65deec4df1"
+checksum = "8e3e04debbb59698c15bacbb6d93584a8c0ca9cc3213cb423d31f760d8843ce5"
 dependencies = [
  "adler2",
 ]
@@ -3613,6 +3648,17 @@ name = "num-conv"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9"
+
+[[package]]
+name = "num-derive"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.90",
+]
 
 [[package]]
 name = "num-integer"
@@ -4049,9 +4095,9 @@ dependencies = [
 
 [[package]]
 name = "p384"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70786f51bcc69f6a4c0360e063a4cac5419ef7c5cd5b3c99ad70f3be5ba79209"
+checksum = "fe42f1670a52a47d448f14b6a5c61dd78fce51856e68edaa38f7ae3a46b8d6b6"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -4710,6 +4756,9 @@ name = "revm-interpreter"
 version = "15.1.0"
 dependencies = [
  "bincode",
+ "fluentbase-types",
+ "num-derive",
+ "num-traits",
  "paste",
  "phf",
  "revm-primitives",
@@ -5387,12 +5436,13 @@ dependencies = [
 
 [[package]]
 name = "shakmaty"
-version = "0.27.2"
-source = "git+https://github.com/niklasf/shakmaty#ff7b332b1f52fe9aaa766e690f632f9dd4bf25c3"
+version = "0.27.3"
+source = "git+https://github.com/niklasf/shakmaty#7f4e37a9c2859fb21804ec9118014f68d6de6f3f"
 dependencies = [
  "arrayvec",
  "bitflags 2.6.0",
  "btoi",
+ "serde",
 ]
 
 [[package]]

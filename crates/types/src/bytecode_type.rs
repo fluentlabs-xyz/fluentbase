@@ -1,3 +1,6 @@
+use crate::KECCAK_EMPTY;
+use alloy_primitives::{keccak256, Bytes, B256};
+
 pub const EIP7702_SIG_LEN: usize = 2;
 /// rWASM binary format signature:
 /// - 0xef 0x00 - EIP-3540 compatible prefix
@@ -33,5 +36,57 @@ impl BytecodeType {
         }
         // all the rest are EVM bytecode
         Self::EVM
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum BytecodeOrHash {
+    Bytecode(Bytes, Option<B256>),
+    Hash(B256),
+}
+
+impl From<Bytes> for BytecodeOrHash {
+    #[inline(always)]
+    fn from(value: Bytes) -> Self {
+        Self::Bytecode(value, None)
+    }
+}
+impl From<B256> for BytecodeOrHash {
+    #[inline(always)]
+    fn from(value: B256) -> Self {
+        Self::Hash(value)
+    }
+}
+impl From<(Bytes, B256)> for BytecodeOrHash {
+    #[inline(always)]
+    fn from(value: (Bytes, B256)) -> Self {
+        Self::Bytecode(value.0, Some(value.1))
+    }
+}
+
+impl Default for BytecodeOrHash {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::Bytecode(Bytes::new(), Some(KECCAK_EMPTY))
+    }
+}
+
+impl BytecodeOrHash {
+    pub fn with_resolved_hash(self) -> Self {
+        match self {
+            BytecodeOrHash::Bytecode(_, Some(_)) => self,
+            BytecodeOrHash::Bytecode(bytecode, None) => {
+                let hash = keccak256(bytecode.as_ref());
+                BytecodeOrHash::Bytecode(bytecode, Some(hash))
+            }
+            BytecodeOrHash::Hash(_) => self,
+        }
+    }
+
+    pub fn resolve_hash(&self) -> B256 {
+        match self {
+            BytecodeOrHash::Bytecode(_, hash) => hash.expect("hash must be resolved"),
+            BytecodeOrHash::Hash(hash) => *hash,
+        }
     }
 }

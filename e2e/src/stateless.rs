@@ -12,17 +12,6 @@ fn test_example_greeting() {
     assert_eq!(output.clone(), "Hello, World".as_bytes().to_vec());
 }
 
-// #[test]
-// #[ignore]
-// fn test_example_greeting_rwasm() {
-//     let (output, exit_code) = run_with_default_context(
-//         include_bytes!("../../examples/greeting/lib.rwasm").to_vec(),
-//         "Hello, World".as_bytes(),
-//     );
-//     assert_eq!(exit_code, 0);
-//     assert_eq!(output.clone(), "Hello, World".as_bytes().to_vec());
-// }
-
 #[test]
 fn test_example_keccak256() {
     let (output, exit_code) = run_with_default_context(
@@ -51,11 +40,8 @@ fn test_example_rwasm() {
 fn test_example_panic() {
     let input_data = include_bytes!("../../examples/panic/lib.wasm");
     let (output, exit_code) = run_with_default_context(input_data.to_vec(), &[]);
-    assert_eq!(
-        from_utf8(&output[68..]).unwrap(),
-        "it's panic time\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
-    );
-    assert_eq!(exit_code, -71);
+    assert_eq!(from_utf8(&output[..]).unwrap(), "it's panic time",);
+    assert_eq!(exit_code, -1);
 }
 
 #[test]

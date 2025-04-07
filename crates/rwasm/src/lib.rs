@@ -21,6 +21,12 @@ pub use rwasm::{
     core::{HostError, TrapCode},
     engine::{bytecode::Instruction, stack::ValueStackPtr, RwasmConfig, StateRouterConfig},
     memory::MemoryEntity,
-    rwasm::{BinaryFormat, InstructionSet, RwasmModule, RwasmModuleInstance},
+    rwasm::{
+        instruction::InstructionExtra,
+        BinaryFormat,
+        InstructionSet,
+        RwasmModule,
+        RwasmModuleInstance,
+    },
 };
 pub use types::*;

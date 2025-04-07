@@ -1,0 +1,20 @@
+[package]
+name = "fluentbase-evm"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+fluentbase-sdk = { workspace = true, default-features = false }
+bitvec = { version = "1", default-features = false, features = ["alloc"] }
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std",
+]

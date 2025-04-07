@@ -34,6 +34,7 @@ pub trait ContractContextReader {
     fn contract_caller(&self) -> Address;
     fn contract_is_static(&self) -> bool;
     fn contract_value(&self) -> U256;
+    fn contract_gas_limit(&self) -> u64;
 }
 
 pub use self::v1::{BlockContextV1, ContractContextV1, SharedContextInputV1, TxContextV1};

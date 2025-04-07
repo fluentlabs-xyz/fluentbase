@@ -90,6 +90,10 @@ impl<'a> ContractContextReader for SharedContextReaderImpl<'a> {
     fn contract_value(&self) -> U256 {
         self.0.borrow().as_ref().unwrap().contract.value
     }
+
+    fn contract_gas_limit(&self) -> u64 {
+        self.0.borrow().as_ref().unwrap().contract.gas_limit
+    }
 }
 
 impl<'a> SharedContextReader for SharedContextReaderImpl<'a> {}

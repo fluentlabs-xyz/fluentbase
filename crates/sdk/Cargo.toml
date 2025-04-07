@@ -14,10 +14,6 @@ hashbrown = { workspace = true }
 fluentbase-runtime = { workspace = true, optional = true }
 
 [dev-dependencies]
-hex = { workspace = true }
-
-[lib]
-crate-type = ["rlib"]
 
 [features]
 default = ["std"]
@@ -28,4 +24,3 @@ std = [
     "fluentbase-runtime?/std",
 ]
 debug-print = []
-more-panic = []
