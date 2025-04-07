@@ -75,7 +75,6 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &pk_bpf_loader_upgradeable,
-            // TODO fix Err(TransactionError(InstructionError(0, ProgramFailedToComplete)))
             "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
             // "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
         );
