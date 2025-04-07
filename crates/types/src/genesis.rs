@@ -5,7 +5,6 @@ use lazy_static::lazy_static;
 
 /// An address of EVM runtime that is used to execute EVM program
 pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0000000000000000000000000000000000520001");
-pub const PRECOMPILE_NITRO_VERIFIER: Address = address!("0000000000000000000000000000000000520007");
 /// A verifier for Fairblock attestations
 pub const PRECOMPILE_FAIRBLOCK_VERIFIER: Address =
     address!("0000000000000000000000000000000000005202");
@@ -17,6 +16,8 @@ pub const PRECOMPILE_WEBAUTHN_VERIFIER: Address =
     address!("0000000000000000000000000000000000520005");
 pub const PRECOMPILE_OAUTH2_VERIFIER: Address =
     address!("0000000000000000000000000000000000520006");
+pub const PRECOMPILE_NITRO_VERIFIER: Address = address!("0000000000000000000000000000000000520007");
+pub const PRECOMPILE_ERC20: Address = address!("0000000000000000000000000000000000520008");
 
 const fn evm_address(value: u8) -> Address {
     Address::with_last_byte(value)
