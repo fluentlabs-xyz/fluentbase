@@ -1,4 +1,4 @@
-// #![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate alloc;
 extern crate core;
@@ -82,7 +82,6 @@ pub fn deploy(mut sdk: impl SharedAPI) {
     let pk_buffer = Pubkey::new_unique(); // must not exist
     let pk_authority = pubkey_from_address(contract_caller.clone()); // must exist // caller
 
-    // TODO extract payer and authority accounts data and save them into mem_storage
     let contract_caller_balance = sdk.balance(&contract_caller);
     let mut payer_account_data = AccountSharedData::new(
         lamports_from_evm_balance(contract_caller_balance.data),
