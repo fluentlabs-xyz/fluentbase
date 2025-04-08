@@ -40,14 +40,12 @@ pub fn main(mut sdk: impl SharedAPI) {
     sdk.write(&output);
 }
 
-/// Handle P256 signature verification
 fn handle_p256_verification(params: &[u8]) -> bool {
     // Ensure we have sufficient data (5 * 32 bytes for parameters)
     if params.len() < 160 {
         return false;
     }
 
-    // Extract parameters directly without temporary variables
     verify_p256_signature(
         &utils::array_from_slice(&params[0..32]),    // message_hash
         &utils::array_from_slice(&params[32..64]),   // r
@@ -58,7 +56,6 @@ fn handle_p256_verification(params: &[u8]) -> bool {
     )
 }
 
-/// Handle WebAuthn verification
 fn handle_webauthn_verification(params: &[u8]) -> bool {
     match parse_webauthn_params(params) {
         Some(parsed_params) => verify_webauthn(&parsed_params),
