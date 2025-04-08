@@ -1,22 +1,32 @@
 [package]
+edition = "2021"
 name = "fluentbase-contracts-webauthn"
 version = "0.1.0"
-edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true }
+base64 = {version = "0.22.0", default-features = false, features = ["alloc"]}
+fluentbase-sdk = {workspace = true}
+hex = {version = "0.4", default-features = false, features = ["alloc"]}
+p256 = {version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"]}
+
+sha2 = {version = "0.10", default-features = false}
 
 [dev-dependencies]
+rand = {version = "0.9.0", default-features = false, features = ["std_rng"]}
+tiny-keccak = {version = "2.0", features = ["keccak"]}
 
 [build-dependencies]
-fluentbase-build = { workspace = true }
+fluentbase-build = {workspace = true}
 
 [lib]
 crate-type = ["cdylib"]
-path = "lib.rs"
 
 [features]
 default = ["std"]
 std = [
-    "fluentbase-sdk/std",
+  "fluentbase-sdk/std",
+  "p256/std",
+  "sha2/std",
+  "base64/std",
+  "hex/std",
 ]
