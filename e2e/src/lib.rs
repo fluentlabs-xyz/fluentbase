@@ -22,8 +22,10 @@ mod nitro;
 mod router;
 #[cfg(test)]
 mod stateless;
+// #[cfg(test)]
+// mod svm_loader_upgradable;
 #[cfg(test)]
-mod svm;
+mod svm_loader_v4;
 #[cfg(test)]
 mod utils;
 #[cfg(test)]

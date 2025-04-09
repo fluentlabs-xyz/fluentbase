@@ -8,7 +8,6 @@ fluentbase-sdk = { workspace = true, default-features = false }
 solana-ee-core = { workspace = true, default-features = false }
 
 [dev-dependencies]
-#fluentbase-svm = { workspace = true, default-features = false }
 
 [build-dependencies]
 fluentbase-build = { workspace = true, default-features = false }
@@ -18,8 +17,9 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [features]
-default = ["std"]
+default = ["std", "use_upgradable_loader"]
 std = [
     "fluentbase-sdk/std",
     #    "fluentbase-svm/std",
 ]
+use_upgradable_loader = []

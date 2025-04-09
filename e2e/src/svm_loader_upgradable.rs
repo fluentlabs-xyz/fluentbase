@@ -14,10 +14,11 @@ mod tests {
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bincode,
         common::pubkey_from_address,
-        fluentbase_helpers::BatchMessage,
+        fluentbase::fluentbase_common::BatchMessage,
         solana_program::{
             bpf_loader_upgradeable,
             instruction::Instruction,
+            loader_v4,
             message::Message,
             pubkey::Pubkey,
             rent::Rent,
@@ -48,12 +49,13 @@ mod tests {
 
         // setup
 
-        let pk_bpf_loader_upgradeable = bpf_loader_upgradeable::id();
+        let loader_id = bpf_loader_upgradeable::id();
+        // let loader_id = loader_v4::id();
 
         let account_with_program = load_program_account_from_elf_file(
-            &pk_bpf_loader_upgradeable,
-            // "../crates/svm/test_elfs/out/noop_aligned.so",
-            "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
+            &loader_id,
+            "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
+            // "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
         );
 
         let program_bytes = account_with_program.data().to_vec();
@@ -71,12 +73,13 @@ mod tests {
 
         // setup
 
-        let pk_bpf_loader_upgradeable = bpf_loader_upgradeable::id();
+        let loader_id = bpf_loader_upgradeable::id();
+        // let loader_id = loader_v4::id();
 
         let account_with_program = load_program_account_from_elf_file(
-            &pk_bpf_loader_upgradeable,
-            "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
-            // "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
+            &loader_id,
+            // "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
+            "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
         );
 
         // init buffer, fill buffer, deploy
