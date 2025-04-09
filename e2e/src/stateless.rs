@@ -15,7 +15,7 @@ fn test_example_greeting() {
 #[test]
 fn test_example_keccak256() {
     let (output, exit_code) = run_with_default_context(
-        include_bytes!("../../examples/keccak256/lib.wasm").to_vec(),
+        include_bytes!("../../examples/tiny-keccak/lib.wasm").to_vec(),
         "Hello, World".as_bytes(),
     );
     assert_eq!(exit_code, 0);

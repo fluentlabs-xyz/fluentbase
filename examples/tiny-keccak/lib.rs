@@ -24,8 +24,7 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::testing::TestingContext;
-    use hex_literal::hex;
+    use fluentbase_sdk::{hex, testing::TestingContext};
 
     #[test]
     fn test_contract_works() {
