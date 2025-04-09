@@ -1,15 +1,10 @@
-use crate::{
-    instruction::{debug_log::SyscallDebugLog, keccak256::SyscallKeccak256},
-    RuntimeContext,
-};
-use anyhow::Result;
+use crate::instruction::{debug_log::SyscallDebugLog, keccak256::SyscallKeccak256};
 use core::{error::Error as StdError, fmt};
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     Bytes,
     ExitCode,
-    FixedBytes,
     SyscallInvocationParams,
     B256,
     STATE_DEPLOY,
@@ -20,25 +15,17 @@ use std::{
     cell::RefCell,
     cmp::min,
     collections::{
-        hash_map::{
-            DefaultHasher,
-            Entry::{Occupied, Vacant},
-        },
+        hash_map::DefaultHasher,
         HashMap,
     },
-    fmt::{Debug, Display, Formatter},
-    future::Future,
+    fmt::Debug,
     hash::{Hash, Hasher},
     io::Write,
-    mem::drop,
-    pin::Pin,
     sync::mpsc,
-    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     thread,
     thread::JoinHandle,
-    time::Instant,
 };
-use wasmtime::{Caller, Config, Engine, Extern, Func, Linker, Memory, Module, Store};
+use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store};
 
 struct WorkerContext {
     sender: mpsc::Sender<Message>,
@@ -283,7 +270,7 @@ mod builtins {
         Ok(caller.data().input.len() as u32)
     }
 
-    pub fn exit(mut caller: Caller<'_, WorkerContext>, exit_code: i32) -> anyhow::Result<()> {
+    pub fn exit(caller: Caller<'_, WorkerContext>, exit_code: i32) -> anyhow::Result<()> {
         println!("builtins::exit({})", exit_code);
         Err(TerminationReason::Exit(exit_code).into())
     }
@@ -399,7 +386,7 @@ mod builtins {
         Ok(())
     }
 
-    pub fn charge_fuel(mut caller: Caller<'_, WorkerContext>, delta: u64) -> anyhow::Result<u64> {
+    pub fn charge_fuel(caller: Caller<'_, WorkerContext>, delta: u64) -> anyhow::Result<u64> {
         Ok(u64::MAX)
     }
 
