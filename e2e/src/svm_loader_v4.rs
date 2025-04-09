@@ -16,7 +16,6 @@ mod tests {
         common::pubkey_from_address,
         fluentbase::common::BatchMessage,
         solana_program::{
-            bpf_loader_upgradeable,
             instruction::Instruction,
             loader_v4,
             message::Message,
@@ -53,8 +52,8 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
-            // "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
+            // "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
+            "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
         );
 
         let program_bytes = account_with_program.data().to_vec();
@@ -77,8 +76,8 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
-            // "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
+            // "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
+            "../solana-ee-core/crates/examples/hello-world/assets/solana_ee_hello_world.so",
         );
 
         // init buffer, fill buffer, deploy
