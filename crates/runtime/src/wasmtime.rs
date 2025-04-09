@@ -19,7 +19,6 @@ use std::{
     },
     fmt::Debug,
     hash::{Hash, Hasher},
-    io::Write,
     sync::mpsc,
     thread,
     thread::JoinHandle,
@@ -169,10 +168,6 @@ impl RuntimeState {
         self.prev_call_id = call_id;
         let existing = self.suspended_executors.insert(call_id, executor);
         assert!(existing.is_none());
-        println!(
-            "suspended_executors.len()={}",
-            self.suspended_executors.len()
-        );
         call_id
     }
 
@@ -243,7 +238,6 @@ mod builtins {
     ) -> anyhow::Result<()> {
         let data = read_memory(&mut caller, offset, length)?;
         let context = caller.data_mut();
-        println!("builtins::write(offset={}, length={})", offset, length);
         context.output.extend_from_slice(&data);
         Ok(())
     }
@@ -269,8 +263,7 @@ mod builtins {
         Ok(caller.data().input.len() as u32)
     }
 
-    pub fn exit(caller: Caller<'_, WorkerContext>, exit_code: i32) -> anyhow::Result<()> {
-        println!("builtins::exit({})", exit_code);
+    pub fn exit(_caller: Caller<'_, WorkerContext>, exit_code: i32) -> anyhow::Result<()> {
         Err(TerminationReason::Exit(exit_code).into())
     }
 
@@ -280,7 +273,6 @@ mod builtins {
         offset: u32,
         length: u32,
     ) -> anyhow::Result<()> {
-        println!("builtin::read_output()");
         let context = caller.data();
         let return_data = &context.return_data;
         if offset + length <= return_data.len() as u32 {
@@ -303,10 +295,8 @@ mod builtins {
         message_ptr: u32,
         message_length: u32,
     ) -> anyhow::Result<()> {
-        println!("builtin::debug_log()");
         let message = read_memory(&mut caller, message_ptr, message_length)?;
         SyscallDebugLog::fn_impl(&message);
-        std::io::stdout().flush();
         Ok(())
     }
 
@@ -318,7 +308,6 @@ mod builtins {
         fuel16_ptr: u32,
         state: u32,
     ) -> anyhow::Result<i32> {
-        println!("builtin::exec()");
         let fuel_limit = if fuel16_ptr > 0 {
             let fuel_buffer = read_memory(&mut caller, fuel16_ptr, 16)?;
             let fuel_limit = LittleEndian::read_i64(&fuel_buffer[..8]) as u64;
@@ -385,11 +374,11 @@ mod builtins {
         Ok(())
     }
 
-    pub fn charge_fuel(caller: Caller<'_, WorkerContext>, delta: u64) -> anyhow::Result<u64> {
+    pub fn charge_fuel(_caller: Caller<'_, WorkerContext>, _delta: u64) -> anyhow::Result<u64> {
         Ok(u64::MAX)
     }
 
-    pub fn fuel(caller: Caller<'_, WorkerContext>) -> anyhow::Result<u64> {
+    pub fn fuel(_caller: Caller<'_, WorkerContext>) -> anyhow::Result<u64> {
         Ok(u64::MAX)
     }
 }
@@ -500,7 +489,7 @@ mod tests {
     fn wasmtime_greeting() {
         let wasm_bytecode = include_bytes!("../../../examples/greeting/lib.wasm");
         let input = Vec::new();
-        let (exit_code, output) = execute_wasmtime(
+        let (exit_code, _output) = execute_wasmtime(
             wasm_bytecode,
             insert_default_shared_context(&input),
             u64::MAX,
@@ -513,7 +502,7 @@ mod tests {
     fn wasmtime_simple_storage() {
         let wasm_bytecode = include_bytes!("../../../examples/simple-storage/lib.wasm");
         let input = Vec::new();
-        let (exit_code, output) = execute_wasmtime(
+        let (exit_code, _output) = execute_wasmtime(
             wasm_bytecode,
             insert_default_shared_context(&input),
             u64::MAX,
@@ -521,7 +510,7 @@ mod tests {
         );
         dbg!(exit_code);
         let value = Vec::from(U256::from(2).to_le_bytes::<32>());
-        let (exit_code, output) = resume_wasmtime(exit_code, value, 0, 0, 0, 0);
+        let (exit_code, _output) = resume_wasmtime(exit_code, value, 0, 0, 0, 0);
         assert_eq!(exit_code, 0);
     }
 }

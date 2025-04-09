@@ -2,7 +2,7 @@ extern crate alloc;
 extern crate core;
 
 use alloc::vec::Vec;
-use alloy_primitives::{address, Address};
+use alloy_primitives::Address;
 use fluentbase_types::{
     PRECOMPILE_BIG_MODEXP,
     PRECOMPILE_BLAKE2F,
