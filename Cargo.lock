@@ -2503,6 +2503,27 @@ dependencies = [
  "alloy-genesis",
  "cargo_metadata",
  "fluentbase-build",
+ "fluentbase-precompile",
+ "fluentbase-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fluentbase-poseidon"
+version = "0.1.0"
+dependencies = [
+ "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
+ "poseidon",
+]
+
+[[package]]
+name = "fluentbase-precompile"
+version = "0.1.0"
+dependencies = [
+ "alloy-genesis",
+ "alloy-primitives",
+ "byteorder",
  "fluentbase-contracts-blake2f",
  "fluentbase-contracts-bls12381",
  "fluentbase-contracts-bn256",
@@ -2520,16 +2541,10 @@ dependencies = [
  "fluentbase-contracts-sha256",
  "fluentbase-contracts-webauthn",
  "fluentbase-types",
+ "hashbrown 0.15.2",
+ "lazy_static",
+ "rwasm",
  "serde",
- "serde_json",
-]
-
-[[package]]
-name = "fluentbase-poseidon"
-version = "0.1.0"
-dependencies = [
- "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
- "poseidon",
 ]
 
 [[package]]
@@ -5191,6 +5206,7 @@ dependencies = [
  "ethers-contract",
  "ethers-core",
  "ethers-providers",
+ "fluentbase-precompile",
  "fluentbase-runtime",
  "fluentbase-sdk",
  "indicatif",

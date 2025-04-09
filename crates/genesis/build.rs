@@ -3,6 +3,7 @@ mod genesis_builder {
     use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
     use cargo_metadata::MetadataCommand;
     use fluentbase_build::cargo_rerun_if_changed;
+    use fluentbase_precompile::get_precompile_wasm_bytecode;
     use fluentbase_types::{
         address,
         compile_wasm_to_rwasm,
@@ -32,19 +33,6 @@ mod genesis_builder {
         PRECOMPILE_SECP256K1_RECOVER,
         PRECOMPILE_SHA256,
         U256,
-        WASM_BLAKE2F,
-        WASM_BLS12381,
-        WASM_BN256,
-        WASM_ECRECOVER,
-        WASM_EVM_RUNTIME,
-        WASM_FAIRBLOCK_VERIFIER,
-        WASM_IDENTITY,
-        WASM_KZG_POINT_EVALUATION,
-        WASM_MODEXP,
-        WASM_MULTICALL,
-        WASM_NITRO_VERIFIER,
-        WASM_RIPEMD160,
-        WASM_SHA256,
         WASM_SIG,
     };
     use std::{collections::BTreeMap, env, fs::File, io::Write, path::PathBuf};
@@ -83,12 +71,14 @@ mod genesis_builder {
         }
     }
 
-    fn init_contract(
-        alloc: &mut BTreeMap<Address, GenesisAccount>,
-        name: &str,
-        address: Address,
-        binary_data: &[u8],
-    ) {
+    fn init_contract(alloc: &mut BTreeMap<Address, GenesisAccount>, name: &str, address: Address) {
+        let binary_data = match get_precompile_wasm_bytecode(&address) {
+            Some(wasm_bytecode) => wasm_bytecode,
+            None => panic!(
+                "wasm bytecode is not defined for contract \"{}\" ({})",
+                name, address
+            ),
+        };
         let bytecode: Bytes = if binary_data.starts_with(&WASM_SIG) {
             let result = compile_wasm_to_rwasm(binary_data).unwrap();
             if !result.constructor_params.is_empty() {
@@ -116,75 +106,25 @@ mod genesis_builder {
         alloc: &mut BTreeMap<Address, GenesisAccount>,
         with_bls12: bool,
     ) {
-        init_contract(
-            alloc,
-            "secp256k1_recover",
-            PRECOMPILE_SECP256K1_RECOVER,
-            WASM_ECRECOVER,
-        );
-        init_contract(alloc, "sha256", PRECOMPILE_SHA256, WASM_SHA256);
-        init_contract(alloc, "ripemd160", PRECOMPILE_RIPEMD160, WASM_RIPEMD160);
-        init_contract(alloc, "identity", PRECOMPILE_IDENTITY, WASM_IDENTITY);
-        init_contract(
-            alloc,
-            "nitro",
-            PRECOMPILE_NITRO_VERIFIER,
-            WASM_NITRO_VERIFIER,
-        );
-        init_contract(alloc, "big_modexp", PRECOMPILE_BIG_MODEXP, WASM_MODEXP);
-        init_contract(alloc, "bn256_add", PRECOMPILE_BN256_ADD, WASM_BN256);
-        init_contract(alloc, "bn256_mul", PRECOMPILE_BN256_MUL, WASM_BN256);
-        init_contract(alloc, "bn256_pairing", PRECOMPILE_BN256_PAIR, WASM_BN256);
-        init_contract(alloc, "blake2f", PRECOMPILE_BLAKE2F, WASM_BLAKE2F);
-        init_contract(
-            alloc,
-            "blake2f",
-            PRECOMPILE_KZG_POINT_EVALUATION,
-            WASM_KZG_POINT_EVALUATION,
-        );
+        init_contract(alloc, "secp256k1_recover", PRECOMPILE_SECP256K1_RECOVER);
+        init_contract(alloc, "sha256", PRECOMPILE_SHA256);
+        init_contract(alloc, "ripemd160", PRECOMPILE_RIPEMD160);
+        init_contract(alloc, "identity", PRECOMPILE_IDENTITY);
+        init_contract(alloc, "nitro", PRECOMPILE_NITRO_VERIFIER);
+        init_contract(alloc, "big_modexp", PRECOMPILE_BIG_MODEXP);
+        init_contract(alloc, "bn256_add", PRECOMPILE_BN256_ADD);
+        init_contract(alloc, "bn256_mul", PRECOMPILE_BN256_MUL);
+        init_contract(alloc, "bn256_pairing", PRECOMPILE_BN256_PAIR);
+        init_contract(alloc, "blake2f", PRECOMPILE_BLAKE2F);
+        init_contract(alloc, "blake2f", PRECOMPILE_KZG_POINT_EVALUATION);
         if with_bls12 {
-            init_contract(
-                alloc,
-                "bls12381_g1_add",
-                PRECOMPILE_BLS12_381_G1_ADD,
-                WASM_BLS12381,
-            );
-            init_contract(
-                alloc,
-                "bls12381_g1_msm",
-                PRECOMPILE_BLS12_381_G1_MSM,
-                WASM_BLS12381,
-            );
-            init_contract(
-                alloc,
-                "bls12381_g2_add",
-                PRECOMPILE_BLS12_381_G2_ADD,
-                WASM_BLS12381,
-            );
-            init_contract(
-                alloc,
-                "bls12381_g2_msm",
-                PRECOMPILE_BLS12_381_G2_MSM,
-                WASM_BLS12381,
-            );
-            init_contract(
-                alloc,
-                "bls12381_pairing",
-                PRECOMPILE_BLS12_381_PAIRING,
-                WASM_BLS12381,
-            );
-            init_contract(
-                alloc,
-                "bls12381_map_g1",
-                PRECOMPILE_BLS12_381_MAP_G1,
-                WASM_BLS12381,
-            );
-            init_contract(
-                alloc,
-                "bls12381_map_g2",
-                PRECOMPILE_BLS12_381_MAP_G2,
-                WASM_BLS12381,
-            );
+            init_contract(alloc, "bls12381_g1_add", PRECOMPILE_BLS12_381_G1_ADD);
+            init_contract(alloc, "bls12381_g1_msm", PRECOMPILE_BLS12_381_G1_MSM);
+            init_contract(alloc, "bls12381_g2_add", PRECOMPILE_BLS12_381_G2_ADD);
+            init_contract(alloc, "bls12381_g2_msm", PRECOMPILE_BLS12_381_G2_MSM);
+            init_contract(alloc, "bls12381_pairing", PRECOMPILE_BLS12_381_PAIRING);
+            init_contract(alloc, "bls12381_map_g1", PRECOMPILE_BLS12_381_MAP_G1);
+            init_contract(alloc, "bls12381_map_g2", PRECOMPILE_BLS12_381_MAP_G2);
         }
     }
 
@@ -228,19 +168,9 @@ mod genesis_builder {
 
         enable_evm_precompiled_contracts(&mut alloc, false);
 
-        init_contract(
-            &mut alloc,
-            "multicall",
-            PRECOMPILE_NATIVE_MULTICALL,
-            WASM_MULTICALL,
-        );
-        init_contract(
-            &mut alloc,
-            "fairblock",
-            PRECOMPILE_FAIRBLOCK_VERIFIER,
-            WASM_FAIRBLOCK_VERIFIER,
-        );
-        init_contract(&mut alloc, "evm", PRECOMPILE_EVM_RUNTIME, WASM_EVM_RUNTIME);
+        init_contract(&mut alloc, "multicall", PRECOMPILE_NATIVE_MULTICALL);
+        init_contract(&mut alloc, "fairblock", PRECOMPILE_FAIRBLOCK_VERIFIER);
+        init_contract(&mut alloc, "evm", PRECOMPILE_EVM_RUNTIME);
 
         Genesis {
             config: devnet_chain_config(),

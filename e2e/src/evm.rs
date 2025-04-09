@@ -371,6 +371,4 @@ fn test_blake2fcaller() {
     // WITHOUT WASMTIME
     // gas_used: 22125,
     // gas_refunded: 0,
-
-
 }

@@ -1,0 +1,41 @@
+[package]
+name = "fluentbase-precompile"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+serde = { workspace = true, optional = true }
+byteorder = { workspace = true, default-features = false }
+rwasm = { workspace = true }
+alloy-primitives = { workspace = true }
+hashbrown = { workspace = true }
+lazy_static = { workspace = true }
+fluentbase-types = { workspace = true }
+
+# we need these deps to ensure build order
+fluentbase-contracts-blake2f = { path = "../../contracts/blake2f" }
+fluentbase-contracts-bls12381 = { path = "../../contracts/bls12381" }
+fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
+fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
+fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }
+fluentbase-contracts-evm = { path = "../../contracts/evm" }
+fluentbase-contracts-fairblock = { path = "../../contracts/fairblock" }
+fluentbase-contracts-identity = { path = "../../contracts/identity" }
+fluentbase-contracts-kzg = { path = "../../contracts/kzg" }
+fluentbase-contracts-modexp = { path = "../../contracts/modexp" }
+fluentbase-contracts-multicall = { path = "../../contracts/multicall" }
+fluentbase-contracts-nitro = { path = "../../contracts/nitro" }
+fluentbase-contracts-oauth2 = { path = "../../contracts/oauth2" }
+fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160" }
+fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
+fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
+
+[build-dependencies]
+alloy-genesis = { workspace = true }
+

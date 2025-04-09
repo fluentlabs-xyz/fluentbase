@@ -5,18 +5,20 @@ use crate::{
 use anyhow::Result;
 use core::{error::Error as StdError, fmt};
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
-use fluentbase_types::{Bytes, ExitCode, FixedBytes, SyscallInvocationParams, B256, U256, STATE_MAIN, STATE_DEPLOY};
-use std::io::Write;
-
-use std::{
-    cmp::min,
-    fmt::{Debug, Display, Formatter},
-};
-
 use fluentbase_types::{
-    byteorder::{ByteOrder, LittleEndian}};
+    byteorder::{ByteOrder, LittleEndian},
+    Bytes,
+    ExitCode,
+    FixedBytes,
+    SyscallInvocationParams,
+    B256,
+    STATE_DEPLOY,
+    STATE_MAIN,
+    U256,
+};
 use std::{
     cell::RefCell,
+    cmp::min,
     collections::{
         hash_map::{
             DefaultHasher,
@@ -24,8 +26,10 @@ use std::{
         },
         HashMap,
     },
+    fmt::{Debug, Display, Formatter},
     future::Future,
     hash::{Hash, Hasher},
+    io::Write,
     mem::drop,
     pin::Pin,
     sync::mpsc,
@@ -179,6 +183,10 @@ impl RuntimeState {
         self.prev_call_id = call_id;
         let existing = self.suspended_executors.insert(call_id, executor);
         assert!(existing.is_none());
+        println!(
+            "suspended_executors.len()={}",
+            self.suspended_executors.len()
+        );
         call_id
     }
 
@@ -290,7 +298,8 @@ mod builtins {
         let context = caller.data();
         let return_data = &context.return_data;
         if offset + length <= return_data.len() as u32 {
-            let buffer = return_data[(offset as usize)..(offset as usize + length as usize)].to_vec();
+            let buffer =
+                return_data[(offset as usize)..(offset as usize + length as usize)].to_vec();
             write_memory(&mut caller, target_ptr, &buffer)?;
             Ok(())
         } else {
@@ -456,7 +465,12 @@ fn handle_one_step(executor: AsyncExecutor) -> (i32, Vec<u8>) {
         }
     })
 }
-pub fn execute_wasmtime(wasm_bytecode: &[u8], input: Vec<u8>, fuel_limit: u64, state: u32) -> (i32, Vec<u8>) {
+pub fn execute_wasmtime(
+    wasm_bytecode: &[u8],
+    input: Vec<u8>,
+    fuel_limit: u64,
+    state: u32,
+) -> (i32, Vec<u8>) {
     let executor = RUNTIME_STATE.with_borrow_mut(|runtime_state| {
         let module = runtime_state.init_module_cached(wasm_bytecode);
         AsyncExecutor::launch(module, input, fuel_limit, state)
@@ -500,8 +514,11 @@ mod tests {
     fn run_identity_in_wasmtime() {
         let wasm_bytecode = include_bytes!("../../../contracts/identity/lib.wasm");
         let input = vec![1, 2, 3, 4, 5, 6];
-        let (exit_code, output) =
-            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input), STATE_MAIN);
+        let (exit_code, output) = execute_wasmtime(
+            wasm_bytecode,
+            insert_default_shared_context(&input),
+            STATE_MAIN,
+        );
         assert_eq!(exit_code, 0);
         assert_eq!(input, output);
     }
@@ -515,7 +532,11 @@ mod tests {
         .into();
         let wasm_bytecode = include_bytes!("../../../contracts/identity/lib.wasm");
         let input = attestation_doc;
-        let (_, _) = execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input), STATE_MAIN);
+        let (_, _) = execute_wasmtime(
+            wasm_bytecode,
+            insert_default_shared_context(&input),
+            STATE_MAIN,
+        );
         panic!("FINISHED Successfully");
     }
 
@@ -523,8 +544,11 @@ mod tests {
     fn wasmtime_greeting() {
         let wasm_bytecode = include_bytes!("../../../examples/greeting/lib.wasm");
         let input = Vec::new();
-        let (exit_code, output) =
-            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input), STATE_MAIN);
+        let (exit_code, output) = execute_wasmtime(
+            wasm_bytecode,
+            insert_default_shared_context(&input),
+            STATE_MAIN,
+        );
         assert_eq!(exit_code, 0);
         panic!("FINISHED");
     }
@@ -533,8 +557,11 @@ mod tests {
     fn wasmtime_simple_storage() {
         let wasm_bytecode = include_bytes!("../../../examples/simple-storage/lib.wasm");
         let input = Vec::new();
-        let (exit_code, output) =
-            execute_wasmtime(wasm_bytecode, insert_default_shared_context(&input), STATE_MAIN);
+        let (exit_code, output) = execute_wasmtime(
+            wasm_bytecode,
+            insert_default_shared_context(&input),
+            STATE_MAIN,
+        );
         dbg!(exit_code);
         let value = Vec::from(U256::from(2).to_le_bytes::<32>());
         let (exit_code, output) = resume_wasmtime(exit_code, value, 0, 0, 0, 0);
