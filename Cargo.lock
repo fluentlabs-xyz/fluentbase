@@ -2643,7 +2643,6 @@ dependencies = [
  "byteorder",
  "fluentbase-codec",
  "hashbrown 0.15.2",
- "lazy_static",
  "revm-primitives",
  "rwasm",
  "serde",

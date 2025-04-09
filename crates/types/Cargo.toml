@@ -20,7 +20,6 @@ revm-primitives = { workspace = true, default-features = false }
 hashbrown = { workspace = true }
 fluentbase-codec = { workspace = true }
 auto_impl = { workspace = true }
-lazy_static = { workspace = true }
 
 [features]
 default = ["std"]

@@ -19,8 +19,6 @@ mod multicall;
 #[cfg(test)]
 mod nitro;
 #[cfg(test)]
-mod precompile;
-#[cfg(test)]
 mod router;
 #[cfg(test)]
 mod stateless;

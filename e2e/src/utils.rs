@@ -58,7 +58,6 @@ impl EvmTestingContext {
                 code_hash,
                 code: None,
             };
-            println!("{} {}", k, code_hash);
             info.code = v.code.clone().map(Bytecode::new_raw);
             db.insert_account_info(*k, info);
         }

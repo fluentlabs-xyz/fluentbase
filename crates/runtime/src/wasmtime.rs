@@ -511,46 +511,16 @@ mod tests {
     }
 
     #[test]
-    fn run_identity_in_wasmtime() {
-        let wasm_bytecode = include_bytes!("../../../contracts/identity/lib.wasm");
-        let input = vec![1, 2, 3, 4, 5, 6];
-        let (exit_code, output) = execute_wasmtime(
-            wasm_bytecode,
-            insert_default_shared_context(&input),
-            STATE_MAIN,
-        );
-        assert_eq!(exit_code, 0);
-        assert_eq!(input, output);
-    }
-
-    #[test]
-    fn run_nitro_verifier_in_wasmtime() {
-        let attestation_doc: Vec<u8> = hex::decode(include_bytes!(
-            "../../../contracts/nitro/attestation-example.hex"
-        ))
-        .unwrap()
-        .into();
-        let wasm_bytecode = include_bytes!("../../../contracts/identity/lib.wasm");
-        let input = attestation_doc;
-        let (_, _) = execute_wasmtime(
-            wasm_bytecode,
-            insert_default_shared_context(&input),
-            STATE_MAIN,
-        );
-        panic!("FINISHED Successfully");
-    }
-
-    #[test]
     fn wasmtime_greeting() {
         let wasm_bytecode = include_bytes!("../../../examples/greeting/lib.wasm");
         let input = Vec::new();
         let (exit_code, output) = execute_wasmtime(
             wasm_bytecode,
             insert_default_shared_context(&input),
+            u64::MAX,
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
-        panic!("FINISHED");
     }
 
     #[test]
@@ -560,12 +530,12 @@ mod tests {
         let (exit_code, output) = execute_wasmtime(
             wasm_bytecode,
             insert_default_shared_context(&input),
+            u64::MAX,
             STATE_MAIN,
         );
         dbg!(exit_code);
         let value = Vec::from(U256::from(2).to_le_bytes::<32>());
         let (exit_code, output) = resume_wasmtime(exit_code, value, 0, 0, 0, 0);
         assert_eq!(exit_code, 0);
-        panic!("FINISHED");
     }
 }

@@ -1,7 +1,4 @@
-use alloc::vec::Vec;
 use alloy_primitives::{address, Address};
-use hashbrown::HashMap;
-use lazy_static::lazy_static;
 
 /// An address of EVM runtime that is used to execute EVM program
 pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0000000000000000000000000000000000520001");
