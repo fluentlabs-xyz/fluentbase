@@ -9,7 +9,6 @@ use fluentbase_types::{
     B256,
     STATE_DEPLOY,
     STATE_MAIN,
-    U256,
 };
 use std::{
     cell::RefCell,
@@ -488,7 +487,7 @@ pub fn resume_wasmtime(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_types::{SharedContextInput, SharedContextInputV1};
+    use fluentbase_types::{SharedContextInput, SharedContextInputV1, U256};
 
     fn insert_default_shared_context(input: &[u8]) -> Vec<u8> {
         let result = SharedContextInput::V1(SharedContextInputV1::default());
