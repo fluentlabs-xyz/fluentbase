@@ -59,6 +59,20 @@ pub const WASM_BLAKE2F: &[u8] = include_bytes!("../../../contracts/blake2f/lib.w
 pub const WASM_KZG_POINT_EVALUATION: &[u8] = include_bytes!("../../../contracts/kzg/lib.wasm");
 pub const WASM_BLS12381: &[u8] = include_bytes!("../../../contracts/bls12381/lib.wasm");
 
+// pub const WASM_EVM_RUNTIME: &[u8] = &[0; 0];
+// pub const WASM_MULTICALL: &[u8] = &[0; 0];
+// pub const WASM_FAIRBLOCK_VERIFIER: &[u8] = &[0; 0];
+// pub const WASM_ECRECOVER: &[u8] = &[0; 0];
+// pub const WASM_SHA256: &[u8] = &[0; 0];
+// pub const WASM_RIPEMD160: &[u8] = &[0; 0];
+// pub const WASM_IDENTITY: &[u8] = &[0; 0];
+// pub const WASM_NITRO_VERIFIER: &[u8] = &[0; 0];
+// pub const WASM_MODEXP: &[u8] = &[0; 0];
+// pub const WASM_BN256: &[u8] = &[0; 0];
+// pub const WASM_BLAKE2F: &[u8] = &[0; 0];
+// pub const WASM_KZG_POINT_EVALUATION: &[u8] = &[0; 0];
+// pub const WASM_BLS12381: &[u8] = &[0; 0];
+
 /// Checks is contract has self-gas management
 pub fn is_self_gas_management_contract(address: &Address) -> bool {
     is_system_precompile(address)

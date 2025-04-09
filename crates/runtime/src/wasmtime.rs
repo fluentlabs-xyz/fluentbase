@@ -6,6 +6,12 @@ use anyhow::Result;
 use core::{error::Error as StdError, fmt};
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{Bytes, ExitCode, FixedBytes, SyscallInvocationParams, B256, U256, STATE_MAIN, STATE_DEPLOY};
+use std::io::Write;
+
+use std::{
+    cmp::min,
+    fmt::{Debug, Display, Formatter},
+};
 
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian}};
@@ -36,6 +42,7 @@ struct WorkerContext {
     input: Vec<u8>,
     output: Vec<u8>,
     return_data: Vec<u8>,
+    fuel_limit: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -83,7 +90,7 @@ struct AsyncExecutor {
 impl AsyncExecutor {
     /* module is expected to be preferified somewhere before.
      * So in this function we should never get errors during initialization of wasm instance */
-    pub fn launch(module: &Module, input: Vec<u8>, state: u32) -> Self {
+    pub fn launch(module: &Module, input: Vec<u8>, fuel_limit: u64, state: u32) -> Self {
         let (executor_sender, worker_receiver) = mpsc::channel();
         let (worker_sender, executor_receiver) = mpsc::channel();
         let worker_context = WorkerContext {
@@ -92,6 +99,7 @@ impl AsyncExecutor {
             input: input,
             output: Vec::new(),
             return_data: Vec::new(),
+            fuel_limit: fuel_limit,
         };
         let engine = module.engine();
         let linker = new_linker_with_builtins(engine).unwrap();
@@ -268,6 +276,7 @@ mod builtins {
     }
 
     pub fn exit(mut caller: Caller<'_, WorkerContext>, exit_code: i32) -> anyhow::Result<()> {
+        println!("builtins::exit({})", exit_code);
         Err(TerminationReason::Exit(exit_code).into())
     }
 
@@ -299,8 +308,10 @@ mod builtins {
         message_ptr: u32,
         message_length: u32,
     ) -> anyhow::Result<()> {
+        println!("builtin::debug_log()");
         let message = read_memory(&mut caller, message_ptr, message_length)?;
         SyscallDebugLog::fn_impl(&message);
+        std::io::stdout().flush();
         Ok(())
     }
 
@@ -313,9 +324,18 @@ mod builtins {
         state: u32,
     ) -> anyhow::Result<i32> {
         println!("builtin::exec()");
-        let mut encoded_state = BytesMut::new();
-
-        let fuel_limit = u64::MAX; // TODO(khasan) what should we put here?
+        let fuel_limit = if fuel16_ptr > 0 {
+            let fuel_buffer = read_memory(&mut caller, fuel16_ptr, 16)?;
+            let fuel_limit = LittleEndian::read_i64(&fuel_buffer[..8]) as u64;
+            let _fuel_refund = LittleEndian::read_i64(&fuel_buffer[8..]);
+            if fuel_limit > 0 {
+                min(fuel_limit, caller.data().fuel_limit)
+            } else {
+                0
+            }
+        } else {
+            caller.data().fuel_limit
+        };
         let code_hash = read_memory(&mut caller, hash32_ptr, 32)?;
         let code_hash: [u8; 32] = code_hash.as_slice().try_into().unwrap();
         let input = read_memory(&mut caller, input_ptr, input_len)?;
@@ -427,10 +447,7 @@ fn handle_one_step(executor: AsyncExecutor) -> (i32, Vec<u8>) {
             Message::WasmTerminated { reason, output } => {
                 executor.worker.join().expect("worker should never panic");
                 let final_exit_code = match reason {
-                    TerminationReason::Exit(value) => match value {
-                        0 => ExitCode::Ok.into_i32(),
-                        _ => ExitCode::Panic.into_i32(),
-                    }, // TODO(khasan) map wasmtime::Trap into ExitCode
+                    TerminationReason::Exit(value) => value,
                     _ => ExitCode::Err.into_i32(),
                 };
                 (final_exit_code, output)
@@ -439,10 +456,10 @@ fn handle_one_step(executor: AsyncExecutor) -> (i32, Vec<u8>) {
         }
     })
 }
-pub fn execute_wasmtime(wasm_bytecode: &[u8], input: Vec<u8>, state: u32) -> (i32, Vec<u8>) {
+pub fn execute_wasmtime(wasm_bytecode: &[u8], input: Vec<u8>, fuel_limit: u64, state: u32) -> (i32, Vec<u8>) {
     let executor = RUNTIME_STATE.with_borrow_mut(|runtime_state| {
         let module = runtime_state.init_module_cached(wasm_bytecode);
-        AsyncExecutor::launch(module, input, state)
+        AsyncExecutor::launch(module, input, fuel_limit, state)
     });
     handle_one_step(executor)
 }
