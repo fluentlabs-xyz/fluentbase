@@ -71,7 +71,6 @@ mod tests {
 
         // setup
 
-        // let loader_id = bpf_loader_upgradeable::id();
         let loader_id = loader_v4::id();
 
         let account_with_program = load_program_account_from_elf_file(
