@@ -2185,7 +2185,6 @@ dependencies = [
 name = "fluentbase-contracts-blake2f"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
  "revm-precompile",
 ]
@@ -2194,7 +2193,6 @@ dependencies = [
 name = "fluentbase-contracts-bls12381"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
  "revm-precompile",
 ]
@@ -2203,7 +2201,6 @@ dependencies = [
 name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
  "revm-precompile",
 ]
@@ -2212,7 +2209,6 @@ dependencies = [
 name = "fluentbase-contracts-ecrecover"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
  "revm-precompile",
 ]
@@ -2221,7 +2217,6 @@ dependencies = [
 name = "fluentbase-contracts-erc20"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
 ]
 
@@ -2229,7 +2224,6 @@ dependencies = [
 name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-evm",
  "fluentbase-sdk",
 ]
@@ -2245,7 +2239,6 @@ dependencies = [
 name = "fluentbase-contracts-identity"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
  "revm-precompile",
 ]
@@ -2254,7 +2247,6 @@ dependencies = [
 name = "fluentbase-contracts-kzg"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
  "revm-precompile",
 ]
@@ -2263,7 +2255,6 @@ dependencies = [
 name = "fluentbase-contracts-modexp"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
  "revm-precompile",
 ]
@@ -2272,7 +2263,6 @@ dependencies = [
 name = "fluentbase-contracts-multicall"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
 ]
 
@@ -2284,7 +2274,6 @@ dependencies = [
  "coset",
  "der",
  "ecdsa",
- "fluentbase-build",
  "fluentbase-sdk",
  "hex",
  "p384",
@@ -2295,7 +2284,6 @@ dependencies = [
 name = "fluentbase-contracts-oauth2"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
 ]
 
@@ -2303,7 +2291,6 @@ dependencies = [
 name = "fluentbase-contracts-ripemd160"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
  "revm-precompile",
 ]
@@ -2312,7 +2299,6 @@ dependencies = [
 name = "fluentbase-contracts-sha256"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
  "revm-precompile",
 ]
@@ -2321,7 +2307,6 @@ dependencies = [
 name = "fluentbase-contracts-webauthn"
 version = "0.1.0"
 dependencies = [
- "fluentbase-build",
  "fluentbase-sdk",
 ]
 
@@ -5175,6 +5160,7 @@ dependencies = [
  "ethers-contract",
  "ethers-core",
  "ethers-providers",
+ "fluentbase-genesis",
  "fluentbase-runtime",
  "fluentbase-sdk",
  "indicatif",

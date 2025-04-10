@@ -34,3 +34,4 @@ std = [
     "generate-genesis",
 ]
 generate-genesis = []
+bls12 = []

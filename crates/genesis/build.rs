@@ -1,10 +1,50 @@
-use fluentbase_build::{build_wasm_program, WasmBuildConfig};
+use fluentbase_types::Address;
+
+#[rustfmt::skip]
+pub fn get_enabled_system_contracts() -> Vec<(Address, String)> {
+    let mut arr = Vec::new();
+    arr.extend([
+        (fluentbase_types::PRECOMPILE_BIG_MODEXP, "fluentbase-contracts-modexp"),
+        (fluentbase_types::PRECOMPILE_BLAKE2F, "fluentbase-contracts-blake2f"),
+        (fluentbase_types::PRECOMPILE_BN256_ADD, "fluentbase-contracts-bn256"),
+        (fluentbase_types::PRECOMPILE_BN256_MUL, "fluentbase-contracts-bn256"),
+        (fluentbase_types::PRECOMPILE_BN256_PAIR, "fluentbase-contracts-bn256"),
+        (fluentbase_types::PRECOMPILE_ERC20, "fluentbase-contracts-erc20"),
+        (fluentbase_types::PRECOMPILE_EVM_RUNTIME, "fluentbase-contracts-evm"),
+        (fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER,"fluentbase-contracts-fairblock",),
+        (fluentbase_types::PRECOMPILE_IDENTITY, "fluentbase-contracts-identity"),
+        (fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, "fluentbase-contracts-kzg"),
+        (fluentbase_types::PRECOMPILE_NATIVE_MULTICALL,"fluentbase-contracts-multicall"),
+        (fluentbase_types::PRECOMPILE_NITRO_VERIFIER, "fluentbase-contracts-nitro"),
+        (fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, "fluentbase-contracts-oauth2"),
+        (fluentbase_types::PRECOMPILE_RIPEMD160, "fluentbase-contracts-ripemd160"),
+        (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, "fluentbase-contracts-ecrecover"),
+        (fluentbase_types::PRECOMPILE_SHA256, "fluentbase-contracts-sha256"),
+        (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, "fluentbase-contracts-webauthn"),
+    ]);
+    #[cfg(feature = "bls12")]
+    {
+        arr.extend([
+            (fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, "fluentbase-contracts-bls12381"),
+            (fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, "fluentbase-contracts-bls12381"),
+            (fluentbase_types::PRECOMPILE_BLS12_381_G2_ADD, "fluentbase-contracts-bls12381"),
+            (fluentbase_types::PRECOMPILE_BLS12_381_G2_MSM, "fluentbase-contracts-bls12381"),
+            (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, "fluentbase-contracts-bls12381"),
+            (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, "fluentbase-contracts-bls12381"),
+            (fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, "fluentbase-contracts-bls12381"),
+        ]);
+    }
+    arr.into_iter()
+        .map(|(address, name)| (address, name.to_string()))
+        .collect()
+}
 
 #[cfg(feature = "generate-genesis")]
 mod genesis_builder {
+    use super::get_enabled_system_contracts;
     use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
-    use cargo_metadata::MetadataCommand;
-    use fluentbase_build::cargo_rerun_if_changed;
+    use cargo_metadata::{camino::Utf8PathBuf, MetadataCommand};
+    use fluentbase_build::{build_wasm_program, cargo_rerun_if_changed, WasmBuildConfig};
     use fluentbase_types::{
         address,
         compile_wasm_to_rwasm,
@@ -12,31 +52,10 @@ mod genesis_builder {
         Bytes,
         B256,
         DEVELOPER_PREVIEW_CHAIN_ID,
-        PRECOMPILE_BIG_MODEXP,
-        PRECOMPILE_BLAKE2F,
-        PRECOMPILE_BLS12_381_G1_ADD,
-        PRECOMPILE_BLS12_381_G1_MSM,
-        PRECOMPILE_BLS12_381_G2_ADD,
-        PRECOMPILE_BLS12_381_G2_MSM,
-        PRECOMPILE_BLS12_381_MAP_G1,
-        PRECOMPILE_BLS12_381_MAP_G2,
-        PRECOMPILE_BLS12_381_PAIRING,
-        PRECOMPILE_BN256_ADD,
-        PRECOMPILE_BN256_MUL,
-        PRECOMPILE_BN256_PAIR,
-        PRECOMPILE_EVM_RUNTIME,
-        PRECOMPILE_FAIRBLOCK_VERIFIER,
-        PRECOMPILE_IDENTITY,
-        PRECOMPILE_KZG_POINT_EVALUATION,
-        PRECOMPILE_NATIVE_MULTICALL,
-        PRECOMPILE_NITRO_VERIFIER,
-        PRECOMPILE_RIPEMD160,
-        PRECOMPILE_SECP256K1_RECOVER,
-        PRECOMPILE_SHA256,
         U256,
         WASM_SIG,
     };
-    use std::{collections::BTreeMap, env, fs::File, io::Write, path::PathBuf};
+    use std::{collections::BTreeMap, env, fs, fs::File, io::Write, path::PathBuf};
 
     fn devnet_chain_config() -> ChainConfig {
         ChainConfig {
@@ -72,16 +91,14 @@ mod genesis_builder {
         }
     }
 
-    fn init_contract(alloc: &mut BTreeMap<Address, GenesisAccount>, name: &str, address: Address) {
-        let binary_data = match get_precompile_wasm_bytecode(&address) {
-            Some(wasm_bytecode) => wasm_bytecode,
-            None => panic!(
-                "wasm bytecode is not defined for contract \"{}\" ({})",
-                name, address
-            ),
-        };
+    fn init_contract(
+        alloc: &mut BTreeMap<Address, GenesisAccount>,
+        name: &str,
+        address: Address,
+        binary_data: Vec<u8>,
+    ) {
         let bytecode: Bytes = if binary_data.starts_with(&WASM_SIG) {
-            let result = compile_wasm_to_rwasm(binary_data).unwrap();
+            let result = compile_wasm_to_rwasm(&binary_data).unwrap();
             if !result.constructor_params.is_empty() {
                 panic!(
                     "rwasm contract ({}) should not have constructor params",
@@ -90,7 +107,7 @@ mod genesis_builder {
             }
             result.rwasm_bytecode
         } else {
-            Bytes::copy_from_slice(binary_data)
+            Bytes::from(binary_data)
         };
         print!("creating genesis account {} (0x{})... ", name, address);
         std::io::stdout().flush().unwrap();
@@ -101,32 +118,6 @@ mod genesis_builder {
             .unwrap_or_else(GenesisAccount::default);
         account.code = Some(bytecode);
         alloc.insert(address, account);
-    }
-
-    fn enable_evm_precompiled_contracts(
-        alloc: &mut BTreeMap<Address, GenesisAccount>,
-        with_bls12: bool,
-    ) {
-        init_contract(alloc, "secp256k1_recover", PRECOMPILE_SECP256K1_RECOVER);
-        init_contract(alloc, "sha256", PRECOMPILE_SHA256);
-        init_contract(alloc, "ripemd160", PRECOMPILE_RIPEMD160);
-        init_contract(alloc, "identity", PRECOMPILE_IDENTITY);
-        init_contract(alloc, "nitro", PRECOMPILE_NITRO_VERIFIER);
-        init_contract(alloc, "big_modexp", PRECOMPILE_BIG_MODEXP);
-        init_contract(alloc, "bn256_add", PRECOMPILE_BN256_ADD);
-        init_contract(alloc, "bn256_mul", PRECOMPILE_BN256_MUL);
-        init_contract(alloc, "bn256_pairing", PRECOMPILE_BN256_PAIR);
-        init_contract(alloc, "blake2f", PRECOMPILE_BLAKE2F);
-        init_contract(alloc, "blake2f", PRECOMPILE_KZG_POINT_EVALUATION);
-        if with_bls12 {
-            init_contract(alloc, "bls12381_g1_add", PRECOMPILE_BLS12_381_G1_ADD);
-            init_contract(alloc, "bls12381_g1_msm", PRECOMPILE_BLS12_381_G1_MSM);
-            init_contract(alloc, "bls12381_g2_add", PRECOMPILE_BLS12_381_G2_ADD);
-            init_contract(alloc, "bls12381_g2_msm", PRECOMPILE_BLS12_381_G2_MSM);
-            init_contract(alloc, "bls12381_pairing", PRECOMPILE_BLS12_381_PAIRING);
-            init_contract(alloc, "bls12381_map_g1", PRECOMPILE_BLS12_381_MAP_G1);
-            init_contract(alloc, "bls12381_map_g2", PRECOMPILE_BLS12_381_MAP_G2);
-        }
     }
 
     #[macro_export]
@@ -167,11 +158,26 @@ mod genesis_builder {
             initial_devnet_balance!("33a831e42B24D19bf57dF73682B9a3780A0435BA"),
         ]);
 
-        enable_evm_precompiled_contracts(&mut alloc, false);
+        let available_system_contracts: Vec<(String, Utf8PathBuf)> = build_all_system_contracts();
+        let enabled_system_contracts: Vec<(Address, String)> = get_enabled_system_contracts();
+        let enabled: Vec<(String, Address, Utf8PathBuf)> = enabled_system_contracts
+            .into_iter()
+            .filter_map(|(address, name)| {
+                available_system_contracts
+                    .iter()
+                    .find(|(available_name, _)| *available_name == name)
+                    .map(|(_, path)| (name.clone(), address, path.clone()))
+            })
+            .collect();
 
-        init_contract(&mut alloc, "multicall", PRECOMPILE_NATIVE_MULTICALL);
-        init_contract(&mut alloc, "fairblock", PRECOMPILE_FAIRBLOCK_VERIFIER);
-        init_contract(&mut alloc, "evm", PRECOMPILE_EVM_RUNTIME);
+        for (name, address, path) in enabled {
+            init_contract(
+                &mut alloc,
+                &name,
+                address,
+                fs::read(path).expect("failed to read system precompile"),
+            );
+        }
 
         Genesis {
             config: devnet_chain_config(),
@@ -190,7 +196,7 @@ mod genesis_builder {
         }
     }
 
-    pub fn generate_genesis() {
+    pub fn build_precompile_contracts_and_genesis() {
         let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
         let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
         let mut metadata_cmd = MetadataCommand::new();
@@ -209,32 +215,29 @@ mod genesis_builder {
         file.sync_all().unwrap();
         file.flush().unwrap();
     }
+
+    pub fn build_all_system_contracts() -> Vec<(String, Utf8PathBuf)> {
+        let mut available_system_contracts = Vec::new();
+        fs::read_dir("../../contracts")
+            .expect("failed to read directory")
+            .for_each(|entry| {
+                let path = entry.expect("failed to read entry").path();
+                assert!(path.is_dir(), "{} is not a directory", path.display());
+                let program = path.to_str().expect("failed to convert path to string");
+                let (target_name, wasm_path) = build_wasm_program(
+                    WasmBuildConfig::default().with_cargo_manifest_dir(program.to_string()),
+                )
+                .unwrap();
+                println!("compiled system contract {} to {}", target_name, wasm_path);
+                available_system_contracts.push((target_name, wasm_path));
+            });
+        available_system_contracts
+    }
 }
 
 fn main() {
-    let programs = [
-        "../../contracts/blake2f",
-        "../../contracts/bls12381",
-        "../../contracts/bn256",
-        "../../contracts/ecrecover",
-        "../../contracts/erc20",
-        "../../contracts/evm",
-        "../../contracts/fairblock",
-        "../../contracts/identity",
-        "../../contracts/kzg",
-        "../../contracts/modexp",
-        "../../contracts/multicall",
-        "../../contracts/nitro",
-        "../../contracts/oauth2",
-        "../../contracts/ripemd160",
-        "../../contracts/sha256",
-        "../../contracts/webauthn",
-    ];
-
-    for program in programs {
-        build_wasm_program(WasmBuildConfig::default().with_cargo_manifest_dir(program.to_string()));
-    }
-
     #[cfg(feature = "generate-genesis")]
-    genesis_builder::generate_genesis();
+    {
+        genesis_builder::build_precompile_contracts_and_genesis();
+    }
 }

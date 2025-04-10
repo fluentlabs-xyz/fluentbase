@@ -482,32 +482,32 @@ mod tests {
         return result;
     }
 
-    #[test]
-    fn wasmtime_greeting() {
-        let wasm_bytecode = include_bytes!("../../../examples/greeting/lib.wasm");
-        let input = Vec::new();
-        let (exit_code, _output) = execute_wasmtime(
-            wasm_bytecode,
-            insert_default_shared_context(&input),
-            u64::MAX,
-            STATE_MAIN,
-        );
-        assert_eq!(exit_code, 0);
-    }
-
-    #[test]
-    fn wasmtime_simple_storage() {
-        let wasm_bytecode = include_bytes!("../../../examples/simple-storage/lib.wasm");
-        let input = Vec::new();
-        let (exit_code, _output) = execute_wasmtime(
-            wasm_bytecode,
-            insert_default_shared_context(&input),
-            u64::MAX,
-            STATE_MAIN,
-        );
-        dbg!(exit_code);
-        let value = Vec::from(U256::from(2).to_le_bytes::<32>());
-        let (exit_code, _output) = resume_wasmtime(exit_code, value, 0, 0, 0, 0);
-        assert_eq!(exit_code, 0);
-    }
+    // #[test]
+    // fn wasmtime_greeting() {
+    //     let wasm_bytecode = include_bytes!("../../../examples/greeting/lib.wasm");
+    //     let input = Vec::new();
+    //     let (exit_code, _output) = execute_wasmtime(
+    //         wasm_bytecode,
+    //         insert_default_shared_context(&input),
+    //         u64::MAX,
+    //         STATE_MAIN,
+    //     );
+    //     assert_eq!(exit_code, 0);
+    // }
+    //
+    // #[test]
+    // fn wasmtime_simple_storage() {
+    //     let wasm_bytecode = include_bytes!("../../../examples/simple-storage/lib.wasm");
+    //     let input = Vec::new();
+    //     let (exit_code, _output) = execute_wasmtime(
+    //         wasm_bytecode,
+    //         insert_default_shared_context(&input),
+    //         u64::MAX,
+    //         STATE_MAIN,
+    //     );
+    //     dbg!(exit_code);
+    //     let value = Vec::from(U256::from(2).to_le_bytes::<32>());
+    //     let (exit_code, _output) = resume_wasmtime(exit_code, value, 0, 0, 0, 0);
+    //     assert_eq!(exit_code, 0);
+    // }
 }

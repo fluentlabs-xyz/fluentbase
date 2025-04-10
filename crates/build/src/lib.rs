@@ -60,7 +60,7 @@ pub fn calc_wasm_artefact_paths(
                 .join(config.target.clone())
                 .join("release")
                 .join(&bin_name);
-            result.push((bin_name.to_owned(), wasm_path));
+            result.push((program.name.clone(), wasm_path));
         }
     }
     result
@@ -70,7 +70,7 @@ pub fn build_wasm_program_from_env() {
     // build_wasm_program(WasmBuildConfig::default())
 }
 
-pub fn build_wasm_program(config: WasmBuildConfig) {
+pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBuf)> {
     let cargo_manifest_dir = PathBuf::from(config.cargo_manifest_dir.clone());
     let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
 
@@ -87,11 +87,11 @@ pub fn build_wasm_program(config: WasmBuildConfig) {
             "cargo:warning=build skipped due to wasm32 compilation target ({})",
             config.current_target
         );
-        return;
+        return None;
     }
     if config.is_tarpaulin_build {
         println!("cargo:warning=build skipped due to the tarpaulin build");
-        return;
+        return None;
     }
 
     let artefact_paths = calc_wasm_artefact_paths(&metadata, &config);
@@ -155,6 +155,7 @@ pub fn build_wasm_program(config: WasmBuildConfig) {
         )
         .unwrap();
     }
+    artefact_paths.first().cloned()
 }
 
 pub fn build_go_program_from_env(program_name: &'static str) {

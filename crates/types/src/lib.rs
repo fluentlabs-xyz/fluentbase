@@ -89,24 +89,3 @@ pub const EVM_MAX_INITCODE_SIZE: usize = 2 * EVM_MAX_CODE_SIZE;
 
 /// A basic SPEC that Fluent supports
 pub const EVM_BASE_SPEC: SpecId = SpecId::CANCUN;
-
-/// Macro to include a WebAssembly binary as a byte array at compile time.
-///
-/// The `include_wasm!` macro allows embedding a WebAssembly binary file into the compiled binary.
-/// It retrieves the file path from an environment variable and includes the corresponding bytes.
-///
-/// # Arguments
-/// - `$arg`: A string literal that specifies the identifier appended to the environment variable
-///   name `FLUENTBASE_WASM_BINARY_PATH_`. The full name of the environment variable will be
-///   `FLUENTBASE_WASM_BINARY_PATH_<identifier>`.
-///
-/// # Notes
-/// - This macro is specifically designed for working with WebAssembly binaries and assumes a
-///   consistent naming convention for environment variables.
-/// - The macro is exported to be usable across the crate boundary.
-#[macro_export]
-macro_rules! include_wasm {
-    ($arg:tt) => {{
-        include_bytes!(env!(concat!("FLUENTBASE_WASM_BINARY_PATH_", $arg)))
-    }};
-}
