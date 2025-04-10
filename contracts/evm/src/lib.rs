@@ -261,7 +261,7 @@ mod tests {
             caller: Address::ZERO,
             is_static: false,
             value: U256::ZERO,
-            gas_limit: 1_000_000,
+            // gas_limit: 1_000_000,
         });
         // deploy
         {
