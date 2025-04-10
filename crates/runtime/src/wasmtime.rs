@@ -13,10 +13,7 @@ use fluentbase_types::{
 use std::{
     cell::RefCell,
     cmp::min,
-    collections::{
-        hash_map::DefaultHasher,
-        HashMap,
-    },
+    collections::{hash_map::DefaultHasher, HashMap},
     fmt::Debug,
     hash::{Hash, Hasher},
     sync::mpsc,
@@ -85,10 +82,10 @@ impl AsyncExecutor {
         let worker_context = WorkerContext {
             sender: worker_sender,
             receiver: worker_receiver,
-            input: input,
+            input,
             output: Vec::new(),
             return_data: Vec::new(),
-            fuel_limit: fuel_limit,
+            fuel_limit,
         };
         let engine = module.engine();
         let linker = new_linker_with_builtins(engine).unwrap();
