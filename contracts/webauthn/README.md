@@ -1,101 +1,87 @@
-# WebAuthn Precompile Documentation
+# WebAuthn Contract for Fluentbase
 
-This document provides information about the WebAuthn precompile contract, which offers functionality for P256 signature verification and WebAuthn assertion validation.
+A WebAuthn verification contract for blockchain authentication, enabling secure, passwordless authentication using the W3C WebAuthn standard.
 
 ## Overview
 
-The WebAuthn precompile provides two main functions:
+This contract implements WebAuthn verification for blockchain applications, allowing users to authenticate using their device's secure hardware (like TouchID, FaceID, or security keys) instead of traditional passwords or private keys.
 
-1. P256 signature verification
-2. WebAuthn assertion validation
+The implementation follows the [W3C WebAuthn Level 2](https://www.w3.org/TR/webauthn-2/) specification and is based on reference implementations from:
 
-These functions are accessible through their respective function selectors.
+- [Solady](https://github.com/vectorized/solady/blob/main/src/utils/WebAuthn.sol)
+- [Daimo](https://github.com/daimo-eth/p256-verifier/blob/master/src/WebAuthn.sol)
+- [Coinbase](https://github.com/base-org/webauthn-sol/blob/main/src/WebAuthn.sol)
 
-## Function Selectors
+## Features
 
-| Function | Selector |
-|----------|----------|
-| `verifyP256Signature` | `0xc358910e` |
-| `verifyWebauthn` | `0xbccf2ab7` |
+- **Secure Authentication**: Verify WebAuthn assertions using the secp256r1 (P-256) elliptic curve
+- **Selective Verification**: Implements critical security checks while omitting unnecessary validations for blockchain use
+- **User Verification Control**: Optional enforcement of user verification (biometric/PIN)
+- **Backup State Validation**: Checks for proper backup eligibility and state flags
+- **Efficient Implementation**: Optimized for blockchain execution
 
-## Function Signatures
+## Interface
 
-### verifyP256Signature
+### Function Selector
 
-```solidity
-function verifyP256Signature(
-    bytes32 messageHash,
-    bytes32 r,
-    bytes32 s,
-    bytes32 x,
-    bytes32 y,
-    bool malleabilityCheck
-) external view returns (bool)
+The contract exposes a single entry point with function selector `0x94516dde`, derived from:
+
+```
+keccak256("verify(bytes,bool,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
 ```
 
-Verifies a P256 (secp256r1) ECDSA signature.
+### Input Parameters
 
-**Parameters:**
+The function takes the following parameters:
 
-- `messageHash`: The 32-byte hash of the message that was signed
-- `r`: The r component of the signature (32 bytes)
-- `s`: The s component of the signature (32 bytes)
-- `x`: The x coordinate of the public key (32 bytes)
-- `y`: The y coordinate of the public key (32 bytes)
-- `malleabilityCheck`: If true, rejects signatures with high s values (s > n/2). You should set this to true to prevent signature malleability attacks.
+1. `challenge` (bytes): The original challenge sent to the authenticator
+2. `require_user_verification` (bool): Whether to require the User Verified (UV) flag
+3. `auth` (WebAuthnAuth struct): The WebAuthn authentication data containing:
+   - `authenticator_data` (bytes): Data from the authenticator including RP ID hash, flags, and counter
+   - `client_data_json` (bytes): Client data JSON containing type, challenge, and origin
+   - `challenge_index` (uint256): Start index of "challenge" in client_data_json
+   - `type_index` (uint256): Start index of "type" in client_data_json
+   - `r` (bytes32): The r component of the signature
+   - `s` (bytes32): The s component of the signature
+4. `x` (uint256): The x coordinate of the public key
+5. `y` (uint256): The y coordinate of the public key
 
-**Returns:**
+### Return Value
 
-- `bool`: True if the signature is valid, false otherwise
+The contract returns a 32-byte value:
 
-### verifyWebauthn
+- If verification succeeds: A 32-byte value with the last byte set to 1 (true)
+- If verification fails: A 32-byte value of all zeros (false)
 
-```solidity
-function verifyWebauthn(
-    bytes calldata challenge,
-    bytes calldata authenticatorData,
-    bool requireUserVerification,
-    bytes calldata clientDataJSON,
-    uint32 challengeLocation,
-    uint32 responseTypeLocation,
-    bytes32 r,
-    bytes32 s,
-    bytes32 x,
-    bytes32 y
-) external view returns (bool)
-```
+## Verification Process
 
-Verifies a WebAuthn assertion.
+The contract performs the following verification steps:
 
-**Parameters:**
+1. **Client Data Verification**:
+   - Verifies the type is "webauthn.get"
+   - Confirms the challenge matches the expected value
 
-- `challenge`: The original challenge sent to the authenticator
-- `authenticatorData`: The authenticator data returned from the device
-- `requireUserVerification`: If true, requires the User Verified (UV) flag to be set. You should set this to true if you want to ensure that the user has been verified.
-- `clientDataJSON`: The client data JSON returned from the authenticator
-- `challengeLocation`: The byte position where the challenge property starts in the clientDataJSON (as a uint32)
-- `responseTypeLocation`: The byte position where the type property starts in the clientDataJSON (as a uint32)
-- `r`: The r component of the signature (32 bytes)
-- `s`: The s component of the signature (32 bytes)
-- `x`: The x coordinate of the public key (32 bytes)
-- `y`: The y coordinate of the public key (32 bytes)
+2. **Authenticator Data Validation**:
+   - Checks the User Present (UP) flag is set
+   - Verifies the User Verified (UV) flag if required
+   - Validates backup state consistency
 
-**Returns:**
+3. **Signature Verification**:
+   - Computes the message hash: SHA-256(authenticator_data || SHA-256(client_data_json))
+   - Verifies the signature using the secp256r1 precompile
 
-- `bool`: True if the WebAuthn assertion is valid, false otherwise
+## Security Considerations
 
-## Special Features
+This implementation deliberately omits certain WebAuthn verifications that are less relevant in a blockchain context:
 
-### Dummy Signature Mode
+- Origin and RP ID validation (delegated to authenticator)
+- Credential backup state
+- Extension outputs
+- Signature counter
+- Attestation objects
 
-If `responseTypeLocation` is set to `uint32.max` in the `verifyWebauthn` function, the precompile will skip the WebAuthn-specific checks and only verify the signature. This is useful for testing or for cases where the WebAuthn checks have already been performed elsewhere.
+These omissions optimize gas usage while maintaining the security properties essential for blockchain authentication.
 
-### Signature Malleability Check
+## License
 
-The P256 signature verification includes an optional malleability check. When enabled, it rejects signatures with high s values (s > n/2) to prevent signature malleability attacks. This follows the standard practice in ECDSA implementations.
-
-## Implementation Notes
-
-- The precompile uses the P256 (secp256r1) elliptic curve, which is different from Ethereum's default secp256k1 curve.
-- The WebAuthn verification follows the WebAuthn Level 2 specification.
-- The precompile returns a 32-byte value with either 0 or 1 at the end to indicate the verification result.
+This project is part of the Fluentbase ecosystem.
