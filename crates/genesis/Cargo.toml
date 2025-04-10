@@ -40,6 +40,7 @@ fluentbase-contracts-oauth2 = { path = "../../contracts/oauth2", optional = true
 fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160", optional = true }
 fluentbase-contracts-sha256 = { path = "../../contracts/sha256", optional = true }
 fluentbase-contracts-webauthn = { path = "../../contracts/webauthn", optional = true }
+fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1", optional = true }
 
 [features]
 default = ["std"]
@@ -67,4 +68,5 @@ generate-genesis = [
     "dep:fluentbase-contracts-ripemd160",
     "dep:fluentbase-contracts-sha256",
     "dep:fluentbase-contracts-webauthn",
+    "dep:fluentbase-contracts-secp256r1",
 ]
