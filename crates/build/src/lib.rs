@@ -96,7 +96,7 @@ pub fn build_wasm_program(config: WasmBuildConfig) {
 
     let artefact_paths = calc_wasm_artefact_paths(&metadata, &config);
     if artefact_paths.is_empty() {
-        panic!("there is no WASM artefact to build");
+        panic!("there is no WASM artifact to build");
     } else if artefact_paths.len() > 1 {
         panic!("multiple WASM artefacts are supported");
     }
