@@ -1,0 +1,28 @@
+{
+    "name": "hardhat-project",
+    "version": "1.0.0",
+    "description": "A Hardhat project",
+    "author": "",
+    "scripts": {
+        "compile": "npx hardhat compile",
+        "test": "npx hardhat test",
+        "deploy-solidity": "npx hardhat run scripts/deploy-solidity.js",
+        "deploy-vyper": "npx hardhat run scripts/deploy-vyper.js",
+        "deploy-erc20": "node scrips/deployerc20.js",
+        "deploy-vy-erc20": "node scripts/deployvy20.js"
+    },
+    "dependencies": {
+        "@nomicfoundation/hardhat-network-helpers": "^1.0.0",
+        "@openzeppelin/contracts": "^5.2.0",
+        "minimist": "^1.2.8",
+        "prompt-sync": "^4.2.0"
+    },
+    "devDependencies": {
+        "@nomicfoundation/hardhat-verify": "^2.0.13",
+        "@nomiclabs/hardhat-ethers": "^2.2.3",
+        "@nomiclabs/hardhat-vyper": "^3.0.8",
+        "dotenv": "^16.4.7",
+        "ethers": "^5.8.0",
+        "hardhat": "^2.22.19"
+    }
+}
