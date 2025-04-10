@@ -1,9 +1,7 @@
-use crate::{ExitCode, B256};
-use alloy_primitives::Bytes;
+use crate::{Bytes, ExitCode, B256};
 use fluentbase_codec::Codec;
 
 #[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SyscallInvocationParams {
     pub code_hash: B256,
     pub input: Bytes,

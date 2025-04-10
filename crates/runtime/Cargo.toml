@@ -11,10 +11,8 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-codec = { workspace = true }
-fluentbase-poseidon = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-rwasm = { workspace = true }
-halo2curves = { workspace = true, default-features = false }
 
 # misc
 keccak-hash = { version = "0.11.0" }

@@ -10,8 +10,6 @@ pub use crate::{
         _input_size,
         _keccak256,
         _output_size,
-        _poseidon,
-        _poseidon_hash,
         _preimage_copy,
         _preimage_size,
         _read,
