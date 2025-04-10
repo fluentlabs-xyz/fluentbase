@@ -67,7 +67,7 @@ pub fn calc_wasm_artefact_paths(
 }
 
 pub fn build_wasm_program_from_env() {
-    build_wasm_program(WasmBuildConfig::default())
+    // build_wasm_program(WasmBuildConfig::default())
 }
 
 pub fn build_wasm_program(config: WasmBuildConfig) {
@@ -96,7 +96,7 @@ pub fn build_wasm_program(config: WasmBuildConfig) {
 
     let artefact_paths = calc_wasm_artefact_paths(&metadata, &config);
     if artefact_paths.is_empty() {
-        panic!("there is no WASM artefact to build");
+        panic!("there is no WASM artifact to build");
     } else if artefact_paths.len() > 1 {
         panic!("multiple WASM artefacts are supported");
     }
@@ -107,6 +107,8 @@ pub fn build_wasm_program(config: WasmBuildConfig) {
         "--target".to_string(),
         config.target,
         "--release".to_string(),
+        "--manifest-path".to_string(),
+        format!("{}/Cargo.toml", config.cargo_manifest_dir),
     ];
     if config.no_default_features {
         arguments.push("--no-default-features".to_string());
@@ -135,8 +137,11 @@ pub fn build_wasm_program(config: WasmBuildConfig) {
 
     let wasm_output = cargo_manifest_dir.join(config.output_file_name.clone());
 
-    for (_target_name, wasm_path) in artefact_paths.iter() {
-        println!("cargo:rustc-env=FLUENTBASE_WASM_BINARY_PATH={}", wasm_path);
+    for (target_name, wasm_path) in artefact_paths.iter() {
+        println!(
+            "cargo:rustc-env=FLUENTBASE_WASM_BINARY_PATH_{}={}",
+            target_name, wasm_path
+        );
         fs::copy(&wasm_path, &wasm_output).unwrap();
     }
 

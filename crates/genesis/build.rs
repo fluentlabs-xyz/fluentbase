@@ -1,9 +1,10 @@
+use fluentbase_build::{build_wasm_program, WasmBuildConfig};
+
 #[cfg(feature = "generate-genesis")]
 mod genesis_builder {
     use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
     use cargo_metadata::MetadataCommand;
     use fluentbase_build::cargo_rerun_if_changed;
-    use fluentbase_precompile::get_precompile_wasm_bytecode;
     use fluentbase_types::{
         address,
         compile_wasm_to_rwasm,
@@ -211,6 +212,29 @@ mod genesis_builder {
 }
 
 fn main() {
+    let programs = [
+        "../../contracts/blake2f",
+        "../../contracts/bls12381",
+        "../../contracts/bn256",
+        "../../contracts/ecrecover",
+        "../../contracts/erc20",
+        "../../contracts/evm",
+        "../../contracts/fairblock",
+        "../../contracts/identity",
+        "../../contracts/kzg",
+        "../../contracts/modexp",
+        "../../contracts/multicall",
+        "../../contracts/nitro",
+        "../../contracts/oauth2",
+        "../../contracts/ripemd160",
+        "../../contracts/sha256",
+        "../../contracts/webauthn",
+    ];
+
+    for program in programs {
+        build_wasm_program(WasmBuildConfig::default().with_cargo_manifest_dir(program.to_string()));
+    }
+
     #[cfg(feature = "generate-genesis")]
     genesis_builder::generate_genesis();
 }
