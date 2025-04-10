@@ -25,13 +25,12 @@ use fluentbase_sdk::{
 /// - Returns a single byte with value 1 if the signature is valid
 /// - Returns an empty byte array if the signature is invalid
 pub fn main(mut sdk: impl SharedAPI) {
-    // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
-    // call secp256r1 p256verify function
+
     let result = revm_precompile::secp256r1::p256_verify(&input, gas_limit)
         .unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
     sdk.sync_evm_gas(gas_limit - result.gas_used, 0);
