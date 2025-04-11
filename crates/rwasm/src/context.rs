@@ -1,11 +1,13 @@
 use crate::{
     config::ExecutorConfig,
+    memory::GlobalMemory,
     RwasmError,
     FUNC_REF_OFFSET,
     N_DEFAULT_STACK_SIZE,
     N_MAX_STACK_SIZE,
 };
 use hashbrown::HashMap;
+use revm_interpreter::SharedMemory;
 use rwasm::{
     core::{TrapCode, UntypedValue, ValueType, N_MAX_MEMORY_PAGES},
     engine::{
@@ -15,24 +17,25 @@ use rwasm::{
         FuelCosts,
         Tracer,
     },
-    memory::{DataSegmentEntity, MemoryEntity},
+    memory::DataSegmentEntity,
     module::{ConstExpr, ElementSegment, ElementSegmentItems, ElementSegmentKind},
     rwasm::RwasmModuleInstance,
     store::ResourceLimiterRef,
     table::{ElementSegmentEntity, TableEntity},
     MemoryType,
 };
+use std::sync::Arc;
 
 pub struct RwasmContext<T> {
     // function segments
-    pub(crate) instance: RwasmModuleInstance,
+    pub(crate) instance: Arc<RwasmModuleInstance>,
     pub(crate) config: ExecutorConfig,
     // execution context information
     pub(crate) consumed_fuel: u64,
     pub(crate) refunded_fuel: i64,
     pub(crate) value_stack: ValueStack,
     pub(crate) sp: ValueStackPtr,
-    pub(crate) global_memory: MemoryEntity,
+    pub(crate) global_memory: GlobalMemory,
     pub(crate) ip: InstructionPtr,
     pub(crate) context: T,
     pub(crate) tracer: Option<Tracer>,
@@ -49,7 +52,12 @@ pub struct RwasmContext<T> {
 }
 
 impl<T> RwasmContext<T> {
-    pub fn new(instance: RwasmModuleInstance, config: ExecutorConfig, context: T) -> Self {
+    pub fn new(
+        instance: Arc<RwasmModuleInstance>,
+        shared_memory: SharedMemory,
+        config: ExecutorConfig,
+        context: T,
+    ) -> Self {
         // create stack with sp
         let mut value_stack = ValueStack::new(N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE);
         let sp = value_stack.stack_ptr();
@@ -63,7 +71,8 @@ impl<T> RwasmContext<T> {
 
         // create global memory
         let mut resource_limiter_ref = ResourceLimiterRef::default();
-        let global_memory = MemoryEntity::new(
+        let global_memory = GlobalMemory::new(
+            shared_memory,
             MemoryType::new(0, Some(N_MAX_MEMORY_PAGES)).expect("rwasm: bad initial memory"),
             &mut resource_limiter_ref,
         )

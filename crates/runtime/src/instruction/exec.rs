@@ -9,9 +9,11 @@ use fluentbase_types::{
     B256,
     CALL_STACK_LIMIT,
 };
+use revm_interpreter::EMPTY_SHARED_MEMORY;
 use std::{
     cmp::min,
     fmt::{Debug, Display, Formatter},
+    mem::replace,
 };
 
 pub struct SyscallExec;
@@ -109,60 +111,13 @@ impl SyscallExec {
             .with_fuel_limit(fuel_limit)
             .with_state(state)
             .with_call_depth(ctx.call_depth + 1)
-            .with_disable_fuel(ctx.disable_fuel);
+            .with_disable_fuel(ctx.disable_fuel)
+            .with_shared_memory(replace(&mut ctx.shared_memory, EMPTY_SHARED_MEMORY));
         let mut runtime = Runtime::new(ctx2);
+
         let mut execution_result = runtime.call();
 
-        // let trace = runtime.store().tracer().unwrap().logs.len();
-        // println!("execution trace ({} steps):", trace);
-
-        // println!("EXEC, interrupted: {}", execution_result.interrupted);
-        // println!(
-        //     "exit_code: {} ({})",
-        //     execution_result.exit_code,
-        //     ExitCode::from(execution_result.exit_code)
-        // );
-        // println!(
-        //     "output: 0x{} ({})",
-        //     fluentbase_types::hex::encode(&execution_result.output),
-        //     std::str::from_utf8(&execution_result.output).unwrap_or("can't decode utf-8")
-        // );
-        // println!("fuel consumed: {}", execution_result.fuel_consumed);
-        // let logs = &runtime.store().tracer().unwrap().logs;
-        // println!("execution trace ({} steps):", logs.len());
-        // for log in logs.iter().rev().take(100).rev() {
-        //     use fluentbase_rwasm::InstructionExtra;
-        //     if let Some(value) = log.opcode.aux_value() {
-        //         println!(
-        //             " - pc={} opcode={:?}({}) gas={} stack={:?}",
-        //             log.program_counter,
-        //             log.opcode,
-        //             value,
-        //             log.consumed_fuel,
-        //             log.stack
-        //                 .iter()
-        //                 .map(|v| v.to_string())
-        //                 .rev()
-        //                 .take(3)
-        //                 .rev()
-        //                 .collect::<Vec<_>>(),
-        //         );
-        //     } else {
-        //         println!(
-        //             " - pc={} opcode={:?} gas={} stack={:?}",
-        //             log.program_counter,
-        //             log.opcode,
-        //             log.consumed_fuel,
-        //             log.stack
-        //                 .iter()
-        //                 .map(|v| v.to_string())
-        //                 .rev()
-        //                 .take(3)
-        //                 .rev()
-        //                 .collect::<Vec<_>>(),
-        //         );
-        //     }
-        // }
+        ctx.shared_memory = runtime.executor.take_shared_memory();
 
         // if execution was interrupted,
         if execution_result.interrupted {
@@ -170,8 +125,6 @@ impl SyscallExec {
             // stands for interrupted runtime call id, negative or zero for error)
             execution_result.exit_code = runtime.remember_runtime(ctx);
         }
-
-        // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
 
         ctx.execution_result.return_data = execution_result.output.clone();
 

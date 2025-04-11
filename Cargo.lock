@@ -2291,6 +2291,7 @@ dependencies = [
  "k256",
  "keccak-hash",
  "num",
+ "revm-interpreter",
  "sha2 0.10.8",
  "sp1-curves",
  "sp1-primitives",
@@ -2303,6 +2304,7 @@ name = "fluentbase-rwasm"
 version = "0.1.0"
 dependencies = [
  "hashbrown 0.15.2",
+ "revm-interpreter",
  "rwasm",
  "tiny-keccak",
 ]
@@ -2314,6 +2316,7 @@ dependencies = [
  "anyhow",
  "byteorder",
  "fluentbase-rwasm",
+ "revm-interpreter",
  "rwasm",
  "serial_test",
  "wast 62.0.1",
@@ -2708,7 +2711,6 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash",
- "rustc-std-workspace-alloc",
  "serde",
 ]
 
@@ -4877,12 +4879,6 @@ name = "rustc-hex"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e75f6a532d0fd9f7f13144f392b6ad56a32696bfcd9c78f797f16bbb6f072d6"
-
-[[package]]
-name = "rustc-std-workspace-alloc"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9d441c3b2ebf55cebf796bfdc265d67fa09db17b7bb6bd4be75c509e1e8fec3"
 
 [[package]]
 name = "rustc_version"
