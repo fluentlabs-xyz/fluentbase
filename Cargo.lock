@@ -2231,9 +2231,6 @@ dependencies = [
 [[package]]
 name = "fluentbase-contracts-fairblock"
 version = "0.1.0"
-dependencies = [
- "fluentbase-build",
-]
 
 [[package]]
 name = "fluentbase-contracts-identity"
