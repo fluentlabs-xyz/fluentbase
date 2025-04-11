@@ -1,6 +1,6 @@
 extern crate test;
 
-use crate::utils::EvmTestingContext;
+use crate::{examples::EXAMPLE_GREETING, utils::EvmTestingContext};
 use fluentbase_sdk::{Address, Bytes};
 use hex_literal::hex;
 use test::Bencher;
@@ -42,7 +42,7 @@ fn bench_wasm_greeting(b: &mut Bencher) {
     const OWNER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(
         OWNER_ADDRESS,
-        include_bytes!("../../../examples/greeting/lib.wasm").into(),
+        EXAMPLE_GREETING.into(),
     );
 
     let hello_world = |ctx: &mut EvmTestingContext| {

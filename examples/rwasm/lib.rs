@@ -20,21 +20,3 @@ pub fn main(mut sdk: impl SharedAPI) {
 }
 
 func_entrypoint!(main);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fluentbase_sdk::testing::TestingContext;
-    use std::str::from_utf8_unchecked;
-
-    #[test]
-    fn test_contract_works() {
-        let greeting_bytecode = include_bytes!("../greeting/lib.wasm");
-        let sdk = TestingContext::default().with_input(greeting_bytecode);
-        main(sdk.clone());
-        let output = sdk.take_output();
-        let module = RwasmModule::new(&output).unwrap();
-        assert!(module.code_section.len() > 0);
-        assert!(unsafe { from_utf8_unchecked(&module.memory_section).contains("Hello, World") })
-    }
-}

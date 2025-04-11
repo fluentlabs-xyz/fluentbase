@@ -1,4 +1,5 @@
 pub use alloy_genesis::Genesis;
+pub use fluentbase_types::genesis::*;
 use fluentbase_types::{Address, HashMap};
 use lazy_static::lazy_static;
 
@@ -13,46 +14,80 @@ pub fn devnet_genesis_v0_1_0_dev10_from_file() -> Genesis {
     serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
 }
 
-macro_rules! include_wasm {
-    ($name:tt) => {{
-        include_bytes!(env!(concat!("FLUENTBASE_WASM_BINARY_PATH_", $name)))
-    }};
+#[rustfmt::skip]
+mod precompile {
+    use fluentbase_types::include_wasm;
+
+    pub const PRECOMPILE_BYTECODE_BIG_MODEXP: &[u8] = include_wasm!("fluentbase-contracts-modexp");
+    pub const PRECOMPILE_BYTECODE_BLAKE2F: &[u8] = include_wasm!("fluentbase-contracts-blake2f");
+    pub const PRECOMPILE_BYTECODE_BN256_ADD: &[u8] = include_wasm!("fluentbase-contracts-bn256");
+    pub const PRECOMPILE_BYTECODE_BN256_MUL: &[u8] = include_wasm!("fluentbase-contracts-bn256");
+    pub const PRECOMPILE_BYTECODE_BN256_PAIR: &[u8] = include_wasm!("fluentbase-contracts-bn256");
+    pub const PRECOMPILE_BYTECODE_ERC20: &[u8] = include_wasm!("fluentbase-contracts-erc20");
+    pub const PRECOMPILE_BYTECODE_EVM_RUNTIME: &[u8] = include_wasm!("fluentbase-contracts-evm");
+    pub const PRECOMPILE_BYTECODE_FAIRBLOCK_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-fairblock");
+    pub const PRECOMPILE_BYTECODE_IDENTITY: &[u8] = include_wasm!("fluentbase-contracts-identity");
+    pub const PRECOMPILE_BYTECODE_KZG_POINT_EVALUATION: &[u8] = include_wasm!("fluentbase-contracts-kzg");
+    pub const PRECOMPILE_BYTECODE_NATIVE_MULTICALL: &[u8] = include_wasm!("fluentbase-contracts-multicall");
+    pub const PRECOMPILE_BYTECODE_NITRO_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-nitro");
+    pub const PRECOMPILE_BYTECODE_OAUTH2_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-oauth2");
+    pub const PRECOMPILE_BYTECODE_RIPEMD160: &[u8] = include_wasm!("fluentbase-contracts-ripemd160");
+    pub const PRECOMPILE_BYTECODE_SECP256K1_RECOVER: &[u8] = include_wasm!("fluentbase-contracts-ecrecover");
+    pub const PRECOMPILE_BYTECODE_SHA256: &[u8] = include_wasm!("fluentbase-contracts-sha256");
+    pub const PRECOMPILE_BYTECODE_WEBAUTHN_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-webauthn");
 }
+
+#[rustfmt::skip]
+#[cfg(feature = "bls12")]
+mod bls12 {
+    use fluentbase_types::include_wasm;
+
+    pub const PRECOMPILE_BYTECODE_BLS12_381_G1_ADD: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+    pub const PRECOMPILE_BYTECODE_BLS12_381_G1_MSM: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+    pub const PRECOMPILE_BYTECODE_BLS12_381_G2_ADD: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+    pub const PRECOMPILE_BYTECODE_BLS12_381_G2_MSM: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+    pub const PRECOMPILE_BYTECODE_BLS12_381_MAP_G1: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+    pub const PRECOMPILE_BYTECODE_BLS12_381_MAP_G2: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+    pub const PRECOMPILE_BYTECODE_BLS12_381_PAIRING: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+}
+
+#[cfg(feature = "bls12")]
+pub use bls12::*;
+pub use precompile::*;
 
 lazy_static! {
     #[rustfmt::skip]
     static ref SYSTEM_PRECOMPILES: HashMap<Address, Vec<u8>> = {
         let mut arr = Vec::new();
         arr.extend([
-            (fluentbase_types::PRECOMPILE_BIG_MODEXP, Vec::from(include_wasm!("fluentbase-contracts-modexp"))),
-            (fluentbase_types::PRECOMPILE_BLAKE2F, Vec::from(include_wasm!("fluentbase-contracts-blake2f"))),
-            (fluentbase_types::PRECOMPILE_BN256_ADD, Vec::from(include_wasm!("fluentbase-contracts-bn256"))),
-            (fluentbase_types::PRECOMPILE_BN256_MUL, Vec::from(include_wasm!("fluentbase-contracts-bn256"))),
-            (fluentbase_types::PRECOMPILE_BN256_PAIR, Vec::from(include_wasm!("fluentbase-contracts-bn256"))),
-            (fluentbase_types::PRECOMPILE_ERC20, Vec::from(include_wasm!("fluentbase-contracts-erc20"))),
-            (fluentbase_types::PRECOMPILE_EVM_RUNTIME, Vec::from(include_wasm!("fluentbase-contracts-evm"))),
-            (fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, Vec::from(include_wasm!("fluentbase-contracts-fairblock"))),
-            (fluentbase_types::PRECOMPILE_IDENTITY, Vec::from(include_wasm!("fluentbase-contracts-identity"))),
-            (fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, Vec::from(include_wasm!("fluentbase-contracts-kzg"))),
-            (fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, Vec::from(include_wasm!("fluentbase-contracts-multicall"))),
-            (fluentbase_types::PRECOMPILE_NITRO_VERIFIER, Vec::from(include_wasm!("fluentbase-contracts-nitro"))),
-            (fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, Vec::from(include_wasm!("fluentbase-contracts-oauth2"))),
-            (fluentbase_types::PRECOMPILE_RIPEMD160, Vec::from(include_wasm!("fluentbase-contracts-ripemd160"))),
-            (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, Vec::from(include_wasm!("fluentbase-contracts-ecrecover"))),
-            (fluentbase_types::PRECOMPILE_SHA256, Vec::from(include_wasm!("fluentbase-contracts-sha256"))),
-            (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, Vec::from(include_wasm!("fluentbase-contracts-webauthn"))),
+            (PRECOMPILE_BIG_MODEXP, PRECOMPILE_BYTECODE_BIG_MODEXP.to_vec()),
+            (PRECOMPILE_BLAKE2F, PRECOMPILE_BYTECODE_BLAKE2F.to_vec()),
+            (PRECOMPILE_BN256_ADD, PRECOMPILE_BYTECODE_BN256_ADD.to_vec()),
+            (PRECOMPILE_BN256_MUL, PRECOMPILE_BYTECODE_BN256_MUL.to_vec()),
+            (PRECOMPILE_BN256_PAIR, PRECOMPILE_BYTECODE_BN256_PAIR.to_vec()),
+            (PRECOMPILE_ERC20, PRECOMPILE_BYTECODE_ERC20.to_vec()),
+            (PRECOMPILE_EVM_RUNTIME, PRECOMPILE_BYTECODE_EVM_RUNTIME.to_vec()),
+            (PRECOMPILE_FAIRBLOCK_VERIFIER, PRECOMPILE_BYTECODE_FAIRBLOCK_VERIFIER.to_vec()),
+            (PRECOMPILE_IDENTITY, PRECOMPILE_BYTECODE_IDENTITY.to_vec()),
+            (PRECOMPILE_KZG_POINT_EVALUATION, PRECOMPILE_BYTECODE_KZG_POINT_EVALUATION.to_vec()),
+            (PRECOMPILE_NATIVE_MULTICALL, PRECOMPILE_BYTECODE_NATIVE_MULTICALL.to_vec()),
+            (PRECOMPILE_NITRO_VERIFIER, PRECOMPILE_BYTECODE_NITRO_VERIFIER.to_vec()),
+            (PRECOMPILE_OAUTH2_VERIFIER, PRECOMPILE_BYTECODE_OAUTH2_VERIFIER.to_vec()),
+            (PRECOMPILE_RIPEMD160, PRECOMPILE_BYTECODE_RIPEMD160.to_vec()),
+            (PRECOMPILE_SECP256K1_RECOVER, PRECOMPILE_BYTECODE_SECP256K1_RECOVER.to_vec()),
+            (PRECOMPILE_SHA256, PRECOMPILE_BYTECODE_SHA256.to_vec()),
+            (PRECOMPILE_WEBAUTHN_VERIFIER, PRECOMPILE_BYTECODE_WEBAUTHN_VERIFIER.to_vec()),
         ]);
-
         #[cfg(feature = "bls12")]
         {
             arr.extend([
-                (fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, Vec::from(include_wasm!("fluentbase-contracts-bls12381"))),
-                (fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, Vec::from(include_wasm!("fluentbase-contracts-bls12381"))),
-                (fluentbase_types::PRECOMPILE_BLS12_381_G2_ADD, Vec::from(include_wasm!("fluentbase-contracts-bls12381"))),
-                (fluentbase_types::PRECOMPILE_BLS12_381_G2_MSM, Vec::from(include_wasm!("fluentbase-contracts-bls12381"))),
-                (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, Vec::from(include_wasm!("fluentbase-contracts-bls12381"))),
-                (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, Vec::from(include_wasm!("fluentbase-contracts-bls12381"))),
-                (fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, Vec::from(include_wasm!("fluentbase-contracts-bls12381"))),
+                (PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BYTECODE_BLS12_381_G1_ADD.to_vec()),
+                (PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BYTECODE_BLS12_381_G1_MSM.to_vec()),
+                (PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BYTECODE_BLS12_381_G2_ADD.to_vec()),
+                (PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BYTECODE_BLS12_381_G2_MSM.to_vec()),
+                (PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BYTECODE_BLS12_381_MAP_G1.to_vec()),
+                (PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BYTECODE_BLS12_381_MAP_G2.to_vec()),
+                (PRECOMPILE_BLS12_381_PAIRING, PRECOMPILE_BYTECODE_BLS12_381_PAIRING.to_vec()),
             ]);
         }
         let mut map = HashMap::new();

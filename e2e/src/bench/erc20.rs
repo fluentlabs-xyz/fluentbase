@@ -1,6 +1,6 @@
 extern crate test;
 
-use crate::utils::EvmTestingContext;
+use crate::{examples::EXAMPLE_ERC20, utils::EvmTestingContext};
 use fluentbase_sdk::Address;
 use hex_literal::hex;
 use test::Bencher;
@@ -38,7 +38,7 @@ fn bench_wasm_erc20(b: &mut Bencher) {
     const OWNER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(
         OWNER_ADDRESS,
-        include_bytes!("../../../examples/erc20/lib.wasm").into(),
+        EXAMPLE_ERC20.into(),
     );
 
     let transfer_coin = |ctx: &mut EvmTestingContext| {
