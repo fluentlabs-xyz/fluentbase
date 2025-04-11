@@ -29,6 +29,7 @@ pub struct RwasmContext<T> {
     pub(crate) config: ExecutorConfig,
     // execution context information
     pub(crate) consumed_fuel: u64,
+    pub(crate) refunded_fuel: i64,
     pub(crate) value_stack: ValueStack,
     pub(crate) sp: ValueStackPtr,
     pub(crate) global_memory: MemoryEntity,
@@ -96,6 +97,7 @@ impl<T> RwasmContext<T> {
             instance,
             config,
             consumed_fuel: 0,
+            refunded_fuel: 0,
             value_stack,
             sp,
             global_memory,
@@ -145,6 +147,10 @@ impl<T> RwasmContext<T> {
         Ok(())
     }
 
+    pub fn refund_fuel(&mut self, fuel: i64) {
+        self.refunded_fuel += fuel;
+    }
+
     pub fn adjust_fuel_limit(&mut self) -> u64 {
         let consumed_fuel = self.consumed_fuel;
         if let Some(fuel_limit) = self.config.fuel_limit.as_mut() {
@@ -160,6 +166,10 @@ impl<T> RwasmContext<T> {
 
     pub fn fuel_consumed(&self) -> u64 {
         self.consumed_fuel
+    }
+
+    pub fn fuel_refunded(&self) -> i64 {
+        self.refunded_fuel
     }
 
     pub fn tracer(&self) -> Option<&Tracer> {

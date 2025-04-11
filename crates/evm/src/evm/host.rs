@@ -181,9 +181,7 @@ pub fn sload<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
 pub fn sstore<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     require_non_staticcall!(evm);
     pop!(evm, index, value);
-    // TODO(dmitry123): "try to avoid syncing gas before every state access"
-    evm.sdk
-        .sync_evm_gas(evm.gas.remaining(), evm.gas.refunded());
+    evm.sync_evm_gas();
     unwrap_syscall!(evm, evm.sdk.write_storage(index, value));
 }
 

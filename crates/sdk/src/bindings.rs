@@ -85,7 +85,7 @@ extern "C" {
         fuel16_ptr: *mut [i64; 2],
     ) -> i32;
 
-    pub fn _charge_fuel(delta: u64) -> u64;
+    pub fn _charge_fuel(fuel_consumed: u64, fuel_refunded: i64) -> u64;
     pub fn _fuel() -> u64;
 
     /// Journaled ZK Trie methods to work with blockchain state

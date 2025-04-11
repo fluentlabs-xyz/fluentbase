@@ -40,7 +40,7 @@ pub fn main(mut sdk: impl SharedAPI) {
     };
     let result =
         precompile_func(&input, gas_limit).unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
-    sdk.sync_evm_gas(gas_limit - result.gas_used, 0);
+    sdk.sync_evm_gas(result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());
 }
@@ -50,7 +50,14 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, testing::TestingContext, Address, Bytes, ContractContextV1};
+    use fluentbase_sdk::{
+        hex,
+        testing::TestingContext,
+        Address,
+        Bytes,
+        ContractContextV1,
+        FUEL_DENOM_RATE,
+    };
 
     fn exec_evm_precompile(address: Address, inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 100_000;
@@ -61,13 +68,13 @@ mod tests {
                 bytecode_address: address,
                 gas_limit,
                 ..Default::default()
-            });
+            })
+            .with_gas_limit(gas_limit);
         main(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(output, expected);
-        let (gas_remaining, gas_refunded) = sdk.synced_gas();
+        let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
-        assert_eq!(gas_refunded, 0);
     }
 
     #[test]

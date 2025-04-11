@@ -109,8 +109,8 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn charge_fuel(&self, value: u64) -> u64 {
-        unsafe { _charge_fuel(value) }
+    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
+        unsafe { _charge_fuel(fuel_consumed, fuel_refunded) }
     }
 
     #[inline(always)]

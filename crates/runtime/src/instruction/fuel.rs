@@ -10,8 +10,7 @@ impl SyscallFuel {
         Ok(())
     }
 
-    pub fn fn_impl(_ctx: &RuntimeContext) -> u64 {
-        // TODO(dmitry123): "we can't get fuel in runtime context, what to do?"
-        u64::MAX
+    pub fn fn_impl(ctx: &RuntimeContext) -> u64 {
+        ctx.remaining_fuel()
     }
 }

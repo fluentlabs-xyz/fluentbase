@@ -62,6 +62,7 @@ fn return_inner<SDK: SharedAPI>(evm: &mut EVM<SDK>, result: InstructionResult) {
         output,
         gas: evm.gas,
         result,
+        committed_gas: evm.committed_gas,
     });
 }
 

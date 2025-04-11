@@ -140,7 +140,7 @@ impl SyscallResume {
 
         (
             execution_result.fuel_consumed,
-            0,
+            execution_result.fuel_refunded,
             execution_result.exit_code,
         )
     }
