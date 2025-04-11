@@ -263,7 +263,7 @@ impl<'a> TxBuilder<'a> {
     }
 
     pub fn enable_rwasm_proxy(mut self) -> Self {
-        // self.env.cfg.enable_rwasm_proxy = true;
+        self.env.cfg.enable_rwasm_proxy = true;
         self
     }
 

@@ -10,7 +10,7 @@ pub struct ContractContextV1 {
     pub caller: Address,
     pub is_static: bool,
     pub value: U256,
-    // pub gas_limit: u64,
+    pub gas_limit: u64,
 }
 
 impl ContractContextReader for ContractContextV1 {
@@ -35,8 +35,7 @@ impl ContractContextReader for ContractContextV1 {
     }
 
     fn contract_gas_limit(&self) -> u64 {
-        // self.gas_limit
-        100_000_000
+        self.gas_limit
     }
 }
 

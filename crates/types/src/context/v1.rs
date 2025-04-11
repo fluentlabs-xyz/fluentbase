@@ -104,8 +104,7 @@ impl ContractContextReader for SharedContextInputV1 {
     }
 
     fn contract_gas_limit(&self) -> u64 {
-        // self.contract.gas_limit
-        100_000_000
+        self.contract.gas_limit
     }
 }
 
