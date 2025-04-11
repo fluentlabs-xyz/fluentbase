@@ -10,6 +10,7 @@ pub struct WasmBuildConfig {
     pub features: Vec<String>,
     pub no_default_features: bool,
     pub target: String,
+    pub profile: String,
 }
 
 impl Default for WasmBuildConfig {
@@ -18,11 +19,12 @@ impl Default for WasmBuildConfig {
             cargo_manifest_dir: env::var("CARGO_MANIFEST_DIR").unwrap(),
             current_target: env::var("TARGET").unwrap(),
             is_tarpaulin_build: env::var("CARGO_CFG_TARPAULIN").is_ok(),
-            stack_size: 262144,
+            stack_size: 128 * 1024,
             output_file_name: "lib.wasm".to_string(),
             features: vec![],
             no_default_features: true,
             target: "wasm32-unknown-unknown".to_string(),
+            profile: env::var("PROFILE").unwrap(),
         }
     }
 }

@@ -503,9 +503,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-types"
-version = "0.8.21"
+version = "0.8.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6044800da35c38118fd4b98e18306bd3b91af5dedeb54c1b768cf1b4fb68f549"
+checksum = "75f306fc801b3aa2e3c4785b7b5252ec8b19f77b30e3b75babfd23849c81bd8c"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -863,6 +863,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bincode"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36eaf5d7b090263e8150820482d5d93cd964a81e4019913c972f4edcc6edb740"
+dependencies = [
+ "bincode_derive",
+ "serde",
+ "unty",
+]
+
+[[package]]
+name = "bincode_derive"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf95709a440f45e986983918d0e8a1f30a9b1df04918fc828670606804ac3c09"
+dependencies = [
+ "virtue",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -913,17 +933,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
 dependencies = [
  "digest 0.10.7",
-]
-
-[[package]]
-name = "blake2b_simd"
-version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23285ad32269793932e830392f2fe2f83e26488fd3ec778883a93c8323735780"
-dependencies = [
- "arrayref",
- "arrayvec",
- "constant_time_eq",
 ]
 
 [[package]]
@@ -1040,15 +1049,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "casey"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "614586263949597dcc18675da12ef9b429135e13628d92eb8b8c6fa50ca5656b"
-dependencies = [
- "syn 1.0.109",
-]
-
-[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1161,12 +1161,6 @@ name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
-
-[[package]]
-name = "constant_time_eq"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
 name = "convert_case"
@@ -1868,7 +1862,6 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ded41244b729663b1e574f1b4fb731469f69f79c17667b5d776b16cda0479449"
 dependencies = [
- "bitvec",
  "byteorder",
  "ff_derive",
  "rand_core",
@@ -1924,15 +1917,11 @@ dependencies = [
  "alloy-sol-types",
  "byteorder",
  "bytes",
- "casey",
  "fluentbase-codec-derive",
  "hashbrown 0.15.2",
  "hex",
  "hex-literal 0.4.1",
- "paste",
  "serde",
- "strum",
- "strum_macros",
 ]
 
 [[package]]
@@ -2116,7 +2105,7 @@ dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk",
  "hex",
- "hex-literal 0.4.1",
+ "hex-literal 1.0.0",
  "revm",
  "rwasm",
 ]
@@ -2125,6 +2114,7 @@ dependencies = [
 name = "fluentbase-evm"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
  "bitvec",
  "fluentbase-sdk",
 ]
@@ -2135,7 +2125,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
- "hex-literal 0.4.1",
+ "hex-literal 1.0.0",
 ]
 
 [[package]]
@@ -2289,28 +2279,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-poseidon"
-version = "0.1.0"
-dependencies = [
- "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
- "poseidon",
-]
-
-[[package]]
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
  "fluentbase-codec",
- "fluentbase-poseidon",
  "fluentbase-rwasm",
  "fluentbase-types",
- "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
  "hashbrown 0.15.2",
  "hex",
- "hex-literal 0.4.1",
+ "hex-literal 1.0.0",
  "k256",
  "keccak-hash",
  "num",
+ "revm-interpreter",
  "sha2 0.10.8",
  "sp1-curves",
  "sp1-primitives",
@@ -2323,6 +2304,7 @@ name = "fluentbase-rwasm"
 version = "0.1.0"
 dependencies = [
  "hashbrown 0.15.2",
+ "revm-interpreter",
  "rwasm",
  "tiny-keccak",
 ]
@@ -2334,6 +2316,7 @@ dependencies = [
  "anyhow",
  "byteorder",
  "fluentbase-rwasm",
+ "revm-interpreter",
  "rwasm",
  "serial_test",
  "wast 62.0.1",
@@ -2387,6 +2370,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "auto_impl",
+ "bincode 2.0.1",
  "byteorder",
  "fluentbase-codec",
  "hashbrown 0.15.2",
@@ -2394,7 +2378,7 @@ dependencies = [
  "revm-primitives",
  "rwasm",
  "serde",
- "strum_macros",
+ "strum_macros 0.27.1",
 ]
 
 [[package]]
@@ -2690,49 +2674,6 @@ checksum = "6dd08c532ae367adf81c312a4580bc67f1d0fe8bc9c460520283f4c0ff277888"
 dependencies = [
  "cfg-if",
  "crunchy",
-]
-
-[[package]]
-name = "halo2curves"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db81d01d0bbfec9f624d7590fc6929ee2537a64ec1e080d8f8c9e2d2da291405"
-dependencies = [
- "blake2b_simd",
- "ff",
- "group",
- "lazy_static",
- "num-bigint 0.4.6",
- "num-traits",
- "pairing",
- "pasta_curves",
- "paste",
- "rand",
- "rand_core",
- "rayon",
- "static_assertions",
- "subtle",
-]
-
-[[package]]
-name = "halo2curves"
-version = "0.6.1"
-source = "git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1#3c43d3c0c3b697c411cfd07f026798998f55073a"
-dependencies = [
- "blake2b_simd",
- "ff",
- "group",
- "lazy_static",
- "num-bigint 0.4.6",
- "num-traits",
- "pairing",
- "pasta_curves",
- "paste",
- "rand",
- "rand_core",
- "rayon",
- "static_assertions",
- "subtle",
 ]
 
 [[package]]
@@ -4162,21 +4103,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pasta_curves"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3e57598f73cc7e1b2ac63c79c517b31a0877cd7c402cdcaa311b5208de7a095"
-dependencies = [
- "blake2b_simd",
- "ff",
- "group",
- "lazy_static",
- "rand",
- "static_assertions",
- "subtle",
-]
-
-[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4350,15 +4276,6 @@ name = "portable-atomic"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
-
-[[package]]
-name = "poseidon"
-version = "0.2.0"
-source = "git+https://github.com/privacy-scaling-explorations/poseidon?tag=v2024_01_31#d29f35d9744e0c58b63679a15730ff2fab470ef2"
-dependencies = [
- "halo2curves 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "subtle",
-]
 
 [[package]]
 name = "powerfmt"
@@ -4753,7 +4670,7 @@ dependencies = [
 name = "revm-interpreter"
 version = "15.1.0"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "fluentbase-types",
  "num-derive",
  "num-traits",
@@ -5096,7 +5013,7 @@ dependencies = [
  "smallvec",
  "spin 0.9.8",
  "strum",
- "strum_macros",
+ "strum_macros 0.26.4",
  "wasmparser-nostd",
 ]
 
@@ -5554,7 +5471,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bea7811abd2d3a991007fcb284f41152840b8388c171288d0c52c6793956609c"
 dependencies = [
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "cfg-if",
  "hex",
  "serde",
@@ -5567,7 +5484,7 @@ version = "4.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1cf66c2781c36037c94a5905b6e05e7396fd4d12df09cd7f05cf96e3f0889f49"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "hex",
  "lazy_static",
  "num-bigint 0.4.6",
@@ -5609,7 +5526,7 @@ dependencies = [
  "sp1-derive",
  "sp1-primitives",
  "strum",
- "strum_macros",
+ "strum_macros 0.26.4",
  "sysinfo",
  "tracing",
 ]
@@ -5684,7 +5601,7 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.26.4",
 ]
 
 [[package]]
@@ -5692,6 +5609,19 @@ name = "strum_macros"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 2.0.90",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c77a8c5abcaf0f9ce05d62342b7d298c346515365c36b673df4ebe3ced01fde8"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -6268,6 +6198,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "unty"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
+
+[[package]]
 name = "url"
 version = "2.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6313,6 +6249,12 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "virtue"
+version = "0.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
 name = "wait-timeout"

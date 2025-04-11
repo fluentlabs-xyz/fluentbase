@@ -17,7 +17,7 @@ pub fn main(mut sdk: impl SharedAPI) {
     if gas_used > gas_limit {
         sdk.exit(ExitCode::OutOfFuel);
     }
-    sdk.sync_evm_gas(gas_limit - gas_used, 0);
+    sdk.sync_evm_gas(gas_used, 0);
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     // write an identical output
@@ -29,7 +29,7 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{testing::TestingContext, Bytes, ContractContextV1};
+    use fluentbase_sdk::{testing::TestingContext, Bytes, ContractContextV1, FUEL_DENOM_RATE};
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 100_000;
@@ -38,13 +38,13 @@ mod tests {
             .with_contract_context(ContractContextV1 {
                 gas_limit,
                 ..Default::default()
-            });
+            })
+            .with_gas_limit(gas_limit);
         main(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(output, expected);
-        let (gas_remaining, gas_refunded) = sdk.synced_gas();
+        let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
-        assert_eq!(gas_refunded, 0);
     }
 
     #[test]
