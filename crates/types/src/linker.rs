@@ -10,10 +10,9 @@ macro_rules! import_func {
 }
 
 // TODO(dmitry123): "add type checks to avoid stack overflow/underflow"
-const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 19] = [
+const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 18] = [
     import_func!("_keccak256", KECCAK256),
     import_func!("_poseidon", KECCAK256),
-    import_func!("_poseidon_hash", POSEIDON_HASH),
     import_func!("_ecrecover", SECP256K1_RECOVER),
     import_func!("_exit", EXIT),
     import_func!("_state", STATE),

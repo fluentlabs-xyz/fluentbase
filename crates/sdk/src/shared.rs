@@ -39,7 +39,6 @@ use fluentbase_types::{
     SYSCALL_ID_STATIC_CALL,
     SYSCALL_ID_STORAGE_READ,
     SYSCALL_ID_STORAGE_WRITE,
-    SYSCALL_ID_SYNC_EVM_GAS,
     SYSCALL_ID_TRANSIENT_READ,
     SYSCALL_ID_TRANSIENT_WRITE,
     SYSCALL_ID_WRITE_PREIMAGE,
@@ -108,8 +107,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         input_size - SharedContextInputV1::FLUENT_HEADER_SIZE as u32
     }
 
-    fn charge_fuel(&self, value: u64) {
-        self.native_sdk.charge_fuel(value);
+    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64) {
+        self.native_sdk.charge_fuel(fuel_consumed, fuel_refunded);
     }
 
     fn fuel(&self) -> u64 {
@@ -212,17 +211,6 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             fuel_refunded,
             exit_code,
         )
-    }
-
-    fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()> {
-        let mut input = [0u8; 16];
-        LittleEndian::write_u64(&mut input[..8], gas_remaining);
-        LittleEndian::write_i64(&mut input[8..], gas_refunded);
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk
-                .exec(SYSCALL_ID_SYNC_EVM_GAS, &input, None, STATE_MAIN);
-        assert!(SyscallResult::is_ok(exit_code), "sdk: yield can't fail");
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes> {

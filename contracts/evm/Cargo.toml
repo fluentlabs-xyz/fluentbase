@@ -9,7 +9,7 @@ fluentbase-evm = { workspace = true, default-features = false }
 
 [lib]
 crate-type = ["cdylib"]
-path = "src/lib.rs"
+path = "lib.rs"
 
 [features]
 default = ["std"]

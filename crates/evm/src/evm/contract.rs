@@ -68,8 +68,7 @@ pub fn create<const IS_CREATE2: bool, SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     };
     // we should sync gas before doing call
     // to make sure gas is synchronized between different runtimes
-    evm.sdk
-        .sync_evm_gas(evm.gas.remaining(), evm.gas.refunded());
+    evm.sync_evm_gas();
     let result = evm.sdk.create(salt, &value, init_code.as_ref());
     insert_create_outcome(evm, result)
 }
@@ -90,8 +89,7 @@ pub fn call<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     };
     // we should sync gas before doing call
     // to make sure gas is synchronized between different runtimes
-    evm.sdk
-        .sync_evm_gas(evm.gas.remaining(), evm.gas.refunded());
+    evm.sync_evm_gas();
     let result = evm.sdk.call(
         to,
         value,
@@ -112,8 +110,7 @@ pub fn call_code<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     };
     // we should sync gas before doing call
     // to make sure gas is synchronized between different runtimes
-    evm.sdk
-        .sync_evm_gas(evm.gas.remaining(), evm.gas.refunded());
+    evm.sync_evm_gas();
     let result = evm.sdk.call_code(
         to,
         value,
@@ -133,8 +130,7 @@ pub fn delegate_call<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     };
     // we should sync gas before doing call
     // to make sure gas is synchronized between different runtimes
-    evm.sdk
-        .sync_evm_gas(evm.gas.remaining(), evm.gas.refunded());
+    evm.sync_evm_gas();
     let result = evm
         .sdk
         .delegate_call(to, input.as_ref(), Some(local_gas_limit * FUEL_DENOM_RATE));
@@ -151,8 +147,7 @@ pub fn static_call<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     };
     // we should sync gas before doing call
     // to make sure gas is synchronized between different runtimes
-    evm.sdk
-        .sync_evm_gas(evm.gas.remaining(), evm.gas.refunded());
+    evm.sync_evm_gas();
     let result = evm
         .sdk
         .static_call(to, input.as_ref(), Some(local_gas_limit * FUEL_DENOM_RATE));

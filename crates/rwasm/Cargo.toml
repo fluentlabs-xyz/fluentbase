@@ -19,4 +19,6 @@ rwasm = { workspace = true }
 [features]
 default = ["std"]
 std = []
+tracer = []
 e2e = []
+debug-print = ["std"]

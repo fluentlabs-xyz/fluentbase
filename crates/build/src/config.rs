@@ -10,6 +10,7 @@ pub struct WasmBuildConfig {
     pub features: Vec<String>,
     pub no_default_features: bool,
     pub target: String,
+    pub profile: String,
 }
 
 impl Default for WasmBuildConfig {
@@ -23,6 +24,7 @@ impl Default for WasmBuildConfig {
             features: vec![],
             no_default_features: true,
             target: "wasm32-unknown-unknown".to_string(),
+            profile: env::var("PROFILE").unwrap(),
         }
     }
 }

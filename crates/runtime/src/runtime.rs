@@ -36,6 +36,7 @@ use std::{
 pub struct ExecutionResult {
     pub exit_code: i32,
     pub fuel_consumed: u64,
+    pub fuel_refunded: i64,
     pub return_data: Vec<u8>,
     pub output: Vec<u8>,
     pub interrupted: bool,
@@ -191,8 +192,13 @@ impl Runtime {
 
     pub fn call(&mut self) -> ExecutionResult {
         let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
+        let fuel_refunded_before_the_call = self.executor.store().fuel_refunded();
         let result = self.executor.run();
-        self.handle_execution_result(result, fuel_consumed_before_the_call)
+        self.handle_execution_result(
+            result,
+            fuel_consumed_before_the_call,
+            fuel_refunded_before_the_call,
+        )
     }
 
     pub fn resume(
@@ -203,6 +209,7 @@ impl Runtime {
         exit_code: i32,
     ) -> ExecutionResult {
         let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
+        let fuel_refunded_before_the_call = self.executor.store().fuel_refunded();
         let mut caller = Caller::new(self.executor.store_mut());
         if fuel16_ptr > 0 {
             let mut buffer = [0u8; 16];
@@ -210,12 +217,20 @@ impl Runtime {
             LittleEndian::write_i64(&mut buffer[8..], fuel_refunded);
             // if we can't write a result into memory, then process it as an error
             if let Err(err) = caller.memory_write(fuel16_ptr as usize, &buffer) {
-                return self.handle_execution_result(Err(err), fuel_consumed_before_the_call);
+                return self.handle_execution_result(
+                    Err(err),
+                    fuel_consumed_before_the_call,
+                    fuel_refunded_before_the_call,
+                );
             }
         }
         caller.stack_push(exit_code);
         let result = self.executor.run();
-        self.handle_execution_result(result, fuel_consumed_before_the_call)
+        self.handle_execution_result(
+            result,
+            fuel_consumed_before_the_call,
+            fuel_refunded_before_the_call,
+        )
     }
 
     pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
@@ -244,6 +259,7 @@ impl Runtime {
         &mut self,
         mut next_result: Result<i32, RwasmError>,
         fuel_consumed_before_the_call: u64,
+        fuel_refunded_before_the_call: i64,
     ) -> ExecutionResult {
         let mut execution_result =
             take(&mut self.executor.store_mut().context_mut().execution_result);
@@ -252,6 +268,8 @@ impl Runtime {
         // if there is rounding then it can cause miscalculations
         execution_result.fuel_consumed =
             self.executor.store().fuel_consumed() - fuel_consumed_before_the_call;
+        execution_result.fuel_refunded =
+            self.executor.store().fuel_refunded() - fuel_refunded_before_the_call;
         loop {
             match next_result {
                 Ok(exit_code) => {
@@ -304,6 +322,9 @@ impl Runtime {
                     }
                     RwasmError::FloatsAreDisabled => {
                         unreachable!("runtime: floats are disabled")
+                    }
+                    RwasmError::NotAllowedInFuelMode => {
+                        unreachable!("runtime: now allowed in fuel mode")
                     }
                 },
             }

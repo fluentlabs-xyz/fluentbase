@@ -25,7 +25,6 @@ use rwasm::{
             ElementSegmentIdx,
             FuncIdx,
             GlobalIdx,
-            InstrMeta,
             Instruction,
             LocalDepth,
             SignatureIdx,
@@ -55,28 +54,29 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         loop {
             let instr = *self.store.ip.get();
 
-            // #[cfg(feature = "std")]
-            // {
-            //     let stack = self
-            //         .store
-            //         .value_stack
-            //         .dump_stack(self.store.sp)
-            //         .iter()
-            //         .rev()
-            //         .take(10)
-            //         .map(|v| v.as_u64())
-            //         .collect::<Vec<_>>();
-            //     println!(
-            //         "{:02}: {:?}, stack={:?} ({})",
-            //         self.store.ip.pc(),
-            //         instr,
-            //         stack,
-            //         self.store.value_stack.stack_len(self.store.sp)
-            //     );
-            // }
+            #[cfg(feature = "debug-print")]
+            {
+                let stack = self
+                    .store
+                    .value_stack
+                    .dump_stack(self.store.sp)
+                    .iter()
+                    .rev()
+                    .take(10)
+                    .map(|v| v.as_u64())
+                    .collect::<Vec<_>>();
+                println!(
+                    "{:02}: {:?}, stack={:?} ({})",
+                    self.store.ip.pc(),
+                    instr,
+                    stack,
+                    self.store.value_stack.stack_len(self.store.sp)
+                );
+            }
 
-            // handle pre-instruction state
+            #[cfg(feature = "tracer")]
             if self.store.tracer.is_some() {
+                use rwasm::engine::bytecode::InstrMeta;
                 let memory_size: u32 = self.store.global_memory.current_pages().into();
                 let consumed_fuel = self.store.fuel_consumed();
                 let stack = self.store.value_stack.dump_stack(self.store.sp);
