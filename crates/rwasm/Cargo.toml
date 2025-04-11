@@ -13,10 +13,15 @@ categories.workspace = true
 hashbrown = { workspace = true }
 tiny-keccak = { workspace = true }
 
+# revm (a temporary solution)
+revm-interpreter = { workspace = true }
+
 # we have rwasm only here because we are planning to remove this dependency in the future
 rwasm = { workspace = true }
 
 [features]
 default = ["std"]
 std = []
+tracer = []
 e2e = []
+debug-print = ["std"]

@@ -14,7 +14,7 @@ fluentbase-build = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
-path = "src/lib.rs"
+path = "lib.rs"
 
 [features]
 default = ["std"]

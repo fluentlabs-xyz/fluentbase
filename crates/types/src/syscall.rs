@@ -1,5 +1,4 @@
-use crate::{ExitCode, B256};
-use alloy_primitives::Bytes;
+use crate::{Bytes, ExitCode, B256};
 use fluentbase_codec::Codec;
 
 #[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -10,6 +9,54 @@ pub struct SyscallInvocationParams {
     pub fuel_limit: u64,
     pub state: u32,
     pub fuel16_ptr: u32,
+}
+
+impl SyscallInvocationParams {
+    pub fn encode(&self) -> Bytes {
+        bincode::encode_to_vec(self, bincode::config::legacy())
+            .unwrap()
+            .into()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let (result, _bytes_read) =
+            bincode::decode_from_slice(bytes, bincode::config::legacy()).unwrap();
+        Some(result)
+    }
+}
+
+impl ::bincode::Encode for SyscallInvocationParams {
+    fn encode<__E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut __E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        ::bincode::Encode::encode(&self.code_hash.0, encoder)?;
+        ::bincode::Encode::encode(&self.fuel_limit, encoder)?;
+        ::bincode::Encode::encode(&self.state, encoder)?;
+        ::bincode::Encode::encode(&self.fuel16_ptr, encoder)?;
+        ::bincode::Encode::encode(&self.input[..], encoder)?;
+        Ok(())
+    }
+}
+
+impl<__Context> ::bincode::Decode<__Context> for SyscallInvocationParams {
+    fn decode<__D: ::bincode::de::Decoder<Context = __Context>>(
+        decoder: &mut __D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        use alloc::vec::Vec;
+        let code_hash: [u8; 32] = bincode::Decode::decode(decoder)?;
+        let fuel_limit: u64 = bincode::Decode::decode(decoder)?;
+        let state: u32 = bincode::Decode::decode(decoder)?;
+        let fuel16_ptr: u32 = bincode::Decode::decode(decoder)?;
+        let input: Vec<u8> = bincode::Decode::decode(decoder)?;
+        Ok(Self {
+            code_hash: B256::from(code_hash),
+            input: input.into(),
+            fuel_limit,
+            state,
+            fuel16_ptr,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -84,6 +131,3 @@ pub const SYSCALL_ID_WRITE_PREIMAGE: B256 = B256::with_last_byte(0x30);
 pub const SYSCALL_ID_PREIMAGE_COPY: B256 = B256::with_last_byte(0x31);
 pub const SYSCALL_ID_PREIMAGE_SIZE: B256 = B256::with_last_byte(0x32);
 pub const SYSCALL_ID_DELEGATED_STORAGE: B256 = B256::with_last_byte(0x33);
-
-// TODO(dmitry): "this syscall will be removed"
-pub const SYSCALL_ID_SYNC_EVM_GAS: B256 = B256::with_last_byte(0xf0);

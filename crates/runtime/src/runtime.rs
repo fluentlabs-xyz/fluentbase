@@ -29,13 +29,17 @@ use std::{
     cell::RefCell,
     fmt::Debug,
     mem::take,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
 };
 
 #[derive(Default, Clone, Debug)]
 pub struct ExecutionResult {
     pub exit_code: i32,
     pub fuel_consumed: u64,
+    pub fuel_refunded: i64,
     pub return_data: Vec<u8>,
     pub output: Vec<u8>,
     pub interrupted: bool,
@@ -53,7 +57,7 @@ impl ExecutionResult {
 pub struct CachingRuntime {
     // TODO(dmitry123): "add LRU cache to this map to avoid memory leak"
     cached_bytecode: HashMap<B256, Bytes>,
-    modules: HashMap<B256, RwasmModuleInstance>,
+    modules: HashMap<B256, Arc<RwasmModuleInstance>>,
     recoverable_runtimes: HashMap<u32, Runtime>,
 }
 
@@ -69,7 +73,7 @@ impl CachingRuntime {
     pub fn insert_module(
         &mut self,
         rwasm_hash: B256,
-        instance: RwasmModuleInstance,
+        instance: Arc<RwasmModuleInstance>,
         bytecode: Bytes,
     ) -> &RwasmModuleInstance {
         self.cached_bytecode.insert(rwasm_hash, bytecode);
@@ -80,7 +84,7 @@ impl CachingRuntime {
         entry.insert(instance)
     }
 
-    pub fn init_module(&mut self, rwasm_hash: B256) -> &RwasmModuleInstance {
+    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<RwasmModuleInstance> {
         let rwasm_bytecode = self
             .cached_bytecode
             .get(&rwasm_hash)
@@ -91,11 +95,13 @@ impl CachingRuntime {
         };
         let reduced_module =
             RwasmModule::new_or_empty(rwasm_bytecode).expect("runtime: can't parse rwasm module");
-        entry.insert(reduced_module.instantiate())
+        let reduced_module = Arc::new(reduced_module.instantiate());
+        entry.insert(reduced_module.clone());
+        reduced_module
     }
 
-    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<&RwasmModuleInstance> {
-        self.modules.get(rwasm_hash)
+    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<RwasmModuleInstance>> {
+        self.modules.get(rwasm_hash).cloned()
     }
 }
 
@@ -166,8 +172,11 @@ impl Runtime {
             // return bytecode
             runtime_context.bytecode = bytecode_repr;
 
+            let shared_memory = runtime_context.take_shared_memory();
+
             let executor = RwasmExecutor::new(
                 rwasm_module.clone(),
+                shared_memory,
                 ExecutorConfig::new()
                     .fuel_limit(runtime_context.fuel_limit)
                     .trace_enabled(runtime_context.trace)
@@ -191,8 +200,13 @@ impl Runtime {
 
     pub fn call(&mut self) -> ExecutionResult {
         let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
+        let fuel_refunded_before_the_call = self.executor.store().fuel_refunded();
         let result = self.executor.run();
-        self.handle_execution_result(result, fuel_consumed_before_the_call)
+        self.handle_execution_result(
+            result,
+            fuel_consumed_before_the_call,
+            fuel_refunded_before_the_call,
+        )
     }
 
     pub fn resume(
@@ -203,6 +217,7 @@ impl Runtime {
         exit_code: i32,
     ) -> ExecutionResult {
         let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
+        let fuel_refunded_before_the_call = self.executor.store().fuel_refunded();
         let mut caller = Caller::new(self.executor.store_mut());
         if fuel16_ptr > 0 {
             let mut buffer = [0u8; 16];
@@ -210,12 +225,20 @@ impl Runtime {
             LittleEndian::write_i64(&mut buffer[8..], fuel_refunded);
             // if we can't write a result into memory, then process it as an error
             if let Err(err) = caller.memory_write(fuel16_ptr as usize, &buffer) {
-                return self.handle_execution_result(Err(err), fuel_consumed_before_the_call);
+                return self.handle_execution_result(
+                    Err(err),
+                    fuel_consumed_before_the_call,
+                    fuel_refunded_before_the_call,
+                );
             }
         }
         caller.stack_push(exit_code);
         let result = self.executor.run();
-        self.handle_execution_result(result, fuel_consumed_before_the_call)
+        self.handle_execution_result(
+            result,
+            fuel_consumed_before_the_call,
+            fuel_refunded_before_the_call,
+        )
     }
 
     pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
@@ -244,6 +267,7 @@ impl Runtime {
         &mut self,
         mut next_result: Result<i32, RwasmError>,
         fuel_consumed_before_the_call: u64,
+        fuel_refunded_before_the_call: i64,
     ) -> ExecutionResult {
         let mut execution_result =
             take(&mut self.executor.store_mut().context_mut().execution_result);
@@ -252,6 +276,8 @@ impl Runtime {
         // if there is rounding then it can cause miscalculations
         execution_result.fuel_consumed =
             self.executor.store().fuel_consumed() - fuel_consumed_before_the_call;
+        execution_result.fuel_refunded =
+            self.executor.store().fuel_refunded() - fuel_refunded_before_the_call;
         loop {
             match next_result {
                 Ok(exit_code) => {
@@ -304,6 +330,9 @@ impl Runtime {
                     }
                     RwasmError::FloatsAreDisabled => {
                         unreachable!("runtime: floats are disabled")
+                    }
+                    RwasmError::NotAllowedInFuelMode => {
+                        unreachable!("runtime: now allowed in fuel mode")
                     }
                 },
             }
