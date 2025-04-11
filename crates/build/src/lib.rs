@@ -109,7 +109,7 @@ pub fn build_wasm_program(config: WasmBuildConfig) {
     let mut arguments = vec![
         "build".to_string(),
         "--target".to_string(),
-        config.target,
+        config.target.clone(),
         "--release".to_string(),
     ];
     if config.no_default_features {
@@ -120,14 +120,8 @@ pub fn build_wasm_program(config: WasmBuildConfig) {
         arguments.extend_from_slice(&config.features);
     }
     let status = Command::new("cargo")
+        .env("CARGO_ENCODED_RUSTFLAGS", get_rust_compiler_flags(&config))
         .args(arguments)
-        .env(
-            "RUSTFLAGS",
-            format!(
-                "-C link-arg=-zstack-size={} -C target-feature=+bulk-memory",
-                config.stack_size
-            ),
-        )
         .status()
         .expect("WASM compilation failure");
     if !status.success() {
@@ -154,6 +148,18 @@ pub fn build_wasm_program(config: WasmBuildConfig) {
         )
         .unwrap();
     }
+}
+
+pub(crate) fn get_rust_compiler_flags(config: &WasmBuildConfig) -> String {
+    let rust_flags = [
+        "-C".to_string(),
+        format!("link-arg=-zstack-size={}", config.stack_size),
+        "-C".to_string(),
+        "panic=abort".to_string(),
+        "-C".to_string(),
+        "target-feature=+bulk-memory".to_string(),
+    ];
+    rust_flags.join("\x1f")
 }
 
 pub fn build_go_program_from_env(program_name: &'static str) {
