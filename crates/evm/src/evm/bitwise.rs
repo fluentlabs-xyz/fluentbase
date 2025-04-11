@@ -115,6 +115,7 @@ pub fn sar<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
 #[cfg(test)]
 mod tests {
     use crate::{
+        bytecode::AnalyzedBytecode,
         evm::{
             bitwise::{byte, sar, shl, shr},
             EVM,
@@ -127,7 +128,7 @@ mod tests {
     #[test]
     fn test_shift_left() {
         let mut sdk = TestingContext::default();
-        let mut evm = EVM::new(&mut sdk, &[], &[], u64::MAX);
+        let mut evm = EVM::new(&mut sdk, AnalyzedBytecode::default(), &[], u64::MAX);
 
         struct TestCase {
             value: U256,
@@ -207,7 +208,7 @@ mod tests {
     #[test]
     fn test_logical_shift_right() {
         let mut sdk = TestingContext::default();
-        let mut evm = EVM::new(&mut sdk, &[], &[], u64::MAX);
+        let mut evm = EVM::new(&mut sdk, AnalyzedBytecode::default(), &[], u64::MAX);
 
         struct TestCase {
             value: U256,
@@ -287,7 +288,7 @@ mod tests {
     #[test]
     fn test_arithmetic_shift_right() {
         let mut sdk = TestingContext::default();
-        let mut evm = EVM::new(&mut sdk, &[], &[], u64::MAX);
+        let mut evm = EVM::new(&mut sdk, AnalyzedBytecode::default(), &[], u64::MAX);
 
         struct TestCase {
             value: U256,
@@ -398,7 +399,7 @@ mod tests {
         }
 
         let mut sdk = TestingContext::default();
-        let mut evm = EVM::new(&mut sdk, &[], &[], u64::MAX);
+        let mut evm = EVM::new(&mut sdk, AnalyzedBytecode::default(), &[], u64::MAX);
 
         let input_value = U256::from(0x1234567890abcdef1234567890abcdef_u128);
         let test_cases = (0..32)

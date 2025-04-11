@@ -2,9 +2,8 @@
 
 extern crate alloc;
 extern crate core;
-extern crate fluentbase_sdk;
 
-use fluentbase_evm::{gas, result::InterpreterResult, return_ok, return_revert, EVM};
+use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, result::InterpreterResult, EVM};
 use fluentbase_sdk::{
     func_entrypoint,
     Bytes,
@@ -12,11 +11,18 @@ use fluentbase_sdk::{
     ExitCode,
     SharedAPI,
     SyscallResult,
-    EVM_CODE_HASH_SLOT,
+    B256,
     EVM_MAX_CODE_SIZE,
     KECCAK_EMPTY,
+    PROTECTED_STORAGE_SLOT_0,
+    PROTECTED_STORAGE_SLOT_1,
     U256,
 };
+
+/// Indicates whether analyzed EVM bytecode should be cached.
+/// Set to `false` to disable caching, which may result in repeated analysis and potentially slower
+/// performance, but ensures the latest results are always used.
+pub const CACHE_ANALYZED_EVM_BYTECODE: bool = false;
 
 /// Commits EVM bytecode to persistent storage and updates the corresponding code hash.
 ///
@@ -30,12 +36,24 @@ use fluentbase_sdk::{
 /// - `sdk`: A mutable reference to the SDK instance implementing the `SharedAPI` trait, which
 ///   provides the methods required for interactions with storage.
 /// - `evm_bytecode`: A `Bytes` object containing the EVM bytecode to be stored.
-pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: Bytes) {
-    // TODO(dmitry123): "here we can store pre-analyzed bytecode"
-    let result = sdk.write_preimage(evm_bytecode);
-    let code_hash = result.data;
+pub(crate) fn commit_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
+    sdk: &mut SDK,
+    evm_bytecode: Bytes,
+) {
+    // write an original EVM bytecode into preimage storage and update protected slot 0
+    let code_hash = sdk.write_preimage(evm_bytecode.clone());
+    assert!(code_hash.status.is_ok());
     // TODO(dmitry123): "instead of protected slots use metadata storage"
-    _ = sdk.write_storage(EVM_CODE_HASH_SLOT.into(), code_hash.into());
+    _ = sdk.write_storage(PROTECTED_STORAGE_SLOT_0.into(), code_hash.data.into());
+    // write analyzed EVM bytecode into storage
+    if CACHE_ANALYZED {
+        let analyzed_bytecode =
+            AnalyzedBytecode::new(&evm_bytecode[..], code_hash.data).serialize();
+        let analyzed_hash = sdk.write_preimage(analyzed_bytecode.into());
+        assert!(analyzed_hash.status.is_ok());
+        // TODO(dmitry123): "instead of protected slots use metadata storage"
+        _ = sdk.write_storage(PROTECTED_STORAGE_SLOT_1.into(), analyzed_hash.data.into());
+    }
 }
 
 /// Loads the EVM bytecode associated with the contract using the provided SDK.
@@ -54,10 +72,18 @@ pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: B
 /// An `Option<Bytecode>`.
 /// - `Some(Bytecode)`: If valid bytecode exists and is successfully retrieved.
 /// - `None`: If the bytecode is empty or not present in the storage.
-pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<Bytes> {
+pub(crate) fn load_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
+    sdk: &SDK,
+) -> Option<AnalyzedBytecode> {
     let bytecode_address = sdk.context().contract_bytecode_address();
-    let evm_code_hash =
-        sdk.delegated_storage(&bytecode_address, &Into::<U256>::into(EVM_CODE_HASH_SLOT));
+    let evm_code_hash = sdk.delegated_storage(
+        &bytecode_address,
+        &Into::<U256>::into(if CACHE_ANALYZED {
+            PROTECTED_STORAGE_SLOT_1
+        } else {
+            PROTECTED_STORAGE_SLOT_0
+        }),
+    );
     let (evm_code_hash, _, _) = evm_code_hash.data;
     // TODO(dmitry123): "do we want to have this optimized during the creation of the frame?"
     let is_empty_bytecode =
@@ -71,8 +97,15 @@ pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<Bytes> {
         SyscallResult::is_ok(evm_bytecode.status),
         "sdk: failed reading evm bytecode"
     );
-    let evm_bytecode = evm_bytecode.data;
-    Some(evm_bytecode)
+    let analyzed_bytecode = if CACHE_ANALYZED {
+        AnalyzedBytecode::deserialize(&evm_bytecode.data[..])
+    } else {
+        AnalyzedBytecode::new(&evm_bytecode.data[..], evm_code_hash.into())
+    };
+    if analyzed_bytecode.hash == KECCAK_EMPTY {
+        return None;
+    }
+    Some(analyzed_bytecode)
 }
 
 /// Handles non-OK results from the EVM interpreter.
@@ -98,16 +131,11 @@ pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<Bytes> {
 fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult) {
     sdk.sync_evm_gas(result.gas.remaining(), result.gas.refunded());
     sdk.write(result.output.as_ref());
-    if result.is_revert() {
-        sdk.exit(ExitCode::Panic);
-    }
-    debug_assert!(result.is_error(), "evm: result must be error");
-    let exit_code = match result.result {
-        return_ok!() => ExitCode::Ok,
-        return_revert!() => ExitCode::Panic,
-        _ => ExitCode::Err,
-    };
-    sdk.exit(exit_code);
+    sdk.exit(if result.is_revert() {
+        ExitCode::Panic
+    } else {
+        ExitCode::Err
+    });
 }
 
 /// Deploys an EVM smart contract using the provided bytecode input.
@@ -166,9 +194,10 @@ fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult)
 /// - Compatibility with EVM gas mechanisms is maintained to ensure Ethereum-like behavior.
 pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     let input: Bytes = sdk.input().into();
+    let analyzed_bytecode = AnalyzedBytecode::new(&input[..], B256::ZERO);
     let gas_limit = sdk.context().contract_gas_limit();
 
-    let mut result = EVM::new(&mut sdk, &input[..], &[], gas_limit).exec();
+    let mut result = EVM::new(&mut sdk, analyzed_bytecode, &[], gas_limit).exec();
     if !result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }
@@ -187,7 +216,7 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     sdk.sync_evm_gas(result.gas.remaining(), result.gas.refunded());
     // we intentionally don't charge gas for these opcodes
     // to keep full compatibility with an EVM deployment process
-    commit_evm_bytecode(&mut sdk, result.output);
+    commit_evm_bytecode::<{ CACHE_ANALYZED_EVM_BYTECODE }, SDK>(&mut sdk, result.output);
 }
 
 /// The main entry point function of the application that processes EVM-based contract bytecode.
@@ -225,14 +254,14 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
 /// - The SDK instance conforms to the `SharedAPI` interface.
 /// - Bytecode is preloaded and valid for the specific context where the function is executed.
 pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
-    let Some(evm_bytecode) = load_evm_bytecode(&sdk) else {
+    let Some(evm_bytecode) = load_evm_bytecode::<{ CACHE_ANALYZED_EVM_BYTECODE }, SDK>(&sdk) else {
         return;
     };
 
     let input: Bytes = sdk.input().into();
     let gas_limit = sdk.context().contract_gas_limit();
 
-    let result = EVM::new(&mut sdk, &evm_bytecode[..], &input[..], gas_limit).exec();
+    let result = EVM::new(&mut sdk, evm_bytecode, &input[..], gas_limit).exec();
     if !result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }

@@ -39,9 +39,13 @@ pub struct EVM<'a, SDK: SharedAPI> {
 }
 
 impl<'a, SDK: SharedAPI> EVM<'a, SDK> {
-    pub fn new(sdk: &'a mut SDK, bytecode: &'a [u8], input: &'a [u8], gas_limit: u64) -> Self {
+    pub fn new(
+        sdk: &'a mut SDK,
+        analyzed_bytecode: AnalyzedBytecode,
+        input: &'a [u8],
+        gas_limit: u64,
+    ) -> Self {
         let is_static = sdk.context().contract_is_static();
-        let analyzed_bytecode = AnalyzedBytecode::new(bytecode);
         let ip = analyzed_bytecode.bytecode.as_ptr();
         let gas = Gas::new(gas_limit);
         Self {

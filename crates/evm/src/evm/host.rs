@@ -27,8 +27,8 @@ use fluentbase_sdk::{
     Bytes,
     SharedAPI,
     B256,
-    EVM_CODE_HASH_SLOT,
     KECCAK_EMPTY,
+    PROTECTED_STORAGE_SLOT_0,
     U256,
 };
 
@@ -48,7 +48,7 @@ pub fn extcodesize<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
     let delegated_code_hash = evm
         .sdk
-        .delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+        .delegated_storage(&address, &PROTECTED_STORAGE_SLOT_0.into());
     assert!(
         !delegated_code_hash.status.is_error(),
         "evm: delegated storage failed with error ({:?})",
@@ -75,7 +75,7 @@ pub fn extcodehash<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
     let delegated_code_hash = evm
         .sdk
-        .delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+        .delegated_storage(&address, &PROTECTED_STORAGE_SLOT_0.into());
     assert!(
         !delegated_code_hash.status.is_error(),
         "evm: delegated storage failed with error ({:?})",
@@ -120,7 +120,7 @@ pub fn extcodecopy<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
 
     let delegated_code_hash = evm
         .sdk
-        .delegated_storage(&address, &EVM_CODE_HASH_SLOT.into());
+        .delegated_storage(&address, &PROTECTED_STORAGE_SLOT_0.into());
     assert!(
         !delegated_code_hash.status.is_error(),
         "evm: delegated storage failed with error ({:?})",

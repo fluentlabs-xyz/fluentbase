@@ -2,12 +2,61 @@ use crate::{Bytes, ExitCode, B256};
 use fluentbase_codec::Codec;
 
 #[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SyscallInvocationParams {
     pub code_hash: B256,
     pub input: Bytes,
     pub fuel_limit: u64,
     pub state: u32,
     pub fuel16_ptr: u32,
+}
+
+impl SyscallInvocationParams {
+    pub fn encode(&self) -> Bytes {
+        bincode::encode_to_vec(self, bincode::config::legacy())
+            .unwrap()
+            .into()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let (result, _bytes_read) =
+            bincode::decode_from_slice(bytes, bincode::config::legacy()).unwrap();
+        Some(result)
+    }
+}
+
+impl ::bincode::Encode for SyscallInvocationParams {
+    fn encode<__E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut __E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        ::bincode::Encode::encode(&self.code_hash.0, encoder)?;
+        ::bincode::Encode::encode(&self.fuel_limit, encoder)?;
+        ::bincode::Encode::encode(&self.state, encoder)?;
+        ::bincode::Encode::encode(&self.fuel16_ptr, encoder)?;
+        ::bincode::Encode::encode(&self.input[..], encoder)?;
+        Ok(())
+    }
+}
+
+impl<__Context> ::bincode::Decode<__Context> for SyscallInvocationParams {
+    fn decode<__D: ::bincode::de::Decoder<Context = __Context>>(
+        decoder: &mut __D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        use alloc::vec::Vec;
+        let code_hash: [u8; 32] = bincode::Decode::decode(decoder)?;
+        let fuel_limit: u64 = bincode::Decode::decode(decoder)?;
+        let state: u32 = bincode::Decode::decode(decoder)?;
+        let fuel16_ptr: u32 = bincode::Decode::decode(decoder)?;
+        let input: Vec<u8> = bincode::Decode::decode(decoder)?;
+        Ok(Self {
+            code_hash: B256::from(code_hash),
+            input: input.into(),
+            fuel_limit,
+            state,
+            fuel16_ptr,
+        })
+    }
 }
 
 #[derive(Debug)]

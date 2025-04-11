@@ -64,7 +64,8 @@ lazy_static = { version = "1.4.0", default-features = false, features = ["spin_n
 anyhow = { version = "1.0.86", default-features = false }
 syn = "2.0"
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
-bincode = { version = "2.0.1", features = ["alloc", "derive"] }
+bitvec = { version = "1", default-features = false, features = ["alloc"] }
+bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
 
 [profile.bench]
 lto = "fat"

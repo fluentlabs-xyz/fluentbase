@@ -4,8 +4,8 @@
 extern crate alloc;
 extern crate core;
 
-// #[cfg(test)]
-// mod bench;
+#[cfg(test)]
+mod bench;
 #[cfg(test)]
 mod bridge;
 #[cfg(test)]

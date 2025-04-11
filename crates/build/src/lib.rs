@@ -93,6 +93,10 @@ pub fn build_wasm_program(config: WasmBuildConfig) {
         println!("cargo:warning=build skipped due to the tarpaulin build");
         return;
     }
+    if config.profile == "release" {
+        println!("cargo:warning=build skipped due to the release profile");
+        return;
+    }
 
     let artefact_paths = calc_wasm_artefact_paths(&metadata, &config);
     if artefact_paths.is_empty() {
