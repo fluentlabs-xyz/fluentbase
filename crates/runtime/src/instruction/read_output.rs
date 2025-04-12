@@ -7,7 +7,7 @@ pub struct SyscallReadOutput;
 impl SyscallReadOutput {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
         let [target_ptr, offset, length] = caller.stack_pop_n();
-        let input = Self::fn_impl(caller.data(), offset.as_u32(), length.as_u32())?;
+        let input = Self::fn_impl(caller.context(), offset.as_u32(), length.as_u32())?;
         let _ = caller.memory_write(target_ptr.as_usize(), &input)?;
         Ok(())
     }

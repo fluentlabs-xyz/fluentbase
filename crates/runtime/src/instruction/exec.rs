@@ -42,8 +42,8 @@ impl HostError for SysExecResumable {}
 
 impl SyscallExec {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let remaining_fuel = caller.store().remaining_fuel().unwrap_or(u64::MAX);
-        let disable_fuel = caller.data().disable_fuel;
+        let remaining_fuel = caller.vm().remaining_fuel().unwrap_or(u64::MAX);
+        let disable_fuel = caller.context().disable_fuel;
         let [hash32_ptr, input_ptr, input_len, fuel16_ptr, state] = caller.stack_pop_n();
         // make sure we have enough fuel for this call
         let fuel16_ptr = fuel16_ptr.as_usize();
@@ -74,7 +74,7 @@ impl SyscallExec {
                 state: state.as_u32(),
                 fuel16_ptr: fuel16_ptr as u32,
             },
-            is_root: caller.store().context().call_depth == 0,
+            is_root: caller.vm().context().call_depth == 0,
         })))
     }
 
@@ -84,7 +84,7 @@ impl SyscallExec {
     ) -> (u64, i64, i32) {
         let fuel_limit = context.params.fuel_limit;
         let (fuel_consumed, fuel_refunded, exit_code) = Self::fn_impl(
-            caller.store_mut().context_mut(),
+            caller.context_mut(),
             context.params.code_hash,
             context.params.input.as_ref(),
             fuel_limit,

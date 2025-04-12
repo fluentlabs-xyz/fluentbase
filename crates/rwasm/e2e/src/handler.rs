@@ -59,9 +59,9 @@ impl SyscallHandler<TestingContext> for TestingSyscallHandler {
                 // yeah dirty, but this is how we remember the program counter to reset,
                 // since we're 100% sure the function is called using `Call`
                 // that we can safely deduct 1 from PC (for `ReturnCall` we need to deduct 2)
-                caller.data_mut().program_counter = caller.store().program_counter() - 1;
+                caller.context_mut().program_counter = caller.store().program_counter() - 1;
                 // push state value into the stack
-                caller.stack_push(caller.data().state);
+                caller.stack_push(caller.context().state);
                 Ok(())
             }
             _ => todo!("not implemented syscall handler"),

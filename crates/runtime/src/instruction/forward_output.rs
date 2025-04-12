@@ -7,7 +7,7 @@ pub struct SyscallForwardOutput;
 impl SyscallForwardOutput {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
         let (offset, length) = caller.stack_pop2();
-        Self::fn_impl(&mut caller.data_mut(), offset.as_u32(), length.as_u32())
+        Self::fn_impl(&mut caller.context_mut(), offset.as_u32(), length.as_u32())
             .map_err(|err| RwasmError::ExecutionHalted(err.into_i32()))?;
         Ok(())
     }

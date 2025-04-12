@@ -10,7 +10,6 @@ use crate::{
     module::{Instruction, InstructionData},
     Caller,
     RwasmError,
-    SyscallHandler,
     FUNC_REF_OFFSET,
     TABLE_ELEMENT_NULL,
 };
@@ -27,15 +26,15 @@ use rwasm::{
     table::{ElementSegmentEntity, TableEntity},
 };
 
-pub type VisitInstruction<E, T> = fn(&mut RwasmExecutor<E, T>);
+pub type VisitInstruction<T> = fn(&mut RwasmExecutor<T>);
 
-pub type InstructionTable<E, T> = [VisitInstruction<E, T>; 0x100];
+pub type InstructionTable<T> = [VisitInstruction<T>; 0x100];
 
 #[inline]
-pub const fn make_instruction_table<E: SyscallHandler<T>, T>() -> InstructionTable<E, T> {
+pub const fn make_instruction_table<T>() -> InstructionTable<T> {
     use Instruction::*;
     const {
-        let mut tables: InstructionTable<E, T> = [visit_unreachable_wrapped; 0x100];
+        let mut tables: InstructionTable<T> = [visit_unreachable_wrapped; 0x100];
         tables[Unreachable as usize] = visit_unreachable_wrapped;
         tables[LocalGet as usize] = visit_local_get;
         tables[LocalSet as usize] = visit_local_set;
@@ -238,12 +237,12 @@ pub const fn make_instruction_table<E: SyscallHandler<T>, T>() -> InstructionTab
     }
 }
 
-pub(crate) fn run_the_loop<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-    instruction_table: &InstructionTable<E, T>,
+pub(crate) fn run_the_loop<T>(
+    exec: &mut RwasmExecutor<T>,
+    instruction_table: &InstructionTable<T>,
 ) -> Result<i32, RwasmError> {
     while !exec.stop_exec {
-        let instr = *exec.store.ip.get();
+        let instr = *exec.ip.get();
         instruction_table[instr as usize](exec);
     }
     exec.stop_exec = false;
@@ -256,7 +255,7 @@ macro_rules! wrap_function_result {
     ($fn_name:ident) => {
         paste::paste! {
             #[inline(always)]
-            pub(crate) fn [< $fn_name _wrapped >]<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>,) {
+            pub(crate) fn [< $fn_name _wrapped >]<T>(exec: &mut RwasmExecutor<T>,) {
                 if let Err(err) = $fn_name(exec, /* &mut ResourceLimiterRef<'_> */) {
                     exec.next_result = Some(Err(RwasmError::from(err)));
                     exec.stop_exec = true;
@@ -291,7 +290,7 @@ wrap_function_result!(visit_table_init);
 //     let stack = self
 //         .store
 //         .value_stack
-//         .dump_stack(exec.store.sp)
+//         .dump_stack(exec.sp)
 //         .iter()
 //         .rev()
 //         .take(10)
@@ -299,21 +298,21 @@ wrap_function_result!(visit_table_init);
 //         .collect::<Vec<_>>();
 //     println!(
 //         "{:02}: {:?}, stack={:?} ({})",
-//         exec.store.ip.pc(),
+//         exec.ip.pc(),
 //         instr,
 //         stack,
-//         exec.store.value_stack.stack_len(exec.store.sp)
+//         exec.value_stack.stack_len(exec.sp)
 //     );
 // }
 //
 // #[cfg(feature = "tracer")]
-// if exec.store.tracer.is_some() {
+// if exec.tracer.is_some() {
 //     use rwasm::engine::bytecode::InstrMeta;
-//     let memory_size: u32 = exec.store.global_memory.current_pages().into();
-//     let consumed_fuel = exec.store.fuel_consumed();
-//     let stack = exec.store.value_stack.dump_stack(exec.store.sp);
-//     exec.store.tracer.as_mut().unwrap().pre_opcode_state(
-//         exec.store.ip.pc(),
+//     let memory_size: u32 = exec.global_memory.current_pages().into();
+//     let consumed_fuel = exec.fuel_consumed();
+//     let stack = exec.value_stack.dump_stack(exec.sp);
+//     exec.tracer.as_mut().unwrap().pre_opcode_state(
+//         exec.ip.pc(),
 //         instr,
 //         stack,
 //         &InstrMeta::new(0, 0, 0),
@@ -323,151 +322,143 @@ wrap_function_result!(visit_table_init);
 // }
 
 #[inline(always)]
-pub(crate) fn visit_unreachable<E: SyscallHandler<T>, T>(
-    _exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
+pub(crate) fn visit_unreachable<T>(_exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
     Err(RwasmError::TrapCode(TrapCode::UnreachableCodeReached))
 }
 
 #[inline(always)]
-pub(crate) fn visit_local_get<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let local_depth = match exec.store.ip.data() {
+pub(crate) fn visit_local_get<T>(exec: &mut RwasmExecutor<T>) {
+    let local_depth = match exec.ip.data() {
         InstructionData::LocalDepth(local_depth) => local_depth,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let value = exec.store.sp.nth_back(local_depth.to_usize());
-    exec.store.sp.push(value);
-    exec.store.ip.add(1);
+    let value = exec.sp.nth_back(local_depth.to_usize());
+    exec.sp.push(value);
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_local_set<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let local_depth = match exec.store.ip.data() {
+pub(crate) fn visit_local_set<T>(exec: &mut RwasmExecutor<T>) {
+    let local_depth = match exec.ip.data() {
         InstructionData::LocalDepth(local_depth) => local_depth,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let new_value = exec.store.sp.pop();
-    exec.store
-        .sp
-        .set_nth_back(local_depth.to_usize(), new_value);
-    exec.store.ip.add(1);
+    let new_value = exec.sp.pop();
+    exec.sp.set_nth_back(local_depth.to_usize(), new_value);
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_local_tee<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let local_depth = match exec.store.ip.data() {
+pub(crate) fn visit_local_tee<T>(exec: &mut RwasmExecutor<T>) {
+    let local_depth = match exec.ip.data() {
         InstructionData::LocalDepth(local_depth) => local_depth,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let new_value = exec.store.sp.last();
-    exec.store
-        .sp
-        .set_nth_back(local_depth.to_usize(), new_value);
-    exec.store.ip.add(1);
+    let new_value = exec.sp.last();
+    exec.sp.set_nth_back(local_depth.to_usize(), new_value);
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_br<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let branch_offset = match exec.store.ip.data() {
+pub(crate) fn visit_br<T>(exec: &mut RwasmExecutor<T>) {
+    let branch_offset = match exec.ip.data() {
         InstructionData::BranchOffset(branch_offset) => branch_offset,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    exec.store.ip.offset(branch_offset.to_i32() as isize)
+    exec.ip.offset(branch_offset.to_i32() as isize)
 }
 
 #[inline(always)]
-pub(crate) fn visit_br_if<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let branch_offset = match exec.store.ip.data() {
+pub(crate) fn visit_br_if<T>(exec: &mut RwasmExecutor<T>) {
+    let branch_offset = match exec.ip.data() {
         InstructionData::BranchOffset(branch_offset) => branch_offset,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let condition = exec.store.sp.pop_as();
+    let condition = exec.sp.pop_as();
     if condition {
-        exec.store.ip.add(1);
+        exec.ip.add(1);
     } else {
-        exec.store.ip.offset(branch_offset.to_i32() as isize);
+        exec.ip.offset(branch_offset.to_i32() as isize);
     }
 }
 
 #[inline(always)]
-pub(crate) fn visit_br_if_nez<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let branch_offset = match exec.store.ip.data() {
+pub(crate) fn visit_br_if_nez<T>(exec: &mut RwasmExecutor<T>) {
+    let branch_offset = match exec.ip.data() {
         InstructionData::BranchOffset(branch_offset) => branch_offset,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let condition = exec.store.sp.pop_as();
+    let condition = exec.sp.pop_as();
     if condition {
-        exec.store.ip.offset(branch_offset.to_i32() as isize);
+        exec.ip.offset(branch_offset.to_i32() as isize);
     } else {
-        exec.store.ip.add(1);
+        exec.ip.add(1);
     }
 }
 
 #[inline(always)]
-pub(crate) fn visit_br_adjust<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let branch_offset = match exec.store.ip.data() {
+pub(crate) fn visit_br_adjust<T>(exec: &mut RwasmExecutor<T>) {
+    let branch_offset = match exec.ip.data() {
         InstructionData::BranchOffset(branch_offset) => branch_offset,
         _ => unreachable!("rwasm: missing instr data"),
     };
     let drop_keep = exec.fetch_drop_keep(1);
-    exec.store.sp.drop_keep(drop_keep);
-    exec.store.ip.offset(branch_offset.to_i32() as isize);
+    exec.sp.drop_keep(drop_keep);
+    exec.ip.offset(branch_offset.to_i32() as isize);
 }
 
 #[inline(always)]
-pub(crate) fn visit_br_adjust_if_nez<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let branch_offset = match exec.store.ip.data() {
+pub(crate) fn visit_br_adjust_if_nez<T>(exec: &mut RwasmExecutor<T>) {
+    let branch_offset = match exec.ip.data() {
         InstructionData::BranchOffset(branch_offset) => branch_offset,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let condition = exec.store.sp.pop_as();
+    let condition = exec.sp.pop_as();
     if condition {
         let drop_keep = exec.fetch_drop_keep(1);
-        exec.store.sp.drop_keep(drop_keep);
-        exec.store.ip.offset(branch_offset.to_i32() as isize);
+        exec.sp.drop_keep(drop_keep);
+        exec.ip.offset(branch_offset.to_i32() as isize);
     } else {
-        exec.store.ip.add(2);
+        exec.ip.add(2);
     }
 }
 
 #[inline(always)]
-pub(crate) fn visit_br_table<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let targets = match exec.store.ip.data() {
+pub(crate) fn visit_br_table<T>(exec: &mut RwasmExecutor<T>) {
+    let targets = match exec.ip.data() {
         InstructionData::BranchTableTargets(targets) => targets,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let index: u32 = exec.store.sp.pop_as();
+    let index: u32 = exec.sp.pop_as();
     let max_index = targets.to_usize() - 1;
     let normalized_index = cmp::min(index as usize, max_index);
-    exec.store.ip.add(2 * normalized_index + 1);
+    exec.ip.add(2 * normalized_index + 1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_consume_fuel<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let block_fuel = match exec.store.ip.data() {
+pub(crate) fn visit_consume_fuel<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let block_fuel = match exec.ip.data() {
         InstructionData::BlockFuel(block_fuel) => block_fuel,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    if exec.store.config.fuel_enabled {
-        exec.store.try_consume_fuel(block_fuel.to_u64())?;
+    if exec.config.fuel_enabled {
+        exec.try_consume_fuel(block_fuel.to_u64())?;
     }
-    exec.store.ip.add(1);
+    exec.ip.add(1);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_return<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let drop_keep = match exec.store.ip.data() {
+pub(crate) fn visit_return<T>(exec: &mut RwasmExecutor<T>) {
+    let drop_keep = match exec.ip.data() {
         InstructionData::DropKeep(drop_keep) => drop_keep,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    exec.store.sp.drop_keep(*drop_keep);
-    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
-    match exec.store.call_stack.pop() {
+    exec.sp.drop_keep(*drop_keep);
+    exec.value_stack.sync_stack_ptr(exec.sp);
+    match exec.call_stack.pop() {
         Some(caller) => {
-            exec.store.ip = caller;
+            exec.ip = caller;
         }
         None => {
             exec.next_result = Some(Ok(0));
@@ -477,18 +468,18 @@ pub(crate) fn visit_return<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, 
 }
 
 #[inline(always)]
-pub(crate) fn visit_return_if_nez<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let drop_keep = match exec.store.ip.data() {
+pub(crate) fn visit_return_if_nez<T>(exec: &mut RwasmExecutor<T>) {
+    let drop_keep = match exec.ip.data() {
         InstructionData::DropKeep(drop_keep) => drop_keep,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let condition = exec.store.sp.pop_as();
+    let condition = exec.sp.pop_as();
     if condition {
-        exec.store.sp.drop_keep(*drop_keep);
-        exec.store.value_stack.sync_stack_ptr(exec.store.sp);
-        match exec.store.call_stack.pop() {
+        exec.sp.drop_keep(*drop_keep);
+        exec.value_stack.sync_stack_ptr(exec.sp);
+        match exec.call_stack.pop() {
             Some(caller) => {
-                exec.store.ip = caller;
+                exec.ip = caller;
             }
             None => {
                 exec.next_result = Some(Ok(0));
@@ -496,73 +487,65 @@ pub(crate) fn visit_return_if_nez<E: SyscallHandler<T>, T>(exec: &mut RwasmExecu
             }
         }
     } else {
-        exec.store.ip.add(1);
+        exec.ip.add(1);
     }
 }
 
 #[inline(always)]
-pub(crate) fn visit_return_call_internal<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let func_idx = match exec.store.ip.data() {
+pub(crate) fn visit_return_call_internal<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let func_idx = match exec.ip.data() {
         InstructionData::CompiledFunc(func_idx) => *func_idx,
         _ => unreachable!("rwasm: missing instr data"),
     };
     let drop_keep = exec.fetch_drop_keep(1);
-    exec.store.sp.drop_keep(drop_keep);
-    exec.store.ip.add(2);
-    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
+    exec.sp.drop_keep(drop_keep);
+    exec.ip.add(2);
+    exec.value_stack.sync_stack_ptr(exec.sp);
     let instr_ref = exec
-        .store
         .module
         .func_segments
         .get(func_idx.to_u32() as usize)
         .copied()
         .expect("rwasm: unknown internal function");
     let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
-    exec.store.value_stack.prepare_wasm_call(&header)?;
-    exec.store.sp = exec.store.value_stack.stack_ptr();
-    exec.store.ip = InstructionPtr::new(
-        exec.store.module.code_section.as_ptr(),
-        exec.store.module.instr_data.as_ptr(),
+    exec.value_stack.prepare_wasm_call(&header)?;
+    exec.sp = exec.value_stack.stack_ptr();
+    exec.ip = InstructionPtr::new(
+        exec.module.code_section.as_ptr(),
+        exec.module.instr_data.as_ptr(),
     );
-    exec.store.ip.add(instr_ref as usize);
+    exec.ip.add(instr_ref as usize);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_return_call<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let func_idx = match exec.store.ip.data() {
+pub(crate) fn visit_return_call<T>(vm: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let func_idx = match vm.ip.data() {
         InstructionData::CompiledFunc(func_idx) => *func_idx,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let drop_keep = exec.fetch_drop_keep(1);
-    exec.store.sp.drop_keep(drop_keep);
-    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
+    let drop_keep = vm.fetch_drop_keep(1);
+    vm.sp.drop_keep(drop_keep);
+    vm.value_stack.sync_stack_ptr(vm.sp);
     // external call can cause interruption,
     // that is why it's important to increase IP before doing the call
-    exec.store.ip.add(2);
-    E::call_function(Caller::new(&mut exec.store), func_idx.to_u32())?;
+    vm.ip.add(2);
+    (vm.syscall_handler)(Caller::new(vm), func_idx.to_u32())?;
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_return_call_indirect<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let signature_idx = match exec.store.ip.data() {
+pub(crate) fn visit_return_call_indirect<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let signature_idx = match exec.ip.data() {
         InstructionData::SignatureIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
     let drop_keep = exec.fetch_drop_keep(1);
     let table = exec.fetch_table_index(2);
-    let func_index: u32 = exec.store.sp.pop_as();
-    exec.store.sp.drop_keep(drop_keep);
-    exec.store.last_signature = Some(signature_idx);
+    let func_index: u32 = exec.sp.pop_as();
+    exec.sp.drop_keep(drop_keep);
+    exec.last_signature = Some(signature_idx);
     let func_idx: u32 = exec
-        .store
         .tables
         .get(&table)
         .expect("rwasm: unresolved table index")
@@ -579,66 +562,58 @@ pub(crate) fn visit_return_call_indirect<E: SyscallHandler<T>, T>(
 }
 
 #[inline(always)]
-pub(crate) fn visit_call_internal<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let func_idx = match exec.store.ip.data() {
+pub(crate) fn visit_call_internal<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let func_idx = match exec.ip.data() {
         InstructionData::CompiledFunc(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    exec.store.ip.add(1);
-    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
-    if exec.store.call_stack.len() > N_MAX_RECURSION_DEPTH {
+    exec.ip.add(1);
+    exec.value_stack.sync_stack_ptr(exec.sp);
+    if exec.call_stack.len() > N_MAX_RECURSION_DEPTH {
         return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
     }
-    exec.store.call_stack.push(exec.store.ip);
+    exec.call_stack.push(exec.ip);
     let instr_ref = exec
-        .store
         .module
         .func_segments
         .get(func_idx.to_u32() as usize)
         .copied()
         .expect("rwasm: unknown internal function");
     let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
-    exec.store.value_stack.prepare_wasm_call(&header)?;
-    exec.store.sp = exec.store.value_stack.stack_ptr();
-    exec.store.ip = InstructionPtr::new(
-        exec.store.module.code_section.as_ptr(),
-        exec.store.module.instr_data.as_ptr(),
+    exec.value_stack.prepare_wasm_call(&header)?;
+    exec.sp = exec.value_stack.stack_ptr();
+    exec.ip = InstructionPtr::new(
+        exec.module.code_section.as_ptr(),
+        exec.module.instr_data.as_ptr(),
     );
-    exec.store.ip.add(instr_ref as usize);
+    exec.ip.add(instr_ref as usize);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_call<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let func_idx = match exec.store.ip.data() {
+pub(crate) fn visit_call<T>(vm: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let func_idx = match vm.ip.data() {
         InstructionData::FuncIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
+    vm.value_stack.sync_stack_ptr(vm.sp);
     // external call can cause interruption,
     // that is why it's important to increase IP before doing the call
-    exec.store.ip.add(1);
-    E::call_function(Caller::new(&mut exec.store), func_idx.to_u32())
+    vm.ip.add(1);
+    (vm.syscall_handler)(Caller::new(vm), func_idx.to_u32())
 }
 
 #[inline(always)]
-pub(crate) fn visit_call_indirect<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let signature_idx = match exec.store.ip.data() {
+pub(crate) fn visit_call_indirect<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let signature_idx = match exec.ip.data() {
         InstructionData::SignatureIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
     // resolve func index
     let table = exec.fetch_table_index(1);
-    let func_index: u32 = exec.store.sp.pop_as();
-    exec.store.last_signature = Some(signature_idx);
+    let func_index: u32 = exec.sp.pop_as();
+    exec.last_signature = Some(signature_idx);
     let func_idx: u32 = exec
-        .store
         .tables
         .get(&table)
         .expect("rwasm: unresolved table index")
@@ -650,56 +625,53 @@ pub(crate) fn visit_call_indirect<E: SyscallHandler<T>, T>(
     }
     let func_idx = func_idx - FUNC_REF_OFFSET;
     // call func
-    exec.store.ip.add(2);
-    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
-    if exec.store.call_stack.len() > N_MAX_RECURSION_DEPTH {
+    exec.ip.add(2);
+    exec.value_stack.sync_stack_ptr(exec.sp);
+    if exec.call_stack.len() > N_MAX_RECURSION_DEPTH {
         return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
     }
-    exec.store.call_stack.push(exec.store.ip);
+    exec.call_stack.push(exec.ip);
     let instr_ref = exec
-        .store
         .module
         .func_segments
         .get(func_idx as usize)
         .copied()
         .expect("rwasm: unknown internal function");
     let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
-    exec.store.value_stack.prepare_wasm_call(&header)?;
-    exec.store.sp = exec.store.value_stack.stack_ptr();
-    exec.store.ip = InstructionPtr::new(
-        exec.store.module.code_section.as_ptr(),
-        exec.store.module.instr_data.as_ptr(),
+    exec.value_stack.prepare_wasm_call(&header)?;
+    exec.sp = exec.value_stack.stack_ptr();
+    exec.ip = InstructionPtr::new(
+        exec.module.code_section.as_ptr(),
+        exec.module.instr_data.as_ptr(),
     );
-    exec.store.ip.add(instr_ref as usize);
+    exec.ip.add(instr_ref as usize);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_signature_check<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let signature_idx = match exec.store.ip.data() {
+pub(crate) fn visit_signature_check<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let signature_idx = match exec.ip.data() {
         InstructionData::SignatureIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    if let Some(actual_signature) = exec.store.last_signature.take() {
+    if let Some(actual_signature) = exec.last_signature.take() {
         if actual_signature != signature_idx {
             return Err(TrapCode::BadSignature).map_err(Into::into);
         }
     }
-    exec.store.ip.add(1);
+    exec.ip.add(1);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_drop<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    exec.store.sp.drop();
-    exec.store.ip.add(1);
+pub(crate) fn visit_drop<T>(exec: &mut RwasmExecutor<T>) {
+    exec.sp.drop();
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_select<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    exec.store.sp.eval_top3(|e1, e2, e3| {
+pub(crate) fn visit_select<T>(exec: &mut RwasmExecutor<T>) {
+    exec.sp.eval_top3(|e1, e2, e3| {
         let condition = <bool as From<UntypedValue>>::from(e3);
         if condition {
             e1
@@ -707,34 +679,33 @@ pub(crate) fn visit_select<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, 
             e2
         }
     });
-    exec.store.ip.add(1);
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_global_get<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let global_idx = match exec.store.ip.data() {
+pub(crate) fn visit_global_get<T>(exec: &mut RwasmExecutor<T>) {
+    let global_idx = match exec.ip.data() {
         InstructionData::GlobalIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
     let global_value = exec
-        .store
         .global_variables
         .get(&global_idx)
         .copied()
         .unwrap_or_default();
-    exec.store.sp.push(global_value);
-    exec.store.ip.add(1);
+    exec.sp.push(global_value);
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_global_set<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let global_idx = match exec.store.ip.data() {
+pub(crate) fn visit_global_set<T>(exec: &mut RwasmExecutor<T>) {
+    let global_idx = match exec.ip.data() {
         InstructionData::GlobalIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let new_value = exec.store.sp.pop();
-    exec.store.global_variables.insert(global_idx, new_value);
-    exec.store.ip.add(1);
+    let new_value = exec.sp.pop();
+    exec.global_variables.insert(global_idx, new_value);
+    exec.ip.add(1);
 }
 
 impl_visit_load! {
@@ -771,83 +742,72 @@ impl_visit_store! {
 }
 
 #[inline(always)]
-pub(crate) fn visit_memory_size<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let result: u32 = exec.store.global_memory.current_pages().into();
-    exec.store.sp.push_as(result);
-    exec.store.ip.add(1);
+pub(crate) fn visit_memory_size<T>(exec: &mut RwasmExecutor<T>) {
+    let result: u32 = exec.global_memory.current_pages().into();
+    exec.sp.push_as(result);
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_memory_grow<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
+pub(crate) fn visit_memory_grow<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
     let mut limiter = ResourceLimiterRef::default();
-    let delta: u32 = exec.store.sp.pop_as();
+    let delta: u32 = exec.sp.pop_as();
     let delta = match Pages::new(delta) {
         Some(delta) => delta,
         None => {
-            exec.store.sp.push_as(u32::MAX);
-            exec.store.ip.add(1);
+            exec.sp.push_as(u32::MAX);
+            exec.ip.add(1);
             return Ok(());
         }
     };
-    if exec.store.config.fuel_enabled {
+    if exec.config.fuel_enabled {
         let delta_in_bytes = delta.to_bytes().unwrap_or(0) as u64;
-        exec.store
-            .try_consume_fuel(exec.store.fuel_costs.fuel_for_bytes(delta_in_bytes))?;
+        exec.try_consume_fuel(exec.fuel_costs.fuel_for_bytes(delta_in_bytes))?;
     }
     let new_pages = exec
-        .store
         .global_memory
         .grow(delta, &mut limiter)
         .map(u32::from)
         .unwrap_or(u32::MAX);
-    exec.store.sp.push_as(new_pages);
-    exec.store.ip.add(1);
+    exec.sp.push_as(new_pages);
+    exec.ip.add(1);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_memory_fill<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let (d, val, n) = exec.store.sp.pop3();
+pub(crate) fn visit_memory_fill<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let (d, val, n) = exec.sp.pop3();
     let n = i32::from(n) as usize;
     let offset = i32::from(d) as usize;
     let byte = u8::from(val);
-    if exec.store.config.fuel_enabled {
-        exec.store
-            .try_consume_fuel(exec.store.fuel_costs.fuel_for_bytes(n as u64))?;
+    if exec.config.fuel_enabled {
+        exec.try_consume_fuel(exec.fuel_costs.fuel_for_bytes(n as u64))?;
     }
     let memory = exec
-        .store
         .global_memory
         .data_mut()
         .get_mut(offset..)
         .and_then(|memory| memory.get_mut(..n))
         .ok_or(TrapCode::MemoryOutOfBounds)?;
     memory.fill(byte);
-    if let Some(tracer) = exec.store.tracer.as_mut() {
+    if let Some(tracer) = exec.tracer.as_mut() {
         tracer.memory_change(offset as u32, n as u32, memory);
     }
-    exec.store.ip.add(1);
+    exec.ip.add(1);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_memory_copy<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let (d, s, n) = exec.store.sp.pop3();
+pub(crate) fn visit_memory_copy<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let (d, s, n) = exec.sp.pop3();
     let n = i32::from(n) as usize;
     let src_offset = i32::from(s) as usize;
     let dst_offset = i32::from(d) as usize;
-    if exec.store.config.fuel_enabled {
-        exec.store
-            .try_consume_fuel(exec.store.fuel_costs.fuel_for_bytes(n as u64))?;
+    if exec.config.fuel_enabled {
+        exec.try_consume_fuel(exec.fuel_costs.fuel_for_bytes(n as u64))?;
     }
     // these accesses just perform the bound checks required by the Wasm spec.
-    let data = exec.store.global_memory.data_mut();
+    let data = exec.global_memory.data_mut();
     data.get(src_offset..)
         .and_then(|memory| memory.get(..n))
         .ok_or(TrapCode::MemoryOutOfBounds)?;
@@ -855,42 +815,38 @@ pub(crate) fn visit_memory_copy<E: SyscallHandler<T>, T>(
         .and_then(|memory| memory.get(..n))
         .ok_or(TrapCode::MemoryOutOfBounds)?;
     data.copy_within(src_offset..src_offset.wrapping_add(n), dst_offset);
-    if let Some(tracer) = exec.store.tracer.as_mut() {
+    if let Some(tracer) = exec.tracer.as_mut() {
         tracer.memory_change(
             dst_offset as u32,
             n as u32,
             &data[dst_offset..(dst_offset + n)],
         );
     }
-    exec.store.ip.add(1);
+    exec.ip.add(1);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_memory_init<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let data_segment_idx = match exec.store.ip.data() {
+pub(crate) fn visit_memory_init<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let data_segment_idx = match exec.ip.data() {
         InstructionData::DataSegmentIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
     let is_empty_data_segment = exec.resolve_data_or_create(data_segment_idx).is_empty();
-    let (d, s, n) = exec.store.sp.pop3();
+    let (d, s, n) = exec.sp.pop3();
     let n = i32::from(n) as usize;
     let src_offset = i32::from(s) as usize;
     let dst_offset = i32::from(d) as usize;
-    if exec.store.config.fuel_enabled {
-        exec.store
-            .try_consume_fuel(exec.store.fuel_costs.fuel_for_bytes(n as u64))?;
+    if exec.config.fuel_enabled {
+        exec.try_consume_fuel(exec.fuel_costs.fuel_for_bytes(n as u64))?;
     }
     let memory = exec
-        .store
         .global_memory
         .data_mut()
         .get_mut(dst_offset..)
         .and_then(|memory| memory.get_mut(..n))
         .ok_or(TrapCode::MemoryOutOfBounds)?;
-    let mut memory_section = exec.store.module.memory_section.as_slice();
+    let mut memory_section = exec.module.memory_section.as_slice();
     if is_empty_data_segment {
         memory_section = &[];
     }
@@ -899,54 +855,50 @@ pub(crate) fn visit_memory_init<E: SyscallHandler<T>, T>(
         .and_then(|data| data.get(..n))
         .ok_or(TrapCode::MemoryOutOfBounds)?;
     memory.copy_from_slice(data);
-    if let Some(tracer) = exec.store.tracer.as_mut() {
+    if let Some(tracer) = exec.tracer.as_mut() {
         tracer.global_memory(dst_offset as u32, n as u32, memory);
     }
-    exec.store.ip.add(1);
+    exec.ip.add(1);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_data_drop<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let data_segment_idx = match exec.store.ip.data() {
+pub(crate) fn visit_data_drop<T>(exec: &mut RwasmExecutor<T>) {
+    let data_segment_idx = match exec.ip.data() {
         InstructionData::DataSegmentIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
     let data_segment = exec.resolve_data_or_create(data_segment_idx);
     data_segment.drop_bytes();
-    exec.store.ip.add(1);
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_table_size<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let table_idx = match exec.store.ip.data() {
+pub(crate) fn visit_table_size<T>(exec: &mut RwasmExecutor<T>) {
+    let table_idx = match exec.ip.data() {
         InstructionData::TableIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
     let table_size = exec
-        .store
         .tables
         .get(&table_idx)
         .expect("rwasm: unresolved table segment")
         .size();
-    exec.store.sp.push_as(table_size);
-    exec.store.ip.add(1);
+    exec.sp.push_as(table_size);
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_table_grow<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
+pub(crate) fn visit_table_grow<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
     let mut limiter = ResourceLimiterRef::default();
-    let table_idx = match exec.store.ip.data() {
+    let table_idx = match exec.ip.data() {
         InstructionData::TableIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let (init, delta) = exec.store.sp.pop2();
+    let (init, delta) = exec.sp.pop2();
     let delta: u32 = delta.into();
-    if exec.store.config.fuel_enabled {
-        exec.store
-            .try_consume_fuel(exec.store.fuel_costs.fuel_for_elements(delta as u64))?;
+    if exec.config.fuel_enabled {
+        exec.try_consume_fuel(exec.fuel_costs.fuel_for_elements(delta as u64))?;
     }
     let table = exec.resolve_table_or_create(table_idx);
     let result = match table.grow_untyped(delta, init, &mut limiter) {
@@ -954,124 +906,109 @@ pub(crate) fn visit_table_grow<E: SyscallHandler<T>, T>(
         Err(EntityGrowError::TrapCode(trap_code)) => return Err(RwasmError::TrapCode(trap_code)),
         Err(EntityGrowError::InvalidGrow) => u32::MAX,
     };
-    exec.store.sp.push_as(result);
-    if let Some(tracer) = exec.store.tracer.as_mut() {
+    exec.sp.push_as(result);
+    if let Some(tracer) = exec.tracer.as_mut() {
         tracer.table_size_change(table_idx.to_u32(), init.as_u32(), delta);
     }
-    exec.store.ip.add(1);
+    exec.ip.add(1);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_table_fill<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let table_idx = match exec.store.ip.data() {
+pub(crate) fn visit_table_fill<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let table_idx = match exec.ip.data() {
         InstructionData::TableIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let (i, val, n) = exec.store.sp.pop3();
-    if exec.store.config.fuel_enabled {
-        exec.store
-            .try_consume_fuel(exec.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
+    let (i, val, n) = exec.sp.pop3();
+    if exec.config.fuel_enabled {
+        exec.try_consume_fuel(exec.fuel_costs.fuel_for_elements(n.as_u64()))?;
     }
     exec.resolve_table(table_idx)
         .fill_untyped(i.as_u32(), val, n.as_u32())?;
-    exec.store.ip.add(1);
+    exec.ip.add(1);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_table_get<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let table_idx = match exec.store.ip.data() {
+pub(crate) fn visit_table_get<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let table_idx = match exec.ip.data() {
         InstructionData::TableIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let index = exec.store.sp.pop();
+    let index = exec.sp.pop();
     let value = exec
         .resolve_table(table_idx)
         .get_untyped(index.as_u32())
         .ok_or(TrapCode::TableOutOfBounds)?;
-    exec.store.sp.push(value);
-    exec.store.ip.add(1);
+    exec.sp.push(value);
+    exec.ip.add(1);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_table_set<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let table_idx = match exec.store.ip.data() {
+pub(crate) fn visit_table_set<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let table_idx = match exec.ip.data() {
         InstructionData::TableIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    let (index, value) = exec.store.sp.pop2();
+    let (index, value) = exec.sp.pop2();
     exec.resolve_table(table_idx)
         .set_untyped(index.as_u32(), value)
         .map_err(|_| TrapCode::TableOutOfBounds)?;
-    if let Some(tracer) = exec.store.tracer.as_mut() {
+    if let Some(tracer) = exec.tracer.as_mut() {
         tracer.table_change(table_idx.to_u32(), index.as_u32(), value);
     }
-    exec.store.ip.add(1);
+    exec.ip.add(1);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_table_copy<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let dst_table_idx = match exec.store.ip.data() {
+pub(crate) fn visit_table_copy<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let dst_table_idx = match exec.ip.data() {
         InstructionData::TableIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
     let src_table_idx = exec.fetch_table_index(1);
-    let (d, s, n) = exec.store.sp.pop3();
+    let (d, s, n) = exec.sp.pop3();
     let len = u32::from(n);
     let src_index = u32::from(s);
     let dst_index = u32::from(d);
-    if exec.store.config.fuel_enabled {
-        exec.store
-            .try_consume_fuel(exec.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
+    if exec.config.fuel_enabled {
+        exec.try_consume_fuel(exec.fuel_costs.fuel_for_elements(n.as_u64()))?;
     }
     // Query both tables and check if they are the same:
     if src_table_idx != dst_table_idx {
         let [src, dst] = exec
-            .store
             .tables
             .get_many_mut([&src_table_idx, &dst_table_idx])
             .map(|v| v.expect("rwasm: unresolved table segment"));
         TableEntity::copy(dst, dst_index, src, src_index, len)?;
     } else {
         let src = exec
-            .store
             .tables
             .get_mut(&src_table_idx)
             .expect("rwasm: unresolved table segment");
         src.copy_within(dst_index, src_index, len)?;
     }
-    exec.store.ip.add(2);
+    exec.ip.add(2);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_table_init<E: SyscallHandler<T>, T>(
-    exec: &mut RwasmExecutor<E, T>,
-) -> Result<(), RwasmError> {
-    let element_segment_idx = match exec.store.ip.data() {
+pub(crate) fn visit_table_init<T>(exec: &mut RwasmExecutor<T>) -> Result<(), RwasmError> {
+    let element_segment_idx = match exec.ip.data() {
         InstructionData::ElementSegmentIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
     let table_idx = exec.fetch_table_index(1);
-    let (d, s, n) = exec.store.sp.pop3();
+    let (d, s, n) = exec.sp.pop3();
     let len = u32::from(n);
     let src_index = u32::from(s);
     let dst_index = u32::from(d);
 
-    if exec.store.config.fuel_enabled {
-        exec.store
-            .try_consume_fuel(exec.store.fuel_costs.fuel_for_elements(len as u64))?;
+    if exec.config.fuel_enabled {
+        exec.try_consume_fuel(exec.fuel_costs.fuel_for_elements(len as u64))?;
     }
 
     // There is a trick with `element_segment_idx`:
@@ -1094,39 +1031,39 @@ pub(crate) fn visit_table_init<E: SyscallHandler<T>, T>(
         element = &mut empty_element_segment;
     }
     table.init_untyped(dst_index, element, src_index, len)?;
-    exec.store.ip.add(2);
+    exec.ip.add(2);
     Ok(())
 }
 
 #[inline(always)]
-pub(crate) fn visit_element_drop<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let element_segment_idx = match exec.store.ip.data() {
+pub(crate) fn visit_element_drop<T>(exec: &mut RwasmExecutor<T>) {
+    let element_segment_idx = match exec.ip.data() {
         InstructionData::ElementSegmentIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
     let element_segment = exec.resolve_element_or_create(element_segment_idx);
     element_segment.drop_items();
-    exec.store.ip.add(1);
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_ref_func<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let func_idx = match exec.store.ip.data() {
+pub(crate) fn visit_ref_func<T>(exec: &mut RwasmExecutor<T>) {
+    let func_idx = match exec.ip.data() {
         InstructionData::FuncIdx(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    exec.store.sp.push_as(func_idx.to_u32() + FUNC_REF_OFFSET);
-    exec.store.ip.add(1);
+    exec.sp.push_as(func_idx.to_u32() + FUNC_REF_OFFSET);
+    exec.ip.add(1);
 }
 
 #[inline(always)]
-pub(crate) fn visit_i32_i64_const<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
-    let untyped_value = match exec.store.ip.data() {
+pub(crate) fn visit_i32_i64_const<T>(exec: &mut RwasmExecutor<T>) {
+    let untyped_value = match exec.ip.data() {
         InstructionData::UntypedValue(value) => *value,
         _ => unreachable!("rwasm: missing instr data"),
     };
-    exec.store.sp.push(untyped_value);
-    exec.store.ip.add(1);
+    exec.sp.push(untyped_value);
+    exec.ip.add(1);
 }
 
 impl_visit_unary! {

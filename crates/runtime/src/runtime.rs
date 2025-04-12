@@ -11,11 +11,9 @@ use fluentbase_rwasm::{
     Caller,
     ExecutorConfig,
     InstructionTable,
-    RwasmContext,
     RwasmError,
     RwasmExecutor,
     RwasmModule2,
-    SyscallHandler,
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
@@ -97,20 +95,20 @@ thread_local! {
 #[derive(Default)]
 pub struct RuntimeSyscallHandler {}
 
-impl SyscallHandler<RuntimeContext> for RuntimeSyscallHandler {
-    fn call_function(caller: Caller<RuntimeContext>, func_idx: u32) -> Result<(), RwasmError> {
-        let sys_func_idx =
-            SysFuncIdx::from_repr(func_idx).ok_or(RwasmError::UnknownExternalFunction(func_idx))?;
-        invoke_runtime_handler(caller, sys_func_idx)
-    }
+fn runtime_syscall_handler(
+    caller: Caller<RuntimeContext>,
+    func_idx: u32,
+) -> Result<(), RwasmError> {
+    let sys_func_idx =
+        SysFuncIdx::from_repr(func_idx).ok_or(RwasmError::UnknownExternalFunction(func_idx))?;
+    invoke_runtime_handler(caller, sys_func_idx)
 }
 
 pub struct Runtime {
-    pub(crate) executor: RwasmExecutor<RuntimeSyscallHandler, RuntimeContext>,
+    pub executor: RwasmExecutor<RuntimeContext>,
 }
 
-const INSTRUCTION_TABLE: InstructionTable<RuntimeSyscallHandler, RuntimeContext> =
-    make_instruction_table();
+const INSTRUCTION_TABLE: InstructionTable<RuntimeContext> = make_instruction_table();
 
 impl Runtime {
     pub fn catch_trap(err: &RwasmError) -> i32 {
@@ -162,7 +160,7 @@ impl Runtime {
 
             let shared_memory = runtime_context.take_shared_memory();
 
-            let executor = RwasmExecutor::new(
+            let mut executor = RwasmExecutor::new(
                 rwasm_module.clone(),
                 shared_memory,
                 ExecutorConfig::new()
@@ -171,6 +169,7 @@ impl Runtime {
                     .fuel_enabled(!runtime_context.disable_fuel),
                 runtime_context,
             );
+            executor.set_syscall_handler(runtime_syscall_handler);
             Self { executor }
         })
     }
@@ -187,8 +186,8 @@ impl Runtime {
     }
 
     pub fn call(&mut self) -> ExecutionResult {
-        let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
-        let fuel_refunded_before_the_call = self.executor.store().fuel_refunded();
+        let fuel_consumed_before_the_call = self.executor.fuel_consumed();
+        let fuel_refunded_before_the_call = self.executor.fuel_refunded();
         let result = self.executor.run(&INSTRUCTION_TABLE);
         self.handle_execution_result(
             result,
@@ -204,9 +203,9 @@ impl Runtime {
         fuel_refunded: i64,
         exit_code: i32,
     ) -> ExecutionResult {
-        let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
-        let fuel_refunded_before_the_call = self.executor.store().fuel_refunded();
-        let mut caller = Caller::new(self.executor.store_mut());
+        let fuel_consumed_before_the_call = self.executor.fuel_consumed();
+        let fuel_refunded_before_the_call = self.executor.fuel_refunded();
+        let mut caller = Caller::new(&mut self.executor);
         if fuel16_ptr > 0 {
             let mut buffer = [0u8; 16];
             LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
@@ -257,15 +256,14 @@ impl Runtime {
         fuel_consumed_before_the_call: u64,
         fuel_refunded_before_the_call: i64,
     ) -> ExecutionResult {
-        let mut execution_result =
-            take(&mut self.executor.store_mut().context_mut().execution_result);
+        let mut execution_result = take(&mut self.executor.context_mut().execution_result);
         // once fuel is calculated, we must adjust our fuel limit,
         // because we don't know what gas conversion policy is used,
         // if there is rounding then it can cause miscalculations
         execution_result.fuel_consumed =
-            self.executor.store().fuel_consumed() - fuel_consumed_before_the_call;
+            self.executor.fuel_consumed() - fuel_consumed_before_the_call;
         execution_result.fuel_refunded =
-            self.executor.store().fuel_refunded() - fuel_refunded_before_the_call;
+            self.executor.fuel_refunded() - fuel_refunded_before_the_call;
         loop {
             match next_result {
                 Ok(exit_code) => {
@@ -306,7 +304,7 @@ impl Runtime {
                         if resumable_state.is_root {
                             // TODO(dmitry123): "validate this logic, might not be ok in STF mode"
                             let (_, _, exit_code) = SyscallExec::fn_continue(
-                                Caller::new(self.executor.store_mut()),
+                                Caller::new(&mut self.executor),
                                 resumable_state,
                             );
                             next_result = Ok(exit_code);
@@ -337,7 +335,7 @@ impl Runtime {
         // so we must save the current state
         // to interrupt execution and delegate decision-making
         // to the root execution
-        let output = self.executor.store_mut().context_mut().output_mut();
+        let output = self.executor.context_mut().output_mut();
         output.clear();
         assert!(output.is_empty(), "runtime: return data must be empty");
         // serialize delegated execution state,
@@ -355,23 +353,15 @@ impl Runtime {
         execution_result.interrupted = true;
     }
 
-    pub fn store(&self) -> &RwasmContext<RuntimeContext> {
-        self.executor.store()
-    }
-
-    pub fn store_mut(&mut self) -> &mut RwasmContext<RuntimeContext> {
-        self.executor.store_mut()
-    }
-
     pub fn context(&self) -> &RuntimeContext {
-        self.executor.store().context()
+        self.executor.context()
     }
 
     pub fn context_mut(&mut self) -> &mut RuntimeContext {
-        self.executor.store_mut().context_mut()
+        self.executor.context_mut()
     }
 
     pub fn take_context(&mut self) -> RuntimeContext {
-        take(self.executor.store_mut().context_mut())
+        take(self.executor.context_mut())
     }
 }
