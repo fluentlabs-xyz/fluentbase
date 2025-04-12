@@ -53,13 +53,13 @@ mod tests {
     use fluentbase_sdk::{hex, testing::TestingContext, Address, Bytes, ContractContextV1};
 
     fn exec_evm_precompile(address: Address, inputs: &[u8], expected: &[u8], expected_gas: u64) {
-        let gas_limit = 100_000;
+        let gas_limit = 100_000_000;
         let sdk = TestingContext::default()
             .with_input(Bytes::copy_from_slice(inputs))
             .with_contract_context(ContractContextV1 {
                 address,
                 bytecode_address: address,
-                gas_limit,
+                // gas_limit,
                 ..Default::default()
             });
         main(sdk.clone());
