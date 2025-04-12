@@ -2064,6 +2064,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-secp256r1"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "hex",
+ "p256",
+ "revm-precompile",
+ "sha2 0.10.8",
+]
+
+[[package]]
 name = "fluentbase-contracts-sha256"
 version = "0.1.0"
 dependencies = [
@@ -2076,8 +2088,13 @@ dependencies = [
 name = "fluentbase-contracts-webauthn"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "fluentbase-build",
  "fluentbase-sdk",
+ "hex",
+ "p256",
+ "revm-precompile",
+ "sha2 0.10.8",
 ]
 
 [[package]]
@@ -2272,6 +2289,7 @@ dependencies = [
  "fluentbase-contracts-nitro",
  "fluentbase-contracts-oauth2",
  "fluentbase-contracts-ripemd160",
+ "fluentbase-contracts-secp256r1",
  "fluentbase-contracts-sha256",
  "fluentbase-contracts-webauthn",
  "fluentbase-types",

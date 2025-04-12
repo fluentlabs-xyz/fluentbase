@@ -1,19 +1,17 @@
 [package]
-name = "fluentbase-contracts-webauthn"
+name = "fluentbase-contracts-secp256r1"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-base64 = { version = "0.22.0", default-features = false, features = ["alloc"] }
 fluentbase-sdk = { workspace = true }
-hex = { version = "0.4", default-features = false, features = ["alloc"] }
-# p256 = {version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"]}
 revm-precompile = { workspace = true, features = ["secp256r1"] }
 
+[dev-dependencies]
+hex = "0.4.3"
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"] }
 sha2 = { version = "0.10", default-features = false }
 
-[dev-dependencies]
-p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"] }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
@@ -25,9 +23,6 @@ path = "lib.rs"
 [features]
 default = ["std"]
 std = [
-    "fluentbase-sdk/std", #   "p256/std",
-    "sha2/std",
-    "base64/std",
-    "hex/std",
+    "fluentbase-sdk/std",
     "revm-precompile/std",
 ]
