@@ -3,6 +3,7 @@ use core::str::from_utf8;
 use fluentbase_codec::{bytes::BytesMut, SolidityABI};
 use fluentbase_sdk::{bytes, Address, Bytes, U256};
 use hex_literal::hex;
+use std::time::SystemTime;
 
 #[test]
 fn test_wasm_greeting() {
@@ -14,6 +15,9 @@ fn test_wasm_greeting() {
         include_bytes!("../../examples/greeting/lib.wasm").into(),
     );
     // call greeting WASM contract
+    let current_time = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
         contract_address,
@@ -22,9 +26,13 @@ fn test_wasm_greeting() {
         None,
     );
     let output = result.output().unwrap_or_default();
-    println!("Result: {:?}", result);
+    let elapsed_time = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
+    println!("Exec took {} us", (elapsed_time - current_time).as_micros());
     assert!(result.is_success());
     assert_eq!("Hello, World", from_utf8(output.as_ref()).unwrap());
+    println!("Result: {:?}", result);
 }
 
 #[test]

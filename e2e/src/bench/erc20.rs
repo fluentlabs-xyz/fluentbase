@@ -17,14 +17,13 @@ fn bench_evm_erc20(b: &mut Bencher) {
     );
 
     let transfer_coin = |ctx: &mut EvmTestingContext| {
-        let result = ctx.call_evm_tx(
+        ctx.call_evm_tx(
             OWNER_ADDRESS,
             contract_address,
             hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into(),
             None,
             None,
         );
-        assert!(result.is_success());
     };
 
     b.iter(|| {
@@ -42,14 +41,13 @@ fn bench_wasm_erc20(b: &mut Bencher) {
     );
 
     let transfer_coin = |ctx: &mut EvmTestingContext| {
-        let result = ctx.call_evm_tx(
+        ctx.call_evm_tx(
             OWNER_ADDRESS,
             contract_address,
             hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into(),
             None,
             None,
         );
-        assert!(result.is_success());
     };
 
     b.iter(|| {

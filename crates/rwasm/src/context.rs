@@ -1,6 +1,8 @@
 use crate::{
     config::ExecutorConfig,
+    instr_ptr::InstructionPtr,
     memory::GlobalMemory,
+    module::RwasmModule2,
     RwasmError,
     FUNC_REF_OFFSET,
     N_DEFAULT_STACK_SIZE,
@@ -12,14 +14,12 @@ use rwasm::{
     core::{TrapCode, UntypedValue, ValueType, N_MAX_MEMORY_PAGES},
     engine::{
         bytecode::{DataSegmentIdx, ElementSegmentIdx, GlobalIdx, SignatureIdx, TableIdx},
-        code_map::InstructionPtr,
         stack::{ValueStack, ValueStackPtr},
         FuelCosts,
         Tracer,
     },
     memory::DataSegmentEntity,
     module::{ConstExpr, ElementSegment, ElementSegmentItems, ElementSegmentKind},
-    rwasm::RwasmModuleInstance,
     store::ResourceLimiterRef,
     table::{ElementSegmentEntity, TableEntity},
     MemoryType,
@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 pub struct RwasmContext<T> {
     // function segments
-    pub(crate) instance: Arc<RwasmModuleInstance>,
+    pub(crate) module: Arc<RwasmModule2>,
     pub(crate) config: ExecutorConfig,
     // execution context information
     pub(crate) consumed_fuel: u64,
@@ -53,7 +53,7 @@ pub struct RwasmContext<T> {
 
 impl<T> RwasmContext<T> {
     pub fn new(
-        instance: Arc<RwasmModuleInstance>,
+        module: Arc<RwasmModule2>,
         shared_memory: SharedMemory,
         config: ExecutorConfig,
         context: T,
@@ -63,11 +63,8 @@ impl<T> RwasmContext<T> {
         let sp = value_stack.stack_ptr();
 
         // assign sp to the position inside code section
-        let mut ip = InstructionPtr::new(
-            instance.module.code_section.instr.as_ptr(),
-            instance.module.code_section.metas.as_ptr(),
-        );
-        ip.add(instance.start);
+        let mut ip = InstructionPtr::new(module.code_section.as_ptr(), module.instr_data.as_ptr());
+        ip.add(module.source_pc as usize);
 
         // create global memory
         let mut resource_limiter_ref = ResourceLimiterRef::default();
@@ -86,8 +83,7 @@ impl<T> RwasmContext<T> {
                 kind: ElementSegmentKind::Passive,
                 ty: ValueType::I32,
                 items: ElementSegmentItems {
-                    exprs: instance
-                        .module
+                    exprs: module
                         .element_section
                         .iter()
                         .map(|v| ConstExpr::from_const((*v + FUNC_REF_OFFSET).into()))
@@ -103,7 +99,7 @@ impl<T> RwasmContext<T> {
         };
 
         Self {
-            instance,
+            module,
             config,
             consumed_fuel: 0,
             refunded_fuel: 0,
@@ -129,10 +125,10 @@ impl<T> RwasmContext<T> {
 
     pub fn reset(&mut self, pc: Option<usize>) {
         let mut ip = InstructionPtr::new(
-            self.instance.module.code_section.instr.as_ptr(),
-            self.instance.module.code_section.metas.as_ptr(),
+            self.module.code_section.as_ptr(),
+            self.module.instr_data.as_ptr(),
         );
-        ip.add(pc.unwrap_or(self.instance.start));
+        ip.add(pc.unwrap_or(self.module.source_pc as usize));
         self.ip = ip;
         self.consumed_fuel = 0;
         self.value_stack.drain();

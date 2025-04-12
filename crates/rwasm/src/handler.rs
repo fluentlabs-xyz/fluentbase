@@ -2,6 +2,8 @@ use crate::{context::Caller, RwasmError};
 use rwasm::core::UntypedValue;
 use tiny_keccak::Hasher;
 
+// pub type SyscallHandler<T> = fn(Caller<T>, u32) -> Result<(), RwasmError>;
+
 pub trait SyscallHandler<T> {
     fn call_function(caller: Caller<T>, func_idx: u32) -> Result<(), RwasmError>;
 }

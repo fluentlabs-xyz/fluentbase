@@ -7,13 +7,14 @@ use crate::{
 };
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_rwasm::{
+    make_instruction_table,
     Caller,
     ExecutorConfig,
+    InstructionTable,
     RwasmContext,
     RwasmError,
     RwasmExecutor,
-    RwasmModule,
-    RwasmModuleInstance,
+    RwasmModule2,
     SyscallHandler,
 };
 use fluentbase_types::{
@@ -57,7 +58,7 @@ impl ExecutionResult {
 pub struct CachingRuntime {
     // TODO(dmitry123): "add LRU cache to this map to avoid memory leak"
     cached_bytecode: HashMap<B256, Bytes>,
-    modules: HashMap<B256, Arc<RwasmModuleInstance>>,
+    modules: HashMap<B256, Arc<RwasmModule2>>,
     recoverable_runtimes: HashMap<u32, Runtime>,
 }
 
@@ -70,21 +71,7 @@ impl CachingRuntime {
         }
     }
 
-    pub fn insert_module(
-        &mut self,
-        rwasm_hash: B256,
-        instance: Arc<RwasmModuleInstance>,
-        bytecode: Bytes,
-    ) -> &RwasmModuleInstance {
-        self.cached_bytecode.insert(rwasm_hash, bytecode);
-        let entry = match self.modules.entry(rwasm_hash) {
-            Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
-            Entry::Vacant(entry) => entry,
-        };
-        entry.insert(instance)
-    }
-
-    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<RwasmModuleInstance> {
+    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<RwasmModule2> {
         let rwasm_bytecode = self
             .cached_bytecode
             .get(&rwasm_hash)
@@ -93,14 +80,12 @@ impl CachingRuntime {
             Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
             Entry::Vacant(entry) => entry,
         };
-        let reduced_module =
-            RwasmModule::new_or_empty(rwasm_bytecode).expect("runtime: can't parse rwasm module");
-        let reduced_module = Arc::new(reduced_module.instantiate());
+        let reduced_module = Arc::new(RwasmModule2::new_or_empty(rwasm_bytecode));
         entry.insert(reduced_module.clone());
         reduced_module
     }
 
-    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<RwasmModuleInstance>> {
+    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<RwasmModule2>> {
         self.modules.get(rwasm_hash).cloned()
     }
 }
@@ -123,6 +108,9 @@ impl SyscallHandler<RuntimeContext> for RuntimeSyscallHandler {
 pub struct Runtime {
     pub(crate) executor: RwasmExecutor<RuntimeSyscallHandler, RuntimeContext>,
 }
+
+const INSTRUCTION_TABLE: InstructionTable<RuntimeSyscallHandler, RuntimeContext> =
+    make_instruction_table();
 
 impl Runtime {
     pub fn catch_trap(err: &RwasmError) -> i32 {
@@ -201,7 +189,7 @@ impl Runtime {
     pub fn call(&mut self) -> ExecutionResult {
         let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
         let fuel_refunded_before_the_call = self.executor.store().fuel_refunded();
-        let result = self.executor.run();
+        let result = self.executor.run(&INSTRUCTION_TABLE);
         self.handle_execution_result(
             result,
             fuel_consumed_before_the_call,
@@ -233,7 +221,7 @@ impl Runtime {
             }
         }
         caller.stack_push(exit_code);
-        let result = self.executor.run();
+        let result = self.executor.run(&INSTRUCTION_TABLE);
         self.handle_execution_result(
             result,
             fuel_consumed_before_the_call,

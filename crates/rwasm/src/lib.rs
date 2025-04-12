@@ -2,11 +2,14 @@
 #![allow(dead_code)]
 #![warn(unused_crate_dependencies)]
 
+mod binary_format;
 mod config;
 mod context;
 mod executor;
 mod handler;
+mod instr_ptr;
 mod memory;
+mod module;
 mod opcodes;
 mod types;
 mod utils;
@@ -18,6 +21,8 @@ pub use config::*;
 pub use context::*;
 pub use executor::*;
 pub use handler::*;
+pub use module::*;
+pub use opcodes::*;
 pub use rwasm::{
     core::{HostError, TrapCode},
     engine::{bytecode::Instruction, stack::ValueStackPtr, RwasmConfig, StateRouterConfig},

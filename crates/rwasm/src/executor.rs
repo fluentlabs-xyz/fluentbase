@@ -1,5 +1,8 @@
 use crate::{
     config::ExecutorConfig,
+    instr_ptr::InstructionPtr,
+    module::{InstructionData, RwasmModule2},
+    opcodes::{run_the_loop, InstructionTable},
     types::RwasmError,
     RwasmContext,
     SyscallHandler,
@@ -11,8 +14,8 @@ use revm_interpreter::{SharedMemory, EMPTY_SHARED_MEMORY};
 use rwasm::{
     core::{TrapCode, UntypedValue, ValueType},
     engine::{
-        bytecode::{AddressOffset, DataSegmentIdx, ElementSegmentIdx, Instruction, TableIdx},
-        code_map::{FuncHeader, InstructionPtr, InstructionsRef},
+        bytecode::{AddressOffset, DataSegmentIdx, ElementSegmentIdx, TableIdx},
+        code_map::{FuncHeader, InstructionsRef},
         DropKeep,
     },
     memory::DataSegmentEntity,
@@ -23,7 +26,7 @@ use rwasm::{
         ElementSegmentItems,
         ElementSegmentKind,
     },
-    rwasm::{RwasmModule, RwasmModuleInstance, N_MAX_RECURSION_DEPTH},
+    rwasm::N_MAX_RECURSION_DEPTH,
     store::ResourceLimiterRef,
     table::{ElementSegmentEntity, TableEntity},
     TableType,
@@ -34,6 +37,8 @@ use std::sync::Arc;
 pub struct RwasmExecutor<E: SyscallHandler<T>, T> {
     pub(crate) store: RwasmContext<T>,
     phantom_data: PhantomData<E>,
+    pub(crate) next_result: Option<Result<i32, RwasmError>>,
+    pub(crate) stop_exec: bool,
 }
 
 impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
@@ -44,7 +49,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         context: T,
     ) -> Result<Self, RwasmError> {
         Ok(Self::new(
-            Arc::new(RwasmModule::new_or_empty(rwasm_bytecode)?.instantiate()),
+            Arc::new(RwasmModule2::new(rwasm_bytecode)),
             shared_memory,
             config,
             context,
@@ -52,7 +57,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     }
 
     pub fn new(
-        rwasm_module: Arc<RwasmModuleInstance>,
+        rwasm_module: Arc<RwasmModule2>,
         shared_memory: SharedMemory,
         config: ExecutorConfig,
         context: T,
@@ -61,11 +66,13 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         Self {
             store,
             phantom_data: Default::default(),
+            next_result: None,
+            stop_exec: false,
         }
     }
 
-    pub fn run(&mut self) -> Result<i32, RwasmError> {
-        match self.run_the_loop() {
+    pub fn run(&mut self, instruction_table: &InstructionTable<E, T>) -> Result<i32, RwasmError> {
+        match run_the_loop(self, instruction_table) {
             Ok(exit_code) => Ok(exit_code),
             Err(err) => match err {
                 RwasmError::ExecutionHalted(exit_code) => Ok(exit_code),
@@ -154,8 +161,8 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     pub(crate) fn fetch_drop_keep(&self, offset: usize) -> DropKeep {
         let mut addr: InstructionPtr = self.store.ip;
         addr.add(offset);
-        match addr.get() {
-            Instruction::Return(drop_keep) => *drop_keep,
+        match addr.data() {
+            InstructionData::DropKeep(drop_keep) => *drop_keep,
             _ => unreachable!("rwasm: can't extract drop keep"),
         }
     }
@@ -163,8 +170,8 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     pub(crate) fn fetch_table_index(&self, offset: usize) -> TableIdx {
         let mut addr: InstructionPtr = self.store.ip;
         addr.add(offset);
-        match addr.get() {
-            Instruction::TableGet(table_idx) => *table_idx,
+        match addr.data() {
+            InstructionData::TableIdx(table_idx) => *table_idx,
             _ => unreachable!("rwasm: can't extract table index"),
         }
     }
@@ -266,7 +273,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         }
         let instr_ref = self
             .store
-            .instance
+            .module
             .func_segments
             .get(func_idx as usize)
             .copied()
@@ -275,8 +282,8 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         self.store.value_stack.prepare_wasm_call(&header)?;
         self.store.sp = self.store.value_stack.stack_ptr();
         self.store.ip = InstructionPtr::new(
-            self.store.instance.module.code_section.instr.as_ptr(),
-            self.store.instance.module.code_section.metas.as_ptr(),
+            self.store.module.code_section.as_ptr(),
+            self.store.module.instr_data.as_ptr(),
         );
         self.store.ip.add(instr_ref as usize);
         Ok(())

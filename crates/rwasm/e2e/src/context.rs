@@ -13,11 +13,14 @@ use crate::handler::{
 };
 use anyhow::Result;
 use fluentbase_rwasm::{
+    make_instruction_table,
     AlwaysFailingSyscallHandler,
     Caller,
     ExecutorConfig,
+    InstructionTable,
     RwasmError,
     RwasmExecutor,
+    RwasmModule2,
     SimpleCallHandler,
 };
 use revm_interpreter::SharedMemory;
@@ -48,6 +51,9 @@ use wast::token::{Id, Span};
 
 type TestingRwasmExecutor = RwasmExecutor<TestingSyscallHandler, TestingContext>;
 type Instance = Rc<RefCell<TestingRwasmExecutor>>;
+
+const TESTING_INSTRUCTION_TABLE: InstructionTable<TestingSyscallHandler, TestingContext> =
+    make_instruction_table();
 
 /// The context of a single Wasm test spec suite run.
 pub struct TestContext<'a> {
@@ -227,7 +233,7 @@ impl TestContext<'_> {
         rwasm_module
             .write_binary_to_vec(&mut encoded_rwasm_module)
             .unwrap();
-        let rwasm_module = RwasmModule::read_from_slice(&encoded_rwasm_module).unwrap();
+        let rwasm_module = RwasmModule2::new(&encoded_rwasm_module);
 
         // println!();
         // #[allow(unused)]
@@ -263,14 +269,14 @@ impl TestContext<'_> {
         // println!();
 
         let mut executor = TestingRwasmExecutor::new(
-            rwasm_module.instantiate().into(),
+            rwasm_module.into(),
             SharedMemory::default(),
             ExecutorConfig::new().floats_enabled(false),
             TestingContext::default(),
         );
         executor.store_mut().context_mut().state = ENTRYPOINT_FUNC_IDX;
         println!(" --- entrypoint ---");
-        let exit_code = executor.run().map_err(|err| {
+        let exit_code = executor.run(&TESTING_INSTRUCTION_TABLE).map_err(|err| {
             let trap_code = match err {
                 RwasmError::TrapCode(trap_code) => trap_code,
                 _ => unreachable!("not possible error: {:?}", err),
@@ -385,7 +391,7 @@ impl TestContext<'_> {
 
         // change function state for router
         instance.store_mut().context_mut().state = func_state;
-        let exit_code = instance.run().map_err(|err| {
+        let exit_code = instance.run(&TESTING_INSTRUCTION_TABLE).map_err(|err| {
             let trap_code = match err {
                 RwasmError::TrapCode(trap_code) => trap_code,
                 _ => unreachable!("not possible error: {:?}", err),

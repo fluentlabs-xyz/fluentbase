@@ -6,6 +6,8 @@ use crate::{
     impl_visit_load,
     impl_visit_store,
     impl_visit_unary,
+    instr_ptr::InstructionPtr,
+    module::{Instruction, InstructionData},
     Caller,
     RwasmError,
     SyscallHandler,
@@ -16,1128 +18,1274 @@ use core::cmp;
 use rwasm::{
     core::{Pages, TrapCode, UntypedValue},
     engine::{
-        bytecode::{
-            AddressOffset,
-            BlockFuel,
-            BranchOffset,
-            BranchTableTargets,
-            DataSegmentIdx,
-            ElementSegmentIdx,
-            FuncIdx,
-            GlobalIdx,
-            Instruction,
-            LocalDepth,
-            SignatureIdx,
-            TableIdx,
-        },
-        code_map::{FuncHeader, InstructionPtr, InstructionsRef},
+        bytecode::ElementSegmentIdx,
+        code_map::{FuncHeader, InstructionsRef},
         executor::EntityGrowError,
-        CompiledFunc,
-        DropKeep,
     },
     rwasm::N_MAX_RECURSION_DEPTH,
     store::ResourceLimiterRef,
     table::{ElementSegmentEntity, TableEntity},
 };
 
-impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
-    pub(crate) fn run_the_loop(&mut self) -> Result<i32, RwasmError> {
-        macro_rules! impl_float_check {
-            ($expr:expr) => {{
-                if self.store.config.floats_enabled {
-                    return Err(RwasmError::FloatsAreDisabled);
-                }
-                $expr
-            }};
-        }
-        let mut resource_limiter_ref = ResourceLimiterRef::default();
-        loop {
-            let instr = *self.store.ip.get();
+pub type VisitInstruction<E, T> = fn(&mut RwasmExecutor<E, T>);
 
-            #[cfg(feature = "debug-print")]
-            {
-                let stack = self
-                    .store
-                    .value_stack
-                    .dump_stack(self.store.sp)
-                    .iter()
-                    .rev()
-                    .take(10)
-                    .map(|v| v.as_u64())
-                    .collect::<Vec<_>>();
-                println!(
-                    "{:02}: {:?}, stack={:?} ({})",
-                    self.store.ip.pc(),
-                    instr,
-                    stack,
-                    self.store.value_stack.stack_len(self.store.sp)
-                );
-            }
+pub type InstructionTable<E, T> = [VisitInstruction<E, T>; 0x100];
 
-            #[cfg(feature = "tracer")]
-            if self.store.tracer.is_some() {
-                use rwasm::engine::bytecode::InstrMeta;
-                let memory_size: u32 = self.store.global_memory.current_pages().into();
-                let consumed_fuel = self.store.fuel_consumed();
-                let stack = self.store.value_stack.dump_stack(self.store.sp);
-                self.store.tracer.as_mut().unwrap().pre_opcode_state(
-                    self.store.ip.pc(),
-                    instr,
-                    stack,
-                    &InstrMeta::new(0, 0, 0),
-                    memory_size,
-                    consumed_fuel,
-                );
-            }
+#[inline]
+pub const fn make_instruction_table<E: SyscallHandler<T>, T>() -> InstructionTable<E, T> {
+    use Instruction::*;
+    const {
+        let mut tables: InstructionTable<E, T> = [visit_unreachable_wrapped; 0x100];
+        tables[Unreachable as usize] = visit_unreachable_wrapped;
+        tables[LocalGet as usize] = visit_local_get;
+        tables[LocalSet as usize] = visit_local_set;
+        tables[LocalTee as usize] = visit_local_tee;
+        tables[Br as usize] = visit_br;
+        tables[BrIfEqz as usize] = visit_br_if;
+        tables[BrIfNez as usize] = visit_br_if_nez;
+        tables[BrAdjust as usize] = visit_br_adjust;
+        tables[BrAdjustIfNez as usize] = visit_br_adjust_if_nez;
+        tables[BrTable as usize] = visit_br_table;
+        tables[ConsumeFuel as usize] = visit_consume_fuel_wrapped;
+        tables[Return as usize] = visit_return;
+        tables[ReturnIfNez as usize] = visit_return_if_nez;
+        tables[ReturnCallInternal as usize] = visit_return_call_internal_wrapped;
+        tables[ReturnCall as usize] = visit_return_call_wrapped;
+        tables[ReturnCallIndirect as usize] = visit_return_call_indirect_wrapped;
+        tables[CallInternal as usize] = visit_call_internal_wrapped;
+        tables[Call as usize] = visit_call_wrapped;
+        tables[CallIndirect as usize] = visit_call_indirect_wrapped;
+        tables[SignatureCheck as usize] = visit_signature_check_wrapped;
+        tables[Drop as usize] = visit_drop;
+        tables[Select as usize] = visit_select;
+        tables[GlobalGet as usize] = visit_global_get;
+        tables[GlobalSet as usize] = visit_global_set;
+        tables[I32Load as usize] = visit_i32_load_wrapped;
+        tables[I64Load as usize] = visit_i64_load_wrapped;
+        tables[F32Load as usize] = visit_f32_load_wrapped; // float
+        tables[F64Load as usize] = visit_f64_load_wrapped; // float
+        tables[I32Load8S as usize] = visit_i32_load_i8_s_wrapped;
+        tables[I32Load8U as usize] = visit_i32_load_i8_u_wrapped;
+        tables[I32Load16S as usize] = visit_i32_load_i16_s_wrapped;
+        tables[I32Load16U as usize] = visit_i32_load_i16_u_wrapped;
+        tables[I64Load8S as usize] = visit_i64_load_i8_s_wrapped;
+        tables[I64Load8U as usize] = visit_i64_load_i8_u_wrapped;
+        tables[I64Load16S as usize] = visit_i64_load_i16_s_wrapped;
+        tables[I64Load16U as usize] = visit_i64_load_i16_u_wrapped;
+        tables[I64Load32S as usize] = visit_i64_load_i32_s_wrapped;
+        tables[I64Load32U as usize] = visit_i64_load_i32_u_wrapped;
+        tables[I32Store as usize] = visit_i32_store_wrapped;
+        tables[I64Store as usize] = visit_i64_store_wrapped;
+        tables[F32Store as usize] = visit_f32_store_wrapped; // float
+        tables[F64Store as usize] = visit_f64_store_wrapped; // float
+        tables[I32Store8 as usize] = visit_i32_store_8_wrapped;
+        tables[I32Store16 as usize] = visit_i32_store_16_wrapped;
+        tables[I64Store8 as usize] = visit_i64_store_8_wrapped;
+        tables[I64Store16 as usize] = visit_i64_store_16_wrapped;
+        tables[I64Store32 as usize] = visit_i64_store_32_wrapped;
+        tables[MemorySize as usize] = visit_memory_size;
+        tables[MemoryGrow as usize] = visit_memory_grow_wrapped;
+        tables[MemoryFill as usize] = visit_memory_fill_wrapped;
+        tables[MemoryCopy as usize] = visit_memory_copy_wrapped;
+        tables[MemoryInit as usize] = visit_memory_init_wrapped;
+        tables[DataDrop as usize] = visit_data_drop;
+        tables[TableSize as usize] = visit_table_size;
+        tables[TableGrow as usize] = visit_table_grow_wrapped;
+        tables[TableFill as usize] = visit_table_fill_wrapped;
+        tables[TableGet as usize] = visit_table_get_wrapped;
+        tables[TableSet as usize] = visit_table_set_wrapped;
+        tables[TableCopy as usize] = visit_table_copy_wrapped;
+        tables[TableInit as usize] = visit_table_init_wrapped;
+        tables[ElemDrop as usize] = visit_element_drop;
+        tables[RefFunc as usize] = visit_ref_func;
+        tables[I32Const as usize] = visit_i32_i64_const;
+        tables[I64Const as usize] = visit_i32_i64_const;
+        tables[F32Const as usize] = visit_i32_i64_const; // float
+        tables[F64Const as usize] = visit_i32_i64_const; // float
+        tables[I32Eqz as usize] = visit_i32_eqz;
+        tables[I32Eq as usize] = visit_i32_eq;
+        tables[I32Ne as usize] = visit_i32_ne;
+        tables[I32LtS as usize] = visit_i32_lt_s;
+        tables[I32LtU as usize] = visit_i32_lt_u;
+        tables[I32GtS as usize] = visit_i32_gt_s;
+        tables[I32GtU as usize] = visit_i32_gt_u;
+        tables[I32LeS as usize] = visit_i32_le_s;
+        tables[I32LeU as usize] = visit_i32_le_u;
+        tables[I32GeS as usize] = visit_i32_ge_s;
+        tables[I32GeU as usize] = visit_i32_ge_u;
+        tables[I64Eqz as usize] = visit_i64_eqz;
+        tables[I64Eq as usize] = visit_i64_eq;
+        tables[I64Ne as usize] = visit_i64_ne;
+        tables[I64LtS as usize] = visit_i64_lt_s;
+        tables[I64LtU as usize] = visit_i64_lt_u;
+        tables[I64GtS as usize] = visit_i64_gt_s;
+        tables[I64GtU as usize] = visit_i64_gt_u;
+        tables[I64LeS as usize] = visit_i64_le_s;
+        tables[I64LeU as usize] = visit_i64_le_u;
+        tables[I64GeS as usize] = visit_i64_ge_s;
+        tables[I64GeU as usize] = visit_i64_ge_u;
+        tables[F32Eq as usize] = visit_f32_eq; // float
+        tables[F32Ne as usize] = visit_f32_ne; // float
+        tables[F32Lt as usize] = visit_f32_lt; // float
+        tables[F32Gt as usize] = visit_f32_gt; // float
+        tables[F32Le as usize] = visit_f32_le; // float
+        tables[F32Ge as usize] = visit_f32_ge; // float
+        tables[F64Eq as usize] = visit_f64_eq; // float
+        tables[F64Ne as usize] = visit_f64_ne; // float
+        tables[F64Lt as usize] = visit_f64_lt; // float
+        tables[F64Gt as usize] = visit_f64_gt; // float
+        tables[F64Le as usize] = visit_f64_le; // float
+        tables[F64Ge as usize] = visit_f64_ge; // float
+        tables[I32Clz as usize] = visit_i32_clz;
+        tables[I32Ctz as usize] = visit_i32_ctz;
+        tables[I32Popcnt as usize] = visit_i32_popcnt;
+        tables[I32Add as usize] = visit_i32_add;
+        tables[I32Sub as usize] = visit_i32_sub;
+        tables[I32Mul as usize] = visit_i32_mul;
+        tables[I32DivS as usize] = visit_i32_div_s_wrapped;
+        tables[I32DivU as usize] = visit_i32_div_u_wrapped;
+        tables[I32RemS as usize] = visit_i32_rem_s_wrapped;
+        tables[I32RemU as usize] = visit_i32_rem_u_wrapped;
+        tables[I32And as usize] = visit_i32_and;
+        tables[I32Or as usize] = visit_i32_or;
+        tables[I32Xor as usize] = visit_i32_xor;
+        tables[I32Shl as usize] = visit_i32_shl;
+        tables[I32ShrS as usize] = visit_i32_shr_s;
+        tables[I32ShrU as usize] = visit_i32_shr_u;
+        tables[I32Rotl as usize] = visit_i32_rotl;
+        tables[I32Rotr as usize] = visit_i32_rotr;
+        tables[I64Clz as usize] = visit_i64_clz;
+        tables[I64Ctz as usize] = visit_i64_ctz;
+        tables[I64Popcnt as usize] = visit_i64_popcnt;
+        tables[I64Add as usize] = visit_i64_add;
+        tables[I64Sub as usize] = visit_i64_sub;
+        tables[I64Mul as usize] = visit_i64_mul;
+        tables[I64DivS as usize] = visit_i64_div_s_wrapped;
+        tables[I64DivU as usize] = visit_i64_div_u_wrapped;
+        tables[I64RemS as usize] = visit_i64_rem_s_wrapped;
+        tables[I64RemU as usize] = visit_i64_rem_u_wrapped;
+        tables[I64And as usize] = visit_i64_and;
+        tables[I64Or as usize] = visit_i64_or;
+        tables[I64Xor as usize] = visit_i64_xor;
+        tables[I64Shl as usize] = visit_i64_shl;
+        tables[I64ShrS as usize] = visit_i64_shr_s;
+        tables[I64ShrU as usize] = visit_i64_shr_u;
+        tables[I64Rotl as usize] = visit_i64_rotl;
+        tables[I64Rotr as usize] = visit_i64_rotr;
+        tables[F32Abs as usize] = visit_f32_abs; // float
+        tables[F32Neg as usize] = visit_f32_neg; // float
+        tables[F32Ceil as usize] = visit_f32_ceil; // float
+        tables[F32Floor as usize] = visit_f32_floor; // float
+        tables[F32Trunc as usize] = visit_f32_trunc; // float
+        tables[F32Nearest as usize] = visit_f32_nearest; // float
+        tables[F32Sqrt as usize] = visit_f32_sqrt; // float
+        tables[F32Add as usize] = visit_f32_add; // float
+        tables[F32Sub as usize] = visit_f32_sub; // float
+        tables[F32Mul as usize] = visit_f32_mul; // float
+        tables[F32Div as usize] = visit_f32_div; // float
+        tables[F32Min as usize] = visit_f32_min; // float
+        tables[F32Max as usize] = visit_f32_max; // float
+        tables[F32Copysign as usize] = visit_f32_copysign; // float
+        tables[F64Abs as usize] = visit_f64_abs; // float
+        tables[F64Neg as usize] = visit_f64_neg; // float
+        tables[F64Ceil as usize] = visit_f64_ceil; // float
+        tables[F64Floor as usize] = visit_f64_floor; // float
+        tables[F64Trunc as usize] = visit_f64_trunc; // float
+        tables[F64Nearest as usize] = visit_f64_nearest; // float
+        tables[F64Sqrt as usize] = visit_f64_sqrt; // float
+        tables[F64Add as usize] = visit_f64_add; // float
+        tables[F64Sub as usize] = visit_f64_sub; // float
+        tables[F64Mul as usize] = visit_f64_mul; // float
+        tables[F64Div as usize] = visit_f64_div; // float
+        tables[F64Min as usize] = visit_f64_min; // float
+        tables[F64Max as usize] = visit_f64_max; // float
+        tables[F64Copysign as usize] = visit_f64_copysign; // float
+        tables[I32WrapI64 as usize] = visit_i32_wrap_i64;
+        tables[I32TruncF32S as usize] = visit_i32_trunc_f32_s_wrapped; // float
+        tables[I32TruncF32U as usize] = visit_i32_trunc_f32_u_wrapped; // float
+        tables[I32TruncF64S as usize] = visit_i32_trunc_f64_s_wrapped; // float
+        tables[I32TruncF64U as usize] = visit_i32_trunc_f64_u_wrapped; // float
+        tables[I64ExtendI32S as usize] = visit_i64_extend_i32_s;
+        tables[I64ExtendI32U as usize] = visit_i64_extend_i32_u;
+        tables[I64TruncF32S as usize] = visit_i64_trunc_f32_s_wrapped; // float
+        tables[I64TruncF32U as usize] = visit_i64_trunc_f32_u_wrapped; // float
+        tables[I64TruncF64S as usize] = visit_i64_trunc_f64_s_wrapped; // float
+        tables[I64TruncF64U as usize] = visit_i64_trunc_f64_u_wrapped; // float
+        tables[F32ConvertI32S as usize] = visit_f32_convert_i32_s; // float
+        tables[F32ConvertI32U as usize] = visit_f32_convert_i32_u; // float
+        tables[F32ConvertI64S as usize] = visit_f32_convert_i64_s; // float
+        tables[F32ConvertI64U as usize] = visit_f32_convert_i64_u; // float
+        tables[F32DemoteF64 as usize] = visit_f32_demote_f64; // float
+        tables[F64ConvertI32S as usize] = visit_f64_convert_i32_s; // float
+        tables[F64ConvertI32U as usize] = visit_f64_convert_i32_u; // float
+        tables[F64ConvertI64S as usize] = visit_f64_convert_i64_s; // float
+        tables[F64ConvertI64U as usize] = visit_f64_convert_i64_u; // float
+        tables[F64PromoteF32 as usize] = visit_f64_promote_f32; // float
+        tables[I32TruncSatF32S as usize] = visit_i32_trunc_sat_f32_s; // float
+        tables[I32TruncSatF32U as usize] = visit_i32_trunc_sat_f32_u; // float
+        tables[I32TruncSatF64S as usize] = visit_i32_trunc_sat_f64_s; // float
+        tables[I32TruncSatF64U as usize] = visit_i32_trunc_sat_f64_u; // float
+        tables[I64TruncSatF32S as usize] = visit_i64_trunc_sat_f32_s; // float
+        tables[I64TruncSatF32U as usize] = visit_i64_trunc_sat_f32_u; // float
+        tables[I64TruncSatF64S as usize] = visit_i64_trunc_sat_f64_s; // float
+        tables[I64TruncSatF64U as usize] = visit_i64_trunc_sat_f64_u; // float
+        tables[I32Extend8S as usize] = visit_i32_extend8_s;
+        tables[I32Extend16S as usize] = visit_i32_extend16_s;
+        tables[I64Extend8S as usize] = visit_i64_extend8_s;
+        tables[I64Extend16S as usize] = visit_i64_extend16_s;
+        tables[I64Extend32S as usize] = visit_i64_extend32_s;
+        tables
+    }
+}
 
-            match instr {
-                Instruction::Unreachable => self.visit_unreachable()?,
-                Instruction::LocalGet(local_depth) => self.visit_local_get(local_depth),
-                Instruction::LocalSet(local_depth) => self.visit_local_set(local_depth),
-                Instruction::LocalTee(local_depth) => self.visit_local_tee(local_depth),
-                Instruction::Br(branch_offset) => self.visit_br(branch_offset),
-                Instruction::BrIfEqz(branch_offset) => self.visit_br_if(branch_offset),
-                Instruction::BrIfNez(branch_offset) => self.visit_br_if_nez(branch_offset),
-                Instruction::BrAdjust(branch_offset) => self.visit_br_adjust(branch_offset),
-                Instruction::BrAdjustIfNez(branch_offset) => {
-                    self.visit_br_adjust_if_nez(branch_offset)
-                }
-                Instruction::BrTable(targets) => self.visit_br_table(targets),
-                Instruction::ConsumeFuel(block_fuel) => self.visit_consume_fuel(block_fuel)?,
-                Instruction::Return(drop_keep) => {
-                    if let Some(exit_code) = self.visit_return(drop_keep) {
-                        return Ok(exit_code);
-                    }
-                }
-                Instruction::ReturnIfNez(drop_keep) => {
-                    if let Some(exit_code) = self.visit_return_if_nez(drop_keep) {
-                        return Ok(exit_code);
-                    }
-                }
-                Instruction::ReturnCallInternal(func_idx) => {
-                    self.visit_return_call_internal(func_idx)?;
-                }
-                Instruction::ReturnCall(func_idx) => self.visit_return_call(func_idx)?,
-                Instruction::ReturnCallIndirect(signature_idx) => {
-                    self.visit_return_call_indirect(signature_idx)?
-                }
-                Instruction::CallInternal(func_idx) => self.visit_call_internal(func_idx)?,
-                Instruction::Call(func_idx) => self.visit_call(func_idx)?,
-                Instruction::CallIndirect(signature_idx) => {
-                    self.visit_call_indirect(signature_idx)?
-                }
-                Instruction::SignatureCheck(signature_idx) => {
-                    self.visit_signature_check(signature_idx)?
-                }
-                Instruction::Drop => self.visit_drop(),
-                Instruction::Select => self.visit_select(),
-                Instruction::GlobalGet(global_idx) => self.visit_global_get(global_idx),
-                Instruction::GlobalSet(global_idx) => self.visit_global_set(global_idx),
-                Instruction::I32Load(offset) => self.visit_i32_load(offset)?,
-                Instruction::I64Load(offset) => self.visit_i64_load(offset)?,
-                Instruction::F32Load(offset) => impl_float_check!(self.visit_f32_load(offset)?),
-                Instruction::F64Load(offset) => impl_float_check!(self.visit_f64_load(offset)?),
-                Instruction::I32Load8S(offset) => self.visit_i32_load_i8_s(offset)?,
-                Instruction::I32Load8U(offset) => self.visit_i32_load_i8_u(offset)?,
-                Instruction::I32Load16S(offset) => self.visit_i32_load_i16_s(offset)?,
-                Instruction::I32Load16U(offset) => self.visit_i32_load_i16_u(offset)?,
-                Instruction::I64Load8S(offset) => self.visit_i64_load_i8_s(offset)?,
-                Instruction::I64Load8U(offset) => self.visit_i64_load_i8_u(offset)?,
-                Instruction::I64Load16S(offset) => self.visit_i64_load_i16_s(offset)?,
-                Instruction::I64Load16U(offset) => self.visit_i64_load_i16_u(offset)?,
-                Instruction::I64Load32S(offset) => self.visit_i64_load_i32_s(offset)?,
-                Instruction::I64Load32U(offset) => self.visit_i64_load_i32_u(offset)?,
-                Instruction::I32Store(offset) => self.visit_i32_store(offset)?,
-                Instruction::I64Store(offset) => self.visit_i64_store(offset)?,
-                Instruction::F32Store(offset) => impl_float_check!(self.visit_f32_store(offset)?),
-                Instruction::F64Store(offset) => impl_float_check!(self.visit_f64_store(offset)?),
-                Instruction::I32Store8(offset) => self.visit_i32_store_8(offset)?,
-                Instruction::I32Store16(offset) => self.visit_i32_store_16(offset)?,
-                Instruction::I64Store8(offset) => self.visit_i64_store_8(offset)?,
-                Instruction::I64Store16(offset) => self.visit_i64_store_16(offset)?,
-                Instruction::I64Store32(offset) => self.visit_i64_store_32(offset)?,
-                Instruction::MemorySize => self.visit_memory_size(),
-                Instruction::MemoryGrow => self.visit_memory_grow(&mut resource_limiter_ref)?,
-                Instruction::MemoryFill => self.visit_memory_fill()?,
-                Instruction::MemoryCopy => self.visit_memory_copy()?,
+pub(crate) fn run_the_loop<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+    instruction_table: &InstructionTable<E, T>,
+) -> Result<i32, RwasmError> {
+    while !exec.stop_exec {
+        let instr = *exec.store.ip.get();
+        instruction_table[instr as usize](exec);
+    }
+    exec.stop_exec = false;
+    exec.next_result
+        .take()
+        .unwrap_or_else(|| unreachable!("rwasm: next result without reason?"))
+}
 
-                Instruction::MemoryInit(segment) => self.visit_memory_init(segment)?,
-                Instruction::DataDrop(segment) => self.visit_data_drop(segment),
-                Instruction::TableSize(table) => self.visit_table_size(table),
-                Instruction::TableGrow(table) => {
-                    self.visit_table_grow(table, &mut resource_limiter_ref)?
+macro_rules! wrap_function_result {
+    ($fn_name:ident) => {
+        paste::paste! {
+            #[inline(always)]
+            pub(crate) fn [< $fn_name _wrapped >]<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>,) {
+                if let Err(err) = $fn_name(exec, /* &mut ResourceLimiterRef<'_> */) {
+                    exec.next_result = Some(Err(RwasmError::from(err)));
+                    exec.stop_exec = true;
                 }
-                Instruction::TableFill(table) => self.visit_table_fill(table)?,
-                Instruction::TableGet(table) => self.visit_table_get(table)?,
-                Instruction::TableSet(table) => self.visit_table_set(table)?,
-                Instruction::TableCopy(dst) => self.visit_table_copy(dst)?,
-                Instruction::TableInit(elem) => self.visit_table_init(elem)?,
-                Instruction::ElemDrop(segment) => self.visit_element_drop(segment),
-                Instruction::RefFunc(func_index) => self.visit_ref_func(func_index)?,
-                Instruction::I32Const(value) | Instruction::I64Const(value) => {
-                    self.visit_i32_i64_const(value)
-                }
-                Instruction::F32Const(value) | Instruction::F64Const(value) => {
-                    impl_float_check!(self.visit_i32_i64_const(value))
-                }
-
-                // Instruction::ConstRef(cref) => self.visit_const(cref),
-                Instruction::I32Eqz => self.visit_i32_eqz(),
-                Instruction::I32Eq => self.visit_i32_eq(),
-                Instruction::I32Ne => self.visit_i32_ne(),
-                Instruction::I32LtS => self.visit_i32_lt_s(),
-                Instruction::I32LtU => self.visit_i32_lt_u(),
-                Instruction::I32GtS => self.visit_i32_gt_s(),
-                Instruction::I32GtU => self.visit_i32_gt_u(),
-                Instruction::I32LeS => self.visit_i32_le_s(),
-                Instruction::I32LeU => self.visit_i32_le_u(),
-                Instruction::I32GeS => self.visit_i32_ge_s(),
-                Instruction::I32GeU => self.visit_i32_ge_u(),
-                Instruction::I64Eqz => self.visit_i64_eqz(),
-                Instruction::I64Eq => self.visit_i64_eq(),
-                Instruction::I64Ne => self.visit_i64_ne(),
-                Instruction::I64LtS => self.visit_i64_lt_s(),
-                Instruction::I64LtU => self.visit_i64_lt_u(),
-                Instruction::I64GtS => self.visit_i64_gt_s(),
-                Instruction::I64GtU => self.visit_i64_gt_u(),
-                Instruction::I64LeS => self.visit_i64_le_s(),
-                Instruction::I64LeU => self.visit_i64_le_u(),
-                Instruction::I64GeS => self.visit_i64_ge_s(),
-                Instruction::I64GeU => self.visit_i64_ge_u(),
-                Instruction::F32Eq => impl_float_check!(self.visit_f32_eq()),
-                Instruction::F32Ne => impl_float_check!(self.visit_f32_ne()),
-                Instruction::F32Lt => impl_float_check!(self.visit_f32_lt()),
-                Instruction::F32Gt => impl_float_check!(self.visit_f32_gt()),
-                Instruction::F32Le => impl_float_check!(self.visit_f32_le()),
-                Instruction::F32Ge => impl_float_check!(self.visit_f32_ge()),
-                Instruction::F64Eq => impl_float_check!(self.visit_f64_eq()),
-                Instruction::F64Ne => impl_float_check!(self.visit_f64_ne()),
-                Instruction::F64Lt => impl_float_check!(self.visit_f64_lt()),
-                Instruction::F64Gt => impl_float_check!(self.visit_f64_gt()),
-                Instruction::F64Le => impl_float_check!(self.visit_f64_le()),
-                Instruction::F64Ge => impl_float_check!(self.visit_f64_ge()),
-                Instruction::I32Clz => self.visit_i32_clz(),
-                Instruction::I32Ctz => self.visit_i32_ctz(),
-                Instruction::I32Popcnt => self.visit_i32_popcnt(),
-                Instruction::I32Add => self.visit_i32_add(),
-                Instruction::I32Sub => self.visit_i32_sub(),
-                Instruction::I32Mul => self.visit_i32_mul(),
-                Instruction::I32DivS => self.visit_i32_div_s()?,
-                Instruction::I32DivU => self.visit_i32_div_u()?,
-                Instruction::I32RemS => self.visit_i32_rem_s()?,
-                Instruction::I32RemU => self.visit_i32_rem_u()?,
-                Instruction::I32And => self.visit_i32_and(),
-                Instruction::I32Or => self.visit_i32_or(),
-                Instruction::I32Xor => self.visit_i32_xor(),
-                Instruction::I32Shl => self.visit_i32_shl(),
-                Instruction::I32ShrS => self.visit_i32_shr_s(),
-                Instruction::I32ShrU => self.visit_i32_shr_u(),
-                Instruction::I32Rotl => self.visit_i32_rotl(),
-                Instruction::I32Rotr => self.visit_i32_rotr(),
-                Instruction::I64Clz => self.visit_i64_clz(),
-                Instruction::I64Ctz => self.visit_i64_ctz(),
-                Instruction::I64Popcnt => self.visit_i64_popcnt(),
-                Instruction::I64Add => self.visit_i64_add(),
-                Instruction::I64Sub => self.visit_i64_sub(),
-                Instruction::I64Mul => self.visit_i64_mul(),
-                Instruction::I64DivS => self.visit_i64_div_s()?,
-                Instruction::I64DivU => self.visit_i64_div_u()?,
-                Instruction::I64RemS => self.visit_i64_rem_s()?,
-                Instruction::I64RemU => self.visit_i64_rem_u()?,
-                Instruction::I64And => self.visit_i64_and(),
-                Instruction::I64Or => self.visit_i64_or(),
-                Instruction::I64Xor => self.visit_i64_xor(),
-                Instruction::I64Shl => self.visit_i64_shl(),
-                Instruction::I64ShrS => self.visit_i64_shr_s(),
-                Instruction::I64ShrU => self.visit_i64_shr_u(),
-                Instruction::I64Rotl => self.visit_i64_rotl(),
-                Instruction::I64Rotr => self.visit_i64_rotr(),
-                Instruction::F32Abs => impl_float_check!(self.visit_f32_abs()),
-                Instruction::F32Neg => impl_float_check!(self.visit_f32_neg()),
-                Instruction::F32Ceil => impl_float_check!(self.visit_f32_ceil()),
-                Instruction::F32Floor => impl_float_check!(self.visit_f32_floor()),
-                Instruction::F32Trunc => impl_float_check!(self.visit_f32_trunc()),
-                Instruction::F32Nearest => impl_float_check!(self.visit_f32_nearest()),
-                Instruction::F32Sqrt => impl_float_check!(self.visit_f32_sqrt()),
-                Instruction::F32Add => impl_float_check!(self.visit_f32_add()),
-                Instruction::F32Sub => impl_float_check!(self.visit_f32_sub()),
-                Instruction::F32Mul => impl_float_check!(self.visit_f32_mul()),
-                Instruction::F32Div => impl_float_check!(self.visit_f32_div()),
-                Instruction::F32Min => impl_float_check!(self.visit_f32_min()),
-                Instruction::F32Max => impl_float_check!(self.visit_f32_max()),
-                Instruction::F32Copysign => impl_float_check!(self.visit_f32_copysign()),
-                Instruction::F64Abs => impl_float_check!(self.visit_f64_abs()),
-                Instruction::F64Neg => impl_float_check!(self.visit_f64_neg()),
-                Instruction::F64Ceil => impl_float_check!(self.visit_f64_ceil()),
-                Instruction::F64Floor => impl_float_check!(self.visit_f64_floor()),
-                Instruction::F64Trunc => impl_float_check!(self.visit_f64_trunc()),
-                Instruction::F64Nearest => impl_float_check!(self.visit_f64_nearest()),
-                Instruction::F64Sqrt => impl_float_check!(self.visit_f64_sqrt()),
-                Instruction::F64Add => impl_float_check!(self.visit_f64_add()),
-                Instruction::F64Sub => impl_float_check!(self.visit_f64_sub()),
-                Instruction::F64Mul => impl_float_check!(self.visit_f64_mul()),
-                Instruction::F64Div => impl_float_check!(self.visit_f64_div()),
-                Instruction::F64Min => impl_float_check!(self.visit_f64_min()),
-                Instruction::F64Max => impl_float_check!(self.visit_f64_max()),
-                Instruction::F64Copysign => impl_float_check!(self.visit_f64_copysign()),
-                Instruction::I32WrapI64 => self.visit_i32_wrap_i64(),
-                Instruction::I32TruncF32S => impl_float_check!(self.visit_i32_trunc_f32_s()?),
-                Instruction::I32TruncF32U => impl_float_check!(self.visit_i32_trunc_f32_u()?),
-                Instruction::I32TruncF64S => impl_float_check!(self.visit_i32_trunc_f64_s()?),
-                Instruction::I32TruncF64U => impl_float_check!(self.visit_i32_trunc_f64_u()?),
-                Instruction::I64ExtendI32S => self.visit_i64_extend_i32_s(),
-                Instruction::I64ExtendI32U => self.visit_i64_extend_i32_u(),
-                Instruction::I64TruncF32S => impl_float_check!(self.visit_i64_trunc_f32_s()?),
-                Instruction::I64TruncF32U => impl_float_check!(self.visit_i64_trunc_f32_u()?),
-                Instruction::I64TruncF64S => impl_float_check!(self.visit_i64_trunc_f64_s()?),
-                Instruction::I64TruncF64U => impl_float_check!(self.visit_i64_trunc_f64_u()?),
-                Instruction::F32ConvertI32S => impl_float_check!(self.visit_f32_convert_i32_s()),
-                Instruction::F32ConvertI32U => impl_float_check!(self.visit_f32_convert_i32_u()),
-                Instruction::F32ConvertI64S => impl_float_check!(self.visit_f32_convert_i64_s()),
-                Instruction::F32ConvertI64U => impl_float_check!(self.visit_f32_convert_i64_u()),
-                Instruction::F32DemoteF64 => impl_float_check!(self.visit_f32_demote_f64()),
-                Instruction::F64ConvertI32S => impl_float_check!(self.visit_f64_convert_i32_s()),
-                Instruction::F64ConvertI32U => impl_float_check!(self.visit_f64_convert_i32_u()),
-                Instruction::F64ConvertI64S => impl_float_check!(self.visit_f64_convert_i64_s()),
-                Instruction::F64ConvertI64U => impl_float_check!(self.visit_f64_convert_i64_u()),
-                Instruction::F64PromoteF32 => impl_float_check!(self.visit_f64_promote_f32()),
-                Instruction::I32TruncSatF32S => impl_float_check!(self.visit_i32_trunc_sat_f32_s()),
-                Instruction::I32TruncSatF32U => impl_float_check!(self.visit_i32_trunc_sat_f32_u()),
-                Instruction::I32TruncSatF64S => impl_float_check!(self.visit_i32_trunc_sat_f64_s()),
-                Instruction::I32TruncSatF64U => impl_float_check!(self.visit_i32_trunc_sat_f64_u()),
-                Instruction::I64TruncSatF32S => impl_float_check!(self.visit_i64_trunc_sat_f32_s()),
-                Instruction::I64TruncSatF32U => impl_float_check!(self.visit_i64_trunc_sat_f32_u()),
-                Instruction::I64TruncSatF64S => impl_float_check!(self.visit_i64_trunc_sat_f64_s()),
-                Instruction::I64TruncSatF64U => impl_float_check!(self.visit_i64_trunc_sat_f64_u()),
-                Instruction::I32Extend8S => self.visit_i32_extend8_s(),
-                Instruction::I32Extend16S => self.visit_i32_extend16_s(),
-                Instruction::I64Extend8S => self.visit_i64_extend8_s(),
-                Instruction::I64Extend16S => self.visit_i64_extend16_s(),
-                Instruction::I64Extend32S => self.visit_i64_extend32_s(),
-
-                _ => unreachable!("rwasm: unsupported instruction ({:?})", instr),
             }
         }
-    }
+    };
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_unreachable(&mut self) -> Result<(), RwasmError> {
-        Err(RwasmError::TrapCode(TrapCode::UnreachableCodeReached))
-    }
+wrap_function_result!(visit_unreachable);
+wrap_function_result!(visit_consume_fuel);
+wrap_function_result!(visit_return_call_internal);
+wrap_function_result!(visit_return_call);
+wrap_function_result!(visit_return_call_indirect);
+wrap_function_result!(visit_call_internal);
+wrap_function_result!(visit_call);
+wrap_function_result!(visit_call_indirect);
+wrap_function_result!(visit_signature_check);
+wrap_function_result!(visit_memory_grow);
+wrap_function_result!(visit_memory_fill);
+wrap_function_result!(visit_memory_copy);
+wrap_function_result!(visit_memory_init);
+wrap_function_result!(visit_table_grow);
+wrap_function_result!(visit_table_fill);
+wrap_function_result!(visit_table_get);
+wrap_function_result!(visit_table_set);
+wrap_function_result!(visit_table_copy);
+wrap_function_result!(visit_table_init);
 
-    #[inline(always)]
-    pub(crate) fn visit_local_get(&mut self, local_depth: LocalDepth) {
-        let value = self.store.sp.nth_back(local_depth.to_usize());
-        self.store.sp.push(value);
-        self.store.ip.add(1);
-    }
+// #[cfg(feature = "debug-print")]
+// {
+//     let stack = self
+//         .store
+//         .value_stack
+//         .dump_stack(exec.store.sp)
+//         .iter()
+//         .rev()
+//         .take(10)
+//         .map(|v| v.as_u64())
+//         .collect::<Vec<_>>();
+//     println!(
+//         "{:02}: {:?}, stack={:?} ({})",
+//         exec.store.ip.pc(),
+//         instr,
+//         stack,
+//         exec.store.value_stack.stack_len(exec.store.sp)
+//     );
+// }
+//
+// #[cfg(feature = "tracer")]
+// if exec.store.tracer.is_some() {
+//     use rwasm::engine::bytecode::InstrMeta;
+//     let memory_size: u32 = exec.store.global_memory.current_pages().into();
+//     let consumed_fuel = exec.store.fuel_consumed();
+//     let stack = exec.store.value_stack.dump_stack(exec.store.sp);
+//     exec.store.tracer.as_mut().unwrap().pre_opcode_state(
+//         exec.store.ip.pc(),
+//         instr,
+//         stack,
+//         &InstrMeta::new(0, 0, 0),
+//         memory_size,
+//         consumed_fuel,
+//     );
+// }
 
-    #[inline(always)]
-    pub(crate) fn visit_local_set(&mut self, local_depth: LocalDepth) {
-        let new_value = self.store.sp.pop();
-        self.store
-            .sp
-            .set_nth_back(local_depth.to_usize(), new_value);
-        self.store.ip.add(1);
-    }
+#[inline(always)]
+pub(crate) fn visit_unreachable<E: SyscallHandler<T>, T>(
+    _exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    Err(RwasmError::TrapCode(TrapCode::UnreachableCodeReached))
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_local_tee(&mut self, local_depth: LocalDepth) {
-        let new_value = self.store.sp.last();
-        self.store
-            .sp
-            .set_nth_back(local_depth.to_usize(), new_value);
-        self.store.ip.add(1);
-    }
+#[inline(always)]
+pub(crate) fn visit_local_get<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let local_depth = match exec.store.ip.data() {
+        InstructionData::LocalDepth(local_depth) => local_depth,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let value = exec.store.sp.nth_back(local_depth.to_usize());
+    exec.store.sp.push(value);
+    exec.store.ip.add(1);
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_br(&mut self, branch_offset: BranchOffset) {
-        self.store.ip.offset(branch_offset.to_i32() as isize)
-    }
+#[inline(always)]
+pub(crate) fn visit_local_set<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let local_depth = match exec.store.ip.data() {
+        InstructionData::LocalDepth(local_depth) => local_depth,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let new_value = exec.store.sp.pop();
+    exec.store
+        .sp
+        .set_nth_back(local_depth.to_usize(), new_value);
+    exec.store.ip.add(1);
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_br_if(&mut self, branch_offset: BranchOffset) {
-        let condition = self.store.sp.pop_as();
-        if condition {
-            self.store.ip.add(1);
-        } else {
-            self.store.ip.offset(branch_offset.to_i32() as isize);
+#[inline(always)]
+pub(crate) fn visit_local_tee<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let local_depth = match exec.store.ip.data() {
+        InstructionData::LocalDepth(local_depth) => local_depth,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let new_value = exec.store.sp.last();
+    exec.store
+        .sp
+        .set_nth_back(local_depth.to_usize(), new_value);
+    exec.store.ip.add(1);
+}
+
+#[inline(always)]
+pub(crate) fn visit_br<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let branch_offset = match exec.store.ip.data() {
+        InstructionData::BranchOffset(branch_offset) => branch_offset,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    exec.store.ip.offset(branch_offset.to_i32() as isize)
+}
+
+#[inline(always)]
+pub(crate) fn visit_br_if<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let branch_offset = match exec.store.ip.data() {
+        InstructionData::BranchOffset(branch_offset) => branch_offset,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let condition = exec.store.sp.pop_as();
+    if condition {
+        exec.store.ip.add(1);
+    } else {
+        exec.store.ip.offset(branch_offset.to_i32() as isize);
+    }
+}
+
+#[inline(always)]
+pub(crate) fn visit_br_if_nez<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let branch_offset = match exec.store.ip.data() {
+        InstructionData::BranchOffset(branch_offset) => branch_offset,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let condition = exec.store.sp.pop_as();
+    if condition {
+        exec.store.ip.offset(branch_offset.to_i32() as isize);
+    } else {
+        exec.store.ip.add(1);
+    }
+}
+
+#[inline(always)]
+pub(crate) fn visit_br_adjust<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let branch_offset = match exec.store.ip.data() {
+        InstructionData::BranchOffset(branch_offset) => branch_offset,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let drop_keep = exec.fetch_drop_keep(1);
+    exec.store.sp.drop_keep(drop_keep);
+    exec.store.ip.offset(branch_offset.to_i32() as isize);
+}
+
+#[inline(always)]
+pub(crate) fn visit_br_adjust_if_nez<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let branch_offset = match exec.store.ip.data() {
+        InstructionData::BranchOffset(branch_offset) => branch_offset,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let condition = exec.store.sp.pop_as();
+    if condition {
+        let drop_keep = exec.fetch_drop_keep(1);
+        exec.store.sp.drop_keep(drop_keep);
+        exec.store.ip.offset(branch_offset.to_i32() as isize);
+    } else {
+        exec.store.ip.add(2);
+    }
+}
+
+#[inline(always)]
+pub(crate) fn visit_br_table<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let targets = match exec.store.ip.data() {
+        InstructionData::BranchTableTargets(targets) => targets,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let index: u32 = exec.store.sp.pop_as();
+    let max_index = targets.to_usize() - 1;
+    let normalized_index = cmp::min(index as usize, max_index);
+    exec.store.ip.add(2 * normalized_index + 1);
+}
+
+#[inline(always)]
+pub(crate) fn visit_consume_fuel<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let block_fuel = match exec.store.ip.data() {
+        InstructionData::BlockFuel(block_fuel) => block_fuel,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    if exec.store.config.fuel_enabled {
+        exec.store.try_consume_fuel(block_fuel.to_u64())?;
+    }
+    exec.store.ip.add(1);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_return<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let drop_keep = match exec.store.ip.data() {
+        InstructionData::DropKeep(drop_keep) => drop_keep,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    exec.store.sp.drop_keep(*drop_keep);
+    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
+    match exec.store.call_stack.pop() {
+        Some(caller) => {
+            exec.store.ip = caller;
+        }
+        None => {
+            exec.next_result = Some(Ok(0));
+            exec.stop_exec = true;
         }
     }
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_br_if_nez(&mut self, branch_offset: BranchOffset) {
-        let condition = self.store.sp.pop_as();
-        if condition {
-            self.store.ip.offset(branch_offset.to_i32() as isize);
-        } else {
-            self.store.ip.add(1);
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_br_adjust(&mut self, branch_offset: BranchOffset) {
-        let drop_keep = self.fetch_drop_keep(1);
-        self.store.sp.drop_keep(drop_keep);
-        self.store.ip.offset(branch_offset.to_i32() as isize);
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_br_adjust_if_nez(&mut self, branch_offset: BranchOffset) {
-        let condition = self.store.sp.pop_as();
-        if condition {
-            let drop_keep = self.fetch_drop_keep(1);
-            self.store.sp.drop_keep(drop_keep);
-            self.store.ip.offset(branch_offset.to_i32() as isize);
-        } else {
-            self.store.ip.add(2);
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_br_table(&mut self, targets: BranchTableTargets) {
-        let index: u32 = self.store.sp.pop_as();
-        let max_index = targets.to_usize() - 1;
-        let normalized_index = cmp::min(index as usize, max_index);
-        self.store.ip.add(2 * normalized_index + 1);
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_consume_fuel(&mut self, block_fuel: BlockFuel) -> Result<(), RwasmError> {
-        if self.store.config.fuel_enabled {
-            self.store.try_consume_fuel(block_fuel.to_u64())?;
-        }
-        self.store.ip.add(1);
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_return(&mut self, drop_keep: DropKeep) -> Option<i32> {
-        self.store.sp.drop_keep(drop_keep);
-        self.store.value_stack.sync_stack_ptr(self.store.sp);
-        match self.store.call_stack.pop() {
+#[inline(always)]
+pub(crate) fn visit_return_if_nez<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let drop_keep = match exec.store.ip.data() {
+        InstructionData::DropKeep(drop_keep) => drop_keep,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let condition = exec.store.sp.pop_as();
+    if condition {
+        exec.store.sp.drop_keep(*drop_keep);
+        exec.store.value_stack.sync_stack_ptr(exec.store.sp);
+        match exec.store.call_stack.pop() {
             Some(caller) => {
-                self.store.ip = caller;
-                None
+                exec.store.ip = caller;
             }
-            None => Some(0),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_return_if_nez(&mut self, drop_keep: DropKeep) -> Option<i32> {
-        let condition = self.store.sp.pop_as();
-        if condition {
-            self.store.sp.drop_keep(drop_keep);
-            self.store.value_stack.sync_stack_ptr(self.store.sp);
-            match self.store.call_stack.pop() {
-                Some(caller) => {
-                    self.store.ip = caller;
-                    None
-                }
-                None => Some(0),
-            }
-        } else {
-            self.store.ip.add(1);
-            None
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_return_call_internal(
-        &mut self,
-        func_idx: CompiledFunc,
-    ) -> Result<(), RwasmError> {
-        let drop_keep = self.fetch_drop_keep(1);
-        self.store.sp.drop_keep(drop_keep);
-        self.store.ip.add(2);
-        self.store.value_stack.sync_stack_ptr(self.store.sp);
-        let instr_ref = self
-            .store
-            .instance
-            .func_segments
-            .get(func_idx.to_u32() as usize)
-            .copied()
-            .expect("rwasm: unknown internal function");
-        let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
-        self.store.value_stack.prepare_wasm_call(&header)?;
-        self.store.sp = self.store.value_stack.stack_ptr();
-        self.store.ip = InstructionPtr::new(
-            self.store.instance.module.code_section.instr.as_ptr(),
-            self.store.instance.module.code_section.metas.as_ptr(),
-        );
-        self.store.ip.add(instr_ref as usize);
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_return_call(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
-        let drop_keep = self.fetch_drop_keep(1);
-        self.store.sp.drop_keep(drop_keep);
-        self.store.value_stack.sync_stack_ptr(self.store.sp);
-        // external call can cause interruption,
-        // that is why it's important to increase IP before doing the call
-        self.store.ip.add(2);
-        E::call_function(Caller::new(&mut self.store), func_idx.to_u32())?;
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_return_call_indirect(
-        &mut self,
-        signature_idx: SignatureIdx,
-    ) -> Result<(), RwasmError> {
-        let drop_keep = self.fetch_drop_keep(1);
-        let table = self.fetch_table_index(2);
-        let func_index: u32 = self.store.sp.pop_as();
-        self.store.sp.drop_keep(drop_keep);
-        self.store.last_signature = Some(signature_idx);
-        let func_idx: u32 = self
-            .store
-            .tables
-            .get(&table)
-            .expect("rwasm: unresolved table index")
-            .get(func_index)
-            .and_then(|v| v.i32())
-            .ok_or(TrapCode::TableOutOfBounds)?
-            .try_into()
-            .unwrap();
-        if func_idx == 0 {
-            return Err(TrapCode::IndirectCallToNull.into());
-        }
-        let func_idx = func_idx - FUNC_REF_OFFSET;
-        self.execute_call_internal(false, 3, func_idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_call_internal(&mut self, func_idx: CompiledFunc) -> Result<(), RwasmError> {
-        self.store.ip.add(1);
-        self.store.value_stack.sync_stack_ptr(self.store.sp);
-        if self.store.call_stack.len() > N_MAX_RECURSION_DEPTH {
-            return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
-        }
-        self.store.call_stack.push(self.store.ip);
-        let instr_ref = self
-            .store
-            .instance
-            .func_segments
-            .get(func_idx.to_u32() as usize)
-            .copied()
-            .expect("rwasm: unknown internal function");
-        let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
-        self.store.value_stack.prepare_wasm_call(&header)?;
-        self.store.sp = self.store.value_stack.stack_ptr();
-        self.store.ip = InstructionPtr::new(
-            self.store.instance.module.code_section.instr.as_ptr(),
-            self.store.instance.module.code_section.metas.as_ptr(),
-        );
-        self.store.ip.add(instr_ref as usize);
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_call(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
-        self.store.value_stack.sync_stack_ptr(self.store.sp);
-        // external call can cause interruption,
-        // that is why it's important to increase IP before doing the call
-        self.store.ip.add(1);
-        E::call_function(Caller::new(&mut self.store), func_idx.to_u32())
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_call_indirect(
-        &mut self,
-        signature_idx: SignatureIdx,
-    ) -> Result<(), RwasmError> {
-        // resolve func index
-        let table = self.fetch_table_index(1);
-        let func_index: u32 = self.store.sp.pop_as();
-        self.store.last_signature = Some(signature_idx);
-        let func_idx: u32 = self
-            .store
-            .tables
-            .get(&table)
-            .expect("rwasm: unresolved table index")
-            .get(func_index)
-            .and_then(|v| v.i32().map(|v| v as u32))
-            .ok_or(TrapCode::TableOutOfBounds)?;
-        if func_idx == TABLE_ELEMENT_NULL {
-            return Err(TrapCode::IndirectCallToNull.into());
-        }
-        let func_idx = func_idx - FUNC_REF_OFFSET;
-        // call func
-        self.store.ip.add(2);
-        self.store.value_stack.sync_stack_ptr(self.store.sp);
-        if self.store.call_stack.len() > N_MAX_RECURSION_DEPTH {
-            return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
-        }
-        self.store.call_stack.push(self.store.ip);
-        let instr_ref = self
-            .store
-            .instance
-            .func_segments
-            .get(func_idx as usize)
-            .copied()
-            .expect("rwasm: unknown internal function");
-        let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
-        self.store.value_stack.prepare_wasm_call(&header)?;
-        self.store.sp = self.store.value_stack.stack_ptr();
-        self.store.ip = InstructionPtr::new(
-            self.store.instance.module.code_section.instr.as_ptr(),
-            self.store.instance.module.code_section.metas.as_ptr(),
-        );
-        self.store.ip.add(instr_ref as usize);
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_signature_check(
-        &mut self,
-        signature_idx: SignatureIdx,
-    ) -> Result<(), RwasmError> {
-        if let Some(actual_signature) = self.store.last_signature.take() {
-            if actual_signature != signature_idx {
-                return Err(TrapCode::BadSignature).map_err(Into::into);
-            }
-        }
-        self.store.ip.add(1);
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_drop(&mut self) {
-        self.store.sp.drop();
-        self.store.ip.add(1);
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_select(&mut self) {
-        self.store.sp.eval_top3(|e1, e2, e3| {
-            let condition = <bool as From<UntypedValue>>::from(e3);
-            if condition {
-                e1
-            } else {
-                e2
-            }
-        });
-        self.store.ip.add(1);
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_global_get(&mut self, global_idx: GlobalIdx) {
-        let global_value = self
-            .store
-            .global_variables
-            .get(&global_idx)
-            .copied()
-            .unwrap_or_default();
-        self.store.sp.push(global_value);
-        self.store.ip.add(1);
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_global_set(&mut self, global_idx: GlobalIdx) {
-        let new_value = self.store.sp.pop();
-        self.store.global_variables.insert(global_idx, new_value);
-        self.store.ip.add(1);
-    }
-
-    impl_visit_load! {
-        fn visit_i32_load(i32_load);
-        fn visit_i64_load(i64_load);
-        fn visit_f32_load(f32_load);
-        fn visit_f64_load(f64_load);
-
-        fn visit_i32_load_i8_s(i32_load8_s);
-        fn visit_i32_load_i8_u(i32_load8_u);
-        fn visit_i32_load_i16_s(i32_load16_s);
-        fn visit_i32_load_i16_u(i32_load16_u);
-
-        fn visit_i64_load_i8_s(i64_load8_s);
-        fn visit_i64_load_i8_u(i64_load8_u);
-        fn visit_i64_load_i16_s(i64_load16_s);
-        fn visit_i64_load_i16_u(i64_load16_u);
-        fn visit_i64_load_i32_s(i64_load32_s);
-        fn visit_i64_load_i32_u(i64_load32_u);
-    }
-
-    impl_visit_store! {
-        fn visit_i32_store(i32_store, 4);
-        fn visit_i64_store(i64_store, 8);
-        fn visit_f32_store(f32_store, 4);
-        fn visit_f64_store(f64_store, 8);
-
-        fn visit_i32_store_8(i32_store8, 1);
-        fn visit_i32_store_16(i32_store16, 2);
-
-        fn visit_i64_store_8(i64_store8, 1);
-        fn visit_i64_store_16(i64_store16, 2);
-        fn visit_i64_store_32(i64_store32, 4);
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_memory_size(&mut self) {
-        let result: u32 = self.store.global_memory.current_pages().into();
-        self.store.sp.push_as(result);
-        self.store.ip.add(1);
-    }
-
-    #[inline(always)]
-    pub(crate) fn visit_memory_grow(
-        &mut self,
-        mut limiter: &mut ResourceLimiterRef<'_>,
-    ) -> Result<(), RwasmError> {
-        let delta: u32 = self.store.sp.pop_as();
-        let delta = match Pages::new(delta) {
-            Some(delta) => delta,
             None => {
-                self.store.sp.push_as(u32::MAX);
-                self.store.ip.add(1);
-                return Ok(());
+                exec.next_result = Some(Ok(0));
+                exec.stop_exec = true;
             }
-        };
-        if self.store.config.fuel_enabled {
-            let delta_in_bytes = delta.to_bytes().unwrap_or(0) as u64;
-            self.store
-                .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(delta_in_bytes))?;
         }
-        let new_pages = self
-            .store
-            .global_memory
-            .grow(delta, &mut limiter)
-            .map(u32::from)
-            .unwrap_or(u32::MAX);
-        self.store.sp.push_as(new_pages);
-        self.store.ip.add(1);
-        Ok(())
+    } else {
+        exec.store.ip.add(1);
     }
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_memory_fill(&mut self) -> Result<(), RwasmError> {
-        let (d, val, n) = self.store.sp.pop3();
-        let n = i32::from(n) as usize;
-        let offset = i32::from(d) as usize;
-        let byte = u8::from(val);
-        if self.store.config.fuel_enabled {
-            self.store
-                .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
-        }
-        let memory = self
-            .store
-            .global_memory
-            .data_mut()
-            .get_mut(offset..)
-            .and_then(|memory| memory.get_mut(..n))
-            .ok_or(TrapCode::MemoryOutOfBounds)?;
-        memory.fill(byte);
-        if let Some(tracer) = self.store.tracer.as_mut() {
-            tracer.memory_change(offset as u32, n as u32, memory);
-        }
-        self.store.ip.add(1);
-        Ok(())
+#[inline(always)]
+pub(crate) fn visit_return_call_internal<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let func_idx = match exec.store.ip.data() {
+        InstructionData::CompiledFunc(func_idx) => *func_idx,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let drop_keep = exec.fetch_drop_keep(1);
+    exec.store.sp.drop_keep(drop_keep);
+    exec.store.ip.add(2);
+    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
+    let instr_ref = exec
+        .store
+        .module
+        .func_segments
+        .get(func_idx.to_u32() as usize)
+        .copied()
+        .expect("rwasm: unknown internal function");
+    let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
+    exec.store.value_stack.prepare_wasm_call(&header)?;
+    exec.store.sp = exec.store.value_stack.stack_ptr();
+    exec.store.ip = InstructionPtr::new(
+        exec.store.module.code_section.as_ptr(),
+        exec.store.module.instr_data.as_ptr(),
+    );
+    exec.store.ip.add(instr_ref as usize);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_return_call<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let func_idx = match exec.store.ip.data() {
+        InstructionData::CompiledFunc(func_idx) => *func_idx,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let drop_keep = exec.fetch_drop_keep(1);
+    exec.store.sp.drop_keep(drop_keep);
+    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
+    // external call can cause interruption,
+    // that is why it's important to increase IP before doing the call
+    exec.store.ip.add(2);
+    E::call_function(Caller::new(&mut exec.store), func_idx.to_u32())?;
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_return_call_indirect<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let signature_idx = match exec.store.ip.data() {
+        InstructionData::SignatureIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let drop_keep = exec.fetch_drop_keep(1);
+    let table = exec.fetch_table_index(2);
+    let func_index: u32 = exec.store.sp.pop_as();
+    exec.store.sp.drop_keep(drop_keep);
+    exec.store.last_signature = Some(signature_idx);
+    let func_idx: u32 = exec
+        .store
+        .tables
+        .get(&table)
+        .expect("rwasm: unresolved table index")
+        .get(func_index)
+        .and_then(|v| v.i32())
+        .ok_or(TrapCode::TableOutOfBounds)?
+        .try_into()
+        .unwrap();
+    if func_idx == 0 {
+        return Err(TrapCode::IndirectCallToNull.into());
     }
+    let func_idx = func_idx - FUNC_REF_OFFSET;
+    exec.execute_call_internal(false, 3, func_idx)
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_memory_copy(&mut self) -> Result<(), RwasmError> {
-        let (d, s, n) = self.store.sp.pop3();
-        let n = i32::from(n) as usize;
-        let src_offset = i32::from(s) as usize;
-        let dst_offset = i32::from(d) as usize;
-        if self.store.config.fuel_enabled {
-            self.store
-                .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
-        }
-        // these accesses just perform the bound checks required by the Wasm spec.
-        let data = self.store.global_memory.data_mut();
-        data.get(src_offset..)
-            .and_then(|memory| memory.get(..n))
-            .ok_or(TrapCode::MemoryOutOfBounds)?;
-        data.get(dst_offset..)
-            .and_then(|memory| memory.get(..n))
-            .ok_or(TrapCode::MemoryOutOfBounds)?;
-        data.copy_within(src_offset..src_offset.wrapping_add(n), dst_offset);
-        if let Some(tracer) = self.store.tracer.as_mut() {
-            tracer.memory_change(
-                dst_offset as u32,
-                n as u32,
-                &data[dst_offset..(dst_offset + n)],
-            );
-        }
-        self.store.ip.add(1);
-        Ok(())
+#[inline(always)]
+pub(crate) fn visit_call_internal<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let func_idx = match exec.store.ip.data() {
+        InstructionData::CompiledFunc(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    exec.store.ip.add(1);
+    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
+    if exec.store.call_stack.len() > N_MAX_RECURSION_DEPTH {
+        return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
     }
+    exec.store.call_stack.push(exec.store.ip);
+    let instr_ref = exec
+        .store
+        .module
+        .func_segments
+        .get(func_idx.to_u32() as usize)
+        .copied()
+        .expect("rwasm: unknown internal function");
+    let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
+    exec.store.value_stack.prepare_wasm_call(&header)?;
+    exec.store.sp = exec.store.value_stack.stack_ptr();
+    exec.store.ip = InstructionPtr::new(
+        exec.store.module.code_section.as_ptr(),
+        exec.store.module.instr_data.as_ptr(),
+    );
+    exec.store.ip.add(instr_ref as usize);
+    Ok(())
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_memory_init(
-        &mut self,
-        data_segment_idx: DataSegmentIdx,
-    ) -> Result<(), RwasmError> {
-        let is_empty_data_segment = self.resolve_data_or_create(data_segment_idx).is_empty();
-        let (d, s, n) = self.store.sp.pop3();
-        let n = i32::from(n) as usize;
-        let src_offset = i32::from(s) as usize;
-        let dst_offset = i32::from(d) as usize;
-        if self.store.config.fuel_enabled {
-            self.store
-                .try_consume_fuel(self.store.fuel_costs.fuel_for_bytes(n as u64))?;
-        }
-        let memory = self
-            .store
-            .global_memory
-            .data_mut()
-            .get_mut(dst_offset..)
-            .and_then(|memory| memory.get_mut(..n))
-            .ok_or(TrapCode::MemoryOutOfBounds)?;
-        let mut memory_section = self.store.instance.module.memory_section.as_slice();
-        if is_empty_data_segment {
-            memory_section = &[];
-        }
-        let data = memory_section
-            .get(src_offset..)
-            .and_then(|data| data.get(..n))
-            .ok_or(TrapCode::MemoryOutOfBounds)?;
-        memory.copy_from_slice(data);
-        if let Some(tracer) = self.store.tracer.as_mut() {
-            tracer.global_memory(dst_offset as u32, n as u32, memory);
-        }
-        self.store.ip.add(1);
-        Ok(())
+#[inline(always)]
+pub(crate) fn visit_call<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let func_idx = match exec.store.ip.data() {
+        InstructionData::FuncIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
+    // external call can cause interruption,
+    // that is why it's important to increase IP before doing the call
+    exec.store.ip.add(1);
+    E::call_function(Caller::new(&mut exec.store), func_idx.to_u32())
+}
+
+#[inline(always)]
+pub(crate) fn visit_call_indirect<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let signature_idx = match exec.store.ip.data() {
+        InstructionData::SignatureIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    // resolve func index
+    let table = exec.fetch_table_index(1);
+    let func_index: u32 = exec.store.sp.pop_as();
+    exec.store.last_signature = Some(signature_idx);
+    let func_idx: u32 = exec
+        .store
+        .tables
+        .get(&table)
+        .expect("rwasm: unresolved table index")
+        .get(func_index)
+        .and_then(|v| v.i32().map(|v| v as u32))
+        .ok_or(TrapCode::TableOutOfBounds)?;
+    if func_idx == TABLE_ELEMENT_NULL {
+        return Err(TrapCode::IndirectCallToNull.into());
     }
-
-    #[inline(always)]
-    pub(crate) fn visit_data_drop(&mut self, data_segment_idx: DataSegmentIdx) {
-        let data_segment = self.resolve_data_or_create(data_segment_idx);
-        data_segment.drop_bytes();
-        self.store.ip.add(1);
+    let func_idx = func_idx - FUNC_REF_OFFSET;
+    // call func
+    exec.store.ip.add(2);
+    exec.store.value_stack.sync_stack_ptr(exec.store.sp);
+    if exec.store.call_stack.len() > N_MAX_RECURSION_DEPTH {
+        return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
     }
+    exec.store.call_stack.push(exec.store.ip);
+    let instr_ref = exec
+        .store
+        .module
+        .func_segments
+        .get(func_idx as usize)
+        .copied()
+        .expect("rwasm: unknown internal function");
+    let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
+    exec.store.value_stack.prepare_wasm_call(&header)?;
+    exec.store.sp = exec.store.value_stack.stack_ptr();
+    exec.store.ip = InstructionPtr::new(
+        exec.store.module.code_section.as_ptr(),
+        exec.store.module.instr_data.as_ptr(),
+    );
+    exec.store.ip.add(instr_ref as usize);
+    Ok(())
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_table_size(&mut self, table_idx: TableIdx) {
-        let table_size = self
+#[inline(always)]
+pub(crate) fn visit_signature_check<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let signature_idx = match exec.store.ip.data() {
+        InstructionData::SignatureIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    if let Some(actual_signature) = exec.store.last_signature.take() {
+        if actual_signature != signature_idx {
+            return Err(TrapCode::BadSignature).map_err(Into::into);
+        }
+    }
+    exec.store.ip.add(1);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_drop<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    exec.store.sp.drop();
+    exec.store.ip.add(1);
+}
+
+#[inline(always)]
+pub(crate) fn visit_select<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    exec.store.sp.eval_top3(|e1, e2, e3| {
+        let condition = <bool as From<UntypedValue>>::from(e3);
+        if condition {
+            e1
+        } else {
+            e2
+        }
+    });
+    exec.store.ip.add(1);
+}
+
+#[inline(always)]
+pub(crate) fn visit_global_get<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let global_idx = match exec.store.ip.data() {
+        InstructionData::GlobalIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let global_value = exec
+        .store
+        .global_variables
+        .get(&global_idx)
+        .copied()
+        .unwrap_or_default();
+    exec.store.sp.push(global_value);
+    exec.store.ip.add(1);
+}
+
+#[inline(always)]
+pub(crate) fn visit_global_set<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let global_idx = match exec.store.ip.data() {
+        InstructionData::GlobalIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let new_value = exec.store.sp.pop();
+    exec.store.global_variables.insert(global_idx, new_value);
+    exec.store.ip.add(1);
+}
+
+impl_visit_load! {
+    fn visit_i32_load(i32_load);
+    fn visit_i64_load(i64_load);
+    fn visit_f32_load(f32_load);
+    fn visit_f64_load(f64_load);
+
+    fn visit_i32_load_i8_s(i32_load8_s);
+    fn visit_i32_load_i8_u(i32_load8_u);
+    fn visit_i32_load_i16_s(i32_load16_s);
+    fn visit_i32_load_i16_u(i32_load16_u);
+
+    fn visit_i64_load_i8_s(i64_load8_s);
+    fn visit_i64_load_i8_u(i64_load8_u);
+    fn visit_i64_load_i16_s(i64_load16_s);
+    fn visit_i64_load_i16_u(i64_load16_u);
+    fn visit_i64_load_i32_s(i64_load32_s);
+    fn visit_i64_load_i32_u(i64_load32_u);
+}
+
+impl_visit_store! {
+    fn visit_i32_store(i32_store, 4);
+    fn visit_i64_store(i64_store, 8);
+    fn visit_f32_store(f32_store, 4);
+    fn visit_f64_store(f64_store, 8);
+
+    fn visit_i32_store_8(i32_store8, 1);
+    fn visit_i32_store_16(i32_store16, 2);
+
+    fn visit_i64_store_8(i64_store8, 1);
+    fn visit_i64_store_16(i64_store16, 2);
+    fn visit_i64_store_32(i64_store32, 4);
+}
+
+#[inline(always)]
+pub(crate) fn visit_memory_size<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let result: u32 = exec.store.global_memory.current_pages().into();
+    exec.store.sp.push_as(result);
+    exec.store.ip.add(1);
+}
+
+#[inline(always)]
+pub(crate) fn visit_memory_grow<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let mut limiter = ResourceLimiterRef::default();
+    let delta: u32 = exec.store.sp.pop_as();
+    let delta = match Pages::new(delta) {
+        Some(delta) => delta,
+        None => {
+            exec.store.sp.push_as(u32::MAX);
+            exec.store.ip.add(1);
+            return Ok(());
+        }
+    };
+    if exec.store.config.fuel_enabled {
+        let delta_in_bytes = delta.to_bytes().unwrap_or(0) as u64;
+        exec.store
+            .try_consume_fuel(exec.store.fuel_costs.fuel_for_bytes(delta_in_bytes))?;
+    }
+    let new_pages = exec
+        .store
+        .global_memory
+        .grow(delta, &mut limiter)
+        .map(u32::from)
+        .unwrap_or(u32::MAX);
+    exec.store.sp.push_as(new_pages);
+    exec.store.ip.add(1);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_memory_fill<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let (d, val, n) = exec.store.sp.pop3();
+    let n = i32::from(n) as usize;
+    let offset = i32::from(d) as usize;
+    let byte = u8::from(val);
+    if exec.store.config.fuel_enabled {
+        exec.store
+            .try_consume_fuel(exec.store.fuel_costs.fuel_for_bytes(n as u64))?;
+    }
+    let memory = exec
+        .store
+        .global_memory
+        .data_mut()
+        .get_mut(offset..)
+        .and_then(|memory| memory.get_mut(..n))
+        .ok_or(TrapCode::MemoryOutOfBounds)?;
+    memory.fill(byte);
+    if let Some(tracer) = exec.store.tracer.as_mut() {
+        tracer.memory_change(offset as u32, n as u32, memory);
+    }
+    exec.store.ip.add(1);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_memory_copy<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let (d, s, n) = exec.store.sp.pop3();
+    let n = i32::from(n) as usize;
+    let src_offset = i32::from(s) as usize;
+    let dst_offset = i32::from(d) as usize;
+    if exec.store.config.fuel_enabled {
+        exec.store
+            .try_consume_fuel(exec.store.fuel_costs.fuel_for_bytes(n as u64))?;
+    }
+    // these accesses just perform the bound checks required by the Wasm spec.
+    let data = exec.store.global_memory.data_mut();
+    data.get(src_offset..)
+        .and_then(|memory| memory.get(..n))
+        .ok_or(TrapCode::MemoryOutOfBounds)?;
+    data.get(dst_offset..)
+        .and_then(|memory| memory.get(..n))
+        .ok_or(TrapCode::MemoryOutOfBounds)?;
+    data.copy_within(src_offset..src_offset.wrapping_add(n), dst_offset);
+    if let Some(tracer) = exec.store.tracer.as_mut() {
+        tracer.memory_change(
+            dst_offset as u32,
+            n as u32,
+            &data[dst_offset..(dst_offset + n)],
+        );
+    }
+    exec.store.ip.add(1);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_memory_init<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let data_segment_idx = match exec.store.ip.data() {
+        InstructionData::DataSegmentIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let is_empty_data_segment = exec.resolve_data_or_create(data_segment_idx).is_empty();
+    let (d, s, n) = exec.store.sp.pop3();
+    let n = i32::from(n) as usize;
+    let src_offset = i32::from(s) as usize;
+    let dst_offset = i32::from(d) as usize;
+    if exec.store.config.fuel_enabled {
+        exec.store
+            .try_consume_fuel(exec.store.fuel_costs.fuel_for_bytes(n as u64))?;
+    }
+    let memory = exec
+        .store
+        .global_memory
+        .data_mut()
+        .get_mut(dst_offset..)
+        .and_then(|memory| memory.get_mut(..n))
+        .ok_or(TrapCode::MemoryOutOfBounds)?;
+    let mut memory_section = exec.store.module.memory_section.as_slice();
+    if is_empty_data_segment {
+        memory_section = &[];
+    }
+    let data = memory_section
+        .get(src_offset..)
+        .and_then(|data| data.get(..n))
+        .ok_or(TrapCode::MemoryOutOfBounds)?;
+    memory.copy_from_slice(data);
+    if let Some(tracer) = exec.store.tracer.as_mut() {
+        tracer.global_memory(dst_offset as u32, n as u32, memory);
+    }
+    exec.store.ip.add(1);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_data_drop<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let data_segment_idx = match exec.store.ip.data() {
+        InstructionData::DataSegmentIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let data_segment = exec.resolve_data_or_create(data_segment_idx);
+    data_segment.drop_bytes();
+    exec.store.ip.add(1);
+}
+
+#[inline(always)]
+pub(crate) fn visit_table_size<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let table_idx = match exec.store.ip.data() {
+        InstructionData::TableIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let table_size = exec
+        .store
+        .tables
+        .get(&table_idx)
+        .expect("rwasm: unresolved table segment")
+        .size();
+    exec.store.sp.push_as(table_size);
+    exec.store.ip.add(1);
+}
+
+#[inline(always)]
+pub(crate) fn visit_table_grow<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let mut limiter = ResourceLimiterRef::default();
+    let table_idx = match exec.store.ip.data() {
+        InstructionData::TableIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let (init, delta) = exec.store.sp.pop2();
+    let delta: u32 = delta.into();
+    if exec.store.config.fuel_enabled {
+        exec.store
+            .try_consume_fuel(exec.store.fuel_costs.fuel_for_elements(delta as u64))?;
+    }
+    let table = exec.resolve_table_or_create(table_idx);
+    let result = match table.grow_untyped(delta, init, &mut limiter) {
+        Ok(result) => result,
+        Err(EntityGrowError::TrapCode(trap_code)) => return Err(RwasmError::TrapCode(trap_code)),
+        Err(EntityGrowError::InvalidGrow) => u32::MAX,
+    };
+    exec.store.sp.push_as(result);
+    if let Some(tracer) = exec.store.tracer.as_mut() {
+        tracer.table_size_change(table_idx.to_u32(), init.as_u32(), delta);
+    }
+    exec.store.ip.add(1);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_table_fill<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let table_idx = match exec.store.ip.data() {
+        InstructionData::TableIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let (i, val, n) = exec.store.sp.pop3();
+    if exec.store.config.fuel_enabled {
+        exec.store
+            .try_consume_fuel(exec.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
+    }
+    exec.resolve_table(table_idx)
+        .fill_untyped(i.as_u32(), val, n.as_u32())?;
+    exec.store.ip.add(1);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_table_get<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let table_idx = match exec.store.ip.data() {
+        InstructionData::TableIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let index = exec.store.sp.pop();
+    let value = exec
+        .resolve_table(table_idx)
+        .get_untyped(index.as_u32())
+        .ok_or(TrapCode::TableOutOfBounds)?;
+    exec.store.sp.push(value);
+    exec.store.ip.add(1);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_table_set<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let table_idx = match exec.store.ip.data() {
+        InstructionData::TableIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let (index, value) = exec.store.sp.pop2();
+    exec.resolve_table(table_idx)
+        .set_untyped(index.as_u32(), value)
+        .map_err(|_| TrapCode::TableOutOfBounds)?;
+    if let Some(tracer) = exec.store.tracer.as_mut() {
+        tracer.table_change(table_idx.to_u32(), index.as_u32(), value);
+    }
+    exec.store.ip.add(1);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_table_copy<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let dst_table_idx = match exec.store.ip.data() {
+        InstructionData::TableIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let src_table_idx = exec.fetch_table_index(1);
+    let (d, s, n) = exec.store.sp.pop3();
+    let len = u32::from(n);
+    let src_index = u32::from(s);
+    let dst_index = u32::from(d);
+    if exec.store.config.fuel_enabled {
+        exec.store
+            .try_consume_fuel(exec.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
+    }
+    // Query both tables and check if they are the same:
+    if src_table_idx != dst_table_idx {
+        let [src, dst] = exec
             .store
             .tables
-            .get(&table_idx)
-            .expect("rwasm: unresolved table segment")
-            .size();
-        self.store.sp.push_as(table_size);
-        self.store.ip.add(1);
+            .get_many_mut([&src_table_idx, &dst_table_idx])
+            .map(|v| v.expect("rwasm: unresolved table segment"));
+        TableEntity::copy(dst, dst_index, src, src_index, len)?;
+    } else {
+        let src = exec
+            .store
+            .tables
+            .get_mut(&src_table_idx)
+            .expect("rwasm: unresolved table segment");
+        src.copy_within(dst_index, src_index, len)?;
+    }
+    exec.store.ip.add(2);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn visit_table_init<E: SyscallHandler<T>, T>(
+    exec: &mut RwasmExecutor<E, T>,
+) -> Result<(), RwasmError> {
+    let element_segment_idx = match exec.store.ip.data() {
+        InstructionData::ElementSegmentIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let table_idx = exec.fetch_table_index(1);
+    let (d, s, n) = exec.store.sp.pop3();
+    let len = u32::from(n);
+    let src_index = u32::from(s);
+    let dst_index = u32::from(d);
+
+    if exec.store.config.fuel_enabled {
+        exec.store
+            .try_consume_fuel(exec.store.fuel_costs.fuel_for_elements(len as u64))?;
     }
 
-    #[inline(always)]
-    pub(crate) fn visit_table_grow(
-        &mut self,
-        table_idx: TableIdx,
-        limiter: &mut ResourceLimiterRef<'_>,
-    ) -> Result<(), RwasmError> {
-        let (init, delta) = self.store.sp.pop2();
-        let delta: u32 = delta.into();
-        if self.store.config.fuel_enabled {
-            self.store
-                .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(delta as u64))?;
-        }
-        let table = self.resolve_table_or_create(table_idx);
-        let result = match table.grow_untyped(delta, init, limiter) {
-            Ok(result) => result,
-            Err(EntityGrowError::TrapCode(trap_code)) => {
-                return Err(RwasmError::TrapCode(trap_code))
-            }
-            Err(EntityGrowError::InvalidGrow) => u32::MAX,
-        };
-        self.store.sp.push_as(result);
-        if let Some(tracer) = self.store.tracer.as_mut() {
-            tracer.table_size_change(table_idx.to_u32(), init.as_u32(), delta);
-        }
-        self.store.ip.add(1);
-        Ok(())
+    // There is a trick with `element_segment_idx`:
+    // it refers to the segment number.
+    // However, in rwasm, all elements are stored in segment 0,
+    // so there is no need to store information about the remaining segments.
+    // According to the WebAssembly standards, though,
+    // we must retain information about all dropped element segments
+    // to perform an emptiness check.
+    // Therefore, in `element_segment_idx`, we store the original index,
+    // which is always > 0.
+    let is_empty_segment = exec
+        .resolve_element_or_create(element_segment_idx)
+        .is_empty();
+
+    let (table, mut element) =
+        exec.resolve_table_with_element_or_create(table_idx, ElementSegmentIdx::from(0));
+    let mut empty_element_segment = ElementSegmentEntity::empty(element.ty());
+    if is_empty_segment {
+        element = &mut empty_element_segment;
     }
+    table.init_untyped(dst_index, element, src_index, len)?;
+    exec.store.ip.add(2);
+    Ok(())
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_table_fill(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
-        let (i, val, n) = self.store.sp.pop3();
-        if self.store.config.fuel_enabled {
-            self.store
-                .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
-        }
-        self.resolve_table(table_idx)
-            .fill_untyped(i.as_u32(), val, n.as_u32())?;
-        self.store.ip.add(1);
-        Ok(())
-    }
+#[inline(always)]
+pub(crate) fn visit_element_drop<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let element_segment_idx = match exec.store.ip.data() {
+        InstructionData::ElementSegmentIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    let element_segment = exec.resolve_element_or_create(element_segment_idx);
+    element_segment.drop_items();
+    exec.store.ip.add(1);
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_table_get(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
-        let index = self.store.sp.pop();
-        let value = self
-            .resolve_table(table_idx)
-            .get_untyped(index.as_u32())
-            .ok_or(TrapCode::TableOutOfBounds)?;
-        self.store.sp.push(value);
-        self.store.ip.add(1);
-        Ok(())
-    }
+#[inline(always)]
+pub(crate) fn visit_ref_func<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let func_idx = match exec.store.ip.data() {
+        InstructionData::FuncIdx(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    exec.store.sp.push_as(func_idx.to_u32() + FUNC_REF_OFFSET);
+    exec.store.ip.add(1);
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_table_set(&mut self, table_idx: TableIdx) -> Result<(), RwasmError> {
-        let (index, value) = self.store.sp.pop2();
-        self.resolve_table(table_idx)
-            .set_untyped(index.as_u32(), value)
-            .map_err(|_| TrapCode::TableOutOfBounds)?;
-        if let Some(tracer) = self.store.tracer.as_mut() {
-            tracer.table_change(table_idx.to_u32(), index.as_u32(), value);
-        }
-        self.store.ip.add(1);
-        Ok(())
-    }
+#[inline(always)]
+pub(crate) fn visit_i32_i64_const<E: SyscallHandler<T>, T>(exec: &mut RwasmExecutor<E, T>) {
+    let untyped_value = match exec.store.ip.data() {
+        InstructionData::UntypedValue(value) => *value,
+        _ => unreachable!("rwasm: missing instr data"),
+    };
+    exec.store.sp.push(untyped_value);
+    exec.store.ip.add(1);
+}
 
-    #[inline(always)]
-    pub(crate) fn visit_table_copy(&mut self, dst_table_idx: TableIdx) -> Result<(), RwasmError> {
-        let src_table_idx = self.fetch_table_index(1);
-        let (d, s, n) = self.store.sp.pop3();
-        let len = u32::from(n);
-        let src_index = u32::from(s);
-        let dst_index = u32::from(d);
-        if self.store.config.fuel_enabled {
-            self.store
-                .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(n.as_u64()))?;
-        }
-        // Query both tables and check if they are the same:
-        if src_table_idx != dst_table_idx {
-            let [src, dst] = self
-                .store
-                .tables
-                .get_many_mut([&src_table_idx, &dst_table_idx])
-                .map(|v| v.expect("rwasm: unresolved table segment"));
-            TableEntity::copy(dst, dst_index, src, src_index, len)?;
-        } else {
-            let src = self
-                .store
-                .tables
-                .get_mut(&src_table_idx)
-                .expect("rwasm: unresolved table segment");
-            src.copy_within(dst_index, src_index, len)?;
-        }
-        self.store.ip.add(2);
-        Ok(())
-    }
+impl_visit_unary! {
+    fn visit_i32_eqz(i32_eqz);
+    fn visit_i64_eqz(i64_eqz);
 
-    #[inline(always)]
-    pub(crate) fn visit_table_init(
-        &mut self,
-        element_segment_idx: ElementSegmentIdx,
-    ) -> Result<(), RwasmError> {
-        let table_idx = self.fetch_table_index(1);
-        let (d, s, n) = self.store.sp.pop3();
-        let len = u32::from(n);
-        let src_index = u32::from(s);
-        let dst_index = u32::from(d);
+    fn visit_i32_clz(i32_clz);
+    fn visit_i32_ctz(i32_ctz);
+    fn visit_i32_popcnt(i32_popcnt);
 
-        if self.store.config.fuel_enabled {
-            self.store
-                .try_consume_fuel(self.store.fuel_costs.fuel_for_elements(len as u64))?;
-        }
+    fn visit_i64_clz(i64_clz);
+    fn visit_i64_ctz(i64_ctz);
+    fn visit_i64_popcnt(i64_popcnt);
 
-        // There is a trick with `element_segment_idx`:
-        // it refers to the segment number.
-        // However, in rwasm, all elements are stored in segment 0,
-        // so there is no need to store information about the remaining segments.
-        // According to the WebAssembly standards, though,
-        // we must retain information about all dropped element segments
-        // to perform an emptiness check.
-        // Therefore, in `element_segment_idx`, we store the original index,
-        // which is always > 0.
-        let is_empty_segment = self
-            .resolve_element_or_create(element_segment_idx)
-            .is_empty();
+    fn visit_f32_abs(f32_abs);
+    fn visit_f32_neg(f32_neg);
+    fn visit_f32_ceil(f32_ceil);
+    fn visit_f32_floor(f32_floor);
+    fn visit_f32_trunc(f32_trunc);
+    fn visit_f32_nearest(f32_nearest);
+    fn visit_f32_sqrt(f32_sqrt);
 
-        let (table, mut element) =
-            self.resolve_table_with_element_or_create(table_idx, ElementSegmentIdx::from(0));
-        let mut empty_element_segment = ElementSegmentEntity::empty(element.ty());
-        if is_empty_segment {
-            element = &mut empty_element_segment;
-        }
-        table.init_untyped(dst_index, element, src_index, len)?;
-        self.store.ip.add(2);
-        Ok(())
-    }
+    fn visit_f64_abs(f64_abs);
+    fn visit_f64_neg(f64_neg);
+    fn visit_f64_ceil(f64_ceil);
+    fn visit_f64_floor(f64_floor);
+    fn visit_f64_trunc(f64_trunc);
+    fn visit_f64_nearest(f64_nearest);
+    fn visit_f64_sqrt(f64_sqrt);
 
-    #[inline(always)]
-    pub(crate) fn visit_element_drop(&mut self, element_segment_idx: ElementSegmentIdx) {
-        let element_segment = self.resolve_element_or_create(element_segment_idx);
-        element_segment.drop_items();
-        self.store.ip.add(1);
-    }
+    fn visit_i32_wrap_i64(i32_wrap_i64);
+    fn visit_i64_extend_i32_s(i64_extend_i32_s);
+    fn visit_i64_extend_i32_u(i64_extend_i32_u);
 
-    #[inline(always)]
-    pub(crate) fn visit_ref_func(&mut self, func_idx: FuncIdx) -> Result<(), RwasmError> {
-        self.store.sp.push_as(func_idx.to_u32() + FUNC_REF_OFFSET);
-        self.store.ip.add(1);
-        Ok(())
-    }
+    fn visit_f32_convert_i32_s(f32_convert_i32_s);
+    fn visit_f32_convert_i32_u(f32_convert_i32_u);
+    fn visit_f32_convert_i64_s(f32_convert_i64_s);
+    fn visit_f32_convert_i64_u(f32_convert_i64_u);
+    fn visit_f32_demote_f64(f32_demote_f64);
+    fn visit_f64_convert_i32_s(f64_convert_i32_s);
+    fn visit_f64_convert_i32_u(f64_convert_i32_u);
+    fn visit_f64_convert_i64_s(f64_convert_i64_s);
+    fn visit_f64_convert_i64_u(f64_convert_i64_u);
+    fn visit_f64_promote_f32(f64_promote_f32);
 
-    #[inline(always)]
-    pub(crate) fn visit_i32_i64_const(&mut self, untyped_value: UntypedValue) {
-        self.store.sp.push(untyped_value);
-        self.store.ip.add(1);
-    }
+    fn visit_i32_extend8_s(i32_extend8_s);
+    fn visit_i32_extend16_s(i32_extend16_s);
+    fn visit_i64_extend8_s(i64_extend8_s);
+    fn visit_i64_extend16_s(i64_extend16_s);
+    fn visit_i64_extend32_s(i64_extend32_s);
 
-    impl_visit_unary! {
-        fn visit_i32_eqz(i32_eqz);
-        fn visit_i64_eqz(i64_eqz);
+    fn visit_i32_trunc_sat_f32_s(i32_trunc_sat_f32_s);
+    fn visit_i32_trunc_sat_f32_u(i32_trunc_sat_f32_u);
+    fn visit_i32_trunc_sat_f64_s(i32_trunc_sat_f64_s);
+    fn visit_i32_trunc_sat_f64_u(i32_trunc_sat_f64_u);
+    fn visit_i64_trunc_sat_f32_s(i64_trunc_sat_f32_s);
+    fn visit_i64_trunc_sat_f32_u(i64_trunc_sat_f32_u);
+    fn visit_i64_trunc_sat_f64_s(i64_trunc_sat_f64_s);
+    fn visit_i64_trunc_sat_f64_u(i64_trunc_sat_f64_u);
+}
 
-        fn visit_i32_clz(i32_clz);
-        fn visit_i32_ctz(i32_ctz);
-        fn visit_i32_popcnt(i32_popcnt);
+impl_visit_fallible_unary! {
+    fn visit_i32_trunc_f32_s(i32_trunc_f32_s);
+    fn visit_i32_trunc_f32_u(i32_trunc_f32_u);
+    fn visit_i32_trunc_f64_s(i32_trunc_f64_s);
+    fn visit_i32_trunc_f64_u(i32_trunc_f64_u);
 
-        fn visit_i64_clz(i64_clz);
-        fn visit_i64_ctz(i64_ctz);
-        fn visit_i64_popcnt(i64_popcnt);
+    fn visit_i64_trunc_f32_s(i64_trunc_f32_s);
+    fn visit_i64_trunc_f32_u(i64_trunc_f32_u);
+    fn visit_i64_trunc_f64_s(i64_trunc_f64_s);
+    fn visit_i64_trunc_f64_u(i64_trunc_f64_u);
+}
 
-        fn visit_f32_abs(f32_abs);
-        fn visit_f32_neg(f32_neg);
-        fn visit_f32_ceil(f32_ceil);
-        fn visit_f32_floor(f32_floor);
-        fn visit_f32_trunc(f32_trunc);
-        fn visit_f32_nearest(f32_nearest);
-        fn visit_f32_sqrt(f32_sqrt);
+impl_visit_binary! {
+    fn visit_i32_eq(i32_eq);
+    fn visit_i32_ne(i32_ne);
+    fn visit_i32_lt_s(i32_lt_s);
+    fn visit_i32_lt_u(i32_lt_u);
+    fn visit_i32_gt_s(i32_gt_s);
+    fn visit_i32_gt_u(i32_gt_u);
+    fn visit_i32_le_s(i32_le_s);
+    fn visit_i32_le_u(i32_le_u);
+    fn visit_i32_ge_s(i32_ge_s);
+    fn visit_i32_ge_u(i32_ge_u);
 
-        fn visit_f64_abs(f64_abs);
-        fn visit_f64_neg(f64_neg);
-        fn visit_f64_ceil(f64_ceil);
-        fn visit_f64_floor(f64_floor);
-        fn visit_f64_trunc(f64_trunc);
-        fn visit_f64_nearest(f64_nearest);
-        fn visit_f64_sqrt(f64_sqrt);
+    fn visit_i64_eq(i64_eq);
+    fn visit_i64_ne(i64_ne);
+    fn visit_i64_lt_s(i64_lt_s);
+    fn visit_i64_lt_u(i64_lt_u);
+    fn visit_i64_gt_s(i64_gt_s);
+    fn visit_i64_gt_u(i64_gt_u);
+    fn visit_i64_le_s(i64_le_s);
+    fn visit_i64_le_u(i64_le_u);
+    fn visit_i64_ge_s(i64_ge_s);
+    fn visit_i64_ge_u(i64_ge_u);
 
-        fn visit_i32_wrap_i64(i32_wrap_i64);
-        fn visit_i64_extend_i32_s(i64_extend_i32_s);
-        fn visit_i64_extend_i32_u(i64_extend_i32_u);
+    fn visit_f32_eq(f32_eq);
+    fn visit_f32_ne(f32_ne);
+    fn visit_f32_lt(f32_lt);
+    fn visit_f32_gt(f32_gt);
+    fn visit_f32_le(f32_le);
+    fn visit_f32_ge(f32_ge);
 
-        fn visit_f32_convert_i32_s(f32_convert_i32_s);
-        fn visit_f32_convert_i32_u(f32_convert_i32_u);
-        fn visit_f32_convert_i64_s(f32_convert_i64_s);
-        fn visit_f32_convert_i64_u(f32_convert_i64_u);
-        fn visit_f32_demote_f64(f32_demote_f64);
-        fn visit_f64_convert_i32_s(f64_convert_i32_s);
-        fn visit_f64_convert_i32_u(f64_convert_i32_u);
-        fn visit_f64_convert_i64_s(f64_convert_i64_s);
-        fn visit_f64_convert_i64_u(f64_convert_i64_u);
-        fn visit_f64_promote_f32(f64_promote_f32);
+    fn visit_f64_eq(f64_eq);
+    fn visit_f64_ne(f64_ne);
+    fn visit_f64_lt(f64_lt);
+    fn visit_f64_gt(f64_gt);
+    fn visit_f64_le(f64_le);
+    fn visit_f64_ge(f64_ge);
 
-        fn visit_i32_extend8_s(i32_extend8_s);
-        fn visit_i32_extend16_s(i32_extend16_s);
-        fn visit_i64_extend8_s(i64_extend8_s);
-        fn visit_i64_extend16_s(i64_extend16_s);
-        fn visit_i64_extend32_s(i64_extend32_s);
+    fn visit_i32_add(i32_add);
+    fn visit_i32_sub(i32_sub);
+    fn visit_i32_mul(i32_mul);
+    fn visit_i32_and(i32_and);
+    fn visit_i32_or(i32_or);
+    fn visit_i32_xor(i32_xor);
+    fn visit_i32_shl(i32_shl);
+    fn visit_i32_shr_s(i32_shr_s);
+    fn visit_i32_shr_u(i32_shr_u);
+    fn visit_i32_rotl(i32_rotl);
+    fn visit_i32_rotr(i32_rotr);
 
-        fn visit_i32_trunc_sat_f32_s(i32_trunc_sat_f32_s);
-        fn visit_i32_trunc_sat_f32_u(i32_trunc_sat_f32_u);
-        fn visit_i32_trunc_sat_f64_s(i32_trunc_sat_f64_s);
-        fn visit_i32_trunc_sat_f64_u(i32_trunc_sat_f64_u);
-        fn visit_i64_trunc_sat_f32_s(i64_trunc_sat_f32_s);
-        fn visit_i64_trunc_sat_f32_u(i64_trunc_sat_f32_u);
-        fn visit_i64_trunc_sat_f64_s(i64_trunc_sat_f64_s);
-        fn visit_i64_trunc_sat_f64_u(i64_trunc_sat_f64_u);
-    }
+    fn visit_i64_add(i64_add);
+    fn visit_i64_sub(i64_sub);
+    fn visit_i64_mul(i64_mul);
+    fn visit_i64_and(i64_and);
+    fn visit_i64_or(i64_or);
+    fn visit_i64_xor(i64_xor);
+    fn visit_i64_shl(i64_shl);
+    fn visit_i64_shr_s(i64_shr_s);
+    fn visit_i64_shr_u(i64_shr_u);
+    fn visit_i64_rotl(i64_rotl);
+    fn visit_i64_rotr(i64_rotr);
 
-    impl_visit_fallible_unary! {
-        fn visit_i32_trunc_f32_s(i32_trunc_f32_s);
-        fn visit_i32_trunc_f32_u(i32_trunc_f32_u);
-        fn visit_i32_trunc_f64_s(i32_trunc_f64_s);
-        fn visit_i32_trunc_f64_u(i32_trunc_f64_u);
+    fn visit_f32_add(f32_add);
+    fn visit_f32_sub(f32_sub);
+    fn visit_f32_mul(f32_mul);
+    fn visit_f32_div(f32_div);
+    fn visit_f32_min(f32_min);
+    fn visit_f32_max(f32_max);
+    fn visit_f32_copysign(f32_copysign);
 
-        fn visit_i64_trunc_f32_s(i64_trunc_f32_s);
-        fn visit_i64_trunc_f32_u(i64_trunc_f32_u);
-        fn visit_i64_trunc_f64_s(i64_trunc_f64_s);
-        fn visit_i64_trunc_f64_u(i64_trunc_f64_u);
-    }
+    fn visit_f64_add(f64_add);
+    fn visit_f64_sub(f64_sub);
+    fn visit_f64_mul(f64_mul);
+    fn visit_f64_div(f64_div);
+    fn visit_f64_min(f64_min);
+    fn visit_f64_max(f64_max);
+    fn visit_f64_copysign(f64_copysign);
+}
 
-    impl_visit_binary! {
-        fn visit_i32_eq(i32_eq);
-        fn visit_i32_ne(i32_ne);
-        fn visit_i32_lt_s(i32_lt_s);
-        fn visit_i32_lt_u(i32_lt_u);
-        fn visit_i32_gt_s(i32_gt_s);
-        fn visit_i32_gt_u(i32_gt_u);
-        fn visit_i32_le_s(i32_le_s);
-        fn visit_i32_le_u(i32_le_u);
-        fn visit_i32_ge_s(i32_ge_s);
-        fn visit_i32_ge_u(i32_ge_u);
+impl_visit_fallible_binary! {
+    fn visit_i32_div_s(i32_div_s);
+    fn visit_i32_div_u(i32_div_u);
+    fn visit_i32_rem_s(i32_rem_s);
+    fn visit_i32_rem_u(i32_rem_u);
 
-        fn visit_i64_eq(i64_eq);
-        fn visit_i64_ne(i64_ne);
-        fn visit_i64_lt_s(i64_lt_s);
-        fn visit_i64_lt_u(i64_lt_u);
-        fn visit_i64_gt_s(i64_gt_s);
-        fn visit_i64_gt_u(i64_gt_u);
-        fn visit_i64_le_s(i64_le_s);
-        fn visit_i64_le_u(i64_le_u);
-        fn visit_i64_ge_s(i64_ge_s);
-        fn visit_i64_ge_u(i64_ge_u);
-
-        fn visit_f32_eq(f32_eq);
-        fn visit_f32_ne(f32_ne);
-        fn visit_f32_lt(f32_lt);
-        fn visit_f32_gt(f32_gt);
-        fn visit_f32_le(f32_le);
-        fn visit_f32_ge(f32_ge);
-
-        fn visit_f64_eq(f64_eq);
-        fn visit_f64_ne(f64_ne);
-        fn visit_f64_lt(f64_lt);
-        fn visit_f64_gt(f64_gt);
-        fn visit_f64_le(f64_le);
-        fn visit_f64_ge(f64_ge);
-
-        fn visit_i32_add(i32_add);
-        fn visit_i32_sub(i32_sub);
-        fn visit_i32_mul(i32_mul);
-        fn visit_i32_and(i32_and);
-        fn visit_i32_or(i32_or);
-        fn visit_i32_xor(i32_xor);
-        fn visit_i32_shl(i32_shl);
-        fn visit_i32_shr_s(i32_shr_s);
-        fn visit_i32_shr_u(i32_shr_u);
-        fn visit_i32_rotl(i32_rotl);
-        fn visit_i32_rotr(i32_rotr);
-
-        fn visit_i64_add(i64_add);
-        fn visit_i64_sub(i64_sub);
-        fn visit_i64_mul(i64_mul);
-        fn visit_i64_and(i64_and);
-        fn visit_i64_or(i64_or);
-        fn visit_i64_xor(i64_xor);
-        fn visit_i64_shl(i64_shl);
-        fn visit_i64_shr_s(i64_shr_s);
-        fn visit_i64_shr_u(i64_shr_u);
-        fn visit_i64_rotl(i64_rotl);
-        fn visit_i64_rotr(i64_rotr);
-
-        fn visit_f32_add(f32_add);
-        fn visit_f32_sub(f32_sub);
-        fn visit_f32_mul(f32_mul);
-        fn visit_f32_div(f32_div);
-        fn visit_f32_min(f32_min);
-        fn visit_f32_max(f32_max);
-        fn visit_f32_copysign(f32_copysign);
-
-        fn visit_f64_add(f64_add);
-        fn visit_f64_sub(f64_sub);
-        fn visit_f64_mul(f64_mul);
-        fn visit_f64_div(f64_div);
-        fn visit_f64_min(f64_min);
-        fn visit_f64_max(f64_max);
-        fn visit_f64_copysign(f64_copysign);
-    }
-
-    impl_visit_fallible_binary! {
-        fn visit_i32_div_s(i32_div_s);
-        fn visit_i32_div_u(i32_div_u);
-        fn visit_i32_rem_s(i32_rem_s);
-        fn visit_i32_rem_u(i32_rem_u);
-
-        fn visit_i64_div_s(i64_div_s);
-        fn visit_i64_div_u(i64_div_u);
-        fn visit_i64_rem_s(i64_rem_s);
-        fn visit_i64_rem_u(i64_rem_u);
-    }
+    fn visit_i64_div_s(i64_div_s);
+    fn visit_i64_div_u(i64_div_u);
+    fn visit_i64_rem_s(i64_rem_s);
+    fn visit_i64_rem_u(i64_rem_u);
 }
