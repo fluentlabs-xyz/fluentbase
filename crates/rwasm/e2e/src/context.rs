@@ -1,7 +1,7 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use crate::handler::{
+    testing_context_syscall_handler,
     TestingContext,
-    TestingSyscallHandler,
     ENTRYPOINT_FUNC_IDX,
     FUNC_PRINT,
     FUNC_PRINT_F32,
@@ -14,14 +14,12 @@ use crate::handler::{
 use anyhow::Result;
 use fluentbase_rwasm::{
     make_instruction_table,
-    AlwaysFailingSyscallHandler,
     Caller,
     ExecutorConfig,
     InstructionTable,
     RwasmError,
     RwasmExecutor,
     RwasmModule2,
-    SimpleCallHandler,
 };
 use revm_interpreter::SharedMemory;
 use rwasm::{
@@ -49,11 +47,10 @@ use rwasm::{
 use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc, sync::Arc};
 use wast::token::{Id, Span};
 
-type TestingRwasmExecutor = RwasmExecutor<TestingSyscallHandler, TestingContext>;
+type TestingRwasmExecutor = RwasmExecutor<TestingContext>;
 type Instance = Rc<RefCell<TestingRwasmExecutor>>;
 
-const TESTING_INSTRUCTION_TABLE: InstructionTable<TestingSyscallHandler, TestingContext> =
-    make_instruction_table();
+const TESTING_INSTRUCTION_TABLE: InstructionTable<TestingContext> = make_instruction_table();
 
 /// The context of a single Wasm test spec suite run.
 pub struct TestContext<'a> {
@@ -274,7 +271,8 @@ impl TestContext<'_> {
             ExecutorConfig::new().floats_enabled(false),
             TestingContext::default(),
         );
-        executor.store_mut().context_mut().state = ENTRYPOINT_FUNC_IDX;
+        executor.set_syscall_handler(testing_context_syscall_handler);
+        executor.context_mut().state = ENTRYPOINT_FUNC_IDX;
         println!(" --- entrypoint ---");
         let exit_code = executor.run(&TESTING_INSTRUCTION_TABLE).map_err(|err| {
             let trap_code = match err {
@@ -375,8 +373,8 @@ impl TestContext<'_> {
         // However, with different states.
         // Some tests might fail, and we might keep outdated signature value in the state,
         // make sure the state is clear before every new call.
-        let pc = instance.store().context().program_counter as usize;
-        instance.store_mut().reset(Some(pc));
+        let pc = instance.context().program_counter as usize;
+        instance.reset(Some(pc));
 
         let func_state = self
             .extern_state
@@ -384,13 +382,13 @@ impl TestContext<'_> {
             .unwrap()
             .clone();
 
-        let mut caller = Caller::new(instance.store_mut());
+        let mut caller = Caller::new(&mut instance);
         for value in args {
             caller.stack_push(value.clone());
         }
 
         // change function state for router
-        instance.store_mut().context_mut().state = func_state;
+        instance.context_mut().state = func_state;
         let exit_code = instance.run(&TESTING_INSTRUCTION_TABLE).map_err(|err| {
             let trap_code = match err {
                 RwasmError::TrapCode(trap_code) => trap_code,
@@ -403,7 +401,7 @@ impl TestContext<'_> {
         let len_results = func_type.results().len();
         self.results.clear();
         self.results.resize(len_results, Value::I32(0));
-        let mut caller = Caller::new(instance.store_mut());
+        let mut caller = Caller::new(&mut instance);
         for (i, val_type) in func_type.results().iter().rev().enumerate() {
             let popped_value = caller.stack_pop();
             self.results[len_results - 1 - i] = match val_type {
