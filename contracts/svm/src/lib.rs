@@ -5,6 +5,6 @@ extern crate alloc;
 extern crate core;
 use fluentbase_sdk::func_entrypoint;
 #[allow(unused_imports)]
-use solana_ee_core::fluentbase::loader_v4::{deploy, main};
+use fluentbase_svm::fluentbase::loader_v4::{deploy, main};
 
 func_entrypoint!(main, deploy);

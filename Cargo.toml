@@ -3,16 +3,18 @@ members = [
     "contracts/*",
     "crates/*",
     "revm/crates/*",
-    "solana-ee-core/crates/core",
-    "solana-ee-core/crates/examples/hello-world",
+    #    "solana-ee-core/crates/core",
+    #    "solana-ee-core/crates/examples/hello-world",
     "crates/rwasm/e2e",
     #    "examples/*",
     "e2e",
+    "examples/svm/hello-world"
 ]
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
     "solana-ee-core",
+    "examples/svm"
 ]
 resolver = "2"
 
@@ -39,9 +41,8 @@ fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-rwasm = { path = "./crates/rwasm", default-features = false, features = ["std"] }
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
+fluentbase-svm = { path = "./crates/svm", default-features = false }
 
-#fluentbase-svm = { path = "./crates/svm", default-features = false }
-solana-ee-core = { path = "./solana-ee-core/crates/core", default-features = false }
 solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
 #solana-program = { path = "../solana/sdk/program", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
@@ -87,6 +88,8 @@ itertools = { version = "0.14.0", default-features = false, features = ["use_all
 bincode = { git = "https://github.com/fluentlabs-xyz/bincode", branch = "feat/svm-v1.3.3", default-features = false }
 num-derive = { version = "0.4" }
 num-traits = { version = "0.2", features = ["i128"], default-features = false }
+
+rand = { version = "0.8.5", default-features = false, features = ["alloc"] }
 
 [profile.bench]
 lto = "fat"

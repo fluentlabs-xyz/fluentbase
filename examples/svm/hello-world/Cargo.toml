@@ -1,0 +1,13 @@
+[package]
+name = "fluentbase-examples-svm-hello-world"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/solana_program.rs"
+
+[dependencies]
+#solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
+#solana-program = { path = "../../../../../solana/sdk/program", default-features = false }
+solana-program = { workspace = true, default-features = false }
