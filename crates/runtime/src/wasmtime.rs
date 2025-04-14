@@ -29,7 +29,24 @@ struct WorkerContext {
     output: Vec<u8>,
     return_data: Vec<u8>,
     fuel_limit: u64,
+    fuel_consumed: u64,
+    fuel_refunded: i64,
 }
+//
+// impl WorkerContext {
+//     fn charge_fuel(&mut self, fuel_consumed: u64, fuel_refunded: i64) -> anyhow::Result<u64> {
+//         self.fuel_consumed_total = self.fuel_consumed_total
+//             .checked_add(fuel_consumed)
+//             .unwrap_or(u64::MAX);
+//         self.fuel_consumed_tick = self.fuel_consumed_total
+//             .checked_add(fuel_consumed)
+//             .unwrap_or(u64::MAX);
+//         self.fuel_refunded_total = self.fuel_refunded_total
+//             .checked_add(fuel_refunded)
+//             .unwrap_or(i64::MAX);
+
+//     }
+// }
 
 #[derive(Debug, Clone)]
 enum TerminationReason {
@@ -49,6 +66,8 @@ impl StdError for TerminationReason {}
 #[derive(Debug)]
 enum Message {
     ExecutionRequest {
+        fuel_consumed: u64,
+        fuel_refunded: i64,
         code_hash: [u8; 32],
         input: Vec<u8>,
         fuel_limit: u64,
@@ -63,6 +82,8 @@ enum Message {
         fuel16_ptr: u32,
     },
     WasmTerminated {
+        fuel_consumed: u64,
+        fuel_refunded: i64,
         reason: TerminationReason,
         output: Vec<u8>,
     },
@@ -71,9 +92,24 @@ struct AsyncExecutor {
     sender: mpsc::Sender<Message>,
     receiver: mpsc::Receiver<Message>,
     worker: JoinHandle<()>,
+    fuel_consumed_checkpoint: u64,
+    fuel_refunded_checkpoint: i64,
 }
 
 impl AsyncExecutor {
+    pub fn calc_fuel_since_checkpoint(
+        &mut self,
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+    ) -> (u64, i64) {
+        let result = (
+            fuel_consumed - self.fuel_consumed_checkpoint,
+            fuel_refunded - self.fuel_refunded_checkpoint,
+        );
+        self.fuel_consumed_checkpoint = fuel_consumed;
+        self.fuel_refunded_checkpoint = fuel_refunded;
+        result
+    }
     /* module is expected to be preferified somewhere before.
      * So in this function we should never get errors during initialization of wasm instance */
     pub fn launch(module: &Module, input: Vec<u8>, fuel_limit: u64, state: u32) -> Self {
@@ -86,6 +122,8 @@ impl AsyncExecutor {
             output: Vec::new(),
             return_data: Vec::new(),
             fuel_limit,
+            fuel_consumed: 0,
+            fuel_refunded: 0,
         };
         let engine = module.engine();
         let linker = new_linker_with_builtins(engine).unwrap();
@@ -117,6 +155,8 @@ impl AsyncExecutor {
             let message = Message::WasmTerminated {
                 reason,
                 output: store.data().output.clone(),
+                fuel_consumed: store.data().fuel_consumed,
+                fuel_refunded: store.data().fuel_refunded,
             };
             store
                 .data()
@@ -129,6 +169,8 @@ impl AsyncExecutor {
             sender: executor_sender,
             receiver: executor_receiver,
             worker,
+            fuel_consumed_checkpoint: 0,
+            fuel_refunded_checkpoint: 0,
         }
     }
     pub fn receive_message(&self) -> Message {
@@ -192,6 +234,7 @@ impl RuntimeState {
 
 mod builtins {
     use super::*;
+
     fn get_memory_export(caller: &mut Caller<'_, WorkerContext>) -> anyhow::Result<Memory> {
         match caller.get_export("memory") {
             Some(Extern::Memory(memory)) => Ok(memory),
@@ -305,23 +348,27 @@ mod builtins {
         fuel16_ptr: u32,
         state: u32,
     ) -> anyhow::Result<i32> {
+        let remaining_fuel = caller.data().fuel_limit - caller.data().fuel_consumed;
         let fuel_limit = if fuel16_ptr > 0 {
             let fuel_buffer = read_memory(&mut caller, fuel16_ptr, 16)?;
             let fuel_limit = LittleEndian::read_i64(&fuel_buffer[..8]) as u64;
             let _fuel_refund = LittleEndian::read_i64(&fuel_buffer[8..]);
             if fuel_limit > 0 {
-                min(fuel_limit, caller.data().fuel_limit)
+                min(fuel_limit, remaining_fuel)
             } else {
                 0
             }
         } else {
-            caller.data().fuel_limit
+            remaining_fuel
         };
         let code_hash = read_memory(&mut caller, hash32_ptr, 32)?;
         let code_hash: [u8; 32] = code_hash.as_slice().try_into().unwrap();
         let input = read_memory(&mut caller, input_ptr, input_len)?;
+
         let context = caller.data();
         let request = Message::ExecutionRequest {
+            fuel_consumed: context.fuel_consumed,
+            fuel_refunded: context.fuel_refunded,
             code_hash,
             input,
             fuel_limit,
@@ -371,12 +418,29 @@ mod builtins {
         Ok(())
     }
 
-    pub fn charge_fuel(_caller: Caller<'_, WorkerContext>, _delta: u64) -> anyhow::Result<u64> {
-        Ok(u64::MAX)
+    pub fn charge_fuel(
+        mut caller: Caller<'_, WorkerContext>,
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+    ) -> anyhow::Result<u64> {
+        let context = caller.data_mut();
+        context.fuel_consumed = context
+            .fuel_consumed
+            .checked_add(fuel_consumed)
+            .unwrap_or(u64::MAX);
+        context.fuel_refunded = context
+            .fuel_refunded
+            .checked_add(fuel_refunded)
+            .unwrap_or(i64::MAX);
+        if context.fuel_consumed > context.fuel_limit {
+            return Err(wasmtime::Trap::OutOfFuel.into());
+        }
+        Ok(context.fuel_limit - context.fuel_consumed)
     }
 
-    pub fn fuel(_caller: Caller<'_, WorkerContext>) -> anyhow::Result<u64> {
-        Ok(u64::MAX)
+    pub fn fuel(caller: Caller<'_, WorkerContext>) -> anyhow::Result<u64> {
+        let context = caller.data();
+        Ok(context.fuel_limit - context.fuel_consumed)
     }
 }
 
@@ -397,52 +461,98 @@ fn new_linker_with_builtins(engine: &Engine) -> anyhow::Result<Linker<WorkerCont
     Ok(linker)
 }
 
-fn handle_one_step(executor: AsyncExecutor) -> (i32, Vec<u8>) {
-    RUNTIME_STATE.with_borrow_mut(|runtime_state| {
-        let next_message = executor.receive_message();
-        match next_message {
-            Message::ExecutionRequest {
-                code_hash,
-                input,
+fn handle_one_step(mut executor: AsyncExecutor) -> (u64, i64, i32, Vec<u8>) {
+    let next_message = executor.receive_message();
+
+    match next_message {
+        Message::ExecutionRequest {
+            fuel_consumed,
+            fuel_refunded,
+            code_hash,
+            input,
+            fuel_limit,
+            state,
+            fuel16_ptr,
+        } => {
+            let (fuel_consumed_delta, fuel_refunded_delta) =
+                executor.calc_fuel_since_checkpoint(fuel_consumed, fuel_refunded);
+            let call_id = RUNTIME_STATE
+                .with_borrow_mut(|runtime_state| runtime_state.suspend_executor(executor));
+            assert!(call_id > 0);
+
+            let params = SyscallInvocationParams {
+                code_hash: B256::from(code_hash),
+                input: Bytes::from(input),
                 fuel_limit,
                 state,
                 fuel16_ptr,
-            } => {
-                let call_id = runtime_state.suspend_executor(executor);
-                assert!(call_id > 0);
+            };
+            let mut encoded_state = BytesMut::new();
+            CompactABI::encode(&params, &mut encoded_state, 0)
+                .expect("failed to encode syscall invocation params");
+            let output = encoded_state.freeze().to_vec();
 
-                let params = SyscallInvocationParams {
-                    code_hash: B256::from(code_hash),
-                    input: Bytes::from(input),
-                    fuel_limit: fuel_limit,
-                    state,
-                    fuel16_ptr,
-                };
-                let mut encoded_state = BytesMut::new();
-                CompactABI::encode(&params, &mut encoded_state, 0)
-                    .expect("failed to encode syscall invocation params");
-                let output = encoded_state.freeze().to_vec();
-
-                (call_id, output)
-            }
-            Message::WasmTerminated { reason, output } => {
-                executor.worker.join().expect("worker should never panic");
-                let final_exit_code = match reason {
-                    TerminationReason::Exit(value) => value,
-                    _ => ExitCode::Err.into_i32(),
-                };
-                (final_exit_code, output)
-            }
-            _ => panic!("unexpected message type received"),
+            (fuel_consumed_delta, fuel_refunded_delta, call_id, output)
         }
-    })
+        Message::WasmTerminated {
+            fuel_consumed,
+            fuel_refunded,
+            reason,
+            output,
+        } => {
+            let (fuel_consumed_delta, fuel_refunded_tick) =
+                executor.calc_fuel_since_checkpoint(fuel_consumed, fuel_refunded);
+            executor.worker.join().expect("worker should never panic");
+            let final_exit_code = match reason {
+                TerminationReason::Exit(value) => value,
+                TerminationReason::Trap(trap) => match trap {
+                    wasmtime::Trap::UnreachableCodeReached => {
+                        ExitCode::UnreachableCodeReached.into_i32()
+                    }
+                    wasmtime::Trap::MemoryOutOfBounds => ExitCode::MemoryOutOfBounds.into_i32(),
+                    wasmtime::Trap::TableOutOfBounds => ExitCode::TableOutOfBounds.into_i32(),
+                    wasmtime::Trap::IndirectCallToNull => ExitCode::IndirectCallToNull.into_i32(),
+                    wasmtime::Trap::IntegerDivisionByZero => {
+                        ExitCode::IntegerDivisionByZero.into_i32()
+                    }
+                    wasmtime::Trap::IntegerOverflow => ExitCode::IntegerOverflow.into_i32(),
+                    wasmtime::Trap::BadConversionToInteger => {
+                        ExitCode::BadConversionToInteger.into_i32()
+                    }
+                    wasmtime::Trap::StackOverflow => ExitCode::StackOverflow.into_i32(),
+                    wasmtime::Trap::BadSignature => ExitCode::BadSignature.into_i32(),
+                    wasmtime::Trap::OutOfFuel => ExitCode::OutOfFuel.into_i32(),
+                    wasmtime::Trap::HeapMisaligned => ExitCode::UnknownError.into_i32(),
+                    wasmtime::Trap::Interrupt => ExitCode::UnknownError.into_i32(),
+                    wasmtime::Trap::AlwaysTrapAdapter => ExitCode::UnknownError.into_i32(),
+                    wasmtime::Trap::AtomicWaitNonSharedMemory => ExitCode::UnknownError.into_i32(),
+                    wasmtime::Trap::NullReference => ExitCode::UnknownError.into_i32(),
+                    wasmtime::Trap::ArrayOutOfBounds => ExitCode::UnknownError.into_i32(),
+                    wasmtime::Trap::AllocationTooLarge => ExitCode::UnknownError.into_i32(),
+                    wasmtime::Trap::CastFailure => ExitCode::UnknownError.into_i32(),
+                    wasmtime::Trap::CannotEnterComponent => ExitCode::UnknownError.into_i32(),
+                    wasmtime::Trap::NoAsyncResult => ExitCode::UnknownError.into_i32(),
+                    _ => ExitCode::UnknownError.into_i32(),
+                },
+                _ => ExitCode::Err.into_i32(),
+            };
+            (
+                fuel_consumed_delta,
+                fuel_refunded_tick,
+                final_exit_code,
+                output,
+            )
+        }
+        _ => panic!("unexpected message type received"),
+    }
 }
-pub fn execute_wasmtime(
+
+pub fn execute(
     wasm_bytecode: &[u8],
     input: Vec<u8>,
     fuel_limit: u64,
     state: u32,
-) -> (i32, Vec<u8>) {
+) -> (u64, i64, i32, Vec<u8>) {
     let executor = RUNTIME_STATE.with_borrow_mut(|runtime_state| {
         let module = runtime_state.init_module_cached(wasm_bytecode);
         AsyncExecutor::launch(module, input, fuel_limit, state)
@@ -450,14 +560,14 @@ pub fn execute_wasmtime(
     handle_one_step(executor)
 }
 
-pub fn resume_wasmtime(
+pub fn resume(
     call_id: i32,
     output: Vec<u8>,
     exit_code: i32,
     fuel_consumed: u64,
     fuel_refunded: i64,
     fuel16_ptr: u32,
-) -> (i32, Vec<u8>) {
+) -> (u64, i64, i32, Vec<u8>) {
     let executor = RUNTIME_STATE
         .with_borrow_mut(|runtime_state| runtime_state.take_suspended_executor(call_id));
     executor.send_message(Message::ExecutionResult {

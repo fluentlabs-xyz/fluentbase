@@ -1,4 +1,5 @@
 use crate::{Runtime, RuntimeContext};
+use fluentbase_genesis::{get_precompile_wasm_bytecode_by_hash, is_system_precompile_hash};
 use fluentbase_rwasm::{Caller, HostError, RwasmError, TrapCode};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
@@ -103,13 +104,26 @@ impl SyscallExec {
             return (fuel_limit, 0, ExitCode::CallDepthOverflow.into_i32());
         }
 
+        let bytecode_or_hash = code_hash.clone().into().with_resolved_hash(); // TODO(khasan) don't copy bytecode
+        let hash = bytecode_or_hash.resolve_hash();
+
+        if is_system_precompile_hash(&hash) {
+            let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(&hash).unwrap();
+            let (fuel_consumed, fuel_refunded, exit_code, output) =
+                crate::wasmtime::execute(wasm_bytecode, input, fuel_limit, state);
+            ctx.execution_result.return_data = output;
+            return (fuel_consumed, fuel_refunded, exit_code);
+        }
+
         // create a new runtime instance with the context
-        let ctx2 = RuntimeContext::new(code_hash)
+        let mut ctx2 = RuntimeContext::new(code_hash)
             .with_input(Bytes::copy_from_slice(input))
             .with_fuel_limit(fuel_limit)
             .with_state(state)
-            .with_call_depth(ctx.call_depth + 1)
-            .with_disable_fuel(ctx.disable_fuel);
+            .with_call_depth(ctx.call_depth + 1);
+        if is_system_precompile_hash(&hash) {
+            ctx2 = ctx2.without_fuel();
+        }
         let mut runtime = Runtime::new(ctx2);
         let mut execution_result = runtime.call();
 

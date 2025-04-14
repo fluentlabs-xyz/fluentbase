@@ -13,6 +13,7 @@ categories.workspace = true
 fluentbase-codec = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-rwasm = { workspace = true }
+fluentbase-genesis = { workspace = true }
 
 # misc
 keccak-hash = { version = "0.11.0" }

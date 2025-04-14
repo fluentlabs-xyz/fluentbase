@@ -14,4 +14,3 @@ mod wasmtime;
 pub use context::*;
 pub use runtime::*;
 pub use storage::*;
-pub use wasmtime::*;

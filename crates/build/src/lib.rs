@@ -66,7 +66,10 @@ pub fn calc_wasm_artefact_paths(
         }
     }
     if result.is_empty() {
-        panic!("there is no WASM artifact to build");
+        panic!(
+            "there is no WASM artifact to build for crate {}",
+            config.cargo_manifest_dir
+        );
     } else if result.len() > 1 {
         panic!("multiple WASM artefacts are supported");
     }

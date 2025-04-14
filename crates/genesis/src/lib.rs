@@ -1,6 +1,6 @@
 pub use alloy_genesis::Genesis;
 pub use fluentbase_types::genesis::*;
-use fluentbase_types::{Address, HashMap};
+use fluentbase_types::{keccak256, Address, HashMap, B256};
 use lazy_static::lazy_static;
 
 #[cfg(feature = "generate-genesis")]
@@ -35,24 +35,23 @@ mod precompile {
     pub const PRECOMPILE_BYTECODE_SECP256K1_RECOVER: &[u8] = include_wasm!("fluentbase-contracts-ecrecover");
     pub const PRECOMPILE_BYTECODE_SHA256: &[u8] = include_wasm!("fluentbase-contracts-sha256");
     pub const PRECOMPILE_BYTECODE_WEBAUTHN_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-webauthn");
+
+    #[cfg(feature = "bls12")]
+    pub mod bls12 {
+        use fluentbase_types::include_wasm;
+
+        pub const PRECOMPILE_BYTECODE_BLS12_381_G1_ADD: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+        pub const PRECOMPILE_BYTECODE_BLS12_381_G1_MSM: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+        pub const PRECOMPILE_BYTECODE_BLS12_381_G2_ADD: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+        pub const PRECOMPILE_BYTECODE_BLS12_381_G2_MSM: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+        pub const PRECOMPILE_BYTECODE_BLS12_381_MAP_G1: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+        pub const PRECOMPILE_BYTECODE_BLS12_381_MAP_G2: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+        pub const PRECOMPILE_BYTECODE_BLS12_381_PAIRING: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
+    }
 }
 
-#[rustfmt::skip]
 #[cfg(feature = "bls12")]
-mod bls12 {
-    use fluentbase_types::include_wasm;
-
-    pub const PRECOMPILE_BYTECODE_BLS12_381_G1_ADD: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-    pub const PRECOMPILE_BYTECODE_BLS12_381_G1_MSM: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-    pub const PRECOMPILE_BYTECODE_BLS12_381_G2_ADD: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-    pub const PRECOMPILE_BYTECODE_BLS12_381_G2_MSM: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-    pub const PRECOMPILE_BYTECODE_BLS12_381_MAP_G1: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-    pub const PRECOMPILE_BYTECODE_BLS12_381_MAP_G2: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-    pub const PRECOMPILE_BYTECODE_BLS12_381_PAIRING: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-}
-
-#[cfg(feature = "bls12")]
-pub use bls12::*;
+pub use precompile::bls12::*;
 pub use precompile::*;
 
 lazy_static! {
@@ -96,11 +95,25 @@ lazy_static! {
         }
         map
     };
+
+    static ref SYSTEM_PRECOMPILE_HASHES: HashMap<B256, Address> = {
+        let mut map = HashMap::new();
+        for (addr, data) in SYSTEM_PRECOMPILES.iter() {
+            map.insert(keccak256(data), addr.clone());
+        }
+        map
+    };
 }
 
 /// Checks is contract has self-gas management
 pub fn is_self_gas_management_contract(address: &Address) -> bool {
     is_system_precompile(address)
+}
+
+pub fn get_precompile_wasm_bytecode_by_hash(hash: &B256) -> Option<&'static [u8]> {
+    SYSTEM_PRECOMPILE_HASHES
+        .get(hash)
+        .and_then(|addr| get_precompile_wasm_bytecode(addr))
 }
 
 /// Determines if a given address belongs to the system precompiled set.
@@ -119,6 +132,10 @@ pub fn is_self_gas_management_contract(address: &Address) -> bool {
 pub fn is_system_precompile(address: &Address) -> bool {
     // TODO(dmitry123): "add spec verification"
     SYSTEM_PRECOMPILES.contains_key(address)
+}
+
+pub fn is_system_precompile_hash(hash: &B256) -> bool {
+    SYSTEM_PRECOMPILE_HASHES.contains_key(hash)
 }
 
 pub fn get_precompile_wasm_bytecode(address: &Address) -> Option<&[u8]> {
