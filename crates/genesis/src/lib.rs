@@ -79,35 +79,15 @@ lazy_static! {
         ]);
         #[cfg(feature = "bls12")]
         {
+            #[rustfmt::skip]
             arr.extend([
-                (
-                    PRECOMPILE_BLS12_381_G1_ADD,
-                    PRECOMPILE_BYTECODE_BLS12_381_G1_ADD.to_vec(),
-                ),
-                (
-                    PRECOMPILE_BLS12_381_G1_MSM,
-                    PRECOMPILE_BYTECODE_BLS12_381_G1_MSM.to_vec(),
-                ),
-                (
-                    PRECOMPILE_BLS12_381_G2_ADD,
-                    PRECOMPILE_BYTECODE_BLS12_381_G2_ADD.to_vec(),
-                ),
-                (
-                    PRECOMPILE_BLS12_381_G2_MSM,
-                    PRECOMPILE_BYTECODE_BLS12_381_G2_MSM.to_vec(),
-                ),
-                (
-                    PRECOMPILE_BLS12_381_MAP_G1,
-                    PRECOMPILE_BYTECODE_BLS12_381_MAP_G1.to_vec(),
-                ),
-                (
-                    PRECOMPILE_BLS12_381_MAP_G2,
-                    PRECOMPILE_BYTECODE_BLS12_381_MAP_G2.to_vec(),
-                ),
-                (
-                    PRECOMPILE_BLS12_381_PAIRING,
-                    PRECOMPILE_BYTECODE_BLS12_381_PAIRING.to_vec(),
-                ),
+                (PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BYTECODE_BLS12_381_G1_ADD.to_vec()),
+                (PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BYTECODE_BLS12_381_G1_MSM.to_vec()),
+                (PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BYTECODE_BLS12_381_G2_ADD.to_vec()),
+                (PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BYTECODE_BLS12_381_G2_MSM.to_vec()),
+                (PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BYTECODE_BLS12_381_MAP_G1.to_vec()),
+                (PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BYTECODE_BLS12_381_MAP_G2.to_vec()),
+                (PRECOMPILE_BLS12_381_PAIRING, PRECOMPILE_BYTECODE_BLS12_381_PAIRING.to_vec()),
             ]);
         }
         let mut map = HashMap::new();
