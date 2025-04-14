@@ -263,15 +263,6 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn recover_bytecode_(call_id: u32) -> Runtime {
-        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
-            caching_runtime
-                .recoverable_runtimes
-                .remove(&call_id)
-                .expect("runtime: can't resolve runtime by id, it should never happen")
-        })
-    }
-
     fn handle_execution_result(
         &mut self,
         mut next_result: Result<i32, RwasmError>,
