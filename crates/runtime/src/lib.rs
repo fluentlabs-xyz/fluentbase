@@ -10,6 +10,7 @@ mod storage;
 #[cfg(test)]
 mod tests;
 mod utils;
+#[cfg(feature = "wasmtime")]
 mod wasmtime;
 
 pub use context::*;

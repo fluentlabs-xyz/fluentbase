@@ -1,6 +1,6 @@
 pub use alloy_genesis::Genesis;
 pub use fluentbase_types::genesis::*;
-use fluentbase_types::{keccak256, Address, HashMap, B256};
+use fluentbase_types::{compile_wasm_to_rwasm, keccak256, Address, HashMap, B256};
 use lazy_static::lazy_static;
 
 #[cfg(feature = "generate-genesis")]
@@ -55,9 +55,9 @@ pub use precompile::bls12::*;
 pub use precompile::*;
 
 lazy_static! {
-    #[rustfmt::skip]
     static ref SYSTEM_PRECOMPILES: HashMap<Address, Vec<u8>> = {
         let mut arr = Vec::new();
+        #[rustfmt::skip]
         arr.extend([
             (PRECOMPILE_BIG_MODEXP, PRECOMPILE_BYTECODE_BIG_MODEXP.to_vec()),
             (PRECOMPILE_BLAKE2F, PRECOMPILE_BYTECODE_BLAKE2F.to_vec()),
@@ -80,13 +80,34 @@ lazy_static! {
         #[cfg(feature = "bls12")]
         {
             arr.extend([
-                (PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BYTECODE_BLS12_381_G1_ADD.to_vec()),
-                (PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BYTECODE_BLS12_381_G1_MSM.to_vec()),
-                (PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BYTECODE_BLS12_381_G2_ADD.to_vec()),
-                (PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BYTECODE_BLS12_381_G2_MSM.to_vec()),
-                (PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BYTECODE_BLS12_381_MAP_G1.to_vec()),
-                (PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BYTECODE_BLS12_381_MAP_G2.to_vec()),
-                (PRECOMPILE_BLS12_381_PAIRING, PRECOMPILE_BYTECODE_BLS12_381_PAIRING.to_vec()),
+                (
+                    PRECOMPILE_BLS12_381_G1_ADD,
+                    PRECOMPILE_BYTECODE_BLS12_381_G1_ADD.to_vec(),
+                ),
+                (
+                    PRECOMPILE_BLS12_381_G1_MSM,
+                    PRECOMPILE_BYTECODE_BLS12_381_G1_MSM.to_vec(),
+                ),
+                (
+                    PRECOMPILE_BLS12_381_G2_ADD,
+                    PRECOMPILE_BYTECODE_BLS12_381_G2_ADD.to_vec(),
+                ),
+                (
+                    PRECOMPILE_BLS12_381_G2_MSM,
+                    PRECOMPILE_BYTECODE_BLS12_381_G2_MSM.to_vec(),
+                ),
+                (
+                    PRECOMPILE_BLS12_381_MAP_G1,
+                    PRECOMPILE_BYTECODE_BLS12_381_MAP_G1.to_vec(),
+                ),
+                (
+                    PRECOMPILE_BLS12_381_MAP_G2,
+                    PRECOMPILE_BYTECODE_BLS12_381_MAP_G2.to_vec(),
+                ),
+                (
+                    PRECOMPILE_BLS12_381_PAIRING,
+                    PRECOMPILE_BYTECODE_BLS12_381_PAIRING.to_vec(),
+                ),
             ]);
         }
         let mut map = HashMap::new();
@@ -95,11 +116,14 @@ lazy_static! {
         }
         map
     };
-
     static ref SYSTEM_PRECOMPILE_HASHES: HashMap<B256, Address> = {
         let mut map = HashMap::new();
         for (addr, data) in SYSTEM_PRECOMPILES.iter() {
-            map.insert(keccak256(data), addr.clone());
+            let rwasm_bytecode = compile_wasm_to_rwasm(data.as_slice())
+                .expect("failed to compile system contract to rwasm");
+            assert!(rwasm_bytecode.constructor_params.is_empty());
+            let rwasm_bytecode: Vec<u8> = rwasm_bytecode.rwasm_bytecode.into();
+            map.insert(keccak256(rwasm_bytecode), addr.clone());
         }
         map
     };

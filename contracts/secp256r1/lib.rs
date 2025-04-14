@@ -43,7 +43,7 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, testing::TestingContext, ContractContextV1, B256};
+    use fluentbase_sdk::{hex, testing::TestingContext, ContractContextV1, B256, FUEL_DENOM_RATE};
     use p256::{
         ecdsa::{signature::Verifier, SigningKey, VerifyingKey},
         elliptic_curve::rand_core::OsRng,
@@ -56,13 +56,13 @@ mod tests {
             .with_contract_context(ContractContextV1 {
                 gas_limit,
                 ..Default::default()
-            });
+            })
+            .with_gas_limit(gas_limit);
         main(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(output, expected);
-        let (gas_remaining, gas_refunded) = sdk.synced_gas();
+        let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
-        assert_eq!(gas_refunded, 0);
     }
 
     #[test]
