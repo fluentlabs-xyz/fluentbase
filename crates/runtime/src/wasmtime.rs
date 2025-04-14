@@ -32,21 +32,6 @@ struct WorkerContext {
     fuel_consumed: u64,
     fuel_refunded: i64,
 }
-//
-// impl WorkerContext {
-//     fn charge_fuel(&mut self, fuel_consumed: u64, fuel_refunded: i64) -> anyhow::Result<u64> {
-//         self.fuel_consumed_total = self.fuel_consumed_total
-//             .checked_add(fuel_consumed)
-//             .unwrap_or(u64::MAX);
-//         self.fuel_consumed_tick = self.fuel_consumed_total
-//             .checked_add(fuel_consumed)
-//             .unwrap_or(u64::MAX);
-//         self.fuel_refunded_total = self.fuel_refunded_total
-//             .checked_add(fuel_refunded)
-//             .unwrap_or(i64::MAX);
-
-//     }
-// }
 
 #[derive(Debug, Clone)]
 enum TerminationReason {
@@ -226,9 +211,8 @@ impl RuntimeState {
         self.modules_cache.get(&hash).unwrap()
     }
 
-    fn take_suspended_executor(&mut self, call_id: i32) -> AsyncExecutor {
-        let executor = self.suspended_executors.remove(&call_id);
-        executor.expect("executor should exist")
+    fn take_suspended_executor(&mut self, call_id: i32) -> Option<AsyncExecutor> {
+        self.suspended_executors.remove(&call_id)
     }
 }
 
@@ -424,17 +408,18 @@ mod builtins {
         fuel_refunded: i64,
     ) -> anyhow::Result<u64> {
         let context = caller.data_mut();
-        context.fuel_consumed = context
+        let new_fuel_consumed = context
             .fuel_consumed
             .checked_add(fuel_consumed)
             .unwrap_or(u64::MAX);
+        if new_fuel_consumed > context.fuel_limit {
+            return Err(wasmtime::Trap::OutOfFuel.into());
+        }
+        context.fuel_consumed = new_fuel_consumed;
         context.fuel_refunded = context
             .fuel_refunded
             .checked_add(fuel_refunded)
             .unwrap_or(i64::MAX);
-        if context.fuel_consumed > context.fuel_limit {
-            return Err(wasmtime::Trap::OutOfFuel.into());
-        }
         Ok(context.fuel_limit - context.fuel_consumed)
     }
 
@@ -560,16 +545,16 @@ pub fn execute(
     handle_one_step(executor)
 }
 
-pub fn resume(
+pub fn try_resume(
     call_id: i32,
     output: Vec<u8>,
     exit_code: i32,
     fuel_consumed: u64,
     fuel_refunded: i64,
     fuel16_ptr: u32,
-) -> (u64, i64, i32, Vec<u8>) {
+) -> Option<(u64, i64, i32, Vec<u8>)> {
     let executor = RUNTIME_STATE
-        .with_borrow_mut(|runtime_state| runtime_state.take_suspended_executor(call_id));
+        .with_borrow_mut(|runtime_state| runtime_state.take_suspended_executor(call_id))?;
     executor.send_message(Message::ExecutionResult {
         fuel_consumed,
         fuel_refunded,
@@ -577,5 +562,5 @@ pub fn resume(
         output,
         fuel16_ptr,
     });
-    handle_one_step(executor)
+    Some(handle_one_step(executor))
 }

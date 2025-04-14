@@ -109,9 +109,9 @@ impl SyscallExec {
         let bytecode_or_hash = code_hash.into().with_resolved_hash();
 
         #[cfg(feature = "wasmtime")]
-        if ctx.disable_fuel {
-            let hash = bytecode_or_hash.resolve_hash();
-            let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(&hash).unwrap();
+        if let Some(wasm_bytecode) =
+            get_precompile_wasm_bytecode_by_hash(&bytecode_or_hash.resolve_hash())
+        {
             let (fuel_consumed, fuel_refunded, exit_code, output) =
                 crate::wasmtime::execute(wasm_bytecode, input.to_vec(), fuel_limit, state);
             ctx.execution_result.return_data = output;

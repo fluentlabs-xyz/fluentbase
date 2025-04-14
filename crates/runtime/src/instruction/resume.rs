@@ -1,4 +1,5 @@
 use crate::{Runtime, RuntimeContext};
+use fluentbase_genesis::get_precompile_wasm_bytecode_by_hash;
 use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
 use num::ToPrimitive;
@@ -52,15 +53,14 @@ impl SyscallResume {
         }
 
         #[cfg(feature = "wasmtime")]
-        if ctx.disable_fuel {
-            let (fuel_consumed, fuel_refunded, exit_code, output) = crate::wasmtime::resume(
-                call_id.to_i32().unwrap(),
-                return_data,
-                exit_code,
-                fuel_consumed,
-                fuel_refunded,
-                fuel16_ptr,
-            );
+        if let Some((fuel_consumed, fuel_refunded, exit_code, output)) = crate::wasmtime::try_resume(
+            call_id.to_i32().unwrap(),
+            return_data,
+            exit_code,
+            fuel_consumed,
+            fuel_refunded,
+            fuel16_ptr,
+        ) {
             ctx.execution_result.return_data = output;
             return (fuel_consumed, fuel_refunded, exit_code);
         }
