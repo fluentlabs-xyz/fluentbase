@@ -10,10 +10,14 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+# fluentbase
 fluentbase-codec = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-rwasm = { workspace = true }
 fluentbase-genesis = { workspace = true }
+
+# revm (a temporary solution)
+revm-interpreter = { workspace = true }
 
 # misc
 keccak-hash = { version = "0.11.0" }

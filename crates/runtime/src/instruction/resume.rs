@@ -1,6 +1,8 @@
 use crate::{Runtime, RuntimeContext};
 use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
+use revm_interpreter::EMPTY_SHARED_MEMORY;
+use std::mem::replace;
 
 pub struct SyscallResume;
 
@@ -53,6 +55,11 @@ impl SyscallResume {
         // during the résumé we must-clear output, otherwise collision might happen
         recoverable_runtime.context_mut().clear_output();
 
+        let shared_memory = replace(&mut ctx.shared_memory, EMPTY_SHARED_MEMORY);
+        recoverable_runtime
+            .executor
+            .insert_shared_memory(shared_memory);
+
         // we can charge fuel only if fuel is not disabled,
         // when fuel is disabled we only pass consumed fuel amount into the contract back,
         // and it can decide on charging
@@ -74,58 +81,10 @@ impl SyscallResume {
         return_data_mut.clear();
         return_data_mut.extend(&return_data);
 
-        // let skip_trace_logs = recoverable_runtime.store().tracer().unwrap().logs.len();
-
         let mut execution_result =
             recoverable_runtime.resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code);
 
-        // println!("RESUME, interrupted: {}", execution_result.interrupted);
-        // println!(
-        //     "exit_code: {} ({})",
-        //     execution_result.exit_code,
-        //     ExitCode::from(execution_result.exit_code)
-        // );
-        // println!(
-        //     "output: 0x{} ({})",
-        //     fluentbase_types::hex::encode(&execution_result.output),
-        //     std::str::from_utf8(&execution_result.output).unwrap_or("can't decode utf-8")
-        // );
-        // println!("fuel consumed: {}", execution_result.fuel_consumed);
-        // let logs = &recoverable_runtime.store().tracer().unwrap().logs;
-        // println!("execution trace ({} steps):", logs.len());
-        // for log in logs.iter().skip(skip_trace_logs).rev().take(100).rev() {
-        //     use fluentbase_rwasm::InstructionExtra;
-        //     if let Some(value) = log.opcode.aux_value() {
-        //         println!(
-        //             " - pc={} opcode={:?}({}) gas={} stack={:?}",
-        //             log.program_counter,
-        //             log.opcode,
-        //             value,
-        //             log.consumed_fuel,
-        //             log.stack
-        //                 .iter()
-        //                 .map(|v| v.to_string())
-        //                 .rev()
-        //                 .take(3)
-        //                 .rev()
-        //                 .collect::<Vec<_>>(),
-        //         );
-        //     } else {
-        //         println!(
-        //             " - pc={} opcode={:?} gas={} stack={:?}",
-        //             log.program_counter,
-        //             log.opcode,
-        //             log.consumed_fuel,
-        //             log.stack
-        //                 .iter()
-        //                 .map(|v| v.to_string())
-        //                 .rev()
-        //                 .take(3)
-        //                 .rev()
-        //                 .collect::<Vec<_>>()
-        //         );
-        //     }
-        // }
+        ctx.shared_memory = recoverable_runtime.executor.take_shared_memory();
 
         // if execution was interrupted,
         if execution_result.interrupted {
@@ -133,8 +92,6 @@ impl SyscallResume {
             // stands for interrupted runtime call id, negative or zero for error)
             execution_result.exit_code = recoverable_runtime.remember_runtime(ctx);
         }
-
-        // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
 
         ctx.execution_result.return_data = execution_result.output.clone();
 

@@ -20,6 +20,7 @@ use fluentbase_rwasm::{
     RwasmExecutor,
     SimpleCallHandler,
 };
+use revm_interpreter::SharedMemory;
 use rwasm::{
     core::{ImportLinker, ValueType, F32, F64},
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
@@ -262,7 +263,8 @@ impl TestContext<'_> {
         // println!();
 
         let mut executor = TestingRwasmExecutor::new(
-            rwasm_module.instantiate(),
+            rwasm_module.instantiate().into(),
+            SharedMemory::default(),
             ExecutorConfig::new().floats_enabled(false),
             TestingContext::default(),
         );

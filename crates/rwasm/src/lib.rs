@@ -6,6 +6,7 @@ mod config;
 mod context;
 mod executor;
 mod handler;
+mod memory;
 mod opcodes;
 mod types;
 mod utils;

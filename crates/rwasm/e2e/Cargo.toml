@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 fluentbase-rwasm = { workspace = true }
-#fluentbase-types = { workspace = true }
+
+# revm (a temporary solution)
+revm-interpreter = { workspace = true }
 
 # we have rwasm only here because we are planning to remove this dependency in the future
 rwasm = { workspace = true }

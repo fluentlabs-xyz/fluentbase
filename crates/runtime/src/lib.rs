@@ -9,6 +9,7 @@ mod runtime;
 mod storage;
 #[cfg(test)]
 mod tests;
+mod utils;
 mod wasmtime;
 
 pub use context::*;

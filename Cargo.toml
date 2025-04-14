@@ -51,7 +51,7 @@ alloy-primitives = { version = "=0.8.21", default-features = false, features = [
 alloy-rlp = { version = "0.3.10", default-features = false, features = ["derive"] }
 alloy-genesis = { version = "=0.11.1", default-features = false }
 alloy-sol-types = { version = "=0.8.20", default-features = false }
-hashbrown = { version = "0.15.0", default-features = false, features = ["alloc"] }
+hashbrown = { version = "0.15.0", default-features = false, features = ["default-hasher", "inline-more"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false }
 paste = { version = "1.0", default-features = false }

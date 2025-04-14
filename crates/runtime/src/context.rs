@@ -1,6 +1,8 @@
 use crate::ExecutionResult;
+use core::mem::replace;
 use fluentbase_rwasm::{RwasmError, TrapCode};
 use fluentbase_types::{BytecodeOrHash, Bytes, B256};
+use revm_interpreter::{SharedMemory, EMPTY_SHARED_MEMORY};
 
 pub struct RuntimeContext {
     // context inputs
@@ -13,6 +15,7 @@ pub struct RuntimeContext {
     pub(crate) disable_fuel: bool,
     // TODO(dmitry123): "check function `remember_runtime`, it's not correct"
     pub(crate) call_counter: u32,
+    pub(crate) shared_memory: SharedMemory,
     // context outputs
     pub(crate) execution_result: ExecutionResult,
 }
@@ -29,6 +32,7 @@ impl Default for RuntimeContext {
             execution_result: ExecutionResult::default(),
             disable_fuel: false,
             call_counter: 0,
+            shared_memory: EMPTY_SHARED_MEMORY,
         }
     }
 }
@@ -98,6 +102,15 @@ impl RuntimeContext {
         self
     }
 
+    pub fn with_shared_memory(mut self, shared_memory: SharedMemory) -> Self {
+        self.shared_memory = shared_memory;
+        self
+    }
+
+    pub fn take_shared_memory(&mut self) -> SharedMemory {
+        replace(&mut self.shared_memory, EMPTY_SHARED_MEMORY)
+    }
+
     pub fn depth(&self) -> u32 {
         self.call_depth
     }
@@ -130,8 +143,8 @@ impl RuntimeContext {
         &self.execution_result.return_data
     }
 
-    pub fn into_return_data(self) -> Vec<u8> {
-        self.execution_result.return_data
+    pub fn into_return_data(self) -> (Bytes, SharedMemory) {
+        (self.execution_result.return_data.into(), self.shared_memory)
     }
 
     pub fn return_data_mut(&mut self) -> &mut Vec<u8> {

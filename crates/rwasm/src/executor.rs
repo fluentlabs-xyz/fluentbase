@@ -6,7 +6,8 @@ use crate::{
     N_MAX_TABLE_SIZE,
     TABLE_ELEMENT_NULL,
 };
-use core::marker::PhantomData;
+use core::{marker::PhantomData, mem::replace};
+use revm_interpreter::{SharedMemory, EMPTY_SHARED_MEMORY};
 use rwasm::{
     core::{TrapCode, UntypedValue, ValueType},
     engine::{
@@ -28,6 +29,7 @@ use rwasm::{
     TableType,
     Value,
 };
+use std::sync::Arc;
 
 pub struct RwasmExecutor<E: SyscallHandler<T>, T> {
     pub(crate) store: RwasmContext<T>,
@@ -37,18 +39,25 @@ pub struct RwasmExecutor<E: SyscallHandler<T>, T> {
 impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     pub fn parse(
         rwasm_bytecode: &[u8],
+        shared_memory: SharedMemory,
         config: ExecutorConfig,
         context: T,
     ) -> Result<Self, RwasmError> {
         Ok(Self::new(
-            RwasmModule::new_or_empty(rwasm_bytecode)?.instantiate(),
+            Arc::new(RwasmModule::new_or_empty(rwasm_bytecode)?.instantiate()),
+            shared_memory,
             config,
             context,
         ))
     }
 
-    pub fn new(rwasm_module: RwasmModuleInstance, config: ExecutorConfig, context: T) -> Self {
-        let store = RwasmContext::new(rwasm_module, config, context);
+    pub fn new(
+        rwasm_module: Arc<RwasmModuleInstance>,
+        shared_memory: SharedMemory,
+        config: ExecutorConfig,
+        context: T,
+    ) -> Self {
+        let store = RwasmContext::new(rwasm_module, shared_memory, config, context);
         Self {
             store,
             phantom_data: Default::default(),
@@ -271,6 +280,17 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         );
         self.store.ip.add(instr_ref as usize);
         Ok(())
+    }
+
+    pub fn take_shared_memory(&mut self) -> SharedMemory {
+        replace(
+            &mut self.store.global_memory.shared_memory,
+            EMPTY_SHARED_MEMORY,
+        )
+    }
+
+    pub fn insert_shared_memory(&mut self, shared_memory: SharedMemory) {
+        self.store.global_memory.shared_memory = shared_memory;
     }
 
     pub fn store(&self) -> &RwasmContext<T> {

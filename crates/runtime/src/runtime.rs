@@ -29,7 +29,10 @@ use std::{
     cell::RefCell,
     fmt::Debug,
     mem::take,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
 };
 
 #[derive(Default, Clone, Debug)]
@@ -54,7 +57,7 @@ impl ExecutionResult {
 pub struct CachingRuntime {
     // TODO(dmitry123): "add LRU cache to this map to avoid memory leak"
     cached_bytecode: HashMap<B256, Bytes>,
-    modules: HashMap<B256, RwasmModuleInstance>,
+    modules: HashMap<B256, Arc<RwasmModuleInstance>>,
     recoverable_runtimes: HashMap<u32, Runtime>,
 }
 
@@ -70,7 +73,7 @@ impl CachingRuntime {
     pub fn insert_module(
         &mut self,
         rwasm_hash: B256,
-        instance: RwasmModuleInstance,
+        instance: Arc<RwasmModuleInstance>,
         bytecode: Bytes,
     ) -> &RwasmModuleInstance {
         self.cached_bytecode.insert(rwasm_hash, bytecode);
@@ -81,7 +84,7 @@ impl CachingRuntime {
         entry.insert(instance)
     }
 
-    pub fn init_module(&mut self, rwasm_hash: B256) -> &RwasmModuleInstance {
+    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<RwasmModuleInstance> {
         let rwasm_bytecode = self
             .cached_bytecode
             .get(&rwasm_hash)
@@ -92,11 +95,13 @@ impl CachingRuntime {
         };
         let reduced_module =
             RwasmModule::new_or_empty(rwasm_bytecode).expect("runtime: can't parse rwasm module");
-        entry.insert(reduced_module.instantiate())
+        let reduced_module = Arc::new(reduced_module.instantiate());
+        entry.insert(reduced_module.clone());
+        reduced_module
     }
 
-    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<&RwasmModuleInstance> {
-        self.modules.get(rwasm_hash)
+    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<RwasmModuleInstance>> {
+        self.modules.get(rwasm_hash).cloned()
     }
 }
 
@@ -167,8 +172,11 @@ impl Runtime {
             // return bytecode
             runtime_context.bytecode = bytecode_repr;
 
+            let shared_memory = runtime_context.take_shared_memory();
+
             let executor = RwasmExecutor::new(
                 rwasm_module.clone(),
+                shared_memory,
                 ExecutorConfig::new()
                     .fuel_limit(runtime_context.fuel_limit)
                     .trace_enabled(runtime_context.trace)
