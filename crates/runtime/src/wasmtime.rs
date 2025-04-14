@@ -571,6 +571,6 @@ pub fn resume(
     handle_one_step(executor)
 }
 
-pub fn is_call_id_valid(call_id: i32) -> bool {
+pub fn is_legal_call_id(call_id: i32) -> bool {
     call_id >= FIRST_VALID_CALL_ID
 }

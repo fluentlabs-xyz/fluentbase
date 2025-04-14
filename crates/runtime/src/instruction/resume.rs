@@ -53,7 +53,7 @@ impl SyscallResume {
 
         #[cfg(feature = "wasmtime")]
         {
-            if crate::wasmtime::is_call_id_valid(call_id as i32) {
+            if crate::wasmtime::is_legal_call_id(call_id as i32) {
                 let (fuel_consumed, fuel_refunded, exit_code, output) = crate::wasmtime::resume(
                     call_id.to_i32().unwrap(),
                     return_data,
