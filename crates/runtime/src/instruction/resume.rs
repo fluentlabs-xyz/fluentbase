@@ -52,19 +52,16 @@ impl SyscallResume {
         }
 
         #[cfg(feature = "wasmtime")]
-        {
-            if crate::wasmtime::is_legal_call_id(call_id as i32) {
-                let (fuel_consumed, fuel_refunded, exit_code, output) = crate::wasmtime::resume(
-                    call_id.to_i32().unwrap(),
-                    return_data,
-                    exit_code,
-                    fuel_consumed,
-                    fuel_refunded,
-                    fuel16_ptr,
-                );
-                ctx.execution_result.return_data = output;
-                return (fuel_consumed, fuel_refunded, exit_code);
-            }
+        if let Some((fuel_consumed, fuel_refunded, exit_code, output)) = crate::wasmtime::try_resume(
+            call_id.to_i32().unwrap(),
+            return_data.clone(),
+            exit_code,
+            fuel_consumed,
+            fuel_refunded,
+            fuel16_ptr,
+        ) {
+            ctx.execution_result.return_data = output;
+            return (fuel_consumed, fuel_refunded, exit_code);
         }
 
         let mut recoverable_runtime = Runtime::recover_runtime(call_id);

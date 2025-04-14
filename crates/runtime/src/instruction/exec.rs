@@ -1,5 +1,4 @@
 use crate::{Runtime, RuntimeContext};
-use fluentbase_genesis::{get_precompile_wasm_bytecode_by_hash, is_system_precompile_hash};
 use fluentbase_rwasm::{Caller, HostError, RwasmError, TrapCode};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
@@ -110,6 +109,10 @@ impl SyscallExec {
 
         #[cfg(feature = "wasmtime")]
         {
+            use fluentbase_genesis::{
+                get_precompile_wasm_bytecode_by_hash,
+                is_system_precompile_hash,
+            };
             let hash = bytecode_or_hash.resolve_hash();
             if is_system_precompile_hash(&hash) {
                 let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(&hash).unwrap();

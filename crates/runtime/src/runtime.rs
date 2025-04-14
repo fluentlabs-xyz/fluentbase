@@ -124,6 +124,8 @@ pub struct Runtime {
     pub(crate) executor: RwasmExecutor<RuntimeSyscallHandler, RuntimeContext>,
 }
 
+pub(crate) static CALL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+
 impl Runtime {
     pub fn catch_trap(err: &RwasmError) -> i32 {
         let err = match err {
@@ -242,11 +244,10 @@ impl Runtime {
     }
 
     pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
-        static CALL_COUNT: AtomicU32 = AtomicU32::new(1);
         // save the current runtime state for future recovery
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             // TODO(dmitry123): "don't use global call counter"
-            let call_id = CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+            let call_id = CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
             // root_ctx.call_counter += 1;
             // let call_id = root_ctx.call_counter;
             caching_runtime.recoverable_runtimes.insert(call_id, self);
