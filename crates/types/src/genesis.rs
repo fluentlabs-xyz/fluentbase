@@ -15,9 +15,6 @@ pub const PRECOMPILE_OAUTH2_VERIFIER: Address =
     address!("0000000000000000000000000000000000520006");
 pub const PRECOMPILE_NITRO_VERIFIER: Address = address!("0000000000000000000000000000000000520007");
 pub const PRECOMPILE_ERC20: Address = address!("0000000000000000000000000000000000520008");
-// "R native" + keccak256("multicall(bytes[])")[..4]
-pub const PRECOMPILE_NATIVE_MULTICALL: Address =
-    address!("52206e61746976650000000000000000ac9650d8");
 
 const fn evm_address(value: u8) -> Address {
     Address::with_last_byte(value)
@@ -40,3 +37,7 @@ pub const PRECOMPILE_BLS12_381_G2_MSM: Address = evm_address(0x0e);
 pub const PRECOMPILE_BLS12_381_PAIRING: Address = evm_address(0x0f);
 pub const PRECOMPILE_BLS12_381_MAP_G1: Address = evm_address(0x10);
 pub const PRECOMPILE_BLS12_381_MAP_G2: Address = evm_address(0x11);
+
+// "R native" + keccak256("multicall(bytes[])")[..4]
+pub const PRECOMPILE_NATIVE_MULTICALL: Address =
+    address!("52206e61746976650000000000000000ac9650d8");
