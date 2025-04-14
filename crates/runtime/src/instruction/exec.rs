@@ -1,5 +1,5 @@
 use crate::{Runtime, RuntimeContext};
-use fluentbase_genesis::get_precompile_wasm_bytecode_by_hash;
+use fluentbase_genesis::{get_precompile_wasm_bytecode_by_hash, is_system_precompile_hash};
 use fluentbase_rwasm::{Caller, HostError, RwasmError, TrapCode};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
@@ -109,17 +109,19 @@ impl SyscallExec {
         let bytecode_or_hash = code_hash.into().with_resolved_hash();
 
         #[cfg(feature = "wasmtime")]
-        if let Some(wasm_bytecode) =
-            get_precompile_wasm_bytecode_by_hash(&bytecode_or_hash.resolve_hash())
         {
-            let (fuel_consumed, fuel_refunded, exit_code, output) =
-                crate::wasmtime::execute(wasm_bytecode, input.to_vec(), fuel_limit, state);
-            ctx.execution_result.return_data = output;
-            return (fuel_consumed, fuel_refunded, exit_code);
+            let hash = bytecode_or_hash.resolve_hash();
+            if is_system_precompile_hash(&hash) {
+                let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(&hash).unwrap();
+                let (fuel_consumed, fuel_refunded, exit_code, output) =
+                    crate::wasmtime::execute(wasm_bytecode, input.to_vec(), fuel_limit, state);
+                ctx.execution_result.return_data = output;
+                return (fuel_consumed, fuel_refunded, exit_code);
+            }
         }
 
         // create a new runtime instance with the context
-        let ctx2 = RuntimeContext::new(bytecode_or_hash.clone()) // TODO(khasan) try to not copy bytecode
+        let ctx2 = RuntimeContext::new(bytecode_or_hash)
             .with_input(Bytes::copy_from_slice(input))
             .with_fuel_limit(fuel_limit)
             .with_state(state)

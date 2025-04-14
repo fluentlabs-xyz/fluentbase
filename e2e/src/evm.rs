@@ -322,10 +322,7 @@ fn test_evm_balance() {
 fn test_wasm_erc20() {
     let mut ctx = EvmTestingContext::default();
     const OWNER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(
-        OWNER_ADDRESS,
-        crate::examples::EXAMPLE_ERC20.into(),
-    );
+    let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, crate::examples::EXAMPLE_ERC20.into());
     let transfer_coin = |ctx: &mut EvmTestingContext| {
         let result = ctx.call_evm_tx(
             OWNER_ADDRESS,
@@ -339,4 +336,3 @@ fn test_wasm_erc20() {
     };
     transfer_coin(&mut ctx);
 }
-

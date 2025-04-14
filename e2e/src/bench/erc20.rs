@@ -36,10 +36,7 @@ fn bench_evm_erc20(b: &mut Bencher) {
 fn bench_wasm_erc20(b: &mut Bencher) {
     let mut ctx = EvmTestingContext::default();
     const OWNER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(
-        OWNER_ADDRESS,
-        EXAMPLE_ERC20.into(),
-    );
+    let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
 
     let transfer_coin = |ctx: &mut EvmTestingContext| {
         let result = ctx.call_evm_tx(
