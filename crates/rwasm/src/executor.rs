@@ -4,7 +4,7 @@ use crate::{
     instr_ptr::InstructionPtr,
     memory::GlobalMemory,
     module::{InstructionData, RwasmModule2},
-    opcodes::{run_the_loop, InstructionTable},
+    opcodes::run_the_loop,
     types::RwasmError,
     SyscallHandler,
     FUNC_REF_OFFSET,
@@ -242,8 +242,8 @@ impl<T> RwasmExecutor<T> {
         &mut self.context
     }
 
-    pub fn run(&mut self, instruction_table: &InstructionTable<T>) -> Result<i32, RwasmError> {
-        match run_the_loop(self, instruction_table) {
+    pub fn run(&mut self) -> Result<i32, RwasmError> {
+        match run_the_loop(self) {
             Ok(exit_code) => Ok(exit_code),
             Err(err) => match err {
                 RwasmError::ExecutionHalted(exit_code) => Ok(exit_code),

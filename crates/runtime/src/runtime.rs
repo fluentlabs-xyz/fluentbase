@@ -188,7 +188,7 @@ impl Runtime {
     pub fn call(&mut self) -> ExecutionResult {
         let fuel_consumed_before_the_call = self.executor.fuel_consumed();
         let fuel_refunded_before_the_call = self.executor.fuel_refunded();
-        let result = self.executor.run(&INSTRUCTION_TABLE);
+        let result = self.executor.run();
         self.handle_execution_result(
             result,
             fuel_consumed_before_the_call,
@@ -220,7 +220,7 @@ impl Runtime {
             }
         }
         caller.stack_push(exit_code);
-        let result = self.executor.run(&INSTRUCTION_TABLE);
+        let result = self.executor.run();
         self.handle_execution_result(
             result,
             fuel_consumed_before_the_call,

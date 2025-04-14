@@ -274,7 +274,7 @@ impl TestContext<'_> {
         executor.set_syscall_handler(testing_context_syscall_handler);
         executor.context_mut().state = ENTRYPOINT_FUNC_IDX;
         println!(" --- entrypoint ---");
-        let exit_code = executor.run(&TESTING_INSTRUCTION_TABLE).map_err(|err| {
+        let exit_code = executor.run().map_err(|err| {
             let trap_code = match err {
                 RwasmError::TrapCode(trap_code) => trap_code,
                 _ => unreachable!("not possible error: {:?}", err),
@@ -389,7 +389,7 @@ impl TestContext<'_> {
 
         // change function state for router
         instance.context_mut().state = func_state;
-        let exit_code = instance.run(&TESTING_INSTRUCTION_TABLE).map_err(|err| {
+        let exit_code = instance.run().map_err(|err| {
             let trap_code = match err {
                 RwasmError::TrapCode(trap_code) => trap_code,
                 _ => unreachable!("not possible error: {:?}", err),

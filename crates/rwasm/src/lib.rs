@@ -8,6 +8,7 @@ mod context;
 mod executor;
 mod handler;
 mod instr_ptr;
+mod instruction_table;
 mod memory;
 mod module;
 mod opcodes;
@@ -21,8 +22,8 @@ pub use config::*;
 pub use context::*;
 pub use executor::*;
 pub use handler::*;
+pub use instruction_table::*;
 pub use module::*;
-pub use opcodes::*;
 pub use rwasm::{
     core::{HostError, TrapCode},
     engine::{bytecode::Instruction, stack::ValueStackPtr, RwasmConfig, StateRouterConfig},
