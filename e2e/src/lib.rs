@@ -13,6 +13,8 @@ mod constructor;
 #[cfg(test)]
 mod evm;
 #[cfg(test)]
+mod examples;
+#[cfg(test)]
 mod gas;
 #[cfg(test)]
 mod multicall;

@@ -10,7 +10,7 @@ mod bytecode_type;
 mod context;
 pub mod evm;
 mod exit_code;
-mod genesis;
+pub mod genesis;
 mod linker;
 pub mod native_api;
 mod preimage;
@@ -96,3 +96,10 @@ pub const EVM_MAX_INITCODE_SIZE: usize = 2 * EVM_MAX_CODE_SIZE;
 
 /// A basic SPEC that Fluent supports
 pub const EVM_BASE_SPEC: SpecId = SpecId::CANCUN;
+
+#[macro_export]
+macro_rules! include_wasm {
+    ($name:tt) => {{
+        include_bytes!(env!(concat!("FLUENTBASE_WASM_BINARY_PATH_", $name)))
+    }};
+}

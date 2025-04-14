@@ -1,6 +1,7 @@
 use crate::{Runtime, RuntimeContext};
 use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
+use num::ToPrimitive;
 use revm_interpreter::EMPTY_SHARED_MEMORY;
 use std::mem::replace;
 
@@ -48,6 +49,19 @@ impl SyscallResume {
         // only root can use resume function
         if ctx.call_depth > 0 {
             return (0, 0, ExitCode::RootCallOnly.into_i32());
+        }
+
+        #[cfg(feature = "wasmtime")]
+        if let Some((fuel_consumed, fuel_refunded, exit_code, output)) = crate::wasmtime::try_resume(
+            call_id.to_i32().unwrap(),
+            return_data.clone(),
+            exit_code,
+            fuel_consumed,
+            fuel_refunded,
+            fuel16_ptr,
+        ) {
+            ctx.execution_result.return_data = output;
+            return (fuel_consumed, fuel_refunded, exit_code);
         }
 
         let mut recoverable_runtime = Runtime::recover_runtime(call_id);

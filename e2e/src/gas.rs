@@ -169,7 +169,7 @@ fn test_deploy_gas_spend() {
     let result = TxBuilder::create(
         &mut ctx,
         DEPLOYER_ADDRESS,
-        include_bytes!("../../examples/greeting/lib.wasm").into(),
+        crate::examples::EXAMPLE_GREETING.into(),
     )
     .enable_rwasm_proxy()
     .exec();

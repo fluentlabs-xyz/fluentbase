@@ -30,6 +30,11 @@ impl Default for WasmBuildConfig {
 }
 
 impl WasmBuildConfig {
+    pub fn with_cargo_manifest_dir(mut self, dir: impl Into<String>) -> Self {
+        self.cargo_manifest_dir = dir.into();
+        self
+    }
+
     pub fn with_feature(mut self, feature: impl Into<String>) -> Self {
         self.features.push(feature.into());
         self
