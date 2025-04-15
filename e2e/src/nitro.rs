@@ -8,7 +8,7 @@ use std::time::Instant;
 #[test]
 fn test_nitro_verifier_wasm_version() {
     let caller = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    let bytecode = include_bytes!("../../contracts/nitro/lib.wasm");
+    let bytecode = fluentbase_genesis::PRECOMPILE_BYTECODE_NITRO_VERIFIER;
     let mut ctx = EvmTestingContext::default();
     let address = ctx.deploy_evm_tx(caller, bytecode.into());
 
