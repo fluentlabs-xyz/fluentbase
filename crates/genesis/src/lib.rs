@@ -146,6 +146,22 @@ pub fn get_precompile_wasm_bytecode(address: &Address) -> Option<&[u8]> {
     SYSTEM_PRECOMPILES.get(address).map(Vec::as_ref)
 }
 
+pub fn get_all_precompile_addresses() -> Vec<Address> {
+    let mut result = Vec::new();
+    for key in SYSTEM_PRECOMPILES.keys() {
+        result.push(key.clone());
+    }
+    result
+}
+
+pub fn get_all_precompile_hashes() -> Vec<B256> {
+    let mut result = Vec::new();
+    for key in SYSTEM_PRECOMPILE_HASHES.keys() {
+        result.push(key.clone());
+    }
+    result
+}
+
 /// Checks if the function call should be redirected to a native precompiled contract.
 ///
 /// When the first four bytes of the input (function selector) match a precompile's address

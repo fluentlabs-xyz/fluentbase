@@ -100,11 +100,6 @@ pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBu
         return None;
     }
 
-    if config.profile == "release" {
-        println!("cargo:warning=build skipped due to the release profile");
-        return None;
-    }
-
     let (crate_name, mut artefact_path) = calc_wasm_artefact_paths(&metadata, &config);
 
     compile_rust_to_wasm(&config);

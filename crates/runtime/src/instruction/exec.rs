@@ -109,15 +109,11 @@ impl SyscallExec {
 
         #[cfg(feature = "wasmtime")]
         {
-            use fluentbase_genesis::{
-                get_precompile_wasm_bytecode_by_hash,
-                is_system_precompile_hash,
-            };
+            use fluentbase_genesis::is_system_precompile_hash;
             let hash = bytecode_or_hash.resolve_hash();
             if is_system_precompile_hash(&hash) {
-                let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(&hash).unwrap();
                 let (fuel_consumed, fuel_refunded, exit_code, output) =
-                    crate::wasmtime::execute(wasm_bytecode, input.to_vec(), fuel_limit, state);
+                    crate::wasmtime::execute(&hash, input.to_vec(), fuel_limit, state);
                 ctx.execution_result.return_data = output;
                 return (fuel_consumed, fuel_refunded, exit_code);
             }

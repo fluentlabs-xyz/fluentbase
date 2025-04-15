@@ -3,7 +3,9 @@ use crate::{
     runtime::CALL_ID_COUNTER,
 };
 use core::{error::Error as StdError, fmt};
+use ctor::ctor;
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
+use fluentbase_genesis::{get_all_precompile_hashes, get_precompile_wasm_bytecode_by_hash};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     Bytes,
@@ -16,14 +18,44 @@ use fluentbase_types::{
 use std::{
     cell::RefCell,
     cmp::min,
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::HashMap,
     fmt::Debug,
-    hash::{Hash, Hasher},
     sync::{atomic::Ordering, mpsc},
     thread,
     thread::JoinHandle,
 };
 use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store};
+
+/// Warms up all Wasmtime modules at program startup.
+#[ctor]
+static MODULES_CACHE: HashMap<B256, Module> = {
+    let start_time = std::time::Instant::now();
+    let mut config = Config::new();
+
+    #[cfg(debug_assertions)]
+    {
+        config.cranelift_opt_level(wasmtime::OptLevel::None);
+        println!("warming up wasmtime modules in debug mode (no optimizations)...");
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+        println!("warming up wasmtime modules in release mode (with optimizations)...");
+    }
+    let engine = Engine::new(&config).unwrap();
+
+    let mut map = HashMap::new();
+    for hash in get_all_precompile_hashes() {
+        let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(&hash).unwrap();
+        let module = Module::new(&engine, wasm_bytecode).expect("bytecode should be preverified");
+        map.insert(hash, module);
+    }
+    println!(
+        "wasmtime modules were compiled in: {:?}",
+        start_time.elapsed()
+    );
+    map
+};
 
 struct WorkerContext {
     sender: mpsc::Sender<Message>,
@@ -173,14 +205,12 @@ thread_local! {
     static RUNTIME_STATE: RefCell<RuntimeState> = RefCell::new(RuntimeState::new());
 }
 struct RuntimeState {
-    modules_cache: HashMap<u64, Module>,
     suspended_executors: HashMap<i32, AsyncExecutor>,
 }
 
 impl RuntimeState {
     fn new() -> Self {
         Self {
-            modules_cache: HashMap::new(),
             suspended_executors: HashMap::new(),
         }
     }
@@ -190,22 +220,6 @@ impl RuntimeState {
         let existing = self.suspended_executors.insert(call_id, executor);
         assert!(existing.is_none());
         call_id
-    }
-
-    fn init_module_cached(&mut self, wasm_bytecode: &[u8]) -> &Module {
-        let mut hasher = DefaultHasher::new();
-        wasm_bytecode.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        if !self.modules_cache.contains_key(&hash) {
-            let config = Config::new();
-            let engine = Engine::new(&config).unwrap();
-            let module =
-                Module::new(&engine, wasm_bytecode).expect("bytecode should be preverified");
-            self.modules_cache.insert(hash, module);
-        }
-
-        self.modules_cache.get(&hash).unwrap()
     }
 
     fn take_suspended_executor(&mut self, call_id: i32) -> Option<AsyncExecutor> {
@@ -530,15 +544,15 @@ fn handle_one_step(mut executor: AsyncExecutor) -> (u64, i64, i32, Vec<u8>) {
 }
 
 pub fn execute(
-    wasm_bytecode: &[u8],
+    bytecode_hash: &B256,
     input: Vec<u8>,
     fuel_limit: u64,
     state: u32,
 ) -> (u64, i64, i32, Vec<u8>) {
-    let executor = RUNTIME_STATE.with_borrow_mut(|runtime_state| {
-        let module = runtime_state.init_module_cached(wasm_bytecode);
-        AsyncExecutor::launch(module, input, fuel_limit, state)
-    });
+    let module = MODULES_CACHE
+        .get(bytecode_hash)
+        .expect("module should be cached");
+    let executor = AsyncExecutor::launch(module, input, fuel_limit, state);
     handle_one_step(executor)
 }
 
