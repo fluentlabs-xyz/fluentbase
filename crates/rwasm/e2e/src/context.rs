@@ -268,7 +268,7 @@ impl TestContext<'_> {
         let mut executor = TestingRwasmExecutor::new(
             rwasm_module.into(),
             SharedMemory::default(),
-            ExecutorConfig::new().floats_enabled(false),
+            ExecutorConfig::new().floats_enabled(true),
             TestingContext::default(),
         );
         executor.set_syscall_handler(testing_context_syscall_handler);
