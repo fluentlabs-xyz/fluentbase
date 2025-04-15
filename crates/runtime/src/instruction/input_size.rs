@@ -5,7 +5,7 @@ pub struct SyscallInputSize;
 
 impl SyscallInputSize {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let input_size = Self::fn_impl(caller.data());
+        let input_size = Self::fn_impl(caller.context());
         caller.stack_push(input_size);
         Ok(())
     }

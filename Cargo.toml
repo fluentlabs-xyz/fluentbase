@@ -66,6 +66,8 @@ syn = "2.0"
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
+smallvec = { version = "1.15.0", features = ["serde", "const_new"] }
+num_enum = { version = "0.7.3" }
 
 [profile.bench]
 lto = "fat"

@@ -7,14 +7,13 @@ use crate::{
 };
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_rwasm::{
+    make_instruction_table,
     Caller,
     ExecutorConfig,
-    RwasmContext,
+    InstructionTable,
     RwasmError,
     RwasmExecutor,
-    RwasmModule,
-    RwasmModuleInstance,
-    SyscallHandler,
+    RwasmModule2,
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
@@ -57,7 +56,7 @@ impl ExecutionResult {
 pub struct CachingRuntime {
     // TODO(dmitry123): "add LRU cache to this map to avoid memory leak"
     cached_bytecode: HashMap<B256, Bytes>,
-    modules: HashMap<B256, Arc<RwasmModuleInstance>>,
+    modules: HashMap<B256, Arc<RwasmModule2>>,
     recoverable_runtimes: HashMap<u32, Runtime>,
 }
 
@@ -70,21 +69,7 @@ impl CachingRuntime {
         }
     }
 
-    pub fn insert_module(
-        &mut self,
-        rwasm_hash: B256,
-        instance: Arc<RwasmModuleInstance>,
-        bytecode: Bytes,
-    ) -> &RwasmModuleInstance {
-        self.cached_bytecode.insert(rwasm_hash, bytecode);
-        let entry = match self.modules.entry(rwasm_hash) {
-            Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
-            Entry::Vacant(entry) => entry,
-        };
-        entry.insert(instance)
-    }
-
-    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<RwasmModuleInstance> {
+    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<RwasmModule2> {
         let rwasm_bytecode = self
             .cached_bytecode
             .get(&rwasm_hash)
@@ -93,14 +78,12 @@ impl CachingRuntime {
             Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
             Entry::Vacant(entry) => entry,
         };
-        let reduced_module =
-            RwasmModule::new_or_empty(rwasm_bytecode).expect("runtime: can't parse rwasm module");
-        let reduced_module = Arc::new(reduced_module.instantiate());
+        let reduced_module = Arc::new(RwasmModule2::new_or_empty(rwasm_bytecode));
         entry.insert(reduced_module.clone());
         reduced_module
     }
 
-    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<RwasmModuleInstance>> {
+    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<RwasmModule2>> {
         self.modules.get(rwasm_hash).cloned()
     }
 }
@@ -112,17 +95,20 @@ thread_local! {
 #[derive(Default)]
 pub struct RuntimeSyscallHandler {}
 
-impl SyscallHandler<RuntimeContext> for RuntimeSyscallHandler {
-    fn call_function(caller: Caller<RuntimeContext>, func_idx: u32) -> Result<(), RwasmError> {
-        let sys_func_idx =
-            SysFuncIdx::from_repr(func_idx).ok_or(RwasmError::UnknownExternalFunction(func_idx))?;
-        invoke_runtime_handler(caller, sys_func_idx)
-    }
+fn runtime_syscall_handler(
+    caller: Caller<RuntimeContext>,
+    func_idx: u32,
+) -> Result<(), RwasmError> {
+    let sys_func_idx =
+        SysFuncIdx::from_repr(func_idx).ok_or(RwasmError::UnknownExternalFunction(func_idx))?;
+    invoke_runtime_handler(caller, sys_func_idx)
 }
 
 pub struct Runtime {
-    pub(crate) executor: RwasmExecutor<RuntimeSyscallHandler, RuntimeContext>,
+    pub executor: RwasmExecutor<RuntimeContext>,
 }
+
+const INSTRUCTION_TABLE: InstructionTable<RuntimeContext> = make_instruction_table();
 
 pub(crate) static CALL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
@@ -176,7 +162,7 @@ impl Runtime {
 
             let shared_memory = runtime_context.take_shared_memory();
 
-            let executor = RwasmExecutor::new(
+            let mut executor = RwasmExecutor::new(
                 rwasm_module.clone(),
                 shared_memory,
                 ExecutorConfig::new()
@@ -185,6 +171,7 @@ impl Runtime {
                     .fuel_enabled(!runtime_context.disable_fuel),
                 runtime_context,
             );
+            executor.set_syscall_handler(runtime_syscall_handler);
             Self { executor }
         })
     }
@@ -201,8 +188,8 @@ impl Runtime {
     }
 
     pub fn call(&mut self) -> ExecutionResult {
-        let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
-        let fuel_refunded_before_the_call = self.executor.store().fuel_refunded();
+        let fuel_consumed_before_the_call = self.executor.fuel_consumed();
+        let fuel_refunded_before_the_call = self.executor.fuel_refunded();
         let result = self.executor.run();
         self.handle_execution_result(
             result,
@@ -218,9 +205,9 @@ impl Runtime {
         fuel_refunded: i64,
         exit_code: i32,
     ) -> ExecutionResult {
-        let fuel_consumed_before_the_call = self.executor.store().fuel_consumed();
-        let fuel_refunded_before_the_call = self.executor.store().fuel_refunded();
-        let mut caller = Caller::new(self.executor.store_mut());
+        let fuel_consumed_before_the_call = self.executor.fuel_consumed();
+        let fuel_refunded_before_the_call = self.executor.fuel_refunded();
+        let mut caller = Caller::new(&mut self.executor);
         if fuel16_ptr > 0 {
             let mut buffer = [0u8; 16];
             LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
@@ -270,15 +257,14 @@ impl Runtime {
         fuel_consumed_before_the_call: u64,
         fuel_refunded_before_the_call: i64,
     ) -> ExecutionResult {
-        let mut execution_result =
-            take(&mut self.executor.store_mut().context_mut().execution_result);
+        let mut execution_result = take(&mut self.executor.context_mut().execution_result);
         // once fuel is calculated, we must adjust our fuel limit,
         // because we don't know what gas conversion policy is used,
         // if there is rounding then it can cause miscalculations
         execution_result.fuel_consumed =
-            self.executor.store().fuel_consumed() - fuel_consumed_before_the_call;
+            self.executor.fuel_consumed() - fuel_consumed_before_the_call;
         execution_result.fuel_refunded =
-            self.executor.store().fuel_refunded() - fuel_refunded_before_the_call;
+            self.executor.fuel_refunded() - fuel_refunded_before_the_call;
         loop {
             match next_result {
                 Ok(exit_code) => {
@@ -319,7 +305,7 @@ impl Runtime {
                         if resumable_state.is_root {
                             // TODO(dmitry123): "validate this logic, might not be ok in STF mode"
                             let (_, _, exit_code) = SyscallExec::fn_continue(
-                                Caller::new(self.executor.store_mut()),
+                                Caller::new(&mut self.executor),
                                 resumable_state,
                             );
                             next_result = Ok(exit_code);
@@ -350,7 +336,7 @@ impl Runtime {
         // so we must save the current state
         // to interrupt execution and delegate decision-making
         // to the root execution
-        let output = self.executor.store_mut().context_mut().output_mut();
+        let output = self.executor.context_mut().output_mut();
         output.clear();
         assert!(output.is_empty(), "runtime: return data must be empty");
         // serialize delegated execution state,
@@ -368,23 +354,15 @@ impl Runtime {
         execution_result.interrupted = true;
     }
 
-    pub fn store(&self) -> &RwasmContext<RuntimeContext> {
-        self.executor.store()
-    }
-
-    pub fn store_mut(&mut self) -> &mut RwasmContext<RuntimeContext> {
-        self.executor.store_mut()
-    }
-
     pub fn context(&self) -> &RuntimeContext {
-        self.executor.store().context()
+        self.executor.context()
     }
 
     pub fn context_mut(&mut self) -> &mut RuntimeContext {
-        self.executor.store_mut().context_mut()
+        self.executor.context_mut()
     }
 
     pub fn take_context(&mut self) -> RuntimeContext {
-        take(self.executor.store_mut().context_mut())
+        take(self.executor.context_mut())
     }
 }

@@ -34,9 +34,9 @@ fn test_wasm_greeting() {
         None,
     );
     let output = result.output().unwrap_or_default();
-    println!("Result: {:?}", result);
     assert!(result.is_success());
     assert_eq!("Hello, World", from_utf8(output.as_ref()).unwrap());
+    println!("Result: {:?}", result);
 }
 
 #[test]

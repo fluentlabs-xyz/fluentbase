@@ -2,7 +2,7 @@ use crate::{ExecutionResult, Runtime};
 use fluentbase_types::ExitCode;
 
 pub(crate) fn trace_execution_logs(runtime: &Runtime, execution_result: &ExecutionResult) {
-    let trace = runtime.store().tracer().unwrap().logs.len();
+    let trace = runtime.executor.tracer().unwrap().logs.len();
     println!("execution trace ({} steps):", trace);
 
     println!("EXEC, interrupted: {}", execution_result.interrupted);
@@ -17,7 +17,7 @@ pub(crate) fn trace_execution_logs(runtime: &Runtime, execution_result: &Executi
         std::str::from_utf8(&execution_result.output).unwrap_or("can't decode utf-8")
     );
     println!("fuel consumed: {}", execution_result.fuel_consumed);
-    let logs = &runtime.store().tracer().unwrap().logs;
+    let logs = &runtime.executor.tracer().unwrap().logs;
     println!("execution trace ({} steps):", logs.len());
     for log in logs.iter().rev().take(100).rev() {
         use fluentbase_rwasm::InstructionExtra;

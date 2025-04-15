@@ -127,7 +127,10 @@ pub const SYSCALL_ID_CODE_COPY: B256 = B256::with_last_byte(0x0f);
 pub const SYSCALL_ID_TRANSIENT_READ: B256 = B256::with_last_byte(0x11);
 pub const SYSCALL_ID_TRANSIENT_WRITE: B256 = B256::with_last_byte(0x12);
 
+// TODO(dmitry123): "rethink these syscalls"
 pub const SYSCALL_ID_WRITE_PREIMAGE: B256 = B256::with_last_byte(0x30);
 pub const SYSCALL_ID_PREIMAGE_COPY: B256 = B256::with_last_byte(0x31);
 pub const SYSCALL_ID_PREIMAGE_SIZE: B256 = B256::with_last_byte(0x32);
+
+// TODO(dmitry123): "rethink this syscall"
 pub const SYSCALL_ID_DELEGATED_STORAGE: B256 = B256::with_last_byte(0x33);
