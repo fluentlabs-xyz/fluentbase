@@ -15,13 +15,12 @@ use fluentbase_types::{
     STATE_DEPLOY,
     STATE_MAIN,
 };
-use once_cell::sync::Lazy;
 use std::{
     cell::RefCell,
     cmp::min,
     collections::HashMap,
     fmt::Debug,
-    sync::{atomic::Ordering, mpsc, Mutex},
+    sync::{atomic::Ordering, mpsc},
     thread,
     thread::JoinHandle,
 };
@@ -29,27 +28,34 @@ use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store};
 
 /// Warms up all Wasmtime modules at program startup.
 #[ctor]
-fn warmup_modules() {
-    println!("warming up wasmtime modules...");
+static MODULES_CACHE: HashMap<B256, Module> = {
     let start_time = std::time::Instant::now();
-    let _unused = MODULES_CACHE.lock().unwrap();
+    let mut config = Config::new();
+
+    #[cfg(debug_assertions)]
+    {
+        config.cranelift_opt_level(wasmtime::OptLevel::None);
+        println!("warming up wasmtime modules in debug mode (no optimizations)...");
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+        println!("warming up wasmtime modules in release mode (with optimizations)...");
+    }
+    let engine = Engine::new(&config).unwrap();
+
+    let mut map = HashMap::new();
+    for hash in get_all_precompile_hashes() {
+        let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(&hash).unwrap();
+        let module = Module::new(&engine, wasm_bytecode).expect("bytecode should be preverified");
+        map.insert(hash, module);
+    }
     println!(
         "wasmtime modules were compiled in: {:?}",
         start_time.elapsed()
     );
-}
-
-static MODULES_CACHE: Lazy<Mutex<HashMap<B256, Module>>> = Lazy::new(|| {
-    let mut map = HashMap::new();
-    for hash in get_all_precompile_hashes() {
-        let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(&hash).unwrap();
-        let config = Config::new();
-        let engine = Engine::new(&config).unwrap();
-        let module = Module::new(&engine, wasm_bytecode).expect("bytecode should be preverified");
-        map.insert(hash, module);
-    }
-    Mutex::new(map)
-});
+    map
+};
 
 struct WorkerContext {
     sender: mpsc::Sender<Message>,
@@ -543,8 +549,9 @@ pub fn execute(
     fuel_limit: u64,
     state: u32,
 ) -> (u64, i64, i32, Vec<u8>) {
-    let cache = MODULES_CACHE.lock().unwrap();
-    let module = cache.get(bytecode_hash).expect("module should be cached");
+    let module = MODULES_CACHE
+        .get(bytecode_hash)
+        .expect("module should be cached");
     let executor = AsyncExecutor::launch(module, input, fuel_limit, state);
     handle_one_step(executor)
 }
