@@ -29,7 +29,6 @@ pub use genesis::*;
 pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use linker::*;
 pub use preimage::*;
-use revm_primitives::SpecId;
 pub use rwasm::*;
 pub use sdk::*;
 pub use sys_func_idx::SysFuncIdx;
@@ -93,6 +92,3 @@ pub const EVM_MAX_CODE_SIZE: usize = 0x6000;
 ///
 /// Limit of maximum initcode size is `2 * WASM_MAX_CODE_SIZE`.
 pub const EVM_MAX_INITCODE_SIZE: usize = 2 * EVM_MAX_CODE_SIZE;
-
-/// A basic SPEC that Fluent supports
-pub const EVM_BASE_SPEC: SpecId = SpecId::CANCUN;
