@@ -17,8 +17,9 @@ byteorder = { workspace = true, default-features = false }
 hashbrown = { workspace = true, default-features = false }
 
 
-solana-program = { workspace = true, default-features = false }
+solana-program = { workspace = true }
 solana_rbpf = { workspace = true, default-features = false }
+solana-poseidon = { workspace = true, default-features = false }
 
 hex = { workspace = true, default-features = false }
 hex-literal = { workspace = true }
@@ -36,6 +37,10 @@ rand = { version = "0.9.0", default-features = false, features = ["alloc", "thre
 [features]
 default = [
     "std",
+    "borsh",
+]
+borsh = [
+    "solana-program/borsh"
 ]
 std = [
     "fluentbase-sdk/std",

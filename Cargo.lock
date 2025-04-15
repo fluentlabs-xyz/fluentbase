@@ -1040,17 +1040,7 @@ dependencies = [
 
 [[package]]
 name = "borsh"
-version = "0.9.3"
-source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.9.3#4f4dac5b4dc994f3fc37354f2c546901ca70ed28"
-dependencies = [
- "borsh-derive 0.9.3",
- "hashbrown 0.15.2",
-]
-
-[[package]]
-name = "borsh"
 version = "0.10.3"
-source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.10.3#ae520a78ef7bead149750c94e53a59a99d3b2151"
 dependencies = [
  "borsh-derive 0.10.3",
  "hashbrown 0.15.2",
@@ -1058,33 +1048,19 @@ dependencies = [
 
 [[package]]
 name = "borsh"
-version = "1.2.1"
-source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-borsh-derive-v1.2.1#b2c83629add52f852967469c65ac1b0375574a0e"
+version = "1.5.1"
 dependencies = [
- "borsh-derive 1.2.1",
+ "borsh-derive 1.5.1",
  "cfg_aliases",
  "hashbrown 0.15.2",
 ]
 
 [[package]]
 name = "borsh-derive"
-version = "0.9.3"
-source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.9.3#4f4dac5b4dc994f3fc37354f2c546901ca70ed28"
-dependencies = [
- "borsh-derive-internal 0.9.3",
- "borsh-schema-derive-internal 0.9.3",
- "proc-macro-crate",
- "proc-macro2",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "borsh-derive"
 version = "0.10.3"
-source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.10.3#ae520a78ef7bead149750c94e53a59a99d3b2151"
 dependencies = [
- "borsh-derive-internal 0.10.3",
- "borsh-schema-derive-internal 0.10.3",
+ "borsh-derive-internal",
+ "borsh-schema-derive-internal",
  "proc-macro-crate",
  "proc-macro2",
  "syn 1.0.109",
@@ -1092,8 +1068,7 @@ dependencies = [
 
 [[package]]
 name = "borsh-derive"
-version = "1.2.1"
-source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-borsh-derive-v1.2.1#b2c83629add52f852967469c65ac1b0375574a0e"
+version = "1.5.1"
 dependencies = [
  "once_cell",
  "proc-macro-crate",
@@ -1105,28 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "borsh-derive-internal"
-version = "0.9.3"
-source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.9.3#4f4dac5b4dc994f3fc37354f2c546901ca70ed28"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "borsh-derive-internal"
 version = "0.10.3"
-source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.10.3#ae520a78ef7bead149750c94e53a59a99d3b2151"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "borsh-schema-derive-internal"
-version = "0.9.3"
-source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.9.3#4f4dac5b4dc994f3fc37354f2c546901ca70ed28"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1136,7 +1090,6 @@ dependencies = [
 [[package]]
 name = "borsh-schema-derive-internal"
 version = "0.10.3"
-source = "git+https://github.com/fluentlabs-xyz/borsh-rs?branch=feat%2Fsvm-v0.10.3#ae520a78ef7bead149750c94e53a59a99d3b2151"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1145,9 +1098,12 @@ dependencies = [
 
 [[package]]
 name = "bs58"
-version = "0.4.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "771fe0050b883fcc3ea2359b1a96bcfbc090b7116eae7c3c512c7a083fdf23d3"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "btoi"
@@ -1167,7 +1123,8 @@ checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 [[package]]
 name = "bv"
 version = "0.11.1"
-source = "git+https://github.com/fluentlabs-xyz/bv-rs?branch=feat%2Fsvm-0.11.1#f8ce6481356162e86b2daf9860077f737290a06c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8834bb1d8ee5dc048ee3124f2c7c1afcc6bc9aed03f11e9dfd8c69470a5db340"
 dependencies = [
  "feature-probe",
  "serde",
@@ -1184,15 +1141,12 @@ name = "bytemuck"
 version = "1.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6b1fc10dbac614ebc03540c9dbd60e83887fda27794998c6528f1782047d540"
-dependencies = [
- "bytemuck_derive",
-]
 
 [[package]]
 name = "bytemuck_derive"
-version = "1.9.3"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ecc273b49b3205b83d648f0690daa588925572cc5063745bfe547fe7ec8e1a1"
+checksum = "3fa76293b4f7bb636ab88fd78228235b5248b4d05cc589aed610f954af5d7c7a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1282,8 +1236,6 @@ version = "1.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "525046617d8376e3db1deffb079e91cef90a89fc3ca5c185bbf8c9ecdd15cd5c"
 dependencies = [
- "jobserver",
- "libc",
  "shlex",
 ]
 
@@ -1295,9 +1247,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.1.1"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
@@ -1383,6 +1335,26 @@ dependencies = [
  "once_cell",
  "unicode-width 0.2.0",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "console_log"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e89f72f65e8501878b8a004d5a1afb780987e2ce2b4532c562e367a72c57499f"
+dependencies = [
+ "log",
+ "web-sys",
 ]
 
 [[package]]
@@ -1564,7 +1536,7 @@ checksum = "0dc92fb57ca44df6db8059111ab3af99a63d5d0f8375d9972e319a379c6bab76"
 dependencies = [
  "generic-array 0.14.7",
  "rand_core 0.6.4",
- "subtle 2.6.1",
+ "subtle",
  "zeroize",
 ]
 
@@ -1606,7 +1578,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b584a330336237c1eecd3e94266efb216c56ed91225d634cb2991c5f3fd1aeab"
 dependencies = [
  "generic-array 0.14.7",
- "subtle 2.6.1",
+ "subtle",
 ]
 
 [[package]]
@@ -1622,7 +1594,7 @@ dependencies = [
  "fiat-crypto",
  "rand_core 0.6.4",
  "rustc_version 0.4.1",
- "subtle 2.6.1",
+ "subtle",
  "zeroize",
 ]
 
@@ -1863,7 +1835,7 @@ dependencies = [
  "block-buffer 0.10.4",
  "const-oid",
  "crypto-common",
- "subtle 2.6.1",
+ "subtle",
 ]
 
 [[package]]
@@ -1931,7 +1903,7 @@ dependencies = [
  "pkcs8",
  "rand_core 0.6.4",
  "sec1",
- "subtle 2.6.1",
+ "subtle",
  "zeroize",
 ]
 
@@ -2178,7 +2150,7 @@ dependencies = [
  "byteorder",
  "ff_derive",
  "rand_core 0.6.4",
- "subtle 2.6.1",
+ "subtle",
 ]
 
 [[package]]
@@ -2201,6 +2173,21 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
+name = "five8_const"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26dec3da8bc3ef08f2c04f61eab298c3ab334523e55f076354d6d6f613799a7b"
+dependencies = [
+ "five8_core",
+]
+
+[[package]]
+name = "five8_core"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2551bf44bc5f776c15044b9b94153a00198be06743e262afaaa61f11ac7523a5"
 
 [[package]]
 name = "fixed-hash"
@@ -2550,7 +2537,7 @@ dependencies = [
  "fluentbase-sdk",
  "hex",
  "hex-literal 1.0.0",
- "libsecp256k1 0.7.2",
+ "libsecp256k1",
  "secp256k1-sys",
  "tiny-keccak",
 ]
@@ -2576,9 +2563,6 @@ dependencies = [
 [[package]]
 name = "fluentbase-examples-svm-hello-world"
 version = "0.1.0"
-dependencies = [
- "solana-program",
-]
 
 [[package]]
 name = "fluentbase-examples-tiny-keccak"
@@ -2725,6 +2709,7 @@ dependencies = [
  "num-traits",
  "rand 0.9.0",
  "serde",
+ "solana-poseidon",
  "solana-program",
  "solana_rbpf",
 ]
@@ -2936,8 +2921,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4567c8db10ae91089c99af84c68c38da3ec2f087c3f82960bcdbf3656b6f4d7"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi 0.11.0+wasi-snapshot-preview1",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3013,7 +3000,7 @@ checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
 dependencies = [
  "ff",
  "rand_core 0.6.4",
- "subtle 2.6.1",
+ "subtle",
 ]
 
 [[package]]
@@ -3083,7 +3070,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "static_assertions",
- "subtle 2.6.1",
+ "subtle",
 ]
 
 [[package]]
@@ -3104,7 +3091,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "static_assertions",
- "subtle 2.6.1",
+ "subtle",
 ]
 
 [[package]]
@@ -3715,16 +3702,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
-name = "jobserver"
-version = "0.1.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38f262f097c174adebe41eb73d66ae9c06b2844fb0da69969647bbddd9b0538a"
-dependencies = [
- "getrandom 0.3.2",
- "libc",
-]
-
-[[package]]
 name = "js-sys"
 version = "0.3.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3839,24 +3816,6 @@ checksum = "8355be11b20d696c8f18f6cc018c4e372165b1fa8126cef092399c9951984ffa"
 
 [[package]]
 name = "libsecp256k1"
-version = "0.7.0"
-source = "git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0#7058a6a560192cf0c1c630327de38178fbe81bbe"
-dependencies = [
- "arrayref",
- "base64 0.13.1",
- "digest 0.9.0",
- "hmac-drbg",
- "libsecp256k1-core 0.3.0 (git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0)",
- "libsecp256k1-gen-ecmult 0.3.0 (git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0)",
- "libsecp256k1-gen-genmult 0.3.0 (git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0)",
- "rand 0.8.5",
- "serde",
- "sha2 0.9.9",
- "typenum",
-]
-
-[[package]]
-name = "libsecp256k1"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e79019718125edc905a079a70cfa5f3820bc76139fc91d6f9abc27ea2a887139"
@@ -3865,9 +3824,9 @@ dependencies = [
  "base64 0.22.1",
  "digest 0.9.0",
  "hmac-drbg",
- "libsecp256k1-core 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "libsecp256k1-gen-ecmult 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "libsecp256k1-gen-genmult 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libsecp256k1-core",
+ "libsecp256k1-gen-ecmult",
+ "libsecp256k1-gen-genmult",
  "rand 0.8.5",
  "serde",
  "sha2 0.9.9",
@@ -3882,17 +3841,7 @@ checksum = "5be9b9bb642d8522a44d533eab56c16c738301965504753b03ad1de3425d5451"
 dependencies = [
  "crunchy",
  "digest 0.9.0",
- "subtle 2.6.1",
-]
-
-[[package]]
-name = "libsecp256k1-core"
-version = "0.3.0"
-source = "git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0#7058a6a560192cf0c1c630327de38178fbe81bbe"
-dependencies = [
- "crunchy",
- "digest 0.9.0",
- "subtle 2.4.1",
+ "subtle",
 ]
 
 [[package]]
@@ -3901,15 +3850,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3038c808c55c87e8a172643a7d87187fc6c4174468159cb3090659d55bcb4809"
 dependencies = [
- "libsecp256k1-core 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "libsecp256k1-gen-ecmult"
-version = "0.3.0"
-source = "git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0#7058a6a560192cf0c1c630327de38178fbe81bbe"
-dependencies = [
- "libsecp256k1-core 0.3.0 (git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0)",
+ "libsecp256k1-core",
 ]
 
 [[package]]
@@ -3918,26 +3859,19 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3db8d6ba2cec9eacc40e6e8ccc98931840301f1006e95647ceb2dd5c3aa06f7c"
 dependencies = [
- "libsecp256k1-core 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "libsecp256k1-gen-genmult"
-version = "0.3.0"
-source = "git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0#7058a6a560192cf0c1c630327de38178fbe81bbe"
-dependencies = [
- "libsecp256k1-core 0.3.0 (git+https://github.com/fluentlabs-xyz/libsecp256k1?branch=feat%2Fsvm-v0.7.0)",
+ "libsecp256k1-core",
 ]
 
 [[package]]
 name = "light-poseidon"
 version = "0.2.0"
-source = "git+https://github.com/fluentlabs-xyz/light-poseidon?branch=feat%2Fsvm-0.2.0#43b0d9caae01f007091338e86f798258dba8d594"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c9a85a9752c549ceb7578064b4ed891179d20acd85f27318573b64d2d7ee7ee"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.4.2",
  "num-bigint 0.4.6",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -4661,7 +4595,7 @@ dependencies = [
  "lazy_static",
  "rand 0.8.5",
  "static_assertions",
- "subtle 2.6.1",
+ "subtle",
 ]
 
 [[package]]
@@ -4851,7 +4785,7 @@ version = "0.2.0"
 source = "git+https://github.com/privacy-scaling-explorations/poseidon?tag=v2024_01_31#d29f35d9744e0c58b63679a15730ff2fab470ef2"
 dependencies = [
  "halo2curves 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "subtle 2.6.1",
+ "subtle",
 ]
 
 [[package]]
@@ -5348,7 +5282,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
 dependencies = [
  "hmac 0.12.1",
- "subtle 2.6.1",
+ "subtle",
 ]
 
 [[package]]
@@ -5554,7 +5488,7 @@ dependencies = [
  "once_cell",
  "rustls-pki-types",
  "rustls-webpki 0.103.1",
- "subtle 2.6.1",
+ "subtle",
  "zeroize",
 ]
 
@@ -5759,7 +5693,7 @@ dependencies = [
  "der",
  "generic-array 0.14.7",
  "pkcs8",
- "subtle 2.6.1",
+ "subtle",
  "zeroize",
 ]
 
@@ -6084,62 +6018,393 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-program"
-version = "1.18.26"
-source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#4cd0342223620b0b10f99ff55ccc97c0d7b3ef64"
+name = "solana-account-info"
+version = "2.1.18"
+dependencies = [
+ "bincode 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+ "solana-program-error",
+ "solana-program-memory",
+ "solana-pubkey",
+]
+
+[[package]]
+name = "solana-atomic-u64"
+version = "2.1.18"
+dependencies = [
+ "parking_lot",
+]
+
+[[package]]
+name = "solana-bincode"
+version = "2.1.18"
+dependencies = [
+ "bincode 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+ "solana-instruction",
+]
+
+[[package]]
+name = "solana-borsh"
+version = "2.1.18"
+dependencies = [
+ "borsh 0.10.3",
+ "borsh 1.5.1",
+ "hashbrown 0.15.2",
+]
+
+[[package]]
+name = "solana-clock"
+version = "2.1.18"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-sdk-macro",
+ "solana-sysvar-id",
+]
+
+[[package]]
+name = "solana-cpi"
+version = "2.1.18"
+dependencies = [
+ "solana-account-info",
+ "solana-define-syscall",
+ "solana-instruction",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-stable-layout",
+]
+
+[[package]]
+name = "solana-decode-error"
+version = "2.1.18"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "solana-define-syscall"
+version = "2.1.18"
+
+[[package]]
+name = "solana-epoch-schedule"
+version = "2.1.18"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-sdk-macro",
+ "solana-sysvar-id",
+]
+
+[[package]]
+name = "solana-fee-calculator"
+version = "2.1.18"
+dependencies = [
+ "log",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
+name = "solana-hash"
+version = "2.1.18"
+dependencies = [
+ "borsh 1.5.1",
+ "bs58",
+ "bytemuck",
+ "bytemuck_derive",
+ "js-sys",
+ "serde",
+ "serde_derive",
+ "solana-atomic-u64",
+ "solana-sanitize",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "solana-instruction"
+version = "2.1.18"
+dependencies = [
+ "bincode 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "borsh 1.5.1",
+ "getrandom 0.2.15",
+ "js-sys",
+ "num-traits",
+ "serde",
+ "serde_derive",
+ "solana-define-syscall",
+ "solana-pubkey",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "solana-last-restart-slot"
+version = "2.1.18"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-sdk-macro",
+ "solana-sysvar-id",
+]
+
+[[package]]
+name = "solana-msg"
+version = "2.1.18"
+dependencies = [
+ "solana-define-syscall",
+]
+
+[[package]]
+name = "solana-native-token"
+version = "2.1.18"
+
+[[package]]
+name = "solana-poseidon"
+version = "2.1.18"
 dependencies = [
  "ark-bn254",
- "ark-ec",
- "ark-ff 0.4.2",
- "ark-serialize 0.4.2",
- "base64 0.21.7",
- "bincode 1.3.3 (git+https://github.com/fluentlabs-xyz/bincode?branch=feat%2Fsvm-v1.3.3)",
+ "light-poseidon",
+ "solana-define-syscall",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "solana-program"
+version = "2.1.18"
+dependencies = [
+ "base64 0.22.1",
+ "bincode 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitflags 2.9.0",
  "blake3",
  "borsh 0.10.3",
- "borsh 0.9.3",
- "borsh 1.2.1",
+ "borsh 1.5.1",
  "bs58",
  "bv",
  "bytemuck",
- "cc",
+ "bytemuck_derive",
+ "console_error_panic_hook",
+ "console_log",
  "curve25519-dalek",
+ "five8_const",
  "getrandom 0.2.15",
  "hashbrown 0.15.2",
- "itertools 0.13.0",
+ "js-sys",
  "lazy_static",
- "libc",
- "libsecp256k1 0.7.0",
- "light-poseidon",
  "log",
  "memoffset",
  "num-bigint 0.4.6",
  "num-derive",
  "num-traits",
+ "parking_lot",
  "rand 0.8.5",
- "rustc_version 0.4.1",
- "rustversion",
  "serde",
  "serde_bytes",
  "serde_derive",
- "serde_json",
  "sha2 0.10.8",
  "sha3",
+ "solana-account-info",
+ "solana-atomic-u64",
+ "solana-bincode",
+ "solana-borsh",
+ "solana-clock",
+ "solana-cpi",
+ "solana-decode-error",
+ "solana-define-syscall",
+ "solana-epoch-schedule",
+ "solana-fee-calculator",
+ "solana-hash",
+ "solana-instruction",
+ "solana-last-restart-slot",
+ "solana-msg",
+ "solana-native-token",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-program-memory",
+ "solana-program-option",
+ "solana-program-pack",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sanitize",
  "solana-sdk-macro",
+ "solana-serde-varint",
+ "solana-serialize-utils",
+ "solana-sha256-hasher",
+ "solana-short-vec",
+ "solana-slot-hashes",
+ "solana-slot-history",
+ "solana-stable-layout",
+ "solana-sysvar-id",
+ "solana-transaction-error",
  "spin 0.9.8",
- "zeroize",
+ "thiserror 1.0.69",
+ "wasm-bindgen",
 ]
 
 [[package]]
+name = "solana-program-entrypoint"
+version = "2.1.18"
+dependencies = [
+ "solana-account-info",
+ "solana-msg",
+ "solana-program-error",
+ "solana-pubkey",
+]
+
+[[package]]
+name = "solana-program-error"
+version = "2.1.18"
+dependencies = [
+ "borsh 1.5.1",
+ "num-traits",
+ "serde",
+ "serde_derive",
+ "solana-decode-error",
+ "solana-instruction",
+ "solana-msg",
+ "solana-pubkey",
+]
+
+[[package]]
+name = "solana-program-memory"
+version = "2.1.18"
+dependencies = [
+ "num-traits",
+ "solana-define-syscall",
+]
+
+[[package]]
+name = "solana-program-option"
+version = "2.1.18"
+
+[[package]]
+name = "solana-program-pack"
+version = "2.1.18"
+dependencies = [
+ "solana-program-error",
+]
+
+[[package]]
+name = "solana-pubkey"
+version = "2.1.18"
+dependencies = [
+ "borsh 0.10.3",
+ "borsh 1.5.1",
+ "bs58",
+ "bytemuck",
+ "bytemuck_derive",
+ "curve25519-dalek",
+ "five8_const",
+ "getrandom 0.2.15",
+ "hashbrown 0.15.2",
+ "js-sys",
+ "num-traits",
+ "serde",
+ "serde_derive",
+ "solana-atomic-u64",
+ "solana-decode-error",
+ "solana-define-syscall",
+ "solana-sanitize",
+ "solana-sha256-hasher",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "solana-rent"
+version = "2.1.18"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-sdk-macro",
+ "solana-sysvar-id",
+]
+
+[[package]]
+name = "solana-sanitize"
+version = "2.1.18"
+
+[[package]]
 name = "solana-sdk-macro"
-version = "1.18.26"
-source = "git+https://github.com/fluentlabs-xyz/solana?branch=feat%2Fsvm#4cd0342223620b0b10f99ff55ccc97c0d7b3ef64"
+version = "2.1.18"
 dependencies = [
  "bs58",
  "proc-macro2",
  "quote",
- "rustversion",
  "syn 2.0.100",
+]
+
+[[package]]
+name = "solana-serde-varint"
+version = "2.1.18"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "solana-serialize-utils"
+version = "2.1.18"
+dependencies = [
+ "solana-instruction",
+ "solana-pubkey",
+ "solana-sanitize",
+]
+
+[[package]]
+name = "solana-sha256-hasher"
+version = "2.1.18"
+dependencies = [
+ "sha2 0.10.8",
+ "solana-define-syscall",
+ "solana-hash",
+]
+
+[[package]]
+name = "solana-short-vec"
+version = "2.1.18"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "solana-slot-hashes"
+version = "2.1.18"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-hash",
+ "solana-sysvar-id",
+]
+
+[[package]]
+name = "solana-slot-history"
+version = "2.1.18"
+dependencies = [
+ "bv",
+ "serde",
+ "serde_derive",
+ "solana-sysvar-id",
+]
+
+[[package]]
+name = "solana-stable-layout"
+version = "2.1.18"
+dependencies = [
+ "solana-instruction",
+ "solana-pubkey",
+]
+
+[[package]]
+name = "solana-sysvar-id"
+version = "2.1.18"
+dependencies = [
+ "solana-pubkey",
+]
+
+[[package]]
+name = "solana-transaction-error"
+version = "2.1.18"
+dependencies = [
+ "solana-instruction",
+ "solana-sanitize",
 ]
 
 [[package]]
@@ -6266,7 +6531,7 @@ dependencies = [
  "pairing",
  "rand_core 0.6.4",
  "sp1-lib",
- "subtle 2.6.1",
+ "subtle",
 ]
 
 [[package]]
@@ -6371,11 +6636,6 @@ dependencies = [
  "rand 0.8.5",
  "rustc-hex",
 ]
-
-[[package]]
-name = "subtle"
-version = "2.4.1"
-source = "git+https://github.com/fluentlabs-xyz/subtle?branch=feat%2Fsvm-2.4.1#1c5526d6c5725b75a14de599899a386fcad7ebb6"
 
 [[package]]
 name = "subtle"
@@ -6651,6 +6911,21 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "tinyvec"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09b3661f17e86524eccd4371ab0429194e0d7c008abb45f7a7495b1719463c71"
+dependencies = [
+ "tinyvec_macros",
+]
+
+[[package]]
+name = "tinyvec_macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"

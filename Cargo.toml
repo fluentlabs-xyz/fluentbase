@@ -13,7 +13,6 @@ members = [
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
-    "solana-ee-core",
     "examples/svm"
 ]
 resolver = "2"
@@ -43,8 +42,10 @@ fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
 
-solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
+#solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
 #solana-program = { path = "../solana/sdk/program", default-features = false }
+solana-program = { path = "../agave/sdk/program", default-features = false, features = ["borsh"] }
+solana-poseidon = { path = "../agave/poseidon", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 

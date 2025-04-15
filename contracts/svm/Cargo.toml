@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-svm = { workspace = true, default-features = false }
+fluentbase-svm = { workspace = true, default-features = false, features = ["borsh"] }
 
 [dev-dependencies]
 

@@ -26,13 +26,12 @@ use fluentbase_sdk::{calc_create2_address, Address, SharedAPI, B256, U256};
 use solana_program::{
     entrypoint::SUCCESS,
     keccak,
-    poseidon,
     pubkey::{bytes_are_curve_point, Pubkey, PubkeyError},
-    secp256k1_recover::{
-        Secp256k1RecoverError,
-        SECP256K1_PUBLIC_KEY_LENGTH,
-        SECP256K1_SIGNATURE_LENGTH,
-    },
+    // secp256k1_recover::{
+    //     Secp256k1RecoverError,
+    //     SECP256K1_PUBLIC_KEY_LENGTH,
+    //     SECP256K1_SIGNATURE_LENGTH,
+    // },
 };
 use solana_rbpf::{
     error::EbpfError,
@@ -490,10 +489,10 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         // test_stub();
-        let parameters: poseidon::Parameters = parameters.try_into().map_err(|e| {
+        let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|e| {
             SyscallError::Abort
         })?;
-        let endianness: poseidon::Endianness = endianness.try_into().map_err(|e| {
+        let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|e| {
             SyscallError::Abort
         })?;
 
@@ -519,7 +518,7 @@ declare_builtin_function!(
         let hash_result = translate_slice_mut::<u8>(
             memory_mapping,
             result_addr,
-            poseidon::HASH_BYTES as u64,
+            solana_poseidon::HASH_BYTES as u64,
             invoke_context.get_check_aligned(),
         )?;
         let inputs = translate_slice::<&[u8]>(
@@ -544,7 +543,7 @@ declare_builtin_function!(
         //     .feature_set
         //     .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
 
-        let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
+        let hash = match solana_poseidon::hashv(parameters, endianness, inputs.as_slice()) {
             Ok(hash) => hash,
             Err(e) => {
                 return /*if simplify_alt_bn128_syscall_error_codes {
@@ -572,10 +571,10 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         // test_stub();
-        let parameters: poseidon::Parameters = parameters.try_into().map_err(|e| {
+        let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|e| {
             SyscallError::Abort
         })?;
-        let endianness: poseidon::Endianness = endianness.try_into().map_err(|e| {
+        let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|e| {
             SyscallError::Abort
         })?;
 
@@ -601,7 +600,7 @@ declare_builtin_function!(
         let hash_result = translate_slice_mut::<u8>(
             memory_mapping,
             result_addr,
-            poseidon::HASH_BYTES as u64,
+            solana_poseidon::HASH_BYTES as u64,
             invoke_context.get_check_aligned(),
         )?;
         let inputs = translate_slice::<&[u8]>(

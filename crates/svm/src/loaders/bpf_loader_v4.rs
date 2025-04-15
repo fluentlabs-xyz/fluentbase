@@ -241,7 +241,7 @@ fn check_program_account(
         // ic_logger_msg!(log_collector, "Authority did not sign");
         return Err(InstructionError::MissingRequiredSignature);
     }
-    if state.authority_address != *authority_address {
+    if &state.authority_address_or_next_version != authority_address {
         // ic_logger_msg!(log_collector, "Incorrect authority provided");
         return Err(InstructionError::IncorrectAuthority);
     }
@@ -369,7 +369,7 @@ pub fn process_instruction_truncate<SDK: SharedAPI>(
             let state = get_state_mut(program.get_data_mut()?)?;
             state.slot = 0;
             state.status = LoaderV4Status::Retracted;
-            state.authority_address = *authority_address;
+            state.authority_address_or_next_version = *authority_address;
         }
     }
     Ok(())
@@ -551,13 +551,58 @@ pub fn process_instruction_transfer_authority<SDK: SharedAPI>(
     }
     let state = get_state_mut(program.get_data_mut()?)?;
     if let Some(new_authority_address) = new_authority_address {
-        state.authority_address = new_authority_address;
+        state.authority_address_or_next_version = new_authority_address;
     } else if matches!(state.status, LoaderV4Status::Deployed) {
         state.status = LoaderV4Status::Finalized;
     } else {
         // ic_logger_msg!(log_collector, "Program must be deployed to be finalized");
         return Err(InstructionError::InvalidArgument);
     }
+    Ok(())
+}
+
+pub fn process_instruction_finalize<SDK: SharedAPI>(
+    invoke_context: &mut InvokeContext<SDK>,
+) -> Result<(), InstructionError> {
+    // let log_collector = invoke_context.get_log_collector();
+    let transaction_context = &invoke_context.transaction_context;
+    let instruction_context = transaction_context.get_current_instruction_context()?;
+    let program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+    let authority_address = instruction_context
+        .get_index_of_instruction_account_in_transaction(1)
+        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let state = check_program_account(
+        // &log_collector,
+        instruction_context,
+        &program,
+        authority_address,
+    )?;
+    if !matches!(state.status, LoaderV4Status::Deployed) {
+        // ic_logger_msg!(log_collector, "Program must be deployed to be finalized");
+        return Err(InstructionError::InvalidArgument);
+    }
+    drop(program);
+    let next_version =
+        instruction_context.try_borrow_instruction_account(transaction_context, 2)?;
+    if !loader_v4::check_id(next_version.get_owner()) {
+        // ic_logger_msg!(log_collector, "Next version is not owned by loader");
+        return Err(InstructionError::InvalidAccountOwner);
+    }
+    let state_of_next_version = get_state(next_version.get_data())?;
+    if state_of_next_version.authority_address_or_next_version != *authority_address {
+        // ic_logger_msg!(log_collector, "Next version has a different authority");
+        return Err(InstructionError::IncorrectAuthority);
+    }
+    if matches!(state_of_next_version.status, LoaderV4Status::Finalized) {
+        // ic_logger_msg!(log_collector, "Next version is finalized");
+        return Err(InstructionError::Immutable);
+    }
+    let address_of_next_version = *next_version.get_key();
+    drop(next_version);
+    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+    let state = get_state_mut(program.get_data_mut()?)?;
+    state.authority_address_or_next_version = address_of_next_version;
+    state.status = LoaderV4Status::Finalized;
     Ok(())
 }
 
@@ -598,6 +643,7 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
             LoaderV4Instruction::TransferAuthority => {
                 process_instruction_transfer_authority(invoke_context)
             }
+            LoaderV4Instruction::Finalize => process_instruction_finalize(invoke_context),
         }
         .map_err(|err| Box::new(err) as Box<dyn core::error::Error>)
     } else {

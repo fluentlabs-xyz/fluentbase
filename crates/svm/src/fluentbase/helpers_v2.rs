@@ -90,7 +90,8 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     flush_result_accounts: bool,
     sapi: &mut Option<&mut SAPI>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
-    let message: SanitizedMessage = SanitizedMessage::Legacy(LegacyMessage::new(message));
+    let message: SanitizedMessage =
+        SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
 
     let config = init_config();
 
