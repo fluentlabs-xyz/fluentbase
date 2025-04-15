@@ -5,7 +5,7 @@ pub struct SyscallOutputSize;
 
 impl SyscallOutputSize {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let output_size = Self::fn_impl(caller.data());
+        let output_size = Self::fn_impl(caller.context());
         caller.stack_push(output_size);
         Ok(())
     }

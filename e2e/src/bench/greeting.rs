@@ -17,17 +17,12 @@ fn bench_evm_greeting(b: &mut Bencher) {
     );
 
     let hello_world = |ctx: &mut EvmTestingContext| {
-        let result = ctx.call_evm_tx(
+        ctx.call_evm_tx(
             OWNER_ADDRESS,
             contract_address,
             hex!("45773e4e").into(),
             None,
             None,
-        );
-        assert!(result.is_success());
-        assert_eq!(
-            &result.output().cloned().unwrap_or_default().as_ref()[64..76],
-            "Hello, World".as_bytes()
         );
     };
 
@@ -43,17 +38,12 @@ fn bench_wasm_greeting(b: &mut Bencher) {
     let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_GREETING.into());
 
     let hello_world = |ctx: &mut EvmTestingContext| {
-        let result = ctx.call_evm_tx(
+        ctx.call_evm_tx(
             OWNER_ADDRESS,
             contract_address,
             Bytes::default(),
             None,
             None,
-        );
-        assert!(result.is_success());
-        assert_eq!(
-            result.output().cloned().unwrap_or_default().as_ref(),
-            "Hello, World".as_bytes()
         );
     };
 

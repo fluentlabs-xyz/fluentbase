@@ -9,7 +9,7 @@ impl SyscallPreimageSize {
         let hash = caller
             .memory_read_fixed::<32>(hash32_offset as usize)?
             .to_vec();
-        let preimage_size = Self::fn_impl(caller.data_mut(), &hash)?;
+        let preimage_size = Self::fn_impl(caller.context_mut(), &hash)?;
         caller.stack_push(preimage_size);
         Ok(())
     }

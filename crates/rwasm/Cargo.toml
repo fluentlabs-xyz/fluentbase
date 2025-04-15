@@ -12,6 +12,9 @@ categories.workspace = true
 [dependencies]
 hashbrown = { workspace = true }
 tiny-keccak = { workspace = true }
+byteorder = { workspace = true }
+num_enum = { workspace = true }
+paste = { workspace = true }
 
 # revm (a temporary solution)
 revm-interpreter = { workspace = true }
@@ -25,3 +28,4 @@ std = []
 tracer = []
 e2e = []
 debug-print = ["std"]
+floats = []

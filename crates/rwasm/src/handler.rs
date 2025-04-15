@@ -2,17 +2,13 @@ use crate::{context::Caller, RwasmError};
 use rwasm::core::UntypedValue;
 use tiny_keccak::Hasher;
 
-pub trait SyscallHandler<T> {
-    fn call_function(caller: Caller<T>, func_idx: u32) -> Result<(), RwasmError>;
-}
+pub type SyscallHandler<T> = fn(Caller<T>, u32) -> Result<(), RwasmError>;
 
-#[derive(Default)]
-pub struct AlwaysFailingSyscallHandler;
-
-impl<T> SyscallHandler<T> for AlwaysFailingSyscallHandler {
-    fn call_function(_caller: Caller<T>, func_idx: u32) -> Result<(), RwasmError> {
-        Err(RwasmError::UnknownExternalFunction(func_idx))
-    }
+pub fn always_failing_syscall_handler<T>(
+    _caller: Caller<T>,
+    func_idx: u32,
+) -> Result<(), RwasmError> {
+    Err(RwasmError::UnknownExternalFunction(func_idx))
 }
 
 #[derive(Default)]
@@ -23,7 +19,7 @@ pub struct SimpleCallContext {
 }
 
 #[derive(Default)]
-pub struct SimpleCallHandler {}
+struct SimpleCallHandler;
 
 impl SimpleCallHandler {
     fn fn_proc_exit(mut caller: Caller<SimpleCallContext>) -> Result<(), RwasmError> {
@@ -32,14 +28,14 @@ impl SimpleCallHandler {
     }
 
     fn fn_get_state(mut caller: Caller<SimpleCallContext>) -> Result<(), RwasmError> {
-        caller.stack_push(UntypedValue::from(caller.data().state));
+        caller.stack_push(UntypedValue::from(caller.context().state));
         Ok(())
     }
 
     fn fn_read_input(mut caller: Caller<SimpleCallContext>) -> Result<(), RwasmError> {
         let [target, offset, length] = caller.stack_pop_n();
         let input = caller
-            .data()
+            .context()
             .input
             .get(offset.as_usize()..(offset.as_usize() + length.as_usize()))
             .ok_or(RwasmError::ExecutionHalted(-2020))?
@@ -49,7 +45,7 @@ impl SimpleCallHandler {
     }
 
     fn fn_input_size(mut caller: Caller<SimpleCallContext>) -> Result<(), RwasmError> {
-        caller.stack_push(UntypedValue::from(caller.data().input.len() as i32));
+        caller.stack_push(UntypedValue::from(caller.context().input.len() as i32));
         Ok(())
     }
 
@@ -57,7 +53,7 @@ impl SimpleCallHandler {
         let [offset, length] = caller.stack_pop_n();
         let mut buffer = vec![0u8; length.as_usize()];
         caller.memory_read(offset.as_usize(), &mut buffer)?;
-        caller.data_mut().output.extend_from_slice(&buffer);
+        caller.context_mut().output.extend_from_slice(&buffer);
         Ok(())
     }
 
@@ -74,16 +70,17 @@ impl SimpleCallHandler {
     }
 }
 
-impl SyscallHandler<SimpleCallContext> for SimpleCallHandler {
-    fn call_function(caller: Caller<SimpleCallContext>, func_idx: u32) -> Result<(), RwasmError> {
-        match func_idx {
-            0x0001 => Self::fn_proc_exit(caller),
-            0x0002 => Self::fn_get_state(caller),
-            0x0003 => Self::fn_read_input(caller),
-            0x0004 => Self::fn_input_size(caller),
-            0x0005 => Self::fn_write_output(caller),
-            0x0101 => Self::fn_keccak256(caller),
-            _ => unreachable!("rwasm: unknown function ({})", func_idx),
-        }
+pub(crate) fn simple_call_handler_syscall_handler(
+    caller: Caller<SimpleCallContext>,
+    func_idx: u32,
+) -> Result<(), RwasmError> {
+    match func_idx {
+        0x0001 => SimpleCallHandler::fn_proc_exit(caller),
+        0x0002 => SimpleCallHandler::fn_get_state(caller),
+        0x0003 => SimpleCallHandler::fn_read_input(caller),
+        0x0004 => SimpleCallHandler::fn_input_size(caller),
+        0x0005 => SimpleCallHandler::fn_write_output(caller),
+        0x0101 => SimpleCallHandler::fn_keccak256(caller),
+        _ => unreachable!("rwasm: unknown function ({})", func_idx),
     }
 }

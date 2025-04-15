@@ -2329,6 +2329,7 @@ dependencies = [
  "hex-literal 1.0.0",
  "revm",
  "rwasm",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -2514,7 +2515,10 @@ dependencies = [
 name = "fluentbase-rwasm"
 version = "0.1.0"
 dependencies = [
+ "byteorder",
  "hashbrown 0.15.2",
+ "num_enum",
+ "paste",
  "revm-interpreter",
  "rwasm",
  "tiny-keccak",
@@ -5029,7 +5033,6 @@ dependencies = [
  "ethers-contract",
  "ethers-core",
  "ethers-providers",
- "fluentbase-genesis",
  "fluentbase-runtime",
  "fluentbase-sdk",
  "indicatif",
@@ -5791,9 +5794,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.13.2"
+version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
+checksum = "8917285742e9f3e1683f0a9c4e6b57960b7314d0b08d30d1ecd426713ee2eee9"
 dependencies = [
  "serde",
 ]
@@ -6251,6 +6254,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
 dependencies = [
  "num_cpus",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.6.0+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd3c60906412afa9c2b5b5a48ca6a5abe5736aec9eb48ad05037a677e52e4e2d"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cec5ff18518d81584f477e9bfdf957f5bb0979b0bac3af4ca30b5b3ae2d2865"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]

@@ -1,42 +1,85 @@
 use crate::{
+    always_failing_syscall_handler,
     config::ExecutorConfig,
+    instr_ptr::InstructionPtr,
+    memory::GlobalMemory,
+    module::{InstructionData, RwasmModule2},
+    opcodes::run_the_loop,
     types::RwasmError,
-    RwasmContext,
     SyscallHandler,
+    FUNC_REF_OFFSET,
+    N_DEFAULT_STACK_SIZE,
+    N_MAX_STACK_SIZE,
     N_MAX_TABLE_SIZE,
     TABLE_ELEMENT_NULL,
 };
-use core::{marker::PhantomData, mem::replace};
+use core::mem::replace;
+use hashbrown::HashMap;
 use revm_interpreter::{SharedMemory, EMPTY_SHARED_MEMORY};
 use rwasm::{
-    core::{TrapCode, UntypedValue, ValueType},
+    core::{TrapCode, UntypedValue, ValueType, N_MAX_MEMORY_PAGES},
     engine::{
-        bytecode::{AddressOffset, DataSegmentIdx, ElementSegmentIdx, Instruction, TableIdx},
-        code_map::{FuncHeader, InstructionPtr, InstructionsRef},
+        bytecode::{
+            AddressOffset,
+            DataSegmentIdx,
+            ElementSegmentIdx,
+            GlobalIdx,
+            SignatureIdx,
+            TableIdx,
+        },
+        code_map::{FuncHeader, InstructionsRef},
+        stack::{ValueStack, ValueStackPtr},
         DropKeep,
+        FuelCosts,
+        Tracer,
     },
     memory::DataSegmentEntity,
     module::{
+        ConstExpr,
         DataSegment,
         DataSegmentKind,
         ElementSegment,
         ElementSegmentItems,
         ElementSegmentKind,
     },
-    rwasm::{RwasmModule, RwasmModuleInstance, N_MAX_RECURSION_DEPTH},
+    rwasm::N_MAX_RECURSION_DEPTH,
     store::ResourceLimiterRef,
     table::{ElementSegmentEntity, TableEntity},
+    MemoryType,
     TableType,
     Value,
 };
 use std::sync::Arc;
 
-pub struct RwasmExecutor<E: SyscallHandler<T>, T> {
-    pub(crate) store: RwasmContext<T>,
-    phantom_data: PhantomData<E>,
+pub struct RwasmExecutor<T> {
+    // function segments
+    pub(crate) module: Arc<RwasmModule2>,
+    pub(crate) config: ExecutorConfig,
+    // execution context information
+    pub(crate) consumed_fuel: u64,
+    pub(crate) refunded_fuel: i64,
+    pub(crate) value_stack: ValueStack,
+    pub(crate) sp: ValueStackPtr,
+    pub(crate) global_memory: GlobalMemory,
+    pub(crate) ip: InstructionPtr,
+    pub(crate) context: T,
+    pub(crate) tracer: Option<Tracer>,
+    pub(crate) fuel_costs: FuelCosts,
+    // rwasm modified segments
+    pub(crate) global_variables: HashMap<GlobalIdx, UntypedValue>,
+    pub(crate) tables: HashMap<TableIdx, TableEntity>,
+    pub(crate) data_segments: HashMap<DataSegmentIdx, DataSegmentEntity>,
+    pub(crate) elements: HashMap<ElementSegmentIdx, ElementSegmentEntity>,
+    // list of nested calls return pointers
+    pub(crate) call_stack: Vec<InstructionPtr>,
+    // the last used signature (needed for indirect calls type checks)
+    pub(crate) last_signature: Option<SignatureIdx>,
+    pub(crate) next_result: Option<Result<i32, RwasmError>>,
+    pub(crate) stop_exec: bool,
+    pub(crate) syscall_handler: SyscallHandler<T>,
 }
 
-impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
+impl<T> RwasmExecutor<T> {
     pub fn parse(
         rwasm_bytecode: &[u8],
         shared_memory: SharedMemory,
@@ -44,7 +87,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         context: T,
     ) -> Result<Self, RwasmError> {
         Ok(Self::new(
-            Arc::new(RwasmModule::new_or_empty(rwasm_bytecode)?.instantiate()),
+            Arc::new(RwasmModule2::new(rwasm_bytecode)),
             shared_memory,
             config,
             context,
@@ -52,20 +95,155 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     }
 
     pub fn new(
-        rwasm_module: Arc<RwasmModuleInstance>,
+        module: Arc<RwasmModule2>,
         shared_memory: SharedMemory,
         config: ExecutorConfig,
         context: T,
     ) -> Self {
-        let store = RwasmContext::new(rwasm_module, shared_memory, config, context);
+        // create stack with sp
+        let mut value_stack = ValueStack::new(N_DEFAULT_STACK_SIZE, N_MAX_STACK_SIZE);
+        let sp = value_stack.stack_ptr();
+
+        // assign sp to the position inside code section
+        let mut ip = InstructionPtr::new(module.code_section.as_ptr(), module.instr_data.as_ptr());
+        ip.add(module.source_pc as usize);
+
+        // create global memory
+        let mut resource_limiter_ref = ResourceLimiterRef::default();
+        let global_memory = GlobalMemory::new(
+            shared_memory,
+            MemoryType::new(0, Some(N_MAX_MEMORY_PAGES)).expect("rwasm: bad initial memory"),
+            &mut resource_limiter_ref,
+        )
+        .expect("rwasm: bad initial memory");
+
+        // create the main element segment (index 0) from the module elements
+        let mut element_segments = HashMap::new();
+        element_segments.insert(
+            ElementSegmentIdx::from(0u32),
+            ElementSegmentEntity::from(&ElementSegment {
+                kind: ElementSegmentKind::Passive,
+                ty: ValueType::I32,
+                items: ElementSegmentItems {
+                    exprs: module
+                        .element_section
+                        .iter()
+                        .map(|v| ConstExpr::from_const((*v + FUNC_REF_OFFSET).into()))
+                        .collect(),
+                },
+            }),
+        );
+
+        let tracer = if config.trace_enabled {
+            Some(Tracer::default())
+        } else {
+            None
+        };
+
         Self {
-            store,
-            phantom_data: Default::default(),
+            module,
+            config,
+            consumed_fuel: 0,
+            refunded_fuel: 0,
+            value_stack,
+            sp,
+            global_memory,
+            ip,
+            context,
+            tracer,
+            fuel_costs: Default::default(),
+            global_variables: Default::default(),
+            tables: Default::default(),
+            data_segments: Default::default(),
+            elements: element_segments,
+            call_stack: vec![],
+            last_signature: None,
+            next_result: None,
+            stop_exec: false,
+            syscall_handler: always_failing_syscall_handler,
         }
     }
 
+    pub fn set_syscall_handler(&mut self, handler: SyscallHandler<T>) {
+        self.syscall_handler = handler;
+    }
+
+    pub fn program_counter(&self) -> u32 {
+        self.ip.pc()
+    }
+
+    pub fn reset(&mut self, pc: Option<usize>) {
+        let mut ip = InstructionPtr::new(
+            self.module.code_section.as_ptr(),
+            self.module.instr_data.as_ptr(),
+        );
+        ip.add(pc.unwrap_or(self.module.source_pc as usize));
+        self.ip = ip;
+        self.consumed_fuel = 0;
+        self.value_stack.drain();
+        self.sp = self.value_stack.stack_ptr();
+        self.call_stack.clear();
+        self.last_signature = None;
+    }
+
+    pub fn reset_last_signature(&mut self) {
+        self.last_signature = None;
+    }
+
+    pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), RwasmError> {
+        let consumed_fuel = self.consumed_fuel.checked_add(fuel).unwrap_or(u64::MAX);
+        if let Some(fuel_limit) = self.config.fuel_limit {
+            if consumed_fuel > fuel_limit {
+                return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
+            }
+        }
+        self.consumed_fuel = consumed_fuel;
+        Ok(())
+    }
+
+    pub fn refund_fuel(&mut self, fuel: i64) {
+        self.refunded_fuel += fuel;
+    }
+
+    pub fn adjust_fuel_limit(&mut self) -> u64 {
+        let consumed_fuel = self.consumed_fuel;
+        if let Some(fuel_limit) = self.config.fuel_limit.as_mut() {
+            *fuel_limit -= self.consumed_fuel;
+        }
+        self.consumed_fuel = 0;
+        consumed_fuel
+    }
+
+    pub fn remaining_fuel(&self) -> Option<u64> {
+        Some(self.config.fuel_limit? - self.consumed_fuel)
+    }
+
+    pub fn fuel_consumed(&self) -> u64 {
+        self.consumed_fuel
+    }
+
+    pub fn fuel_refunded(&self) -> i64 {
+        self.refunded_fuel
+    }
+
+    pub fn tracer(&self) -> Option<&Tracer> {
+        self.tracer.as_ref()
+    }
+
+    pub fn tracer_mut(&mut self) -> Option<&mut Tracer> {
+        self.tracer.as_mut()
+    }
+
+    pub fn context(&self) -> &T {
+        &self.context
+    }
+
+    pub fn context_mut(&mut self) -> &mut T {
+        &mut self.context
+    }
+
     pub fn run(&mut self) -> Result<i32, RwasmError> {
-        match self.run_the_loop() {
+        match run_the_loop(self) {
             Ok(exit_code) => Ok(exit_code),
             Err(err) => match err {
                 RwasmError::ExecutionHalted(exit_code) => Ok(exit_code),
@@ -75,15 +253,13 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     }
 
     pub(crate) fn resolve_table(&mut self, table_idx: TableIdx) -> &mut TableEntity {
-        self.store
-            .tables
+        self.tables
             .get_mut(&table_idx)
             .expect("rwasm: missing table")
     }
 
     pub(crate) fn resolve_table_or_create(&mut self, table_idx: TableIdx) -> &mut TableEntity {
-        self.store
-            .tables
+        self.tables
             .entry(table_idx)
             .or_insert_with(Self::empty_table)
     }
@@ -117,8 +293,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         &mut self,
         data_segment_idx: DataSegmentIdx,
     ) -> &mut DataSegmentEntity {
-        self.store
-            .data_segments
+        self.data_segments
             .entry(data_segment_idx)
             .or_insert_with(Self::empty_data_segment)
     }
@@ -127,8 +302,7 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         &mut self,
         element_idx: ElementSegmentIdx,
     ) -> &mut ElementSegmentEntity {
-        self.store
-            .elements
+        self.elements
             .entry(element_idx)
             .or_insert_with(Self::empty_element_segment)
     }
@@ -139,12 +313,10 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         element_idx: ElementSegmentIdx,
     ) -> (&mut TableEntity, &mut ElementSegmentEntity) {
         let table_entity = self
-            .store
             .tables
             .entry(table_idx)
             .or_insert_with(Self::empty_table);
         let element_entity = self
-            .store
             .elements
             .entry(element_idx)
             .or_insert_with(Self::empty_element_segment);
@@ -152,19 +324,19 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
     }
 
     pub(crate) fn fetch_drop_keep(&self, offset: usize) -> DropKeep {
-        let mut addr: InstructionPtr = self.store.ip;
+        let mut addr: InstructionPtr = self.ip;
         addr.add(offset);
-        match addr.get() {
-            Instruction::Return(drop_keep) => *drop_keep,
+        match addr.data() {
+            InstructionData::DropKeep(drop_keep) => *drop_keep,
             _ => unreachable!("rwasm: can't extract drop keep"),
         }
     }
 
     pub(crate) fn fetch_table_index(&self, offset: usize) -> TableIdx {
-        let mut addr: InstructionPtr = self.store.ip;
+        let mut addr: InstructionPtr = self.ip;
         addr.add(offset);
-        match addr.get() {
-            Instruction::TableGet(table_idx) => *table_idx,
+        match addr.data() {
+            InstructionData::TableIdx(table_idx) => *table_idx,
             _ => unreachable!("rwasm: can't extract table index"),
         }
     }
@@ -179,12 +351,12 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
             offset: u32,
         ) -> Result<UntypedValue, TrapCode>,
     ) -> Result<(), TrapCode> {
-        self.store.sp.try_eval_top(|address| {
-            let memory = self.store.global_memory.data();
+        self.sp.try_eval_top(|address| {
+            let memory = self.global_memory.data();
             let value = load_extend(memory, address, offset.into_inner())?;
             Ok(value)
         })?;
-        self.store.ip.add(1);
+        self.ip.add(1);
         Ok(())
     }
 
@@ -200,33 +372,33 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         ) -> Result<(), TrapCode>,
         len: u32,
     ) -> Result<(), TrapCode> {
-        let (address, value) = self.store.sp.pop2();
-        let memory = self.store.global_memory.data_mut();
+        let (address, value) = self.sp.pop2();
+        let memory = self.global_memory.data_mut();
         store_wrap(memory, address, offset.into_inner(), value)?;
-        self.store.ip.offset(0);
+        self.ip.offset(0);
         let address = u32::from(address);
         let base_address = offset.into_inner() + address;
-        if let Some(tracer) = self.store.tracer.as_mut() {
+        if let Some(tracer) = self.tracer.as_mut() {
             tracer.memory_change(
                 base_address,
                 len,
                 &memory[base_address as usize..(base_address + len) as usize],
             );
         }
-        self.store.ip.add(1);
+        self.ip.add(1);
         Ok(())
     }
 
     #[inline(always)]
     pub(crate) fn execute_unary(&mut self, f: fn(UntypedValue) -> UntypedValue) {
-        self.store.sp.eval_top(f);
-        self.store.ip.add(1);
+        self.sp.eval_top(f);
+        self.ip.add(1);
     }
 
     #[inline(always)]
     pub(crate) fn execute_binary(&mut self, f: fn(UntypedValue, UntypedValue) -> UntypedValue) {
-        self.store.sp.eval_top2(f);
-        self.store.ip.add(1);
+        self.sp.eval_top2(f);
+        self.ip.add(1);
     }
 
     #[inline(always)]
@@ -234,8 +406,8 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         &mut self,
         f: fn(UntypedValue) -> Result<UntypedValue, TrapCode>,
     ) -> Result<(), TrapCode> {
-        self.store.sp.try_eval_top(f)?;
-        self.store.ip.add(1);
+        self.sp.try_eval_top(f)?;
+        self.ip.add(1);
         Ok(())
     }
 
@@ -244,8 +416,8 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         &mut self,
         f: fn(UntypedValue, UntypedValue) -> Result<UntypedValue, TrapCode>,
     ) -> Result<(), TrapCode> {
-        self.store.sp.try_eval_top2(f)?;
-        self.store.ip.add(1);
+        self.sp.try_eval_top2(f)?;
+        self.ip.add(1);
         Ok(())
     }
 
@@ -256,48 +428,36 @@ impl<E: SyscallHandler<T>, T> RwasmExecutor<E, T> {
         skip: usize,
         func_idx: u32,
     ) -> Result<(), RwasmError> {
-        self.store.ip.add(skip);
-        self.store.value_stack.sync_stack_ptr(self.store.sp);
+        self.ip.add(skip);
+        self.value_stack.sync_stack_ptr(self.sp);
         if is_nested_call {
-            if self.store.call_stack.len() > N_MAX_RECURSION_DEPTH {
+            if self.call_stack.len() > N_MAX_RECURSION_DEPTH {
                 return Err(RwasmError::TrapCode(TrapCode::StackOverflow));
             }
-            self.store.call_stack.push(self.store.ip);
+            self.call_stack.push(self.ip);
         }
         let instr_ref = self
-            .store
-            .instance
+            .module
             .func_segments
             .get(func_idx as usize)
             .copied()
             .expect("rwasm: unknown internal function");
         let header = FuncHeader::new(InstructionsRef::uninit(), 0, 0);
-        self.store.value_stack.prepare_wasm_call(&header)?;
-        self.store.sp = self.store.value_stack.stack_ptr();
-        self.store.ip = InstructionPtr::new(
-            self.store.instance.module.code_section.instr.as_ptr(),
-            self.store.instance.module.code_section.metas.as_ptr(),
+        self.value_stack.prepare_wasm_call(&header)?;
+        self.sp = self.value_stack.stack_ptr();
+        self.ip = InstructionPtr::new(
+            self.module.code_section.as_ptr(),
+            self.module.instr_data.as_ptr(),
         );
-        self.store.ip.add(instr_ref as usize);
+        self.ip.add(instr_ref as usize);
         Ok(())
     }
 
     pub fn take_shared_memory(&mut self) -> SharedMemory {
-        replace(
-            &mut self.store.global_memory.shared_memory,
-            EMPTY_SHARED_MEMORY,
-        )
+        replace(&mut self.global_memory.shared_memory, EMPTY_SHARED_MEMORY)
     }
 
     pub fn insert_shared_memory(&mut self, shared_memory: SharedMemory) {
-        self.store.global_memory.shared_memory = shared_memory;
-    }
-
-    pub fn store(&self) -> &RwasmContext<T> {
-        &self.store
-    }
-
-    pub fn store_mut(&mut self) -> &mut RwasmContext<T> {
-        &mut self.store
+        self.global_memory.shared_memory = shared_memory;
     }
 }
