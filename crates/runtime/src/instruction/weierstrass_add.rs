@@ -1,6 +1,6 @@
 use crate::{instruction::cast_u8_to_u32, RuntimeContext};
-use fluentbase_rwasm::{Caller, RwasmError};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
+use rwasm_executor::{Caller, RwasmError};
 use sp1_curves::{params::NumWords, AffinePoint, EllipticCurve};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;

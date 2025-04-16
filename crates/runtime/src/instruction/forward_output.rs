@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
+use rwasm_executor::{Caller, RwasmError};
 
 pub struct SyscallForwardOutput;
 

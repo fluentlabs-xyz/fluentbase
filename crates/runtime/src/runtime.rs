@@ -6,15 +6,6 @@ use crate::{
     },
 };
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
-use fluentbase_rwasm::{
-    make_instruction_table,
-    Caller,
-    ExecutorConfig,
-    InstructionTable,
-    RwasmError,
-    RwasmExecutor,
-    RwasmModule2,
-};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     BytecodeOrHash,
@@ -24,6 +15,15 @@ use fluentbase_types::{
     B256,
 };
 use hashbrown::{hash_map::Entry, HashMap};
+use rwasm_executor::{
+    make_instruction_table,
+    Caller,
+    ExecutorConfig,
+    InstructionTable,
+    RwasmError,
+    RwasmExecutor,
+    RwasmModule2,
+};
 use std::{
     cell::RefCell,
     fmt::Debug,
@@ -160,11 +160,8 @@ impl Runtime {
             // return bytecode
             runtime_context.bytecode = bytecode_repr;
 
-            let shared_memory = runtime_context.take_shared_memory();
-
             let mut executor = RwasmExecutor::new(
                 rwasm_module.clone(),
-                shared_memory,
                 ExecutorConfig::new()
                     .fuel_limit(runtime_context.fuel_limit)
                     .trace_enabled(runtime_context.trace)

@@ -1,9 +1,8 @@
 use crate::{Runtime, RuntimeContext};
-use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
+#[cfg(feature = "wasmtime")]
 use num::ToPrimitive;
-use revm_interpreter::EMPTY_SHARED_MEMORY;
-use std::mem::replace;
+use rwasm_executor::{Caller, RwasmError};
 
 pub struct SyscallResume;
 
@@ -69,11 +68,6 @@ impl SyscallResume {
         // during the résumé we must-clear output, otherwise collision might happen
         recoverable_runtime.context_mut().clear_output();
 
-        let shared_memory = replace(&mut ctx.shared_memory, EMPTY_SHARED_MEMORY);
-        recoverable_runtime
-            .executor
-            .insert_shared_memory(shared_memory);
-
         // we can charge fuel only if fuel is not disabled,
         // when fuel is disabled we only pass consumed fuel amount into the contract back,
         // and it can decide on charging
@@ -93,8 +87,6 @@ impl SyscallResume {
 
         let mut execution_result =
             recoverable_runtime.resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code);
-
-        ctx.shared_memory = recoverable_runtime.executor.take_shared_memory();
 
         // if execution was interrupted,
         if execution_result.interrupted {

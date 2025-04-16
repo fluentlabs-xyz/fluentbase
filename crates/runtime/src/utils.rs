@@ -20,7 +20,7 @@ pub(crate) fn trace_execution_logs(runtime: &Runtime, execution_result: &Executi
     let logs = &runtime.executor.tracer().unwrap().logs;
     println!("execution trace ({} steps):", logs.len());
     for log in logs.iter().rev().take(100).rev() {
-        use fluentbase_rwasm::InstructionExtra;
+        use rwasm_executor::InstructionExtra;
         if let Some(value) = log.opcode.aux_value() {
             println!(
                 " - pc={} opcode={:?}({}) gas={} stack={:?}",

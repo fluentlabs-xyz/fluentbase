@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError, TrapCode};
 use fluentbase_types::Bytes;
+use rwasm_executor::{Caller, RwasmError, TrapCode};
 
 pub struct SyscallPreimageCopy;
 

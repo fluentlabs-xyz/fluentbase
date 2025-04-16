@@ -1,5 +1,4 @@
 use crate::{Runtime, RuntimeContext};
-use fluentbase_rwasm::{Caller, HostError, RwasmError, TrapCode};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     BytecodeOrHash,
@@ -9,11 +8,10 @@ use fluentbase_types::{
     B256,
     CALL_STACK_LIMIT,
 };
-use revm_interpreter::EMPTY_SHARED_MEMORY;
+use rwasm_executor::{Caller, HostError, RwasmError, TrapCode};
 use std::{
     cmp::min,
     fmt::{Debug, Display, Formatter},
-    mem::replace,
 };
 
 pub struct SyscallExec;
@@ -125,13 +123,10 @@ impl SyscallExec {
             .with_fuel_limit(fuel_limit)
             .with_state(state)
             .with_call_depth(ctx.call_depth + 1)
-            .with_disable_fuel(ctx.disable_fuel)
-            .with_shared_memory(replace(&mut ctx.shared_memory, EMPTY_SHARED_MEMORY));
+            .with_disable_fuel(ctx.disable_fuel);
 
         let mut runtime = Runtime::new(ctx2);
         let mut execution_result = runtime.call();
-
-        ctx.shared_memory = runtime.executor.take_shared_memory();
 
         // if execution was interrupted,
         if execution_result.interrupted {

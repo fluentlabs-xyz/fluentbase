@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError, TrapCode};
+use rwasm_executor::{Caller, RwasmError, TrapCode};
 
 pub struct SyscallPreimageSize;
 

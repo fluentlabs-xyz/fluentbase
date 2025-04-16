@@ -1,7 +1,7 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
+use rwasm_executor::{Caller, RwasmError};
 use sp1_curves::{
     params::NumLimbs,
     weierstrass::{bls12_381::bls12381_decompress, secp256k1::secp256k1_decompress},
