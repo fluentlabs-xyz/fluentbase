@@ -122,10 +122,10 @@ pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBu
         fs::copy(&artefact_path, &wasm_output).unwrap();
     }
 
-    // println!(
-    //     "cargo:rustc-env=FLUENTBASE_WASM_BINARY_PATH_{}={}",
-    //     crate_name, artefact_path
-    // );
+    println!(
+        "cargo:rustc-env=FLUENTBASE_WASM_BINARY_PATH_{}={}",
+        crate_name, artefact_path
+    );
 
     let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
     if wasm_to_wat.is_ok() {
