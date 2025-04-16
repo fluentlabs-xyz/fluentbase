@@ -16,6 +16,15 @@ use crate::{
     native_loader,
     sysvar_cache::SysvarCache,
 };
+use crate::{
+    // bpf_loader_upgradeable,
+    // bpf_loader_upgradeable::UpgradeableLoaderState,
+    clock::Slot,
+    fluentbase::loader_v4,
+    hash::Hash,
+    pubkey::Pubkey,
+    rent::Rent,
+};
 use alloc::{boxed::Box, rc::Rc, sync::Arc, vec, vec::Vec};
 use core::{
     cell::{Ref, RefCell, RefMut},
@@ -23,17 +32,6 @@ use core::{
     sync::atomic::Ordering,
 };
 use fluentbase_sdk::{HashSet, SharedAPI};
-use solana_program::{
-    bpf_loader_upgradeable,
-    bpf_loader_upgradeable::UpgradeableLoaderState,
-    clock::Slot,
-    hash::Hash,
-    loader_v4,
-    loader_v4::{LoaderV4State, LoaderV4Status},
-    pubkey::Pubkey,
-    rent::Rent,
-    stable_layout::stable_instruction::StableInstruction,
-};
 use solana_rbpf::{
     error::{EbpfError, ProgramResult},
     memory_region::MemoryMapping,

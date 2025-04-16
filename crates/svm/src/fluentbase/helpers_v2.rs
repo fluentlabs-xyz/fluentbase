@@ -16,7 +16,13 @@ use crate::{
     loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
     loaders::{bpf_loader_v4, bpf_loader_v4::get_state},
     message_processor::MessageProcessor,
+    solana_program::{
+        loader_v4,
+        loader_v4::{LoaderV4State, LoaderV4Status},
+        message::{legacy, LegacyMessage, SanitizedMessage},
+    },
     system_processor,
+    system_program,
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
@@ -24,20 +30,13 @@ use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
 use hashbrown::HashMap;
 use itertools::Itertools;
 use serde::Deserialize;
-use solana_program::{
-    clock::Clock,
-    epoch_schedule::EpochSchedule,
-    loader_v4,
-    loader_v4::{LoaderV4State, LoaderV4Status},
-    message::{legacy, LegacyMessage, SanitizedMessage},
-    pubkey::Pubkey,
-    rent::Rent,
-    system_program,
-};
+use solana_clock::Clock;
+use solana_epoch_schedule::EpochSchedule;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
 };
+use solana_rent::Rent;
 
 pub fn init_config() -> Config {
     Config {

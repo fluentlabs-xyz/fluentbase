@@ -17,9 +17,8 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [features]
-default = ["std", "use_upgradable_loader"]
+default = ["std"]
 std = [
     "fluentbase-sdk/std",
-    #    "fluentbase-svm/std",
+    "fluentbase-svm/std",
 ]
-use_upgradable_loader = []

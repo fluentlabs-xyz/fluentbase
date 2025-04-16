@@ -13,7 +13,7 @@ mod tests {
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bincode,
         common::pubkey_from_address,
-        fluentbase::common::BatchMessage,
+        r#mod::common::BatchMessage,
         solana_program::{
             instruction::Instruction,
             loader_v4,

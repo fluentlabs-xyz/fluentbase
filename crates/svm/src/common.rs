@@ -1,4 +1,9 @@
 // use crate::builtins::SyscallSecp256k1Recover;
+// use crate::solana_program::bpf_loader;
+// use crate::solana_program::blake3;
+// use crate::solana_program::bpf_loader_deprecated;
+// use crate::solana_program::bpf_loader_upgradeable;
+// use crate::solana_program::bpf_loader_upgradeable::UpgradeableLoaderState;
 use crate::{
     account::AccountSharedData,
     builtins::{
@@ -11,7 +16,7 @@ use crate::{
         SyscallMemmove,
         SyscallMemset,
         SyscallPanic,
-        SyscallPoseidon,
+        // SyscallPoseidon,
         SyscallTryFindProgramAddress,
     },
     compute_budget::ComputeBudget,
@@ -28,21 +33,16 @@ use crate::{
     },
     loaded_programs::{LoadedProgram, DELAY_VISIBILITY_SLOT_OFFSET},
 };
+use crate::{
+    clock::Slot,
+    hash::{Hash, Hasher},
+    pubkey::Pubkey,
+    solana_program::loader_v4,
+};
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use bincode::Options;
 use core::marker::PhantomData;
 use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
-use solana_program::{
-    blake3,
-    bpf_loader,
-    bpf_loader_deprecated,
-    bpf_loader_upgradeable,
-    bpf_loader_upgradeable::UpgradeableLoaderState,
-    clock::Slot,
-    hash::{Hash, Hasher},
-    loader_v4,
-    pubkey::Pubkey,
-};
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
@@ -431,12 +431,12 @@ pub fn create_program_runtime_environment_v1<'a, SDK: SharedAPI>(
     // )?;
 
     // Poseidon
-    register_feature_gated_function!(
-        result,
-        enable_poseidon_syscall,
-        *b"sol_poseidon",
-        SyscallPoseidon::vm,
-    )?;
+    // register_feature_gated_function!(
+    //     result,
+    //     enable_poseidon_syscall,
+    //     *b"sol_poseidon",
+    //     SyscallPoseidon::vm,
+    // )?;
 
     // Accessing remaining compute units
     // register_feature_gated_function!(

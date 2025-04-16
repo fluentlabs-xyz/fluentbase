@@ -105,13 +105,11 @@ use crate::{
     },
     context::InvokeContext,
     error::SvmError,
+    pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN},
+    solana_program::sysvar::Sysvar,
     storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
 use fluentbase_sdk::{ExitCode, SharedAPI, StorageAPI};
-use solana_program::{
-    pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN},
-    sysvar::Sysvar,
-};
 use solana_rbpf::{ebpf::MM_HEAP_START, error::ProgramResult};
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;

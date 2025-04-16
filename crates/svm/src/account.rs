@@ -1,23 +1,16 @@
-use alloc::rc::Rc;
-use alloc::sync::Arc;
-use alloc::vec::Vec;
-use core::cell::Ref;
-use core::mem::MaybeUninit;
-use core::ptr;
-use core::cell::RefMut;
-use core::cell::RefCell;
-use solana_program::clock::{Epoch, INITIAL_RENT_EPOCH};
-use solana_program::entrypoint::MAX_PERMITTED_DATA_INCREASE;
-use solana_program::lamports::LamportsError;
-use solana_program::pubkey::Pubkey;
-use solana_program::system_instruction::{MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION, MAX_PERMITTED_DATA_LENGTH};
-use crate::context::{IndexOfAccount, InstructionContext, TransactionContext};
-use crate::error::InstructionError;
-use crate::helpers::is_zeroed;
-use alloc::vec;
-use alloc::boxed::Box;
+use crate::{
+    clock::{Epoch, INITIAL_RENT_EPOCH},
+    context::{IndexOfAccount, InstructionContext, TransactionContext},
+    error::InstructionError,
+    helpers::is_zeroed,
+};
+use alloc::{boxed::Box, rc::Rc, sync::Arc, vec, vec::Vec};
+use core::{
+    cell::{Ref, RefCell, RefMut},
+    mem::MaybeUninit,
+    ptr,
+};
 use serde::{Deserialize, Serialize};
-use solana_program::sysvar::Sysvar;
 
 pub type InheritableAccountFields = (u64, Epoch);
 pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITIAL_RENT_EPOCH);
@@ -38,10 +31,9 @@ fn shared_serialize_data<T: serde::Serialize, U: WritableAccount>(
     bincode::serialize_into(account.data_as_mut_slice(), state)
 }
 
-
 /// An Account with data that is stored on chain
 #[repr(C)]
-#[derive(/*Deserialize, */PartialEq, Eq, Clone, Default/*, AbiExample*/)]
+#[derive(/*Deserialize, */ PartialEq, Eq, Clone, Default /*, AbiExample*/)]
 // #[serde(rename_all = "camelCase")]
 pub struct Account {
     /// lamports in the account
@@ -239,7 +231,6 @@ pub trait WritableAccount: ReadableAccount {
     ) -> Self;
 }
 
-
 fn shared_new<T: WritableAccount>(lamports: u64, space: usize, owner: &Pubkey) -> T {
     T::create(
         lamports,
@@ -296,7 +287,6 @@ fn shared_new_ref_data_with_space<T: serde::Serialize, U: WritableAccount>(
         lamports, state, space, owner,
     )?))
 }
-
 
 /// An Account with data that is stored on chain
 /// This will be the in-memory representation of the 'Account' struct data.
@@ -535,7 +525,6 @@ impl ReadableAccount for Ref<'_, AccountSharedData> {
         }
     }
 }
-
 
 /// Shared account borrowed from the TransactionContext and an InstructionContext.
 #[derive(Debug)]
@@ -905,9 +894,12 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Returns true if the owner of this account is the current `InstructionContext`s last program (instruction wide)
     pub fn is_owned_by_current_program(&self) -> bool {
-        let last_program_key_result = self.instruction_context
+        let last_program_key_result = self
+            .instruction_context
             .get_last_program_key(self.transaction_context);
-        last_program_key_result.map(|key| key == self.get_owner()).unwrap_or_default()
+        last_program_key_result
+            .map(|key| key == self.get_owner())
+            .unwrap_or_default()
     }
 
     /// Returns an error if the account data can not be mutated by the current program

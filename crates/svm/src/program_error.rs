@@ -1,37 +1,43 @@
+use crate::{
+    alloc::string::ToString,
+    error::InstructionError,
+    solana_program::{
+        // decode_error::DecodeError,
+        program_error::{
+            ACCOUNT_ALREADY_INITIALIZED,
+            ACCOUNT_BORROW_FAILED,
+            ACCOUNT_DATA_TOO_SMALL,
+            ACCOUNT_NOT_RENT_EXEMPT,
+            ARITHMETIC_OVERFLOW,
+            BORSH_IO_ERROR,
+            BUILTIN_PROGRAMS_MUST_CONSUME_COMPUTE_UNITS,
+            CUSTOM_ZERO,
+            ILLEGAL_OWNER,
+            INCORRECT_PROGRAM_ID,
+            INSUFFICIENT_FUNDS,
+            INVALID_ACCOUNT_DATA,
+            INVALID_ACCOUNT_DATA_REALLOC,
+            INVALID_ACCOUNT_OWNER,
+            INVALID_ARGUMENT,
+            INVALID_INSTRUCTION_DATA,
+            INVALID_SEEDS,
+            MAX_ACCOUNTS_DATA_ALLOCATIONS_EXCEEDED,
+            MAX_INSTRUCTION_TRACE_LENGTH_EXCEEDED,
+            MAX_SEED_LENGTH_EXCEEDED,
+            MISSING_REQUIRED_SIGNATURES,
+            NOT_ENOUGH_ACCOUNT_KEYS,
+            UNINITIALIZED_ACCOUNT,
+            UNSUPPORTED_SYSVAR,
+        },
+    },
+};
 use num_traits::{FromPrimitive, ToPrimitive};
-use solana_program::decode_error::DecodeError;
-use solana_program::program_error::CUSTOM_ZERO;
-use solana_program::program_error::INVALID_ARGUMENT;
-use solana_program::program_error::INVALID_INSTRUCTION_DATA;
-use solana_program::program_error::INVALID_ACCOUNT_DATA;
-use solana_program::program_error::ACCOUNT_DATA_TOO_SMALL;
-use solana_program::program_error::INSUFFICIENT_FUNDS;
-use solana_program::program_error::INCORRECT_PROGRAM_ID;
-use solana_program::program_error::MISSING_REQUIRED_SIGNATURES;
-use solana_program::program_error::ACCOUNT_ALREADY_INITIALIZED;
-use solana_program::program_error::UNINITIALIZED_ACCOUNT;
-use solana_program::program_error::NOT_ENOUGH_ACCOUNT_KEYS;
-use solana_program::program_error::ACCOUNT_BORROW_FAILED;
-use solana_program::program_error::MAX_SEED_LENGTH_EXCEEDED;
-use solana_program::program_error::INVALID_SEEDS;
-use solana_program::program_error::BORSH_IO_ERROR;
-use solana_program::program_error::ACCOUNT_NOT_RENT_EXEMPT;
-use solana_program::program_error::UNSUPPORTED_SYSVAR;
-use solana_program::program_error::ILLEGAL_OWNER;
-use solana_program::program_error::MAX_ACCOUNTS_DATA_ALLOCATIONS_EXCEEDED;
-use solana_program::program_error::INVALID_ACCOUNT_DATA_REALLOC;
-use solana_program::program_error::MAX_INSTRUCTION_TRACE_LENGTH_EXCEEDED;
-use solana_program::program_error::BUILTIN_PROGRAMS_MUST_CONSUME_COMPUTE_UNITS;
-use solana_program::program_error::INVALID_ACCOUNT_OWNER;
-use solana_program::program_error::ARITHMETIC_OVERFLOW;
-use crate::error::InstructionError;
-use crate::alloc::string::ToString;
 
-pub trait PrintProgramError {
-    fn print<E>(&self)
-    where
-        E: 'static + core::error::Error + DecodeError<E> + PrintProgramError + FromPrimitive;
-}
+// pub trait PrintProgramError {
+//     fn print<E>(&self)
+//     where
+//         E: 'static + core::error::Error + DecodeError<E> + PrintProgramError + FromPrimitive;
+// }
 
 /// Builtin return values occupy the upper 32 bits
 const BUILTIN_BIT_SHIFT: usize = 32;

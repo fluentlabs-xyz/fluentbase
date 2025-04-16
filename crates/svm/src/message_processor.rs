@@ -1,12 +1,13 @@
-use crate::account::WritableAccount;
-use crate::context::{IndexOfAccount, InstructionAccount, InvokeContext};
-use crate::error::TransactionError;
-use crate::precompiles::is_precompile;
-use serde::{Deserialize, Serialize};
-use solana_program::message::SanitizedMessage;
-use solana_program::sysvar::instructions;
+use crate::{
+    account::WritableAccount,
+    context::{IndexOfAccount, InstructionAccount, InvokeContext},
+    error::TransactionError,
+    precompiles::is_precompile,
+    solana_program::{message::SanitizedMessage, sysvar::instructions},
+};
 use alloc::vec::Vec;
 use fluentbase_sdk::SharedAPI;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct MessageProcessor {}
@@ -42,9 +43,8 @@ impl MessageProcessor {
             .zip(program_indices.iter())
             .enumerate()
         {
-            let is_precompile = is_precompile(program_id, |id| {
-                invoke_context.feature_set.is_active(id)
-            });
+            let is_precompile =
+                is_precompile(program_id, |id| invoke_context.feature_set.is_active(id));
 
             // Fixup the special instructions key if present
             // before the account pre-values are taken care of

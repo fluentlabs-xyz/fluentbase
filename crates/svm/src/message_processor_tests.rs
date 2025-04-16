@@ -152,8 +152,8 @@ pub mod tests {
             },
         );
 
-        let message =
-            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new_with_compiled_instructions(
                 1,
                 0,
                 2,
@@ -166,7 +166,9 @@ pub mod tests {
                         account_metas.clone(),
                     ),
                 ]),
-            )));
+            ),
+            &Default::default(),
+        ));
 
         let compute_budget = crate::compute_budget::ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
@@ -203,8 +205,8 @@ pub mod tests {
             0
         );
 
-        let message =
-            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new_with_compiled_instructions(
                 1,
                 0,
                 2,
@@ -217,7 +219,9 @@ pub mod tests {
                         account_metas.clone(),
                     ),
                 ]),
-            )));
+            ),
+            &Default::default(),
+        ));
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert_eq!(
@@ -228,8 +232,8 @@ pub mod tests {
             ))
         );
 
-        let message =
-            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new_with_compiled_instructions(
                 1,
                 0,
                 2,
@@ -242,7 +246,9 @@ pub mod tests {
                         account_metas,
                     ),
                 ]),
-            )));
+            ),
+            &Default::default(),
+        ));
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert_eq!(
@@ -369,14 +375,17 @@ pub mod tests {
             ),
         ];
 
-        let message = SanitizedMessage::Legacy(LegacyMessage::new(Message::new(
-            &[Instruction::new_with_bincode(
-                mock_program_id,
-                &MockSystemInstruction::BorrowFail,
-                account_metas.clone(),
-            )],
-            Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
-        )));
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new(
+                &[Instruction::new_with_bincode(
+                    mock_program_id,
+                    &MockSystemInstruction::BorrowFail,
+                    account_metas.clone(),
+                )],
+                Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
+            ),
+            &Default::default(),
+        ));
 
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
@@ -419,19 +428,22 @@ pub mod tests {
             ))
         );
 
-        let message = SanitizedMessage::Legacy(LegacyMessage::new(Message::new(
-            &[Instruction::new_with_bincode(
-                mock_program_id,
-                &MockSystemInstruction::MultiBorrowMut,
-                account_metas.clone(),
-            )],
-            Some(
-                invoke_context
-                    .transaction_context
-                    .get_key_of_account_at_index(0)
-                    .unwrap(),
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new(
+                &[Instruction::new_with_bincode(
+                    mock_program_id,
+                    &MockSystemInstruction::MultiBorrowMut,
+                    account_metas.clone(),
+                )],
+                Some(
+                    invoke_context
+                        .transaction_context
+                        .get_key_of_account_at_index(0)
+                        .unwrap(),
+                ),
             ),
-        )));
+            &Default::default(),
+        ));
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
             ProgramRuntimeEnvironments {
@@ -447,22 +459,25 @@ pub mod tests {
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert!(result.is_ok());
 
-        let message = SanitizedMessage::Legacy(LegacyMessage::new(Message::new(
-            &[Instruction::new_with_bincode(
-                mock_program_id,
-                &MockSystemInstruction::DoWork {
-                    lamports: 10,
-                    data: 42,
-                },
-                account_metas,
-            )],
-            Some(
-                invoke_context
-                    .transaction_context
-                    .get_key_of_account_at_index(0)
-                    .unwrap(),
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new(
+                &[Instruction::new_with_bincode(
+                    mock_program_id,
+                    &MockSystemInstruction::DoWork {
+                        lamports: 10,
+                        data: 42,
+                    },
+                    account_metas,
+                )],
+                Some(
+                    invoke_context
+                        .transaction_context
+                        .get_key_of_account_at_index(0)
+                        .unwrap(),
+                ),
             ),
-        )));
+            &Default::default(),
+        ));
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
             ProgramRuntimeEnvironments {
@@ -592,8 +607,8 @@ pub mod tests {
             0,
         );
 
-        let message =
-            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new_with_compiled_instructions(
                 2,
                 0,
                 0,
@@ -610,7 +625,9 @@ pub mod tests {
                         account_metas.clone(),
                     ),
                 ]),
-            )));
+            ),
+            &Default::default(),
+        ));
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
@@ -720,8 +737,8 @@ pub mod tests {
             0,
         );
 
-        let message =
-            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new_with_compiled_instructions(
                 1,
                 0,
                 1,
@@ -734,7 +751,9 @@ pub mod tests {
                         account_metas.clone(),
                     ),
                 ]),
-            )));
+            ),
+            &Default::default(),
+        ));
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
@@ -761,8 +780,8 @@ pub mod tests {
             assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account3.lamports());
         }
 
-        let message =
-            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new_with_compiled_instructions(
                 1,
                 0,
                 1,
@@ -775,7 +794,9 @@ pub mod tests {
                         account_metas.clone(),
                     ),
                 ]),
-            )));
+            ),
+            &Default::default(),
+        ));
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
@@ -802,8 +823,8 @@ pub mod tests {
             assert_eq!(DUMMY_INHERITABLE_ACCOUNT_FIELDS.0, account3.lamports());
         }
 
-        let message =
-            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new_with_compiled_instructions(
                 1,
                 0,
                 1,
@@ -816,7 +837,9 @@ pub mod tests {
                         account_metas.clone(),
                     ),
                 ]),
-            )));
+            ),
+            &Default::default(),
+        ));
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
@@ -939,8 +962,8 @@ pub mod tests {
             })
             .collect::<Vec<_>>();
         let account_metas = vec![AccountMeta::new(from, true), AccountMeta::new(to, true)];
-        let message =
-            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new_with_compiled_instructions(
                 2,
                 0,
                 0,
@@ -957,7 +980,9 @@ pub mod tests {
                         account_metas.clone(),
                     ),
                 ]),
-            )));
+            ),
+            &Default::default(),
+        ));
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         // println!("result1: {:?}", result);
@@ -1003,7 +1028,7 @@ pub mod tests {
                 ),
             ]),
         );
-        let message = LegacyMessage::new(message);
+        let message = LegacyMessage::new(message, &Default::default());
         let message = SanitizedMessage::Legacy(message);
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
@@ -1052,7 +1077,7 @@ pub mod tests {
                 ),
             ]),
         );
-        let message = LegacyMessage::new(message);
+        let message = LegacyMessage::new(message, &Default::default());
         let message = SanitizedMessage::Legacy(message);
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
@@ -1175,8 +1200,8 @@ pub mod tests {
         program_indices.push(vec![2]);
         program_indices.push(vec![2]);
         program_indices.push(vec![2]);
-        let message =
-            SanitizedMessage::Legacy(LegacyMessage::new(Message::new_with_compiled_instructions(
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(
+            Message::new_with_compiled_instructions(
                 2,
                 0,
                 0,
@@ -1203,7 +1228,9 @@ pub mod tests {
                         vec![AccountMeta::new(to, true)],
                     ),
                 ]),
-            )));
+            ),
+            &Default::default(),
+        ));
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
@@ -1445,7 +1472,7 @@ pub mod tests {
 
         let instructions = create_buffer(&pk_payer, &pk_buffer, &pk_9, 0, program_len).unwrap();
         let message = Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash);
-        let message = SanitizedMessage::Legacy(LegacyMessage::new(message));
+        let message = SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         assert!(result.is_ok());
@@ -1623,7 +1650,8 @@ pub mod tests {
             write_messages.push(msg);
         }
         for (mn, m) in write_messages.iter().enumerate() {
-            let message = SanitizedMessage::Legacy(LegacyMessage::new(m.clone()));
+            let message =
+                SanitizedMessage::Legacy(LegacyMessage::new(m.clone(), &Default::default()));
             let result =
                 MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
             // println!("result2_{}: {:?}", mn, result);
@@ -1791,7 +1819,7 @@ pub mod tests {
         )
         .unwrap();
         let message = Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash);
-        let message = LegacyMessage::new(message);
+        let message = LegacyMessage::new(message, &Default::default());
         let message = SanitizedMessage::Legacy(message);
         let program_indices = vec![
             vec![working_accounts_count],
@@ -2056,7 +2084,7 @@ pub mod tests {
             vec![],
         )];
         let message = Message::new_with_blockhash(&instructions, Some(&pk_exec), &blockhash);
-        let message = LegacyMessage::new(message);
+        let message = LegacyMessage::new(message, &Default::default());
         let message = SanitizedMessage::Legacy(message);
         let program_indices = vec![vec![working_accounts_count, working_accounts_count + 1]];
         let result =

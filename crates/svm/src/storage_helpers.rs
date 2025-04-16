@@ -1,7 +1,7 @@
 use alloc::{rc::Rc, vec, vec::Vec};
 use core::{marker::PhantomData, ops::Deref};
 use fluentbase_sdk::{ExitCode, StorageAPI, B256, U256};
-use solana_program::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 
 pub type Bytes32 = [u8; 32];
 

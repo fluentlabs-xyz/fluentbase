@@ -1,14 +1,14 @@
-use hashbrown::HashSet;
-use solana_program::nonce::State;
-use solana_program::nonce::state::{AuthorizeNonceError, Data, DurableNonce, Versions};
-use solana_program::pubkey::Pubkey;
-use solana_program::rent::Rent;
-use solana_program::system_instruction::SystemError;
-use crate::account::BorrowedAccount;
-use crate::common::checked_add;
-use crate::context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext};
-use crate::error::InstructionError;
+use crate::{
+    account::BorrowedAccount,
+    common::checked_add,
+    context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
+    error::InstructionError,
+};
 use fluentbase_sdk::SharedAPI;
+use hashbrown::HashSet;
+use solana_pubkey::{declare_id, Pubkey};
+
+declare_id!("11111111111111111111111111111111");
 
 pub fn advance_nonce_account<SDK: SharedAPI>(
     account: &mut BorrowedAccount,

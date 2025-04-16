@@ -1,7 +1,9 @@
+use crate::{
+    hash::{hashv, Hash},
+    pubkey::Pubkey,
+};
 use serde::{Deserialize, Serialize};
-use solana_program::fee_calculator::FeeCalculator;
-use solana_program::hash::{hashv, Hash};
-use solana_program::pubkey::Pubkey;
+use solana_fee_calculator::FeeCalculator;
 
 const DURABLE_NONCE_HASH_PREFIX: &[u8] = "DURABLE_NONCE".as_bytes();
 
@@ -88,8 +90,10 @@ impl State {
 
 #[cfg(test)]
 mod test {
-    use crate::nonce::Versions;
-    use crate::nonce_current::{Data, State};
+    use crate::{
+        nonce::Versions,
+        nonce_current::{Data, State},
+    };
 
     #[test]
     fn default_is_uninitialized() {

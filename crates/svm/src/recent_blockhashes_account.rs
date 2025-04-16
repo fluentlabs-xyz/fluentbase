@@ -1,20 +1,23 @@
 //! Helpers for the recent blockhashes sysvar.
 
-use solana_program::clock::INITIAL_RENT_EPOCH;
 #[allow(deprecated)]
-use solana_program::sysvar::recent_blockhashes::{
-    IntoIterSorted, IterItem, RecentBlockhashes, MAX_ENTRIES,
+use crate::solana_program::sysvar::recent_blockhashes::{
+    IntoIterSorted,
+    IterItem,
+    RecentBlockhashes,
+    MAX_ENTRIES,
 };
-use {
-    crate::{
-        account::{
-            to_account, AccountSharedData,
-            InheritableAccountFields, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
-        },
+use crate::{
+    account::{
+        to_account,
+        AccountSharedData,
+        InheritableAccountFields,
+        DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
-    alloc::{collections::BinaryHeap},
+    helpers::create_account_shared_data_with_fields,
 };
-use crate::helpers::create_account_shared_data_with_fields;
+use alloc::collections::BinaryHeap;
+use solana_clock::INITIAL_RENT_EPOCH;
 
 #[deprecated(
     since = "1.9.0",
@@ -26,7 +29,7 @@ pub fn update_account<'a, I>(
     recent_blockhash_iter: I,
 ) -> Option<()>
 where
-    I: IntoIterator<Item=IterItem<'a>>,
+    I: IntoIterator<Item = IterItem<'a>>,
 {
     let sorted = BinaryHeap::from_iter(recent_blockhash_iter);
     #[allow(deprecated)]
@@ -45,7 +48,7 @@ where
 #[allow(deprecated)]
 pub fn create_account_with_data<'a, I>(lamports: u64, recent_blockhash_iter: I) -> AccountSharedData
 where
-    I: IntoIterator<Item=IterItem<'a>>,
+    I: IntoIterator<Item = IterItem<'a>>,
 {
     #[allow(deprecated)]
     create_account_with_data_and_fields(recent_blockhash_iter, (lamports, INITIAL_RENT_EPOCH))
@@ -61,7 +64,7 @@ pub fn create_account_with_data_and_fields<'a, I>(
     fields: InheritableAccountFields,
 ) -> AccountSharedData
 where
-    I: IntoIterator<Item=IterItem<'a>>,
+    I: IntoIterator<Item = IterItem<'a>>,
 {
     let mut account = create_account_shared_data_with_fields::<RecentBlockhashes>(
         &RecentBlockhashes::default(),
@@ -78,7 +81,7 @@ where
 #[allow(deprecated)]
 pub fn create_account_with_data_for_test<'a, I>(recent_blockhash_iter: I) -> AccountSharedData
 where
-    I: IntoIterator<Item=IterItem<'a>>,
+    I: IntoIterator<Item = IterItem<'a>>,
 {
     create_account_with_data_and_fields(recent_blockhash_iter, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
 }
@@ -87,17 +90,16 @@ where
 mod tests {
     #![allow(deprecated)]
 
-    use alloc::vec;
-    use alloc::vec::Vec;
-    use {
-        super::*,
-        rand::{seq::SliceRandom, thread_rng},
+    use super::*;
+    use crate::{
+        account_utils::from_account,
         solana_program::{
             hash::{Hash, HASH_BYTES},
             sysvar::recent_blockhashes::Entry,
         },
     };
-    use crate::account_utils::from_account;
+    use alloc::{vec, vec::Vec};
+    use rand::{seq::SliceRandom, thread_rng};
 
     #[test]
     fn test_create_account_empty() {
@@ -169,7 +171,7 @@ mod tests {
         let expected_recent_blockhashes: Vec<_> = (unsorted_recent_blockhashes
             .into_iter()
             .map(|IterItem(_, b, f)| Entry::new(b, f)))
-            .collect();
+        .collect();
 
         assert_eq!(*recent_blockhashes, expected_recent_blockhashes);
     }

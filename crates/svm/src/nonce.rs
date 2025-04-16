@@ -1,11 +1,13 @@
 //! State for durable transaction nonces.
 
+use crate::{
+    hash::Hash,
+    nonce_current::{Data, DurableNonce, State},
+    pubkey::Pubkey,
+};
+use alloc::boxed::Box;
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
-use solana_program::hash::Hash;
-use solana_program::pubkey::Pubkey;
-use crate::nonce_current::{Data, DurableNonce, State};
-use alloc::boxed::Box;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum Versions {
@@ -112,13 +114,10 @@ impl From<Versions> for State {
 
 #[cfg(test)]
 mod tests {
-    use solana_program::fee_calculator::FeeCalculator;
-    use solana_program::hash::Hash;
-    use {
-        super::*,
-        core::iter::repeat_with,
-    };
+    use super::*;
     use crate::nonce_current::{Data, DurableNonce};
+    use core::iter::repeat_with;
+    use solana_program::{fee_calculator::FeeCalculator, hash::Hash};
 
     #[test]
     fn test_verify_recent_blockhash() {

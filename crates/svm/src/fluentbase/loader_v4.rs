@@ -10,7 +10,8 @@ use crate::{
     helpers::{storage_read_account_data, storage_write_account_data},
     native_loader,
     native_loader::create_loadable_account_for_test,
-    solana_program::{loader_v4, message::Message, system_program},
+    solana_program::{loader_v4, message::Message},
+    system_program,
 };
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{

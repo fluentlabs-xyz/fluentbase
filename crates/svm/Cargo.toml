@@ -16,14 +16,33 @@ num-traits = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
 hashbrown = { workspace = true, default-features = false }
 
-
-solana-program = { workspace = true }
 solana_rbpf = { workspace = true, default-features = false }
-solana-poseidon = { workspace = true, default-features = false }
+solana-pubkey = { workspace = true, default-features = false }
+solana-instruction = { workspace = true, default-features = false }
+solana-account-info = { workspace = true, default-features = false }
+solana-clock = { workspace = true, default-features = false, features = ["sysvar"] }
+solana-epoch-schedule = { workspace = true, default-features = false, features = ["sysvar"] }
+solana-rent = { workspace = true, default-features = false, features = ["sysvar"] }
+solana-sanitize = { workspace = true, default-features = false }
+solana-short-vec = { workspace = true, default-features = false }
+solana-sha256-hasher = { workspace = true, default-features = false }
+solana-fee-calculator = { workspace = true, default-features = false }
+solana-program-error = { workspace = true, default-features = false }
+solana-sysvar-id = { workspace = true, default-features = false }
+solana-sdk-macro = { workspace = true, default-features = false }
+solana-serialize-utils = { workspace = true, default-features = false }
+solana-last-restart-slot = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
+solana-hash = { workspace = true, default-features = false }
+solana-slot-hashes = { workspace = true, default-features = false, features = ["sysvar"] }
+solana-slot-history = { workspace = true, default-features = false, features = ["sysvar"] }
+#solana-program = { workspace = true, default-features = false }
+#solana-poseidon = { workspace = true, default-features = false }
 
 hex = { workspace = true, default-features = false }
 hex-literal = { workspace = true }
+bitflags = { workspace = true }
 
+num-derive = { workspace = true, default-features = false }
 serde = { workspace = true, default-features = false }
 bincode = { workspace = true, default-features = false }
 #bincode = { version = "1.3.3", default-features = false }
@@ -40,10 +59,10 @@ default = [
     "borsh",
 ]
 borsh = [
-    "solana-program/borsh"
+    #    "solana-program/borsh"
 ]
 std = [
     "fluentbase-sdk/std",
-    "solana-program/std",
+    #    "solana-program/std",
 ]
 debug-print = []

@@ -1,12 +1,7 @@
 //! Functions related to nonce accounts.
 
-use solana_program::nonce::State;
-use solana_program::nonce::state::Versions;
-use solana_program::system_program;
-use {
-    crate::account::AccountSharedData,
-    core::cell::RefCell,
-};
+use crate::account::AccountSharedData;
+use core::cell::RefCell;
 
 pub fn create_account(lamports: u64) -> RefCell<AccountSharedData> {
     RefCell::new(
@@ -16,7 +11,7 @@ pub fn create_account(lamports: u64) -> RefCell<AccountSharedData> {
             State::size(),
             &system_program::id(),
         )
-            .expect("nonce_account"),
+        .expect("nonce_account"),
     )
 }
 

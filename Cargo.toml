@@ -44,13 +44,33 @@ fluentbase-svm = { path = "./crates/svm", default-features = false }
 
 #solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
 #solana-program = { path = "../solana/sdk/program", default-features = false }
-solana-program = { path = "../agave/sdk/program", default-features = false, features = ["borsh"] }
-solana-poseidon = { path = "../agave/poseidon", default-features = false }
+#solana-program = { path = "../agave/sdk/program", default-features = false, features = ["borsh"] }
+solana-pubkey = { path = "../agave/sdk/pubkey", default-features = false }
+solana-instruction = { path = "../agave/sdk/instruction", default-features = false }
+solana-account-info = { path = "../agave/sdk/account-info", default-features = false }
+solana-clock = { path = "../agave/sdk/clock", default-features = false }
+solana-epoch-schedule = { path = "../agave/sdk/epoch-schedule", default-features = false }
+solana-rent = { path = "../agave/sdk/rent", default-features = false }
+solana-sanitize = { path = "../agave/sdk/sanitize", default-features = false }
+solana-short-vec = { path = "../agave/short-vec", default-features = false }
+solana-hash = { path = "../agave/sdk/hash", default-features = false }
+solana-slot-hashes = { path = "../agave/sdk/slot-hashes", default-features = false }
+solana-fee-calculator = { path = "../agave/sdk/fee-calculator", default-features = false }
+solana-program-error = { path = "../agave/sdk/program-error", default-features = false }
+solana-sysvar-id = { path = "../agave/sdk/sysvar-id", default-features = false }
+solana-sdk-macro = { path = "../agave/sdk/macro", default-features = false }
+solana-serialize-utils = { path = "../agave/sdk/serialize-utils", default-features = false }
+solana-last-restart-slot = { path = "../agave/sdk/last-restart-slot", default-features = false }
+solana-slot-history = { path = "../agave/sdk/slot-history", default-features = false }
+solana-sha256-hasher = { path = "../agave/sdk/sha256-hasher", default-features = false }
+solana-entrypoint = { path = "../agave/sdk/program-entrypoint", default-features = false }
+#solana-poseidon = { path = "../agave/poseidon", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 
+bitflags = { version = "2.9.0", default-features = false, features = [] }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
 alloy-primitives = { version = "=0.8.21", default-features = false, features = ["rlp", "map"] }

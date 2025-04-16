@@ -7,10 +7,7 @@ use crate::{
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use fluentbase_sdk::SharedAPI;
-use solana_program::{
-    bpf_loader_deprecated,
-    entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-};
+use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 use solana_rbpf::{
     elf::Executable,
     error::{EbpfError, ProgramResult},

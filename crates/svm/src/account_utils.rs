@@ -1,15 +1,12 @@
 //! Useful extras for `Account` state.
 
-use solana_program::sysvar::Sysvar;
-use {
-    crate::{
-        account::{Account, AccountSharedData},
-    },
-    bincode::ErrorKind,
-    core::cell::Ref,
+use crate::{
+    account::{Account, AccountSharedData, ReadableAccount},
+    error::InstructionError,
+    solana_program::sysvar::Sysvar,
 };
-use crate::account::ReadableAccount;
-use crate::error::InstructionError;
+use bincode::ErrorKind;
+use core::cell::Ref;
 
 /// Convenience trait to covert bincode errors to instruction errors.
 pub trait StateMut<T> {
@@ -68,10 +65,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use solana_program::pubkey::Pubkey;
-    use {
-        super::*,
-    };
 
     #[test]
     fn test_account_state() {
@@ -88,7 +83,6 @@ mod tests {
         assert_eq!(stored_state, state);
     }
 }
-
 
 /// Create a `Sysvar` from an `Account`'s data.
 pub fn from_account<S: Sysvar, T: ReadableAccount>(account: &T) -> Option<S> {

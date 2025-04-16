@@ -2,14 +2,9 @@
 #![feature(new_range_api)]
 #![feature(assert_matches)]
 #![feature(liballoc_internals)]
-// #![warn(unused_crate_dependencies)]
 
 extern crate alloc;
 extern crate core;
-// #[macro_use]
-// extern crate solana_rbpf;
-// #[cfg(target_arch = "wasm32")]
-// extern crate fluentbase_sdk;
 
 pub mod account;
 pub mod account_utils;
@@ -41,12 +36,20 @@ pub mod program_error;
 pub mod recent_blockhashes_account;
 // #[cfg(test)]
 // pub mod secp256k1_instruction;
+pub mod bpf_loader;
+pub mod bpf_loader_deprecated;
+pub mod epoch_rewards;
+pub mod epoch_schedule;
+pub mod epoch_stake;
 pub mod fluentbase;
+pub mod hash;
 pub mod loaders;
 pub mod serialization;
+pub mod solana_program;
 pub mod storage_helpers;
 #[cfg(test)]
 mod storage_helpers_tests;
+pub mod system_instruction;
 pub mod system_processor;
 #[cfg(test)]
 mod system_processor_tests;
@@ -58,4 +61,19 @@ pub mod types;
 // mod test_macroses;
 
 pub use bincode;
-pub use solana_program;
+pub use {
+    solana_account_info::{self as account_info, debug_account_data},
+    solana_clock as clock,
+    // solana_msg::msg,
+    // solana_native_token as native_token,
+    // solana_program_entrypoint::{
+    //     self as entrypoint,
+    //     custom_heap_default,
+    //     custom_panic_default,
+    //     entrypoint,
+    //     entrypoint_no_alloc,
+    // },
+    // solana_program_option as program_option,
+    solana_pubkey as pubkey,
+    solana_rent as rent,
+};

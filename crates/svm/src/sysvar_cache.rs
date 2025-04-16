@@ -1,16 +1,16 @@
 use crate::error::InstructionError;
 use alloc::sync::Arc;
-use solana_program::clock::Clock;
-use solana_program::epoch_rewards::EpochRewards;
-use solana_program::epoch_schedule::EpochSchedule;
-use solana_program::last_restart_slot::LastRestartSlot;
-use solana_program::pubkey::Pubkey;
-use solana_program::rent::Rent;
-use solana_program::slot_hashes::SlotHashes;
-use solana_program::stake_history::StakeHistory;
-use solana_program::sysvar::fees::Fees;
-use solana_program::sysvar::recent_blockhashes::RecentBlockhashes;
-use solana_program::sysvar::SysvarId;
+use solana_program::{
+    clock::Clock,
+    epoch_rewards::EpochRewards,
+    epoch_schedule::EpochSchedule,
+    last_restart_slot::LastRestartSlot,
+    pubkey::Pubkey,
+    rent::Rent,
+    slot_hashes::SlotHashes,
+    stake_history::StakeHistory,
+    sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes, SysvarId},
+};
 // #[cfg(RUSTC_WITH_SPECIALIZATION)]
 // impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
 //     fn example() -> Self {
@@ -241,14 +241,15 @@ pub mod get_sysvar_with_account_check {
         invoke_context.get_sysvar_cache().get_clock()
     }
 
-    use fluentbase_sdk::SharedAPI;
-    use crate::context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext};
-    use crate::error::InstructionError;
+    use crate::{
+        clock::Clock,
+        context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
+        error::InstructionError,
+        rent::Rent,
+        solana_program::sysvar::{recent_blockhashes::RecentBlockhashes, Sysvar},
+    };
     use alloc::sync::Arc;
-    use solana_program::clock::Clock;
-    use solana_program::rent::Rent;
-    use solana_program::sysvar::recent_blockhashes::RecentBlockhashes;
-    use solana_program::sysvar::Sysvar;
+    use fluentbase_sdk::SharedAPI;
 
     pub fn rent<SDK: SharedAPI>(
         invoke_context: &InvokeContext<SDK>,

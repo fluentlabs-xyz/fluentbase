@@ -1,25 +1,25 @@
+use crate::{
+    account::BorrowedAccount,
+    bpf_loader_deprecated,
+    context::{IndexOfAccount, InstructionContext, TransactionContext},
+    error::InstructionError,
+    helpers::SerializedAccountMetadata,
+    types::VecU8,
+};
+use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
-use solana_program::account_info::AccountInfo;
-use solana_program::entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER};
-use solana_program::pubkey::Pubkey;
-use solana_program::system_instruction::MAX_PERMITTED_DATA_LENGTH;
-use crate::types::VecU8;
-use alloc::vec::Vec;
 use core::mem;
-use solana_program::bpf_loader_deprecated;
-use solana_rbpf::aligned_memory::{AlignedMemory, Pod};
-use solana_rbpf::ebpf::{HOST_ALIGN, MM_INPUT_START};
-use solana_rbpf::memory_region::{MemoryRegion, MemoryState};
-use crate::account::BorrowedAccount;
-use crate::context::{IndexOfAccount, InstructionContext, TransactionContext};
-use crate::helpers::SerializedAccountMetadata;
-use alloc::boxed::Box;
-use crate::error::InstructionError;
+use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
+use solana_pubkey::Pubkey;
+use solana_rbpf::{
+    aligned_memory::{AlignedMemory, Pod},
+    ebpf::{HOST_ALIGN, MM_INPUT_START},
+    memory_region::{MemoryRegion, MemoryState},
+};
 
 /// Maximum number of instruction accounts that can be serialized into the
 /// SBF VM.
 const MAX_INSTRUCTION_ACCOUNTS: u8 = NON_DUP_MARKER;
-
 
 pub(crate) fn account_data_region_memory_state(account: &BorrowedAccount<'_>) -> MemoryState {
     if account.can_data_be_changed().is_ok() {
@@ -180,12 +180,12 @@ impl Serializer {
         debug_assert!(
             !self.aligned
                 || self
-                .buffer
-                .as_slice()
-                .as_ptr_range()
-                .end
-                .align_offset(mem::align_of::<T>())
-                == 0
+                    .buffer
+                    .as_slice()
+                    .as_ptr_range()
+                    .end
+                    .align_offset(mem::align_of::<T>())
+                    == 0
         );
     }
 }
@@ -206,26 +206,36 @@ pub fn serialize_parameters_aligned_custom(
     // s.write_all()
     let mut s = VecU8::new(Vec::<u8>::new());
     // Serialize into the buffer
-    s.write_u64::<BO>((accounts.len() as u64).to_le()).map_err(|v| crate::error::InstructionError::InvalidError)?;
+    s.write_u64::<BO>((accounts.len() as u64).to_le())
+        .map_err(|v| crate::error::InstructionError::InvalidError)?;
     for account in accounts {
         // match account {
         //     SerializeAccount::Account(_, mut borrowed_account) => {
-        s.write_u8(NON_DUP_MARKER).map_err(|v| crate::error::InstructionError::InvalidError)?;
-        s.write_u8(account.is_signer as u8).map_err(|v| crate::error::InstructionError::InvalidError)?;
-        s.write_u8(account.is_writable as u8).map_err(|v| crate::error::InstructionError::InvalidError)?;
-        s.write_u8(account.executable as u8).map_err(|v| crate::error::InstructionError::InvalidError)?;
+        s.write_u8(NON_DUP_MARKER)
+            .map_err(|v| crate::error::InstructionError::InvalidError)?;
+        s.write_u8(account.is_signer as u8)
+            .map_err(|v| crate::error::InstructionError::InvalidError)?;
+        s.write_u8(account.is_writable as u8)
+            .map_err(|v| crate::error::InstructionError::InvalidError)?;
+        s.write_u8(account.executable as u8)
+            .map_err(|v| crate::error::InstructionError::InvalidError)?;
         s.vec.extend_from_slice(&[0u8, 0, 0, 0]);
         s.vec.extend_from_slice(account.key.as_ref());
         s.vec.extend_from_slice(account.owner.as_ref());
-        s.write_u64::<BO>(account.lamports.borrow().to_le()).map_err(|v| crate::error::InstructionError::InvalidError)?;
-        s.write_u64::<BO>((account.data.borrow().len() as u64).to_le()).map_err(|v| crate::error::InstructionError::InvalidError)?;
+        s.write_u64::<BO>(account.lamports.borrow().to_le())
+            .map_err(|v| crate::error::InstructionError::InvalidError)?;
+        s.write_u64::<BO>((account.data.borrow().len() as u64).to_le())
+            .map_err(|v| crate::error::InstructionError::InvalidError)?;
         s.vec.extend_from_slice(account.data.borrow().as_ref());
-        s.vec.extend(core::iter::repeat(0).take(MAX_PERMITTED_DATA_INCREASE));
+        s.vec
+            .extend(core::iter::repeat(0).take(MAX_PERMITTED_DATA_INCREASE));
         let align = BPF_ALIGN_OF_U128 - (s.len() - s.len() / BPF_ALIGN_OF_U128 * BPF_ALIGN_OF_U128);
         s.vec.extend(core::iter::repeat(0).take(align));
-        s.write_u64::<BO>(account.rent_epoch.to_le()).map_err(|v| crate::error::InstructionError::InvalidError)?;
+        s.write_u64::<BO>(account.rent_epoch.to_le())
+            .map_err(|v| crate::error::InstructionError::InvalidError)?;
     }
-    s.write_u64::<BO>((instruction_data.len() as u64).to_le()).map_err(|v| crate::error::InstructionError::InvalidError)?;
+    s.write_u64::<BO>((instruction_data.len() as u64).to_le())
+        .map_err(|v| crate::error::InstructionError::InvalidError)?;
     s.vec.extend_from_slice(instruction_data);
     s.vec.extend_from_slice(program_id.as_ref());
 
@@ -459,7 +469,7 @@ pub fn serialize_parameters_unaligned(
     Ok((mem, regions, accounts_metadata))
 }
 
-pub fn deserialize_parameters_unaligned<I: IntoIterator<Item=usize>>(
+pub fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
@@ -513,7 +523,7 @@ pub fn deserialize_parameters_unaligned<I: IntoIterator<Item=usize>>(
     Ok(())
 }
 
-pub fn deserialize_parameters_aligned_custom<I: IntoIterator<Item=usize>>(
+pub fn deserialize_parameters_aligned_custom<I: IntoIterator<Item = usize>>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     // copy_account_data: bool,
@@ -577,35 +587,35 @@ pub fn deserialize_parameters_aligned_custom<I: IntoIterator<Item=usize>>(
                 _ => {}
             }
             start += pre_len; // data
-            // } else {
-            //     // See Serializer::write_account() as to why we have this
-            //     // padding before the realloc region here.
-            //     start += BPF_ALIGN_OF_U128.saturating_sub(alignment_offset);
-            //     let data = buffer
-            //         .get(start..start + MAX_PERMITTED_DATA_INCREASE)
-            //         .ok_or(InstructionError::InvalidArgument)?;
-            //     match borrowed_account
-            //         .can_data_be_resized(post_len)
-            //         .and_then(|_| borrowed_account.can_data_be_changed())
-            //     {
-            //         Ok(()) => {
-            //             borrowed_account.set_data_length(post_len)?;
-            //             let allocated_bytes = post_len.saturating_sub(pre_len);
-            //             if allocated_bytes > 0 {
-            //                 borrowed_account
-            //                     .get_data_mut()?
-            //                     .get_mut(pre_len..pre_len.saturating_add(allocated_bytes))
-            //                     .ok_or(InstructionError::InvalidArgument)?
-            //                     .copy_from_slice(
-            //                         data.get(0..allocated_bytes)
-            //                             .ok_or(InstructionError::InvalidArgument)?,
-            //                     );
-            //             }
-            //         }
-            //         Err(err) if borrowed_account.get_data().len() != post_len => return Err(err),
-            //         _ => {}
-            //     }
-            // }
+                              // } else {
+                              //     // See Serializer::write_account() as to why we have this
+                              //     // padding before the realloc region here.
+                              //     start += BPF_ALIGN_OF_U128.saturating_sub(alignment_offset);
+                              //     let data = buffer
+                              //         .get(start..start + MAX_PERMITTED_DATA_INCREASE)
+                              //         .ok_or(InstructionError::InvalidArgument)?;
+                              //     match borrowed_account
+                              //         .can_data_be_resized(post_len)
+                              //         .and_then(|_| borrowed_account.can_data_be_changed())
+                              //     {
+                              //         Ok(()) => {
+                              //             borrowed_account.set_data_length(post_len)?;
+                              //             let allocated_bytes = post_len.saturating_sub(pre_len);
+                              //             if allocated_bytes > 0 {
+                              //                 borrowed_account
+                              //                     .get_data_mut()?
+                              //                     .get_mut(pre_len..pre_len.saturating_add(allocated_bytes))
+                              //                     .ok_or(InstructionError::InvalidArgument)?
+                              //                     .copy_from_slice(
+                              //                         data.get(0..allocated_bytes)
+                              //                             .ok_or(InstructionError::InvalidArgument)?,
+                              //                     );
+                              //             }
+                              //         }
+                              //         Err(err) if borrowed_account.get_data().len() != post_len => return Err(err),
+                              //         _ => {}
+                              //     }
+                              // }
             start += MAX_PERMITTED_DATA_INCREASE;
             start += alignment_offset;
             start += size_of::<u64>(); // rent_epoch
@@ -618,7 +628,7 @@ pub fn deserialize_parameters_aligned_custom<I: IntoIterator<Item=usize>>(
     Ok(())
 }
 
-pub fn deserialize_parameters_aligned<I: IntoIterator<Item=usize>>(
+pub fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,

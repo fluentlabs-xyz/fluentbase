@@ -1,7 +1,6 @@
 use crate::{
     account::WritableAccount,
     context::{IndexOfAccount, InvokeContext},
-    declare_builtin_function,
     helpers::{
         create_memory_mapping,
         BpfAllocator,
@@ -12,7 +11,6 @@ use crate::{
 };
 use alloc::{boxed::Box, rc::Rc, string::ToString, vec::Vec};
 use fluentbase_sdk::SharedAPI;
-use solana_program::entrypoint::MAX_PERMITTED_DATA_INCREASE;
 pub use solana_rbpf::vm::ContextObject;
 use solana_rbpf::{
     aligned_memory::AlignedMemory,

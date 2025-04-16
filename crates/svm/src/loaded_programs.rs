@@ -1,18 +1,18 @@
 use crate::context::{BuiltinFunctionWithContext, InvokeContext};
+use crate::{
+    bpf_loader,
+    bpf_loader_deprecated,
+    // bpf_loader_upgradeable,
+    clock::{Epoch, Slot},
+    fluentbase::loader_v4,
+    pubkey::Pubkey,
+};
 use alloc::{boxed::Box, sync::Arc};
 use core::{
     fmt::{Debug, Formatter},
     sync::atomic::{AtomicU64, Ordering},
 };
 use fluentbase_sdk::{HashMap, SharedAPI};
-use solana_program::{
-    bpf_loader,
-    bpf_loader_deprecated,
-    bpf_loader_upgradeable,
-    clock::{Epoch, Slot},
-    loader_v4,
-    pubkey::Pubkey,
-};
 use solana_rbpf::{
     elf::Executable,
     program::{BuiltinProgram, FunctionRegistry},

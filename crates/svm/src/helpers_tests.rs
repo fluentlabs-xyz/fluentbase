@@ -1,43 +1,47 @@
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::account::{AccountSharedData, WritableAccount};
-    use crate::builtins::register_builtins;
-    use crate::common::TestSdkType;
-    use crate::compute_budget::ComputeBudget;
-    use crate::context::{InvokeContext, TransactionContext};
-    use crate::error::{InstructionError, TransactionError};
-    use crate::feature_set::FeatureSet;
-    use crate::helpers::INSTRUCTION_METER_BUDGET;
-    use crate::loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments};
-    use crate::message_processor::MessageProcessor;
-    use crate::native_loader::create_loadable_account_for_test;
-    use crate::secp256k1_instruction::new_secp256k1_instruction;
-    use crate::serialization::serialize_parameters_aligned_custom;
-    use crate::sysvar_cache::SysvarCache;
-    use crate::test_helpers::journal_state;
-    use crate::{declare_process_instruction, native_loader};
-    use alloc::sync::Arc;
-    use alloc::vec::Vec;
-    use alloc::{format, vec};
-
+    use crate::{
+        account::{AccountSharedData, WritableAccount},
+        builtins::register_builtins,
+        common::TestSdkType,
+        compute_budget::ComputeBudget,
+        context::{InvokeContext, TransactionContext},
+        declare_process_instruction,
+        error::{InstructionError, TransactionError},
+        feature_set::FeatureSet,
+        helpers::INSTRUCTION_METER_BUDGET,
+        loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
+        message_processor::MessageProcessor,
+        native_loader,
+        native_loader::create_loadable_account_for_test,
+        secp256k1_instruction::new_secp256k1_instruction,
+        serialization::serialize_parameters_aligned_custom,
+        solana_program::sysvar_cache::SysvarCache,
+        test_helpers::journal_state,
+    };
+    use alloc::{format, sync::Arc, vec, vec::Vec};
     use fluentbase_sdk::SharedAPI;
     use serde::Deserialize;
-    use solana_program::account_info::AccountInfo;
-    use solana_program::clock::{Epoch, Slot};
-    use solana_program::entrypoint::deserialize;
-    use solana_program::hash::Hash;
-    use solana_program::instruction::Instruction;
-    use solana_program::message::{LegacyMessage, Message, SanitizedMessage};
-    use solana_program::pubkey::Pubkey;
-    use solana_program::rent::Rent;
-    use solana_program::secp256k1_program;
-    use solana_rbpf::ebpf;
-    use solana_rbpf::elf::Executable;
-    use solana_rbpf::error::ProgramResult;
-    use solana_rbpf::memory_region::MemoryRegion;
-    use solana_rbpf::program::{BuiltinFunction, BuiltinProgram, FunctionRegistry};
-    use solana_rbpf::verifier::RequisiteVerifier;
-    use solana_rbpf::vm::Config;
+    use solana_program::{
+        account_info::AccountInfo,
+        clock::{Epoch, Slot},
+        entrypoint::deserialize,
+        hash::Hash,
+        instruction::Instruction,
+        message::{LegacyMessage, Message, SanitizedMessage},
+        pubkey::Pubkey,
+        rent::Rent,
+        secp256k1_program,
+    };
+    use solana_rbpf::{
+        ebpf,
+        elf::Executable,
+        error::ProgramResult,
+        memory_region::MemoryRegion,
+        program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
+        verifier::RequisiteVerifier,
+        vm::Config,
+    };
 
     #[test]
     fn serde_test() {
@@ -49,10 +53,21 @@ pub(crate) mod tests {
         let mut account1_lamports = 11;
         let mut account1_data = vec![3, 2, 1];
         let account1_rent_epoch = Epoch::default();
-        let account1 = AccountInfo::new(&account1_key, true, false, &mut account1_lamports, &mut account1_data, &account1_owner, false, account1_rent_epoch);
+        let account1 = AccountInfo::new(
+            &account1_key,
+            true,
+            false,
+            &mut account1_lamports,
+            &mut account1_data,
+            &account1_owner,
+            false,
+            account1_rent_epoch,
+        );
         let accounts: Vec<AccountInfo> = vec![account1];
 
-        let mut init = serialize_parameters_aligned_custom(&accounts, &instruction_data, &program_id).expect("failed to serialize");
+        let mut init =
+            serialize_parameters_aligned_custom(&accounts, &instruction_data, &program_id)
+                .expect("failed to serialize");
         let deser = unsafe { deserialize(init.as_mut_ptr()) };
 
         assert_eq!(accounts[0].key, deser.1[0].key);
@@ -82,7 +97,7 @@ pub(crate) mod tests {
             "../examples/hello-world/assets/{}.so",
             solana_elf_file_name
         ))
-            .unwrap();
+        .unwrap();
 
         println!("ELF file loaded, size: {}", elf_bytes.len());
 
@@ -114,7 +129,8 @@ pub(crate) mod tests {
             3,
         );
 
-        let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+        let mut function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -161,7 +177,16 @@ pub(crate) mod tests {
         let mut account1_lamports = 11;
         let mut account1_data = vec![3, 2, 1];
         let account1_rent_epoch = Epoch::default();
-        let account1 = AccountInfo::new(&account1_key, true, false, &mut account1_lamports, &mut account1_data, &account1_owner, false, account1_rent_epoch);
+        let account1 = AccountInfo::new(
+            &account1_key,
+            true,
+            false,
+            &mut account1_lamports,
+            &mut account1_data,
+            &account1_owner,
+            false,
+            account1_rent_epoch,
+        );
         let accounts: Vec<AccountInfo> = vec![account1];
 
         let program_id = Pubkey::new_from_array([0xcu8; 32]);
@@ -169,7 +194,9 @@ pub(crate) mod tests {
 
         let (interpreter_instruction_count, interpreter_final_pct) = {
             let mut mem = vec![0u8; 1024 * 1024];
-            let mut init = serialize_parameters_aligned_custom(&accounts, &instruction_data, &program_id).expect("failed to serialize");
+            let mut init =
+                serialize_parameters_aligned_custom(&accounts, &instruction_data, &program_id)
+                    .expect("failed to serialize");
             mem[..init.len()].copy_from_slice(&init);
 
             let mem_region = MemoryRegion::new_writable(&mut mem, ebpf::MM_INPUT_START);
@@ -199,10 +226,7 @@ pub(crate) mod tests {
                 format!("{:?}", result),
                 "Unexpected result for executed program"
             );
-            (
-                interpreter_instruction_count,
-                vm.registers[11],
-            )
+            (interpreter_instruction_count, vm.registers[11])
         };
         // if executable_elf.get_config().enable_instruction_meter {
         //     assert_eq!(
@@ -223,7 +247,8 @@ pub(crate) mod tests {
             ..Default::default()
         };
 
-        let function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+        let function_registry =
+            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -296,11 +321,8 @@ pub(crate) mod tests {
             Hash::default(),
             0,
         );
-        let result = MessageProcessor::process_message(
-            &message,
-            &[vec![0], vec![1]],
-            &mut invoke_context,
-        );
+        let result =
+            MessageProcessor::process_message(&message, &[vec![0], vec![1]], &mut invoke_context);
 
         assert_eq!(
             result,

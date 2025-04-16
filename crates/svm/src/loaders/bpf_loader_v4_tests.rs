@@ -132,7 +132,7 @@ mod tests {
         );
         let state = get_state_mut(program_account.data_as_mut_slice()).unwrap();
         state.slot = 0;
-        state.authority_address = authority_address;
+        state.authority_address_or_next_version = authority_address;
         state.status = status;
         program_account.data_as_mut_slice()[loader_v4::LoaderV4State::program_data_offset()..]
             .copy_from_slice(&elf_bytes);
