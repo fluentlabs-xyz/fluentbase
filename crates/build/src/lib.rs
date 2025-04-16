@@ -41,13 +41,25 @@ pub fn cargo_rerun_if_changed(metadata: &Metadata) {
     }
 }
 
-pub fn calc_wasm_artefact_paths(
-    metadata: &Metadata,
-    config: &WasmBuildConfig,
-) -> (String, Utf8PathBuf) {
+fn root_crate_name(metadata: &Metadata) -> String {
+    let root_id = metadata
+        .resolve
+        .as_ref()
+        .expect("resolve should be present")
+        .root
+        .as_ref()
+        .expect("root should be present");
+    let package = metadata
+        .packages
+        .iter()
+        .find(|p| &p.id == root_id)
+        .expect("package should be present");
+    package.name.clone()
+}
+
+fn bin_target_name(metadata: &Metadata) -> String {
     let mut result = vec![];
-    let packages_to_iterate = metadata.workspace_default_members.to_vec();
-    for program_crate in packages_to_iterate {
+    for program_crate in metadata.workspace_default_members.to_vec() {
         let program = metadata
             .packages
             .iter()
@@ -57,21 +69,19 @@ pub fn calc_wasm_artefact_paths(
             t.kind.contains(&TargetKind::CDyLib) && t.crate_types.contains(&CrateType::CDyLib)
         }) {
             let bin_name = bin_target.name.clone() + ".wasm";
-            let wasm_path = metadata
-                .target_directory
-                .join(config.target.clone())
-                .join("release")
-                .join(&bin_name);
-            result.push((program.name.clone(), wasm_path));
+            result.push(bin_name);
         }
     }
-    if result.is_empty() {
+    if result.len() == 0 {
         panic!(
             "there is no WASM artifact to build for crate {}",
-            config.cargo_manifest_dir
+            metadata.workspace_members.first().unwrap()
         );
     } else if result.len() > 1 {
-        panic!("multiple WASM artefacts are supported");
+        panic!(
+            "multiple WASM artefacts to build for crate {}",
+            metadata.workspace_members.first().unwrap()
+        );
     }
     result.first().unwrap().clone()
 }
@@ -88,21 +98,14 @@ pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBu
 
     cargo_rerun_if_changed(&metadata);
 
-    if config.current_target.contains("wasm32") {
-        println!(
-            "cargo:warning=build skipped due to wasm32 compilation target ({})",
-            config.current_target
-        );
-        return None;
-    }
     if config.is_tarpaulin_build {
         println!("cargo:warning=build skipped due to the tarpaulin build");
         return None;
     }
 
-    let (crate_name, mut artefact_path) = calc_wasm_artefact_paths(&metadata, &config);
+    let crate_name = root_crate_name(&metadata);
 
-    compile_rust_to_wasm(&config);
+    let mut artefact_path = compile_rust_to_wasm(&config, &metadata);
 
     if crate_name == "fluentbase-contracts-fairblock" {
         if let Some(path) = compile_go_to_wasm(&config) {
@@ -112,11 +115,10 @@ pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBu
 
     let wasm_output = cargo_manifest_dir.join(config.output_file_name.clone());
 
+    // check that paths are different, or the file will be truncated
     if !wasm_output.canonicalize().is_ok()
         || wasm_output.canonicalize().unwrap() != artefact_path.canonicalize().unwrap()
     {
-        // this condition is needed to prevent file truncation when artefact_path equal to
-        // wasm_output
         fs::copy(&artefact_path, &wasm_output).unwrap();
     }
 
@@ -125,7 +127,6 @@ pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBu
         crate_name, artefact_path
     );
 
-    // Build the project as a WASM binary
     let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
     if wasm_to_wat.is_ok() {
         let wast_output = cargo_manifest_dir.join(config.output_file_name.replace(".wasm", ".wat"));
@@ -138,8 +139,10 @@ pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBu
     Some((crate_name, artefact_path))
 }
 
-pub fn compile_rust_to_wasm(config: &WasmBuildConfig) {
-    // Build the project as a WASM binary
+pub fn compile_rust_to_wasm(config: &WasmBuildConfig, metadata: &Metadata) -> Utf8PathBuf {
+    let target_dir = metadata.target_directory.clone();
+    let target2_dir = target_dir.join("target2");
+
     let mut arguments = vec![
         "build".to_string(),
         "--target".to_string(),
@@ -147,6 +150,8 @@ pub fn compile_rust_to_wasm(config: &WasmBuildConfig) {
         "--release".to_string(),
         "--manifest-path".to_string(),
         format!("{}/Cargo.toml", config.cargo_manifest_dir),
+        "--target-dir".to_string(),
+        target2_dir.to_string(),
     ];
     if config.no_default_features {
         arguments.push("--no-default-features".to_string());
@@ -166,6 +171,12 @@ pub fn compile_rust_to_wasm(config: &WasmBuildConfig) {
             status.code().unwrap_or(1)
         );
     }
+
+    let bin_path = target2_dir
+        .join(config.target.clone())
+        .join("release")
+        .join(bin_target_name(metadata));
+    bin_path
 }
 
 pub fn compile_go_to_wasm(config: &WasmBuildConfig) -> Option<Utf8PathBuf> {
