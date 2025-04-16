@@ -25,6 +25,7 @@ keywords = ["wasm", "webassembly", "interpreter", "vm"]
 categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
+fluentbase-contracts = { path = "./crates/contracts", default-features = false }
 fluentbase-build = { path = "./crates/build", default-features = false }
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"] }

@@ -122,10 +122,10 @@ pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBu
         fs::copy(&artefact_path, &wasm_output).unwrap();
     }
 
-    println!(
-        "cargo:rustc-env=FLUENTBASE_WASM_BINARY_PATH_{}={}",
-        crate_name, artefact_path
-    );
+    // println!(
+    //     "cargo:rustc-env=FLUENTBASE_WASM_BINARY_PATH_{}={}",
+    //     crate_name, artefact_path
+    // );
 
     let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
     if wasm_to_wat.is_ok() {
@@ -141,7 +141,8 @@ pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBu
 
 pub fn compile_rust_to_wasm(config: &WasmBuildConfig, metadata: &Metadata) -> Utf8PathBuf {
     let target_dir = metadata.target_directory.clone();
-    let target2_dir = target_dir.join("target2");
+    // let target2_dir = target_dir.join("target2");
+    let target2_dir = target_dir;
 
     let mut arguments = vec![
         "build".to_string(),

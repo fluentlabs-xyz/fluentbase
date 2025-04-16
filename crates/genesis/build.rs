@@ -241,6 +241,7 @@ mod genesis_builder {
 }
 
 fn main() {
+    println!("cargo:info=genesis build.rs");
     #[cfg(feature = "generate-genesis")]
     {
         genesis_builder::build_precompile_contracts_and_genesis();

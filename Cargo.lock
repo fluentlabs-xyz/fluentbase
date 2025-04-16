@@ -2171,6 +2171,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts"
+version = "0.1.0"
+dependencies = [
+ "alloy-genesis",
+ "cargo_metadata",
+ "fluentbase-build",
+ "fluentbase-types",
+ "lazy_static",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fluentbase-contracts-blake2f"
 version = "0.1.0"
 dependencies = [
@@ -2479,6 +2492,7 @@ dependencies = [
  "alloy-genesis",
  "cargo_metadata",
  "fluentbase-build",
+ "fluentbase-contracts",
  "fluentbase-types",
  "lazy_static",
  "serde",

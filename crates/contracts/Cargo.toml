@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-genesis"
+name = "fluentbase-contracts"
 version = "0.1.0"
 authors.workspace = true
 repository.workspace = true
@@ -17,7 +17,6 @@ alloy-genesis = { workspace = true, default-features = false }
 lazy_static = { workspace = true }
 
 [build-dependencies]
-fluentbase-contracts = { workspace = true }
 fluentbase-types = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
@@ -32,7 +31,7 @@ std = [
     "alloy-genesis/std",
     "serde/std",
     "serde_json/std",
-    "generate-genesis",
+    "generate-contracts",
 ]
-generate-genesis = []
+generate-contracts = []
 bls12 = []

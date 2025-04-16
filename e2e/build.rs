@@ -30,6 +30,7 @@ pub fn build_all_examples() -> Vec<(String, Utf8PathBuf)> {
 }
 
 fn main() {
+    println!("cargo:info=e2e build.rs");
     let all_examples = build_all_examples();
     assert!(
         !all_examples.is_empty(),
