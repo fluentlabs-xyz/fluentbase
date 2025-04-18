@@ -7,6 +7,7 @@ use crate::{
     },
     system_program,
 };
+use alloc::{vec, vec::Vec};
 use serde::{Deserialize, Serialize};
 use solana_clock::Slot;
 use solana_instruction::Instruction;

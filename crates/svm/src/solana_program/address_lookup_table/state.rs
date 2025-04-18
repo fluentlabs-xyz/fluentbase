@@ -2,7 +2,7 @@ use crate::solana_program::{
     address_lookup_table::error::AddressLookupError,
     instruction::InstructionError,
 };
-use alloc::borrow::Cow;
+use alloc::{borrow::Cow, vec, vec::Vec};
 use serde::{Deserialize, Serialize};
 use solana_clock::Slot;
 #[cfg(feature = "frozen-abi")]

@@ -6,6 +6,7 @@
 //!
 //! [`sysvar::stake_history`]: crate::sysvar::stake_history
 
+use alloc::{vec, vec::Vec};
 use core::ops::Deref;
 use serde::{Deserialize, Serialize};
 pub use solana_clock::Epoch;

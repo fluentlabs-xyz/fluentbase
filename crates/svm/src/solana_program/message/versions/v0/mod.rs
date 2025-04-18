@@ -23,6 +23,7 @@ use crate::solana_program::{
         MessageHeader,
     },
 };
+use alloc::{vec, vec::Vec};
 use hashbrown::HashSet;
 pub use loaded::*;
 use serde::{Deserialize, Serialize};

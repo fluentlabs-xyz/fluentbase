@@ -3,7 +3,7 @@
 #![cfg(not(target_os = "solana"))]
 
 use crate::{account_info::AccountInfo, program_error::UNSUPPORTED_SYSVAR, pubkey::Pubkey};
-use alloc::sync::Arc;
+use alloc::{boxed::Box, format, sync::Arc, vec, vec::Vec};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use solana_instruction::Instruction;
 use solana_program_error::ProgramResult;
@@ -17,12 +17,12 @@ lazy_static::lazy_static! {
 // The default syscall stubs may not do much, but `set_syscalls()` can be used
 // to swap in alternatives
 pub fn set_syscall_stubs(syscall_stubs: Box<dyn SyscallStubs>) -> Box<dyn SyscallStubs> {
-    std::mem::replace(&mut SYSCALL_STUBS.write(), syscall_stubs)
+    core::mem::replace(&mut SYSCALL_STUBS.write(), syscall_stubs)
 }
 
 pub trait SyscallStubs: Sync + Send {
     fn sol_log(&self, message: &str) {
-        println!("{message}");
+        // println!("{message}");
     }
     fn sol_log_compute_units(&self) {
         sol_log("SyscallStubs: sol_log_compute_units() not available");
@@ -91,14 +91,14 @@ pub trait SyscallStubs: Sync + Send {
     }
     fn sol_set_return_data(&self, _data: &[u8]) {}
     fn sol_log_data(&self, fields: &[&[u8]]) {
-        println!(
-            "data: {}",
-            fields
-                .iter()
-                .map(|v| BASE64_STANDARD.encode(v))
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
+        // println!(
+        //     "data: {}",
+        //     fields
+        //         .iter()
+        //         .map(|v| BASE64_STANDARD.encode(v))
+        //         .collect::<Vec<_>>()
+        //         .join(" ")
+        // );
     }
     fn sol_get_processed_sibling_instruction(&self, _index: usize) -> Option<Instruction> {
         None

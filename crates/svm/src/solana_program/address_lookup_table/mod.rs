@@ -5,6 +5,7 @@
 pub mod error;
 pub mod instruction;
 pub mod state;
+use alloc::{vec, vec::Vec};
 
 pub mod program {
     use solana_pubkey::declare_id;

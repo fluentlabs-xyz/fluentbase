@@ -2567,7 +2567,6 @@ dependencies = [
  "bytemuck_derive",
  "byteorder",
  "fluentbase-sdk",
- "fluentbase-types",
  "hashbrown 0.15.2",
  "hex",
  "hex-literal 0.4.1",
