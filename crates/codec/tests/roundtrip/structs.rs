@@ -302,7 +302,7 @@ mod solidity {
             contract PointContract {
                 struct Point {
                     uint64 x;
-                    // bytes bytes;
+                    // bytes;
                 }
 
                 struct ComplexPoint {
