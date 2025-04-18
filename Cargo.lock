@@ -5446,7 +5446,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#59445516bc9cf7436ba1701dfadba8b21fb4357e"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#6920ba1eec11d9a499a53ec2a6fb2efdbf9bf703"
 dependencies = [
  "byteorder",
  "downcast-rs",
@@ -5464,7 +5464,7 @@ dependencies = [
 [[package]]
 name = "rwasm-executor"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#59445516bc9cf7436ba1701dfadba8b21fb4357e"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#6920ba1eec11d9a499a53ec2a6fb2efdbf9bf703"
 dependencies = [
  "byteorder",
  "bytes",

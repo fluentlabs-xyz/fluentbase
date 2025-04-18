@@ -25,6 +25,7 @@ pub fn rwasm_config() -> RwasmConfig {
         wrap_import_functions: true,
         translate_drop_keep: false,
         allow_malformed_entrypoint_func_type: false,
+        use_32bit_mode: false,
     }
 }
 
