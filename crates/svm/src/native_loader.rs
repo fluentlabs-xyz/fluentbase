@@ -1,13 +1,13 @@
 //! The native loader native program.
 
-use solana_program::clock::INITIAL_RENT_EPOCH;
-use solana_program::declare_id;
-use solana_program::pubkey::Pubkey;
-use crate::{
-    account::{
-        Account, AccountSharedData, InheritableAccountFields, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
-    },
+use crate::account::{
+    Account,
+    AccountSharedData,
+    InheritableAccountFields,
+    DUMMY_INHERITABLE_ACCOUNT_FIELDS,
 };
+use solana_clock::INITIAL_RENT_EPOCH;
+use solana_pubkey::{declare_id, Pubkey};
 
 declare_id!("NativeLoader1111111111111111111111111111111");
 

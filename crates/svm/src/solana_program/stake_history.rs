@@ -6,8 +6,9 @@
 //!
 //! [`sysvar::stake_history`]: crate::sysvar::stake_history
 
+use core::ops::Deref;
+use serde::{Deserialize, Serialize};
 pub use solana_clock::Epoch;
-use std::ops::Deref;
 
 pub const MAX_ENTRIES: usize = 512; // it should never take as many as 512 epochs to warm up or cool down
 
@@ -45,7 +46,7 @@ impl StakeHistoryEntry {
     }
 }
 
-impl std::ops::Add for StakeHistoryEntry {
+impl core::ops::Add for StakeHistoryEntry {
     type Output = StakeHistoryEntry;
     fn add(self, rhs: StakeHistoryEntry) -> Self::Output {
         Self {

@@ -3,12 +3,21 @@ pub mod tests {
     use crate::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         account_utils::StateMut,
+        bpf_loader,
+        bpf_loader_deprecated,
         context::InvokeContext,
         deploy_program,
         error::InstructionError,
         helpers::{calculate_heap_cost, create_account_shared_data_for_test, test_utils},
         loaded_programs::{LoadedProgram, LoadedProgramType, LoadedProgramsForTxBatch},
-        loaders::bpf_loader_upgradable::Entrypoint,
+        loaders::bpf_loader_upgradeable::Entrypoint,
+        solana_program::{
+            bpf_loader_upgradeable,
+            bpf_loader_upgradeable::UpgradeableLoaderState,
+            loader_upgradeable_instruction::UpgradeableLoaderInstruction,
+            sysvar::{clock, epoch_schedule, rent},
+        },
+        system_program,
         test_helpers::{
             load_program_account_from_elf_file,
             mock_process_instruction,
@@ -20,29 +29,17 @@ pub mod tests {
     };
     use alloc::sync::Arc;
     use core::{
-        cell::RefCell,
         ops::Range,
         sync::atomic::{AtomicU64, Ordering},
     };
     use fluentbase_sdk::SharedAPI;
     use rand::Rng;
     use serde::Serialize;
-    use solana_program::{
-        bpf_loader,
-        bpf_loader_deprecated,
-        bpf_loader_upgradeable,
-        bpf_loader_upgradeable::UpgradeableLoaderState,
-        clock::Clock,
-        epoch_schedule::EpochSchedule,
-        instruction::AccountMeta,
-        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-        pubkey::Pubkey,
-        rent::Rent,
-        slot_history::Slot,
-        system_program,
-        sysvar,
-    };
+    use solana_epoch_schedule::EpochSchedule;
+    use solana_instruction::AccountMeta;
+    use solana_pubkey::Pubkey;
     use solana_rbpf::program::BuiltinProgram;
+    use solana_rent::Rent;
     use std::{fs::File, io::Read};
 
     #[test]
@@ -722,7 +719,7 @@ pub mod tests {
                 .unwrap();
             let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
             let rent_account = create_account_shared_data_for_test(&rent);
-            let clock_account = create_account_shared_data_for_test(&Clock {
+            let clock_account = create_account_shared_data_for_test(&clock::Clock {
                 slot: SLOT.saturating_add(1),
                 ..Default::default()
             });
@@ -732,8 +729,8 @@ pub mod tests {
                 (program_address, program_account),
                 (*buffer_address, buffer_account),
                 (spill_address, spill_account),
-                (sysvar::rent::id(), rent_account),
-                (sysvar::clock::id(), clock_account),
+                (rent::id(), rent_account),
+                (clock::id(), clock_account),
                 (*upgrade_authority_address, upgrade_authority_account),
             ];
             let instruction_accounts = vec![
@@ -758,12 +755,12 @@ pub mod tests {
                     is_writable: true,
                 },
                 AccountMeta {
-                    pubkey: sysvar::rent::id(),
+                    pubkey: rent::id(),
                     is_signer: false,
                     is_writable: false,
                 },
                 AccountMeta {
-                    pubkey: sysvar::clock::id(),
+                    pubkey: clock::id(),
                     is_signer: false,
                     is_writable: false,
                 },
@@ -2048,9 +2045,9 @@ pub mod tests {
                 programdata_address,
             })
             .unwrap();
-        let clock_account = create_account_shared_data_for_test(&Clock {
+        let clock_account = create_account_shared_data_for_test(&clock::Clock {
             slot: 1,
-            ..Clock::default()
+            ..clock::Clock::default()
         });
         let transaction_accounts = vec![
             (buffer_address, buffer_account.clone()),
@@ -2163,7 +2160,7 @@ pub mod tests {
                 (recipient_address, recipient_account.clone()),
                 (authority_address, authority_account.clone()),
                 (program_address, program_account.clone()),
-                (sysvar::clock::id(), clock_account.clone()),
+                (clock::id(), clock_account.clone()),
             ],
             vec![
                 AccountMeta {
@@ -2221,10 +2218,10 @@ pub mod tests {
                 (program_address, program_account),
                 (buffer_address, buffer_account),
                 (
-                    sysvar::rent::id(),
+                    rent::id(),
                     create_account_shared_data_for_test(&Rent::default()),
                 ),
-                (sysvar::clock::id(), clock_account),
+                (clock::id(), clock_account),
                 (
                     system_program::id(),
                     AccountSharedData::new(0, 0, &system_program::id()),
@@ -2253,12 +2250,12 @@ pub mod tests {
                     is_writable: false,
                 },
                 AccountMeta {
-                    pubkey: sysvar::rent::id(),
+                    pubkey: rent::id(),
                     is_signer: false,
                     is_writable: false,
                 },
                 AccountMeta {
-                    pubkey: sysvar::clock::id(),
+                    pubkey: clock::id(),
                     is_signer: false,
                     is_writable: false,
                 },
@@ -2378,7 +2375,7 @@ pub mod tests {
     #[test]
     fn test_program_usage_count_on_upgrade() {
         let transaction_accounts = vec![(
-            sysvar::epoch_schedule::id(),
+            epoch_schedule::id(),
             create_account_shared_data_for_test(&EpochSchedule::default()),
         )];
 
@@ -2432,7 +2429,7 @@ pub mod tests {
     #[test]
     fn test_program_usage_count_on_non_upgrade() {
         let transaction_accounts = vec![(
-            sysvar::epoch_schedule::id(),
+            epoch_schedule::id(),
             create_account_shared_data_for_test(&EpochSchedule::default()),
         )];
         let sdk = new_test_sdk();

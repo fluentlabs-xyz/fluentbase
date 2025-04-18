@@ -1,20 +1,24 @@
 #[cfg(test)]
 mod tests {
-    use crate::account::{AccountSharedData, ReadableAccount, WritableAccount};
-    use crate::context::InstructionAccount;
-    use crate::error::InstructionError;
-    use crate::loaded_programs::LoadedProgram;
-    use crate::system_processor::Entrypoint;
-    use crate::test_helpers::{mock_process_instruction, new_test_sdk, prepare_vars_for_tests};
-    use crate::{declare_process_instruction, native_loader, with_mock_invoke_context};
+    use crate::{
+        account::{AccountSharedData, ReadableAccount, WritableAccount},
+        context::InstructionAccount,
+        declare_process_instruction,
+        error::InstructionError,
+        loaded_programs::LoadedProgram,
+        native_loader,
+        pubkey::Pubkey,
+        solana_program::instruction::{AccountMeta, Instruction},
+        system_instruction::{SystemError, SystemInstruction},
+        system_processor::Entrypoint,
+        system_program,
+        test_helpers::{mock_process_instruction, new_test_sdk, prepare_vars_for_tests},
+        with_mock_invoke_context,
+    };
     use alloc::sync::Arc;
     use fluentbase_sdk::SharedAPI;
     use serde::{Deserialize, Serialize};
-    use solana_program::instruction::{AccountMeta, Instruction};
-    use solana_program::pubkey::Pubkey;
-    use solana_program::stable_layout::stable_instruction::StableInstruction;
-    use solana_program::system_instruction::{SystemError, SystemInstruction};
-    use solana_program::system_program;
+    use solana_stable_layout::stable_instruction::StableInstruction;
 
     #[derive(Debug, Serialize, Deserialize)]
     enum MockInstruction {
@@ -33,7 +37,6 @@ mod tests {
             new_len: u64,
         },
     }
-
 
     const MOCK_BUILTIN_COMPUTE_UNIT_COST: u64 = 1;
 
@@ -169,13 +172,19 @@ mod tests {
             .collect::<Vec<_>>();
         let sdk = new_test_sdk();
         let (config, loader) = prepare_vars_for_tests();
-        with_mock_invoke_context!(invoke_context, transaction_context, &sdk, loader, transaction_accounts);
+        with_mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            &sdk,
+            loader,
+            transaction_accounts
+        );
         let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
-            }
+            },
         );
         programs_loaded_for_tx_batch.replenish(
             callee_program_id,
@@ -268,7 +277,6 @@ mod tests {
             invoke_context.pop().unwrap();
         }
     }
-
 
     fn process_instruction<SDK: SharedAPI>(
         sdk: &SDK,

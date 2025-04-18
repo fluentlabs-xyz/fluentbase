@@ -1,6 +1,6 @@
 extern crate solana_rbpf;
 
-use crate::{alloc::string::ToString, helpers::SyscallError::UnalignedPointer};
+use crate::{alloc::string::ToString, helpers::SyscallError::UnalignedPointer, solana_program};
 use alloc::{boxed::Box, rc::Rc, str::Utf8Error, string::String, vec, vec::Vec};
 use core::{
     alloc::Layout,
@@ -751,15 +751,17 @@ macro_rules! with_mock_invoke_context {
         $loader:expr,
         $transaction_accounts:expr $(,)?
     ) => {
-        use alloc::sync::Arc;
-        use solana_program::{hash::Hash, rent::Rent};
-        use $crate::{
+        use crate::{
             account::ReadableAccount,
-            context::{InvokeContext, TransactionContext},
-            feature_set::FeatureSet,
+            context::TransactionContext,
+            hash::Hash,
             loaded_programs::{LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
+            rent::Rent,
             sysvar_cache::SysvarCache,
         };
+        use alloc::sync::Arc;
+        use solana_feature_set::FeatureSet;
+        use $crate::context::InvokeContext;
         let compute_budget = $crate::compute_budget::ComputeBudget::default();
         let $transaction_context = TransactionContext::new(
             $transaction_accounts,

@@ -2,10 +2,10 @@
 // use crate::solana_program::bpf_loader;
 // use crate::solana_program::blake3;
 // use crate::solana_program::bpf_loader_deprecated;
-// use crate::solana_program::bpf_loader_upgradeable;
-// use crate::solana_program::bpf_loader_upgradeable::UpgradeableLoaderState;
 use crate::{
     account::AccountSharedData,
+    bpf_loader,
+    bpf_loader_deprecated,
     builtins::{
         SyscallAbort,
         SyscallCreateProgramAddress,
@@ -22,15 +22,6 @@ use crate::{
     compute_budget::ComputeBudget,
     context::{InstructionContext, InvokeContext, TransactionContext},
     error::InstructionError,
-    feature_set::{
-        blake3_syscall_enabled,
-        bpf_account_data_direct_mapping,
-        enable_poseidon_syscall,
-        error_on_syscall_bpf_function_hash_collisions,
-        reject_callx_r10,
-        switch_to_new_elf_parser,
-        FeatureSet,
-    },
     loaded_programs::{LoadedProgram, DELAY_VISIBILITY_SLOT_OFFSET},
 };
 use crate::{
@@ -43,6 +34,15 @@ use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use bincode::Options;
 use core::marker::PhantomData;
 use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
+use solana_feature_set::{
+    blake3_syscall_enabled,
+    bpf_account_data_direct_mapping,
+    enable_poseidon_syscall,
+    error_on_syscall_bpf_function_hash_collisions,
+    reject_callx_r10,
+    switch_to_new_elf_parser,
+    FeatureSet,
+};
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
@@ -57,7 +57,11 @@ pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 ///   8 bytes is the size of the fragment header
 pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
 
-use crate::{error::SvmError, types::SVM_ADDRESS_PREFIX};
+use crate::{
+    error::SvmError,
+    solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
+    types::SVM_ADDRESS_PREFIX,
+};
 #[cfg(test)]
 use fluentbase_sdk::testing::TestingContext;
 
@@ -176,23 +180,23 @@ impl<SDK: SharedAPI> HasherImpl for PoseidonHasher<SDK> {
     }
 }
 
-pub struct Blake3Hasher(blake3::Hasher);
-impl HasherImpl for Blake3Hasher {
-    const NAME: &'static str = "Blake3";
-    type Output = blake3::Hash;
-
-    fn create_hasher() -> Self {
-        Blake3Hasher(blake3::Hasher::default())
-    }
-
-    fn hash(&mut self, val: &[u8]) {
-        self.0.hash(val);
-    }
-
-    fn result(self) -> Self::Output {
-        self.0.result()
-    }
-}
+// pub struct Blake3Hasher(blake3::Hasher);
+// impl HasherImpl for Blake3Hasher {
+//     const NAME: &'static str = "Blake3";
+//     type Output = blake3::Hash;
+//
+//     fn create_hasher() -> Self {
+//         Blake3Hasher(blake3::Hasher::default())
+//     }
+//
+//     fn hash(&mut self, val: &[u8]) {
+//         self.0.hash(val);
+//     }
+//
+//     fn result(self) -> Self::Output {
+//         self.0.result()
+//     }
+// }
 
 // declare_id!("NativeLoader1111111111111111111111111111111");
 //
@@ -327,13 +331,13 @@ pub fn create_program_runtime_environment_v1<'a, SDK: SharedAPI>(
     // Secp256k1 Recover
     // result.register_function_hashed(*b"sol_secp256k1_recover", SyscallSecp256k1Recover::vm)?;
 
-    // Blake3
-    register_feature_gated_function!(
-        result,
-        blake3_syscall_enabled,
-        *b"sol_blake3",
-        SyscallHash::vm::<SDK, Blake3Hasher>,
-    )?;
+    // // Blake3
+    // register_feature_gated_function!(
+    //     result,
+    //     blake3_syscall_enabled,
+    //     *b"sol_blake3",
+    //     SyscallHash::vm::<SDK, Blake3Hasher>,
+    // )?;
 
     // Elliptic Curve Operations
     // register_feature_gated_function!(
@@ -521,7 +525,7 @@ macro_rules! deploy_program {
         use crate::common::load_program_from_bytes;
         use crate::common::morph_into_deployment_environment_v1;
         use core::sync::atomic::Ordering;
-        use solana_program::clock::Slot;
+        use crate::clock::Slot;
 
         // let mut load_program_metrics = LoadProgramMetrics::default();
         // let mut register_syscalls_time = Measure::start("register_syscalls_time");
@@ -680,7 +684,7 @@ pub fn checked_add(a: u64, b: u64) -> Result<u64, InstructionError> {
 
 pub fn calculate_max_chunk_size<F>(_create_msg: &F) -> usize
 where
-    F: Fn(u32, Vec<u8>) -> solana_program::message::legacy::Message,
+    F: Fn(u32, Vec<u8>) -> crate::solana_program::message::legacy::Message,
 {
     // let baseline_msg = create_msg(0, Vec::new());
     // let tx_size = bincode::serialized_size(&Transaction {

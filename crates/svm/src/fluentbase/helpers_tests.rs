@@ -9,6 +9,13 @@ mod tests {
         helpers::{storage_read_account_data, storage_write_account_data},
         native_loader,
         native_loader::create_loadable_account_for_test,
+        solana_program::{
+            bpf_loader_upgradeable,
+            bpf_loader_upgradeable::UpgradeableLoaderState,
+            message::Message,
+            sysvar::{clock, rent},
+        },
+        system_program,
         test_helpers::load_program_account_from_elf_file,
     };
     use core::str::from_utf8;
@@ -23,16 +30,9 @@ mod tests {
         SharedContextInputV1,
         StorageAPI,
     };
-    use solana_program::{
-        bpf_loader_upgradeable,
-        bpf_loader_upgradeable::{create_buffer, UpgradeableLoaderState},
-        hash::Hash,
-        instruction::Instruction,
-        message::Message,
-        pubkey::Pubkey,
-        system_program,
-        sysvar,
-    };
+    use solana_hash::Hash;
+    use solana_instruction::Instruction;
+    use solana_pubkey::Pubkey;
 
     fn main_single_message<SAPI: StorageAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
         let input = sdk.input();
@@ -67,8 +67,8 @@ mod tests {
         let system_program_id = system_program::id();
         let native_loader_id = native_loader::id();
         let loader_id = bpf_loader_upgradeable::id();
-        let sysvar_clock_id = sysvar::clock::id();
-        let sysvar_rent_id = sysvar::rent::id();
+        let sysvar_clock_id = clock::id();
+        let sysvar_rent_id = rent::id();
 
         let pk_payer = Pubkey::new_unique();
         let account_payer = AccountSharedData::new(100, 0, &system_program_id);
@@ -137,8 +137,14 @@ mod tests {
 
         // init buffer
 
-        let instructions =
-            create_buffer(&pk_payer, &pk_buffer, &pk_authority, 0, program_len).unwrap();
+        let instructions = bpf_loader_upgradeable::create_buffer(
+            &pk_payer,
+            &pk_buffer,
+            &pk_authority,
+            0,
+            program_len,
+        )
+        .unwrap();
         let message = Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash);
         let mut sdk = sdk.with_input(bincode::serialize(&message).unwrap());
         main_single_message(sdk.clone(), Some(&mut sapi));
@@ -360,8 +366,14 @@ mod tests {
 
         let mut batch_message = BatchMessage::new(None);
 
-        let instructions =
-            create_buffer(&pk_payer, &pk_buffer, &pk_authority, 0, program_len).unwrap();
+        let instructions = bpf_loader_upgradeable::create_buffer(
+            &pk_payer,
+            &pk_buffer,
+            &pk_authority,
+            0,
+            program_len,
+        )
+        .unwrap();
         let message = Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash);
         batch_message.append_one(message);
 

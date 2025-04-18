@@ -1,50 +1,3 @@
-//! History of stake activations and de-activations.
-//!
-//! The _stake history sysvar_ provides access to the [`StakeHistory`] type.
-//!
-//! The [`Sysvar::get`] method always returns
-//! [`ProgramError::UnsupportedSysvar`], and in practice the data size of this
-//! sysvar is too large to process on chain. One can still use the
-//! [`SysvarId::id`], [`SysvarId::check_id`] and [`Sysvar::size_of`] methods in
-//! an on-chain program, and it can be accessed off-chain through RPC.
-//!
-//! [`ProgramError::UnsupportedSysvar`]: crate::solana_program::program_error::ProgramError::UnsupportedSysvar
-//! [`SysvarId::id`]: crate::solana_program::sysvar::SysvarId::id
-//! [`SysvarId::check_id`]: crate::solana_program::sysvar::SysvarId::check_id
-//!
-//! # Examples
-//!
-//! Calling via the RPC client:
-//!
-//! ```
-//! # use solana_program::example_mocks::solana_sdk;
-//! # use solana_program::example_mocks::solana_rpc_client;
-//! # use solana_sdk::account::Account;
-//! # use solana_rpc_client::rpc_client::RpcClient;
-//! # use solana_sdk::sysvar::stake_history::{self, StakeHistory};
-//! # use anyhow::Result;
-//! #
-//! fn print_sysvar_stake_history(client: &RpcClient) -> Result<()> {
-//! #   client.set_get_account_response(stake_history::ID, Account {
-//! #       lamports: 114979200,
-//! #       data: vec![0, 0, 0, 0, 0, 0, 0, 0],
-//! #       owner: solana_sdk::system_program::ID,
-//! #       executable: false,
-//! #       rent_epoch: 307,
-//! #   });
-//! #
-//!     let stake_history = client.get_account(&stake_history::ID)?;
-//!     let data: StakeHistory = bincode::deserialize(&stake_history.data)?;
-//!
-//!     Ok(())
-//! }
-//! #
-//! # let client = RpcClient::new(String::new());
-//! # print_sysvar_stake_history(&client)?;
-//! #
-//! # Ok::<(), anyhow::Error>(())
-//! ```
-
 pub use crate::solana_program::stake_history::StakeHistory;
 use crate::solana_program::{
     stake_history::{StakeHistoryEntry, StakeHistoryGetEntry, MAX_ENTRIES},
@@ -118,7 +71,7 @@ impl StakeHistoryGetEntry for StakeHistorySysvar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{stake_history::*, sysvar::tests::mock_get_sysvar_syscall};
+    use crate::solana_program::{stake_history::*, sysvar::tests::mock_get_sysvar_syscall};
     use serial_test::serial;
 
     #[test]

@@ -6,17 +6,17 @@ use crate::{
     error::InstructionError,
     loaded_programs::{LoadedProgram, LoadedProgramType, DELAY_VISIBILITY_SLOT_OFFSET},
     loaders,
+    pubkey::Pubkey,
+    solana_program::{
+        loader_v4,
+        loader_v4::{LoaderV4State, LoaderV4Status, DEPLOYMENT_COOLDOWN_IN_SLOTS},
+        loader_v4_instruction::LoaderV4Instruction,
+    },
 };
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use core::sync::atomic::Ordering;
 use fluentbase_sdk::SharedAPI;
-use solana_program::{
-    entrypoint::SUCCESS,
-    loader_v4,
-    loader_v4::{LoaderV4State, LoaderV4Status, DEPLOYMENT_COOLDOWN_IN_SLOTS},
-    loader_v4_instruction::LoaderV4Instruction,
-    pubkey::Pubkey,
-};
+use solana_program_entrypoint::SUCCESS;
 use solana_rbpf::{
     aligned_memory::AlignedMemory,
     declare_builtin_function,

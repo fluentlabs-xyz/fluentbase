@@ -1,13 +1,3 @@
-use crate::solana_program::{
-    // bpf_loader_upgradeable,
-    // bpf_loader_upgradeable::UpgradeableLoaderState,
-    clock::Clock,
-    epoch_schedule::EpochSchedule,
-    message::{legacy, LegacyMessage, SanitizedMessage},
-    pubkey::Pubkey,
-    rent::Rent,
-    system_program,
-};
 use crate::{
     account::{AccountSharedData, ReadableAccount},
     account_utils::StateMut,
@@ -16,7 +6,6 @@ use crate::{
     compute_budget::ComputeBudget,
     context::{IndexOfAccount, InvokeContext, TransactionContext},
     error::{InstructionError, SvmError},
-    feature_set::FeatureSet,
     fluentbase::common::{
         extract_account_data_or_default,
         flush_accounts,
@@ -25,20 +14,30 @@ use crate::{
         SYSTEM_PROGRAMS_KEYS,
     },
     loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
-    loaders::bpf_loader_upgradable,
     message_processor::MessageProcessor,
+    solana_program::{
+        bpf_loader_upgradeable,
+        bpf_loader_upgradeable::UpgradeableLoaderState,
+        message::{legacy, LegacyMessage, SanitizedMessage},
+    },
     system_processor,
+    system_program,
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
+use fluentbase_sdk::{BlockContextReader, BlockContextV1, SharedAPI, StorageAPI};
 use hashbrown::HashMap;
 use itertools::Itertools;
 use serde::Deserialize;
+use solana_clock::Clock;
+use solana_epoch_schedule::EpochSchedule;
+use solana_feature_set::FeatureSet;
+use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
 };
+use solana_rent::Rent;
 
 pub fn init_config() -> Config {
     Config {
@@ -235,7 +234,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
         Arc::new(LoadedProgram::new_builtin(
             0,
             0,
-            bpf_loader_upgradable::Entrypoint::vm,
+            crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
         )),
     );
     let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(

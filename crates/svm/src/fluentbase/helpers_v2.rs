@@ -5,7 +5,6 @@ use crate::{
     compute_budget::ComputeBudget,
     context::{IndexOfAccount, InvokeContext, TransactionContext},
     error::{InstructionError, SvmError},
-    feature_set::FeatureSet,
     fluentbase::common::{
         extract_account_data_or_default,
         flush_accounts,
@@ -32,6 +31,8 @@ use itertools::Itertools;
 use serde::Deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
+use solana_feature_set::FeatureSet;
+use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,

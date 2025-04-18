@@ -2,14 +2,22 @@ mod tests {
     use crate::{
         account::{AccountSharedData, ReadableAccount},
         common::{calculate_max_chunk_size, pubkey_from_address},
+        fluentbase::{
+            common::{process_svm_result, BatchMessage, MemStorage},
+            helpers_v2::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
+        },
         helpers::{storage_read_account_data, storage_write_account_data},
         loaders::bpf_loader_v4::get_state,
         native_loader,
         native_loader::create_loadable_account_for_test,
-        r#mod::{
-            common::{process_svm_result, BatchMessage, MemStorage},
-            helpers_v2::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
+        solana_program::{
+            instruction::Instruction,
+            loader_v4,
+            loader_v4::{create_buffer, LoaderV4State, LoaderV4Status},
+            message::Message,
+            sysvar,
         },
+        system_program,
         test_helpers::load_program_account_from_elf_file,
     };
     use core::str::from_utf8;
@@ -24,15 +32,7 @@ mod tests {
         SharedContextInputV1,
         StorageAPI,
     };
-    use solana_program::{
-        instruction::Instruction,
-        loader_v4,
-        loader_v4::{create_buffer, LoaderV4State, LoaderV4Status},
-        message::Message,
-        pubkey::Pubkey,
-        system_program,
-        sysvar,
-    };
+    use solana_pubkey::Pubkey;
 
     fn main_single_message<SAPI: StorageAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
         let input = sdk.input();

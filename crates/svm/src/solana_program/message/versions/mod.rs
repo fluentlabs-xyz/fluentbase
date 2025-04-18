@@ -1,16 +1,24 @@
-use alloc::{
-    fmt,
-    vec::{self, Vec},
-};
+use crate::solana_program::message::{Message as LegacyMessage, MessageHeader};
+use alloc::{fmt, vec, vec::Vec};
 use hashbrown::HashSet;
 use serde::{
     de::{self, Deserializer, SeqAccess, Unexpected, Visitor},
     ser::{SerializeTuple, Serializer},
+    Deserialize,
+    Serialize,
 };
+use solana_hash::{Hash, HASH_BYTES};
+use solana_pubkey::Pubkey;
+use solana_sanitize::{Sanitize, SanitizeError};
+use solana_short_vec as short_vec;
 
 mod sanitized;
 pub mod v0;
 
+use crate::solana_program::{
+    instruction::CompiledInstruction,
+    message::versions::v0::MessageAddressTableLookup,
+};
 pub use sanitized::*;
 
 /// Bit mask that indicates whether a serialized message is versioned.
@@ -53,14 +61,14 @@ impl VersionedMessage {
     pub fn static_account_keys(&self) -> &[Pubkey] {
         match self {
             Self::Legacy(message) => &message.account_keys,
-            Self::V0(message) => &message.account_keys,
+            // Self::V0(message) => &message.account_keys,
         }
     }
 
     pub fn address_table_lookups(&self) -> Option<&[MessageAddressTableLookup]> {
         match self {
             Self::Legacy(_) => None,
-            Self::V0(message) => Some(&message.address_table_lookups),
+            // Self::V0(message) => Some(&message.address_table_lookups),
         }
     }
 
@@ -81,7 +89,7 @@ impl VersionedMessage {
     ) -> bool {
         match self {
             Self::Legacy(message) => message.is_maybe_writable(index, reserved_account_keys),
-            Self::V0(message) => message.is_maybe_writable(index, reserved_account_keys),
+            // Self::V0(message) => message.is_maybe_writable(index, reserved_account_keys),
         }
     }
 
@@ -105,7 +113,7 @@ impl VersionedMessage {
     pub fn is_invoked(&self, key_index: usize) -> bool {
         match self {
             Self::Legacy(message) => message.is_key_called_as_program(key_index),
-            Self::V0(message) => message.is_key_called_as_program(key_index),
+            // Self::V0(message) => message.is_key_called_as_program(key_index),
         }
     }
 
@@ -118,14 +126,14 @@ impl VersionedMessage {
     pub fn recent_blockhash(&self) -> &Hash {
         match self {
             Self::Legacy(message) => &message.recent_blockhash,
-            Self::V0(message) => &message.recent_blockhash,
+            // Self::V0(message) => &message.recent_blockhash,
         }
     }
 
     pub fn set_recent_blockhash(&mut self, recent_blockhash: Hash) {
         match self {
             Self::Legacy(message) => message.recent_blockhash = recent_blockhash,
-            Self::V0(message) => message.recent_blockhash = recent_blockhash,
+            // Self::V0(message) => message.recent_blockhash = recent_blockhash,
         }
     }
 
@@ -134,7 +142,7 @@ impl VersionedMessage {
     pub fn instructions(&self) -> &[CompiledInstruction] {
         match self {
             Self::Legacy(message) => &message.instructions,
-            Self::V0(message) => &message.instructions,
+            // Self::V0(message) => &message.instructions,
         }
     }
 
@@ -175,13 +183,12 @@ impl serde::Serialize for VersionedMessage {
                 let mut seq = serializer.serialize_tuple(1)?;
                 seq.serialize_element(message)?;
                 seq.end()
-            }
-            Self::V0(message) => {
-                let mut seq = serializer.serialize_tuple(2)?;
-                seq.serialize_element(&MESSAGE_VERSION_PREFIX)?;
-                seq.serialize_element(message)?;
-                seq.end()
-            }
+            } // Self::V0(message) => {
+              //     let mut seq = serializer.serialize_tuple(2)?;
+              //     seq.serialize_element(&MESSAGE_VERSION_PREFIX)?;
+              //     seq.serialize_element(message)?;
+              //     seq.end()
+              // }
         }
     }
 }
@@ -283,14 +290,14 @@ impl<'de> serde::Deserialize<'de> for VersionedMessage {
                     }
                     MessagePrefix::Versioned(version) => {
                         match version {
-                            0 => {
-                                Ok(VersionedMessage::V0(seq.next_element()?.ok_or_else(
-                                    || {
-                                        // will never happen since tuple length is always 2
-                                        de::Error::invalid_length(1, &self)
-                                    },
-                                )?))
-                            }
+                            // 0 => {
+                            //     Ok(VersionedMessage::V0(seq.next_element()?.ok_or_else(
+                            //         || {
+                            //             // will never happen since tuple length is always 2
+                            //             de::Error::invalid_length(1, &self)
+                            //         },
+                            //     )?))
+                            // }
                             127 => {
                                 // 0xff is used as the first byte of the off-chain messages
                                 // which corresponds to version 127 of the versioned messages.
@@ -316,9 +323,10 @@ impl<'de> serde::Deserialize<'de> for VersionedMessage {
 mod tests {
     use super::*;
     use crate::{
-        instruction::{AccountMeta, Instruction},
-        message::v0::MessageAddressTableLookup,
+        solana_program::instruction::{AccountMeta, Instruction},
+        // message::v0::MessageAddressTableLookup,
     };
+    use solana_pubkey::Pubkey;
 
     #[test]
     fn test_legacy_message_serialization() {
@@ -368,41 +376,41 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_versioned_message_serialization() {
-        let message = VersionedMessage::V0(v0::Message {
-            header: MessageHeader {
-                num_required_signatures: 1,
-                num_readonly_signed_accounts: 0,
-                num_readonly_unsigned_accounts: 0,
-            },
-            recent_blockhash: Hash::new_unique(),
-            account_keys: vec![Pubkey::new_unique()],
-            address_table_lookups: vec![
-                MessageAddressTableLookup {
-                    account_key: Pubkey::new_unique(),
-                    writable_indexes: vec![1],
-                    readonly_indexes: vec![0],
-                },
-                MessageAddressTableLookup {
-                    account_key: Pubkey::new_unique(),
-                    writable_indexes: vec![0],
-                    readonly_indexes: vec![1],
-                },
-            ],
-            instructions: vec![CompiledInstruction {
-                program_id_index: 1,
-                accounts: vec![0, 2, 3, 4],
-                data: vec![],
-            }],
-        });
-
-        let bytes = bincode::serialize(&message).unwrap();
-        let message_from_bytes: VersionedMessage = bincode::deserialize(&bytes).unwrap();
-        assert_eq!(message, message_from_bytes);
-
-        let string = serde_json::to_string(&message).unwrap();
-        let message_from_string: VersionedMessage = serde_json::from_str(&string).unwrap();
-        assert_eq!(message, message_from_string);
-    }
+    // #[test]
+    // fn test_versioned_message_serialization() {
+    //     let message = VersionedMessage::V0(v0::Message {
+    //         header: MessageHeader {
+    //             num_required_signatures: 1,
+    //             num_readonly_signed_accounts: 0,
+    //             num_readonly_unsigned_accounts: 0,
+    //         },
+    //         recent_blockhash: Hash::new_unique(),
+    //         account_keys: vec![Pubkey::new_unique()],
+    //         address_table_lookups: vec![
+    //             MessageAddressTableLookup {
+    //                 account_key: Pubkey::new_unique(),
+    //                 writable_indexes: vec![1],
+    //                 readonly_indexes: vec![0],
+    //             },
+    //             MessageAddressTableLookup {
+    //                 account_key: Pubkey::new_unique(),
+    //                 writable_indexes: vec![0],
+    //                 readonly_indexes: vec![1],
+    //             },
+    //         ],
+    //         instructions: vec![CompiledInstruction {
+    //             program_id_index: 1,
+    //             accounts: vec![0, 2, 3, 4],
+    //             data: vec![],
+    //         }],
+    //     });
+    //
+    //     let bytes = bincode::serialize(&message).unwrap();
+    //     let message_from_bytes: VersionedMessage = bincode::deserialize(&bytes).unwrap();
+    //     assert_eq!(message, message_from_bytes);
+    //
+    //     let string = serde_json::to_string(&message).unwrap();
+    //     let message_from_string: VersionedMessage = serde_json::from_str(&string).unwrap();
+    //     assert_eq!(message, message_from_string);
+    // }
 }

@@ -22,6 +22,7 @@
 use crate::{hash::Hash, solana_program::sysvar::Sysvar};
 use alloc::{boxed::Box, collections::BinaryHeap, string::String, vec::Vec};
 use core::{cmp::Ordering, iter::FromIterator, ops::Deref};
+use serde::{Deserialize, Serialize};
 use solana_fee_calculator::FeeCalculator;
 use solana_sysvar_id::declare_deprecated_sysvar_id;
 

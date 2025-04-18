@@ -4,7 +4,6 @@ use crate::{
     common::{check_loader_id, load_program_from_bytes},
     compute_budget::ComputeBudget,
     error::InstructionError,
-    feature_set::FeatureSet,
     helpers::SyscallContext,
     loaded_programs::{
         LoadedProgram,
@@ -14,13 +13,18 @@ use crate::{
     },
     loaders::bpf_loader_v4,
     native_loader,
+    solana_program::{
+        bpf_loader_upgradeable,
+        bpf_loader_upgradeable::UpgradeableLoaderState,
+        loader_v4,
+        loader_v4::{LoaderV4State, LoaderV4Status},
+    },
     sysvar_cache::SysvarCache,
 };
 use crate::{
     // bpf_loader_upgradeable,
     // bpf_loader_upgradeable::UpgradeableLoaderState,
     clock::Slot,
-    fluentbase::loader_v4,
     hash::Hash,
     pubkey::Pubkey,
     rent::Rent,
@@ -32,6 +36,7 @@ use core::{
     sync::atomic::Ordering,
 };
 use fluentbase_sdk::{HashSet, SharedAPI};
+use solana_feature_set::FeatureSet;
 use solana_rbpf::{
     error::{EbpfError, ProgramResult},
     memory_region::MemoryMapping,
@@ -39,6 +44,7 @@ use solana_rbpf::{
     static_analysis::TraceLogEntry,
     vm::{Config, ContextObject, EbpfVm},
 };
+use solana_stable_layout::stable_instruction::StableInstruction;
 
 /// Index of an account inside of the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
@@ -648,6 +654,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 }
             }
         }
+
         Some(ProgramAccountLoadResult::InvalidAccountData)
     }
 

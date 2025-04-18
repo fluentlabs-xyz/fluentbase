@@ -1,9 +1,10 @@
 //! Solana precompiled programs.
 
-use crate::feature_set::FeatureSet;
+use crate::{pubkey::Pubkey, solana_program::instruction::CompiledInstruction};
 use alloc::{vec, vec::Vec};
 use lazy_static::lazy_static;
-use solana_program::{decode_error::DecodeError, instruction::CompiledInstruction, pubkey::Pubkey};
+use solana_decode_error::DecodeError;
+use solana_feature_set::FeatureSet;
 
 /// Precompile errors
 #[derive(/*Error, */ Debug, Clone, PartialEq, Eq)]

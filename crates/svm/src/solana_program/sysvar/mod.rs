@@ -1,86 +1,3 @@
-//! Access to special accounts with dynamically-updated data.
-//!
-//! Sysvars are special accounts that contain dynamically-updated data about the
-//! network cluster, the blockchain history, and the executing transaction. Each
-//! sysvar is defined in its own submodule within this module. The [`clock`],
-//! [`epoch_schedule`], [`instructions`], and [`rent`] sysvars are most useful
-//! to on-chain programs.
-//!
-//! Simple sysvars implement the [`Sysvar::get`] method, which loads a sysvar
-//! directly from the runtime, as in this example that logs the `clock` sysvar:
-//!
-//! ```
-//! use solana_program::{
-//!     account_info::AccountInfo,
-//!     clock,
-//!     entrypoint::ProgramResult,
-//!     msg,
-//!     pubkey::Pubkey,
-//!     sysvar::Sysvar,
-//! };
-//!
-//! fn process_instruction(
-//!     program_id: &Pubkey,
-//!     accounts: &[AccountInfo],
-//!     instruction_data: &[u8],
-//! ) -> ProgramResult {
-//!     let clock = clock::Clock::get()?;
-//!     msg!("clock: {:#?}", clock);
-//!     Ok(())
-//! }
-//! ```
-//!
-//! Since Solana sysvars are accounts, if the `AccountInfo` is provided to the
-//! program, then the program can deserialize the sysvar with
-//! [`Sysvar::from_account_info`] to access its data, as in this example that
-//! again logs the [`clock`] sysvar.
-//!
-//! ```
-//! use solana_program::{
-//!     account_info::{next_account_info, AccountInfo},
-//!     clock,
-//!     entrypoint::ProgramResult,
-//!     msg,
-//!     pubkey::Pubkey,
-//!     sysvar::Sysvar,
-//! };
-//!
-//! fn process_instruction(
-//!     program_id: &Pubkey,
-//!     accounts: &[AccountInfo],
-//!     instruction_data: &[u8],
-//! ) -> ProgramResult {
-//!     let account_info_iter = &mut accounts.iter();
-//!     let clock_account = next_account_info(account_info_iter)?;
-//!     let clock = clock::Clock::from_account_info(&clock_account)?;
-//!     msg!("clock: {:#?}", clock);
-//!     Ok(())
-//! }
-//! ```
-//!
-//! When possible, programs should prefer to call `Sysvar::get` instead of
-//! deserializing with `Sysvar::from_account_info`, as the latter imposes extra
-//! overhead of deserialization while also requiring the sysvar account address
-//! be passed to the program, wasting the limited space available to
-//! transactions. Deserializing sysvars that can instead be retrieved with
-//! `Sysvar::get` should be only be considered for compatibility with older
-//! programs that pass around sysvar accounts.
-//!
-//! Some sysvars are too large to deserialize within a program, and
-//! `Sysvar::from_account_info` returns an error, or the serialization attempt
-//! will exhaust the program's compute budget. Some sysvars do not implement
-//! `Sysvar::get` and return an error. Some sysvars have custom deserializers
-//! that do not implement the `Sysvar` trait. These cases are documented in the
-//! modules for individual sysvars.
-//!
-//! All sysvar accounts are owned by the account identified by [`sysvar::ID`].
-//!
-//! [`sysvar::ID`]: crate::solana_program::sysvar::ID
-//!
-//! For more details see the Solana [documentation on sysvars][sysvardoc].
-//!
-//! [sysvardoc]: https://docs.solanalabs.com/runtime/sysvars
-
 use crate::solana_program::program_error::ProgramError;
 #[deprecated(since = "2.1.0", note = "Use `solana-sysvar-id` crate instead")]
 pub use solana_sysvar_id::{
@@ -91,8 +8,8 @@ pub use solana_sysvar_id::{
     SysvarId,
     ID,
 };
-// #[allow(deprecated)]
-// pub use sysvar_ids::ALL_IDS;
+#[allow(deprecated)]
+pub use sysvar_ids::ALL_IDS;
 
 pub mod clock;
 pub mod epoch_rewards;
@@ -106,40 +23,41 @@ pub mod rewards;
 pub mod slot_hashes;
 pub mod slot_history;
 pub mod stake_history;
+use crate::solana_program::program_stubs;
 use alloc::{boxed::Box, string::String, vec::Vec};
-// #[deprecated(
-//     since = "2.0.0",
-//     note = "please use `solana_sdk::reserved_account_keys::ReservedAccountKeys` instead"
-// )]
-// mod sysvar_ids {
-//     use {
-//         super::*,
-//         alloc::{
-//             boxed::Box,
-//             string::{String, ToString},
-//             vec,
-//             vec::Vec,
-//         },
-//         lazy_static::lazy_static,
-//     };
-//     lazy_static! {
-//         // This will be deprecated and so this list shouldn't be modified
-//         pub static ref ALL_IDS: Vec<Pubkey> = vec![
-//             clock::id(),
-//             epoch_schedule::id(),
-//             #[allow(deprecated)]
-//             fees::id(),
-//             #[allow(deprecated)]
-//             recent_blockhashes::id(),
-//             rent::id(),
-//             rewards::id(),
-//             slot_hashes::id(),
-//             slot_history::id(),
-//             stake_history::id(),
-//             instructions::id(),
-//         ];
-//     }
-// }
+use solana_account_info::AccountInfo;
+use solana_pubkey::Pubkey;
+#[deprecated(
+    since = "2.0.0",
+    note = "please use `solana_sdk::reserved_account_keys::ReservedAccountKeys` instead"
+)]
+mod sysvar_ids {
+    use super::*;
+    use alloc::{
+        boxed::Box,
+        string::{String, ToString},
+        vec,
+        vec::Vec,
+    };
+    use lazy_static::lazy_static;
+    lazy_static! {
+        // This will be deprecated and so this list shouldn't be modified
+        pub static ref ALL_IDS: Vec<Pubkey> = vec![
+            clock::id(),
+            epoch_schedule::id(),
+            #[allow(deprecated)]
+            fees::id(),
+            #[allow(deprecated)]
+            recent_blockhashes::id(),
+            rent::id(),
+            rewards::id(),
+            slot_hashes::id(),
+            slot_history::id(),
+            stake_history::id(),
+            instructions::id(),
+        ];
+    }
+}
 
 /// Returns `true` of the given `Pubkey` is a sysvar account.
 #[deprecated(
@@ -207,10 +125,10 @@ macro_rules! impl_sysvar_get {
             let result = unsafe { $crate::syscalls::$syscall_name(var_addr) };
 
             #[cfg(not(target_os = "solana"))]
-            let result = $crate::program_stubs::$syscall_name(var_addr);
+            let result = $crate::solana_program::program_stubs::$syscall_name(var_addr);
 
             match result {
-                $crate::entrypoint::SUCCESS => Ok(var),
+                solana_program_entrypoint::SUCCESS => Ok(var),
                 e => Err(e.into()),
             }
         }
@@ -238,10 +156,10 @@ fn get_sysvar(
     let result = unsafe { crate::syscalls::sol_get_sysvar(sysvar_id, var_addr, offset, length) };
 
     #[cfg(not(target_os = "solana"))]
-    let result = crate::program_stubs::sol_get_sysvar(sysvar_id, var_addr, offset, length);
+    let result = program_stubs::sol_get_sysvar(sysvar_id, var_addr, offset, length);
 
     match result {
-        crate::entrypoint::SUCCESS => Ok(()),
+        solana_program_entrypoint::SUCCESS => Ok(()),
         e => Err(e.into()),
     }
 }
@@ -250,21 +168,25 @@ fn get_sysvar(
 mod tests {
     use super::*;
     use crate::{
-        entrypoint::SUCCESS,
-        program_stubs::{set_syscall_stubs, SyscallStubs},
         pubkey::Pubkey,
-        solana_program::program_error::ProgramError,
+        solana_program::{
+            program_error::ProgramError,
+            program_stubs::{set_syscall_stubs, SyscallStubs},
+        },
     };
     use alloc::rc::Rc;
     use core::cell::RefCell;
+    use serde::{Deserialize, Serialize};
     use solana_clock::Epoch;
+    use solana_program_entrypoint::SUCCESS;
+    use solana_pubkey::declare_id;
 
     #[repr(C)]
     #[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
     struct TestSysvar {
         something: Pubkey,
     }
-    crate::declare_id!("TestSysvar111111111111111111111111111111111");
+    declare_id!("TestSysvar111111111111111111111111111111111");
     impl crate::solana_program::sysvar::SysvarId for TestSysvar {
         fn id() -> crate::pubkey::Pubkey {
             id()

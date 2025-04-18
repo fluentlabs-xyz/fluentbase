@@ -1,16 +1,35 @@
-use crate::error::InstructionError;
-use alloc::sync::Arc;
-use solana_program::{
+use crate::{
     clock::Clock,
     epoch_rewards::EpochRewards,
     epoch_schedule::EpochSchedule,
-    last_restart_slot::LastRestartSlot,
+    // last_restart_slot::LastRestartSlot,
     pubkey::Pubkey,
     rent::Rent,
-    slot_hashes::SlotHashes,
-    stake_history::StakeHistory,
-    sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes, SysvarId},
+    // slot_hashes::SlotHashes,
+    // sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes, SysvarId},
 };
+use crate::{
+    error::InstructionError,
+    solana_program::{
+        stake_history::StakeHistory,
+        sysvar::{
+            clock,
+            epoch_rewards,
+            epoch_schedule,
+            fees,
+            fees::Fees,
+            last_restart_slot,
+            recent_blockhashes,
+            recent_blockhashes::RecentBlockhashes,
+            rent,
+            slot_hashes,
+            stake_history,
+        },
+    },
+};
+use alloc::sync::Arc;
+use solana_last_restart_slot::LastRestartSlot;
+use solana_slot_hashes::SlotHashes;
 // #[cfg(RUSTC_WITH_SPECIALIZATION)]
 // impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
 //     fn example() -> Self {
@@ -134,14 +153,14 @@ impl SysvarCache {
         mut get_account_data: F,
     ) {
         if self.clock.is_none() {
-            get_account_data(&Clock::id(), &mut |data: &[u8]| {
+            get_account_data(&clock::id(), &mut |data: &[u8]| {
                 if let Ok(clock) = bincode::deserialize(data) {
                     self.set_clock(clock);
                 }
             });
         }
         if self.epoch_schedule.is_none() {
-            get_account_data(&EpochSchedule::id(), &mut |data: &[u8]| {
+            get_account_data(&epoch_schedule::id(), &mut |data: &[u8]| {
                 if let Ok(epoch_schedule) = bincode::deserialize(data) {
                     self.set_epoch_schedule(epoch_schedule);
                 }
@@ -149,7 +168,7 @@ impl SysvarCache {
         }
 
         if self.epoch_rewards.is_none() {
-            get_account_data(&EpochRewards::id(), &mut |data: &[u8]| {
+            get_account_data(&epoch_rewards::id(), &mut |data: &[u8]| {
                 if let Ok(epoch_rewards) = bincode::deserialize(data) {
                     self.set_epoch_rewards(epoch_rewards);
                 }
@@ -158,21 +177,21 @@ impl SysvarCache {
 
         #[allow(deprecated)]
         if self.fees.is_none() {
-            get_account_data(&Fees::id(), &mut |data: &[u8]| {
+            get_account_data(&fees::id(), &mut |data: &[u8]| {
                 if let Ok(fees) = bincode::deserialize(data) {
                     self.set_fees(fees);
                 }
             });
         }
         if self.rent.is_none() {
-            get_account_data(&Rent::id(), &mut |data: &[u8]| {
+            get_account_data(&rent::id(), &mut |data: &[u8]| {
                 if let Ok(rent) = bincode::deserialize(data) {
                     self.set_rent(rent);
                 }
             });
         }
         if self.slot_hashes.is_none() {
-            get_account_data(&SlotHashes::id(), &mut |data: &[u8]| {
+            get_account_data(&slot_hashes::id(), &mut |data: &[u8]| {
                 if let Ok(slot_hashes) = bincode::deserialize(data) {
                     self.set_slot_hashes(slot_hashes);
                 }
@@ -180,21 +199,21 @@ impl SysvarCache {
         }
         #[allow(deprecated)]
         if self.recent_blockhashes.is_none() {
-            get_account_data(&RecentBlockhashes::id(), &mut |data: &[u8]| {
+            get_account_data(&recent_blockhashes::id(), &mut |data: &[u8]| {
                 if let Ok(recent_blockhashes) = bincode::deserialize(data) {
                     self.set_recent_blockhashes(recent_blockhashes);
                 }
             });
         }
         if self.stake_history.is_none() {
-            get_account_data(&StakeHistory::id(), &mut |data: &[u8]| {
+            get_account_data(&stake_history::id(), &mut |data: &[u8]| {
                 if let Ok(stake_history) = bincode::deserialize(data) {
                     self.set_stake_history(stake_history);
                 }
             });
         }
         if self.last_restart_slot.is_none() {
-            get_account_data(&LastRestartSlot::id(), &mut |data: &[u8]| {
+            get_account_data(&last_restart_slot::id(), &mut |data: &[u8]| {
                 if let Ok(last_restart_slot) = bincode::deserialize(data) {
                     self.set_last_restart_slot(last_restart_slot);
                 }

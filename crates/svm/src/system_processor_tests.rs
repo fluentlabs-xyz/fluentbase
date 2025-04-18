@@ -1,29 +1,40 @@
 #[cfg(test)]
 mod tests {
-    use crate::account::{Account, AccountSharedData, ReadableAccount};
-    use crate::error::InstructionError;
-    use crate::helpers::create_account_shared_data_for_test;
-    use crate::{native_loader, nonce_account, recent_blockhashes_account, with_mock_invoke_context};
-    use crate::system_processor::{get_system_account_kind, Address, Entrypoint, SystemAccountKind};
+    use crate::{
+        account::{Account, AccountSharedData, ReadableAccount},
+        common::TestSdkType,
+        context::InvokeContext,
+        error::InstructionError,
+        hash::{hash, Hash},
+        helpers::create_account_shared_data_for_test,
+        native_loader,
+        nonce_account,
+        pubkey::Pubkey,
+        recent_blockhashes_account,
+        recent_blockhashes_account::create_account_with_data_for_test,
+        rent::Rent,
+        solana_program::{
+            instruction::{AccountMeta, Instruction},
+            nonce,
+            nonce::state::{
+                Data as NonceData,
+                DurableNonce,
+                State as NonceState,
+                Versions as NonceVersions,
+            },
+            sysvar,
+            sysvar::{recent_blockhashes, recent_blockhashes::IterItem},
+        },
+        system_instruction,
+        system_instruction::{SystemError, SystemInstruction, MAX_PERMITTED_DATA_LENGTH},
+        system_processor::{get_system_account_kind, Address, Entrypoint, SystemAccountKind},
+        system_program,
+        test_helpers::{mock_process_instruction, new_test_sdk, prepare_vars_for_tests},
+        with_mock_invoke_context,
+    };
     use alloc::sync::Arc;
-    use solana_program::hash::{hash, Hash};
-    use solana_program::instruction::{AccountMeta, Instruction};
-    use solana_program::pubkey::Pubkey;
-    use solana_program::rent::Rent;
-    use solana_program::system_instruction::{SystemError, SystemInstruction, MAX_PERMITTED_DATA_LENGTH};
-    use solana_program::{nonce, system_instruction, system_program, sysvar};
-    use solana_program::fee_calculator::FeeCalculator;
-    use solana_program::sysvar::recent_blockhashes;
-    use solana_program::sysvar::recent_blockhashes::IterItem;
-    use crate::common::TestSdkType;
     use fluentbase_sdk::SharedAPI;
-    use crate::context::InvokeContext;
-    use crate::recent_blockhashes_account::create_account_with_data_for_test;
-    use crate::nonce::Versions as NonceVersions;
-    use crate::nonce_current::Data as NonceData;
-    use crate::nonce_current::DurableNonce;
-    use crate::nonce_current::State as NonceState;
-    use crate::test_helpers::{mock_process_instruction, new_test_sdk, prepare_vars_for_tests};
+    use solana_fee_calculator::FeeCalculator;
 
     fn process_instruction<SDK: SharedAPI>(
         sdk: &SDK,
@@ -76,7 +87,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (to, to_account)],
             vec![
                 AccountMeta {
@@ -118,7 +129,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (to, to_account)],
             vec![
                 AccountMeta {
@@ -162,7 +173,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (to, to_account), (base, base_account)],
             vec![
                 AccountMeta {
@@ -194,7 +205,13 @@ mod tests {
         let sdk = new_test_sdk();
 
         let (config, loader) = prepare_vars_for_tests();
-        with_mock_invoke_context!(invoke_context, transaction_context, &sdk, loader, Vec::new());
+        with_mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            &sdk,
+            loader,
+            Vec::new()
+        );
         let from = Pubkey::new_unique();
         let seed = "dull boy";
         let to = Pubkey::new_unique();
@@ -224,7 +241,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (to, to_account)],
             vec![
                 AccountMeta {
@@ -262,7 +279,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (to, to_account)],
             vec![
                 AccountMeta {
@@ -302,7 +319,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (to, to_account)],
             vec![
                 AccountMeta {
@@ -349,7 +366,7 @@ mod tests {
                 space: MAX_PERMITTED_DATA_LENGTH + 1,
                 owner: system_program::id(),
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account.clone()), (to, to_account.clone())],
             instruction_accounts.clone(),
             Err(SystemError::InvalidAccountDataLength.into()),
@@ -363,7 +380,7 @@ mod tests {
                 space: MAX_PERMITTED_DATA_LENGTH,
                 owner: system_program::id(),
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (to, to_account)],
             instruction_accounts,
             Ok(()),
@@ -392,7 +409,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account.clone()), (owned_key, owned_account)],
             vec![
                 AccountMeta {
@@ -421,7 +438,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account.clone()), (owned_key, owned_account)],
             vec![
                 AccountMeta {
@@ -450,7 +467,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (owned_key, owned_account)],
             vec![
                 AccountMeta {
@@ -489,7 +506,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![
                 (from, from_account.clone()),
                 (owned_key, owned_account.clone()),
@@ -517,7 +534,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account.clone()), (owned_key, owned_account)],
             vec![
                 AccountMeta {
@@ -543,7 +560,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (owned_key, owned_account)],
             vec![
                 AccountMeta {
@@ -579,7 +596,7 @@ mod tests {
                 space: 2,
                 owner: sysvar::id(),
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (to, to_account)],
             vec![
                 AccountMeta {
@@ -618,7 +635,7 @@ mod tests {
                 space: 2,
                 owner: new_owner,
             })
-                .unwrap(),
+            .unwrap(),
             vec![(from, from_account), (populated_key, populated_account)],
             vec![
                 AccountMeta {
@@ -646,7 +663,7 @@ mod tests {
             &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::default())),
             &system_program::id(),
         )
-            .unwrap();
+        .unwrap();
         let new = Pubkey::new_unique();
         let new_account = AccountSharedData::new(0, 0, &system_program::id());
 
@@ -657,7 +674,7 @@ mod tests {
                 space: 0,
                 owner: Pubkey::new_unique(),
             })
-                .unwrap(),
+            .unwrap(),
             vec![(nonce, nonce_account), (new, new_account)],
             vec![
                 AccountMeta {
@@ -689,7 +706,7 @@ mod tests {
             &bincode::serialize(&SystemInstruction::Assign {
                 owner: system_program::id(),
             })
-                .unwrap(),
+            .unwrap(),
             vec![(pubkey, account.clone())],
             vec![AccountMeta {
                 pubkey,
@@ -730,7 +747,7 @@ mod tests {
             &bincode::serialize(&SystemInstruction::Assign {
                 owner: sysvar::id(),
             })
-                .unwrap(),
+            .unwrap(),
             vec![(pubkey, account)],
             vec![AccountMeta {
                 pubkey,
@@ -899,7 +916,7 @@ mod tests {
                 from_seed: from_seed.clone(),
                 from_owner,
             })
-                .unwrap(),
+            .unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Ok(()),
@@ -915,7 +932,7 @@ mod tests {
                 from_seed: from_seed.clone(),
                 from_owner,
             })
-                .unwrap(),
+            .unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(SystemError::ResultWithNegativeLamports.into()),
@@ -931,7 +948,7 @@ mod tests {
                 from_seed,
                 from_owner,
             })
-                .unwrap(),
+            .unwrap(),
             transaction_accounts,
             instruction_accounts,
             Ok(()),
@@ -953,7 +970,7 @@ mod tests {
             })),
             &system_program::id(),
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(
             get_system_account_kind(&from_account),
             Some(SystemAccountKind::Nonce)
@@ -1092,10 +1109,10 @@ mod tests {
         );
         let blockhash = hash(&bincode::serialize(&0).unwrap());
         #[allow(deprecated)]
-        let new_recent_blockhashes_account =
-            create_account_with_data_for_test(
-                vec![IterItem(0u64, &blockhash, 0); recent_blockhashes::MAX_ENTRIES],
-            );
+        let new_recent_blockhashes_account = create_account_with_data_for_test(vec![
+                IterItem(0u64, &blockhash, 0);
+                recent_blockhashes::MAX_ENTRIES
+            ]);
         mock_process_instruction(
             &sdk,
             &system_program::id(),
@@ -1224,7 +1241,8 @@ mod tests {
 
         process_instruction(
             &sdk,
-            &bincode::serialize(&SystemInstruction::InitializeNonceAccount(Pubkey::default())).unwrap(),
+            &bincode::serialize(&SystemInstruction::InitializeNonceAccount(Pubkey::default()))
+                .unwrap(),
             Vec::new(),
             Vec::new(),
             Err(InstructionError::NotEnoughAccountKeys),
@@ -1369,7 +1387,7 @@ mod tests {
             &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::default())),
             &system_program::id(),
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(
             get_system_account_kind(&nonce_account),
             Some(SystemAccountKind::Nonce)
@@ -1404,7 +1422,7 @@ mod tests {
             &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::default())),
             &Pubkey::new_unique(),
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(get_system_account_kind(&nonce_account), None);
     }
 
@@ -1527,7 +1545,7 @@ mod tests {
             &versions,             // state
             &Pubkey::new_unique(), // owner
         )
-            .unwrap();
+        .unwrap();
         let accounts = process_instruction(
             &sdk,
             &bincode::serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
@@ -1549,7 +1567,7 @@ mod tests {
             &versions,             // state
             &system_program::id(), // owner
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(
             nonce_account.deserialize_data::<NonceVersions>().unwrap(),
             versions
@@ -1671,7 +1689,7 @@ mod tests {
                 &bincode::serialize(&SystemInstruction::Assign {
                     owner: native_loader::id(),
                 })
-                    .unwrap(),
+                .unwrap(),
                 vec![(pubkey, account.clone())],
                 vec![AccountMeta {
                     pubkey,

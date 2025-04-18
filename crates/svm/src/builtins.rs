@@ -1,9 +1,9 @@
+// use crate::common::Blake3Hasher;
 use crate::{
     alloc::string::ToString,
-    common::{Blake3Hasher, HasherImpl, Keccak256Hasher, Sha256Hasher},
+    common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
-    feature_set,
     helpers::{
         is_nonoverlapping,
         memcmp,
@@ -16,13 +16,15 @@ use crate::{
         Error,
         SyscallError,
     },
-    loaders::bpf_loader_upgradable::Entrypoint,
+    loaders::bpf_loader_upgradeable,
     mem_ops::{memcmp_non_contiguous, memset_non_contiguous},
     types::SVM_ADDRESS_PREFIX,
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::{ops::Deref, slice::from_raw_parts, str::from_utf8};
 use fluentbase_sdk::{calc_create2_address, Address, SharedAPI, B256, U256};
+use solana_feature_set;
+use solana_pubkey::{bytes_are_curve_point, Pubkey, PubkeyError};
 // use solana_program::{
 //     entrypoint::SUCCESS,
 //     keccak,
@@ -43,13 +45,22 @@ pub fn register_builtins<SDK: SharedAPI>(
     function_registry: &mut FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>>,
 ) {
     function_registry
-        .register_function_hashed("solana_bpf_loader_deprecated_program", Entrypoint::vm)
+        .register_function_hashed(
+            "solana_bpf_loader_deprecated_program",
+            bpf_loader_upgradeable::Entrypoint::vm,
+        )
         .unwrap();
     function_registry
-        .register_function_hashed("solana_bpf_loader_program", Entrypoint::vm)
+        .register_function_hashed(
+            "solana_bpf_loader_program",
+            bpf_loader_upgradeable::Entrypoint::vm,
+        )
         .unwrap();
     function_registry
-        .register_function_hashed("solana_bpf_loader_upgradeable_program", Entrypoint::vm)
+        .register_function_hashed(
+            "solana_bpf_loader_upgradeable_program",
+            bpf_loader_upgradeable::Entrypoint::vm,
+        )
         .unwrap();
 
     function_registry
@@ -104,9 +115,9 @@ pub fn register_builtins<SDK: SharedAPI>(
             SyscallHash::vm::<SDK, Keccak256Hasher<SDK>>,
         )
         .unwrap();
-    function_registry
-        .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
-        .unwrap();
+    // function_registry
+    //     .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
+    //     .unwrap();
 }
 
 // #[inline(always)]
@@ -157,7 +168,7 @@ declare_builtin_function!(
 
         if invoke_context
             .feature_set
-            .is_active(&feature_set::bpf_account_data_direct_mapping::id())
+            .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
         {
             let cmp_result = translate_type_mut::<i32>(
                 memory_mapping,
@@ -233,7 +244,7 @@ declare_builtin_function!(
 
         if invoke_context
             .feature_set
-            .is_active(&feature_set::bpf_account_data_direct_mapping::id())
+            .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
         {
             memset_non_contiguous(dst_addr, c as u8, n, memory_mapping)
         } else {

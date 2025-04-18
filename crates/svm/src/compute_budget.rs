@@ -7,6 +7,7 @@
 // }
 
 use crate::compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT;
+use solana_program_entrypoint::HEAP_LENGTH;
 
 /// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
 /// default heap page cost = 0.5 * 15 ~= 8CU/page

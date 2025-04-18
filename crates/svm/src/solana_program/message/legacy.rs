@@ -13,7 +13,12 @@
 
 use crate::{
     bpf_loader_deprecated,
-    solana_program::{instruction::CompiledInstruction, message::MessageHeader},
+    solana_program::{
+        bpf_loader_upgradeable,
+        instruction::CompiledInstruction,
+        message::{compiled_keys::CompiledKeys, MessageHeader},
+        sysvar,
+    },
     system_instruction,
     system_program,
 };
@@ -23,6 +28,8 @@ pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
 use core::{convert::TryFrom, str::FromStr};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+use solana_hash::Hash;
+use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 use solana_sanitize::{Sanitize, SanitizeError};
 use solana_short_vec as short_vec;
@@ -39,7 +46,7 @@ mod builtins {
     use solana_pubkey::Pubkey;
 
     lazy_static! {
-        pub static ref BUILTIN_PROGRAMS_KEYS: [Pubkey; 9] = {
+        pub static ref BUILTIN_PROGRAMS_KEYS: [Pubkey; 10] = {
             let parse = |s| Pubkey::from_str(s).unwrap();
             [
                 parse("Config1111111111111111111111111111111111111"),
@@ -51,7 +58,7 @@ mod builtins {
                 system_program::id(),
                 bpf_loader::id(),
                 bpf_loader_deprecated::id(),
-                // bpf_loader_upgradeable::id(),
+                bpf_loader_upgradeable::id(),
             ]
         };
     }
@@ -208,149 +215,9 @@ impl Sanitize for Message {
 }
 
 impl Message {
-    /// Create a new `Message`.
-    ///
-    /// # Examples
-    ///
-    /// This example uses the [`solana_sdk`], [`solana_rpc_client`] and [`anyhow`] crates.
-    ///
-    /// [`solana_sdk`]: https://docs.rs/solana-sdk
-    /// [`solana_rpc_client`]: https://docs.rs/solana-rpc-client
-    /// [`anyhow`]: https://docs.rs/anyhow
-    ///
-    /// ```
-    /// # use solana_program::example_mocks::solana_sdk;
-    /// # use solana_program::example_mocks::solana_rpc_client;
-    /// use anyhow::Result;
-    /// use borsh::{BorshSerialize, BorshDeserialize};
-    /// use solana_rpc_client::rpc_client::RpcClient;
-    /// use solana_sdk::{
-    ///     instruction::Instruction,
-    ///     message::Message,
-    ///     pubkey::Pubkey,
-    ///     signature::{Keypair, Signer},
-    ///     transaction::Transaction,
-    /// };
-    ///
-    /// // A custom program instruction. This would typically be defined in
-    /// // another crate so it can be shared between the on-chain program and
-    /// // the client.
-    /// #[derive(BorshSerialize, BorshDeserialize)]
-    /// # #[borsh(crate = "borsh")]
-    /// enum BankInstruction {
-    ///     Initialize,
-    ///     Deposit { lamports: u64 },
-    ///     Withdraw { lamports: u64 },
-    /// }
-    ///
-    /// fn send_initialize_tx(
-    ///     client: &RpcClient,
-    ///     program_id: Pubkey,
-    ///     payer: &Keypair
-    /// ) -> Result<()> {
-    ///
-    ///     let bank_instruction = BankInstruction::Initialize;
-    ///
-    ///     let instruction = Instruction::new_with_borsh(
-    ///         program_id,
-    ///         &bank_instruction,
-    ///         vec![],
-    ///     );
-    ///
-    ///     let message = Message::new(
-    ///         &[instruction],
-    ///         Some(&payer.pubkey()),
-    ///     );
-    ///
-    ///     let blockhash = client.get_latest_blockhash()?;
-    ///     let mut tx = Transaction::new(&[payer], message, blockhash);
-    ///     client.send_and_confirm_transaction(&tx)?;
-    ///
-    ///     Ok(())
-    /// }
-    /// #
-    /// # let client = RpcClient::new(String::new());
-    /// # let program_id = Pubkey::new_unique();
-    /// # let payer = Keypair::new();
-    /// # send_initialize_tx(&client, program_id, &payer)?;
-    /// #
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
     pub fn new(instructions: &[Instruction], payer: Option<&Pubkey>) -> Self {
         Self::new_with_blockhash(instructions, payer, &Hash::default())
     }
-
-    /// Create a new message while setting the blockhash.
-    ///
-    /// # Examples
-    ///
-    /// This example uses the [`solana_sdk`], [`solana_rpc_client`] and [`anyhow`] crates.
-    ///
-    /// [`solana_sdk`]: https://docs.rs/solana-sdk
-    /// [`solana_rpc_client`]: https://docs.rs/solana-rpc-client
-    /// [`anyhow`]: https://docs.rs/anyhow
-    ///
-    /// ```
-    /// # use solana_program::example_mocks::solana_sdk;
-    /// # use solana_program::example_mocks::solana_rpc_client;
-    /// use anyhow::Result;
-    /// use borsh::{BorshSerialize, BorshDeserialize};
-    /// use solana_rpc_client::rpc_client::RpcClient;
-    /// use solana_sdk::{
-    ///     instruction::Instruction,
-    ///     message::Message,
-    ///     pubkey::Pubkey,
-    ///     signature::{Keypair, Signer},
-    ///     transaction::Transaction,
-    /// };
-    ///
-    /// // A custom program instruction. This would typically be defined in
-    /// // another crate so it can be shared between the on-chain program and
-    /// // the client.
-    /// #[derive(BorshSerialize, BorshDeserialize)]
-    /// # #[borsh(crate = "borsh")]
-    /// enum BankInstruction {
-    ///     Initialize,
-    ///     Deposit { lamports: u64 },
-    ///     Withdraw { lamports: u64 },
-    /// }
-    ///
-    /// fn send_initialize_tx(
-    ///     client: &RpcClient,
-    ///     program_id: Pubkey,
-    ///     payer: &Keypair
-    /// ) -> Result<()> {
-    ///
-    ///     let bank_instruction = BankInstruction::Initialize;
-    ///
-    ///     let instruction = Instruction::new_with_borsh(
-    ///         program_id,
-    ///         &bank_instruction,
-    ///         vec![],
-    ///     );
-    ///
-    ///     let blockhash = client.get_latest_blockhash()?;
-    ///
-    ///     let message = Message::new_with_blockhash(
-    ///         &[instruction],
-    ///         Some(&payer.pubkey()),
-    ///         &blockhash,
-    ///     );
-    ///
-    ///     let mut tx = Transaction::new_unsigned(message);
-    ///     tx.sign(&[payer], tx.message.recent_blockhash);
-    ///     client.send_and_confirm_transaction(&tx)?;
-    ///
-    ///     Ok(())
-    /// }
-    /// #
-    /// # let client = RpcClient::new(String::new());
-    /// # let program_id = Pubkey::new_unique();
-    /// # let payer = Keypair::new();
-    /// # send_initialize_tx(&client, program_id, &payer)?;
-    /// #
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
     pub fn new_with_blockhash(
         instructions: &[Instruction],
         payer: Option<&Pubkey>,
@@ -371,113 +238,6 @@ impl Message {
         )
     }
 
-    /// Create a new message for a [nonced transaction].
-    ///
-    /// [nonced transaction]: https://docs.solanalabs.com/implemented-proposals/durable-tx-nonces
-    ///
-    /// In this type of transaction, the blockhash is replaced with a _durable
-    /// transaction nonce_, allowing for extended time to pass between the
-    /// transaction's signing and submission to the blockchain.
-    ///
-    /// # Examples
-    ///
-    /// This example uses the [`solana_sdk`], [`solana_rpc_client`] and [`anyhow`] crates.
-    ///
-    /// [`solana_sdk`]: https://docs.rs/solana-sdk
-    /// [`solana_rpc_client`]: https://docs.rs/solana-client
-    /// [`anyhow`]: https://docs.rs/anyhow
-    ///
-    /// ```
-    /// # use solana_program::example_mocks::solana_sdk;
-    /// # use solana_program::example_mocks::solana_rpc_client;
-    /// use anyhow::Result;
-    /// use borsh::{BorshSerialize, BorshDeserialize};
-    /// use solana_rpc_client::rpc_client::RpcClient;
-    /// use solana_sdk::{
-    ///     hash::Hash,
-    ///     instruction::Instruction,
-    ///     message::Message,
-    ///     nonce,
-    ///     pubkey::Pubkey,
-    ///     signature::{Keypair, Signer},
-    ///     system_instruction,
-    ///     transaction::Transaction,
-    /// };
-    ///
-    /// // A custom program instruction. This would typically be defined in
-    /// // another crate so it can be shared between the on-chain program and
-    /// // the client.
-    /// #[derive(BorshSerialize, BorshDeserialize)]
-    /// # #[borsh(crate = "borsh")]
-    /// enum BankInstruction {
-    ///     Initialize,
-    ///     Deposit { lamports: u64 },
-    ///     Withdraw { lamports: u64 },
-    /// }
-    ///
-    /// // Create a nonced transaction for later signing and submission,
-    /// // returning it and the nonce account's pubkey.
-    /// fn create_offline_initialize_tx(
-    ///     client: &RpcClient,
-    ///     program_id: Pubkey,
-    ///     payer: &Keypair
-    /// ) -> Result<(Transaction, Pubkey)> {
-    ///
-    ///     let bank_instruction = BankInstruction::Initialize;
-    ///     let bank_instruction = Instruction::new_with_borsh(
-    ///         program_id,
-    ///         &bank_instruction,
-    ///         vec![],
-    ///     );
-    ///
-    ///     // This will create a nonce account and assign authority to the
-    ///     // payer so they can sign to advance the nonce and withdraw its rent.
-    ///     let nonce_account = make_nonce_account(client, payer)?;
-    ///
-    ///     let mut message = Message::new_with_nonce(
-    ///         vec![bank_instruction],
-    ///         Some(&payer.pubkey()),
-    ///         &nonce_account,
-    ///         &payer.pubkey()
-    ///     );
-    ///
-    ///     // This transaction will need to be signed later, using the blockhash
-    ///     // stored in the nonce account.
-    ///     let tx = Transaction::new_unsigned(message);
-    ///
-    ///     Ok((tx, nonce_account))
-    /// }
-    ///
-    /// fn make_nonce_account(client: &RpcClient, payer: &Keypair)
-    ///     -> Result<Pubkey>
-    /// {
-    ///     let nonce_account_address = Keypair::new();
-    ///     let nonce_account_size = nonce::State::size();
-    ///     let nonce_rent = client.get_minimum_balance_for_rent_exemption(nonce_account_size)?;
-    ///
-    ///     // Assigning the nonce authority to the payer so they can sign for the withdrawal,
-    ///     // and we can throw away the nonce address secret key.
-    ///     let create_nonce_instr = system_instruction::create_nonce_account(
-    ///         &payer.pubkey(),
-    ///         &nonce_account_address.pubkey(),
-    ///         &payer.pubkey(),
-    ///         nonce_rent,
-    ///     );
-    ///
-    ///     let mut nonce_tx = Transaction::new_with_payer(&create_nonce_instr, Some(&payer.pubkey()));
-    ///     let blockhash = client.get_latest_blockhash()?;
-    ///     nonce_tx.sign(&[&payer, &nonce_account_address], blockhash);
-    ///     client.send_and_confirm_transaction(&nonce_tx)?;
-    ///
-    ///     Ok(nonce_account_address.pubkey())
-    /// }
-    /// #
-    /// # let client = RpcClient::new(String::new());
-    /// # let program_id = Pubkey::new_unique();
-    /// # let payer = Keypair::new();
-    /// # create_offline_initialize_tx(&client, program_id, &payer)?;
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
     pub fn new_with_nonce(
         mut instructions: Vec<Instruction>,
         payer: Option<&Pubkey>,
@@ -699,7 +459,10 @@ impl Message {
 mod tests {
     #![allow(deprecated)]
     use super::*;
-    use crate::{hash, instruction::AccountMeta, message::MESSAGE_HEADER_LENGTH};
+    use crate::{
+        hash,
+        solana_program::{instruction::AccountMeta, message::MESSAGE_HEADER_LENGTH},
+    };
 
     #[test]
     fn test_builtin_program_keys() {

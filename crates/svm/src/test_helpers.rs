@@ -12,24 +12,21 @@ use crate::{
     error::InstructionError,
     helpers::{create_account_shared_data_for_test, test_utils},
     loaded_programs::LoadedProgram,
-    loaders::bpf_loader_upgradable::Entrypoint,
+    loaders::bpf_loader_upgradeable,
     native_loader,
+    solana_program::{instruction::AccountMeta, sysvar},
     with_mock_invoke_context,
 };
 use alloc::sync::Arc;
 use core::cell::RefCell;
 use fluentbase_sdk::{testing::TestingContext, Address, ContractContextV1, SharedAPI, U256};
-use solana_program::{
-    epoch_schedule::EpochSchedule,
-    instruction::AccountMeta,
-    pubkey::Pubkey,
-    rent::Rent,
-    sysvar,
-};
+use solana_epoch_schedule::EpochSchedule;
+use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
 };
+use solana_rent::Rent;
 use std::{fs::File, io::Read};
 
 pub(crate) fn prepare_vars_for_tests<'a, SDK: SharedAPI>(
@@ -179,7 +176,7 @@ pub(crate) fn process_instruction<SDK: SharedAPI>(
         transaction_accounts,
         instruction_accounts,
         expected_result,
-        Entrypoint::vm,
+        bpf_loader_upgradeable::Entrypoint::vm,
         |invoke_context| {
             test_utils::load_all_invoked_programs(invoke_context);
         },

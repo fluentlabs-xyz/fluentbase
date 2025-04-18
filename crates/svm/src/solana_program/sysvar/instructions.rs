@@ -298,9 +298,11 @@ pub fn get_instruction_relative(
 mod tests {
     use super::*;
     use crate::{
-        instruction::AccountMeta,
-        message::{Message as LegacyMessage, SanitizedMessage},
         pubkey::Pubkey,
+        solana_program::{
+            instruction::AccountMeta,
+            message::{Message as LegacyMessage, SanitizedMessage},
+        },
     };
     use hashbrown::HashSet;
 

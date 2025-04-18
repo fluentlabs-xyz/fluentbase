@@ -11,6 +11,7 @@ use crate::{
 };
 use alloc::{boxed::Box, rc::Rc, string::ToString, vec::Vec};
 use fluentbase_sdk::SharedAPI;
+use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 pub use solana_rbpf::vm::ContextObject;
 use solana_rbpf::{
     aligned_memory::AlignedMemory,

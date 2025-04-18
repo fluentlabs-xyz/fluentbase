@@ -3,10 +3,16 @@ use crate::{
     common::checked_add,
     context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
     error::InstructionError,
+    solana_program::nonce::{
+        state::{AuthorizeNonceError, Data, DurableNonce, Versions},
+        State,
+    },
+    system_instruction::SystemError,
 };
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashSet;
 use solana_pubkey::{declare_id, Pubkey};
+use solana_rent::Rent;
 
 declare_id!("11111111111111111111111111111111");
 

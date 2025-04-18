@@ -11,36 +11,51 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
 
 num-traits = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
 hashbrown = { workspace = true, default-features = false }
 
-solana_rbpf = { workspace = true, default-features = false }
-solana-pubkey = { workspace = true, default-features = false }
-solana-instruction = { workspace = true, default-features = false }
-solana-account-info = { workspace = true, default-features = false }
-solana-clock = { workspace = true, default-features = false, features = ["sysvar"] }
-solana-epoch-schedule = { workspace = true, default-features = false, features = ["sysvar"] }
-solana-rent = { workspace = true, default-features = false, features = ["sysvar"] }
-solana-sanitize = { workspace = true, default-features = false }
-solana-short-vec = { workspace = true, default-features = false }
-solana-sha256-hasher = { workspace = true, default-features = false }
-solana-fee-calculator = { workspace = true, default-features = false }
-solana-program-error = { workspace = true, default-features = false }
-solana-sysvar-id = { workspace = true, default-features = false }
-solana-sdk-macro = { workspace = true, default-features = false }
-solana-serialize-utils = { workspace = true, default-features = false }
+solana_rbpf = { workspace = true, default-features = false, features = [] }
+solana-pubkey = { workspace = true, default-features = false, features = ["serde", "bytemuck"] }
+solana-instruction = { workspace = true, default-features = false, features = ["serde", "bincode"] }
+solana-account-info = { workspace = true, default-features = false, features = [] }
+solana-clock = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
+solana-epoch-schedule = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
+solana-rent = { workspace = true, default-features = false, features = ["serde", "sysvar"] }
+solana-sanitize = { workspace = true, default-features = false, features = [] }
+solana-short-vec = { workspace = true, default-features = false, features = [] }
+solana-sha256-hasher = { workspace = true, default-features = false, features = [] }
+solana-fee-calculator = { workspace = true, default-features = false, features = ["serde"] }
+solana-program-error = { workspace = true, default-features = false, features = ["serde"] }
+solana-transaction-error = { workspace = true, default-features = false, features = ["serde"] }
+solana-sysvar-id = { workspace = true, default-features = false, features = [] }
+solana-sdk-macro = { workspace = true, default-features = false, features = [] }
+solana-serialize-utils = { workspace = true, default-features = false, features = [] }
 solana-last-restart-slot = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
-solana-hash = { workspace = true, default-features = false }
-solana-slot-hashes = { workspace = true, default-features = false, features = ["sysvar"] }
-solana-slot-history = { workspace = true, default-features = false, features = ["sysvar"] }
-#solana-program = { workspace = true, default-features = false }
-#solana-poseidon = { workspace = true, default-features = false }
+solana-hash = { workspace = true, default-features = false, features = ["serde", "bytemuck"] }
+solana-slot-hashes = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
+solana-slot-history = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
+solana-decode-error = { workspace = true, default-features = false, features = [] }
+solana-program-entrypoint = { workspace = true, default-features = false, features = [] }
+solana-feature-set = { workspace = true, default-features = false, features = [] }
+solana-program-memory = { workspace = true, default-features = false, features = [] }
+static_assertions = { workspace = true, default-features = false, features = [] }
+solana-stable-layout = { workspace = true, default-features = false, features = [] }
+#solana-program = { workspace = true, default-features = false, features = ["serde", "sysvar"] }
+#solana-poseidon = { workspace = true, default-features = false, features = ["serde", "sysvar"] }
 
-hex = { workspace = true, default-features = false }
-hex-literal = { workspace = true }
-bitflags = { workspace = true }
+serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
+serde_json = { workspace = true, default-features = false, features = ["alloc"] }
+blake3 = { workspace = true, default-features = false, features = ["serde", ] }
+hex = { workspace = true, default-features = false, features = ["serde", "alloc"] }
+hex-literal = { workspace = true, features = [] }
+base64 = { workspace = true, default-features = false, features = ["alloc"] }
+bitflags = { workspace = true, default-features = false, features = ["serde"] }
+bytemuck = { workspace = true, default-features = false, features = [] }
+bytemuck_derive = { workspace = true, default-features = false, features = [] }
+spin = { workspace = true, default-features = false, features = ["spin_mutex", "rwlock"] }
 
 num-derive = { workspace = true, default-features = false }
 serde = { workspace = true, default-features = false }
@@ -48,10 +63,13 @@ bincode = { workspace = true, default-features = false }
 #bincode = { version = "1.3.3", default-features = false }
 lazy_static = { workspace = true, default-features = false }
 keccak-hash = { workspace = true, default-features = false }
-itertools = { workspace = true, default-features = false }
+itertools = { workspace = true, default-features = false, features = ["use_alloc"] }
 
 [dev-dependencies]
 rand = { version = "0.9.0", default-features = false, features = ["alloc", "thread_rng"] }
+memoffset = { workspace = true, default-features = false, features = [] }
+serial_test = { workspace = true }
+test-case = { workspace = true }
 
 [features]
 default = [
@@ -63,6 +81,8 @@ borsh = [
 ]
 std = [
     "fluentbase-sdk/std",
+    "fluentbase-types/std",
+    "itertools/use_std"
     #    "solana-program/std",
 ]
 debug-print = []

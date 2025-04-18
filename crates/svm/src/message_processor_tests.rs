@@ -7,40 +7,40 @@ pub mod tests {
             WritableAccount,
             DUMMY_INHERITABLE_ACCOUNT_FIELDS,
         },
+        bpf_loader,
         builtins::register_builtins,
+        clock::Clock,
         common::{calculate_max_chunk_size, compile_accounts_for_tx_ctx, TestSdkType},
         context::{IndexOfAccount, InvokeContext, TransactionContext},
         declare_process_instruction,
+        epoch_schedule::EpochSchedule,
         error::{InstructionError, TransactionError},
-        feature_set::FeatureSet,
+        hash::Hash,
         loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
         message_processor::MessageProcessor,
         native_loader,
         native_loader::create_loadable_account_for_test,
+        pubkey,
+        pubkey::Pubkey,
+        rent::Rent,
+        solana_program::{
+            bpf_loader_upgradeable,
+            bpf_loader_upgradeable::UpgradeableLoaderState,
+            loader_v4,
+            message::{AccountKeys, LegacyMessage, Message, SanitizedMessage},
+            sysvar,
+        },
+        system_instruction::{SystemError, SystemInstruction},
         system_processor,
+        system_program,
         sysvar_cache::SysvarCache,
         test_helpers::{journal_state, load_program_account_from_elf_file},
     };
     use alloc::{sync::Arc, vec, vec::Vec};
     use fluentbase_sdk::SharedAPI;
     use serde::{Deserialize, Serialize};
-    use solana_program::{
-        bpf_loader,
-        bpf_loader_upgradeable,
-        bpf_loader_upgradeable::{create_buffer, UpgradeableLoaderState},
-        clock::Clock,
-        epoch_schedule::EpochSchedule,
-        hash::Hash,
-        instruction::{AccountMeta, Instruction},
-        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-        message::{AccountKeys, LegacyMessage, Message, SanitizedMessage},
-        pubkey,
-        pubkey::Pubkey,
-        rent::Rent,
-        system_instruction::{SystemError, SystemInstruction},
-        system_program,
-        sysvar,
-    };
+    use solana_feature_set::FeatureSet;
+    use solana_instruction::{AccountMeta, Instruction};
     use solana_rbpf::{
         declare_builtin_function,
         program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
@@ -887,7 +887,7 @@ pub mod tests {
         let sdk = journal_state();
 
         let native_loader_id = native_loader::id();
-        let bpf_loader_id = solana_program::bpf_loader::id();
+        let bpf_loader_id = bpf_loader::id();
         let system_program_id = system_program::id();
         let new_owner = Pubkey::from([9; 32]);
         let from = Pubkey::new_unique();
@@ -1122,7 +1122,7 @@ pub mod tests {
         let sdk = journal_state();
 
         let native_loader_id = native_loader::id();
-        let bpf_loader_id = solana_program::bpf_loader::id();
+        let bpf_loader_id = bpf_loader::id();
         let system_program_id = system_program::id();
 
         let new_owner = Pubkey::from([9; 32]);
@@ -1360,7 +1360,7 @@ pub mod tests {
             Arc::new(LoadedProgram::new_builtin(
                 0,
                 0,
-                crate::loaders::bpf_loader_upgradable::Entrypoint::vm,
+                crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
@@ -1440,7 +1440,7 @@ pub mod tests {
             Arc::new(LoadedProgram::new_builtin(
                 0,
                 0,
-                crate::loaders::bpf_loader_upgradable::Entrypoint::vm,
+                crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
@@ -1470,7 +1470,9 @@ pub mod tests {
         let program_len = account_with_program.data().len();
         let buffer_space = UpgradeableLoaderState::size_of_buffer(program_len);
 
-        let instructions = create_buffer(&pk_payer, &pk_buffer, &pk_9, 0, program_len).unwrap();
+        let instructions =
+            bpf_loader_upgradeable::create_buffer(&pk_payer, &pk_buffer, &pk_9, 0, program_len)
+                .unwrap();
         let message = Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash);
         let message = SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
         let result =
@@ -1611,7 +1613,7 @@ pub mod tests {
             Arc::new(LoadedProgram::new_builtin(
                 0,
                 0,
-                crate::loaders::bpf_loader_upgradable::Entrypoint::vm,
+                crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
@@ -1787,7 +1789,7 @@ pub mod tests {
             Arc::new(LoadedProgram::new_builtin(
                 0,
                 0,
-                crate::loaders::bpf_loader_upgradable::Entrypoint::vm,
+                crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
@@ -2039,7 +2041,7 @@ pub mod tests {
             Arc::new(LoadedProgram::new_builtin(
                 0,
                 0,
-                crate::loaders::bpf_loader_upgradable::Entrypoint::vm,
+                crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
         programs_loaded_for_tx_batch.replenish(
@@ -2047,7 +2049,7 @@ pub mod tests {
             Arc::new(LoadedProgram::new_builtin(
                 0,
                 0,
-                crate::loaders::bpf_loader_upgradable::Entrypoint::vm,
+                crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
 

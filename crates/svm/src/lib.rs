@@ -15,7 +15,7 @@ pub mod compute_budget_processor;
 pub mod context;
 // pub mod ed25519_instruction;
 pub mod error;
-pub mod feature_set;
+// pub mod feature_set;
 pub mod helpers;
 // #[cfg(test)]
 // mod helpers_tests;
@@ -26,9 +26,9 @@ pub mod message_processor;
 #[cfg(test)]
 mod message_processor_tests;
 pub mod native_loader;
-pub mod nonce;
+// pub mod nonce;
 pub mod nonce_account;
-pub mod nonce_current;
+// pub mod nonce_current;
 pub mod precompiles;
 #[cfg(test)]
 mod process_instruction_tests;
@@ -40,7 +40,7 @@ pub mod bpf_loader;
 pub mod bpf_loader_deprecated;
 pub mod epoch_rewards;
 pub mod epoch_schedule;
-pub mod epoch_stake;
+// pub mod epoch_stake;
 pub mod fluentbase;
 pub mod hash;
 pub mod loaders;

@@ -1,4 +1,4 @@
-use crate::{
+pub(crate) use crate::{
     alloc::string::ToString,
     error::InstructionError,
     solana_program::{

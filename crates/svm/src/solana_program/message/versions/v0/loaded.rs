@@ -1,8 +1,11 @@
-use alloc::{
-    borrow::Cow,
-    vec::{self, Vec},
+use crate::solana_program::{
+    bpf_loader_upgradeable,
+    message::{versions::v0, AccountKeys},
 };
+use alloc::{borrow::Cow, vec, vec::Vec};
 use hashbrown::HashSet;
+use serde::{Deserialize, Serialize};
+use solana_pubkey::Pubkey;
 
 /// Combination of a version #0 message and its loaded addresses
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -183,8 +186,17 @@ impl<'a> LoadedMessage<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{instruction::CompiledInstruction, message::MessageHeader, system_program, sysvar};
+    use crate::{
+        solana_program::{
+            instruction,
+            instruction::CompiledInstruction,
+            message::MessageHeader,
+            sysvar::clock,
+        },
+        system_program,
+    };
     use itertools::Itertools;
+    use solana_pubkey::Pubkey;
 
     fn check_test_loaded_message() -> (LoadedMessage<'static>, [Pubkey; 6]) {
         let key0 = Pubkey::new_unique();
@@ -265,9 +277,9 @@ mod tests {
 
     #[test]
     fn test_is_writable() {
-        solana_logger::setup();
+        // solana_logger::setup();
 
-        let reserved_account_keys = HashSet::from_iter([sysvar::clock::id(), system_program::id()]);
+        let reserved_account_keys = HashSet::from_iter([clock::id(), system_program::id()]);
         let create_message_with_keys = |keys: Vec<Pubkey>| {
             LoadedMessage::new(
                 v0::Message {
@@ -291,7 +303,7 @@ mod tests {
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         {
-            let message = create_message_with_keys(vec![sysvar::clock::id(), key0, key1, key2]);
+            let message = create_message_with_keys(vec![clock::id(), key0, key1, key2]);
             assert!(message.is_writable_index(0));
             assert!(!message.is_writable(0));
         }

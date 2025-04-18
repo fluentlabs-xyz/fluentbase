@@ -1,4 +1,7 @@
 use super::VersionedMessage;
+use crate::solana_program::instruction::CompiledInstruction;
+use solana_pubkey::Pubkey;
+use solana_sanitize::SanitizeError;
 
 /// Wraps a sanitized `VersionedMessage` to provide a safe API
 #[derive(Clone, Debug, PartialEq, Eq)]

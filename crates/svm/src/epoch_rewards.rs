@@ -5,8 +5,8 @@
 //! The sysvar ID is declared in [`sysvar::epoch_rewards`].
 //!
 //! [`sysvar::epoch_rewards`]: crate::solana_program::sysvar::epoch_rewards
-
 use crate::hash::Hash;
+use serde::{Deserialize, Serialize};
 use solana_sdk_macro::CloneZeroed;
 
 #[repr(C, align(16))]

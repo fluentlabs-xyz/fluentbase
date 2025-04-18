@@ -66,7 +66,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solana_program::pubkey::Pubkey;
+    use solana_pubkey::Pubkey;
 
     #[test]
     fn test_account_state() {

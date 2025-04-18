@@ -6,6 +6,7 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 pub use current::{Data, DurableNonce, State};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+use solana_hash::Hash;
 use solana_pubkey::Pubkey;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -114,8 +115,10 @@ impl From<Versions> for State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{fee_calculator::FeeCalculator, pubkey::Pubkey};
+    use crate::pubkey::Pubkey;
     use core::iter::repeat_with;
+    use solana_fee_calculator::FeeCalculator;
+    use solana_hash::Hash;
 
     #[test]
     fn test_verify_recent_blockhash() {

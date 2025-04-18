@@ -11,7 +11,7 @@ fn get_epoch_stake(var_addr: *const u8) -> u64 {
     let result = unsafe { crate::syscalls::sol_get_epoch_stake(var_addr) };
 
     #[cfg(not(target_os = "solana"))]
-    let result = crate::program_stubs::sol_get_epoch_stake(var_addr);
+    let result = program_stubs::sol_get_epoch_stake(var_addr);
 
     result
 }

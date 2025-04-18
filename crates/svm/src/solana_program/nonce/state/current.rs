@@ -4,8 +4,10 @@
 //     pubkey::Pubkey,
 // };
 use serde::{Deserialize, Serialize};
+use solana_fee_calculator::FeeCalculator;
 use solana_hash::Hash;
 use solana_pubkey::Pubkey;
+use solana_sha256_hasher::hashv;
 
 const DURABLE_NONCE_HASH_PREFIX: &[u8] = "DURABLE_NONCE".as_bytes();
 

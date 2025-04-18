@@ -1,5 +1,10 @@
+use crate::solana_program::{
+    instruction::CompiledInstruction,
+    message::{versions::v0::LoadedAddresses, CompileError},
+};
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{iter::zip, ops::Index};
+use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 
 /// Collection of static and dynamically loaded keys used to load accounts
@@ -148,7 +153,7 @@ impl PartialEq for AccountKeys<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instruction::AccountMeta;
+    use crate::solana_program::instruction::AccountMeta;
 
     fn test_account_keys() -> [Pubkey; 6] {
         let key0 = Pubkey::new_unique();

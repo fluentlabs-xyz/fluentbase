@@ -1,17 +1,19 @@
+use crate::solana_program::program_stubs;
+use alloc::{vec, vec::Vec};
+use bincode::serialize;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::AbiExample;
 pub use solana_instruction::{
-    error::InstructionError, AccountMeta, Instruction, ProcessedSiblingInstruction,
+    error::InstructionError,
+    AccountMeta,
+    Instruction,
+    ProcessedSiblingInstruction,
     TRANSACTION_LEVEL_STACK_HEIGHT,
 };
-use {
-    alloc::{vec, vec::Vec},
-    bincode::serialize,
-    serde::Serialize,
-    solana_pubkey::Pubkey,
-    solana_sanitize::Sanitize,
-    solana_short_vec as short_vec,
-};
+use solana_pubkey::Pubkey;
+use solana_sanitize::Sanitize;
+use solana_short_vec as short_vec;
 
 /// A compact encoding of an instruction.
 ///
@@ -108,7 +110,7 @@ pub fn get_processed_sibling_instruction(index: usize) -> Option<Instruction> {
     }
 
     #[cfg(not(target_os = "solana"))]
-    crate::program_stubs::sol_get_processed_sibling_instruction(index)
+    program_stubs::sol_get_processed_sibling_instruction(index)
 }
 
 /// Get the current stack height, transaction-level instructions are height
@@ -122,7 +124,7 @@ pub fn get_stack_height() -> usize {
 
     #[cfg(not(target_os = "solana"))]
     {
-        crate::program_stubs::sol_get_stack_height() as usize
+        program_stubs::sol_get_stack_height() as usize
     }
 }
 

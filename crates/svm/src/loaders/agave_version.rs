@@ -1,13 +1,15 @@
 use crate::{
+    bpf_loader_deprecated,
     context::{IndexOfAccount, InvokeContext},
     create_vm2,
     error::InstructionError,
-    feature_set::bpf_account_data_direct_mapping,
     serialization,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use fluentbase_sdk::SharedAPI;
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
+use solana_feature_set::bpf_account_data_direct_mapping;
+use solana_program_entrypoint::SUCCESS;
 use solana_rbpf::{
     elf::Executable,
     error::{EbpfError, ProgramResult},

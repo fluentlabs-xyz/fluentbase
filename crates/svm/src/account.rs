@@ -3,6 +3,11 @@ use crate::{
     context::{IndexOfAccount, InstructionContext, TransactionContext},
     error::InstructionError,
     helpers::is_zeroed,
+    solana_program::sysvar::Sysvar,
+    system_instruction::{
+        MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
+        MAX_PERMITTED_DATA_LENGTH,
+    },
 };
 use alloc::{boxed::Box, rc::Rc, sync::Arc, vec, vec::Vec};
 use core::{
@@ -11,6 +16,9 @@ use core::{
     ptr,
 };
 use serde::{Deserialize, Serialize};
+use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
+use solana_instruction::error::LamportsError;
+use solana_pubkey::Pubkey;
 
 pub type InheritableAccountFields = (u64, Epoch);
 pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITIAL_RENT_EPOCH);

@@ -4,12 +4,14 @@ use crate::{
     context::{IndexOfAccount, InstructionContext, TransactionContext},
     error::InstructionError,
     helpers::SerializedAccountMetadata,
+    system_instruction::MAX_PERMITTED_DATA_LENGTH,
     types::VecU8,
 };
 use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use core::mem;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
+use solana_program_entrypoint::{BPF_ALIGN_OF_U128, NON_DUP_MARKER};
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
     aligned_memory::{AlignedMemory, Pod},

@@ -1,10 +1,26 @@
-use crate::solana_program::message::{legacy, versions::SanitizedVersionedMessage, AddressLoader};
-use alloc::{
-    borrow::Cow,
-    vec::{self, Vec},
+use crate::{
+    common::limited_deserialize,
+    solana_program::{
+        ed25519_program,
+        instruction::CompiledInstruction,
+        message::{
+            legacy,
+            versions::{v0, v0::LoadedAddresses, SanitizedVersionedMessage},
+            AccountKeys,
+            MessageHeader,
+        },
+        nonce::NONCED_TX_MARKER_IX_INDEX,
+        secp256k1_program,
+        sysvar::instructions::{BorrowedAccountMeta, BorrowedInstruction},
+    },
+    system_instruction::SystemInstruction,
+    system_program,
 };
+// use crate::solana_program::message::AddressLoader;
+use alloc::{borrow::Cow, vec, vec::Vec};
 use core::convert::TryFrom;
 use hashbrown::HashSet;
+use solana_hash::Hash;
 use solana_pubkey::Pubkey;
 use solana_sanitize::Sanitize;
 #[deprecated(
@@ -69,33 +85,33 @@ pub enum SanitizedMessage {
     /// Sanitized legacy message
     Legacy(LegacyMessage<'static>),
     // /// Sanitized version #0 message with dynamically loaded addresses
-    // V0(v0::LoadedMessage<'static>),
+    V0(v0::LoadedMessage<'static>),
 }
 
 impl SanitizedMessage {
-    /// Create a sanitized message from a sanitized versioned message.
-    /// If the input message uses address tables, attempt to look up the
-    /// address for each table index.
-    pub fn try_new(
-        sanitized_msg: SanitizedVersionedMessage,
-        address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
-    ) -> Result<Self, SanitizeMessageError> {
-        Ok(match sanitized_msg.message {
-            VersionedMessage::Legacy(message) => {
-                SanitizedMessage::Legacy(LegacyMessage::new(message, reserved_account_keys))
-            }
-            VersionedMessage::V0(message) => {
-                let loaded_addresses =
-                    address_loader.load_addresses(&message.address_table_lookups)?;
-                SanitizedMessage::V0(v0::LoadedMessage::new(
-                    message,
-                    loaded_addresses,
-                    reserved_account_keys,
-                ))
-            }
-        })
-    }
+    // /// Create a sanitized message from a sanitized versioned message.
+    // /// If the input message uses address tables, attempt to look up the
+    // /// address for each table index.
+    // pub fn try_new(
+    //     sanitized_msg: SanitizedVersionedMessage,
+    //     address_loader: impl AddressLoader,
+    //     reserved_account_keys: &HashSet<Pubkey>,
+    // ) -> Result<Self, SanitizeMessageError> {
+    //     Ok(match sanitized_msg.message {
+    //         VersionedMessage::Legacy(message) => {
+    //             SanitizedMessage::Legacy(LegacyMessage::new(message, reserved_account_keys))
+    //         }
+    //         VersionedMessage::V0(message) => {
+    //             let loaded_addresses =
+    //                 address_loader.load_addresses(&message.address_table_lookups)?;
+    //             SanitizedMessage::V0(v0::LoadedMessage::new(
+    //                 message,
+    //                 loaded_addresses,
+    //                 reserved_account_keys,
+    //             ))
+    //         }
+    //     })
+    // }
 
     /// Create a sanitized legacy message
     pub fn try_from_legacy_message(
@@ -441,7 +457,8 @@ impl TransactionSignatureDetails {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::v0;
+    use crate::solana_program::{ed25519_program, secp256k1_program};
+    // use crate::message::v0;
 
     #[test]
     fn test_try_from_legacy_message() {

@@ -11,20 +11,20 @@ mod tests {
             bpf_loader_v4,
             bpf_loader_v4::{create_program_runtime_environment_v2, get_state_mut},
         },
+        rent,
+        solana_program::{
+            instruction::AccountMeta,
+            loader_v4,
+            loader_v4::LoaderV4Status,
+            loader_v4_instruction::LoaderV4Instruction,
+            sysvar,
+            sysvar::clock,
+        },
         test_helpers::{mock_process_instruction, new_test_sdk},
     };
     use fluentbase_sdk::SharedAPI;
-    use solana_program::{
-        clock,
-        clock::Slot,
-        instruction::AccountMeta,
-        loader_v4,
-        loader_v4::LoaderV4Status,
-        loader_v4_instruction::LoaderV4Instruction,
-        pubkey::Pubkey,
-        rent,
-        sysvar,
-    };
+    use solana_clock::Slot;
+    use solana_pubkey::Pubkey;
     use std::{fs::File, io::Read, path::Path, sync::Arc};
 
     pub fn load_all_invoked_programs<SDK: SharedAPI>(invoke_context: &mut InvokeContext<SDK>) {

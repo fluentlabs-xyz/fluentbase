@@ -1,11 +1,10 @@
-use crate::context::{BuiltinFunctionWithContext, InvokeContext};
 use crate::{
     bpf_loader,
     bpf_loader_deprecated,
-    // bpf_loader_upgradeable,
     clock::{Epoch, Slot},
-    fluentbase::loader_v4,
+    context::{BuiltinFunctionWithContext, InvokeContext},
     pubkey::Pubkey,
+    solana_program::{bpf_loader_upgradeable, loader_v4},
 };
 use alloc::{boxed::Box, sync::Arc};
 use core::{

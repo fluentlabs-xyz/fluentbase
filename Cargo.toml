@@ -57,19 +57,34 @@ solana-hash = { path = "../agave/sdk/hash", default-features = false }
 solana-slot-hashes = { path = "../agave/sdk/slot-hashes", default-features = false }
 solana-fee-calculator = { path = "../agave/sdk/fee-calculator", default-features = false }
 solana-program-error = { path = "../agave/sdk/program-error", default-features = false }
+solana-transaction-error = { path = "../agave/sdk/transaction-error", default-features = false }
 solana-sysvar-id = { path = "../agave/sdk/sysvar-id", default-features = false }
 solana-sdk-macro = { path = "../agave/sdk/macro", default-features = false }
 solana-serialize-utils = { path = "../agave/sdk/serialize-utils", default-features = false }
 solana-last-restart-slot = { path = "../agave/sdk/last-restart-slot", default-features = false }
 solana-slot-history = { path = "../agave/sdk/slot-history", default-features = false }
 solana-sha256-hasher = { path = "../agave/sdk/sha256-hasher", default-features = false }
-solana-entrypoint = { path = "../agave/sdk/program-entrypoint", default-features = false }
+solana-decode-error = { path = "../agave/sdk/decode-error", default-features = false }
+solana-program-entrypoint = { path = "../agave/sdk/program-entrypoint", default-features = false }
+solana-feature-set = { path = "../agave/sdk/feature-set", default-features = false }
+solana-program-memory = { path = "../agave/sdk/program-memory", default-features = false }
+solana-stable-layout = { path = "../agave/sdk/stable-layout", default-features = false }
 #solana-poseidon = { path = "../agave/poseidon", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 
+serde_bytes = { version = "0.11.15", default-features = false }
+bytemuck = { version = "1.19.0", default-features = false }
+bytemuck_derive = { version = ">=1.8.0, <1.9.0", default-features = false }
+blake3 = { version = "1.5.4", default-features = false }
+static_assertions = { version = "1.1.0", default-features = false }
+base64 = { version = "0.22.1", default-features = false }
+memoffset = { version = "0.9.1", default-features = false }
+serial_test = { version = "3.2.0", default-features = false }
+test-case = { version = "3.3.1", default-features = false }
+spin = { version = "0.10.0", default-features = false }
 bitflags = { version = "2.9.0", default-features = false, features = [] }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }

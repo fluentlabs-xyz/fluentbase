@@ -2,8 +2,9 @@
 //!
 //! This is the loader of the program runtime v2.
 
+use crate::{solana_program::loader_v4_instruction::LoaderV4Instruction, system_instruction};
 use alloc::{vec, vec::Vec};
-use solana_instruction::Instruction;
+use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::{declare_id, Pubkey};
 
 declare_id!("LoaderV411111111111111111111111111111111111");

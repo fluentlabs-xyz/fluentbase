@@ -1,4 +1,6 @@
 use crate::{
+    bpf_loader,
+    bpf_loader_deprecated,
     common::{
         common_close_account,
         limited_deserialize,
@@ -12,30 +14,29 @@ use crate::{
     declare_builtin_function,
     deploy_program,
     error::InstructionError,
-    feature_set::{
-        bpf_account_data_direct_mapping,
-        enable_bpf_loader_extend_program_ix,
-        enable_bpf_loader_set_authority_checked_ix,
-    },
     loaded_programs::{LoadedProgram, LoadedProgramType},
     native_loader,
     serialization,
+    solana_program::{
+        bpf_loader_upgradeable,
+        bpf_loader_upgradeable::UpgradeableLoaderState,
+        instruction::AccountMeta,
+        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
+    },
+    system_instruction,
+    system_instruction::MAX_PERMITTED_DATA_LENGTH,
     sysvar_cache::get_sysvar_with_account_check,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use fluentbase_sdk::SharedAPI;
-use solana_program::{
-    bpf_loader,
-    bpf_loader_deprecated,
-    bpf_loader_upgradeable,
-    bpf_loader_upgradeable::UpgradeableLoaderState,
-    entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-    instruction::AccountMeta,
-    loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-    pubkey::{Pubkey, PubkeyError},
-    system_instruction,
-    system_instruction::MAX_PERMITTED_DATA_LENGTH,
+use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
+use solana_feature_set::{
+    bpf_account_data_direct_mapping,
+    enable_bpf_loader_extend_program_ix,
+    enable_bpf_loader_set_authority_checked_ix,
 };
+use solana_program_entrypoint::SUCCESS;
+use solana_pubkey::{declare_id, Pubkey, PubkeyError};
 use solana_rbpf::{
     elf::Executable,
     error::{EbpfError, ProgramResult},

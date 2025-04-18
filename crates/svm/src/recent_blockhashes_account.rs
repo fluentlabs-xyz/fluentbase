@@ -93,10 +93,8 @@ mod tests {
     use super::*;
     use crate::{
         account_utils::from_account,
-        solana_program::{
-            hash::{Hash, HASH_BYTES},
-            sysvar::recent_blockhashes::Entry,
-        },
+        hash::{Hash, HASH_BYTES},
+        solana_program::sysvar::recent_blockhashes::Entry,
     };
     use alloc::{vec, vec::Vec};
     use rand::{seq::SliceRandom, thread_rng};

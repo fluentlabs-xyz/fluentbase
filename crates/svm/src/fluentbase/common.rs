@@ -4,6 +4,9 @@ use crate::{
     helpers::{storage_read_account_data, storage_write_account_data},
     loaders::bpf_loader_v4,
     native_loader,
+    pubkey::Pubkey,
+    solana_program::{loader_v4, message::legacy, sysvar},
+    system_program,
 };
 use alloc::vec::Vec;
 use fluentbase_sdk::{ExitCode, SharedAPI, StorageAPI, SyscallResult, U256};
@@ -11,14 +14,6 @@ use hashbrown::{HashMap, HashSet};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use solana_program::{
-    bpf_loader_upgradeable,
-    loader_v4,
-    message::legacy,
-    pubkey::Pubkey,
-    system_program,
-    sysvar,
-};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct BatchMessage {
@@ -57,7 +52,7 @@ lazy_static! {
         let mut set = HashSet::new();
         set.insert(system_program::id());
         set.insert(native_loader::id());
-        set.insert(bpf_loader_upgradeable::id());
+        // set.insert(bpf_loader_upgradeable::id());
         set.insert(loader_v4::id());
         set.insert(sysvar::clock::id());
         set.insert(sysvar::rent::id());

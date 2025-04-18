@@ -117,7 +117,7 @@ mod tests {
     use super::*;
     use crate::nonce_current::{Data, DurableNonce};
     use core::iter::repeat_with;
-    use solana_program::{fee_calculator::FeeCalculator, hash::Hash};
+    use solana_fee_calculator::FeeCalculator;
 
     #[test]
     fn test_verify_recent_blockhash() {
