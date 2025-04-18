@@ -70,7 +70,7 @@ test-case = { workspace = true }
 [features]
 default = [
     "std",
-    "borsh",
+    #    "borsh",
 ]
 borsh = [
     #    "solana-program/borsh"

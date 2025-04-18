@@ -1012,8 +1012,7 @@ checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 [[package]]
 name = "bv"
 version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8834bb1d8ee5dc048ee3124f2c7c1afcc6bc9aed03f11e9dfd8c69470a5db340"
+source = "git+https://github.com/fluentlabs-xyz/bv-rs?branch=feat%2Fsvm-0.11.1#f8ce6481356162e86b2daf9860077f737290a06c"
 dependencies = [
  "feature-probe",
  "serde",
@@ -5986,14 +5985,11 @@ name = "solana-instruction"
 version = "2.1.18"
 dependencies = [
  "bincode 1.3.3 (git+https://github.com/fluentlabs-xyz/bincode?branch=feat%2Fsvm-v1.3.3)",
- "getrandom 0.2.15",
- "js-sys",
  "num-traits",
  "serde",
  "serde_derive",
  "solana-define-syscall",
  "solana-pubkey",
- "wasm-bindgen",
 ]
 
 [[package]]
