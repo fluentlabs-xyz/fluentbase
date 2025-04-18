@@ -47,7 +47,7 @@ solana-stable-layout = { workspace = true, default-features = false, features = 
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
 serde_json = { workspace = true, default-features = false, features = ["alloc"] }
 blake3 = { workspace = true, default-features = false, features = ["serde", ] }
-hex-literal = { workspace = true, features = [] }
+hex-literal = { workspace = true, default-features = false, features = [] }
 base64 = { workspace = true, default-features = false, features = ["alloc"] }
 bitflags = { workspace = true, default-features = false, features = ["serde"] }
 bytemuck = { workspace = true, default-features = false, features = [] }
@@ -70,10 +70,6 @@ test-case = { workspace = true }
 [features]
 default = [
     "std",
-    #    "borsh",
-]
-borsh = [
-    #    "solana-program/borsh"
 ]
 std = [
     "fluentbase-sdk/std",

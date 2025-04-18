@@ -15,7 +15,7 @@ fluentbase-sdk = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
 
-fluentbase-svm = { workspace = true }
+fluentbase-svm = { workspace = true, default-features = false }
 
 rwasm = { workspace = true }
 revm = { workspace = true }

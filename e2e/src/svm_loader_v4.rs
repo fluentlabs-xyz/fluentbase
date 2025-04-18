@@ -13,17 +13,17 @@ mod tests {
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bincode,
         common::pubkey_from_address,
-        r#mod::common::BatchMessage,
         solana_program::{
             instruction::Instruction,
             loader_v4,
             message::Message,
-            pubkey::Pubkey,
-            rent::Rent,
         },
     };
     use hex_literal::hex;
     use std::{fs::File, io::Read};
+    use fluentbase_svm::fluentbase::common::BatchMessage;
+    use fluentbase_svm::pubkey::Pubkey;
+    use fluentbase_svm::rent::Rent;
 
     pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
         let mut file = File::open(path).expect("file open failed");
