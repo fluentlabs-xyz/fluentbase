@@ -11,3 +11,8 @@ path = "src/solana_program.rs"
 #solana-program = { git = "https://github.com/fluentlabs-xyz/solana", branch = "feat/svm", default-features = false }
 #solana-program = { path = "../../../../../solana/sdk/program", default-features = false }
 #solana-program = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false }
+solana-account-info = { workspace = true, default-features = false }
+solana-program-entrypoint = { workspace = true, default-features = false }
+solana-program-error = { workspace = true, default-features = false }
+solana-msg = { workspace = true, default-features = false }

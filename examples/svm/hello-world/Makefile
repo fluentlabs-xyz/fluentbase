@@ -33,5 +33,5 @@ INPUT_NAME=hello_world
 .PHONY: build_cargo_powered_solana_program
 build_cargo_powered_solana_program:
 	#$(SOLANA_ROOT)/cargo-build-sbf -- -Znext-lockfile-bump
-	cargo build-sbf -- -Znext-lockfile-bump
+	cargo build-sbf -j1 -- -Znext-lockfile-bump
 	cp ../../../target/sbf-solana-solana/release/fluentbase_examples_svm_$(INPUT_NAME).so assets/hello_world.so

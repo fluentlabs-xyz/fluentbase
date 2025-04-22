@@ -1,14 +1,18 @@
 #![feature(error_in_core)]
 
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint,
-    entrypoint::ProgramResult,
-    keccak::hash as keccak_hash,
-    msg,
-    poseidon::{hash as poseidon_hash, Endianness, Parameters},
-    pubkey::Pubkey,
-};
+// use solana_program::{
+//     account_info::AccountInfo,
+//     entrypoint,
+//     entrypoint::ProgramResult,
+//     keccak::hash as keccak_hash,
+//     msg,
+//     poseidon::{hash as poseidon_hash, Endianness, Parameters},
+//     pubkey::Pubkey,
+// };
+
+use solana_account_info::AccountInfo;
+use solana_program_entrypoint::{__msg, entrypoint, ProgramResult};
+use solana_pubkey::Pubkey;
 
 pub fn process_instruction(
     program_id: &Pubkey,
@@ -16,9 +20,9 @@ pub fn process_instruction(
     instruction_data: &[u8],
 ) -> ProgramResult {
     // log a message to the blockchain
-    msg!("This is message from 'example solana program. program_id {:?} accounts {} instruction_data {:x?}", program_id, accounts.len(), instruction_data);
+    __msg!("This is message from 'example solana program. program_id {:?} accounts {} instruction_data {:x?}", program_id, accounts.len(), instruction_data);
     let message = "it is some message";
-    msg!("message='{}'", &message);
+    __msg!("message='{}'", &message);
     // TODO bug in `keccak_hash` function doesnt allow to pass tests
     // let keccak_hash_res = keccak_hash(message.as_bytes());
     // msg!("message's keccak_hash_res={:x?}", &keccak_hash_res.to_bytes());

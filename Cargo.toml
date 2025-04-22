@@ -91,6 +91,8 @@ solana-feature-set = { git = "https://github.com/fluentlabs-xyz/agave", branch =
 solana-program-memory = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 #solana-stable-layout = { path = "../agave/sdk/stable-layout", default-features = false }
 solana-stable-layout = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+#solana-msg = { path = "../agave/sdk/msg", default-features = false }
+solana-msg = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 #solana-poseidon = { path = "../agave/poseidon", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
