@@ -4,6 +4,7 @@ members = [
     "crates/*",
     "revm/crates/*",
     "crates/rwasm/e2e",
+    "examples/*",
     "e2e",
     "examples/svm/hello-world"
 ]

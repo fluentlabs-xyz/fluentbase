@@ -11,8 +11,8 @@ build:
 examples:
 	cd examples && $(MAKE)
 
-.PHONY: clean
-clean:
+.PHONY: clear
+clear:
 	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE) clean; fi
 	cargo clean
 	find . -type f | grep -iP "lib\.wa(sm|t)" | grep -viP "/fairblock/" | xargs rm

@@ -28,6 +28,4 @@ bytes = "1.0"
 
 [features]
 default = ["std"]
-std = [
-    #    "darling/default"
-]
+std = []

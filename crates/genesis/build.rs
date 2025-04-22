@@ -234,8 +234,8 @@ mod genesis_builder {
         );
         const PRECOMPILE_EVM: &[u8] = include_bytes!("../../contracts/evm/lib.wasm");
         init_contract(&mut alloc, "evm", PRECOMPILE_EVM_RUNTIME, PRECOMPILE_EVM);
-        // const PRECOMPILE_SVM: &[u8] = include_bytes!("../../contracts/svm/lib.wasm");
-        // init_contract(&mut alloc, "svm", PRECOMPILE_SVM_RUNTIME, PRECOMPILE_SVM);
+        const PRECOMPILE_SVM: &[u8] = include_bytes!("../../contracts/svm/lib.wasm");
+        init_contract(&mut alloc, "svm", PRECOMPILE_SVM_RUNTIME, PRECOMPILE_SVM);
 
         Genesis {
             config: devnet_chain_config(),

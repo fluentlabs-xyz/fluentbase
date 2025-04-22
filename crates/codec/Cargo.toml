@@ -19,7 +19,7 @@ serde = { workspace = true, default-features = false }
 casey = { workspace = true }
 paste = { workspace = true }
 bytes = { workspace = true, default-features = false }
-fluentbase-codec-derive = { workspace = true, default-features = false }
+fluentbase-codec-derive = { workspace = true }
 
 [dev-dependencies]
 hex = "0.4.3"
