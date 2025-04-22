@@ -5443,18 +5443,18 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#970dcd21fb36e09c8d3e68a8e73ded28f428055e"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#cb1a6a1827d694607b42cad1d020563e8684f47a"
 dependencies = [
  "byteorder",
  "downcast-rs",
- "hashbrown 0.15.2",
+ "hashbrown 0.14.5",
  "libm",
  "num-traits",
  "paste",
  "smallvec",
  "spin 0.9.8",
- "strum 0.27.1",
- "strum_macros 0.27.1",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
  "wasmparser-nostd",
 ]
 
