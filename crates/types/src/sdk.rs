@@ -6,6 +6,7 @@ use crate::{
     ExitCode,
     SyscallResult,
     B256,
+    FUEL_DENOM_RATE,
     U256,
 };
 
@@ -39,7 +40,16 @@ pub trait SharedAPI: StorageAPI {
         buffer
     }
 
-    fn charge_fuel(&self, value: u64);
+    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64);
+
+    fn sync_evm_gas(&self, gas_consumed: u64, gas_refunded: i64) {
+        // TODO(dmitry123): "do we care about overflow here?"
+        self.charge_fuel(
+            gas_consumed * FUEL_DENOM_RATE,
+            gas_refunded * FUEL_DENOM_RATE as i64,
+        );
+    }
+
     fn fuel(&self) -> u64;
 
     fn write(&mut self, output: &[u8]);
@@ -75,8 +85,6 @@ pub trait SharedAPI: StorageAPI {
         address: &Address,
         slot: &U256,
     ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)>;
-
-    fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()>;
 
     fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes>;
     fn preimage_size(&self, hash: &B256) -> SyscallResult<u32>;

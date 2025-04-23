@@ -4,14 +4,16 @@
 extern crate alloc;
 extern crate core;
 
-// #[cfg(test)]
-// mod bench;
+#[cfg(test)]
+mod bench;
 #[cfg(test)]
 mod bridge;
 #[cfg(test)]
 mod constructor;
 #[cfg(test)]
 mod evm;
+#[cfg(test)]
+mod examples;
 #[cfg(test)]
 mod gas;
 #[cfg(test)]

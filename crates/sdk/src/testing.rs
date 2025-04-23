@@ -14,6 +14,7 @@ use fluentbase_types::{
     SharedContextReader,
     StorageAPI,
     SyscallResult,
+    FUEL_DENOM_RATE,
 };
 use hashbrown::HashMap;
 use std::ops::AddAssign;
@@ -51,8 +52,16 @@ impl TestingContext {
             .change_input(input.into());
         self
     }
-    pub fn synced_gas(&self) -> (u64, i64) {
-        self.inner.borrow_mut().synced_evm_gas
+    pub fn with_fuel_limit(self, fuel_limit: u64) -> Self {
+        self.inner.borrow_mut().native_sdk.set_fuel(fuel_limit);
+        self
+    }
+    pub fn with_gas_limit(self, gas_limit: u64) -> Self {
+        self.inner
+            .borrow_mut()
+            .native_sdk
+            .set_fuel(gas_limit * FUEL_DENOM_RATE);
+        self
     }
     pub fn take_output(&self) -> Vec<u8> {
         self.inner.borrow_mut().native_sdk.take_output()
@@ -72,28 +81,6 @@ struct TestingContextInner {
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     preimages: HashMap<B256, Bytes>,
-    synced_evm_gas: (u64, i64),
-    balances: HashMap<Address, U256>,
-}
-
-impl TestingContext {
-    pub fn set_balance(&mut self, address: Address, balance: U256) {
-        self.inner.borrow_mut().balances.insert(address, balance);
-    }
-    pub fn add_balance(&mut self, address: Address, balance: U256) {
-        if balance.is_zero() {
-            return;
-        }
-        let mut current = self
-            .inner
-            .borrow()
-            .balances
-            .get(&address)
-            .unwrap_or(&U256::ZERO)
-            .clone();
-        current.add_assign(balance);
-        self.set_balance(address, current);
-    }
 }
 
 impl Default for TestingContext {
@@ -106,8 +93,6 @@ impl Default for TestingContext {
                 transient_storage: Default::default(),
                 logs: vec![],
                 preimages: Default::default(),
-                synced_evm_gas: (0, 0),
-                balances: Default::default(),
             })),
         }
     }
@@ -152,8 +137,11 @@ impl SharedAPI for TestingContext {
         self.inner.borrow().native_sdk.input_size()
     }
 
-    fn charge_fuel(&self, value: u64) {
-        self.inner.borrow().native_sdk.charge_fuel(value);
+    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64) {
+        self.inner
+            .borrow()
+            .native_sdk
+            .charge_fuel(fuel_consumed, fuel_refunded);
     }
 
     fn fuel(&self) -> u64 {
@@ -203,13 +191,6 @@ impl SharedAPI for TestingContext {
         SyscallResult::new((value, false, false), 0, 0, 0)
     }
 
-    fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()> {
-        let mut ctx = self.inner.borrow_mut();
-        ctx.synced_evm_gas.0 += gas_remaining;
-        ctx.synced_evm_gas.1 += gas_refunded;
-        SyscallResult::new((), 0, 0, 0)
-    }
-
     fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes> {
         let value = self
             .inner
@@ -238,13 +219,11 @@ impl SharedAPI for TestingContext {
     }
 
     fn self_balance(&self) -> SyscallResult<U256> {
-        self.balance(&self.context().contract_address())
+        panic!("not supported for testing context")
     }
 
-    fn balance(&self, address: &Address) -> SyscallResult<U256> {
-        let binding = self.inner.borrow();
-        let res = binding.balances.get(address);
-        SyscallResult::new(res.unwrap_or(&U256::ZERO).clone(), 0, 0, 0)
+    fn balance(&self, _address: &Address) -> SyscallResult<U256> {
+        panic!("not supported for testing context")
     }
 
     fn code_size(&self, _address: &Address) -> SyscallResult<u32> {

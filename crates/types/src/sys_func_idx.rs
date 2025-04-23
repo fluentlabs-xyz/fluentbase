@@ -25,8 +25,8 @@ pub enum SysFuncIdx {
     // hashing
     KECCAK256 = 0x0101,
     KECCAK256_PERMUTE = 0x0102,
-    POSEIDON = 0x0103,
-    POSEIDON_HASH = 0x0104,
+    // POSEIDON = 0x0103,
+    // POSEIDON_HASH = 0x0104,
     SHA256_EXTEND = 0x0105,
     SHA256_COMPRESS = 0x0106,
 
@@ -83,8 +83,6 @@ impl SysFuncIdx {
             SysFuncIdx::INPUT_SIZE => 1,
             SysFuncIdx::WRITE_OUTPUT => 1,
             SysFuncIdx::KECCAK256 => 1,
-            SysFuncIdx::POSEIDON => 1,
-            SysFuncIdx::POSEIDON_HASH => 1,
             SysFuncIdx::SECP256K1_RECOVER => 1,
             _ => 1, //unreachable!("not configured fuel for opcode: {:?}", self),
         }

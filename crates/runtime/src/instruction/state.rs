@@ -1,11 +1,11 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
+use rwasm_executor::{Caller, RwasmError};
 
 pub struct SyscallState;
 
 impl SyscallState {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let state = Self::fn_impl(caller.data());
+        let state = Self::fn_impl(caller.context());
         caller.stack_push(state);
         Ok(())
     }

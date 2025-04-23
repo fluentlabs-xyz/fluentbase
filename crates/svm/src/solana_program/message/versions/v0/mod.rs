@@ -11,16 +11,19 @@
 
 mod loaded;
 
-use crate::solana_program::{
-    address_lookup_table::AddressLookupTableAccount,
-    bpf_loader_upgradeable,
-    instruction::CompiledInstruction,
-    message::{
-        compiled_keys::CompiledKeys,
-        versions::MESSAGE_VERSION_PREFIX,
-        AccountKeys,
-        CompileError,
-        MessageHeader,
+use crate::{
+    common::BINCODE_DEFAULT_CONFIG,
+    solana_program::{
+        address_lookup_table::AddressLookupTableAccount,
+        bpf_loader_upgradeable,
+        instruction::CompiledInstruction,
+        message::{
+            compiled_keys::CompiledKeys,
+            versions::MESSAGE_VERSION_PREFIX,
+            AccountKeys,
+            CompileError,
+            MessageHeader,
+        },
     },
 };
 use alloc::{vec, vec::Vec};
@@ -216,7 +219,14 @@ impl Message {
 
     /// Serialize this message with a version #0 prefix using bincode encoding.
     pub fn serialize(&self) -> Vec<u8> {
-        bincode::serialize(&(MESSAGE_VERSION_PREFIX, self)).unwrap()
+        let mut buf = vec![];
+        bincode::encode_into_slice(
+            &(MESSAGE_VERSION_PREFIX, self),
+            &mut buf,
+            BINCODE_DEFAULT_CONFIG.clone(),
+        )
+        .unwrap();
+        buf
     }
 
     /// Returns true if the account at the specified index is called as a program by an instruction

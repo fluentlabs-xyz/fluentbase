@@ -85,7 +85,7 @@ extern "C" {
         fuel16_ptr: *mut [i64; 2],
     ) -> i32;
 
-    pub fn _charge_fuel(delta: u64) -> u64;
+    pub fn _charge_fuel(fuel_consumed: u64, fuel_refunded: i64) -> u64;
     pub fn _fuel() -> u64;
 
     /// Journaled ZK Trie methods to work with blockchain state
@@ -118,13 +118,6 @@ extern "C" {
     /// memory.
     pub fn _keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     pub fn _keccak256_permute(state_ptr: *mut [u64; 25]);
-    pub fn _poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    pub fn _poseidon_hash(
-        fa32_offset: *const u8,
-        fb32_offset: *const u8,
-        fd32_offset: *const u8,
-        output32_offset: *mut u8,
-    );
     pub fn _sha256_extend(w_ptr: *mut u8);
     pub fn _sha256_compress(w_ptr: *mut u8, h_ptr: *const u8);
 

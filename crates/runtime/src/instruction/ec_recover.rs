@@ -1,5 +1,4 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::{ExitCode, B256};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
@@ -7,6 +6,7 @@ use k256::{
     EncodedPoint,
     PublicKey,
 };
+use rwasm_executor::{Caller, RwasmError};
 
 pub struct SyscallEcrecover;
 

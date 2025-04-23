@@ -1,11 +1,11 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
+use rwasm_executor::{Caller, RwasmError};
 
 pub struct SyscallInputSize;
 
 impl SyscallInputSize {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let input_size = Self::fn_impl(caller.data());
+        let input_size = Self::fn_impl(caller.context());
         caller.stack_push(input_size);
         Ok(())
     }

@@ -1,7 +1,12 @@
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     bincode,
-    common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_address},
+    common::{
+        calculate_max_chunk_size,
+        lamports_from_evm_balance,
+        pubkey_from_address,
+        BINCODE_DEFAULT_CONFIG,
+    },
     fluentbase::{
         common::{process_svm_result, BatchMessage, MemStorage},
         helpers_v2::{exec_encoded_svm_batch_message, exec_svm_batch_message},
@@ -23,7 +28,7 @@ use fluentbase_sdk::{
     SharedAPI,
 };
 
-pub fn deploy(mut sdk: impl SharedAPI) {
+pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log!("loader_v4: deploy started");
     debug_log!("deploy: block_number: {:?}", sdk.context().block_number());
     let mut mem_storage = MemStorage::new();
@@ -126,11 +131,17 @@ pub fn deploy(mut sdk: impl SharedAPI) {
     debug_log!("after deploy: payer_account_data {:x?}", payer_account_data);
     debug_log!("after deploy: exec_account_data {:x?}", exec_account_data);
 
-    let preimage: Bytes = bincode::serialize(&exec_account_data).unwrap().into();
+    let mut preimage = vec![];
+    bincode::encode_into_slice(
+        &exec_account_data,
+        &mut preimage,
+        BINCODE_DEFAULT_CONFIG.clone(),
+    )?;
+    let preimage: Bytes = preimage.into();
     let _ = write_protected_preimage(&mut sdk, preimage);
 }
 
-pub fn main(mut sdk: impl SharedAPI) {
+pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     let input = sdk.input();
     let preimage = read_protected_preimage(&sdk);
     let contract_address = sdk.context().contract_address();
@@ -139,8 +150,9 @@ pub fn main(mut sdk: impl SharedAPI) {
     let loader_id = loader_v4::id();
 
     let pk_exec = pubkey_from_address(contract_address);
-    let mut exec_account_data: AccountSharedData =
-        bincode::deserialize(preimage.as_ref()).expect("preimage doesnt contain account data");
+    let (mut exec_account_data, _): (AccountSharedData, usize) =
+        bincode::decode_from_slice(preimage.as_ref(), BINCODE_DEFAULT_CONFIG.clone())
+            .expect("preimage doesnt contain account data");
     exec_account_data.set_lamports(lamports_from_evm_balance(
         sdk.balance(&contract_address).data,
     ));

@@ -13,6 +13,7 @@
 
 use crate::{
     bpf_loader_deprecated,
+    common::BINCODE_DEFAULT_CONFIG,
     solana_program::{
         bpf_loader_upgradeable,
         instruction::CompiledInstruction,
@@ -296,7 +297,9 @@ impl Message {
     }
 
     pub fn serialize(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap()
+        let mut buf = vec![];
+        bincode::encode_into_slice(self, &mut buf, BINCODE_DEFAULT_CONFIG.clone()).unwrap();
+        buf
     }
 
     pub fn program_id(&self, instruction_index: usize) -> Option<&Pubkey> {

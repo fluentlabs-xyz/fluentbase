@@ -572,7 +572,8 @@ impl core::error::Error for TransactionError {}
 #[derive(Debug)]
 pub enum SvmError {
     TransactionError(TransactionError),
-    BincodeError(bincode::Error),
+    BincodeEncodeError(bincode::error::EncodeError),
+    BincodeDecodeError(bincode::error::DecodeError),
     ExitCode(ExitCode),
     InstructionError(InstructionError),
 }
@@ -589,9 +590,15 @@ impl From<ExitCode> for SvmError {
     }
 }
 
-impl From<bincode::Error> for SvmError {
-    fn from(value: bincode::Error) -> Self {
-        SvmError::BincodeError(value)
+impl From<bincode::error::EncodeError> for SvmError {
+    fn from(value: bincode::error::EncodeError) -> Self {
+        SvmError::BincodeEncodeError(value)
+    }
+}
+
+impl From<bincode::error::DecodeError> for SvmError {
+    fn from(value: bincode::error::DecodeError) -> Self {
+        SvmError::BincodeDecodeError(value)
     }
 }
 

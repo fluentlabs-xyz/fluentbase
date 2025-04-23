@@ -128,7 +128,7 @@ fn test_evm_create_and_send() {
     let result = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
-        include_bytes!("../../examples/greeting/lib.wasm").into(),
+        crate::examples::EXAMPLE_GREETING.into(),
     )
     .enable_rwasm_proxy()
     .gas_price(gas_price)
@@ -162,7 +162,7 @@ fn test_evm_revert() {
     let result = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
-        include_bytes!("../../examples/greeting/lib.wasm").into(),
+        crate::examples::EXAMPLE_GREETING.into(),
     )
     .enable_rwasm_proxy()
     .gas_price(gas_price)
@@ -173,7 +173,7 @@ fn test_evm_revert() {
     let contract_address = calc_create_address::<TestingContextNativeAPI>(&SENDER_ADDRESS, 1);
     println!("{}", contract_address);
     assert!(result.is_success());
-    assert_eq!(result.gas_used(), 60697);
+    assert_eq!(result.gas_used(), 60875);
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
 }
@@ -322,10 +322,7 @@ fn test_evm_balance() {
 fn test_wasm_erc20() {
     let mut ctx = EvmTestingContext::default();
     const OWNER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(
-        OWNER_ADDRESS,
-        include_bytes!("../../examples/erc20/lib.wasm").into(),
-    );
+    let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, crate::examples::EXAMPLE_ERC20.into());
     let transfer_coin = |ctx: &mut EvmTestingContext| {
         let result = ctx.call_evm_tx(
             OWNER_ADDRESS,

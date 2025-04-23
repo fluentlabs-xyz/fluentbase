@@ -10,10 +10,11 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+fluentbase-types = { workspace = true }
 serde = { workspace = true, default-features = false }
 serde_json = { version = "1.0", default-features = false }
 alloy-genesis = { workspace = true, default-features = false }
-fluentbase-types = { workspace = true }
+lazy_static = { workspace = true }
 
 [build-dependencies]
 fluentbase-types = { workspace = true }
@@ -22,24 +23,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 fluentbase-build = { workspace = true }
 cargo_metadata = "0.19.1"
-
-# we need these deps to ensure build order when generating genesis
-fluentbase-contracts-blake2f = { path = "../../contracts/blake2f", optional = true }
-fluentbase-contracts-bls12381 = { path = "../../contracts/bls12381", optional = true }
-fluentbase-contracts-bn256 = { path = "../../contracts/bn256", optional = true }
-fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover", optional = true }
-fluentbase-contracts-erc20 = { path = "../../contracts/erc20", optional = true }
-fluentbase-contracts-evm = { path = "../../contracts/evm", optional = true }
-fluentbase-contracts-fairblock = { path = "../../contracts/fairblock", optional = true }
-fluentbase-contracts-identity = { path = "../../contracts/identity", optional = true }
-fluentbase-contracts-kzg = { path = "../../contracts/kzg", optional = true }
-fluentbase-contracts-modexp = { path = "../../contracts/modexp", optional = true }
-fluentbase-contracts-multicall = { path = "../../contracts/multicall", optional = true }
-fluentbase-contracts-nitro = { path = "../../contracts/nitro", optional = true }
-fluentbase-contracts-oauth2 = { path = "../../contracts/oauth2", optional = true }
-fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160", optional = true }
-fluentbase-contracts-sha256 = { path = "../../contracts/sha256", optional = true }
-fluentbase-contracts-webauthn = { path = "../../contracts/webauthn", optional = true }
 
 [features]
 default = ["std"]
@@ -50,21 +33,5 @@ std = [
     "serde_json/std",
     "generate-genesis",
 ]
-generate-genesis = [
-    "dep:fluentbase-contracts-blake2f",
-    "dep:fluentbase-contracts-bls12381",
-    "dep:fluentbase-contracts-bn256",
-    "dep:fluentbase-contracts-ecrecover",
-    "dep:fluentbase-contracts-erc20",
-    "dep:fluentbase-contracts-evm",
-    "dep:fluentbase-contracts-fairblock",
-    "dep:fluentbase-contracts-identity",
-    "dep:fluentbase-contracts-kzg",
-    "dep:fluentbase-contracts-modexp",
-    "dep:fluentbase-contracts-multicall",
-    "dep:fluentbase-contracts-nitro",
-    "dep:fluentbase-contracts-oauth2",
-    "dep:fluentbase-contracts-ripemd160",
-    "dep:fluentbase-contracts-sha256",
-    "dep:fluentbase-contracts-webauthn",
-]
+generate-genesis = []
+bls12 = []

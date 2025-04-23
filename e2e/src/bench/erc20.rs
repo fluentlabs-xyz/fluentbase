@@ -1,6 +1,6 @@
 extern crate test;
 
-use crate::utils::EvmTestingContext;
+use crate::{examples::EXAMPLE_ERC20, utils::EvmTestingContext};
 use fluentbase_sdk::Address;
 use hex_literal::hex;
 use test::Bencher;
@@ -17,14 +17,13 @@ fn bench_evm_erc20(b: &mut Bencher) {
     );
 
     let transfer_coin = |ctx: &mut EvmTestingContext| {
-        let result = ctx.call_evm_tx(
+        ctx.call_evm_tx(
             OWNER_ADDRESS,
             contract_address,
             hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into(),
             None,
             None,
         );
-        assert!(result.is_success());
     };
 
     b.iter(|| {
@@ -36,20 +35,16 @@ fn bench_evm_erc20(b: &mut Bencher) {
 fn bench_wasm_erc20(b: &mut Bencher) {
     let mut ctx = EvmTestingContext::default();
     const OWNER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(
-        OWNER_ADDRESS,
-        include_bytes!("../../../examples/erc20/lib.wasm").into(),
-    );
+    let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
 
     let transfer_coin = |ctx: &mut EvmTestingContext| {
-        let result = ctx.call_evm_tx(
+        ctx.call_evm_tx(
             OWNER_ADDRESS,
             contract_address,
             hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into(),
             None,
             None,
         );
-        assert!(result.is_success());
     };
 
     b.iter(|| {

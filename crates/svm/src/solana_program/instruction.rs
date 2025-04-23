@@ -1,6 +1,8 @@
-use crate::solana_program::program_stubs;
+use crate::{
+    common::{bincode_serialize, BINCODE_DEFAULT_CONFIG},
+    solana_program::program_stubs,
+};
 use alloc::{vec, vec::Vec};
-use bincode::serialize;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::AbiExample;
@@ -40,11 +42,11 @@ impl Sanitize for CompiledInstruction {}
 
 impl CompiledInstruction {
     pub fn new<T: Serialize>(program_ids_index: u8, data: &T, accounts: Vec<u8>) -> Self {
-        let data = serialize(data).unwrap();
+        let (buf, _) = bincode_serialize(data).unwrap();
         Self {
             program_id_index: program_ids_index,
             accounts,
-            data,
+            data: buf,
         }
     }
 

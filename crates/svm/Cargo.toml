@@ -46,7 +46,7 @@ solana-stable-layout = { workspace = true, default-features = false, features = 
 
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
 serde_json = { workspace = true, default-features = false, features = ["alloc"] }
-blake3 = { workspace = true, default-features = false, features = ["serde", ] }
+blake3 = { workspace = true, default-features = false, features = ["serde"] }
 hex-literal = { workspace = true, features = [] }
 base64 = { workspace = true, default-features = false, features = ["alloc"] }
 bitflags = { workspace = true, default-features = false, features = ["serde"] }
@@ -56,7 +56,7 @@ spin = { workspace = true, default-features = false, features = ["spin_mutex", "
 
 num-derive = { workspace = true, default-features = false }
 serde = { workspace = true, default-features = false }
-bincode = { workspace = true, default-features = false }
+bincode = { workspace = true, default-features = false, features = ["alloc", "serde", "derive", "bincode_derive"] }
 lazy_static = { workspace = true, default-features = false }
 keccak-hash = { workspace = true, default-features = false }
 itertools = { workspace = true, default-features = false, features = ["use_alloc"] }

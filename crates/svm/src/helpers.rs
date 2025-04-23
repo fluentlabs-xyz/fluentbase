@@ -103,6 +103,7 @@ use crate::{
         InheritableAccountFields,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
+    common::{bincode_serialized_size, BINCODE_DEFAULT_CONFIG},
     context::InvokeContext,
     error::SvmError,
     pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN},
@@ -703,7 +704,7 @@ pub fn create_account_with_fields<S: Sysvar>(
     sysvar: &S,
     (lamports, rent_epoch): InheritableAccountFields,
 ) -> Account {
-    let data_len = S::size_of().max(bincode::serialized_size(sysvar).unwrap() as usize);
+    let data_len = S::size_of().max(bincode_serialized_size(sysvar).unwrap());
     let mut account = Account::new(lamports, data_len, &solana_program::sysvar::id());
     to_account::<S, Account>(sysvar, &mut account).unwrap();
     account.rent_epoch = rent_epoch;
@@ -826,7 +827,10 @@ pub fn storage_read_account_data<SAPI: StorageAPI>(
         _phantom: Default::default(),
     };
     storage_writer.read_data(sapi, &mut buffer)?;
-    Ok(bincode::deserialize(&buffer)?)
+    Ok(bincode::decode_from_slice(
+        &buffer,
+        BINCODE_DEFAULT_CONFIG.clone(),
+    )?)
 }
 
 pub fn storage_write_account_data<SAPI: StorageAPI>(
@@ -838,7 +842,13 @@ pub fn storage_write_account_data<SAPI: StorageAPI>(
         slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
         _phantom: Default::default(),
     };
-    storage_writer.write_data(sapi, &bincode::serialize(account_data)?);
+    let mut data = vec![];
+    bincode::encode_into_slice(
+        account_data,
+        data.as_mut_slice(),
+        BINCODE_DEFAULT_CONFIG.clone(),
+    )?;
+    storage_writer.write_data(sapi, &data);
     Ok(())
 }
 

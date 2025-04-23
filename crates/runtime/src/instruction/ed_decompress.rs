@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
+use rwasm_executor::{Caller, RwasmError};
 use sp1_curves::{
     curve25519_dalek::CompressedEdwardsY,
     edwards::{ed25519::decompress, EdwardsParameters, WORDS_FIELD_ELEMENT},

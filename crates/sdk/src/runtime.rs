@@ -96,9 +96,9 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallFuel::fn_impl(&ctx)
     }
 
-    fn charge_fuel(&self, value: u64) -> u64 {
+    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
         let mut ctx = self.ctx.borrow_mut();
-        SyscallChargeFuel::fn_impl(&mut ctx, value)
+        SyscallChargeFuel::fn_impl(&mut ctx, fuel_consumed, fuel_refunded)
     }
 
     fn exec<I: Into<BytecodeOrHash>>(

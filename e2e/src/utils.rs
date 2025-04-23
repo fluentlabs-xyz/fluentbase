@@ -275,7 +275,7 @@ impl<'a> TxBuilder<'a> {
     }
 
     pub fn enable_rwasm_proxy(mut self) -> Self {
-        // self.env.cfg.enable_rwasm_proxy = true;
+        self.env.cfg.enable_rwasm_proxy = true;
         self
     }
 
@@ -360,7 +360,7 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
     println!("fuel consumed: {}", result.fuel_consumed);
     if result.exit_code != 0 {
         let logs = &runtime
-            .store()
+            .executor
             .tracer()
             .map(|v| v.logs.clone())
             .unwrap_or_default();
@@ -379,7 +379,7 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
         println!(
             "trace steps: {}",
             runtime
-                .store()
+                .executor
                 .tracer()
                 .map(|v| v.logs.len())
                 .unwrap_or_default()

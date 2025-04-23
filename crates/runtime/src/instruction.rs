@@ -14,8 +14,6 @@ pub mod input_size;
 pub mod keccak256;
 pub mod keccak256_permute;
 pub mod output_size;
-pub mod poseidon;
-pub mod poseidon_hash;
 pub mod preimage_copy;
 pub mod preimage_size;
 pub mod read;
@@ -48,8 +46,6 @@ use crate::{
         keccak256::SyscallKeccak256,
         keccak256_permute::SyscallKeccak256Permute,
         output_size::SyscallOutputSize,
-        poseidon::SyscallPoseidon,
-        poseidon_hash::SyscallPoseidonHash,
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
@@ -66,9 +62,9 @@ use crate::{
     },
     RuntimeContext,
 };
-use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::SysFuncIdx;
 use num::BigUint;
+use rwasm_executor::{Caller, RwasmError};
 use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{
@@ -100,8 +96,6 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::DEBUG_LOG => SyscallDebugLog::fn_handler(caller),
         SysFuncIdx::KECCAK256 => SyscallKeccak256::fn_handler(caller),
         SysFuncIdx::KECCAK256_PERMUTE => SyscallKeccak256Permute::fn_handler(caller),
-        SysFuncIdx::POSEIDON => SyscallPoseidon::fn_handler(caller),
-        SysFuncIdx::POSEIDON_HASH => SyscallPoseidonHash::fn_handler(caller),
         SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller),
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller),

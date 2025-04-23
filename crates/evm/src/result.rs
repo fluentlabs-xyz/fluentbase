@@ -1,5 +1,5 @@
 use crate::gas::Gas;
-use fluentbase_sdk::Bytes;
+use fluentbase_sdk::{Bytes, FUEL_DENOM_RATE};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -181,6 +181,8 @@ pub struct InterpreterResult {
     pub output: Bytes,
     /// The gas usage information.
     pub gas: Gas,
+    /// The committed gas usage information.
+    pub committed_gas: Gas,
 }
 
 impl InterpreterResult {
@@ -200,6 +202,15 @@ impl InterpreterResult {
     #[inline]
     pub const fn is_error(&self) -> bool {
         self.result.is_error()
+    }
+
+    pub fn chargeable_fuel_and_refund(&self) -> (u64, i64) {
+        let remaining_diff = self.committed_gas.remaining() - self.gas.remaining();
+        let refunded_diff = self.gas.refunded() - self.committed_gas.refunded();
+        (
+            remaining_diff * FUEL_DENOM_RATE,
+            refunded_diff * FUEL_DENOM_RATE as i64,
+        )
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
+use rwasm_executor::{Caller, RwasmError};
 
 pub(crate) struct SyscallSha256Extend;
 

@@ -1,7 +1,10 @@
 pub use crate::solana_program::stake_history::StakeHistory;
-use crate::solana_program::{
-    stake_history::{StakeHistoryEntry, StakeHistoryGetEntry, MAX_ENTRIES},
-    sysvar::{get_sysvar, Sysvar, SysvarId},
+use crate::{
+    common::bincode_deserialize,
+    solana_program::{
+        stake_history::{StakeHistoryEntry, StakeHistoryGetEntry, MAX_ENTRIES},
+        sysvar::{get_sysvar, Sysvar, SysvarId},
+    },
 };
 use solana_clock::Epoch;
 use solana_sysvar_id::declare_sysvar_id;
@@ -55,8 +58,8 @@ impl StakeHistoryGetEntry for StakeHistorySysvar {
 
         match result {
             Ok(()) => {
-                let (entry_epoch, entry) =
-                    bincode::deserialize::<(Epoch, StakeHistoryEntry)>(&entry_buf).ok()?;
+                let ((entry_epoch, entry), _) =
+                    bincode_deserialize::<(Epoch, StakeHistoryEntry)>(&entry_buf).ok()?;
 
                 // this would only fail if stake history skipped an epoch or the binary format of the sysvar changed
                 assert_eq!(entry_epoch, target_epoch);

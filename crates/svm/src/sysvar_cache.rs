@@ -9,6 +9,7 @@ use crate::{
     // sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes, SysvarId},
 };
 use crate::{
+    common::bincode_deserialize,
     error::InstructionError,
     solana_program::{
         stake_history::StakeHistory,
@@ -154,14 +155,14 @@ impl SysvarCache {
     ) {
         if self.clock.is_none() {
             get_account_data(&clock::id(), &mut |data: &[u8]| {
-                if let Ok(clock) = bincode::deserialize(data) {
+                if let Ok((clock, _)) = bincode_deserialize(data) {
                     self.set_clock(clock);
                 }
             });
         }
         if self.epoch_schedule.is_none() {
             get_account_data(&epoch_schedule::id(), &mut |data: &[u8]| {
-                if let Ok(epoch_schedule) = bincode::deserialize(data) {
+                if let Ok((epoch_schedule, _)) = bincode_deserialize(data) {
                     self.set_epoch_schedule(epoch_schedule);
                 }
             });
@@ -169,7 +170,7 @@ impl SysvarCache {
 
         if self.epoch_rewards.is_none() {
             get_account_data(&epoch_rewards::id(), &mut |data: &[u8]| {
-                if let Ok(epoch_rewards) = bincode::deserialize(data) {
+                if let Ok((epoch_rewards, _)) = bincode_deserialize(data) {
                     self.set_epoch_rewards(epoch_rewards);
                 }
             });
@@ -178,21 +179,21 @@ impl SysvarCache {
         #[allow(deprecated)]
         if self.fees.is_none() {
             get_account_data(&fees::id(), &mut |data: &[u8]| {
-                if let Ok(fees) = bincode::deserialize(data) {
+                if let Ok((fees, _)) = bincode_deserialize(data) {
                     self.set_fees(fees);
                 }
             });
         }
         if self.rent.is_none() {
             get_account_data(&rent::id(), &mut |data: &[u8]| {
-                if let Ok(rent) = bincode::deserialize(data) {
+                if let Ok((rent, _)) = bincode_deserialize(data) {
                     self.set_rent(rent);
                 }
             });
         }
         if self.slot_hashes.is_none() {
             get_account_data(&slot_hashes::id(), &mut |data: &[u8]| {
-                if let Ok(slot_hashes) = bincode::deserialize(data) {
+                if let Ok((slot_hashes, _)) = bincode_deserialize(data) {
                     self.set_slot_hashes(slot_hashes);
                 }
             });
@@ -200,21 +201,21 @@ impl SysvarCache {
         #[allow(deprecated)]
         if self.recent_blockhashes.is_none() {
             get_account_data(&recent_blockhashes::id(), &mut |data: &[u8]| {
-                if let Ok(recent_blockhashes) = bincode::deserialize(data) {
+                if let Ok((recent_blockhashes, _)) = bincode_deserialize(data) {
                     self.set_recent_blockhashes(recent_blockhashes);
                 }
             });
         }
         if self.stake_history.is_none() {
             get_account_data(&stake_history::id(), &mut |data: &[u8]| {
-                if let Ok(stake_history) = bincode::deserialize(data) {
+                if let Ok((stake_history, _)) = bincode_deserialize(data) {
                     self.set_stake_history(stake_history);
                 }
             });
         }
         if self.last_restart_slot.is_none() {
             get_account_data(&last_restart_slot::id(), &mut |data: &[u8]| {
-                if let Ok(last_restart_slot) = bincode::deserialize(data) {
+                if let Ok((last_restart_slot, _)) = bincode_deserialize(data) {
                     self.set_last_restart_slot(last_restart_slot);
                 }
             });

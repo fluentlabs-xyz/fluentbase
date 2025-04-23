@@ -31,7 +31,10 @@ use crate::{
     solana_program::loader_v4,
 };
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
-use bincode::Options;
+use bincode::{
+    config::{Configuration, Fixint, LittleEndian},
+    enc,
+};
 use core::marker::PhantomData;
 use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
 use solana_feature_set::{
@@ -40,7 +43,6 @@ use solana_feature_set::{
     enable_poseidon_syscall,
     error_on_syscall_bpf_function_hash_collisions,
     reject_callx_r10,
-    switch_to_new_elf_parser,
     FeatureSet,
 };
 use solana_rbpf::{
@@ -57,7 +59,50 @@ pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 ///   8 bytes is the size of the fragment header
 pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
 
+lazy_static::lazy_static! {
+    pub static ref BINCODE_DEFAULT_CONFIG: Configuration<LittleEndian, Fixint> = bincode::config::legacy();
+}
+
+pub fn bincode_serialize_into<T: enc::Encode>(
+    entity: &T,
+    dst: &mut [u8],
+) -> Result<usize, bincode::error::EncodeError> {
+    bincode::encode_into_slice(entity, dst, BINCODE_DEFAULT_CONFIG.clone())
+}
+
+pub fn bincode_serialize_original<T: enc::Encode>(
+    entity: &T,
+) -> Result<(Vec<u8>, usize), bincode::error::EncodeError> {
+    let mut buf = vec![];
+    let bytes_written = bincode_serialize_into(entity, &mut buf)?;
+    Ok((buf, bytes_written))
+}
+
+pub fn bincode_serialize<T: enc::Encode>(
+    entity: &T,
+) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    Ok(bincode::encode_to_vec(
+        entity,
+        BINCODE_DEFAULT_CONFIG.clone(),
+    )?)
+}
+
+pub fn bincode_serialized_size<T: enc::Encode>(
+    entity: &T,
+) -> Result<usize, bincode::error::EncodeError> {
+    // TODO need mor efficient way to extract serialized size
+    let result = bincode_serialize(entity)?;
+    Ok(result.len())
+}
+
+pub fn bincode_deserialize<'a, T: bincode::de::Decode<()>>(
+    src: &[u8],
+) -> Result<T, bincode::error::DecodeError> {
+    Ok(bincode::decode_from_reader(src, BINCODE_DEFAULT_CONFIG.clone())?.0)
+}
+
 use crate::{
+    account::WritableAccount,
     error::SvmError,
     solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
     types::SVM_ADDRESS_PREFIX,
@@ -628,12 +673,14 @@ pub fn common_close_account(
 
 /// Deserialize with a limit based the maximum amount of data a program can expect to get.
 /// This function should be used in place of direct deserialization to help prevent OOM errors
-pub fn limited_deserialize<T>(instruction_data: &[u8], limit: u64) -> Result<T, InstructionError>
+pub fn limited_deserialize<T, const LIMIT: usize>(
+    instruction_data: &[u8],
+) -> Result<T, InstructionError>
 where
     T: serde::de::DeserializeOwned,
 {
-    bincode::options()
-        .with_limit(limit)
+    BINCODE_DEFAULT_CONFIG
+        .with_limit::<LIMIT>()
         .with_fixint_encoding() // As per https://github.com/servo/bincode/issues/333, these two options are needed
         .allow_trailing_bytes() // to retain the behavior of bincode::deserialize with the new `options()` method
         .deserialize_from(instruction_data)
@@ -646,7 +693,7 @@ pub fn limited_deserialize_packet_size<T>(instruction_data: &[u8]) -> Result<T, 
 where
     T: serde::de::DeserializeOwned,
 {
-    limited_deserialize(instruction_data, PACKET_DATA_SIZE as u64)
+    limited_deserialize::<_, PACKET_DATA_SIZE>(instruction_data)
 }
 
 pub fn write_program_data<SDK: SharedAPI>(

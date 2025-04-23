@@ -2,10 +2,11 @@
 
 use crate::{
     account::{Account, AccountSharedData, ReadableAccount},
+    common::BINCODE_DEFAULT_CONFIG,
     error::InstructionError,
     solana_program::sysvar::Sysvar,
 };
-use bincode::ErrorKind;
+use bincode::error::EncodeError;
 use core::cell::Ref;
 
 /// Convenience trait to covert bincode errors to instruction errors.
@@ -27,8 +28,8 @@ where
             .map_err(|_| InstructionError::InvalidAccountData)
     }
     fn set_state(&mut self, state: &T) -> Result<(), InstructionError> {
-        self.serialize_data(state).map_err(|err| match *err {
-            ErrorKind::SizeLimit => InstructionError::AccountDataTooSmall,
+        self.serialize_data(state).map_err(|ref err| match err {
+            EncodeError::Other("account data size limit") => InstructionError::AccountDataTooSmall,
             _ => InstructionError::GenericError,
         })
     }
@@ -44,7 +45,7 @@ where
     }
     fn set_state(&mut self, state: &T) -> Result<(), InstructionError> {
         self.serialize_data(state).map_err(|err| match *err {
-            ErrorKind::SizeLimit => InstructionError::AccountDataTooSmall,
+            EncodeError::Other("account data size limit") => InstructionError::AccountDataTooSmall,
             _ => InstructionError::GenericError,
         })
     }
@@ -86,5 +87,5 @@ mod tests {
 
 /// Create a `Sysvar` from an `Account`'s data.
 pub fn from_account<S: Sysvar, T: ReadableAccount>(account: &T) -> Option<S> {
-    bincode::deserialize(account.data()).ok()
+    bincode::decode_from_slice(account.data(), BINCODE_DEFAULT_CONFIG.clone()).ok()
 }

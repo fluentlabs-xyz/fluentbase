@@ -15,9 +15,12 @@ use solana_short_vec as short_vec;
 mod sanitized;
 pub mod v0;
 
-use crate::solana_program::{
-    instruction::CompiledInstruction,
-    message::versions::v0::MessageAddressTableLookup,
+use crate::{
+    common::bincode_serialize,
+    solana_program::{
+        instruction::CompiledInstruction,
+        message::versions::v0::MessageAddressTableLookup,
+    },
 };
 pub use sanitized::*;
 
@@ -147,7 +150,8 @@ impl VersionedMessage {
     }
 
     pub fn serialize(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap()
+        let (buf, _) = bincode_serialize(self).unwrap();
+        buf
     }
 
     /// Compute the blake3 hash of this transaction's message

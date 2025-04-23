@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
+use bincode::{de::read::SliceReader, enc::write::SliceWriter};
 use bitvec::{bitvec, order::Lsb0, vec::BitVec};
-use fluentbase_sdk::Bytes;
+use fluentbase_sdk::{alloc_slice, Bytes, B256};
 
 /// A map of valid `jump` destinations.
 #[derive(Clone, Default, PartialEq, Eq, Hash)]
@@ -58,11 +59,17 @@ pub struct AnalyzedBytecode {
     pub bytecode: Bytes,
     pub len: usize,
     pub jump_table: JumpTable,
+    pub hash: B256,
+}
+
+impl Default for AnalyzedBytecode {
+    fn default() -> Self {
+        Self::new(&[], B256::ZERO)
+    }
 }
 
 impl AnalyzedBytecode {
-    #[inline]
-    pub fn new(bytecode: &[u8]) -> Self {
+    pub fn new(bytecode: &[u8], hash: B256) -> Self {
         let original_len = bytecode.len();
         let mut padded_bytecode = Vec::with_capacity(original_len + 33);
         padded_bytecode.extend_from_slice(&bytecode);
@@ -73,6 +80,45 @@ impl AnalyzedBytecode {
             bytecode,
             len: original_len,
             jump_table,
+            hash,
+        }
+    }
+
+    pub fn serialize<'a>(&self) -> &'a [u8] {
+        let mut buffer = alloc_slice(
+            8 + self.bytecode.len()
+                + size_of::<usize>()
+                + 8
+                + self.jump_table.as_slice().len()
+                + 32
+                + 8, // why? alignment?
+        );
+        let mut writer = SliceWriter::new(&mut buffer);
+        let config = bincode::config::legacy();
+        bincode::encode_into_writer(&self.bytecode[..], &mut writer, config)
+            .unwrap_or_else(|_| panic!("evm: can't serialize"));
+        bincode::encode_into_writer(self.len, &mut writer, config)
+            .unwrap_or_else(|_| panic!("evm: can't serialize"));
+        bincode::encode_into_writer(self.jump_table.as_slice(), &mut writer, config)
+            .unwrap_or_else(|_| panic!("evm: can't serialize"));
+        bincode::encode_into_writer(&self.hash.0, &mut writer, config)
+            .unwrap_or_else(|_| panic!("evm: can't serialize"));
+        buffer
+    }
+
+    pub fn deserialize(bytes: &[u8]) -> Self {
+        use alloc::vec::Vec;
+        let config = bincode::config::legacy();
+        let mut reader = SliceReader::new(&bytes);
+        let bytecode: Vec<u8> = bincode::decode_from_reader(&mut reader, config).unwrap();
+        let len: usize = bincode::decode_from_reader(&mut reader, config).unwrap();
+        let jump_table: Vec<u8> = bincode::decode_from_reader(&mut reader, config).unwrap();
+        let hash: [u8; 32] = bincode::decode_from_reader(&mut reader, config).unwrap();
+        Self {
+            bytecode: bytecode.into(),
+            len,
+            jump_table: JumpTable::from_slice(&jump_table),
+            hash: B256::from(hash),
         }
     }
 
@@ -84,5 +130,35 @@ impl AnalyzedBytecode {
     #[inline]
     pub fn len(&self) -> usize {
         self.len
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::bytecode::AnalyzedBytecode;
+    use fluentbase_sdk::B256;
+
+    #[test]
+    fn test_analyzed_bytecode_encoding() {
+        let bytecode = [
+            0x60, 0x03, // PUSH1 3
+            0x56, // JUMP
+            0x5b, // JUMPDEST
+        ];
+        let original_bytecode = AnalyzedBytecode::new(bytecode.as_ref(), B256::ZERO);
+        let raw = original_bytecode.serialize();
+        let new_bytecode = AnalyzedBytecode::deserialize(raw);
+        assert_eq!(original_bytecode.bytecode, new_bytecode.bytecode);
+        assert_eq!(original_bytecode.len, new_bytecode.len);
+        assert_eq!(
+            original_bytecode.jump_table.as_slice(),
+            new_bytecode.jump_table.as_slice()
+        );
+        for (pc, _) in bytecode.iter().enumerate() {
+            assert_eq!(
+                original_bytecode.jump_table.is_valid(pc),
+                new_bytecode.jump_table.is_valid(pc)
+            );
+        }
     }
 }

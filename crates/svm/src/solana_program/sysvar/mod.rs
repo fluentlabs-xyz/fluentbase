@@ -23,10 +23,15 @@ pub mod rewards;
 pub mod slot_hashes;
 pub mod slot_history;
 pub mod stake_history;
-use crate::solana_program::program_stubs;
+use crate::{
+    common::{bincode_deserialize, bincode_serialize_into, bincode_serialized_size},
+    solana_program::program_stubs,
+};
 use alloc::{boxed::Box, string::String, vec::Vec};
+use bincode::{de, enc};
 use solana_account_info::AccountInfo;
 use solana_pubkey::Pubkey;
+
 #[deprecated(
     since = "2.0.0",
     note = "please use `solana_sdk::reserved_account_keys::ReservedAccountKeys` instead"
@@ -71,11 +76,17 @@ pub fn is_sysvar_id(id: &Pubkey) -> bool {
 
 /// A type that holds sysvar data.
 pub trait Sysvar:
-    SysvarId + Default + Sized + serde::Serialize + serde::de::DeserializeOwned
+    SysvarId
+    + Default
+    + Sized
+    + serde::Serialize
+    + serde::de::DeserializeOwned
+    + enc::Encode
+    + de::Decode<()>
 {
     /// The size in bytes of the sysvar as serialized account data.
     fn size_of() -> usize {
-        bincode::serialized_size(&Self::default()).unwrap() as usize
+        bincode_serialized_size(&Self::default()).unwrap()
     }
 
     /// Deserializes the sysvar from its `AccountInfo`.
@@ -88,7 +99,7 @@ pub trait Sysvar:
         if !Self::check_id(account_info.unsigned_key()) {
             return Err(ProgramError::InvalidArgument);
         }
-        bincode::deserialize(&account_info.data.borrow()).map_err(|_| ProgramError::InvalidArgument)
+        bincode_deserialize(&account_info.data.borrow()).map_err(|_| ProgramError::InvalidArgument)
     }
 
     /// Serializes the sysvar to `AccountInfo`.
@@ -96,8 +107,8 @@ pub trait Sysvar:
     /// # Errors
     ///
     /// Returns `None` if serialization failed.
-    fn to_account_info(&self, account_info: &mut AccountInfo) -> Option<()> {
-        bincode::serialize_into(&mut account_info.data.borrow_mut()[..], self).ok()
+    fn to_account_info(&self, account_info: &mut AccountInfo) -> Option<usize> {
+        bincode_serialize_into(self, &mut account_info.data.borrow_mut()[..]).ok()
     }
 
     /// Load the sysvar directly from the runtime.

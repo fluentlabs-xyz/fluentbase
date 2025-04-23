@@ -1,6 +1,9 @@
-use crate::solana_program::{
-    address_lookup_table::error::AddressLookupError,
-    instruction::InstructionError,
+use crate::{
+    common::BINCODE_DEFAULT_CONFIG,
+    solana_program::{
+        address_lookup_table::error::AddressLookupError,
+        instruction::InstructionError,
+    },
 };
 use alloc::{borrow::Cow, vec, vec::Vec};
 use serde::{Deserialize, Serialize};
@@ -144,7 +147,7 @@ impl<'a> AddressLookupTable<'a> {
             .get_mut(0..LOOKUP_TABLE_META_SIZE)
             .ok_or(InstructionError::InvalidAccountData)?;
         meta_data.fill(0);
-        bincode::serialize_into(meta_data, &ProgramState::LookupTable(lookup_table_meta))
+        bincode::encode_into_slice(&ProgramState::LookupTable(lookup_table_meta), meta_data)
             .map_err(|_| InstructionError::GenericError)?;
         Ok(())
     }
@@ -219,8 +222,8 @@ impl<'a> AddressLookupTable<'a> {
     /// Efficiently deserialize an address table without allocating
     /// for stored addresses.
     pub fn deserialize(data: &'a [u8]) -> Result<AddressLookupTable<'a>, InstructionError> {
-        let program_state: ProgramState =
-            bincode::deserialize(data).map_err(|_| InstructionError::InvalidAccountData)?;
+        let (program_state, _) = bincode::decode_from_slice(data, BINCODE_DEFAULT_CONFIG.clone())
+            .map_err(|_| InstructionError::InvalidAccountData)?;
 
         let meta = match program_state {
             ProgramState::LookupTable(meta) => Ok(meta),

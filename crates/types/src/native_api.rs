@@ -18,7 +18,7 @@ pub trait NativeAPI {
     fn read_output(&self, target: &mut [u8], offset: u32);
     fn state(&self) -> u32;
     fn fuel(&self) -> u64;
-    fn charge_fuel(&self, value: u64) -> u64;
+    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64;
     fn exec<I: Into<BytecodeOrHash>>(
         &self,
         code_hash: I,

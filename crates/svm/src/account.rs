@@ -1,5 +1,11 @@
 use crate::{
     clock::{Epoch, INITIAL_RENT_EPOCH},
+    common::{
+        bincode_deserialize,
+        bincode_serialize_into,
+        bincode_serialized_size,
+        BINCODE_DEFAULT_CONFIG,
+    },
     context::{IndexOfAccount, InstructionContext, TransactionContext},
     error::InstructionError,
     helpers::is_zeroed,
@@ -9,7 +15,8 @@ use crate::{
         MAX_PERMITTED_DATA_LENGTH,
     },
 };
-use alloc::{boxed::Box, rc::Rc, sync::Arc, vec, vec::Vec};
+use alloc::{rc::Rc, sync::Arc, vec, vec::Vec};
+use bincode::{de, enc};
 use core::{
     cell::{Ref, RefCell, RefMut},
     mem::MaybeUninit,
@@ -23,20 +30,23 @@ use solana_pubkey::Pubkey;
 pub type InheritableAccountFields = (u64, Epoch);
 pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITIAL_RENT_EPOCH);
 
-fn shared_deserialize_data<T: serde::de::DeserializeOwned, U: ReadableAccount>(
+fn shared_deserialize_data<T: de::Decode<()>, U: ReadableAccount>(
     account: &U,
-) -> Result<T, bincode::Error> {
-    bincode::deserialize(account.data())
+) -> Result<T, bincode::error::DecodeError> {
+    Ok(bincode_deserialize(account.data())?)
 }
 
-fn shared_serialize_data<T: serde::Serialize, U: WritableAccount>(
+fn shared_serialize_data<T: enc::Encode, U: WritableAccount>(
     account: &mut U,
     state: &T,
-) -> Result<(), bincode::Error> {
-    if bincode::serialized_size(state)? > account.data().len() as u64 {
-        return Err(Box::new(bincode::ErrorKind::SizeLimit));
+) -> Result<usize, bincode::error::EncodeError> {
+    // TODO need mor efficient way to validate ser size
+    if bincode_serialized_size(state)? > account.data().len() {
+        return Err(bincode::error::EncodeError::Other(
+            "account data size limit",
+        ));
     }
-    bincode::serialize_into(account.data_as_mut_slice(), state)
+    bincode_serialize_into(state, account.data_as_mut_slice())
 }
 
 /// An Account with data that is stored on chain
@@ -97,10 +107,13 @@ impl Account {
     // pub fn new_rent_epoch(lamports: u64, space: usize, owner: &Pubkey, rent_epoch: Epoch) -> Self {
     //     shared_new_rent_epoch(lamports, space, owner, rent_epoch)
     // }
-    pub fn deserialize_data<T: serde::de::DeserializeOwned>(&self) -> Result<T, bincode::Error> {
+    pub fn deserialize_data<T: de::Decode<()>>(&self) -> Result<T, bincode::error::DecodeError> {
         shared_deserialize_data(self)
     }
-    pub fn serialize_data<T: serde::Serialize>(&mut self, state: &T) -> Result<(), bincode::Error> {
+    pub fn serialize_data<T: enc::Encode>(
+        &mut self,
+        state: &T,
+    ) -> Result<usize, bincode::error::EncodeError> {
         shared_serialize_data(self, state)
     }
 }
@@ -257,12 +270,13 @@ fn shared_new_ref<T: WritableAccount>(
     Rc::new(RefCell::new(shared_new::<T>(lamports, space, owner)))
 }
 
-fn shared_new_data<T: serde::Serialize, U: WritableAccount>(
+fn shared_new_data<T: serde::Serialize + bincode::Encode, U: WritableAccount>(
     lamports: u64,
     state: &T,
     owner: &Pubkey,
-) -> Result<U, bincode::Error> {
-    let data = bincode::serialize(state)?;
+) -> Result<U, bincode::error::EncodeError> {
+    let mut data = vec![];
+    bincode::encode_into_slice(state, data.as_mut_slice(), BINCODE_DEFAULT_CONFIG.clone())?;
     Ok(U::create(
         lamports,
         data,
@@ -272,12 +286,12 @@ fn shared_new_data<T: serde::Serialize, U: WritableAccount>(
     ))
 }
 
-fn shared_new_data_with_space<T: serde::Serialize, U: WritableAccount>(
+fn shared_new_data_with_space<T: enc::Encode, U: WritableAccount>(
     lamports: u64,
     state: &T,
     space: usize,
     owner: &Pubkey,
-) -> Result<U, bincode::Error> {
+) -> Result<U, bincode::error::EncodeError> {
     let mut account = shared_new::<U>(lamports, space, owner);
 
     shared_serialize_data(&mut account, state)?;
@@ -285,12 +299,12 @@ fn shared_new_data_with_space<T: serde::Serialize, U: WritableAccount>(
     Ok(account)
 }
 
-fn shared_new_ref_data_with_space<T: serde::Serialize, U: WritableAccount>(
+fn shared_new_ref_data_with_space<T: enc::Encode, U: WritableAccount>(
     lamports: u64,
     state: &T,
     space: usize,
     owner: &Pubkey,
-) -> Result<RefCell<U>, bincode::Error> {
+) -> Result<RefCell<U>, bincode::error::EncodeError> {
     Ok(RefCell::new(shared_new_data_with_space::<T, U>(
         lamports, state, space, owner,
     )?))
@@ -321,11 +335,11 @@ impl AccountSharedData {
     pub fn new_ref(lamports: u64, space: usize, owner: &Pubkey) -> Rc<RefCell<Self>> {
         shared_new_ref(lamports, space, owner)
     }
-    pub fn new_data<T: serde::Serialize>(
+    pub fn new_data<T: serde::Serialize + bincode::Encode>(
         lamports: u64,
         state: &T,
         owner: &Pubkey,
-    ) -> Result<Self, bincode::Error> {
+    ) -> Result<Self, bincode::error::EncodeError> {
         shared_new_data(lamports, state, owner)
     }
 
@@ -421,12 +435,12 @@ impl AccountSharedData {
     // ) -> Result<RefCell<Self>, bincode::Error> {
     //     shared_new_ref_data(lamports, state, owner)
     // }
-    pub fn new_data_with_space<T: serde::Serialize>(
+    pub fn new_data_with_space<T: enc::Encode>(
         lamports: u64,
         state: &T,
         space: usize,
         owner: &Pubkey,
-    ) -> Result<Self, bincode::Error> {
+    ) -> Result<Self, bincode::error::EncodeError> {
         shared_new_data_with_space(lamports, state, space, owner)
     }
     // pub fn new_ref_data_with_space<T: serde::Serialize>(
@@ -440,10 +454,13 @@ impl AccountSharedData {
     // pub fn new_rent_epoch(lamports: u64, space: usize, owner: &Pubkey, rent_epoch: Epoch) -> Self {
     //     shared_new_rent_epoch(lamports, space, owner, rent_epoch)
     // }
-    pub fn deserialize_data<T: serde::de::DeserializeOwned>(&self) -> Result<T, bincode::Error> {
+    pub fn deserialize_data<T: de::Decode<()>>(&self) -> Result<T, bincode::error::DecodeError> {
         shared_deserialize_data(self)
     }
-    pub fn serialize_data<T: serde::Serialize>(&mut self, state: &T) -> Result<(), bincode::Error> {
+    pub fn serialize_data<T: enc::Encode>(
+        &mut self,
+        state: &T,
+    ) -> Result<usize, bincode::error::EncodeError> {
         shared_serialize_data(self, state)
     }
 }
@@ -801,7 +818,7 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Deserializes the account data into a state
     #[cfg(not(target_os = "solana"))]
-    pub fn get_state<T: serde::de::DeserializeOwned>(&self) -> Result<T, InstructionError> {
+    pub fn get_state<T: de::Decode<()>>(&self) -> Result<T, InstructionError> {
         self.account
             .deserialize_data()
             .map_err(|_| InstructionError::InvalidAccountData)
@@ -809,14 +826,14 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Serializes a state into the account data
     #[cfg(not(target_os = "solana"))]
-    pub fn set_state<T: serde::Serialize>(&mut self, state: &T) -> Result<(), InstructionError> {
+    pub fn set_state<T: enc::Encode>(&mut self, state: &T) -> Result<(), InstructionError> {
         let data = self.get_data_mut()?;
         let serialized_size =
-            bincode::serialized_size(state).map_err(|_| InstructionError::GenericError)?;
-        if serialized_size > data.len() as u64 {
+            bincode_serialized_size(state).map_err(|_| InstructionError::GenericError)?;
+        if serialized_size > data.len() {
             return Err(InstructionError::AccountDataTooSmall);
         }
-        bincode::serialize_into(&mut *data, state).map_err(|_| InstructionError::GenericError)?;
+        bincode_serialize_into(state, &mut *data).map_err(|_| InstructionError::GenericError)?;
         Ok(())
     }
 
@@ -974,6 +991,6 @@ impl<'a> BorrowedAccount<'a> {
 }
 
 /// Serialize a `Sysvar` into an `Account`'s data.
-pub fn to_account<S: Sysvar, T: WritableAccount>(sysvar: &S, account: &mut T) -> Option<()> {
-    bincode::serialize_into(account.data_as_mut_slice(), sysvar).ok()
+pub fn to_account<S: Sysvar, T: WritableAccount>(sysvar: &S, account: &mut T) -> Option<usize> {
+    bincode_serialize_into(sysvar, account.data_as_mut_slice()).ok()
 }

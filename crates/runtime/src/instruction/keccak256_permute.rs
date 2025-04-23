@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
+use rwasm_executor::{Caller, RwasmError};
 use tiny_keccak::keccakf;
 
 pub(crate) const STATE_SIZE: u32 = 25;

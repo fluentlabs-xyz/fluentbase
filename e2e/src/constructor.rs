@@ -7,7 +7,7 @@ use hex_literal::hex;
 fn test_deploy_with_constructor_params() {
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let bytecode: Vec<u8> = include_bytes!("../../examples/constructor-params/lib.wasm").into();
+    let bytecode: Vec<u8> = crate::examples::EXAMPLE_CONSTRUCTOR_PARAMS.into();
     let constructor_params: Vec<u8> =
         hex!("68656c6c6fffffffffffffffffffffffffffffffffffffffffffffffffffffff").into();
     let encoded_params = encode_constructor_params(&constructor_params);
