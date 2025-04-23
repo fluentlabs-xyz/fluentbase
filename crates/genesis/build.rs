@@ -21,6 +21,7 @@ pub fn get_enabled_system_contracts() -> Vec<(Address, String)> {
         (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, "fluentbase-contracts-ecrecover"),
         (fluentbase_types::PRECOMPILE_SHA256, "fluentbase-contracts-sha256"),
         (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, "fluentbase-contracts-webauthn"),
+        (fluentbase_types::PRECOMPILE_SVM_RUNTIME, "fluentbase-contracts-svm"),
     ]);
     #[cfg(feature = "bls12")]
     {
@@ -179,13 +180,6 @@ mod genesis_builder {
                 fs::read(path).expect("failed to read system precompile"),
             );
         }
-        const PRECOMPILE_SVM: &[u8] = include_bytes!("../../contracts/svm/lib.wasm");
-        init_contract(
-            &mut alloc,
-            "svm",
-            PRECOMPILE_SVM_RUNTIME,
-            PRECOMPILE_SVM.to_vec(),
-        );
 
         Genesis {
             config: devnet_chain_config(),

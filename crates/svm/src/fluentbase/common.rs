@@ -2,7 +2,6 @@ use crate::{
     account::AccountSharedData,
     error::SvmError,
     helpers::{storage_read_account_data, storage_write_account_data},
-    loaders::bpf_loader_v4,
     native_loader,
     pubkey::Pubkey,
     solana_program::{loader_v4, message::legacy, sysvar},
