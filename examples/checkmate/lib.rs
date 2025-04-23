@@ -24,7 +24,7 @@ pub fn is_checkmate(board: String, mv: String) -> bool {
         return false;
     };
     // try to play the move on the chess board and get new position
-    let Ok(new_pos) = pos.play(&mv) else {
+    let Ok(new_pos) = pos.play(mv) else {
         return false;
     };
     // check if the new position is a checkmate

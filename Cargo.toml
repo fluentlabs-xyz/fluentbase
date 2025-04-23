@@ -97,7 +97,7 @@ solana-msg = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/s
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", rev = "cb1a6a1827d694607b42cad1d020563e8684f47a", default-features = false }
 
 serde_bytes = { version = "0.11.15", default-features = false }
 bytemuck = { version = "1.19.0", default-features = false }
