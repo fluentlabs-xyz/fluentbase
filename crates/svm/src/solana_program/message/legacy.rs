@@ -13,7 +13,6 @@
 
 use crate::{
     bpf_loader_deprecated,
-    common::BINCODE_DEFAULT_CONFIG,
     solana_program::{
         bpf_loader_upgradeable,
         instruction::CompiledInstruction,
@@ -29,6 +28,7 @@ pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
 use core::{convert::TryFrom, str::FromStr};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+use solana_bincode::{bincode_serialize, bincode_serialize_into};
 use solana_hash::Hash;
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
@@ -135,7 +135,9 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
     frozen_abi(digest = "4kL6EbLGU25m5eMk4H1cW9YGhA5LejHSgj2w2fhY1NGp"),
     derive(AbiExample)
 )]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
+#[derive(
+    Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     /// The message header, identifying signed and read-only `account_keys`.
@@ -297,9 +299,7 @@ impl Message {
     }
 
     pub fn serialize(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        bincode::encode_into_slice(self, &mut buf, BINCODE_DEFAULT_CONFIG.clone()).unwrap();
-        buf
+        bincode_serialize(self).unwrap()
     }
 
     pub fn program_id(&self, instruction_index: usize) -> Option<&Pubkey> {
@@ -461,11 +461,13 @@ impl Message {
 #[cfg(test)]
 mod tests {
     #![allow(deprecated)]
+
     use super::*;
     use crate::{
         hash,
         solana_program::{instruction::AccountMeta, message::MESSAGE_HEADER_LENGTH},
     };
+    use solana_bincode::bincode_serialized_size;
 
     #[test]
     fn test_builtin_program_keys() {
@@ -709,7 +711,7 @@ mod tests {
     #[test]
     fn test_message_header_len_constant() {
         assert_eq!(
-            bincode::serialized_size(&MessageHeader::default()).unwrap() as usize,
+            bincode_serialized_size(&MessageHeader::default()).unwrap() as usize,
             MESSAGE_HEADER_LENGTH
         );
     }

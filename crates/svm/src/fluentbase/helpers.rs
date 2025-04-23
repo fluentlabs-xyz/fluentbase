@@ -2,7 +2,7 @@ use crate::{
     account::{AccountSharedData, ReadableAccount},
     account_utils::StateMut,
     builtins::register_builtins,
-    common::{compile_accounts_for_tx_ctx, BINCODE_DEFAULT_CONFIG},
+    common::compile_accounts_for_tx_ctx,
     compute_budget::ComputeBudget,
     context::{IndexOfAccount, InvokeContext, TransactionContext},
     error::{InstructionError, SvmError},
@@ -28,7 +28,7 @@ use alloc::{sync::Arc, vec, vec::Vec};
 use fluentbase_sdk::{BlockContextReader, BlockContextV1, SharedAPI, StorageAPI};
 use hashbrown::HashMap;
 use itertools::Itertools;
-use serde::Deserialize;
+use solana_bincode::bincode_deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
 use solana_feature_set::FeatureSet;
@@ -54,8 +54,7 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     flush_result_accounts: bool,
     sapi: &mut Option<&mut SAPI>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
-    let (batch_message, _) =
-        bincode::decode_from_slice(batch_message, BINCODE_DEFAULT_CONFIG.clone())?;
+    let batch_message = bincode_deserialize::<BatchMessage>(batch_message)?;
     exec_svm_batch_message(sdk, batch_message, flush_result_accounts, sapi)
 }
 pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
@@ -78,7 +77,7 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     flush_result_accounts: bool,
     sapi: &mut Option<&mut SAPI>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
-    let (message, _) = bincode::decode_from_slice(message, BINCODE_DEFAULT_CONFIG.clone())?;
+    let message = bincode_deserialize(message)?;
     exec_svm_message(sdk, message, flush_result_accounts, sapi)
 }
 

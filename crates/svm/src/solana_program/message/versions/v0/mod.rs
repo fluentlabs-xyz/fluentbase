@@ -11,25 +11,23 @@
 
 mod loaded;
 
-use crate::{
-    common::BINCODE_DEFAULT_CONFIG,
-    solana_program::{
-        address_lookup_table::AddressLookupTableAccount,
-        bpf_loader_upgradeable,
-        instruction::CompiledInstruction,
-        message::{
-            compiled_keys::CompiledKeys,
-            versions::MESSAGE_VERSION_PREFIX,
-            AccountKeys,
-            CompileError,
-            MessageHeader,
-        },
+use crate::solana_program::{
+    address_lookup_table::AddressLookupTableAccount,
+    bpf_loader_upgradeable,
+    instruction::CompiledInstruction,
+    message::{
+        compiled_keys::CompiledKeys,
+        versions::MESSAGE_VERSION_PREFIX,
+        AccountKeys,
+        CompileError,
+        MessageHeader,
     },
 };
 use alloc::{vec, vec::Vec};
 use hashbrown::HashSet;
 pub use loaded::*;
 use serde::{Deserialize, Serialize};
+use solana_bincode::bincode_serialize;
 use solana_hash::Hash;
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
@@ -39,7 +37,9 @@ use solana_short_vec as short_vec;
 /// Address table lookups describe an on-chain address lookup table to use
 /// for loading more readonly and writable accounts in a single tx.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
+#[derive(
+    Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageAddressTableLookup {
     /// Address lookup table account key
@@ -61,7 +61,9 @@ pub struct MessageAddressTableLookup {
 ///
 /// [`message`]: crate::message
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
+#[derive(
+    Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     /// The message header, identifying signed and read-only `account_keys`.
@@ -219,14 +221,7 @@ impl Message {
 
     /// Serialize this message with a version #0 prefix using bincode encoding.
     pub fn serialize(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        bincode::encode_into_slice(
-            &(MESSAGE_VERSION_PREFIX, self),
-            &mut buf,
-            BINCODE_DEFAULT_CONFIG.clone(),
-        )
-        .unwrap();
-        buf
+        bincode_serialize(&(MESSAGE_VERSION_PREFIX, self)).unwrap()
     }
 
     /// Returns true if the account at the specified index is called as a program by an instruction

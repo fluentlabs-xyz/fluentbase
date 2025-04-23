@@ -11,7 +11,17 @@ use solana_sdk_macro::CloneZeroed;
 
 #[repr(C, align(16))]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, CloneZeroed)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Default,
+    CloneZeroed,
+    bincode::Encode,
+    bincode::Decode,
+)]
 pub struct EpochRewards {
     /// The starting block height of the rewards distribution in the current
     /// epoch

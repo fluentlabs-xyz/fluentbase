@@ -37,6 +37,7 @@ use bincode::{
 };
 use core::marker::PhantomData;
 use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
+use solana_bincode::limited_deserialize;
 use solana_feature_set::{
     blake3_syscall_enabled,
     bpf_account_data_direct_mapping,
@@ -58,48 +59,6 @@ pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 ///   40 bytes is the size of the IPv6 header
 ///   8 bytes is the size of the fragment header
 pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
-
-lazy_static::lazy_static! {
-    pub static ref BINCODE_DEFAULT_CONFIG: Configuration<LittleEndian, Fixint> = bincode::config::legacy();
-}
-
-pub fn bincode_serialize_into<T: enc::Encode>(
-    entity: &T,
-    dst: &mut [u8],
-) -> Result<usize, bincode::error::EncodeError> {
-    bincode::encode_into_slice(entity, dst, BINCODE_DEFAULT_CONFIG.clone())
-}
-
-pub fn bincode_serialize_original<T: enc::Encode>(
-    entity: &T,
-) -> Result<(Vec<u8>, usize), bincode::error::EncodeError> {
-    let mut buf = vec![];
-    let bytes_written = bincode_serialize_into(entity, &mut buf)?;
-    Ok((buf, bytes_written))
-}
-
-pub fn bincode_serialize<T: enc::Encode>(
-    entity: &T,
-) -> Result<Vec<u8>, bincode::error::EncodeError> {
-    Ok(bincode::encode_to_vec(
-        entity,
-        BINCODE_DEFAULT_CONFIG.clone(),
-    )?)
-}
-
-pub fn bincode_serialized_size<T: enc::Encode>(
-    entity: &T,
-) -> Result<usize, bincode::error::EncodeError> {
-    // TODO need mor efficient way to extract serialized size
-    let result = bincode_serialize(entity)?;
-    Ok(result.len())
-}
-
-pub fn bincode_deserialize<'a, T: bincode::de::Decode<()>>(
-    src: &[u8],
-) -> Result<T, bincode::error::DecodeError> {
-    Ok(bincode::decode_from_reader(src, BINCODE_DEFAULT_CONFIG.clone())?.0)
-}
 
 use crate::{
     account::WritableAccount,
@@ -671,29 +630,32 @@ pub fn common_close_account(
     Ok(())
 }
 
+// /// Deserialize with a limit based the maximum amount of data a program can expect to get.
+// /// This function should be used in place of direct deserialization to help prevent OOM errors
+// pub fn limited_deserialize<T, const LIMIT: usize>(
+//     instruction_data: &[u8],
+// ) -> Result<T, InstructionError>
+// where
+//     T: serde::de::DeserializeOwned,
+// {
+//     BINCODE_DEFAULT_CONFIG
+//         .with_limit::<LIMIT>()
+//         .with_fixint_encoding() // As per https://github.com/servo/bincode/issues/333, these two options are needed
+//         .allow_trailing_bytes() // to retain the behavior of bincode::deserialize with the new `options()` method
+//         .deserialize_from(instruction_data)
+//         .map_err(|_| InstructionError::InvalidInstructionData)
+// }
+
 /// Deserialize with a limit based the maximum amount of data a program can expect to get.
 /// This function should be used in place of direct deserialization to help prevent OOM errors
-pub fn limited_deserialize<T, const LIMIT: usize>(
+pub fn limited_deserialize_packet_size<T: bincode::de::Decode<()>>(
     instruction_data: &[u8],
 ) -> Result<T, InstructionError>
 where
     T: serde::de::DeserializeOwned,
 {
-    BINCODE_DEFAULT_CONFIG
-        .with_limit::<LIMIT>()
-        .with_fixint_encoding() // As per https://github.com/servo/bincode/issues/333, these two options are needed
-        .allow_trailing_bytes() // to retain the behavior of bincode::deserialize with the new `options()` method
-        .deserialize_from(instruction_data)
+    limited_deserialize::<PACKET_DATA_SIZE, _>(instruction_data)
         .map_err(|_| InstructionError::InvalidInstructionData)
-}
-
-/// Deserialize with a limit based the maximum amount of data a program can expect to get.
-/// This function should be used in place of direct deserialization to help prevent OOM errors
-pub fn limited_deserialize_packet_size<T>(instruction_data: &[u8]) -> Result<T, InstructionError>
-where
-    T: serde::de::DeserializeOwned,
-{
-    limited_deserialize::<_, PACKET_DATA_SIZE>(instruction_data)
 }
 
 pub fn write_program_data<SDK: SharedAPI>(

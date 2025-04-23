@@ -107,7 +107,7 @@ static_assertions::const_assert_eq!(MAX_PERMITTED_DATA_LENGTH, 10_485_760);
     frozen_abi(digest = "2LnVTnJg7LxB1FawNZLoQEY8yiYx3MT3paTdx4s5kAXU"),
     derive(AbiExample, AbiEnumVisitor)
 )]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, bincode::Encode, bincode::Decode)]
 pub enum SystemInstruction {
     /// Create a new account
     ///

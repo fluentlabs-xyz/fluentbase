@@ -27,7 +27,17 @@ use solana_pubkey::declare_id;
 declare_id!("BPFLoaderUpgradeab1e11111111111111111111111");
 
 /// Upgradeable loader account states
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy /*, AbiExample*/)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    bincode::Encode,
+    bincode::Decode, /*, AbiExample*/
+)]
 pub enum UpgradeableLoaderState {
     /// Account is not initialized.
     Uninitialized,

@@ -2,12 +2,12 @@
 
 use crate::{
     account::{Account, AccountSharedData, ReadableAccount},
-    common::BINCODE_DEFAULT_CONFIG,
     error::InstructionError,
     solana_program::sysvar::Sysvar,
 };
 use bincode::error::EncodeError;
 use core::cell::Ref;
+use solana_bincode::bincode_deserialize;
 
 /// Convenience trait to covert bincode errors to instruction errors.
 pub trait StateMut<T> {
@@ -21,39 +21,50 @@ pub trait State<T> {
 
 impl<T> StateMut<T> for Account
 where
-    T: serde::Serialize + serde::de::DeserializeOwned,
+    T: serde::Serialize
+        + serde::de::DeserializeOwned
+        + bincode::enc::Encode
+        + bincode::de::Decode<()>,
 {
     fn state(&self) -> Result<T, InstructionError> {
         self.deserialize_data()
             .map_err(|_| InstructionError::InvalidAccountData)
     }
     fn set_state(&mut self, state: &T) -> Result<(), InstructionError> {
-        self.serialize_data(state).map_err(|ref err| match err {
-            EncodeError::Other("account data size limit") => InstructionError::AccountDataTooSmall,
-            _ => InstructionError::GenericError,
-        })
+        self.serialize_data(state)
+            .map_err(|ref err| match err {
+                EncodeError::Other("account data size limit") => {
+                    InstructionError::AccountDataTooSmall
+                }
+                _ => InstructionError::GenericError,
+            })
+            .map(|_| ())
     }
 }
 
 impl<T> StateMut<T> for AccountSharedData
 where
-    T: serde::Serialize + serde::de::DeserializeOwned,
+    T: serde::Serialize + serde::de::DeserializeOwned + bincode::enc::Encode + bincode::Decode<()>,
 {
     fn state(&self) -> Result<T, InstructionError> {
         self.deserialize_data()
             .map_err(|_| InstructionError::InvalidAccountData)
     }
     fn set_state(&mut self, state: &T) -> Result<(), InstructionError> {
-        self.serialize_data(state).map_err(|err| match *err {
-            EncodeError::Other("account data size limit") => InstructionError::AccountDataTooSmall,
-            _ => InstructionError::GenericError,
-        })
+        self.serialize_data(state)
+            .map_err(|ref err| match err {
+                EncodeError::Other("account data size limit") => {
+                    InstructionError::AccountDataTooSmall
+                }
+                _ => InstructionError::GenericError,
+            })
+            .map(|_| ())
     }
 }
 
 impl<T> StateMut<T> for Ref<'_, AccountSharedData>
 where
-    T: serde::Serialize + serde::de::DeserializeOwned,
+    T: serde::Serialize + serde::de::DeserializeOwned + bincode::Decode<()>,
 {
     fn state(&self) -> Result<T, InstructionError> {
         self.deserialize_data()
@@ -87,5 +98,5 @@ mod tests {
 
 /// Create a `Sysvar` from an `Account`'s data.
 pub fn from_account<S: Sysvar, T: ReadableAccount>(account: &T) -> Option<S> {
-    bincode::decode_from_slice(account.data(), BINCODE_DEFAULT_CONFIG.clone()).ok()
+    bincode_deserialize(account.data()).ok()
 }

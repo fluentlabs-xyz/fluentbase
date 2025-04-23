@@ -3,7 +3,6 @@ use crate::{
     bpf_loader_deprecated,
     common::{
         common_close_account,
-        limited_deserialize,
         write_program_data,
         DEFAULT_LOADER_COMPUTE_UNITS,
         DEPRECATED_LOADER_COMPUTE_UNITS,
@@ -30,6 +29,7 @@ use crate::{
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use fluentbase_sdk::SharedAPI;
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
+use solana_bincode::limited_deserialize;
 use solana_feature_set::{
     bpf_account_data_direct_mapping,
     enable_bpf_loader_extend_program_ix,
@@ -323,7 +323,9 @@ fn process_loader_upgradeable_instruction<SDK: SharedAPI>(
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_last_program_key(transaction_context)?;
 
-    match limited_deserialize(instruction_data, PACKET_DATA_SIZE as u64)? {
+    match limited_deserialize::<PACKET_DATA_SIZE, _>(instruction_data)
+        .map_err(|_| InstructionError::InvalidInstructionData)?
+    {
         UpgradeableLoaderInstruction::InitializeBuffer => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let mut buffer =

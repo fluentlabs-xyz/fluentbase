@@ -9,6 +9,7 @@ use core::{
     fmt::{Display, Formatter, Write},
     str::from_utf8,
 };
+use solana_bincode::{bincode_deserialize, bincode_serialize_into, bincode_serialized_size};
 use solana_rbpf::{
     aligned_memory::AlignedMemory,
     ebpf,
@@ -103,7 +104,6 @@ use crate::{
         InheritableAccountFields,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
-    common::{bincode_serialized_size, BINCODE_DEFAULT_CONFIG},
     context::InvokeContext,
     error::SvmError,
     pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN},
@@ -827,10 +827,7 @@ pub fn storage_read_account_data<SAPI: StorageAPI>(
         _phantom: Default::default(),
     };
     storage_writer.read_data(sapi, &mut buffer)?;
-    Ok(bincode::decode_from_slice(
-        &buffer,
-        BINCODE_DEFAULT_CONFIG.clone(),
-    )?)
+    Ok(bincode_deserialize(&buffer)?)
 }
 
 pub fn storage_write_account_data<SAPI: StorageAPI>(
@@ -843,11 +840,7 @@ pub fn storage_write_account_data<SAPI: StorageAPI>(
         _phantom: Default::default(),
     };
     let mut data = vec![];
-    bincode::encode_into_slice(
-        account_data,
-        data.as_mut_slice(),
-        BINCODE_DEFAULT_CONFIG.clone(),
-    )?;
+    bincode_serialize_into(account_data, data.as_mut_slice())?;
     storage_writer.write_data(sapi, &data);
     Ok(())
 }

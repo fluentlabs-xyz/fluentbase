@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use solana_clock::Slot;
 use solana_instruction::Instruction;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 pub enum ProgramInstruction {
     /// Create an address lookup table
     ///

@@ -15,7 +15,9 @@ pub const MAX_ENTRIES: usize = 512; // it should never take as many as 512 epoch
 
 #[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone)]
+#[derive(
+    Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone, bincode::Encode, bincode::Decode,
+)]
 pub struct StakeHistoryEntry {
     pub effective: u64,    // effective stake at this epoch
     pub activating: u64,   // sum of portion of stakes not fully warmed up
@@ -60,7 +62,9 @@ impl core::ops::Add for StakeHistoryEntry {
 
 #[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone)]
+#[derive(
+    Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone, bincode::Encode, bincode::Decode,
+)]
 pub struct StakeHistory(Vec<(Epoch, StakeHistoryEntry)>);
 
 impl StakeHistory {

@@ -23,13 +23,11 @@ pub mod rewards;
 pub mod slot_hashes;
 pub mod slot_history;
 pub mod stake_history;
-use crate::{
-    common::{bincode_deserialize, bincode_serialize_into, bincode_serialized_size},
-    solana_program::program_stubs,
-};
-use alloc::{boxed::Box, string::String, vec::Vec};
+use crate::solana_program::program_stubs;
+use alloc::{boxed::Box, vec::Vec};
 use bincode::{de, enc};
 use solana_account_info::AccountInfo;
+use solana_bincode::{bincode_deserialize, bincode_serialize_into, bincode_serialized_size};
 use solana_pubkey::Pubkey;
 
 #[deprecated(
@@ -38,12 +36,7 @@ use solana_pubkey::Pubkey;
 )]
 mod sysvar_ids {
     use super::*;
-    use alloc::{
-        boxed::Box,
-        string::{String, ToString},
-        vec,
-        vec::Vec,
-    };
+    use alloc::{vec, vec::Vec};
     use lazy_static::lazy_static;
     lazy_static! {
         // This will be deprecated and so this list shouldn't be modified

@@ -1,9 +1,7 @@
-use crate::{
-    common::{bincode_serialize, BINCODE_DEFAULT_CONFIG},
-    solana_program::program_stubs,
-};
-use alloc::{vec, vec::Vec};
+use crate::solana_program::program_stubs;
+use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
+use solana_bincode::bincode_serialize;
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::AbiExample;
 pub use solana_instruction::{
@@ -25,7 +23,7 @@ use solana_short_vec as short_vec;
 ///
 /// [`Message`]: crate::message::Message
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 #[serde(rename_all = "camelCase")]
 pub struct CompiledInstruction {
     /// Index into the transaction keys array indicating the program account that executes this instruction.
@@ -41,8 +39,12 @@ pub struct CompiledInstruction {
 impl Sanitize for CompiledInstruction {}
 
 impl CompiledInstruction {
-    pub fn new<T: Serialize>(program_ids_index: u8, data: &T, accounts: Vec<u8>) -> Self {
-        let (buf, _) = bincode_serialize(data).unwrap();
+    pub fn new<T: Serialize + bincode::enc::Encode>(
+        program_ids_index: u8,
+        data: &T,
+        accounts: Vec<u8>,
+    ) -> Self {
+        let buf = bincode_serialize(data).unwrap();
         Self {
             program_id_index: program_ids_index,
             accounts,

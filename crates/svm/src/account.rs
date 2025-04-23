@@ -1,11 +1,5 @@
 use crate::{
     clock::{Epoch, INITIAL_RENT_EPOCH},
-    common::{
-        bincode_deserialize,
-        bincode_serialize_into,
-        bincode_serialized_size,
-        BINCODE_DEFAULT_CONFIG,
-    },
     context::{IndexOfAccount, InstructionContext, TransactionContext},
     error::InstructionError,
     helpers::is_zeroed,
@@ -24,6 +18,7 @@ use core::{
 };
 use serde::{Deserialize, Serialize};
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
+use solana_bincode::{bincode_deserialize, bincode_serialize_into, bincode_serialized_size};
 use solana_instruction::error::LamportsError;
 use solana_pubkey::Pubkey;
 
@@ -276,7 +271,7 @@ fn shared_new_data<T: serde::Serialize + bincode::Encode, U: WritableAccount>(
     owner: &Pubkey,
 ) -> Result<U, bincode::error::EncodeError> {
     let mut data = vec![];
-    bincode::encode_into_slice(state, data.as_mut_slice(), BINCODE_DEFAULT_CONFIG.clone())?;
+    bincode_serialize_into(state, data.as_mut_slice())?;
     Ok(U::create(
         lamports,
         data,
@@ -313,7 +308,17 @@ fn shared_new_ref_data_with_space<T: enc::Encode, U: WritableAccount>(
 /// An Account with data that is stored on chain
 /// This will be the in-memory representation of the 'Account' struct data.
 /// The existing 'Account' structure cannot easily change due to downstream projects.
-#[derive(PartialEq, Eq, Clone, Default, Debug, /*AbiExample,*/ Serialize, Deserialize)]
+#[derive(
+    PartialEq,
+    Eq,
+    Clone,
+    Default,
+    Debug,
+    /*AbiExample,*/ Serialize,
+    Deserialize,
+    bincode::Encode,
+    bincode::Decode,
+)]
 // #[serde(from = "Account")]
 pub struct AccountSharedData {
     /// lamports in the account
@@ -991,6 +996,8 @@ impl<'a> BorrowedAccount<'a> {
 }
 
 /// Serialize a `Sysvar` into an `Account`'s data.
-pub fn to_account<S: Sysvar, T: WritableAccount>(sysvar: &S, account: &mut T) -> Option<usize> {
-    bincode_serialize_into(sysvar, account.data_as_mut_slice()).ok()
+pub fn to_account<S: Sysvar, T: WritableAccount>(sysvar: &S, account: &mut T) -> Option<()> {
+    bincode_serialize_into(sysvar, account.data_as_mut_slice())
+        .ok()
+        .map(|_| ())
 }

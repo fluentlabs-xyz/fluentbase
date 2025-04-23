@@ -7,6 +7,7 @@ use serde::{
     Deserialize,
     Serialize,
 };
+use solana_bincode::bincode_serialize;
 use solana_hash::{Hash, HASH_BYTES};
 use solana_pubkey::Pubkey;
 use solana_sanitize::{Sanitize, SanitizeError};
@@ -15,12 +16,9 @@ use solana_short_vec as short_vec;
 mod sanitized;
 pub mod v0;
 
-use crate::{
-    common::bincode_serialize,
-    solana_program::{
-        instruction::CompiledInstruction,
-        message::versions::v0::MessageAddressTableLookup,
-    },
+use crate::solana_program::{
+    instruction::CompiledInstruction,
+    message::versions::v0::MessageAddressTableLookup,
 };
 pub use sanitized::*;
 
@@ -40,38 +38,38 @@ pub const MESSAGE_VERSION_PREFIX: u8 = 0x80;
     frozen_abi(digest = "EjjHMjAnRrd86DuTgysFXRicMiAQv3vTvzRzcMJCjYfC"),
     derive(AbiEnumVisitor, AbiExample)
 )]
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 pub enum VersionedMessage {
     Legacy(LegacyMessage),
-    // V0(v0::Message),
+    V0(v0::Message),
 }
 
 impl VersionedMessage {
     pub fn sanitize(&self) -> Result<(), SanitizeError> {
         match self {
             Self::Legacy(message) => message.sanitize(),
-            // Self::V0(message) => message.sanitize(),
+            Self::V0(message) => message.sanitize(),
         }
     }
 
     pub fn header(&self) -> &MessageHeader {
         match self {
             Self::Legacy(message) => &message.header,
-            // Self::V0(message) => &message.header,
+            Self::V0(message) => &message.header,
         }
     }
 
     pub fn static_account_keys(&self) -> &[Pubkey] {
         match self {
             Self::Legacy(message) => &message.account_keys,
-            // Self::V0(message) => &message.account_keys,
+            Self::V0(message) => &message.account_keys,
         }
     }
 
     pub fn address_table_lookups(&self) -> Option<&[MessageAddressTableLookup]> {
         match self {
             Self::Legacy(_) => None,
-            // Self::V0(message) => Some(&message.address_table_lookups),
+            Self::V0(message) => Some(&message.address_table_lookups),
         }
     }
 
@@ -92,7 +90,7 @@ impl VersionedMessage {
     ) -> bool {
         match self {
             Self::Legacy(message) => message.is_maybe_writable(index, reserved_account_keys),
-            // Self::V0(message) => message.is_maybe_writable(index, reserved_account_keys),
+            Self::V0(message) => message.is_maybe_writable(index, reserved_account_keys),
         }
     }
 
@@ -116,7 +114,7 @@ impl VersionedMessage {
     pub fn is_invoked(&self, key_index: usize) -> bool {
         match self {
             Self::Legacy(message) => message.is_key_called_as_program(key_index),
-            // Self::V0(message) => message.is_key_called_as_program(key_index),
+            Self::V0(message) => message.is_key_called_as_program(key_index),
         }
     }
 
@@ -129,14 +127,14 @@ impl VersionedMessage {
     pub fn recent_blockhash(&self) -> &Hash {
         match self {
             Self::Legacy(message) => &message.recent_blockhash,
-            // Self::V0(message) => &message.recent_blockhash,
+            Self::V0(message) => &message.recent_blockhash,
         }
     }
 
     pub fn set_recent_blockhash(&mut self, recent_blockhash: Hash) {
         match self {
             Self::Legacy(message) => message.recent_blockhash = recent_blockhash,
-            // Self::V0(message) => message.recent_blockhash = recent_blockhash,
+            Self::V0(message) => message.recent_blockhash = recent_blockhash,
         }
     }
 
@@ -145,13 +143,12 @@ impl VersionedMessage {
     pub fn instructions(&self) -> &[CompiledInstruction] {
         match self {
             Self::Legacy(message) => &message.instructions,
-            // Self::V0(message) => &message.instructions,
+            Self::V0(message) => &message.instructions,
         }
     }
 
     pub fn serialize(&self) -> Vec<u8> {
-        let (buf, _) = bincode_serialize(self).unwrap();
-        buf
+        bincode_serialize(self).unwrap()
     }
 
     /// Compute the blake3 hash of this transaction's message
@@ -187,12 +184,13 @@ impl serde::Serialize for VersionedMessage {
                 let mut seq = serializer.serialize_tuple(1)?;
                 seq.serialize_element(message)?;
                 seq.end()
-            } // Self::V0(message) => {
-              //     let mut seq = serializer.serialize_tuple(2)?;
-              //     seq.serialize_element(&MESSAGE_VERSION_PREFIX)?;
-              //     seq.serialize_element(message)?;
-              //     seq.end()
-              // }
+            }
+            Self::V0(message) => {
+                let mut seq = serializer.serialize_tuple(2)?;
+                seq.serialize_element(&MESSAGE_VERSION_PREFIX)?;
+                seq.serialize_element(message)?;
+                seq.end()
+            }
         }
     }
 }
@@ -330,6 +328,7 @@ mod tests {
         solana_program::instruction::{AccountMeta, Instruction},
         // message::v0::MessageAddressTableLookup,
     };
+    use solana_bincode::bincode_deserialize;
     use solana_pubkey::Pubkey;
 
     #[test]
@@ -361,12 +360,11 @@ mod tests {
 
         // bincode
         {
-            let bytes = bincode::serialize(&message).unwrap();
-            assert_eq!(bytes, bincode::serialize(&wrapped_message).unwrap());
+            let bytes = bincode_serialize(&message).unwrap();
+            assert_eq!(bytes, bincode_serialize(&wrapped_message).unwrap());
 
-            let message_from_bytes: LegacyMessage = bincode::deserialize(&bytes).unwrap();
-            let wrapped_message_from_bytes: VersionedMessage =
-                bincode::deserialize(&bytes).unwrap();
+            let message_from_bytes: LegacyMessage = bincode_deserialize(&bytes).unwrap();
+            let wrapped_message_from_bytes: VersionedMessage = bincode_deserialize(&bytes).unwrap();
 
             assert_eq!(message, message_from_bytes);
             assert_eq!(wrapped_message, wrapped_message_from_bytes);

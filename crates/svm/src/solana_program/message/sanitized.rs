@@ -1,5 +1,5 @@
 use crate::{
-    common::limited_deserialize,
+    error::InstructionError,
     solana_program::{
         ed25519_program,
         instruction::CompiledInstruction,
@@ -20,6 +20,7 @@ use crate::{
 use alloc::{borrow::Cow, vec, vec::Vec};
 use core::convert::TryFrom;
 use hashbrown::HashSet;
+use solana_bincode::limited_deserialize;
 use solana_hash::Hash;
 use solana_pubkey::Pubkey;
 use solana_sanitize::Sanitize;
@@ -340,7 +341,10 @@ impl SanitizedMessage {
             )
             .filter(|ix| {
                 matches!(
-                    limited_deserialize(&ix.data, 4 /* serialized size of AdvanceNonceAccount */),
+                    limited_deserialize::<4, _>(
+                        &ix.data /* serialized size of AdvanceNonceAccount */
+                    )
+                    .map_err(|_| InstructionError::InvalidInstructionData),
                     Ok(SystemInstruction::AdvanceNonceAccount)
                 )
             })

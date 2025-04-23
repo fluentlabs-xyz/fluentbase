@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use solana_hash::Hash;
 use solana_pubkey::Pubkey;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 pub enum Versions {
     Legacy(Box<State>),
     /// Current variants have durable nonce and blockhash domains separated.

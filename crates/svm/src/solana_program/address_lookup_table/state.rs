@@ -1,12 +1,10 @@
-use crate::{
-    common::BINCODE_DEFAULT_CONFIG,
-    solana_program::{
-        address_lookup_table::error::AddressLookupError,
-        instruction::InstructionError,
-    },
+use crate::solana_program::{
+    address_lookup_table::error::AddressLookupError,
+    instruction::InstructionError,
 };
 use alloc::{borrow::Cow, vec, vec::Vec};
 use serde::{Deserialize, Serialize};
+use solana_bincode::{bincode_deserialize, bincode_serialize_into};
 use solana_clock::Slot;
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::{AbiEnumVisitor, AbiExample};
@@ -42,7 +40,7 @@ pub enum LookupTableStatus {
 
 /// Address lookup table metadata
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 pub struct LookupTableMeta {
     /// Lookup tables cannot be closed until the deactivation slot is
     /// no longer "recent" (not accessible in the `SlotHashes` sysvar).
@@ -120,7 +118,7 @@ impl LookupTableMeta {
 
 /// Program account states
 #[cfg_attr(feature = "frozen-abi", derive(AbiEnumVisitor, AbiExample))]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 #[allow(clippy::large_enum_variant)]
 pub enum ProgramState {
     /// Account is not initialized.
@@ -147,7 +145,7 @@ impl<'a> AddressLookupTable<'a> {
             .get_mut(0..LOOKUP_TABLE_META_SIZE)
             .ok_or(InstructionError::InvalidAccountData)?;
         meta_data.fill(0);
-        bincode::encode_into_slice(&ProgramState::LookupTable(lookup_table_meta), meta_data)
+        bincode_serialize_into(&ProgramState::LookupTable(lookup_table_meta), meta_data)
             .map_err(|_| InstructionError::GenericError)?;
         Ok(())
     }
@@ -222,8 +220,8 @@ impl<'a> AddressLookupTable<'a> {
     /// Efficiently deserialize an address table without allocating
     /// for stored addresses.
     pub fn deserialize(data: &'a [u8]) -> Result<AddressLookupTable<'a>, InstructionError> {
-        let (program_state, _) = bincode::decode_from_slice(data, BINCODE_DEFAULT_CONFIG.clone())
-            .map_err(|_| InstructionError::InvalidAccountData)?;
+        let program_state =
+            bincode_deserialize(data).map_err(|_| InstructionError::InvalidAccountData)?;
 
         let meta = match program_state {
             ProgramState::LookupTable(meta) => Ok(meta),
@@ -252,6 +250,7 @@ impl<'a> AddressLookupTable<'a> {
 mod tests {
     use super::*;
     use crate::hash::Hash;
+    use solana_bincode::{bincode_serialize, bincode_serialized_size};
 
     impl AddressLookupTable<'_> {
         fn new_for_tests(meta: LookupTableMeta, num_addresses: usize) -> Self {
@@ -276,12 +275,12 @@ mod tests {
     #[test]
     fn test_lookup_table_meta_size() {
         let lookup_table = ProgramState::LookupTable(LookupTableMeta::new_for_tests());
-        let meta_size = bincode::serialized_size(&lookup_table).unwrap();
+        let meta_size = bincode_serialized_size(&lookup_table).unwrap();
         assert!(meta_size as usize <= LOOKUP_TABLE_META_SIZE);
         assert_eq!(meta_size as usize, 56);
 
         let lookup_table = ProgramState::LookupTable(LookupTableMeta::default());
-        let meta_size = bincode::serialized_size(&lookup_table).unwrap();
+        let meta_size = bincode_serialized_size(&lookup_table).unwrap();
         assert!(meta_size as usize <= LOOKUP_TABLE_META_SIZE);
         assert_eq!(meta_size as usize, 24);
     }
@@ -358,7 +357,7 @@ mod tests {
     fn test_overwrite_meta_data() {
         let meta = LookupTableMeta::new_for_tests();
         let empty_table = ProgramState::LookupTable(meta.clone());
-        let mut serialized_table_1 = bincode::serialize(&empty_table).unwrap();
+        let mut serialized_table_1 = bincode_serialize(&empty_table).unwrap();
         serialized_table_1.resize(LOOKUP_TABLE_META_SIZE, 0);
 
         let address_table = AddressLookupTable::new_for_tests(meta, 0);

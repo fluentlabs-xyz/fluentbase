@@ -15,7 +15,7 @@ use itertools::Itertools;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 pub struct BatchMessage {
     messages: Vec<legacy::Message>,
 }
@@ -115,7 +115,12 @@ pub(crate) fn flush_accounts<SDK: SharedAPI, SAPI: StorageAPI>(
 pub fn process_svm_error(svm_error: SvmError) -> (HashMap<Pubkey, AccountSharedData>, i32) {
     match svm_error {
         SvmError::TransactionError(_err) => (Default::default(), ExitCode::UnknownError.into_i32()),
-        SvmError::BincodeError(_err) => (Default::default(), ExitCode::UnknownError.into_i32()),
+        SvmError::BincodeEncodeError(_err) => {
+            (Default::default(), ExitCode::UnknownError.into_i32())
+        }
+        SvmError::BincodeDecodeError(_err) => {
+            (Default::default(), ExitCode::UnknownError.into_i32())
+        }
         SvmError::ExitCode(_err) => (Default::default(), ExitCode::UnknownError.into_i32()),
         SvmError::InstructionError(_err) => (Default::default(), ExitCode::UnknownError.into_i32()),
     }
