@@ -166,7 +166,9 @@ pub struct Message {
     frozen_abi(digest = "4kL6EbLGU25m5eMk4H1cW9YGhA5LejHSgj2w2fhY1NGp"),
     derive(AbiExample)
 )]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
+#[derive(
+    Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub header: MessageHeader,

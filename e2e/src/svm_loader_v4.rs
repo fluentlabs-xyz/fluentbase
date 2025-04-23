@@ -13,17 +13,14 @@ mod tests {
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bincode,
         common::pubkey_from_address,
-        solana_program::{
-            instruction::Instruction,
-            loader_v4,
-            message::Message,
-        },
+        fluentbase::common::BatchMessage,
+        pubkey::Pubkey,
+        rent::Rent,
+        solana_bincode::bincode_serialize,
+        solana_program::{instruction::Instruction, loader_v4, message::Message},
     };
     use hex_literal::hex;
     use std::{fs::File, io::Read};
-    use fluentbase_svm::fluentbase::common::BatchMessage;
-    use fluentbase_svm::pubkey::Pubkey;
-    use fluentbase_svm::rent::Rent;
 
     pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
         let mut file = File::open(path).expect("file open failed");
@@ -99,7 +96,7 @@ mod tests {
         let message = Message::new(&instructions, Some(&pk_exec));
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
-        let input = bincode::serialize(&batch_message).unwrap();
+        let input = bincode_serialize(&batch_message).unwrap();
         println!("input.len {} input '{:?}'", input.len(), input.as_slice());
         ctx.sdk = ctx.sdk.with_block_number(1);
         assert_eq!(ctx.sdk.context().block_number(), 1);

@@ -1,14 +1,19 @@
 use cargo_metadata::camino::Utf8PathBuf;
 use fluentbase_build::{build_wasm_program, WasmBuildConfig};
-use std::fs;
+use std::{collections::HashSet, fs};
 
 pub fn build_all_examples() -> Vec<(String, Utf8PathBuf)> {
+    let dirs_to_skip: HashSet<String> = HashSet::from_iter(["svm".to_string()].iter().cloned());
     let mut dirs: Vec<String> = Vec::new();
     fs::read_dir("../examples")
         .expect("failed to read directory")
         .for_each(|entry| {
             let path = entry.expect("failed to read entry").path();
             if path.is_dir() {
+                let dir_name = path.file_name().unwrap().to_str().unwrap().to_string();
+                if dirs_to_skip.contains(&dir_name) {
+                    return;
+                }
                 let program = path.to_str().expect("failed to convert path to string");
                 dirs.push(program.to_string());
             }

@@ -11,6 +11,7 @@ pub fn get_enabled_system_contracts() -> Vec<(Address, String)> {
         (fluentbase_types::PRECOMPILE_BN256_PAIR, "fluentbase-contracts-bn256"),
         (fluentbase_types::PRECOMPILE_ERC20, "fluentbase-contracts-erc20"),
         (fluentbase_types::PRECOMPILE_EVM_RUNTIME, "fluentbase-contracts-evm"),
+        (fluentbase_types::PRECOMPILE_SVM_RUNTIME, "fluentbase-contracts-svm"),
         (fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER,"fluentbase-contracts-fairblock",),
         (fluentbase_types::PRECOMPILE_IDENTITY, "fluentbase-contracts-identity"),
         (fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, "fluentbase-contracts-kzg"),
@@ -21,7 +22,6 @@ pub fn get_enabled_system_contracts() -> Vec<(Address, String)> {
         (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, "fluentbase-contracts-ecrecover"),
         (fluentbase_types::PRECOMPILE_SHA256, "fluentbase-contracts-sha256"),
         (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, "fluentbase-contracts-webauthn"),
-        (fluentbase_types::PRECOMPILE_SVM_RUNTIME, "fluentbase-contracts-svm"),
     ]);
     #[cfg(feature = "bls12")]
     {
@@ -53,7 +53,6 @@ mod genesis_builder {
         Bytes,
         B256,
         DEVELOPER_PREVIEW_CHAIN_ID,
-        PRECOMPILE_SVM_RUNTIME,
         U256,
         WASM_SIG,
     };

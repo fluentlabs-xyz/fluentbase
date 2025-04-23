@@ -7,11 +7,6 @@ edition = "2021"
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-svm = { workspace = true, default-features = false, features = [] }
 
-[dev-dependencies]
-
-[build-dependencies]
-fluentbase-build = { workspace = true, default-features = false }
-
 [lib]
 crate-type = ["cdylib"]
 path = "lib.rs"

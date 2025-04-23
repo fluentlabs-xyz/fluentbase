@@ -25,6 +25,7 @@ mod precompile {
     pub const PRECOMPILE_BYTECODE_BN256_PAIR: &[u8] = include_wasm!("fluentbase-contracts-bn256");
     pub const PRECOMPILE_BYTECODE_ERC20: &[u8] = include_wasm!("fluentbase-contracts-erc20");
     pub const PRECOMPILE_BYTECODE_EVM_RUNTIME: &[u8] = include_wasm!("fluentbase-contracts-evm");
+    pub const PRECOMPILE_BYTECODE_SVM_RUNTIME: &[u8] = include_wasm!("fluentbase-contracts-svm");
     pub const PRECOMPILE_BYTECODE_FAIRBLOCK_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-fairblock");
     pub const PRECOMPILE_BYTECODE_IDENTITY: &[u8] = include_wasm!("fluentbase-contracts-identity");
     pub const PRECOMPILE_BYTECODE_KZG_POINT_EVALUATION: &[u8] = include_wasm!("fluentbase-contracts-kzg");
@@ -66,6 +67,7 @@ lazy_static! {
             (PRECOMPILE_BN256_PAIR, PRECOMPILE_BYTECODE_BN256_PAIR.to_vec()),
             (PRECOMPILE_ERC20, PRECOMPILE_BYTECODE_ERC20.to_vec()),
             (PRECOMPILE_EVM_RUNTIME, PRECOMPILE_BYTECODE_EVM_RUNTIME.to_vec()),
+            (PRECOMPILE_SVM_RUNTIME, PRECOMPILE_BYTECODE_SVM_RUNTIME.to_vec()),
             (PRECOMPILE_FAIRBLOCK_VERIFIER, PRECOMPILE_BYTECODE_FAIRBLOCK_VERIFIER.to_vec()),
             (PRECOMPILE_IDENTITY, PRECOMPILE_BYTECODE_IDENTITY.to_vec()),
             (PRECOMPILE_KZG_POINT_EVALUATION, PRECOMPILE_BYTECODE_KZG_POINT_EVALUATION.to_vec()),
@@ -177,8 +179,8 @@ pub fn try_resolve_precompile_account_from_input(input: &[u8]) -> Option<Address
     if input.len() < 4 {
         return None;
     };
-    if input[..4] == fluentbase_types::PRECOMPILE_NATIVE_MULTICALL[16..] {
-        Some(fluentbase_types::PRECOMPILE_NATIVE_MULTICALL)
+    if input[..4] == PRECOMPILE_NATIVE_MULTICALL[16..] {
+        Some(PRECOMPILE_NATIVE_MULTICALL)
     } else {
         None
     }

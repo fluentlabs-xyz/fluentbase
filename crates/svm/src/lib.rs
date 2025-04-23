@@ -64,6 +64,7 @@ pub mod types;
 pub use bincode;
 pub use {
     solana_account_info::{self as account_info, debug_account_data},
+    solana_bincode,
     solana_clock as clock,
     // solana_msg::msg,
     // solana_native_token as native_token,
