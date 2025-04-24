@@ -2,4 +2,4 @@
 
 ## Preparation
 
-- install solana cli using https://docs.solanalabs.com/cli/install
+- run `make prepare` or install solana tools manually https://docs.anza.xyz/cli/install

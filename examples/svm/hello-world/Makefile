@@ -9,6 +9,10 @@ LD_COMMON=$(TOOLCHAIN)/llvm/bin/ld.lld -z notext -shared --Bdynamic -entry entry
 LD=$(LD_COMMON) --section-start=.text=0x100000000
 LD_V1=$(LD_COMMON)
 
+.PHONY: install_solana_tools
+install_solana_tools:
+	sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.18/install)"
+
 .PHONY: clean
 clean:
 	cargo clean
@@ -16,6 +20,7 @@ clean:
 .PHONY: prepare
 prepare:
 	#cd $(SOLANA_ROOT) && git checkout v1.18.26 && ./cargo build
+	$(MAKE) install_solana_tools
 
 .PHONY: build_hello_world
 build_hello_world:
