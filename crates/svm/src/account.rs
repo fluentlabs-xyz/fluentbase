@@ -40,7 +40,7 @@ fn shared_serialize_data<T: enc::Encode, U: WritableAccount>(
     account: &mut U,
     state: &T,
 ) -> Result<usize, bincode::error::EncodeError> {
-    // TODO need mor efficient way to validate ser size
+    // TODO need more efficient way to validate ser size
     if bincode_serialized_size(state)? > account.data().len() {
         return Err(bincode::error::EncodeError::Other(
             "account data size limit",
@@ -51,13 +51,13 @@ fn shared_serialize_data<T: enc::Encode, U: WritableAccount>(
 
 /// An Account with data that is stored on chain
 #[repr(C)]
-#[derive(/*Deserialize, */ PartialEq, Eq, Clone, Default /*, AbiExample*/)]
-// #[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Default /*, AbiExample*/)]
+#[serde(rename_all = "camelCase")]
 pub struct Account {
     /// lamports in the account
     pub lamports: u64,
     /// data held in this account
-    // #[serde(with = "serde_bytes")]
+    #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
     /// the program that owns this account. If executable, the program that loads this account.
     pub owner: Pubkey,

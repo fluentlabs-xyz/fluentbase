@@ -163,6 +163,7 @@ impl Runtime {
             let mut executor = RwasmExecutor::new(
                 rwasm_module.clone(),
                 ExecutorConfig::new()
+                    .floats_enabled(true) // need to support solana ee
                     .fuel_limit(runtime_context.fuel_limit)
                     .trace_enabled(runtime_context.trace)
                     .fuel_enabled(!runtime_context.disable_fuel),

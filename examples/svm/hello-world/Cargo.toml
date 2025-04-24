@@ -8,8 +8,8 @@ crate-type = ["cdylib", "rlib"]
 path = "src/solana_program.rs"
 
 [dependencies]
-solana-pubkey = { workspace = true, default-features = false }
-solana-account-info = { workspace = true, default-features = false }
-solana-program-entrypoint = { workspace = true, default-features = false }
-solana-program-error = { workspace = true, default-features = false }
-solana-msg = { workspace = true, default-features = false }
+solana-pubkey = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-account-info = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-program-entrypoint = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-program-error = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-msg = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
