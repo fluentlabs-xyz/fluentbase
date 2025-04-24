@@ -1,15 +1,5 @@
 #![feature(error_in_core)]
 
-// use solana_program::{
-//     account_info::AccountInfo,
-//     entrypoint,
-//     entrypoint::ProgramResult,
-//     keccak::hash as keccak_hash,
-//     msg,
-//     poseidon::{hash as poseidon_hash, Endianness, Parameters},
-//     pubkey::Pubkey,
-// };
-
 use solana_account_info::AccountInfo;
 use solana_program_entrypoint::{__msg, entrypoint, ProgramResult};
 use solana_pubkey::Pubkey;
