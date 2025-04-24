@@ -447,7 +447,7 @@ mod builtins {
         mut caller: Caller<'_, WorkerContext>,
         digest32_offset: u32,
         sig64_offset: u32,
-        output65_offset: u32,
+        output32_offset: u32,
         rec_id: u32,
     ) -> anyhow::Result<()> {
         let digest = read_memory(&mut caller, digest32_offset, 32)?;
@@ -462,14 +462,9 @@ mod builtins {
             .try_into()
             .expect("signature should be 64 bytes");
         let hash = SyscallEcrecover::fn_impl(&digest, &sig, rec_id as u8);
-        match hash {
-            Ok(hash) => {
-                let hash = hash.to_vec();
-                write_memory(&mut caller, output65_offset, &hash)?;
-                Ok(())
-            }
-            Err(err) => Err(TerminationReason::Exit(err.into_i32()).into()),
-        }
+        let hash = hash.to_vec();
+        write_memory(&mut caller, output32_offset, &hash)?;
+        Ok(())
     }
 }
 

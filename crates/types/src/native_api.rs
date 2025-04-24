@@ -6,7 +6,7 @@ use alloy_primitives::{Bytes, B256};
 pub trait NativeAPI {
     fn keccak256(data: &[u8]) -> B256;
     fn sha256(data: &[u8]) -> B256;
-    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65];
+    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 32];
     fn debug_log(message: &str);
 
     fn read(&self, target: &mut [u8], offset: u32);

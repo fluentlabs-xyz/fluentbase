@@ -46,8 +46,8 @@ impl NativeAPI for RuntimeContextWrapper {
         todo!("not implemented")
     }
 
-    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
-        SyscallEcrecover::fn_impl(digest, sig, rec_id).unwrap_exit_code()
+    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 32] {
+        SyscallEcrecover::fn_impl(digest, sig, rec_id)
     }
 
     fn debug_log(message: &str) {

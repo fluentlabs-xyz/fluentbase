@@ -47,7 +47,7 @@ mod tests {
             todo!()
         }
 
-        fn ec_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> [u8; 65] {
+        fn ec_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> [u8; 32] {
             todo!()
         }
 

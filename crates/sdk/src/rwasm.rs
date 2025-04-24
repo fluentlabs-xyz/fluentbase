@@ -45,9 +45,9 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 32] {
         unsafe {
-            let mut res: [u8; 65] = [0u8; 65];
+            let mut res: [u8; 32] = [0u8; 32];
             _ecrecover(
                 digest.0.as_ptr(),
                 sig.as_ptr(),
