@@ -5,6 +5,7 @@ members = [
     "revm/crates/*",
     "examples/*",
     "e2e",
+    "examples/svm/hello-world",
 ]
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
@@ -88,6 +89,7 @@ solana-stable-layout = { git = "https://github.com/fluentlabs-xyz/agave", branch
 solana-msg = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm-next", default-features = false }
 #solana-bincode = { path = "../agave/sdk/bincode", default-features = false }
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm-next", default-features = false }
+
 #solana-poseidon = { path = "../agave/poseidon", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
