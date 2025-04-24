@@ -407,8 +407,8 @@ mod tests {
     //         }],
     //     });
     //
-    //     let bytes = bincode::serialize(&message).unwrap();
-    //     let message_from_bytes: VersionedMessage = bincode::deserialize(&bytes).unwrap();
+    //     let bytes = bincode_serialize(&message).unwrap();
+    //     let message_from_bytes: VersionedMessage = bincode_deserialize(&bytes).unwrap();
     //     assert_eq!(message, message_from_bytes);
     //
     //     let string = serde_json::to_string(&message).unwrap();

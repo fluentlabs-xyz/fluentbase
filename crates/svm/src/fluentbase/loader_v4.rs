@@ -21,7 +21,7 @@ use fluentbase_sdk::{
     ExitCode,
     SharedAPI,
 };
-use solana_bincode::{bincode_deserialize, bincode_serialize_into};
+use solana_bincode::{bincode_deserialize, bincode_serialize};
 
 pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log!("loader_v4: deploy started");
@@ -126,8 +126,8 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log!("after deploy: payer_account_data {:x?}", payer_account_data);
     debug_log!("after deploy: exec_account_data {:x?}", exec_account_data);
 
-    let mut preimage = vec![];
-    bincode_serialize_into(&exec_account_data, &mut preimage).expect("");
+    let preimage =
+        bincode_serialize(&exec_account_data).expect("failed to serialize exec account data");
     let preimage: Bytes = preimage.into();
     let _ = write_protected_preimage(&mut sdk, preimage);
 }

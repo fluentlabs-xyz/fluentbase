@@ -32,6 +32,7 @@ mod tests {
         SharedContextInputV1,
         StorageAPI,
     };
+    use solana_bincode::bincode_serialize;
     use solana_pubkey::Pubkey;
 
     fn main_single_message<SAPI: StorageAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
@@ -96,6 +97,7 @@ mod tests {
                 caller: Default::default(),
                 is_static: false,
                 value: Default::default(),
+                gas_limit: 0,
             },
         };
         let mut sdk = TestingContext::default().with_shared_context_input(shared_context);
@@ -139,7 +141,7 @@ mod tests {
             &pk_payer,
         );
         let message = Message::new(&instructions, Some(&pk_payer));
-        let mut sdk = sdk.with_input(bincode::serialize(&message).unwrap());
+        let mut sdk = sdk.with_input(bincode_serialize(&message).unwrap());
         main_single_message(sdk.clone(), Some(&mut sapi));
         let output = sdk.take_output();
         assert_eq!(from_utf8(&output).unwrap(), "");
@@ -186,7 +188,7 @@ mod tests {
             write_messages.push(msg);
         }
         for (_, message) in write_messages.iter().enumerate() {
-            sdk = sdk.with_input(bincode::serialize(&message).unwrap());
+            sdk = sdk.with_input(bincode_serialize(&message).unwrap());
             main_single_message(sdk.clone(), Some(&mut sapi));
         }
 
@@ -215,7 +217,7 @@ mod tests {
 
         let instruction = loader_v4::deploy(&pk_exec, &pk_authority);
         let message = Message::new(&[instruction], Some(&pk_payer));
-        sdk = sdk.with_input(bincode::serialize(&message).unwrap());
+        sdk = sdk.with_input(bincode_serialize(&message).unwrap());
         main_single_message(sdk.clone(), Some(&mut sapi));
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
@@ -273,7 +275,7 @@ mod tests {
                 },
                 ..Default::default()
             })
-            .with_input(bincode::serialize(&message).unwrap());
+            .with_input(bincode_serialize(&message).unwrap());
         main_single_message(sdk.clone(), Some(&mut sapi));
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
@@ -358,7 +360,7 @@ mod tests {
         let message = Message::new(&[instruction], Some(&pk_payer));
         batch_message.append_one(message);
 
-        sdk = sdk.with_input(bincode::serialize(&batch_message).unwrap());
+        sdk = sdk.with_input(bincode_serialize(&batch_message).unwrap());
         main_batch_message(sdk.clone(), Some(&mut sapi));
 
         // exec
@@ -397,7 +399,7 @@ mod tests {
                 },
                 ..Default::default()
             })
-            .with_input(bincode::serialize(&batch_message).unwrap());
+            .with_input(bincode_serialize(&batch_message).unwrap());
         main_batch_message(sdk.clone(), Some(&mut sapi));
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();

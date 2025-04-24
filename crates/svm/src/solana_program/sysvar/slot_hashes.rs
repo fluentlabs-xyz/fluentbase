@@ -26,7 +26,7 @@ impl Sysvar for SlotHashes {
         20_488 // golden, update if MAX_ENTRIES changes
     }
     fn from_account_info(_account_info: &AccountInfo) -> Result<Self, ProgramError> {
-        // This sysvar is too large to bincode::deserialize in-program
+        // This sysvar is too large to bincode_deserialize in-program
         Err(ProgramError::UnsupportedSysvar)
     }
 }
@@ -178,6 +178,7 @@ mod tests {
         solana_program::sysvar::tests::mock_get_sysvar_syscall,
     };
     use serial_test::serial;
+    use solana_bincode::{bincode_serialize, bincode_serialize_into, bincode_serialized_size};
     use solana_slot_hashes::MAX_ENTRIES;
     use test_case::test_case;
 
@@ -185,7 +186,7 @@ mod tests {
     fn test_size_of() {
         assert_eq!(
             SlotHashes::size_of(),
-            bincode::serialized_size(
+            bincode_serialized_size(
                 &(0..MAX_ENTRIES)
                     .map(|slot| (slot as Slot, Hash::default()))
                     .collect::<SlotHashes>()
@@ -197,7 +198,7 @@ mod tests {
     fn mock_slot_hashes(slot_hashes: &SlotHashes) {
         // The data is always `SlotHashes::size_of()`.
         let mut data = vec![0; SlotHashes::size_of()];
-        bincode::serialize_into(&mut data[..], slot_hashes).unwrap();
+        bincode_serialize_into(slot_hashes, &mut data[..]).unwrap();
         mock_get_sysvar_syscall(&data);
     }
 
@@ -286,7 +287,7 @@ mod tests {
         }
 
         let check_slot_hashes = SlotHashes::new(&slot_hashes);
-        mock_get_sysvar_syscall(&bincode::serialize(&check_slot_hashes).unwrap());
+        mock_get_sysvar_syscall(&bincode_serialize(&check_slot_hashes).unwrap());
 
         // `get`:
         assert_eq!(

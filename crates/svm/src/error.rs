@@ -10,7 +10,16 @@ use serde::{Deserialize, Serialize};
 /// an error be consistent across software versions.  For example, it is
 /// dangerous to include error strings from 3rd party crates because they could
 /// change at any time and changes to them are difficult to detect.
-#[derive(Serialize, Deserialize, Debug, /*Error, */ PartialEq, Eq, Clone)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Debug,
+    /*Error, */ PartialEq,
+    Eq,
+    Clone,
+    bincode::Encode,
+    bincode::Decode,
+)]
 pub enum InstructionError {
     /// Deprecated! Use CustomError instead!
     /// The program instruction returned an error

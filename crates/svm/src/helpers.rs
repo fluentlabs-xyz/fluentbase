@@ -9,7 +9,12 @@ use core::{
     fmt::{Display, Formatter, Write},
     str::from_utf8,
 };
-use solana_bincode::{bincode_deserialize, bincode_serialize_into, bincode_serialized_size};
+use solana_bincode::{
+    bincode_deserialize,
+    bincode_serialize,
+    bincode_serialize_into,
+    bincode_serialized_size,
+};
 use solana_rbpf::{
     aligned_memory::AlignedMemory,
     ebpf,
@@ -839,8 +844,7 @@ pub fn storage_write_account_data<SAPI: StorageAPI>(
         slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
         _phantom: Default::default(),
     };
-    let mut data = vec![];
-    bincode_serialize_into(account_data, data.as_mut_slice())?;
+    let data = bincode_serialize(account_data)?;
     storage_writer.write_data(sapi, &data);
     Ok(())
 }

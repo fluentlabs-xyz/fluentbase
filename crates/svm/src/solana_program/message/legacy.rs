@@ -28,7 +28,7 @@ pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
 use core::{convert::TryFrom, str::FromStr};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
-use solana_bincode::{bincode_serialize, bincode_serialize_into};
+use solana_bincode::bincode_serialize;
 use solana_hash::Hash;
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;

@@ -18,9 +18,10 @@ mod tests {
     use alloc::sync::Arc;
     use fluentbase_sdk::SharedAPI;
     use serde::{Deserialize, Serialize};
+    use solana_bincode::{bincode_deserialize, bincode_serialize};
     use solana_stable_layout::stable_instruction::StableInstruction;
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
     enum MockInstruction {
         NoopSuccess,
         NoopFail,
@@ -72,7 +73,7 @@ mod tests {
                     .get_key()
             );
 
-            if let Ok(instruction) = bincode::deserialize(instruction_data) {
+            if let Ok(instruction) = bincode_deserialize(instruction_data) {
                 match instruction {
                     MockInstruction::NoopSuccess => (),
                     MockInstruction::NoopFail => return Err(InstructionError::GenericError),
@@ -327,7 +328,7 @@ mod tests {
         // Success case
         let accounts = process_instruction(
             &sdk,
-            &bincode::serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
+            &bincode_serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Ok(()),
@@ -340,7 +341,7 @@ mod tests {
         // Attempt to move more lamports than from_account has
         let accounts = process_instruction(
             &sdk,
-            &bincode::serialize(&SystemInstruction::Transfer { lamports: 101 }).unwrap(),
+            &bincode_serialize(&SystemInstruction::Transfer { lamports: 101 }).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(SystemError::ResultWithNegativeLamports.into()),
@@ -351,7 +352,7 @@ mod tests {
         // test signed transfer of zero
         let accounts = process_instruction(
             &sdk,
-            &bincode::serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
+            &bincode_serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts,
             Ok(()),
@@ -362,7 +363,7 @@ mod tests {
         // test unsigned transfer of zero
         let accounts = process_instruction(
             &sdk,
-            &bincode::serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
+            &bincode_serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
             transaction_accounts,
             vec![
                 AccountMeta {

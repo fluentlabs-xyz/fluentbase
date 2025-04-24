@@ -31,10 +31,6 @@ use crate::{
     solana_program::loader_v4,
 };
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
-use bincode::{
-    config::{Configuration, Fixint, LittleEndian},
-    enc,
-};
 use core::marker::PhantomData;
 use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
 use solana_bincode::limited_deserialize;
@@ -641,7 +637,7 @@ pub fn common_close_account(
 //     BINCODE_DEFAULT_CONFIG
 //         .with_limit::<LIMIT>()
 //         .with_fixint_encoding() // As per https://github.com/servo/bincode/issues/333, these two options are needed
-//         .allow_trailing_bytes() // to retain the behavior of bincode::deserialize with the new `options()` method
+//         .allow_trailing_bytes() // to retain the behavior of bincode_deserialize with the new `options()` method
 //         .deserialize_from(instruction_data)
 //         .map_err(|_| InstructionError::InvalidInstructionData)
 // }
@@ -696,7 +692,7 @@ where
     F: Fn(u32, Vec<u8>) -> crate::solana_program::message::legacy::Message,
 {
     // let baseline_msg = create_msg(0, Vec::new());
-    // let tx_size = bincode::serialized_size(&Transaction {
+    // let tx_size = bincode_serialized_size(&Transaction {
     //     signatures: vec![
     //         solana_sdk::Signature::default();
     //         baseline_msg.header.num_required_signatures as usize

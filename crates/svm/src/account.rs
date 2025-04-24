@@ -18,7 +18,12 @@ use core::{
 };
 use serde::{Deserialize, Serialize};
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
-use solana_bincode::{bincode_deserialize, bincode_serialize_into, bincode_serialized_size};
+use solana_bincode::{
+    bincode_deserialize,
+    bincode_serialize,
+    bincode_serialize_into,
+    bincode_serialized_size,
+};
 use solana_instruction::error::LamportsError;
 use solana_pubkey::Pubkey;
 
@@ -270,8 +275,7 @@ fn shared_new_data<T: serde::Serialize + bincode::Encode, U: WritableAccount>(
     state: &T,
     owner: &Pubkey,
 ) -> Result<U, bincode::error::EncodeError> {
-    let mut data = vec![];
-    bincode_serialize_into(state, data.as_mut_slice())?;
+    let data = bincode_serialize(state)?;
     Ok(U::create(
         lamports,
         data,

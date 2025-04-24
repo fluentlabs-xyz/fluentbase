@@ -1,59 +1,33 @@
-use bincode::{
-    config,
-    config::{Configuration, Fixint, LittleEndian},
-    enc,
-};
+#[cfg(test)]
+pub mod tests {
+    use crate::system_instruction::SystemInstruction;
+    use solana_bincode::{bincode_serialize, limited_deserialize};
 
-lazy_static::lazy_static! {
-    pub static ref BINCODE_CONFIG_DEFAULT: Configuration<LittleEndian, Fixint> = config::legacy();
-}
+    #[test]
+    fn test_limited_deserialize_advance_nonce_account() {
+        let item = SystemInstruction::AdvanceNonceAccount;
+        let mut serialized = bincode_serialize(&item).unwrap();
 
-pub fn bincode_serialize_into_config<T: enc::Encode, C: config::Config>(
-    entity: &T,
-    dst: &mut [u8],
-    config: C,
-) -> Result<usize, bincode::error::EncodeError> {
-    bincode::encode_into_slice(entity, dst, config)
-}
+        assert_eq!(
+            serialized.len(),
+            4,
+            "`SanitizedMessage::get_durable_nonce()` may need a change"
+        );
 
-pub fn bincode_serialize_into<T: enc::Encode>(
-    entity: &T,
-    dst: &mut [u8],
-) -> Result<usize, bincode::error::EncodeError> {
-    bincode_serialize_into_config(entity, dst, BINCODE_CONFIG_DEFAULT.clone())
-}
+        assert_eq!(
+            limited_deserialize::<4, SystemInstruction>(&serialized)
+                .as_ref()
+                .unwrap(),
+            &item
+        );
+        assert!(limited_deserialize::<3, SystemInstruction>(&serialized).is_err());
 
-pub fn bincode_serialize_original<T: enc::Encode>(
-    entity: &T,
-) -> Result<(Vec<u8>, usize), bincode::error::EncodeError> {
-    let mut buf = vec![];
-    let bytes_written = bincode_serialize_into(entity, &mut buf)?;
-    Ok((buf, bytes_written))
-}
-
-pub fn bincode_serialize_config<T: enc::Encode, C: config::Config>(
-    entity: &T,
-    config: C,
-) -> Result<Vec<u8>, bincode::error::EncodeError> {
-    Ok(bincode::encode_to_vec(entity, config)?)
-}
-
-pub fn bincode_serialize<T: enc::Encode>(
-    entity: &T,
-) -> Result<Vec<u8>, bincode::error::EncodeError> {
-    bincode_serialize_config(entity, BINCODE_CONFIG_DEFAULT.clone())
-}
-
-pub fn bincode_serialized_size<T: enc::Encode>(
-    entity: &T,
-) -> Result<usize, bincode::error::EncodeError> {
-    // TODO need mor efficient way to extract serialized size
-    let result = bincode_serialize(entity)?;
-    Ok(result.len())
-}
-
-pub fn bincode_deserialize<'a, T: bincode::de::Decode<()>>(
-    src: &[u8],
-) -> Result<T, bincode::error::DecodeError> {
-    Ok(bincode::decode_from_reader(src, BINCODE_CONFIG_DEFAULT.clone())?.0)
+        serialized.push(0);
+        assert_eq!(
+            limited_deserialize::<4, SystemInstruction>(&serialized)
+                .as_ref()
+                .unwrap(),
+            &item
+        );
+    }
 }

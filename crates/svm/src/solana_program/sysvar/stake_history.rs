@@ -99,7 +99,7 @@ mod tests {
         let epoch_entry = stake_history_inner.into_iter().next().unwrap();
 
         assert_eq!(
-            bincode_serialized_size(&epoch_entry).unwrap(),
+            bincode_serialized_size(&epoch_entry).unwrap() as u64,
             EPOCH_AND_ENTRY_SERIALIZED_SIZE
         );
     }

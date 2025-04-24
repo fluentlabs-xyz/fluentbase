@@ -191,6 +191,7 @@ pub(crate) fn contract_context() -> ContractContextV1 {
         caller: Address::from_slice(&[00; 20]),
         is_static: false,
         value: U256::default(),
+        gas_limit: 0,
     }
 }
 pub(crate) fn journal_state() -> TestingContext {

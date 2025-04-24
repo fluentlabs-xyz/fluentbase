@@ -186,7 +186,9 @@ mod tests {
     use solana_pubkey::declare_id;
 
     #[repr(C)]
-    #[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
+    #[derive(
+        Serialize, Deserialize, Debug, Default, PartialEq, Eq, bincode::Encode, bincode::Decode,
+    )]
     struct TestSysvar {
         something: Pubkey,
     }

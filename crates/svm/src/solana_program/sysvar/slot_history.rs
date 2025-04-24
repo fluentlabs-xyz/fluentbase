@@ -12,7 +12,7 @@ impl Sysvar for SlotHistory {
         131_097 // golden, update if MAX_ENTRIES changes
     }
     fn from_account_info(_account_info: &AccountInfo) -> Result<Self, ProgramError> {
-        // This sysvar is too large to bincode::deserialize in-program
+        // This sysvar is too large to bincode_deserialize in-program
         Err(ProgramError::UnsupportedSysvar)
     }
 }
@@ -20,11 +20,12 @@ impl Sysvar for SlotHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solana_bincode::bincode_serialized_size;
     #[test]
     fn test_size_of() {
         assert_eq!(
             SlotHistory::size_of(),
-            bincode::serialized_size(&SlotHistory::default()).unwrap() as usize
+            bincode_serialized_size(&SlotHistory::default()).unwrap() as usize
         );
     }
 }

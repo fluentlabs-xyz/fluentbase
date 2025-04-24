@@ -39,6 +39,7 @@ pub mod tests {
     use alloc::{sync::Arc, vec, vec::Vec};
     use fluentbase_sdk::SharedAPI;
     use serde::{Deserialize, Serialize};
+    use solana_bincode::bincode_deserialize;
     use solana_feature_set::FeatureSet;
     use solana_instruction::{AccountMeta, Instruction};
     use solana_rbpf::{
@@ -98,7 +99,7 @@ pub mod tests {
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
-        #[derive(Serialize, Deserialize)]
+        #[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode)]
         enum MockSystemInstruction {
             Correct,
             Transfer { lamports: u64 },
@@ -109,7 +110,7 @@ pub mod tests {
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
-            if let Ok(instruction) = bincode::deserialize(instruction_data) {
+            if let Ok(instruction) = bincode_deserialize(instruction_data) {
                 match instruction {
                     MockSystemInstruction::Correct => Ok(()),
                     MockSystemInstruction::Transfer { lamports } => {
@@ -277,7 +278,7 @@ pub mod tests {
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
-        #[derive(Serialize, Deserialize)]
+        #[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode)]
         enum MockSystemInstruction {
             BorrowFail,
             MultiBorrowMut,
@@ -290,7 +291,7 @@ pub mod tests {
             let instruction_data = instruction_context.get_instruction_data();
             let mut to_account =
                 instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
-            if let Ok(instruction) = bincode::deserialize(instruction_data) {
+            if let Ok(instruction) = bincode_deserialize(instruction_data) {
                 match instruction {
                     MockSystemInstruction::BorrowFail => {
                         let from_account = instruction_context

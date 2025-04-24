@@ -1,16 +1,11 @@
-use serde::{Deserialize, Serialize};
-use sha3::Digest;
-use solana_program::instruction::Instruction;
-use solana_program::secp256k1_program;
-use {
-    crate::{
-        feature_set::{
-            libsecp256k1_fail_on_bad_count, libsecp256k1_fail_on_bad_count2, FeatureSet,
-        },
-        precompiles::PrecompileError,
-    },
+use crate::{
+    feature_set::{libsecp256k1_fail_on_bad_count, libsecp256k1_fail_on_bad_count2, FeatureSet},
+    precompiles::PrecompileError,
 };
 use alloc::vec;
+use serde::{Deserialize, Serialize};
+use sha3::Digest;
+use solana_program::{instruction::Instruction, secp256k1_program};
 
 pub const HASHED_PUBKEY_SERIALIZED_SIZE: usize = 20;
 pub const SIGNATURE_SERIALIZED_SIZE: usize = 64;
@@ -107,7 +102,7 @@ pub fn new_secp256k1_instruction(
         message_instruction_index: 0,
     };
     let writer = &mut instruction_data[1..DATA_START];
-    bincode::serialize_into(writer, &offsets).unwrap();
+    bincode_serialize_into(writer, &offsets).unwrap();
 
     Instruction {
         program_id: secp256k1_program::id(),
@@ -170,7 +165,7 @@ pub fn verify(
             .saturating_add(1);
         let end = start.saturating_add(SIGNATURE_OFFSETS_SERIALIZED_SIZE);
 
-        let offsets: SecpSignatureOffsets = bincode::deserialize(&data[start..end])
+        let offsets: SecpSignatureOffsets = bincode_deserialize(&data[start..end])
             .map_err(|_| PrecompileError::InvalidSignature)?;
 
         // Parse out signature
@@ -188,7 +183,7 @@ pub fn verify(
         let signature = libsecp256k1::Signature::parse_standard_slice(
             &signature_instruction[sig_start..sig_end],
         )
-            .map_err(|_| PrecompileError::InvalidSignature)?;
+        .map_err(|_| PrecompileError::InvalidSignature)?;
 
         let recovery_id = libsecp256k1::RecoveryId::parse(signature_instruction[sig_end])
             .map_err(|_| PrecompileError::InvalidRecoveryId)?;
@@ -218,7 +213,7 @@ pub fn verify(
             &signature,
             &recovery_id,
         )
-            .map_err(|_| PrecompileError::InvalidSignature)?;
+        .map_err(|_| PrecompileError::InvalidSignature)?;
         let eth_address = construct_eth_pubkey(&pubkey);
 
         if eth_address_slice != eth_address {
@@ -247,4 +242,3 @@ fn get_data_slice<'a>(
 
     Ok(&instruction_datas[signature_index][start..end])
 }
-
