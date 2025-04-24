@@ -1,6 +1,6 @@
 all: build_cargo_powered_solana_program
 
-SOLANA_ROOT=../../../../solana_copy
+SOLANA_ROOT=../../../../agave_copy
 TOOLCHAIN=$(SOLANA_ROOT)/sdk/sbf/dependencies/platform-tools
 RC_COMMON=$(TOOLCHAIN)/rust/bin/rustc --target sbf-solana-solana --crate-type lib -C panic=abort -C opt-level=2
 RC=$(RC_COMMON) -C target_cpu=sbfv2
@@ -37,6 +37,6 @@ build_solana_program:
 INPUT_NAME=hello_world
 .PHONY: build_cargo_powered_solana_program
 build_cargo_powered_solana_program:
-	#$(SOLANA_ROOT)/cargo-build-sbf -- -Znext-lockfile-bump
+	#cd $(SOLANA_ROOT) && git checkout v2.1.18 && ./cargo-build-sbf -- -Znext-lockfile-bump
 	cargo build-sbf -j1 -- -Znext-lockfile-bump
 	cp ../../../target/sbf-solana-solana/release/fluentbase_examples_svm_$(INPUT_NAME).so assets/hello_world.so
