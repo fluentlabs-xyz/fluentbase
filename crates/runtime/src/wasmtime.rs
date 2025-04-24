@@ -229,6 +229,7 @@ impl RuntimeState {
 
 mod builtins {
     use super::*;
+    use crate::instruction::ec_recover::SyscallEcrecover;
 
     fn get_memory_export(caller: &mut Caller<'_, WorkerContext>) -> anyhow::Result<Memory> {
         match caller.get_export("memory") {
@@ -357,7 +358,10 @@ mod builtins {
             remaining_fuel
         };
         let code_hash = read_memory(&mut caller, hash32_ptr, 32)?;
-        let code_hash: [u8; 32] = code_hash.as_slice().try_into().unwrap();
+        let code_hash: [u8; 32] = code_hash
+            .as_slice()
+            .try_into()
+            .expect("code hash should be 32 bytes");
         let input = read_memory(&mut caller, input_ptr, input_len)?;
 
         let context = caller.data();
@@ -438,6 +442,35 @@ mod builtins {
         let context = caller.data();
         Ok(context.fuel_limit - context.fuel_consumed)
     }
+
+    pub fn ecrecover(
+        mut caller: Caller<'_, WorkerContext>,
+        digest32_offset: u32,
+        sig64_offset: u32,
+        output65_offset: u32,
+        rec_id: u32,
+    ) -> anyhow::Result<()> {
+        let digest = read_memory(&mut caller, digest32_offset, 32)?;
+        let digest: [u8; 32] = digest
+            .as_slice()
+            .try_into()
+            .expect("digest should be 32 bytes");
+        let digest = B256::from(digest);
+        let sig = read_memory(&mut caller, sig64_offset, 64)?;
+        let sig: [u8; 64] = sig
+            .as_slice()
+            .try_into()
+            .expect("signature should be 64 bytes");
+        let hash = SyscallEcrecover::fn_impl(&digest, &sig, rec_id as u8);
+        match hash {
+            Ok(hash) => {
+                let hash = hash.to_vec();
+                write_memory(&mut caller, output65_offset, &hash)?;
+                Ok(())
+            }
+            Err(err) => Err(TerminationReason::Exit(err.into_i32()).into()),
+        }
+    }
 }
 
 fn new_linker_with_builtins(engine: &Engine) -> anyhow::Result<Linker<WorkerContext>> {
@@ -454,6 +487,7 @@ fn new_linker_with_builtins(engine: &Engine) -> anyhow::Result<Linker<WorkerCont
     linker.func_wrap(module, "_keccak256", builtins::keccak256)?;
     linker.func_wrap(module, "_fuel", builtins::fuel)?;
     linker.func_wrap(module, "_charge_fuel", builtins::charge_fuel)?;
+    linker.func_wrap(module, "_ecrecover", builtins::ecrecover)?;
     Ok(linker)
 }
 
