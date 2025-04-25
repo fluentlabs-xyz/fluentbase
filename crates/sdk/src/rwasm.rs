@@ -2,7 +2,6 @@ pub use crate::{
     bindings::{
         _charge_fuel,
         _debug_log,
-        _ecrecover,
         _exec,
         _exit,
         _forward_output,
@@ -15,6 +14,7 @@ pub use crate::{
         _read,
         _read_output,
         _resume,
+        _secp256k1_recover,
         _state,
         _write,
     },
@@ -45,16 +45,20 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         unsafe {
             let mut res: [u8; 65] = [0u8; 65];
-            _ecrecover(
+            let ok = _secp256k1_recover(
                 digest.0.as_ptr(),
                 sig.as_ptr(),
                 res.as_mut_ptr(),
                 rec_id as u32,
             );
-            res
+            if ok == 0 {
+                Some(res)
+            } else {
+                None
+            }
         }
     }
 

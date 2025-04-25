@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use rwasm::core::{ImportLinker, ImportLinkerEntity, ValueType};
 
 macro_rules! import_func {
@@ -17,7 +18,12 @@ macro_rules! import_func {
 
 const SHARED_IMPORT_LINKER: [(&'static str, &'static str, ImportLinkerEntity); 17] = [
     import_func!("_keccak256", KECCAK256, [ValueType::I32; 3], []),
-    import_func!("_ecrecover", SECP256K1_RECOVER, [ValueType::I32; 4], []),
+    import_func!(
+        "_secp256k1_recover",
+        SECP256K1_RECOVER,
+        [ValueType::I32; 4],
+        [ValueType::I32; 1]
+    ),
     import_func!("_exit", EXIT, [ValueType::I32; 1], []),
     import_func!("_state", STATE, [], [ValueType::I32; 1]),
     import_func!("_read", READ_INPUT, [ValueType::I32; 3], []),
@@ -47,4 +53,12 @@ const SHARED_IMPORT_LINKER: [(&'static str, &'static str, ImportLinkerEntity); 1
 
 pub fn create_import_linker() -> ImportLinker {
     ImportLinker::from(SHARED_IMPORT_LINKER)
+}
+pub fn get_import_linker_symbols() -> Vec<&'static str> {
+    let mut symbols: Vec<&str> = SHARED_IMPORT_LINKER
+        .iter()
+        .map(|(_, name, _)| *name)
+        .collect();
+    symbols.sort();
+    symbols
 }
