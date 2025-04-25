@@ -20,6 +20,7 @@ mod tests {
         solana_program::{instruction::Instruction, loader_v4, message::Message},
     };
     use hex_literal::hex;
+    use revm::primitives::ExecutionResult;
     use std::{fs::File, io::Read};
 
     pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
@@ -101,6 +102,11 @@ mod tests {
         ctx.sdk = ctx.sdk.with_block_number(1);
         assert_eq!(ctx.sdk.context().block_number(), 1);
         let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
+        match &result {
+            ExecutionResult::Success { .. } => {}
+            ExecutionResult::Revert { .. } => {}
+            ExecutionResult::Halt { .. } => {}
+        }
         let output = result.output().unwrap_or_default();
         assert!(result.is_success());
         let expected_output = hex!("");
