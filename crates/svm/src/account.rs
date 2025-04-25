@@ -10,7 +10,6 @@ use crate::{
     },
 };
 use alloc::{rc::Rc, sync::Arc, vec, vec::Vec};
-use bincode::{de, enc};
 use core::{
     cell::{Ref, RefCell, RefMut},
     mem::MaybeUninit,
@@ -18,12 +17,7 @@ use core::{
 };
 use serde::{Deserialize, Serialize};
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
-use solana_bincode::{
-    bincode_deserialize,
-    bincode_serialize,
-    bincode_serialize_into,
-    bincode_serialized_size,
-};
+use solana_bincode::{deserialize, serialize, serialize_into, serialized_size};
 use solana_instruction::error::LamportsError;
 use solana_pubkey::Pubkey;
 
@@ -33,7 +27,7 @@ pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITI
 fn shared_deserialize_data<T: serde::de::DeserializeOwned, U: ReadableAccount>(
     account: &U,
 ) -> Result<T, bincode::error::DecodeError> {
-    Ok(bincode_deserialize(account.data())?)
+    Ok(deserialize(account.data())?)
 }
 
 fn shared_serialize_data<T: serde::Serialize, U: WritableAccount>(
@@ -41,12 +35,12 @@ fn shared_serialize_data<T: serde::Serialize, U: WritableAccount>(
     state: &T,
 ) -> Result<usize, bincode::error::EncodeError> {
     // TODO need more efficient way to validate ser size
-    if bincode_serialized_size(state)? > account.data().len() {
+    if serialized_size(state)? > account.data().len() {
         return Err(bincode::error::EncodeError::Other(
             "account data size limit",
         ));
     }
-    bincode_serialize_into(state, account.data_as_mut_slice())
+    serialize_into(state, account.data_as_mut_slice())
 }
 
 /// An Account with data that is stored on chain
@@ -277,7 +271,7 @@ fn shared_new_data<T: serde::Serialize + bincode::Encode, U: WritableAccount>(
     state: &T,
     owner: &Pubkey,
 ) -> Result<U, bincode::error::EncodeError> {
-    let data = bincode_serialize(state)?;
+    let data = serialize(state)?;
     Ok(U::create(
         lamports,
         data,
@@ -841,12 +835,11 @@ impl<'a> BorrowedAccount<'a> {
     #[cfg(not(target_os = "solana"))]
     pub fn set_state<T: serde::Serialize>(&mut self, state: &T) -> Result<(), InstructionError> {
         let data = self.get_data_mut()?;
-        let serialized_size =
-            bincode_serialized_size(state).map_err(|_| InstructionError::GenericError)?;
+        let serialized_size = serialized_size(state).map_err(|_| InstructionError::GenericError)?;
         if serialized_size > data.len() {
             return Err(InstructionError::AccountDataTooSmall);
         }
-        bincode_serialize_into(state, &mut *data).map_err(|_| InstructionError::GenericError)?;
+        serialize_into(state, &mut *data).map_err(|_| InstructionError::GenericError)?;
         Ok(())
     }
 
@@ -1005,7 +998,7 @@ impl<'a> BorrowedAccount<'a> {
 
 /// Serialize a `Sysvar` into an `Account`'s data.
 pub fn to_account<S: Sysvar, T: WritableAccount>(sysvar: &S, account: &mut T) -> Option<()> {
-    bincode_serialize_into(sysvar, account.data_as_mut_slice())
+    serialize_into(sysvar, account.data_as_mut_slice())
         .ok()
         .map(|_| ())
 }

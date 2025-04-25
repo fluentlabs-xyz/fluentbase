@@ -29,7 +29,7 @@ pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
 use core::{convert::TryFrom, str::FromStr};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
-use solana_bincode::bincode_serialize;
+use solana_bincode::serialize;
 use solana_hash::Hash;
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
@@ -302,7 +302,7 @@ impl Message {
     }
 
     pub fn serialize(&self) -> Vec<u8> {
-        bincode_serialize(self).unwrap()
+        serialize(self).unwrap()
     }
 
     pub fn program_id(&self, instruction_index: usize) -> Option<&Pubkey> {
@@ -470,7 +470,7 @@ mod tests {
         hash,
         solana_program::{instruction::AccountMeta, message::MESSAGE_HEADER_LENGTH},
     };
-    use solana_bincode::{bincode_deserialize, bincode_serialized_size};
+    use solana_bincode::{deserialize, serialized_size};
 
     #[test]
     fn test_serialization_results_match() {
@@ -496,10 +496,10 @@ mod tests {
         ];
 
         let message = Message::new(&instructions, Some(&id1));
-        let message_vec = bincode_serialize(&message).unwrap();
+        let message_vec = serialize(&message).unwrap();
         let message_vec_old = bincode_v1_3_3::serialize(&message).unwrap();
         assert_eq!(message_vec, message_vec_old);
-        let message_recovered: Message = bincode_deserialize(&message_vec).unwrap();
+        let message_recovered: Message = deserialize(&message_vec).unwrap();
         let message_recovered_old: Message = bincode_v1_3_3::deserialize(&message_vec_old).unwrap();
         assert_eq!(message_recovered, message);
         assert_eq!(message_recovered_old, message);
@@ -747,7 +747,7 @@ mod tests {
     #[test]
     fn test_message_header_len_constant() {
         assert_eq!(
-            bincode_serialized_size(&MessageHeader::default()).unwrap() as usize,
+            serialized_size(&MessageHeader::default()).unwrap() as usize,
             MESSAGE_HEADER_LENGTH
         );
     }

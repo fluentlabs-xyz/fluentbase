@@ -178,7 +178,7 @@ mod tests {
         solana_program::sysvar::tests::mock_get_sysvar_syscall,
     };
     use serial_test::serial;
-    use solana_bincode::{bincode_serialize, bincode_serialize_into, bincode_serialized_size};
+    use solana_bincode::{serialize, serialize_into, serialized_size};
     use solana_slot_hashes::MAX_ENTRIES;
     use test_case::test_case;
 
@@ -186,7 +186,7 @@ mod tests {
     fn test_size_of() {
         assert_eq!(
             SlotHashes::size_of(),
-            bincode_serialized_size(
+            serialized_size(
                 &(0..MAX_ENTRIES)
                     .map(|slot| (slot as Slot, Hash::default()))
                     .collect::<SlotHashes>()
@@ -198,7 +198,7 @@ mod tests {
     fn mock_slot_hashes(slot_hashes: &SlotHashes) {
         // The data is always `SlotHashes::size_of()`.
         let mut data = vec![0; SlotHashes::size_of()];
-        bincode_serialize_into(slot_hashes, &mut data[..]).unwrap();
+        serialize_into(slot_hashes, &mut data[..]).unwrap();
         mock_get_sysvar_syscall(&data);
     }
 
@@ -287,7 +287,7 @@ mod tests {
         }
 
         let check_slot_hashes = SlotHashes::new(&slot_hashes);
-        mock_get_sysvar_syscall(&bincode_serialize(&check_slot_hashes).unwrap());
+        mock_get_sysvar_syscall(&serialize(&check_slot_hashes).unwrap());
 
         // `get`:
         assert_eq!(

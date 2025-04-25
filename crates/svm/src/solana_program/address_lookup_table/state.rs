@@ -4,7 +4,7 @@ use crate::solana_program::{
 };
 use alloc::{borrow::Cow, vec, vec::Vec};
 use serde::{Deserialize, Serialize};
-use solana_bincode::{bincode_deserialize, bincode_serialize_into};
+use solana_bincode::{deserialize, serialize_into};
 use solana_clock::Slot;
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::{AbiEnumVisitor, AbiExample};
@@ -145,7 +145,7 @@ impl<'a> AddressLookupTable<'a> {
             .get_mut(0..LOOKUP_TABLE_META_SIZE)
             .ok_or(InstructionError::InvalidAccountData)?;
         meta_data.fill(0);
-        bincode_serialize_into(&ProgramState::LookupTable(lookup_table_meta), meta_data)
+        serialize_into(&ProgramState::LookupTable(lookup_table_meta), meta_data)
             .map_err(|_| InstructionError::GenericError)?;
         Ok(())
     }
@@ -220,8 +220,7 @@ impl<'a> AddressLookupTable<'a> {
     /// Efficiently deserialize an address table without allocating
     /// for stored addresses.
     pub fn deserialize(data: &'a [u8]) -> Result<AddressLookupTable<'a>, InstructionError> {
-        let program_state =
-            bincode_deserialize(data).map_err(|_| InstructionError::InvalidAccountData)?;
+        let program_state = deserialize(data).map_err(|_| InstructionError::InvalidAccountData)?;
 
         let meta = match program_state {
             ProgramState::LookupTable(meta) => Ok(meta),
@@ -250,7 +249,7 @@ impl<'a> AddressLookupTable<'a> {
 mod tests {
     use super::*;
     use crate::hash::Hash;
-    use solana_bincode::{bincode_serialize, bincode_serialized_size};
+    use solana_bincode::{serialize, serialized_size};
 
     impl AddressLookupTable<'_> {
         fn new_for_tests(meta: LookupTableMeta, num_addresses: usize) -> Self {
@@ -275,12 +274,12 @@ mod tests {
     #[test]
     fn test_lookup_table_meta_size() {
         let lookup_table = ProgramState::LookupTable(LookupTableMeta::new_for_tests());
-        let meta_size = bincode_serialized_size(&lookup_table).unwrap();
+        let meta_size = serialized_size(&lookup_table).unwrap();
         assert!(meta_size as usize <= LOOKUP_TABLE_META_SIZE);
         assert_eq!(meta_size as usize, 56);
 
         let lookup_table = ProgramState::LookupTable(LookupTableMeta::default());
-        let meta_size = bincode_serialized_size(&lookup_table).unwrap();
+        let meta_size = serialized_size(&lookup_table).unwrap();
         assert!(meta_size as usize <= LOOKUP_TABLE_META_SIZE);
         assert_eq!(meta_size as usize, 24);
     }
@@ -357,7 +356,7 @@ mod tests {
     fn test_overwrite_meta_data() {
         let meta = LookupTableMeta::new_for_tests();
         let empty_table = ProgramState::LookupTable(meta.clone());
-        let mut serialized_table_1 = bincode_serialize(&empty_table).unwrap();
+        let mut serialized_table_1 = serialize(&empty_table).unwrap();
         serialized_table_1.resize(LOOKUP_TABLE_META_SIZE, 0);
 
         let address_table = AddressLookupTable::new_for_tests(meta, 0);

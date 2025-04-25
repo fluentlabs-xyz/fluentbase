@@ -20,12 +20,12 @@ impl Sysvar for SlotHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solana_bincode::bincode_serialized_size;
+    use solana_bincode::serialized_size;
     #[test]
     fn test_size_of() {
         assert_eq!(
             SlotHistory::size_of(),
-            bincode_serialized_size(&SlotHistory::default()).unwrap() as usize
+            serialized_size(&SlotHistory::default()).unwrap() as usize
         );
     }
 }

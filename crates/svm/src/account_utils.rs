@@ -7,7 +7,7 @@ use crate::{
 };
 use bincode::error::EncodeError;
 use core::cell::Ref;
-use solana_bincode::bincode_deserialize;
+use solana_bincode::deserialize;
 
 /// Convenience trait to covert bincode errors to instruction errors.
 pub trait StateMut<T> {
@@ -98,5 +98,5 @@ mod tests {
 
 /// Create a `Sysvar` from an `Account`'s data.
 pub fn from_account<S: Sysvar, T: ReadableAccount>(account: &T) -> Option<S> {
-    bincode_deserialize(account.data()).ok()
+    deserialize(account.data()).ok()
 }

@@ -35,7 +35,7 @@ pub mod tests {
     use fluentbase_sdk::SharedAPI;
     use rand::Rng;
     use serde::Serialize;
-    use solana_bincode::bincode_serialize;
+    use solana_bincode::serialize;
     use solana_epoch_schedule::EpochSchedule;
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
@@ -336,8 +336,7 @@ pub mod tests {
         let authority_address = Pubkey::new_unique();
         let authority_account =
             AccountSharedData::new(1, UpgradeableLoaderState::size_of_buffer(9), &loader_id);
-        let instruction_data =
-            bincode_serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap();
+        let instruction_data = serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap();
         let instruction_accounts = vec![
             AccountMeta {
                 pubkey: buffer_address,
@@ -419,7 +418,7 @@ pub mod tests {
         let sdk = new_test_sdk();
 
         // Case: Not initialized
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::Write {
+        let instruction = serialize(&UpgradeableLoaderInstruction::Write {
             offset: 0,
             bytes: vec![42; 9],
         })
@@ -435,7 +434,7 @@ pub mod tests {
         );
 
         // Case: Write entire buffer
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::Write {
+        let instruction = serialize(&UpgradeableLoaderInstruction::Write {
             offset: 0,
             bytes: vec![42; 9],
         })
@@ -472,7 +471,7 @@ pub mod tests {
         );
 
         // Case: Write portion of the buffer
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::Write {
+        let instruction = serialize(&UpgradeableLoaderInstruction::Write {
             offset: 3,
             bytes: vec![42; 6],
         })
@@ -511,7 +510,7 @@ pub mod tests {
         );
 
         // Case: overflow size
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::Write {
+        let instruction = serialize(&UpgradeableLoaderInstruction::Write {
             offset: 0,
             bytes: vec![42; 10],
         })
@@ -532,7 +531,7 @@ pub mod tests {
         );
 
         // Case: overflow offset
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::Write {
+        let instruction = serialize(&UpgradeableLoaderInstruction::Write {
             offset: 1,
             bytes: vec![42; 9],
         })
@@ -553,7 +552,7 @@ pub mod tests {
         );
 
         // Case: Not signed
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::Write {
+        let instruction = serialize(&UpgradeableLoaderInstruction::Write {
             offset: 0,
             bytes: vec![42; 9],
         })
@@ -586,7 +585,7 @@ pub mod tests {
 
         // Case: wrong authority
         let authority_address = Pubkey::new_unique();
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::Write {
+        let instruction = serialize(&UpgradeableLoaderInstruction::Write {
             offset: 1,
             bytes: vec![42; 9],
         })
@@ -621,7 +620,7 @@ pub mod tests {
         );
 
         // Case: None authority
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::Write {
+        let instruction = serialize(&UpgradeableLoaderInstruction::Write {
             offset: 1,
             bytes: vec![42; 9],
         })
@@ -780,8 +779,7 @@ pub mod tests {
             instruction_accounts: Vec<AccountMeta>,
             expected_result: Result<(), InstructionError>,
         ) -> Vec<AccountSharedData> {
-            let instruction_data =
-                bincode_serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+            let instruction_data = serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
             mock_process_instruction(
                 sdk,
                 &bpf_loader_upgradeable::id(),
@@ -1171,7 +1169,7 @@ pub mod tests {
 
     #[test]
     fn test_bpf_loader_upgradeable_set_upgrade_authority() {
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
+        let instruction = serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
         let loader_id = bpf_loader_upgradeable::id();
         let slot = 0;
         let upgrade_authority_address = Pubkey::new_unique();
@@ -1354,8 +1352,7 @@ pub mod tests {
 
     #[test]
     fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
-        let instruction =
-            bincode_serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
+        let instruction = serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
         let loader_id = bpf_loader_upgradeable::id();
         let slot = 0;
         let upgrade_authority_address = Pubkey::new_unique();
@@ -1610,7 +1607,7 @@ pub mod tests {
 
     #[test]
     fn test_bpf_loader_upgradeable_set_buffer_authority() {
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
+        let instruction = serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
         let loader_id = bpf_loader_upgradeable::id();
         let invalid_authority_address = Pubkey::new_unique();
         let authority_address = Pubkey::new_unique();
@@ -1791,8 +1788,7 @@ pub mod tests {
 
     #[test]
     fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
-        let instruction =
-            bincode_serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
+        let instruction = serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
         let loader_id = bpf_loader_upgradeable::id();
         let invalid_authority_address = Pubkey::new_unique();
         let authority_address = Pubkey::new_unique();
@@ -2001,7 +1997,7 @@ pub mod tests {
     // fatal runtime error: stack overflow
     #[test]
     fn test_bpf_loader_upgradeable_close() {
-        let instruction = bincode_serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+        let instruction = serialize(&UpgradeableLoaderInstruction::Close).unwrap();
         let loader_id = bpf_loader_upgradeable::id();
         let invalid_authority_address = Pubkey::new_unique();
         let authority_address = Pubkey::new_unique();
@@ -2209,10 +2205,8 @@ pub mod tests {
             &sdk,
             &loader_id,
             &[],
-            &bincode_serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
-                max_data_len: 0,
-            })
-            .unwrap(),
+            &serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len: 0 })
+                .unwrap(),
             vec![
                 (recipient_address, recipient_account),
                 (programdata_address, programdata_account),

@@ -1,12 +1,12 @@
 #[cfg(test)]
 pub mod tests {
     use crate::system_instruction::SystemInstruction;
-    use solana_bincode::{bincode_serialize, limited_deserialize};
+    use solana_bincode::{limited_deserialize, serialize};
 
     #[test]
     fn test_limited_deserialize_advance_nonce_account() {
         let item = SystemInstruction::AdvanceNonceAccount;
-        let mut serialized = bincode_serialize(&item).unwrap();
+        let mut serialized = serialize(&item).unwrap();
 
         assert_eq!(
             serialized.len(),

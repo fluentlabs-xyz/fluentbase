@@ -27,7 +27,7 @@ use alloc::{vec, vec::Vec};
 use hashbrown::HashSet;
 pub use loaded::*;
 use serde::{Deserialize, Serialize};
-use solana_bincode::bincode_serialize;
+use solana_bincode::serialize;
 use solana_hash::Hash;
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
@@ -221,7 +221,7 @@ impl Message {
 
     /// Serialize this message with a version #0 prefix using bincode encoding.
     pub fn serialize(&self) -> Vec<u8> {
-        bincode_serialize(&(MESSAGE_VERSION_PREFIX, self)).unwrap()
+        serialize(&(MESSAGE_VERSION_PREFIX, self)).unwrap()
     }
 
     /// Returns true if the account at the specified index is called as a program by an instruction

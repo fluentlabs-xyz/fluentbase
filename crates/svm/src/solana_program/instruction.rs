@@ -1,7 +1,7 @@
 use crate::solana_program::program_stubs;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
-use solana_bincode::bincode_serialize;
+use solana_bincode::serialize;
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::AbiExample;
 pub use solana_instruction::{
@@ -44,7 +44,7 @@ impl CompiledInstruction {
         data: &T,
         accounts: Vec<u8>,
     ) -> Self {
-        let buf = bincode_serialize(data).unwrap();
+        let buf = serialize(data).unwrap();
         Self {
             program_id_index: program_ids_index,
             accounts,

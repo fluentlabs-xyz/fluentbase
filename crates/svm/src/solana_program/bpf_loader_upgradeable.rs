@@ -390,12 +390,12 @@ pub fn extend_program(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solana_bincode::{bincode_serialize, bincode_serialized_size};
+    use solana_bincode::{serialize, serialized_size};
 
     #[test]
     fn test_state_size_of_uninitialized() {
         let buffer_state = UpgradeableLoaderState::Uninitialized;
-        let size = bincode_serialized_size(&buffer_state).unwrap();
+        let size = serialized_size(&buffer_state).unwrap();
         assert_eq!(UpgradeableLoaderState::size_of_uninitialized(), size);
     }
 
@@ -404,7 +404,7 @@ mod tests {
         let buffer_state = UpgradeableLoaderState::Buffer {
             authority_address: Some(Pubkey::default()),
         };
-        let size = bincode_serialized_size(&buffer_state).unwrap();
+        let size = serialized_size(&buffer_state).unwrap();
         assert_eq!(UpgradeableLoaderState::size_of_buffer_metadata(), size);
     }
 
@@ -414,7 +414,7 @@ mod tests {
             upgrade_authority_address: Some(Pubkey::default()),
             slot: 0,
         };
-        let size = bincode_serialized_size(&programdata_state).unwrap();
+        let size = serialized_size(&programdata_state).unwrap();
         assert_eq!(UpgradeableLoaderState::size_of_programdata_metadata(), size);
     }
 
@@ -423,7 +423,7 @@ mod tests {
         let program_state = UpgradeableLoaderState::Program {
             programdata_address: Pubkey::default(),
         };
-        let size = bincode_serialized_size(&program_state).unwrap();
+        let size = serialized_size(&program_state).unwrap();
         assert_eq!(UpgradeableLoaderState::size_of_program(), size);
     }
 
@@ -432,7 +432,7 @@ mod tests {
     fn test_account_lengths() {
         assert_eq!(
             4,
-            bincode_serialized_size(&UpgradeableLoaderState::Uninitialized).unwrap()
+            serialized_size(&UpgradeableLoaderState::Uninitialized).unwrap()
         );
         assert_eq!(36, UpgradeableLoaderState::program_len().unwrap());
         assert_eq!(
@@ -451,9 +451,8 @@ mod tests {
     ) where
         F: Fn(&[u8]) -> bool,
     {
-        let result = is_instruction_fn(
-            &bincode_serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap(),
-        );
+        let result =
+            is_instruction_fn(&serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap());
         let expected_result = matches!(
             expected_instruction,
             UpgradeableLoaderInstruction::InitializeBuffer
@@ -461,7 +460,7 @@ mod tests {
         assert_eq!(expected_result, result);
 
         let result = is_instruction_fn(
-            &bincode_serialize(&UpgradeableLoaderInstruction::Write {
+            &serialize(&UpgradeableLoaderInstruction::Write {
                 offset: 0,
                 bytes: vec![],
             })
@@ -477,10 +476,8 @@ mod tests {
         assert_eq!(expected_result, result);
 
         let result = is_instruction_fn(
-            &bincode_serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
-                max_data_len: 0,
-            })
-            .unwrap(),
+            &serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len: 0 })
+                .unwrap(),
         );
         let expected_result = matches!(
             expected_instruction,
@@ -488,22 +485,19 @@ mod tests {
         );
         assert_eq!(expected_result, result);
 
-        let result =
-            is_instruction_fn(&bincode_serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap());
+        let result = is_instruction_fn(&serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap());
         let expected_result = matches!(expected_instruction, UpgradeableLoaderInstruction::Upgrade);
         assert_eq!(expected_result, result);
 
-        let result = is_instruction_fn(
-            &bincode_serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap(),
-        );
+        let result =
+            is_instruction_fn(&serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap());
         let expected_result = matches!(
             expected_instruction,
             UpgradeableLoaderInstruction::SetAuthority
         );
         assert_eq!(expected_result, result);
 
-        let result =
-            is_instruction_fn(&bincode_serialize(&UpgradeableLoaderInstruction::Close).unwrap());
+        let result = is_instruction_fn(&serialize(&UpgradeableLoaderInstruction::Close).unwrap());
         let expected_result = matches!(expected_instruction, UpgradeableLoaderInstruction::Close);
         assert_eq!(expected_result, result);
     }

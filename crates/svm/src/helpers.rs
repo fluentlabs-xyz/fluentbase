@@ -9,12 +9,7 @@ use core::{
     fmt::{Display, Formatter, Write},
     str::from_utf8,
 };
-use solana_bincode::{
-    bincode_deserialize,
-    bincode_serialize,
-    bincode_serialize_into,
-    bincode_serialized_size,
-};
+use solana_bincode::{deserialize, serialize, serialize_into, serialized_size};
 use solana_rbpf::{
     aligned_memory::AlignedMemory,
     ebpf,
@@ -709,7 +704,7 @@ pub fn create_account_with_fields<S: Sysvar>(
     sysvar: &S,
     (lamports, rent_epoch): InheritableAccountFields,
 ) -> Account {
-    let data_len = S::size_of().max(bincode_serialized_size(sysvar).unwrap());
+    let data_len = S::size_of().max(serialized_size(sysvar).unwrap());
     let mut account = Account::new(lamports, data_len, &solana_program::sysvar::id());
     to_account::<S, Account>(sysvar, &mut account).unwrap();
     account.rent_epoch = rent_epoch;
@@ -832,7 +827,7 @@ pub fn storage_read_account_data<SAPI: StorageAPI>(
         _phantom: Default::default(),
     };
     storage_writer.read_data(sapi, &mut buffer)?;
-    Ok(bincode_deserialize(&buffer)?)
+    Ok(deserialize(&buffer)?)
 }
 
 pub fn storage_write_account_data<SAPI: StorageAPI>(
@@ -844,7 +839,7 @@ pub fn storage_write_account_data<SAPI: StorageAPI>(
         slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
         _phantom: Default::default(),
     };
-    let data = bincode_serialize(account_data)?;
+    let data = serialize(account_data)?;
     storage_writer.write_data(sapi, &data);
     Ok(())
 }

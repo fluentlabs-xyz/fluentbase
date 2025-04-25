@@ -167,7 +167,7 @@ pub fn deploy(mut sdk: impl SharedAPI) {
         programdata_account_data.data().len(),
         &programdata_account_data
     );
-    let preimage: Bytes = bincode_serialize(&programdata_account_data).unwrap().into();
+    let preimage: Bytes = serialize(&programdata_account_data).unwrap().into();
     debug_log!("deploy: preimage.len: {}", preimage.len());
     let _ = write_protected_preimage(&mut sdk, preimage);
 }
@@ -184,13 +184,13 @@ pub fn main(mut sdk: impl SharedAPI) {
     let (pk_programdata, _) =
         Pubkey::find_program_address(&[pk_exec.as_ref()], &bpf_loader_upgradeable::id());
     let programdata_account_data: AccountSharedData =
-        bincode_deserialize(preimage.as_ref()).expect("preimage must contain account shared data");
+        deserialize(preimage.as_ref()).expect("preimage must contain account shared data");
     let state = UpgradeableLoaderState::Program {
         programdata_address: pk_programdata,
     };
     let exec_account_data = AccountSharedData::create(
         lamports_from_evm_balance(sdk.self_balance().data),
-        bincode_serialize(&state).unwrap(),
+        serialize(&state).unwrap(),
         bpf_loader_upgradeable::id(),
         true,
         Default::default(),

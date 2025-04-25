@@ -16,7 +16,7 @@ mod tests {
         fluentbase::common::BatchMessage,
         pubkey::Pubkey,
         rent::Rent,
-        solana_bincode::bincode_serialize,
+        solana_bincode::serialize,
         solana_program::{instruction::Instruction, loader_v4, message::Message},
     };
     use hex_literal::hex;
@@ -97,7 +97,7 @@ mod tests {
         let message = Message::new(&instructions, Some(&pk_exec));
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
-        let input = bincode_serialize(&batch_message).unwrap();
+        let input = serialize(&batch_message).unwrap();
         println!("input.len {} input '{:?}'", input.len(), input.as_slice());
         ctx.sdk = ctx.sdk.with_block_number(1);
         assert_eq!(ctx.sdk.context().block_number(), 1);

@@ -23,7 +23,7 @@ mod tests {
         test_helpers::{mock_process_instruction, new_test_sdk},
     };
     use fluentbase_sdk::SharedAPI;
-    use solana_bincode::bincode_serialize;
+    use solana_bincode::serialize;
     use solana_clock::Slot;
     use solana_pubkey::Pubkey;
     use std::{fs::File, io::Read, path::Path, sync::Arc};
@@ -154,7 +154,7 @@ mod tests {
     ) {
         let sdk = new_test_sdk();
 
-        let instruction = bincode_serialize(&instruction).unwrap();
+        let instruction = serialize(&instruction).unwrap();
         let authority_address = Pubkey::new_unique();
         let transaction_accounts = vec![
             (
@@ -298,7 +298,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Write {
+            &serialize(&LoaderV4Instruction::Write {
                 offset: 2,
                 bytes: vec![8, 8, 8, 8],
             })
@@ -312,7 +312,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Write {
+            &serialize(&LoaderV4Instruction::Write {
                 offset: 2,
                 bytes: Vec::new(),
             })
@@ -326,7 +326,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Write {
+            &serialize(&LoaderV4Instruction::Write {
                 offset: 8,
                 bytes: vec![8, 8, 8, 8],
             })
@@ -340,7 +340,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Write {
+            &serialize(&LoaderV4Instruction::Write {
                 offset: transaction_accounts[0]
                     .1
                     .data()
@@ -420,7 +420,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate {
+            &serialize(&LoaderV4Instruction::Truncate {
                 new_size: transaction_accounts[0]
                     .1
                     .data()
@@ -445,7 +445,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate {
+            &serialize(&LoaderV4Instruction::Truncate {
                 new_size: transaction_accounts[0]
                     .1
                     .data()
@@ -467,7 +467,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate {
+            &serialize(&LoaderV4Instruction::Truncate {
                 new_size: transaction_accounts[4]
                     .1
                     .data()
@@ -489,7 +489,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate {
+            &serialize(&LoaderV4Instruction::Truncate {
                 new_size: transaction_accounts[0]
                     .1
                     .data()
@@ -520,7 +520,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate { new_size: 0 }).unwrap(),
+            &serialize(&LoaderV4Instruction::Truncate { new_size: 0 }).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (1, true, false), (2, false, true)],
             Ok(()),
@@ -540,7 +540,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate { new_size: 8 }).unwrap(),
+            &serialize(&LoaderV4Instruction::Truncate { new_size: 8 }).unwrap(),
             transaction_accounts.clone(),
             &[(1, false, true), (1, true, false), (2, true, true)],
             Err(InstructionError::InvalidAccountOwner),
@@ -550,7 +550,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate { new_size: 8 }).unwrap(),
+            &serialize(&LoaderV4Instruction::Truncate { new_size: 8 }).unwrap(),
             transaction_accounts.clone(),
             &[(3, false, false), (1, true, false), (2, true, true)],
             Err(InstructionError::InvalidArgument),
@@ -560,7 +560,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate { new_size: 8 }).unwrap(),
+            &serialize(&LoaderV4Instruction::Truncate { new_size: 8 }).unwrap(),
             transaction_accounts.clone(),
             &[(3, false, true), (1, true, false), (2, true, true)],
             Err(InstructionError::MissingRequiredSignature),
@@ -570,7 +570,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate { new_size: 8 }).unwrap(),
+            &serialize(&LoaderV4Instruction::Truncate { new_size: 8 }).unwrap(),
             transaction_accounts.clone(),
             &[(3, true, true), (1, false, false), (2, true, true)],
             Err(InstructionError::MissingRequiredSignature),
@@ -580,7 +580,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate { new_size: 0 }).unwrap(),
+            &serialize(&LoaderV4Instruction::Truncate { new_size: 0 }).unwrap(),
             transaction_accounts.clone(),
             &[(3, false, true), (1, true, false), (2, true, true)],
             Err(InstructionError::InvalidAccountData),
@@ -590,7 +590,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate { new_size: 8 }).unwrap(),
+            &serialize(&LoaderV4Instruction::Truncate { new_size: 8 }).unwrap(),
             transaction_accounts.clone(),
             &[(5, false, true), (1, true, false), (2, false, true)],
             Err(InstructionError::InvalidArgument),
@@ -600,7 +600,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate { new_size: 0 }).unwrap(),
+            &serialize(&LoaderV4Instruction::Truncate { new_size: 0 }).unwrap(),
             transaction_accounts.clone(),
             &[(0, true, true), (1, true, false)],
             Err(InstructionError::NotEnoughAccountKeys),
@@ -610,7 +610,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate { new_size: 0 }).unwrap(),
+            &serialize(&LoaderV4Instruction::Truncate { new_size: 0 }).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (1, true, false), (2, false, false)],
             Err(InstructionError::InvalidArgument),
@@ -620,7 +620,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Truncate {
+            &serialize(&LoaderV4Instruction::Truncate {
                 new_size: transaction_accounts[4]
                     .1
                     .data()
@@ -686,7 +686,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Deploy).unwrap(),
+            &serialize(&LoaderV4Instruction::Deploy).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (1, true, false)],
             Ok(()),
@@ -703,7 +703,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Deploy).unwrap(),
+            &serialize(&LoaderV4Instruction::Deploy).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (1, true, false), (2, false, false)],
             Err(InstructionError::InvalidArgument),
@@ -713,7 +713,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Deploy).unwrap(),
+            &serialize(&LoaderV4Instruction::Deploy).unwrap(),
             transaction_accounts.clone(),
             &[(2, false, true), (1, true, false), (0, false, true)],
             Err(InstructionError::InvalidArgument),
@@ -723,7 +723,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Retract).unwrap(),
+            &serialize(&LoaderV4Instruction::Retract).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (1, true, false)],
             Ok(()),
@@ -732,7 +732,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Deploy).unwrap(),
+            &serialize(&LoaderV4Instruction::Deploy).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (1, true, false), (2, false, true)],
             Ok(()),
@@ -756,7 +756,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Deploy).unwrap(),
+            &serialize(&LoaderV4Instruction::Deploy).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (1, true, false)],
             Err(InstructionError::InvalidArgument),
@@ -767,7 +767,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Deploy).unwrap(),
+            &serialize(&LoaderV4Instruction::Deploy).unwrap(),
             transaction_accounts.clone(),
             &[(3, false, true), (1, true, false)],
             Err(InstructionError::InvalidAccountData),
@@ -777,7 +777,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Deploy).unwrap(),
+            &serialize(&LoaderV4Instruction::Deploy).unwrap(),
             transaction_accounts.clone(),
             &[(4, false, true), (1, true, false)],
             Err(InstructionError::InvalidAccountData),
@@ -787,7 +787,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Deploy).unwrap(),
+            &serialize(&LoaderV4Instruction::Deploy).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (1, true, false)],
             Err(InstructionError::InvalidArgument),
@@ -837,7 +837,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Retract).unwrap(),
+            &serialize(&LoaderV4Instruction::Retract).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (1, true, false)],
             Ok(()),
@@ -852,7 +852,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Retract).unwrap(),
+            &serialize(&LoaderV4Instruction::Retract).unwrap(),
             transaction_accounts.clone(),
             &[(2, false, true), (1, true, false)],
             Err(InstructionError::InvalidAccountData),
@@ -862,7 +862,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Retract).unwrap(),
+            &serialize(&LoaderV4Instruction::Retract).unwrap(),
             transaction_accounts.clone(),
             &[(3, false, true), (1, true, false)],
             Err(InstructionError::InvalidArgument),
@@ -873,7 +873,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::Retract).unwrap(),
+            &serialize(&LoaderV4Instruction::Retract).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (1, true, false)],
             Err(InstructionError::InvalidArgument),
@@ -930,7 +930,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
+            &serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (3, true, false), (4, true, false)],
             Ok(()),
@@ -945,7 +945,7 @@ mod tests {
         let accounts = process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
+            &serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (3, true, false)],
             Ok(()),
@@ -960,7 +960,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
+            &serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
             transaction_accounts.clone(),
             &[(1, false, true), (3, true, false)],
             Err(InstructionError::InvalidArgument),
@@ -970,7 +970,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
+            &serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
             transaction_accounts.clone(),
             &[(2, false, true), (3, true, false), (4, true, false)],
             Err(InstructionError::InvalidAccountData),
@@ -980,7 +980,7 @@ mod tests {
         process_instruction(
             &sdk,
             vec![],
-            &bincode_serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
+            &serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
             transaction_accounts,
             &[(0, false, true), (3, true, false), (4, false, false)],
             Err(InstructionError::MissingRequiredSignature),

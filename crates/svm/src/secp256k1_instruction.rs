@@ -102,7 +102,7 @@ pub fn new_secp256k1_instruction(
         message_instruction_index: 0,
     };
     let writer = &mut instruction_data[1..DATA_START];
-    bincode_serialize_into(writer, &offsets).unwrap();
+    serialize_into(writer, &offsets).unwrap();
 
     Instruction {
         program_id: secp256k1_program::id(),
@@ -165,8 +165,8 @@ pub fn verify(
             .saturating_add(1);
         let end = start.saturating_add(SIGNATURE_OFFSETS_SERIALIZED_SIZE);
 
-        let offsets: SecpSignatureOffsets = bincode_deserialize(&data[start..end])
-            .map_err(|_| PrecompileError::InvalidSignature)?;
+        let offsets: SecpSignatureOffsets =
+            deserialize(&data[start..end]).map_err(|_| PrecompileError::InvalidSignature)?;
 
         // Parse out signature
         let signature_index = offsets.signature_instruction_index as usize;

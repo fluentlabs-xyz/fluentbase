@@ -27,7 +27,7 @@ use crate::solana_program::program_stubs;
 use alloc::{boxed::Box, vec::Vec};
 use bincode::{de, enc};
 use solana_account_info::AccountInfo;
-use solana_bincode::{bincode_deserialize, bincode_serialize_into, bincode_serialized_size};
+use solana_bincode::{deserialize, serialize_into, serialized_size};
 use solana_pubkey::Pubkey;
 
 #[deprecated(
@@ -79,7 +79,7 @@ pub trait Sysvar:
 {
     /// The size in bytes of the sysvar as serialized account data.
     fn size_of() -> usize {
-        bincode_serialized_size(&Self::default()).unwrap()
+        serialized_size(&Self::default()).unwrap()
     }
 
     /// Deserializes the sysvar from its `AccountInfo`.
@@ -92,7 +92,7 @@ pub trait Sysvar:
         if !Self::check_id(account_info.unsigned_key()) {
             return Err(ProgramError::InvalidArgument);
         }
-        bincode_deserialize(&account_info.data.borrow()).map_err(|_| ProgramError::InvalidArgument)
+        deserialize(&account_info.data.borrow()).map_err(|_| ProgramError::InvalidArgument)
     }
 
     /// Serializes the sysvar to `AccountInfo`.
@@ -101,7 +101,7 @@ pub trait Sysvar:
     ///
     /// Returns `None` if serialization failed.
     fn to_account_info(&self, account_info: &mut AccountInfo) -> Option<usize> {
-        bincode_serialize_into(self, &mut account_info.data.borrow_mut()[..]).ok()
+        serialize_into(self, &mut account_info.data.borrow_mut()[..]).ok()
     }
 
     /// Load the sysvar directly from the runtime.

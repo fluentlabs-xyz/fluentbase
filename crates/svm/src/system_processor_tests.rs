@@ -34,7 +34,7 @@ mod tests {
     };
     use alloc::sync::Arc;
     use fluentbase_sdk::SharedAPI;
-    use solana_bincode::bincode_serialize;
+    use solana_bincode::serialize;
     use solana_fee_calculator::FeeCalculator;
 
     fn process_instruction<SDK: SharedAPI>(
@@ -83,7 +83,7 @@ mod tests {
 
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
                 owner: new_owner,
@@ -123,7 +123,7 @@ mod tests {
 
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccountWithSeed {
+            &serialize(&SystemInstruction::CreateAccountWithSeed {
                 base: from,
                 seed: seed.to_string(),
                 lamports: 50,
@@ -167,7 +167,7 @@ mod tests {
 
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccountWithSeed {
+            &serialize(&SystemInstruction::CreateAccountWithSeed {
                 base,
                 seed: seed.to_string(),
                 lamports: 50,
@@ -237,7 +237,7 @@ mod tests {
 
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
                 owner: new_owner,
@@ -275,7 +275,7 @@ mod tests {
 
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 0,
                 space: 2,
                 owner: new_owner,
@@ -315,7 +315,7 @@ mod tests {
 
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 150,
                 space: 2,
                 owner: new_owner,
@@ -362,7 +362,7 @@ mod tests {
         // Trying to request more data length than permitted will result in failure
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: MAX_PERMITTED_DATA_LENGTH + 1,
                 owner: system_program::id(),
@@ -376,7 +376,7 @@ mod tests {
         // Trying to request equal or less data length than permitted will be successful
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: MAX_PERMITTED_DATA_LENGTH,
                 owner: system_program::id(),
@@ -405,7 +405,7 @@ mod tests {
         let unchanged_account = owned_account.clone();
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
                 owner: new_owner,
@@ -434,7 +434,7 @@ mod tests {
         let unchanged_account = owned_account.clone();
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
                 owner: new_owner,
@@ -463,7 +463,7 @@ mod tests {
         let unchanged_account = owned_account.clone();
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
                 owner: new_owner,
@@ -502,7 +502,7 @@ mod tests {
         // Haven't signed from account
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
                 owner: new_owner,
@@ -530,7 +530,7 @@ mod tests {
         // Haven't signed to account
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
                 owner: new_owner,
@@ -556,7 +556,7 @@ mod tests {
         let owned_account = AccountSharedData::new(0, 0, &Pubkey::default());
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
                 owner: new_owner,
@@ -592,7 +592,7 @@ mod tests {
         // fail to create a sysvar::id() owned account
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
                 owner: sysvar::id(),
@@ -631,7 +631,7 @@ mod tests {
 
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
                 owner: new_owner,
@@ -670,7 +670,7 @@ mod tests {
 
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::CreateAccount {
+            &serialize(&SystemInstruction::CreateAccount {
                 lamports: 42,
                 space: 0,
                 owner: Pubkey::new_unique(),
@@ -704,7 +704,7 @@ mod tests {
         // owner does not change, no signature needed
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::Assign {
+            &serialize(&SystemInstruction::Assign {
                 owner: system_program::id(),
             })
             .unwrap(),
@@ -720,7 +720,7 @@ mod tests {
         // owner does change, signature needed
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::Assign { owner: new_owner }).unwrap(),
+            &serialize(&SystemInstruction::Assign { owner: new_owner }).unwrap(),
             vec![(pubkey, account.clone())],
             vec![AccountMeta {
                 pubkey,
@@ -732,7 +732,7 @@ mod tests {
 
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::Assign { owner: new_owner }).unwrap(),
+            &serialize(&SystemInstruction::Assign { owner: new_owner }).unwrap(),
             vec![(pubkey, account.clone())],
             vec![AccountMeta {
                 pubkey,
@@ -745,7 +745,7 @@ mod tests {
         // assign to sysvar instead of system_program
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::Assign {
+            &serialize(&SystemInstruction::Assign {
                 owner: sysvar::id(),
             })
             .unwrap(),
@@ -767,7 +767,7 @@ mod tests {
         let instruction = SystemInstruction::Assign {
             owner: Pubkey::new_unique(),
         };
-        let data = bincode_serialize(&instruction).unwrap();
+        let data = serialize(&instruction).unwrap();
         process_instruction(
             &sdk,
             &data,
@@ -780,7 +780,7 @@ mod tests {
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
         let instruction = SystemInstruction::Transfer { lamports: 0 };
-        let data = bincode_serialize(&instruction).unwrap();
+        let data = serialize(&instruction).unwrap();
         process_instruction(
             &sdk,
             &data,
@@ -822,7 +822,7 @@ mod tests {
         // Success case
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
+            &serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Ok(()),
@@ -835,7 +835,7 @@ mod tests {
         // Attempt to move more lamports than from_account has
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::Transfer { lamports: 101 }).unwrap(),
+            &serialize(&SystemInstruction::Transfer { lamports: 101 }).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(SystemError::ResultWithNegativeLamports.into()),
@@ -846,7 +846,7 @@ mod tests {
         // test signed transfer of zero
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
+            &serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts,
             Ok(()),
@@ -857,7 +857,7 @@ mod tests {
         // test unsigned transfer of zero
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
+            &serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
             transaction_accounts,
             vec![
                 AccountMeta {
@@ -912,7 +912,7 @@ mod tests {
         // Success case
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::TransferWithSeed {
+            &serialize(&SystemInstruction::TransferWithSeed {
                 lamports: 50,
                 from_seed: from_seed.clone(),
                 from_owner,
@@ -928,7 +928,7 @@ mod tests {
         // Attempt to move more lamports than from_account has
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::TransferWithSeed {
+            &serialize(&SystemInstruction::TransferWithSeed {
                 lamports: 101,
                 from_seed: from_seed.clone(),
                 from_owner,
@@ -944,7 +944,7 @@ mod tests {
         // Test unsigned transfer of zero
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::TransferWithSeed {
+            &serialize(&SystemInstruction::TransferWithSeed {
                 lamports: 0,
                 from_seed,
                 from_owner,
@@ -981,7 +981,7 @@ mod tests {
 
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
+            &serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
             vec![(from, from_account), (to, to_account)],
             vec![
                 AccountMeta {
@@ -1048,7 +1048,7 @@ mod tests {
 
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
+            &serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
             Vec::new(),
             Vec::new(),
             Err(InstructionError::NotEnoughAccountKeys),
@@ -1062,7 +1062,7 @@ mod tests {
         let pubkey = Pubkey::new_unique();
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
+            &serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
             vec![(pubkey, create_default_account())],
             vec![AccountMeta {
                 pubkey,
@@ -1083,7 +1083,7 @@ mod tests {
         let blockhash_id = sysvar::recent_blockhashes::id();
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
+            &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
             vec![
                 (nonce_address, nonce_account),
                 (blockhash_id, create_default_recent_blockhashes_account()),
@@ -1108,7 +1108,7 @@ mod tests {
             ],
             Ok(()),
         );
-        let blockhash = hash(&bincode_serialize(&0).unwrap());
+        let blockhash = hash(&serialize(&0).unwrap());
         #[allow(deprecated)]
         let new_recent_blockhashes_account = create_account_with_data_for_test(vec![
                 IterItem(0u64, &blockhash, 0);
@@ -1118,7 +1118,7 @@ mod tests {
             &sdk,
             &system_program::id(),
             Vec::new(),
-            &bincode_serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
+            &serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
             vec![
                 (nonce_address, accounts[0].clone()),
                 (blockhash_id, new_recent_blockhashes_account),
@@ -1138,7 +1138,7 @@ mod tests {
             Ok(()),
             Entrypoint::vm,
             |invoke_context: &mut InvokeContext<TestSdkType>| {
-                invoke_context.blockhash = hash(&bincode_serialize(&0).unwrap());
+                invoke_context.blockhash = hash(&serialize(&0).unwrap());
             },
             |_invoke_context| {},
         );
@@ -1167,7 +1167,7 @@ mod tests {
 
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::WithdrawNonceAccount(42)).unwrap(),
+            &serialize(&SystemInstruction::WithdrawNonceAccount(42)).unwrap(),
             Vec::new(),
             Vec::new(),
             Err(InstructionError::NotEnoughAccountKeys),
@@ -1181,7 +1181,7 @@ mod tests {
         let nonce_address = Pubkey::new_unique();
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::WithdrawNonceAccount(42)).unwrap(),
+            &serialize(&SystemInstruction::WithdrawNonceAccount(42)).unwrap(),
             vec![(nonce_address, create_default_account())],
             vec![AccountMeta {
                 pubkey: nonce_address,
@@ -1203,7 +1203,7 @@ mod tests {
         let blockhash_id = recent_blockhashes::id();
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::WithdrawNonceAccount(42)).unwrap(),
+            &serialize(&SystemInstruction::WithdrawNonceAccount(42)).unwrap(),
             vec![
                 (nonce_address, nonce_account),
                 (pubkey, create_default_account()),
@@ -1242,8 +1242,7 @@ mod tests {
 
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::InitializeNonceAccount(Pubkey::default()))
-                .unwrap(),
+            &serialize(&SystemInstruction::InitializeNonceAccount(Pubkey::default())).unwrap(),
             Vec::new(),
             Vec::new(),
             Err(InstructionError::NotEnoughAccountKeys),
@@ -1258,7 +1257,7 @@ mod tests {
         let nonce_account = nonce_account::create_account(1_000_000).into_inner();
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
+            &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
             vec![(nonce_address, nonce_account)],
             vec![AccountMeta {
                 pubkey: nonce_address,
@@ -1279,7 +1278,7 @@ mod tests {
         let blockhash_id = sysvar::recent_blockhashes::id();
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
+            &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
             vec![
                 (nonce_address, nonce_account),
                 (blockhash_id, create_default_recent_blockhashes_account()),
@@ -1316,7 +1315,7 @@ mod tests {
         let blockhash_id = sysvar::recent_blockhashes::id();
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
+            &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
             vec![
                 (nonce_address, nonce_account),
                 (blockhash_id, create_default_recent_blockhashes_account()),
@@ -1343,7 +1342,7 @@ mod tests {
         );
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::AuthorizeNonceAccount(nonce_address)).unwrap(),
+            &serialize(&SystemInstruction::AuthorizeNonceAccount(nonce_address)).unwrap(),
             vec![(nonce_address, accounts[0].clone())],
             vec![AccountMeta {
                 pubkey: nonce_address,
@@ -1440,7 +1439,7 @@ mod tests {
             recent_blockhashes_account::create_account_with_data_for_test(vec![]);
         process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
+            &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
             vec![
                 (nonce_address, nonce_account),
                 (blockhash_id, new_recent_blockhashes_account),
@@ -1477,7 +1476,7 @@ mod tests {
         let blockhash_id = sysvar::recent_blockhashes::id();
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
+            &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
             vec![
                 (nonce_address, nonce_account),
                 (blockhash_id, create_default_recent_blockhashes_account()),
@@ -1509,7 +1508,7 @@ mod tests {
             &sdk,
             &system_program::id(),
             Vec::new(),
-            &bincode_serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
+            &serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
             vec![
                 (nonce_address, accounts[0].clone()),
                 (blockhash_id, new_recent_blockhashes_account),
@@ -1529,7 +1528,7 @@ mod tests {
             Err(SystemError::NonceNoRecentBlockhashes.into()),
             Entrypoint::vm,
             |invoke_context: &mut InvokeContext<TestSdkType>| {
-                invoke_context.blockhash = hash(&bincode_serialize(&0).unwrap());
+                invoke_context.blockhash = hash(&serialize(&0).unwrap());
             },
             |_invoke_context| {},
         );
@@ -1549,7 +1548,7 @@ mod tests {
         .unwrap();
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
+            &serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
             vec![(nonce_address, nonce_account.clone())],
             vec![AccountMeta {
                 pubkey: nonce_address,
@@ -1585,7 +1584,7 @@ mod tests {
         let nonce_account = new_nonce_account(versions);
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
+            &serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
             vec![(nonce_address, nonce_account.clone())],
             vec![AccountMeta {
                 pubkey: nonce_address,
@@ -1600,7 +1599,7 @@ mod tests {
         let nonce_account = new_nonce_account(versions);
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
+            &serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
             vec![(nonce_address, nonce_account.clone())],
             vec![AccountMeta {
                 pubkey: nonce_address,
@@ -1624,7 +1623,7 @@ mod tests {
         let nonce_account = new_nonce_account(versions);
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
+            &serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
             vec![(nonce_address, nonce_account.clone())],
             vec![AccountMeta {
                 pubkey: nonce_address,
@@ -1637,7 +1636,7 @@ mod tests {
         assert_eq!(accounts[0], nonce_account);
         let mut accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
+            &serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
             vec![(nonce_address, nonce_account)],
             vec![AccountMeta {
                 pubkey: nonce_address,
@@ -1662,7 +1661,7 @@ mod tests {
         );
         let accounts = process_instruction(
             &sdk,
-            &bincode_serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
+            &serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
             vec![(nonce_address, nonce_account)],
             vec![AccountMeta {
                 pubkey: nonce_address,
@@ -1687,7 +1686,7 @@ mod tests {
             let account = AccountSharedData::new(100, size, &system_program::id());
             let accounts = process_instruction(
                 &sdk,
-                &bincode_serialize(&SystemInstruction::Assign {
+                &serialize(&SystemInstruction::Assign {
                     owner: native_loader::id(),
                 })
                 .unwrap(),
@@ -1705,7 +1704,7 @@ mod tests {
             let pubkey2 = Pubkey::new_unique();
             let accounts = process_instruction(
                 &sdk,
-                &bincode_serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
+                &serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
                 vec![
                     (
                         pubkey2,

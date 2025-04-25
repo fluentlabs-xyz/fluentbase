@@ -166,7 +166,7 @@ impl Deref for RecentBlockhashes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solana_bincode::bincode_serialized_size;
+    use solana_bincode::serialized_size;
     use solana_clock::MAX_PROCESSING_AGE;
 
     #[test]
@@ -180,7 +180,7 @@ mod tests {
     fn test_size_of() {
         let entry = Entry::new(&Hash::default(), 0);
         assert_eq!(
-            bincode_serialized_size(&RecentBlockhashes(vec![entry; MAX_ENTRIES])).unwrap(),
+            serialized_size(&RecentBlockhashes(vec![entry; MAX_ENTRIES])).unwrap(),
             RecentBlockhashes::size_of()
         );
     }

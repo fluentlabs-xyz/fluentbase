@@ -7,7 +7,7 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use solana_bincode::bincode_serialize;
+use solana_bincode::serialize;
 use solana_hash::{Hash, HASH_BYTES};
 use solana_pubkey::Pubkey;
 use solana_sanitize::{Sanitize, SanitizeError};
@@ -148,7 +148,7 @@ impl VersionedMessage {
     }
 
     pub fn serialize(&self) -> Vec<u8> {
-        bincode_serialize(self).unwrap()
+        serialize(self).unwrap()
     }
 
     /// Compute the blake3 hash of this transaction's message
@@ -328,7 +328,7 @@ mod tests {
         solana_program::instruction::{AccountMeta, Instruction},
         // message::v0::MessageAddressTableLookup,
     };
-    use solana_bincode::bincode_deserialize;
+    use solana_bincode::deserialize;
     use solana_pubkey::Pubkey;
 
     #[test]
@@ -360,11 +360,11 @@ mod tests {
 
         // bincode
         {
-            let bytes = bincode_serialize(&message).unwrap();
-            assert_eq!(bytes, bincode_serialize(&wrapped_message).unwrap());
+            let bytes = serialize(&message).unwrap();
+            assert_eq!(bytes, serialize(&wrapped_message).unwrap());
 
-            let message_from_bytes: LegacyMessage = bincode_deserialize(&bytes).unwrap();
-            let wrapped_message_from_bytes: VersionedMessage = bincode_deserialize(&bytes).unwrap();
+            let message_from_bytes: LegacyMessage = deserialize(&bytes).unwrap();
+            let wrapped_message_from_bytes: VersionedMessage = deserialize(&bytes).unwrap();
 
             assert_eq!(message, message_from_bytes);
             assert_eq!(wrapped_message, wrapped_message_from_bytes);

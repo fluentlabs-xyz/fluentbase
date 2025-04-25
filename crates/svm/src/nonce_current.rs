@@ -103,7 +103,7 @@ mod test {
     #[test]
     fn test_nonce_state_size() {
         let data = Versions::new(State::Initialized(Data::default()));
-        let size = bincode_serialized_size(&data).unwrap();
+        let size = serialized_size(&data).unwrap();
         assert_eq!(State::size() as u64, size);
     }
 }
