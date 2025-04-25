@@ -123,12 +123,14 @@ extern "C" {
 
     pub fn _ed25519_add(p_ptr: *mut u8, q_ptr: *const u8);
     pub fn _ed25519_decompress(slice_ptr: *mut u8, sign: u32);
-    pub fn _ecrecover(
+
+    /// Returns 0 when public key was successfully recovered and 1 in case of error
+    pub fn _secp256k1_recover(
         digest32_offset: *const u8,
         sig64_offset: *const u8,
-        output32_offset: *mut u8,
+        output65_offset: *mut u8,
         rec_id: u32,
-    );
+    ) -> i32;
     pub fn _secp256k1_add(p_ptr: *mut u8, q_ptr: *const u8);
     pub fn _secp256k1_decompress(x_ptr: *mut u8, sign: u32);
     pub fn _secp256k1_double(p_ptr: *mut u8);

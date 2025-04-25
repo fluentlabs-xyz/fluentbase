@@ -1,6 +1,5 @@
 pub mod charge_fuel;
 pub mod debug_log;
-pub mod ec_recover;
 pub mod ed_add;
 pub mod ed_decompress;
 pub mod exec;
@@ -19,6 +18,7 @@ pub mod preimage_size;
 pub mod read;
 pub mod read_output;
 pub mod resume;
+pub mod secp256k1_recover;
 pub mod sha256_compress;
 pub mod sha256_extend;
 pub mod state;
@@ -32,7 +32,6 @@ use crate::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
         debug_log::SyscallDebugLog,
-        ec_recover::SyscallEcrecover,
         ed_add::SyscallEdwardsAddAssign,
         ed_decompress::SyscallEdwardsDecompress,
         exec::SyscallExec,
@@ -51,6 +50,7 @@ use crate::{
         read::SyscallRead,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
+        secp256k1_recover::SyscallSecp256k1Recover,
         sha256_compress::SyscallSha256Compress,
         sha256_extend::SyscallSha256Extend,
         state::SyscallState,
@@ -100,7 +100,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller),
         SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller),
-        SysFuncIdx::SECP256K1_RECOVER => SyscallEcrecover::fn_handler(caller),
+        SysFuncIdx::SECP256K1_RECOVER => SyscallSecp256k1Recover::fn_handler(caller),
         SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller),
         SysFuncIdx::SECP256K1_DECOMPRESS => {
             SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller)

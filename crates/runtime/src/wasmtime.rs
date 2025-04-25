@@ -229,7 +229,7 @@ impl RuntimeState {
 
 mod builtins {
     use super::*;
-    use crate::instruction::ec_recover::SyscallEcrecover;
+    use crate::instruction::secp256k1_recover::SyscallSecp256k1Recover;
 
     fn get_memory_export(caller: &mut Caller<'_, WorkerContext>) -> anyhow::Result<Memory> {
         match caller.get_export("memory") {
@@ -443,13 +443,13 @@ mod builtins {
         Ok(context.fuel_limit - context.fuel_consumed)
     }
 
-    pub fn ecrecover(
+    pub fn secp256k1_recover(
         mut caller: Caller<'_, WorkerContext>,
         digest32_offset: u32,
         sig64_offset: u32,
-        output32_offset: u32,
+        output65_offset: u32,
         rec_id: u32,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<i32> {
         let digest = read_memory(&mut caller, digest32_offset, 32)?;
         let digest: [u8; 32] = digest
             .as_slice()
@@ -461,10 +461,14 @@ mod builtins {
             .as_slice()
             .try_into()
             .expect("signature should be 64 bytes");
-        let hash = SyscallEcrecover::fn_impl(&digest, &sig, rec_id as u8);
-        let hash = hash.to_vec();
-        write_memory(&mut caller, output32_offset, &hash)?;
-        Ok(())
+        let hash = SyscallSecp256k1Recover::fn_impl(&digest, &sig, rec_id as u8);
+        if let Some(hash) = hash {
+            let hash = hash.as_slice();
+            write_memory(&mut caller, output65_offset, &hash)?;
+            Ok(0)
+        } else {
+            Ok(1)
+        }
     }
 }
 
@@ -482,7 +486,7 @@ fn new_linker_with_builtins(engine: &Engine) -> anyhow::Result<Linker<WorkerCont
     linker.func_wrap(module, "_keccak256", builtins::keccak256)?;
     linker.func_wrap(module, "_fuel", builtins::fuel)?;
     linker.func_wrap(module, "_charge_fuel", builtins::charge_fuel)?;
-    linker.func_wrap(module, "_ecrecover", builtins::ecrecover)?;
+    linker.func_wrap(module, "_secp256k1_recover", builtins::secp256k1_recover)?;
     Ok(linker)
 }
 

@@ -3,7 +3,6 @@ use fluentbase_runtime::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
         debug_log::SyscallDebugLog,
-        ec_recover::SyscallEcrecover,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
@@ -16,6 +15,7 @@ use fluentbase_runtime::{
         read::SyscallRead,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
+        secp256k1_recover::SyscallSecp256k1Recover,
         state::SyscallState,
         write::SyscallWrite,
     },
@@ -46,8 +46,8 @@ impl NativeAPI for RuntimeContextWrapper {
         todo!("not implemented")
     }
 
-    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 32] {
-        SyscallEcrecover::fn_impl(digest, sig, rec_id)
+    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
+        SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
     }
 
     fn debug_log(message: &str) {
