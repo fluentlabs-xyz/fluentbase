@@ -897,7 +897,7 @@ pub mod tests {
         let account_to = AccountSharedData::new(0, 0, &system_program_id);
         // let mut account_with_elf =
         //     load_program_account_from_elf(&bpf_loader_id,
-        // "../examples/hello-world/assets/hello_world.so"); account_with_elf.
+        // "../examples/solana-program/assets/solana_program.so"); account_with_elf.
         // set_lamports(0);
 
         let accounts = vec![
@@ -1133,7 +1133,7 @@ pub mod tests {
         let account_to = AccountSharedData::new(0, 0, &system_program_id);
         // let mut account_with_elf =
         //     load_program_account_from_elf(&bpf_loader_id,
-        // "../examples/hello-world/assets/hello_world.so"); account_with_elf.
+        // "../examples/solana-program/assets/solana_program.so"); account_with_elf.
         // set_lamports(0);
 
         let accounts = vec![
@@ -1311,7 +1311,7 @@ pub mod tests {
         let account_buffer = AccountSharedData::new(0, 0, &system_program_id);
         let account_with_program = load_program_account_from_elf_file(
             &bpf_loader_upgradeable_id,
-            "../../examples/svm/hello-world/assets/hello_world.so",
+            "../../examples/svm/solana-program/assets/solana_program.so",
         );
         let program_len = account_with_program.data().len();
         let programdata_len = UpgradeableLoaderState::size_of_programdata(program_len);

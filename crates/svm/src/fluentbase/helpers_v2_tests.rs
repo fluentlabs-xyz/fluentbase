@@ -81,7 +81,7 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            "../../examples/svm/hello-world/assets/hello_world.so",
+            "../../examples/svm/solana-program/assets/solana_program.so",
             // "./test_elfs/out/noop_aligned.so",
         );
 
@@ -305,7 +305,7 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            "../../examples/svm/hello-world/assets/hello_world.so",
+            "../../examples/svm/solana-program/assets/solana_program.so",
             // "./test_elfs/out/noop_aligned.so",
         );
 

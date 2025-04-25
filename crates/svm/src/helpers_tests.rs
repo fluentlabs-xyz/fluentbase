@@ -94,7 +94,7 @@ pub(crate) mod tests {
         // let solana_elf_file_name = "hello_world";
         let solana_elf_file_name = "solana_ee_hello_world";
         let elf_bytes = std::fs::read(format!(
-            "../examples/hello-world/assets/{}.so",
+            "../examples/solana-program/assets/{}.so",
             solana_elf_file_name
         ))
         .unwrap();

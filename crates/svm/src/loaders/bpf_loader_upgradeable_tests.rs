@@ -145,7 +145,7 @@ pub mod tests {
         let program_id = Pubkey::new_unique();
         let mut program_account = load_program_account_from_elf_file(
             &loader_id,
-            "../../examples/svm/hello-world/assets/hello_world.so",
+            "../../examples/svm/solana-program/assets/solana_program.so",
         );
         let parameter_id = Pubkey::new_unique();
         let parameter_account = AccountSharedData::new(1, 0, &loader_id);

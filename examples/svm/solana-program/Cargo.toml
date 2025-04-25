@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-examples-svm-hello-world"
+name = "fluentbase-examples-svm-solana-program"
 version = "0.1.0"
 edition = "2021"
 
