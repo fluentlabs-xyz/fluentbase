@@ -496,14 +496,13 @@ mod tests {
         ];
 
         let message = Message::new(&instructions, Some(&id1));
-        let message = Compat(message);
         let message_vec = bincode_serialize(&message).unwrap();
-        let message_vec_old = bincode_v1_3_3::serialize(&message.0).unwrap();
+        let message_vec_old = bincode_v1_3_3::serialize(&message).unwrap();
         assert_eq!(message_vec, message_vec_old);
-        let message_recovered: Compat<Message> = bincode_deserialize(&message_vec).unwrap();
+        let message_recovered: Message = bincode_deserialize(&message_vec).unwrap();
         let message_recovered_old: Message = bincode_v1_3_3::deserialize(&message_vec_old).unwrap();
-        assert_eq!(message_recovered.0, message.0);
-        assert_eq!(message_recovered_old, message.0);
+        assert_eq!(message_recovered, message);
+        assert_eq!(message_recovered_old, message);
     }
 
     #[test]

@@ -30,13 +30,13 @@ use solana_pubkey::Pubkey;
 pub type InheritableAccountFields = (u64, Epoch);
 pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITIAL_RENT_EPOCH);
 
-fn shared_deserialize_data<T: de::Decode<()>, U: ReadableAccount>(
+fn shared_deserialize_data<T: serde::de::DeserializeOwned, U: ReadableAccount>(
     account: &U,
 ) -> Result<T, bincode::error::DecodeError> {
     Ok(bincode_deserialize(account.data())?)
 }
 
-fn shared_serialize_data<T: enc::Encode, U: WritableAccount>(
+fn shared_serialize_data<T: serde::Serialize, U: WritableAccount>(
     account: &mut U,
     state: &T,
 ) -> Result<usize, bincode::error::EncodeError> {
@@ -107,10 +107,12 @@ impl Account {
     // pub fn new_rent_epoch(lamports: u64, space: usize, owner: &Pubkey, rent_epoch: Epoch) -> Self {
     //     shared_new_rent_epoch(lamports, space, owner, rent_epoch)
     // }
-    pub fn deserialize_data<T: de::Decode<()>>(&self) -> Result<T, bincode::error::DecodeError> {
+    pub fn deserialize_data<T: serde::de::DeserializeOwned>(
+        &self,
+    ) -> Result<T, bincode::error::DecodeError> {
         shared_deserialize_data(self)
     }
-    pub fn serialize_data<T: enc::Encode>(
+    pub fn serialize_data<T: serde::Serialize>(
         &mut self,
         state: &T,
     ) -> Result<usize, bincode::error::EncodeError> {
@@ -285,7 +287,7 @@ fn shared_new_data<T: serde::Serialize + bincode::Encode, U: WritableAccount>(
     ))
 }
 
-fn shared_new_data_with_space<T: enc::Encode, U: WritableAccount>(
+fn shared_new_data_with_space<T: serde::Serialize, U: WritableAccount>(
     lamports: u64,
     state: &T,
     space: usize,
@@ -298,7 +300,7 @@ fn shared_new_data_with_space<T: enc::Encode, U: WritableAccount>(
     Ok(account)
 }
 
-fn shared_new_ref_data_with_space<T: enc::Encode, U: WritableAccount>(
+fn shared_new_ref_data_with_space<T: serde::Serialize, U: WritableAccount>(
     lamports: u64,
     state: &T,
     space: usize,
@@ -444,7 +446,7 @@ impl AccountSharedData {
     // ) -> Result<RefCell<Self>, bincode::Error> {
     //     shared_new_ref_data(lamports, state, owner)
     // }
-    pub fn new_data_with_space<T: enc::Encode>(
+    pub fn new_data_with_space<T: serde::Serialize>(
         lamports: u64,
         state: &T,
         space: usize,
@@ -463,10 +465,12 @@ impl AccountSharedData {
     // pub fn new_rent_epoch(lamports: u64, space: usize, owner: &Pubkey, rent_epoch: Epoch) -> Self {
     //     shared_new_rent_epoch(lamports, space, owner, rent_epoch)
     // }
-    pub fn deserialize_data<T: de::Decode<()>>(&self) -> Result<T, bincode::error::DecodeError> {
+    pub fn deserialize_data<T: serde::de::DeserializeOwned>(
+        &self,
+    ) -> Result<T, bincode::error::DecodeError> {
         shared_deserialize_data(self)
     }
-    pub fn serialize_data<T: enc::Encode>(
+    pub fn serialize_data<T: serde::Serialize>(
         &mut self,
         state: &T,
     ) -> Result<usize, bincode::error::EncodeError> {
@@ -827,7 +831,7 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Deserializes the account data into a state
     #[cfg(not(target_os = "solana"))]
-    pub fn get_state<T: de::Decode<()>>(&self) -> Result<T, InstructionError> {
+    pub fn get_state<T: serde::de::DeserializeOwned>(&self) -> Result<T, InstructionError> {
         self.account
             .deserialize_data()
             .map_err(|_| InstructionError::InvalidAccountData)
@@ -835,7 +839,7 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Serializes a state into the account data
     #[cfg(not(target_os = "solana"))]
-    pub fn set_state<T: enc::Encode>(&mut self, state: &T) -> Result<(), InstructionError> {
+    pub fn set_state<T: serde::Serialize>(&mut self, state: &T) -> Result<(), InstructionError> {
         let data = self.get_data_mut()?;
         let serialized_size =
             bincode_serialized_size(state).map_err(|_| InstructionError::GenericError)?;
