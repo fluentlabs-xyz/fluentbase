@@ -23,6 +23,7 @@ use crate::{
     system_program,
 };
 use alloc::{vec, vec::Vec};
+use bincode::serde::Compat;
 #[allow(deprecated)]
 pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
 use core::{convert::TryFrom, str::FromStr};
@@ -472,6 +473,42 @@ mod tests {
     use solana_bincode::{bincode_deserialize, bincode_serialized_size};
 
     #[test]
+    fn test_serialization_results_match() {
+        let program_id0 = Pubkey::from_str("4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM").unwrap();
+        let program_id1 = Pubkey::from_str("8opHzTAnfzRpPEx21XtnrVTX28YQuCpAjcn1PczScKh").unwrap();
+        let id0 = Pubkey::from_str("CiDwVBFgWV9E5MvXWoLgnEgn2hK7rJikbvfWavzAQz3").unwrap();
+        let id1 = Pubkey::from_str("GcdayuLaLyrdmUu324nahyv33G5poQdLUEZ1nEytDeP").unwrap();
+        let id2 = Pubkey::from_str("LX3EUdRUBUa3TbsYXLEUdj9J3prXkWXvLYSWyYyc2Jj").unwrap();
+        let id3 = Pubkey::from_str("QRSsyMWN1yHT9ir42bgNZUNZ4PdEhcSWCrL2AryKpy5").unwrap();
+        let instructions = vec![
+            // Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id0, false)]),
+            // Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id1, true)]),
+            // Instruction::new_with_bincode(
+            //     program_id1,
+            //     &0,
+            //     vec![AccountMeta::new_readonly(id2, false)],
+            // ),
+            // Instruction::new_with_bincode(
+            //     program_id1,
+            //     &0,
+            //     vec![AccountMeta::new_readonly(id3, true)],
+            // ),
+        ];
+
+        let message = Message::new(&instructions, Some(&id1));
+        let message = Compat(message);
+        let message_vec = bincode_serialize(&message).unwrap();
+        let message_vec_old = bincode_v1_3_3::serialize(&message.0).unwrap();
+        println!("mn: {:?}", message_vec);
+        println!("mo: {:?}", message_vec_old);
+        assert_eq!(message_vec, message_vec_old);
+        let message_recovered: Compat<Message> = bincode_deserialize(&message_vec).unwrap();
+        let message_recovered_old: Message = bincode_v1_3_3::deserialize(&message_vec_old).unwrap();
+        assert_eq!(message_recovered.0, message.0);
+        assert_eq!(message_recovered_old, message.0);
+    }
+
+    #[test]
     fn test_builtin_program_keys() {
         let keys: HashSet<Pubkey> = BUILTIN_PROGRAMS_KEYS.iter().copied().collect();
         assert_eq!(keys.len(), 10);
@@ -716,41 +753,6 @@ mod tests {
             bincode_serialized_size(&MessageHeader::default()).unwrap() as usize,
             MESSAGE_HEADER_LENGTH
         );
-    }
-
-    #[test]
-    fn test_compare_serialization() {
-        let program_id0 = Pubkey::from_str("4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM").unwrap();
-        let program_id1 = Pubkey::from_str("8opHzTAnfzRpPEx21XtnrVTX28YQuCpAjcn1PczScKh").unwrap();
-        let id0 = Pubkey::from_str("CiDwVBFgWV9E5MvXWoLgnEgn2hK7rJikbvfWavzAQz3").unwrap();
-        let id1 = Pubkey::from_str("GcdayuLaLyrdmUu324nahyv33G5poQdLUEZ1nEytDeP").unwrap();
-        let id2 = Pubkey::from_str("LX3EUdRUBUa3TbsYXLEUdj9J3prXkWXvLYSWyYyc2Jj").unwrap();
-        let id3 = Pubkey::from_str("QRSsyMWN1yHT9ir42bgNZUNZ4PdEhcSWCrL2AryKpy5").unwrap();
-        let instructions = vec![
-            // Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id0, false)]),
-            // Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id1, true)]),
-            // Instruction::new_with_bincode(
-            //     program_id1,
-            //     &0,
-            //     vec![AccountMeta::new_readonly(id2, false)],
-            // ),
-            // Instruction::new_with_bincode(
-            //     program_id1,
-            //     &0,
-            //     vec![AccountMeta::new_readonly(id3, true)],
-            // ),
-        ];
-
-        let message = Message::new(&instructions, Some(&id1));
-        let message_vec = message.serialize();
-        let message_vec_old = bincode_v1_3_3::serialize(&message).unwrap();
-        println!("mn: {:?}", message_vec);
-        println!("mo: {:?}", message_vec_old);
-        assert_eq!(message_vec, message_vec_old);
-        let message_recovered: Message = bincode_deserialize(&message_vec).unwrap();
-        let message_recovered_old: Message = bincode_v1_3_3::deserialize(&message_vec_old).unwrap();
-        assert_eq!(message_recovered, message);
-        assert_eq!(message_recovered_old, message);
     }
 
     #[test]
