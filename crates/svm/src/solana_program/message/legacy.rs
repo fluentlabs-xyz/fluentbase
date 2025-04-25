@@ -481,26 +481,24 @@ mod tests {
         let id2 = Pubkey::from_str("LX3EUdRUBUa3TbsYXLEUdj9J3prXkWXvLYSWyYyc2Jj").unwrap();
         let id3 = Pubkey::from_str("QRSsyMWN1yHT9ir42bgNZUNZ4PdEhcSWCrL2AryKpy5").unwrap();
         let instructions = vec![
-            // Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id0, false)]),
-            // Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id1, true)]),
-            // Instruction::new_with_bincode(
-            //     program_id1,
-            //     &0,
-            //     vec![AccountMeta::new_readonly(id2, false)],
-            // ),
-            // Instruction::new_with_bincode(
-            //     program_id1,
-            //     &0,
-            //     vec![AccountMeta::new_readonly(id3, true)],
-            // ),
+            Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id0, false)]),
+            Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id1, true)]),
+            Instruction::new_with_bincode(
+                program_id1,
+                &0,
+                vec![AccountMeta::new_readonly(id2, false)],
+            ),
+            Instruction::new_with_bincode(
+                program_id1,
+                &0,
+                vec![AccountMeta::new_readonly(id3, true)],
+            ),
         ];
 
         let message = Message::new(&instructions, Some(&id1));
         let message = Compat(message);
         let message_vec = bincode_serialize(&message).unwrap();
         let message_vec_old = bincode_v1_3_3::serialize(&message.0).unwrap();
-        println!("mn: {:?}", message_vec);
-        println!("mo: {:?}", message_vec_old);
         assert_eq!(message_vec, message_vec_old);
         let message_recovered: Compat<Message> = bincode_deserialize(&message_vec).unwrap();
         let message_recovered_old: Message = bincode_v1_3_3::deserialize(&message_vec_old).unwrap();
