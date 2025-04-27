@@ -8,6 +8,7 @@ use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_genesis::{get_all_precompile_hashes, get_precompile_wasm_bytecode_by_hash};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
+    get_import_linker_symbols,
     Bytes,
     ExitCode,
     SyscallInvocationParams,
@@ -66,6 +67,7 @@ struct WorkerContext {
     fuel_limit: u64,
     fuel_consumed: u64,
     fuel_refunded: i64,
+    state: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -144,10 +146,13 @@ impl AsyncExecutor {
             fuel_limit,
             fuel_consumed: 0,
             fuel_refunded: 0,
+            state,
         };
         let engine = module.engine();
         let linker = new_linker_with_builtins(engine).unwrap();
         let mut store = Store::new(engine, worker_context);
+
+        verify_linker(&linker, &mut store);
 
         let instance = linker
             .instantiate(&mut store, &module)
@@ -229,6 +234,7 @@ impl RuntimeState {
 
 mod builtins {
     use super::*;
+    use crate::instruction::secp256k1_recover::SyscallSecp256k1Recover;
 
     fn get_memory_export(caller: &mut Caller<'_, WorkerContext>) -> anyhow::Result<Memory> {
         match caller.get_export("memory") {
@@ -357,7 +363,10 @@ mod builtins {
             remaining_fuel
         };
         let code_hash = read_memory(&mut caller, hash32_ptr, 32)?;
-        let code_hash: [u8; 32] = code_hash.as_slice().try_into().unwrap();
+        let code_hash: [u8; 32] = code_hash
+            .as_slice()
+            .try_into()
+            .expect("code hash should be 32 bytes");
         let input = read_memory(&mut caller, input_ptr, input_len)?;
 
         let context = caller.data();
@@ -438,6 +447,81 @@ mod builtins {
         let context = caller.data();
         Ok(context.fuel_limit - context.fuel_consumed)
     }
+
+    pub fn secp256k1_recover(
+        mut caller: Caller<'_, WorkerContext>,
+        digest32_offset: u32,
+        sig64_offset: u32,
+        output65_offset: u32,
+        rec_id: u32,
+    ) -> anyhow::Result<i32> {
+        let digest = read_memory(&mut caller, digest32_offset, 32)?;
+        let digest: [u8; 32] = digest
+            .as_slice()
+            .try_into()
+            .expect("digest should be 32 bytes");
+        let digest = B256::from(digest);
+        let sig = read_memory(&mut caller, sig64_offset, 64)?;
+        let sig: [u8; 64] = sig
+            .as_slice()
+            .try_into()
+            .expect("signature should be 64 bytes");
+        let hash = SyscallSecp256k1Recover::fn_impl(&digest, &sig, rec_id as u8);
+        if let Some(hash) = hash {
+            let hash = hash.as_slice();
+            write_memory(&mut caller, output65_offset, &hash)?;
+            Ok(0)
+        } else {
+            Ok(1)
+        }
+    }
+
+    pub fn forward_output(
+        mut caller: Caller<'_, WorkerContext>,
+        offset: u32,
+        length: u32,
+    ) -> anyhow::Result<()> {
+        let context = caller.data_mut();
+        let return_data = &context.return_data;
+        if offset + length <= return_data.len() as u32 {
+            let ret_data = &return_data[(offset as usize)..(offset as usize + length as usize)];
+            context.output.extend_from_slice(ret_data);
+            Ok(())
+        } else {
+            Err(wasmtime::Trap::MemoryOutOfBounds.into())
+        }
+    }
+
+    pub fn state(caller: Caller<'_, WorkerContext>) -> anyhow::Result<u32> {
+        Ok(caller.data().state)
+    }
+
+    pub fn preimage_copy(
+        _caller: Caller<'_, WorkerContext>,
+        _hash32_ptr: u32,
+        _preimage_ptr: u32,
+    ) -> anyhow::Result<()> {
+        Err(wasmtime::Trap::UnreachableCodeReached.into())
+    }
+
+    pub fn preimage_size(
+        _caller: Caller<'_, WorkerContext>,
+        _hash32_ptr: u32,
+    ) -> anyhow::Result<u32> {
+        Err(wasmtime::Trap::UnreachableCodeReached.into())
+    }
+
+    pub fn resume(
+        _caller: Caller<'_, WorkerContext>,
+        _call_id: u32,
+        _return_data_ptr: u32,
+        _return_data_len: u32,
+        _exit_code: i32,
+        _fuel16_ptr: u32,
+    ) -> anyhow::Result<i32> {
+        // should never be called in this context
+        Err(wasmtime::Trap::UnreachableCodeReached.into())
+    }
 }
 
 fn new_linker_with_builtins(engine: &Engine) -> anyhow::Result<Linker<WorkerContext>> {
@@ -454,6 +538,12 @@ fn new_linker_with_builtins(engine: &Engine) -> anyhow::Result<Linker<WorkerCont
     linker.func_wrap(module, "_keccak256", builtins::keccak256)?;
     linker.func_wrap(module, "_fuel", builtins::fuel)?;
     linker.func_wrap(module, "_charge_fuel", builtins::charge_fuel)?;
+    linker.func_wrap(module, "_secp256k1_recover", builtins::secp256k1_recover)?;
+    linker.func_wrap(module, "_forward_output", builtins::forward_output)?;
+    linker.func_wrap(module, "_preimage_copy", builtins::preimage_copy)?;
+    linker.func_wrap(module, "_preimage_size", builtins::preimage_size)?;
+    linker.func_wrap(module, "_state", builtins::state)?;
+    linker.func_wrap(module, "_resume", builtins::resume)?;
     Ok(linker)
 }
 
@@ -574,4 +664,15 @@ pub fn try_resume(
         fuel16_ptr,
     });
     Some(handle_one_step(executor))
+}
+
+fn verify_linker(linker: &Linker<WorkerContext>, store: &mut Store<WorkerContext>) {
+    let mut imported_symbols: Vec<&str> = linker.iter(store).map(|(_, name, _)| name).collect();
+    imported_symbols.sort();
+    let expected_symbols = get_import_linker_symbols();
+    // TODO(khasan) verify signature of each function, not just the name
+    assert_eq!(
+        imported_symbols, expected_symbols,
+        "imported symbols mismatch"
+    );
 }

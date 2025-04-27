@@ -4,7 +4,6 @@ use core::cell::RefCell;
 use fluentbase_runtime::RuntimeContext;
 use fluentbase_types::{
     native_api::NativeAPI,
-    ContractContextReader,
     ContractContextV1,
     ExitCode,
     IsAccountEmpty,
@@ -17,7 +16,6 @@ use fluentbase_types::{
     FUEL_DENOM_RATE,
 };
 use hashbrown::HashMap;
-use std::ops::AddAssign;
 
 #[derive(Clone)]
 pub struct TestingContext {
@@ -97,6 +95,7 @@ impl Default for TestingContext {
         }
     }
 }
+
 impl StorageAPI for TestingContext {
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
         let target_address = self.inner.borrow().shared_context_input_v1.contract.address;

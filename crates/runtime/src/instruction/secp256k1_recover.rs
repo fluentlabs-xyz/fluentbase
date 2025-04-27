@@ -1,37 +1,47 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, B256};
-use k256::{
-    ecdsa::{RecoveryId, Signature, VerifyingKey},
-    elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
-    EncodedPoint,
-    PublicKey,
-};
+use fluentbase_types::B256;
 use rwasm_executor::{Caller, RwasmError};
+use secp256k1::{
+    ecdsa::{RecoverableSignature, RecoveryId},
+    Message,
+    SECP256K1,
+};
 
-pub struct SyscallEcrecover;
+pub struct SyscallSecp256k1Recover;
 
-impl SyscallEcrecover {
+impl SyscallSecp256k1Recover {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
         let [digest32_ptr, sig64_ptr, output65_ptr, rec_id] = caller.stack_pop_n();
         let digest = caller.memory_read_fixed::<32>(digest32_ptr.as_usize())?;
         let sig = caller.memory_read_fixed::<64>(sig64_ptr.as_usize())?;
-        let public_key = Self::fn_impl(&B256::from(digest), &sig, rec_id.as_u32() as u8)
-            .map_err(|err| RwasmError::ExecutionHalted(err.into_i32()))?;
-        caller.memory_write(output65_ptr.as_usize(), &public_key)?;
+        let public_key = Self::fn_impl(&B256::from(digest), &sig, rec_id.as_u32() as u8);
+        match public_key {
+            Some(public_key) => {
+                caller.memory_write(output65_ptr.as_usize(), &public_key)?;
+                caller.stack_push(0);
+            }
+            None => {
+                caller.stack_push(1);
+            }
+        };
         Ok(())
     }
 
-    pub fn fn_impl(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Result<[u8; 65], ExitCode> {
-        let sig = Signature::from_slice(&sig[..]).map_err(|_| ExitCode::MalformedBuiltinParams)?;
-        let rec_id = RecoveryId::new(rec_id & 0b1 > 0, rec_id & 0b10 > 0);
-        let pk = VerifyingKey::recover_from_prehash(digest.as_slice(), &sig, rec_id)
-            .map_err(|_| ExitCode::MalformedBuiltinParams)?;
-        let pk_computed = EncodedPoint::from(&pk);
-        let public_key = PublicKey::from_encoded_point(&pk_computed).unwrap();
-        let pk_uncompressed = public_key.to_encoded_point(false);
-        let mut result = [0u8; 65];
-        result.copy_from_slice(pk_uncompressed.as_bytes());
-        Ok(result)
+    pub fn fn_impl(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
+        let recid = match RecoveryId::from_i32(rec_id as i32) {
+            Ok(recid) => recid,
+            Err(_) => return None,
+        };
+        let sig = match RecoverableSignature::from_compact(sig.as_slice(), recid) {
+            Ok(sig) => sig,
+            Err(_) => return None,
+        };
+        let msg = Message::from_digest(digest.0);
+        let public = match SECP256K1.recover_ecdsa(&msg, &sig) {
+            Ok(public) => public,
+            Err(_) => return None,
+        };
+        Some(public.serialize_uncompressed())
     }
 }
 
@@ -39,7 +49,7 @@ impl SyscallEcrecover {
 mod secp256k1_tests {
     extern crate alloc;
 
-    use crate::instruction::ec_recover::SyscallEcrecover;
+    use crate::instruction::secp256k1_recover::SyscallSecp256k1Recover;
     use fluentbase_types::B256;
     use hex_literal::hex;
     use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
@@ -49,7 +59,7 @@ mod secp256k1_tests {
         pk: [u8; 33],
         msg: &'static [u8],
         sig: [u8; 65],
-        rec_id: usize,
+        rec_id: u8,
     }
 
     const RECOVERY_TEST_VECTORS: &[RecoveryTestVector] = &[
@@ -78,24 +88,36 @@ mod secp256k1_tests {
         for vector in RECOVERY_TEST_VECTORS {
             let digest = Sha256::new_with_prefix(vector.msg).finalize();
 
-            let mut params_vec: Vec<u8> = vec![];
-            params_vec.extend(&digest);
-            params_vec.extend(&vector.sig);
-            params_vec.push(vector.rec_id as u8);
-            params_vec.extend(&vector.pk);
-
             let public_key = PublicKey::from_sec1_bytes(&vector.pk).unwrap();
             let pk_uncompressed = public_key.to_encoded_point(false);
             let mut pk = [0u8; 65];
             pk.copy_from_slice(pk_uncompressed.as_bytes());
 
-            let result = SyscallEcrecover::fn_impl(
+            let result = SyscallSecp256k1Recover::fn_impl(
                 &B256::from_slice(&digest),
                 &vector.sig[1..].try_into().unwrap(),
-                vector.rec_id as u8,
+                vector.rec_id,
             )
             .unwrap();
             assert_eq!(result, pk);
         }
+    }
+
+    #[test]
+    fn public_key_recovery_failure() {
+        let vector = RecoveryTestVector {
+            pk: [0u8; 33],
+            msg: b"example message",
+            sig: [0u8; 65],
+            rec_id: 1,
+        };
+        let digest = Sha256::new_with_prefix(vector.msg).finalize();
+
+        let result = SyscallSecp256k1Recover::fn_impl(
+            &B256::from_slice(&digest),
+            &vector.sig[1..].try_into().unwrap(),
+            vector.rec_id,
+        );
+        assert!(result.is_none());
     }
 }
