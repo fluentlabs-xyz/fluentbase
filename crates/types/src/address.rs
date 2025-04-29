@@ -91,7 +91,11 @@ mod tests {
             todo!()
         }
 
-        fn charge_fuel(&self, _fuel_consumed: u64, _fuel_refunded: i64) -> u64 {
+        fn charge_fuel_manually(&self, _fuel_consumed: u64, _fuel_refunded: i64) -> u64 {
+            todo!()
+        }
+
+        fn charge_fuel(&self, _fuel_consumed: u64) {
             todo!()
         }
 

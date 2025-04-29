@@ -9,6 +9,7 @@ use crate::{
         EXAMPLE_RWASM,
         EXAMPLE_SECP256K1,
         EXAMPLE_SIMPLE_STORAGE,
+        EXAMPLE_TINY_KECCAK256,
     },
     utils::EvmTestingContext,
 };
@@ -40,11 +41,11 @@ fn test_wasm_greeting() {
 }
 
 #[test]
-fn test_wasm_keccak256() {
+fn test_wasm_tiny_keccak256() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_KECCAK256.into());
+    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_TINY_KECCAK256.into());
     // call greeting WASM contract
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
@@ -206,7 +207,7 @@ fn test_wasm_simple_storage() {
 }
 
 #[test]
-fn test_contract_works() {
+fn test_wasm_rwasm() {
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_RWASM.into());
@@ -224,4 +225,25 @@ fn test_contract_works() {
     let module = RwasmModule::new(&output).unwrap();
     assert!(module.code_section.len() > 0);
     assert!(unsafe { from_utf8_unchecked(&module.memory_section).contains("Hello, World") })
+}
+
+#[test]
+fn test_wasm_keccak256_gas_price() {
+    let mut ctx = EvmTestingContext::default();
+    let contract_address = ctx.deploy_evm_tx(Address::ZERO, EXAMPLE_KECCAK256.into());
+    let result = ctx.call_evm_tx(
+        Address::ZERO,
+        contract_address,
+        "Hello, World".into(),
+        None,
+        None,
+    );
+    println!("{:?}", result);
+    assert!(result.is_success());
+    let bytes = result.output().unwrap_or_default().as_ref();
+    println!("bytes: {:?}", hex::encode(&bytes));
+    assert_eq!(
+        "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
+        hex::encode(&bytes[0..32]),
+    );
 }

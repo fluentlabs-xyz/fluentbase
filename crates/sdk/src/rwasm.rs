@@ -1,6 +1,7 @@
 pub use crate::{
     bindings::{
         _charge_fuel,
+        _charge_fuel_manually,
         _debug_log,
         _exec,
         _exit,
@@ -113,8 +114,13 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
-        unsafe { _charge_fuel(fuel_consumed, fuel_refunded) }
+    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
+        unsafe { _charge_fuel_manually(fuel_consumed, fuel_refunded) }
+    }
+
+    #[inline(always)]
+    fn charge_fuel(&self, fuel_consumed: u64) {
+        unsafe { _charge_fuel(fuel_consumed) }
     }
 
     #[inline(always)]

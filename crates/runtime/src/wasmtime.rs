@@ -422,7 +422,7 @@ mod builtins {
         Ok(())
     }
 
-    pub fn charge_fuel(
+    pub fn charge_fuel_manually(
         mut caller: Caller<'_, WorkerContext>,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -441,6 +441,15 @@ mod builtins {
             .checked_add(fuel_refunded)
             .unwrap_or(i64::MAX);
         Ok(context.fuel_limit - context.fuel_consumed)
+    }
+
+    pub fn charge_fuel(
+        _caller: Caller<'_, WorkerContext>,
+        _fuel_consumed: u64,
+    ) -> anyhow::Result<()> {
+        // all contracts running in wasmtime runtime expect to
+        // charge fuel manually through `charge_fuel_manually` builtin
+        Err(wasmtime::Trap::UnreachableCodeReached.into())
     }
 
     pub fn fuel(caller: Caller<'_, WorkerContext>) -> anyhow::Result<u64> {
@@ -544,6 +553,11 @@ fn new_linker_with_builtins(engine: &Engine) -> anyhow::Result<Linker<WorkerCont
     linker.func_wrap(module, "_preimage_size", builtins::preimage_size)?;
     linker.func_wrap(module, "_state", builtins::state)?;
     linker.func_wrap(module, "_resume", builtins::resume)?;
+    linker.func_wrap(
+        module,
+        "_charge_fuel_manually",
+        builtins::charge_fuel_manually,
+    )?;
     Ok(linker)
 }
 

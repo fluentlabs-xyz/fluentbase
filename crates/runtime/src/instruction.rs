@@ -1,4 +1,5 @@
 pub mod charge_fuel;
+pub mod charge_fuel_manually;
 pub mod debug_log;
 pub mod ed_add;
 pub mod ed_decompress;
@@ -31,6 +32,7 @@ pub mod write;
 use crate::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
+        charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
         ed_add::SyscallEdwardsAddAssign,
         ed_decompress::SyscallEdwardsDecompress,
@@ -89,6 +91,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::EXEC => SyscallExec::fn_handler(caller),
         SysFuncIdx::RESUME => SyscallResume::fn_handler(caller),
         SysFuncIdx::FORWARD_OUTPUT => SyscallForwardOutput::fn_handler(caller),
+        SysFuncIdx::CHARGE_FUEL_MANUALLY => SyscallChargeFuelManually::fn_handler(caller),
         SysFuncIdx::CHARGE_FUEL => SyscallChargeFuel::fn_handler(caller),
         SysFuncIdx::FUEL => SyscallFuel::fn_handler(caller),
         SysFuncIdx::PREIMAGE_SIZE => SyscallPreimageSize::fn_handler(caller),

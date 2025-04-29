@@ -2456,6 +2456,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-examples-keccak"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+]
+
+[[package]]
 name = "fluentbase-examples-panic"
 version = "0.1.0"
 dependencies = [
@@ -5444,7 +5451,6 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#970dcd21fb36e09c8d3e68a8e73ded28f428055e"
 dependencies = [
  "byteorder",
  "downcast-rs",
@@ -5462,7 +5468,6 @@ dependencies = [
 [[package]]
 name = "rwasm-executor"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#970dcd21fb36e09c8d3e68a8e73ded28f428055e"
 dependencies = [
  "byteorder",
  "bytes",
