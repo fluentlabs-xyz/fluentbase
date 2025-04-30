@@ -8,8 +8,10 @@ use crate::{
         SyscallContext,
         SyscallError,
     },
+    solana_program::runtime::mem_pool::VmMemoryPool,
 };
 use alloc::{boxed::Box, rc::Rc, string::ToString, vec::Vec};
+use core::cell::RefCell;
 use fluentbase_sdk::SharedAPI;
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 pub use solana_rbpf::vm::ContextObject;
@@ -21,45 +23,19 @@ use solana_rbpf::{
     vm::EbpfVm,
 };
 
-#[macro_export]
-macro_rules! create_vm {
-    ($vm_name:ident, $verified_executable:expr, $context_object:expr, $stack:ident,
-    $heap:ident, $additional_regions:expr, $cow_cb:expr) => {
-        let mut $stack = solana_rbpf::aligned_memory::AlignedMemory::zero_filled(
-            $verified_executable.get_config().stack_size(),
-        );
-        // here we have error r/o heap on wasm:
-        // let mut $heap = solana_rbpf::aligned_memory::AlignedMemory::with_capacity(0);
-        // fix (do not use with_capacity() more):
-        let mut $heap = solana_rbpf::aligned_memory::AlignedMemory::zero_filled(1024 * 1024);
-        let stack_len = $stack.len();
-        let memory_mapping = $crate::helpers::create_memory_mapping(
-            $verified_executable,
-            &mut $stack,
-            &mut $heap,
-            $additional_regions,
-            $cow_cb,
-        )
-        .unwrap();
-        let mut $vm_name = solana_rbpf::vm::EbpfVm::new(
-            $verified_executable.get_loader().clone(),
-            $verified_executable.get_sbpf_version(),
-            $context_object,
-            memory_mapping,
-            stack_len,
-        );
-    };
+thread_local! {
+    pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
 }
 
 /// Only used in macro, do not use directly!
-pub fn create_vm_fn<'a, 'b, SDK: SharedAPI>(
-    program: &'b Executable<InvokeContext<'a, SDK>>,
+pub fn create_vm<'a, 'b, SDK: SharedAPI>(
+    program: &'a Executable<InvokeContext<'b, SDK>>,
     regions: Vec<MemoryRegion>,
     accounts_metadata: Vec<SerializedAccountMetadata>,
-    invoke_context: &'b mut InvokeContext<'a, SDK>,
-    stack: &mut AlignedMemory<{ HOST_ALIGN }>,
-    heap: &mut AlignedMemory<{ HOST_ALIGN }>,
-) -> Result<EbpfVm<'b, InvokeContext<'a, SDK>>, Box<dyn core::error::Error>> {
+    invoke_context: &'a mut InvokeContext<'b, SDK>,
+    stack: &mut [u8],
+    heap: &mut [u8],
+) -> Result<EbpfVm<'a, InvokeContext<'b, SDK>>, Box<dyn core::error::Error>> {
     let stack_size = stack.len();
     let heap_size = heap.len();
     let accounts = Rc::clone(invoke_context.transaction_context.accounts());
@@ -87,14 +63,12 @@ pub fn create_vm_fn<'a, 'b, SDK: SharedAPI>(
             Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
         })),
     )?;
-    invoke_context
-        .set_syscall_context(SyscallContext {
-            allocator: BpfAllocator::new(heap_size as u64),
-            accounts_metadata,
-            trace_log: Vec::new(),
-        })
-        .map_err(|_e| SyscallError::Panic("failed to set syscall context".to_string(), 0, 0))?;
-    Ok(EbpfVm::<'b, InvokeContext<'a, SDK>>::new(
+    invoke_context.set_syscall_context(SyscallContext {
+        allocator: BpfAllocator::new(heap_size as u64),
+        accounts_metadata,
+        trace_log: Vec::new(),
+    })?;
+    Ok(EbpfVm::new(
         program.get_loader().clone(),
         program.get_sbpf_version(),
         invoke_context,
@@ -103,8 +77,59 @@ pub fn create_vm_fn<'a, 'b, SDK: SharedAPI>(
     ))
 }
 
+// /// Only used in macro, do not use directly!
+// pub fn create_vm<'a, 'b, SDK: SharedAPI>(
+//     program: &'b Executable<InvokeContext<'a, SDK>>,
+//     regions: Vec<MemoryRegion>,
+//     accounts_metadata: Vec<SerializedAccountMetadata>,
+//     invoke_context: &'b mut InvokeContext<'a, SDK>,
+//     stack: &mut AlignedMemory<{ HOST_ALIGN }>,
+//     heap: &mut AlignedMemory<{ HOST_ALIGN }>,
+// ) -> Result<EbpfVm<'b, InvokeContext<'a, SDK>>, Box<dyn core::error::Error>> {
+//     let stack_size = stack.len();
+//     let heap_size = heap.len();
+//     let accounts = Rc::clone(invoke_context.transaction_context.accounts());
+//     let memory_mapping = create_memory_mapping(
+//         program,
+//         stack,
+//         heap,
+//         regions,
+//         Some(Box::new(move |index_in_transaction| {
+//             // The two calls below can't really fail. If they fail because of a bug,
+//             // whatever is writing will trigger an EbpfError::AccessViolation like
+//             // if the region was readonly, and the transaction will fail gracefully.
+//             let mut account = accounts
+//                 .try_borrow_mut(index_in_transaction as IndexOfAccount)
+//                 .map_err(|_| ())?;
+//             accounts
+//                 .touch(index_in_transaction as IndexOfAccount)
+//                 .map_err(|_| ())?;
+//
+//             if account.is_shared() {
+//                 // See BorrowedAccount::make_data_mut() as to why we reserve extra
+//                 // MAX_PERMITTED_DATA_INCREASE bytes here.
+//                 account.reserve(MAX_PERMITTED_DATA_INCREASE);
+//             }
+//             Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
+//         })),
+//     );
+//     let memory_mapping = memory_mapping?;
+//     invoke_context.set_syscall_context(SyscallContext {
+//         allocator: BpfAllocator::new(heap_size as u64),
+//         accounts_metadata,
+//         trace_log: Vec::new(),
+//     })?;
+//     Ok(EbpfVm::<'b, InvokeContext<'a, SDK>>::new(
+//         program.get_loader().clone(),
+//         program.get_sbpf_version(),
+//         invoke_context,
+//         memory_mapping,
+//         stack_size,
+//     ))
+// }
+
 #[macro_export]
-macro_rules! create_vm2 {
+macro_rules! create_vm {
     ($vm:ident, $program:expr, $regions:expr, $accounts_metadata:expr, $invoke_context:expr $(,)?) => {
         let stack_size = $program.get_config().stack_size();
         let heap_size = $invoke_context.get_compute_budget().heap_size;
@@ -113,24 +138,25 @@ macro_rules! create_vm2 {
                 heap_size,
                 $invoke_context.get_compute_budget().heap_cost,
             ));
-        let mut allocations = None;
         let $vm = heap_cost_result.and_then(|_| {
-            let mut stack = solana_rbpf::aligned_memory::AlignedMemory::<
-                { solana_rbpf::ebpf::HOST_ALIGN },
-            >::zero_filled(stack_size);
-            let mut heap = solana_rbpf::aligned_memory::AlignedMemory::<
-                { solana_rbpf::ebpf::HOST_ALIGN },
-            >::zero_filled(usize::try_from(heap_size).unwrap());
-            let vm = $crate::macros::create_vm_fn(
+            let (mut stack, mut heap) = $crate::macros::MEMORY_POOL
+                .with_borrow_mut(|pool| (pool.get_stack(stack_size), pool.get_heap(heap_size)));
+            let vm = $crate::macros::create_vm(
                 $program,
                 $regions,
                 $accounts_metadata,
                 $invoke_context,
-                &mut stack,
-                &mut heap,
+                stack
+                    .as_slice_mut()
+                    .get_mut(..stack_size)
+                    .expect("invalid stack size"),
+                heap.as_slice_mut()
+                    .get_mut(..heap_size as usize)
+                    .expect("invalid heap size"),
             );
-            allocations = Some((stack, heap));
-            vm
+            // allocations = Some((stack, heap));
+            // vm
+            vm.map(|vm| (vm, stack, heap))
         });
     };
 }

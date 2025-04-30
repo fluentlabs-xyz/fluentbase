@@ -3,7 +3,7 @@ mod tests {
         account::{AccountSharedData, ReadableAccount},
         common::{calculate_max_chunk_size, pubkey_from_address},
         fluentbase::{
-            common::{process_svm_result, BatchMessage, MemStorage},
+            common::{BatchMessage, MemStorage},
             helpers_v2::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
         },
         helpers::{storage_read_account_data, storage_write_account_data},
@@ -26,39 +26,40 @@ mod tests {
         testing::TestingContext,
         Address,
         BlockContextV1,
-        Bytes,
         ContractContextV1,
         SharedAPI,
         SharedContextInputV1,
         StorageAPI,
     };
+    use hashbrown::HashMap;
     use solana_bincode::serialize;
+    use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
 
-    fn main_single_message<SAPI: StorageAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
+    fn main_single_message<SAPI: StorageAPI>(
+        mut sdk: impl SharedAPI,
+        mut sapi: Option<&mut SAPI>,
+    ) -> HashMap<Pubkey, AccountSharedData> {
         let input = sdk.input();
 
         let result = exec_encoded_svm_message(&mut sdk, input, true, &mut sapi);
         if let Err(err) = result {
             panic!("exec svm message error: {:?}", err);
         }
-        let (_output, _) = process_svm_result(result);
-
-        let out = Bytes::new();
-        sdk.write(out.as_ref());
+        result.unwrap()
     }
 
-    fn main_batch_message<SAPI: StorageAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
+    fn main_batch_message<SAPI: StorageAPI>(
+        mut sdk: impl SharedAPI,
+        mut sapi: Option<&mut SAPI>,
+    ) -> HashMap<Pubkey, AccountSharedData> {
         let input = sdk.input();
 
         let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut sapi);
         if let Err(err) = result {
             panic!("exec svm message error: {:?}", err);
         }
-        let (_output, _) = process_svm_result(result);
-
-        let out = Bytes::new();
-        sdk.write(out.as_ref());
+        result.unwrap()
     }
 
     #[test]
@@ -72,9 +73,12 @@ mod tests {
         let sysvar_rent_id = sysvar::rent::id();
 
         let pk_payer = Pubkey::new_unique();
-        let account_payer = AccountSharedData::new(100, 0, &system_program_id);
+        let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
 
         let pk_exec = Pubkey::from([8; 32]);
+
+        let pk_exec_data = Pubkey::from([3; 32]);
+        // let pk_exec_data_account = AccountSharedData::new(0, 0, &pk_exec);
 
         let pk_authority = Pubkey::from([9; 32]);
         let pk_authority_account = AccountSharedData::new(100, 0, &system_program_id);
@@ -103,8 +107,9 @@ mod tests {
         let mut sdk = TestingContext::default().with_shared_context_input(shared_context);
         let mut sapi = MemStorage::new();
 
-        storage_write_account_data(&mut sapi, &pk_payer, &account_payer).unwrap();
+        storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
         storage_write_account_data(&mut sapi, &pk_authority, &pk_authority_account).unwrap();
+        // storage_write_account_data(&mut sapi, &pk_exec_data, &pk_exec_data_account).unwrap();
         storage_write_account_data(
             &mut sapi,
             &system_program_id,
@@ -261,10 +266,18 @@ mod tests {
 
         // exec
 
+        let mut account_meta1: AccountMeta = AccountMeta::new(pk_exec_data.clone(), false);
+        let amount = 1234u64;
         let instructions = vec![Instruction::new_with_bincode(
             pk_exec.clone(),
+            // &amount.to_be_bytes(),
             &[0u8; 0],
-            vec![],
+            vec![
+                // account_meta1
+                AccountMeta::new(pk_payer, false),
+                // AccountMeta::new(pk_exec, false),
+                // AccountMeta::new(system_program_id, false),
+            ],
         )];
         let message = Message::new(&instructions, Some(&pk_exec));
         sdk = sdk
@@ -276,7 +289,9 @@ mod tests {
                 ..Default::default()
             })
             .with_input(serialize(&message).unwrap());
-        main_single_message(sdk.clone(), Some(&mut sapi));
+        let result_accounts = main_single_message(sdk.clone(), Some(&mut sapi));
+        println!("result_accounts.len: {}", result_accounts.len());
+        for account in &result_accounts {}
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
         assert_eq!(account_data.lamports(), 0);

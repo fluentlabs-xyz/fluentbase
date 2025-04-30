@@ -532,26 +532,19 @@ pub fn translate_and_check_program_address_inputs<'a>(
 //     }
 // );
 
-pub fn create_memory_mapping<'a, C: ContextObject>(
+pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
     executable: &'a Executable<C>,
-    stack: &mut AlignedMemory<{ HOST_ALIGN }>,
-    heap: &mut AlignedMemory<{ HOST_ALIGN }>,
+    stack: &'b mut [u8],
+    heap: &'b mut [u8],
     additional_regions: Vec<MemoryRegion>,
     cow_cb: Option<MemoryCowCallback>,
-) -> Result<MemoryMapping<'a>, EbpfError> {
+) -> Result<MemoryMapping<'a>, Box<dyn std::error::Error>> {
     let config = executable.get_config();
     let sbpf_version = executable.get_sbpf_version();
-
-    // #[cfg(feature = "debug-print")] {
-    //     println!("Creating memory mapping:");
-    //     println!("Stack size: {}", stack.len());
-    //     println!("Heap size: {}", heap.len());
-    // }
-
     let regions: Vec<MemoryRegion> = vec![
         executable.get_ro_region(),
         MemoryRegion::new_writable_gapped(
-            stack.as_slice_mut(),
+            stack,
             ebpf::MM_STACK_START,
             if !sbpf_version.dynamic_stack_frames() && config.enable_stack_frame_gaps {
                 config.stack_frame_size as u64
@@ -559,19 +552,11 @@ pub fn create_memory_mapping<'a, C: ContextObject>(
                 0
             },
         ),
-        MemoryRegion::new_writable(heap.as_slice_mut(), ebpf::MM_HEAP_START),
+        MemoryRegion::new_writable(heap, MM_HEAP_START),
     ]
     .into_iter()
-    .chain(additional_regions.into_iter())
+    .chain(additional_regions)
     .collect();
-
-    // #[cfg(feature = "debug-print")]
-    // println!("Memory regions created: {:?}", regions);
-    // Program code starts at `0x100000000`
-    // Stack data starts at `0x200000000`
-    // Heap data starts at `0x300000000`
-    // Program input parameters start at `0x400000000`
-    // Solana offers 4KB of stack frame space and 32KB of heap space by default
 
     Ok(if let Some(cow_cb) = cow_cb {
         MemoryMapping::new_with_cow(regions, cow_cb, config, sbpf_version)?
@@ -579,6 +564,54 @@ pub fn create_memory_mapping<'a, C: ContextObject>(
         MemoryMapping::new(regions, config, sbpf_version)?
     })
 }
+
+// pub fn create_memory_mapping<'a, C: ContextObject>(
+//     executable: &'a Executable<C>,
+//     stack: &mut AlignedMemory<{ HOST_ALIGN }>,
+//     heap: &mut AlignedMemory<{ HOST_ALIGN }>,
+//     additional_regions: Vec<MemoryRegion>,
+//     cow_cb: Option<MemoryCowCallback>,
+// ) -> Result<MemoryMapping<'a>, EbpfError> {
+//     let config = executable.get_config();
+//     let sbpf_version = executable.get_sbpf_version();
+//
+//     // #[cfg(feature = "debug-print")] {
+//     //     println!("Creating memory mapping:");
+//     //     println!("Stack size: {}", stack.len());
+//     //     println!("Heap size: {}", heap.len());
+//     // }
+//
+//     let regions: Vec<MemoryRegion> = vec![
+//         executable.get_ro_region(),
+//         MemoryRegion::new_writable_gapped(
+//             stack.as_slice_mut(),
+//             ebpf::MM_STACK_START,
+//             if !sbpf_version.dynamic_stack_frames() && config.enable_stack_frame_gaps {
+//                 config.stack_frame_size as u64
+//             } else {
+//                 0
+//             },
+//         ),
+//         MemoryRegion::new_writable(heap.as_slice_mut(), ebpf::MM_HEAP_START),
+//     ]
+//     .into_iter()
+//     .chain(additional_regions.into_iter())
+//     .collect();
+//
+//     // #[cfg(feature = "debug-print")]
+//     // println!("Memory regions created: {:?}", regions);
+//     // Program code starts at `0x100000000`
+//     // Stack data starts at `0x200000000`
+//     // Heap data starts at `0x300000000`
+//     // Program input parameters start at `0x400000000`
+//     // Solana offers 4KB of stack frame space and 32KB of heap space by default
+//
+//     Ok(if let Some(cow_cb) = cow_cb {
+//         MemoryMapping::new_with_cow(regions, cow_cb, config, sbpf_version)?
+//     } else {
+//         MemoryMapping::new(regions, config, sbpf_version)?
+//     })
+// }
 
 #[derive(Debug, Clone)]
 pub struct SvmTransactResult {

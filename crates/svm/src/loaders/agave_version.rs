@@ -1,8 +1,10 @@
 use crate::{
     bpf_loader_deprecated,
+    compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
     context::{IndexOfAccount, InvokeContext},
-    create_vm2,
+    create_vm,
     error::InstructionError,
+    macros::MEMORY_POOL,
     serialization,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
@@ -38,7 +40,7 @@ pub fn execute<'a, SDK: SharedAPI>(
             *program_account.get_owner() == bpf_loader_deprecated::id(),
         )
     };
-    #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
+    // #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
     let use_jit = false;
     // #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
     // let use_jit = executable.get_compiled_program().is_some();
@@ -74,32 +76,32 @@ pub fn execute<'a, SDK: SharedAPI>(
     // let mut create_vm_time = Measure::start("create_vm");
     let execution_result = {
         // let compute_meter_prev = invoke_context.get_remaining();
-        create_vm2!(
+        create_vm!(
             vm,
             executable.as_ref(),
             regions,
             accounts_metadata,
             invoke_context
         );
-        // let (mut vm, stack, heap) = match vm {
-        let mut vm = match vm {
+        let (mut vm, stack, heap) = match vm {
+            // let mut vm = match vm {
             Ok(info) => info,
             Err(e) => {
-                // ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", e);
+                // #[cfg(feature = "std")]
+                // println!("Failed to create SBF VM: {}", e);
                 return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
             }
         };
         // create_vm_time.stop();
 
         // vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
-        let (_compute_units_consumed, result) =
-            vm.execute_program(executable.as_ref(), true /* !use_jit*/);
-        // MEMORY_POOL.with_borrow_mut(|memory_pool| {
-        //     memory_pool.put_stack(stack);
-        //     memory_pool.put_heap(heap);
-        //     debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH);
-        //     debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
-        // });
+        let (_compute_units_consumed, result) = vm.execute_program(executable.as_ref(), !use_jit);
+        MEMORY_POOL.with_borrow_mut(|memory_pool| {
+            memory_pool.put_stack(stack);
+            memory_pool.put_heap(heap);
+            debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH);
+            debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
+        });
         drop(vm);
         // if let Some(execute_time) = invoke_context.execute_time.as_mut() {
         //     execute_time.stop();

@@ -1,6 +1,7 @@
 set -ex
 
-TOOLCHAIN=../../../../../solana-labs/solana/sdk/sbf/dependencies/platform-tools
+SOLANA_ROOT=../../../../agave_copy
+TOOLCHAIN=$SOLANA_ROOT/sdk/sbf/dependencies/platform-tools
 RC_COMMON="$TOOLCHAIN/rust/bin/rustc --target sbf-solana-solana --crate-type lib -C panic=abort -C opt-level=2"
 RC="$RC_COMMON -C target_cpu=sbfv2"
 RC_V1="$RC_COMMON -C target_cpu=generic"

@@ -25,7 +25,7 @@ use solana_bincode::{deserialize, serialize};
 
 pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log!("loader_v4: deploy started");
-    debug_log!("deploy: block_number: {:?}", sdk.context().block_number());
+    // debug_log!("deploy: block_number: {:?}", sdk.context().block_number());
     let mut mem_storage = MemStorage::new();
 
     let elf_program_bytes: Bytes = sdk.input().into();
@@ -43,10 +43,10 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     let contract_caller_balance = sdk.balance(&contract_caller);
     let payer_balance_before = lamports_from_evm_balance(contract_caller_balance.data);
     let payer_account_data = AccountSharedData::new(payer_balance_before, 0, &system_program::id());
-    debug_log!(
-        "before deploy: payer_account_data {:x?}",
-        payer_account_data
-    );
+    // debug_log!(
+    //     "before deploy: payer_account_data {:x?}",
+    //     payer_account_data
+    // );
 
     storage_write_account_data(
         &mut mem_storage,
@@ -123,8 +123,8 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
         storage_read_account_data(&mem_storage, &pk_exec).expect("no exec account");
     assert_eq!(exec_account_data.lamports(), 0, "exec account balance != 0");
 
-    debug_log!("after deploy: payer_account_data {:x?}", payer_account_data);
-    debug_log!("after deploy: exec_account_data {:x?}", exec_account_data);
+    // debug_log!("after deploy: payer_account_data {:x?}", payer_account_data);
+    // debug_log!("after deploy: exec_account_data {:x?}", exec_account_data);
 
     let preimage = serialize(&exec_account_data).expect("failed to serialize exec account data");
     let preimage: Bytes = preimage.into();
@@ -146,7 +146,7 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
         sdk.balance(&contract_address).data,
     ));
     let exec_account_balance_before = exec_account_data.lamports();
-    debug_log!("before main: exec_account_data {:x?}", exec_account_data);
+    // debug_log!("before main: exec_account_data {:x?}", exec_account_data);
 
     storage_write_account_data(&mut mem_storage, &pk_exec, &exec_account_data)
         .expect("failed to write exec account");
@@ -165,12 +165,12 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     .unwrap();
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
-    match &result {
-        Err(e) => {
-            debug_log!("main: result error: {:?}", e)
-        }
-        _ => {}
-    }
+    // match &result {
+    //     Err(e) => {
+    //         debug_log!("main: result error: {:?}", e)
+    //     }
+    //     _ => {}
+    // }
     let (result_accounts, exit_code) = process_svm_result(result);
     if exit_code != ExitCode::Ok.into_i32() {
         panic!(
@@ -186,19 +186,19 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
         exec_account_balance_before, exec_account_balance_after,
         "exec account balance shouldn't change"
     );
-    debug_log!("after main: exec_account_data {:x?}", exec_account_data);
-    debug_log!(
-        "after main: result_accounts.len {:x?}",
-        result_accounts.len()
-    );
-    for (num, acc) in result_accounts.iter().enumerate() {
-        debug_log!(
-            "after main: result_account {}: pk {:x?} account data {:?}",
-            num,
-            &acc.0.to_bytes(),
-            &acc.1
-        );
-    }
+    // debug_log!("after main: exec_account_data {:x?}", exec_account_data);
+    // debug_log!(
+    //     "after main: result_accounts.len {:x?}",
+    //     result_accounts.len()
+    // );
+    // for (num, acc) in result_accounts.iter().enumerate() {
+    //     debug_log!(
+    //         "after main: result_account {}: pk {:x?} account data {:?}",
+    //         num,
+    //         &acc.0.to_bytes(),
+    //         &acc.1
+    //     );
+    // }
 
     let out = Bytes::new();
     sdk.write(out.as_ref());

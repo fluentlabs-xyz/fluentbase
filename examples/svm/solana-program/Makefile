@@ -1,13 +1,6 @@
 all: build_cargo_powered_solana_program
 
 SOLANA_ROOT=../../../../agave_copy
-#TOOLCHAIN=$(SOLANA_ROOT)/sdk/sbf/dependencies/platform-tools
-#RC_COMMON=$(TOOLCHAIN)/rust/bin/rustc --target sbf-solana-solana --crate-type lib -C panic=abort -C opt-level=2
-#RC=$(RC_COMMON) -C target_cpu=sbfv2
-#RC_V1=$(RC_COMMON) -C target_cpu=generic
-#LD_COMMON=$(TOOLCHAIN)/llvm/bin/ld.lld -z notext -shared --Bdynamic -entry entrypoint --script elf.ld
-#LD=$(LD_COMMON) --section-start=.text=0x100000000
-#LD_V1=$(LD_COMMON)
 
 .PHONY: install_solana_tools
 install_solana_tools:
@@ -39,4 +32,4 @@ INPUT_NAME=solana_program
 build_cargo_powered_solana_program:
 	#cd $(SOLANA_ROOT) && git checkout v2.1.18 && ./cargo-build-sbf -- -Znext-lockfile-bump
 	cargo build-sbf -j1 -- -Znext-lockfile-bump
-	cp ../../../target/sbf-solana-solana/release/fluentbase_examples_svm_$(INPUT_NAME).so assets/$(INPUT_NAME).so
+	cp target/sbf-solana-solana/release/fluentbase_examples_svm_$(INPUT_NAME).so assets/$(INPUT_NAME).so

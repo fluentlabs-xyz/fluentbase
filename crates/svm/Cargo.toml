@@ -17,6 +17,7 @@ byteorder = { workspace = true, default-features = false }
 hashbrown = { workspace = true, default-features = false }
 
 solana_rbpf = { workspace = true, default-features = false, features = [] }
+
 solana-pubkey = { workspace = true, default-features = false, features = ["serde", "bytemuck"] }
 solana-instruction = { workspace = true, default-features = false, features = ["serde", "bincode"] }
 solana-account-info = { workspace = true, default-features = false, features = [] }

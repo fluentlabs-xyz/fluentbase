@@ -1,4 +1,4 @@
-# Solana program, hello-world example
+# Solana program build example and assets for tests
 
 ## Preparation
 

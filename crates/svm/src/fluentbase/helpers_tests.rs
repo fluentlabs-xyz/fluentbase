@@ -1,6 +1,6 @@
 mod tests {
     use crate::{
-        account::{AccountSharedData, ReadableAccount},
+        account::{AccountSharedData, ReadableAccount, WritableAccount},
         common::{calculate_max_chunk_size, pubkey_from_address},
         fluentbase::{
             common::{process_svm_result, BatchMessage, MemStorage},
@@ -32,7 +32,7 @@ mod tests {
     };
     use solana_bincode::serialize;
     use solana_hash::Hash;
-    use solana_instruction::Instruction;
+    use solana_instruction::{AccountMeta, Instruction};
     use solana_pubkey::Pubkey;
 
     fn main_single_message<SAPI: StorageAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
@@ -72,7 +72,7 @@ mod tests {
         let sysvar_rent_id = rent::id();
 
         let pk_payer = Pubkey::new_unique();
-        let account_payer = AccountSharedData::new(100, 0, &system_program_id);
+        let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
 
         let pk_buffer = Pubkey::new_unique();
 
@@ -110,7 +110,7 @@ mod tests {
         let mut sdk = TestingContext::default().with_shared_context_input(shared_context);
         let mut sapi = MemStorage::new();
 
-        storage_write_account_data(&mut sapi, &pk_payer, &account_payer).unwrap();
+        storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
         storage_write_account_data(&mut sapi, &pk_authority, &pk_authority_account).unwrap();
         storage_write_account_data(
             &mut sapi,

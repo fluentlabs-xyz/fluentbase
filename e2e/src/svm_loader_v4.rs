@@ -11,7 +11,6 @@ mod tests {
     };
     use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bincode,
         common::pubkey_from_address,
         fluentbase::common::BatchMessage,
         pubkey::Pubkey,
@@ -56,7 +55,7 @@ mod tests {
 
         let program_bytes = account_with_program.data().to_vec();
         ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1e18));
-        let (contract_address, gas_used) =
+        let (contract_address, _gas_used) =
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
         println!("contract_addr {:x?}", contract_address);
     }

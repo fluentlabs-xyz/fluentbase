@@ -1,4 +1,3 @@
-// use crate::common::Blake3Hasher;
 use crate::{
     alloc::string::ToString,
     common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
@@ -21,20 +20,10 @@ use crate::{
     types::SVM_ADDRESS_PREFIX,
 };
 use alloc::{boxed::Box, vec::Vec};
-use core::{ops::Deref, slice::from_raw_parts, str::from_utf8};
-use fluentbase_sdk::{calc_create2_address, Address, SharedAPI, B256, U256};
+use core::{slice::from_raw_parts, str::from_utf8};
+use fluentbase_sdk::{debug_log, SharedAPI, U256};
 use solana_feature_set;
 use solana_pubkey::{bytes_are_curve_point, Pubkey, PubkeyError};
-// use solana_program::{
-//     entrypoint::SUCCESS,
-//     keccak,
-//     pubkey::{bytes_are_curve_point, Pubkey, PubkeyError},
-//     // secp256k1_recover::{
-//     //     Secp256k1RecoverError,
-//     //     SECP256K1_PUBLIC_KEY_LENGTH,
-//     //     SECP256K1_SIGNATURE_LENGTH,
-//     // },
-// };
 use solana_rbpf::{
     error::EbpfError,
     memory_region::{AccessType, MemoryMapping},
@@ -120,13 +109,6 @@ pub fn register_builtins<SDK: SharedAPI>(
     //     .unwrap();
 }
 
-// #[inline(always)]
-// fn test_stub() {
-//     #[cfg(test)]{
-//         println!("Test stub");
-//     }
-// }
-
 declare_builtin_function!(
     /// memcpy
     SyscallMemcpy<SDK: SharedAPI>,
@@ -139,7 +121,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // test_stub();
+
         // mem_op_consume(invoke_context, n)?;
 
         if !is_nonoverlapping(src_addr, n, dst_addr, n) {
@@ -163,7 +145,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // test_stub();
+
         // mem_op_consume(invoke_context, n)?;
 
         if invoke_context
@@ -220,7 +202,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // test_stub();
+
         // mem_op_consume(invoke_context, n)?;
 
         memmove(invoke_context, dst_addr, src_addr, n, memory_mapping)
@@ -239,7 +221,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // test_stub();
+
         // mem_op_consume(invoke_context, n)?;
 
         if invoke_context
@@ -272,7 +254,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Box<dyn core::error::Error>> {
-        // test_stub();
         let host_addr: Result<u64, EbpfError> =
             memory_mapping.map(AccessType::Load, vm_addr, len).into();
         let host_addr = host_addr?;
@@ -280,8 +261,10 @@ declare_builtin_function!(
             let c_buf = from_raw_parts(host_addr as *const u8, len as usize);
             let len = c_buf.iter().position(|c| *c == 0).unwrap_or(len as usize);
             let message = from_utf8(&c_buf[0..len]).unwrap_or("Invalid UTF-8 String");
-            // #[cfg(test)]
-            // println!("message={}", message);
+            #[cfg(test)]
+            println!("message={}", message);
+            #[cfg(target_arch = "wasm32")]
+            debug_log!("message={}", message);
         }
         Ok(0)
     }
@@ -291,7 +274,7 @@ declare_builtin_function!(
     /// Log a user's info message
     SyscallLog<SDK: SharedAPI>,
     fn rust(
-        _invoke_context: &mut InvokeContext<SDK>,
+        invoke_context: &mut InvokeContext<SDK>,
         addr: u64,
         len: u64,
         _arg3: u64,
@@ -299,7 +282,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // test_stub();
         // let cost = invoke_context
         //     .get_compute_budget()
         //     .syscall_base_cost
@@ -310,12 +292,14 @@ declare_builtin_function!(
             memory_mapping,
             addr,
             len,
-            // invoke_context.get_check_aligned(),
-            true,
+            invoke_context.get_check_aligned(),
+            // true,
             &mut |string: &str| {
                 // stable_log::program_log(&invoke_context.get_log_collector(), string);
-                // #[cfg(all(feature = "std"))]
-                // println!("Log: {string}");
+                #[cfg(test)]
+                println!("Log: {}", string);
+                #[cfg(target_arch = "wasm32")]
+                debug_log!("Log: {}", string);
                 Ok(0)
             },
         )?;
@@ -338,7 +322,6 @@ declare_builtin_function!(
         _arg5: u64,
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // test_stub();
         Err(SyscallError::Abort.into())
     }
 );
@@ -356,7 +339,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // test_stub();
         // consume_compute_meter(invoke_context, len)?;
 
         translate_string_and_do(
@@ -381,7 +363,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // test_stub();
+
         // let compute_budget = invoke_context.get_compute_budget();
         // let hash_base_cost = H::get_base_cost(compute_budget);
         // let hash_byte_cost = H::get_byte_cost(compute_budget);
@@ -402,7 +384,7 @@ declare_builtin_function!(
         let hash_result = translate_slice_mut::<u8>(
             memory_mapping,
             result_addr,
-            core::mem::size_of::<H::Output>() as u64,
+            size_of::<H::Output>() as u64,
             invoke_context.get_check_aligned(),
         )?;
         let mut hasher = H::create_hasher();
@@ -440,7 +422,7 @@ declare_builtin_function!(
 //         _arg5: u64,
 //         memory_mapping: &mut MemoryMapping,
 //     ) -> Result<u64, Error> {
-//         // test_stub();
+//
 //         // let cost = invoke_context.get_compute_budget().secp256k1_recover_cost;
 //         // consume_compute_meter(invoke_context, cost)?;
 //
@@ -499,7 +481,7 @@ declare_builtin_function!(
 //         result_addr: u64,
 //         memory_mapping: &mut MemoryMapping,
 //     ) -> Result<u64, Error> {
-//         // test_stub();
+//
 //         let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|e| {
 //             SyscallError::Abort
 //         })?;
@@ -581,7 +563,7 @@ declare_builtin_function!(
 //         result_addr: u64,
 //         memory_mapping: &mut MemoryMapping,
 //     ) -> Result<u64, Error> {
-//         // test_stub();
+//
 //         let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|e| {
 //             SyscallError::Abort
 //         })?;
@@ -666,7 +648,6 @@ pub fn create_program_address<SDK: SharedAPI>(
     program_id: &Pubkey,
     seeds: &Vec<&[u8]>,
 ) -> Result<[u8; 32], Error> {
-    // test_stub();
     let deployer = program_id.to_bytes();
     // TODO do we need this check?
     if deployer[0..SVM_ADDRESS_PREFIX.len()] != SVM_ADDRESS_PREFIX {

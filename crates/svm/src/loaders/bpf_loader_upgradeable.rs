@@ -9,7 +9,7 @@ use crate::{
         PACKET_DATA_SIZE,
     },
     context::{IndexOfAccount, InvokeContext},
-    create_vm2,
+    create_vm,
     declare_builtin_function,
     deploy_program,
     error::InstructionError,
@@ -78,7 +78,7 @@ pub(crate) fn execute<'a, SDK: SharedAPI>(
             *program_account.get_owner() == bpf_loader_deprecated::id(),
         )
     };
-    #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
+    // #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
     let use_jit = false;
     // #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
     // let use_jit = executable.get_compiled_program().is_some();
@@ -116,14 +116,14 @@ pub(crate) fn execute<'a, SDK: SharedAPI>(
     let execution_result = {
         // let compute_meter_prev = invoke_context.get_remaining();
         // let mut invoke_context_ref_mut = invoke_context.borrow_mut();
-        create_vm2!(
+        create_vm!(
             vm,
             executable.as_ref(),
             regions,
             accounts_metadata,
             invoke_context
         );
-        let mut vm = match vm {
+        let (mut vm, stack, heap) = match vm {
             Ok(info) => info,
             Err(e) => {
                 // ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", e);
@@ -133,8 +133,7 @@ pub(crate) fn execute<'a, SDK: SharedAPI>(
         // create_vm_time.stop();
 
         // execute_time = Measure::start("execute");
-        let (_compute_units_consumed, result) =
-            vm.execute_program(executable.as_ref(), true /*, !use_jit*/);
+        let (_compute_units_consumed, result) = vm.execute_program(executable.as_ref(), !use_jit);
         drop(vm);
         // ic_logger_msg!(
         //     log_collector,

@@ -270,17 +270,17 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     };
 
     // TODO optimize accounts saving
-    let mut result_accounts: HashMap<Pubkey, AccountSharedData> =
+    let mut result_accounts =
         HashMap::with_capacity(transaction_context.get_number_of_accounts() as usize);
+    for account_idx in 0..transaction_context.get_number_of_accounts() {
+        let account_key = transaction_context.get_key_of_account_at_index(account_idx)?;
+        let account_data = transaction_context.get_account_at_index(account_idx)?;
+        result_accounts.insert(
+            account_key.clone(),
+            account_data.borrow().to_account_shared_data(),
+        );
+    }
     if flush_result_accounts {
-        for account_idx in 0..transaction_context.get_number_of_accounts() {
-            let account_key = transaction_context.get_key_of_account_at_index(account_idx)?;
-            let account_data = transaction_context.get_account_at_index(account_idx)?;
-            result_accounts.insert(
-                account_key.clone(),
-                account_data.borrow().to_account_shared_data(),
-            );
-        }
         flush_accounts(sdk, sapi, &result_accounts)?;
     }
 

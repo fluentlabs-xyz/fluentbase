@@ -1,4 +1,4 @@
-const MAX_HEAP_FRAME_BYTES: u32 = 256 * 1024;
+pub const MAX_HEAP_FRAME_BYTES: u32 = 256 * 1024;
 pub const DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT: u32 = 200_000;
 pub const MAX_COMPUTE_UNIT_LIMIT: u32 = 1_400_000;
 
@@ -13,7 +13,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //     pub compute_unit_price: u64,
 //     pub loaded_accounts_bytes: u32,
 // }
-// 
+//
 // impl Default for ComputeBudgetLimits {
 //     fn default() -> Self {
 //         ComputeBudgetLimits {
@@ -24,7 +24,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //         }
 //     }
 // }
-// 
+//
 // impl From<ComputeBudgetLimits> for FeeBudgetLimits {
 //     fn from(val: ComputeBudgetLimits) -> Self {
 //         let prioritization_fee_details = PrioritizationFeeDetails::new(
@@ -32,7 +32,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             u64::from(val.compute_unit_limit),
 //         );
 //         let prioritization_fee = prioritization_fee_details.get_fee();
-// 
+//
 //         FeeBudgetLimits {
 //             // NOTE - usize::from(u32).unwrap() may fail if target is 16-bit and
 //             // `loaded_accounts_bytes` is greater than u16::MAX. In that case, panic is proper.
@@ -43,7 +43,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //         }
 //     }
 // }
-// 
+//
 // /// Processing compute_budget could be part of tx sanitizing, failed to process
 // /// these instructions will drop the transaction eventually without execution,
 // /// may as well fail it early.
@@ -57,7 +57,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //     let mut updated_compute_unit_price = None;
 //     let mut requested_heap_size = None;
 //     let mut updated_loaded_accounts_data_size_limit = None;
-// 
+//
 //     for (i, (program_id, instruction)) in instructions.enumerate() {
 //         if compute_budget::check_id(program_id) {
 //             let invalid_instruction_data_error = TransactionError::InstructionError(
@@ -65,7 +65,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //                 InstructionError::InvalidInstructionData,
 //             );
 //             let duplicate_instruction_error = TransactionError::DuplicateInstruction(i as u8);
-// 
+//
 //             match try_from_slice_unchecked(&instruction.data) {
 //                 Ok(ComputeBudgetInstruction::RequestHeapFrame(bytes)) => {
 //                     if requested_heap_size.is_some() {
@@ -103,25 +103,25 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //                 num_non_compute_budget_instructions.saturating_add(1);
 //         }
 //     }
-// 
+//
 //     // sanitize limits
 //     let updated_heap_bytes = requested_heap_size
 //         .unwrap_or(u32::try_from(MIN_HEAP_FRAME_BYTES).unwrap()) // loader's default heap_size
 //         .min(MAX_HEAP_FRAME_BYTES);
-// 
+//
 //     let compute_unit_limit = updated_compute_unit_limit
 //         .unwrap_or_else(|| {
 //             num_non_compute_budget_instructions
 //                 .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT)
 //         })
 //         .min(MAX_COMPUTE_UNIT_LIMIT);
-// 
+//
 //     let compute_unit_price = updated_compute_unit_price.unwrap_or(0);
-// 
+//
 //     let loaded_accounts_bytes = updated_loaded_accounts_data_size_limit
 //         .unwrap_or(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES)
 //         .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
-// 
+//
 //     Ok(ComputeBudgetLimits {
 //         updated_heap_bytes,
 //         compute_unit_limit,
@@ -129,12 +129,12 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //         loaded_accounts_bytes,
 //     })
 // }
-// 
+//
 // fn sanitize_requested_heap_size(bytes: u32) -> bool {
 //     (u32::try_from(MIN_HEAP_FRAME_BYTES).unwrap()..=MAX_HEAP_FRAME_BYTES).contains(&bytes)
 //         && bytes % 1024 == 0
 // }
-// 
+//
 // #[cfg(test)]
 // mod tests {
 //     use {
@@ -150,7 +150,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             transaction::{SanitizedTransaction, Transaction},
 //         },
 //     };
-// 
+//
 //     macro_rules! test {
 //         ( $instructions: expr, $expected_result: expr) => {
 //             let payer_keypair = Keypair::new();
@@ -164,7 +164,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             assert_eq!($expected_result, result);
 //         };
 //     }
-// 
+//
 //     #[test]
 //     fn test_process_instructions() {
 //         // Units
@@ -228,7 +228,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //                 ..ComputeBudgetLimits::default()
 //             })
 //         );
-// 
+//
 //         // HeapFrame
 //         test!(
 //             &[],
@@ -317,7 +317,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //                 ..ComputeBudgetLimits::default()
 //             })
 //         );
-// 
+//
 //         // Combined
 //         test!(
 //             &[
@@ -347,7 +347,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //                 ..ComputeBudgetLimits::default()
 //             })
 //         );
-// 
+//
 //         // Duplicates
 //         test!(
 //             &[
@@ -357,7 +357,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             ],
 //             Err(TransactionError::DuplicateInstruction(2))
 //         );
-// 
+//
 //         test!(
 //             &[
 //                 Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
@@ -375,7 +375,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             Err(TransactionError::DuplicateInstruction(2))
 //         );
 //     }
-// 
+//
 //     #[test]
 //     fn test_process_loaded_accounts_data_size_limit_instruction() {
 //         test!(
@@ -385,7 +385,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //                 ..ComputeBudgetLimits::default()
 //             })
 //         );
-// 
+//
 //         // Assert when set_loaded_accounts_data_size_limit presents,
 //         // budget is set with data_size
 //         let data_size = 1;
@@ -394,7 +394,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             loaded_accounts_bytes: data_size,
 //             ..ComputeBudgetLimits::default()
 //         });
-// 
+//
 //         test!(
 //             &[
 //                 ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(data_size),
@@ -402,7 +402,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             ],
 //             expected_result
 //         );
-// 
+//
 //         // Assert when set_loaded_accounts_data_size_limit presents, with greater than max value
 //         // budget is set to max data size
 //         let data_size = MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES + 1;
@@ -411,7 +411,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             loaded_accounts_bytes: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
 //             ..ComputeBudgetLimits::default()
 //         });
-// 
+//
 //         test!(
 //             &[
 //                 ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(data_size),
@@ -419,7 +419,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             ],
 //             expected_result
 //         );
-// 
+//
 //         // Assert when set_loaded_accounts_data_size_limit is not presented
 //         // budget is set to default data size
 //         let expected_result = Ok(ComputeBudgetLimits {
@@ -427,7 +427,7 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             loaded_accounts_bytes: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
 //             ..ComputeBudgetLimits::default()
 //         });
-// 
+//
 //         test!(
 //             &[Instruction::new_with_bincode(
 //                 Pubkey::new_unique(),
@@ -436,12 +436,12 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             ),],
 //             expected_result
 //         );
-// 
+//
 //         // Assert when set_loaded_accounts_data_size_limit presents more than once,
 //         // return DuplicateInstruction
 //         let data_size = MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES;
 //         let expected_result = Err(TransactionError::DuplicateInstruction(2));
-// 
+//
 //         test!(
 //             &[
 //                 Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
@@ -451,11 +451,11 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //             expected_result
 //         );
 //     }
-// 
+//
 //     #[test]
 //     fn test_process_mixed_instructions_without_compute_budget() {
 //         let payer_keypair = Keypair::new();
-// 
+//
 //         let transaction =
 //             SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
 //                 &[
@@ -466,10 +466,10 @@ pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 //                 &[&payer_keypair],
 //                 Hash::default(),
 //             ));
-// 
+//
 //         let result =
 //             process_compute_budget_instructions(transaction.message().program_instructions_iter());
-// 
+//
 //         // assert process_instructions will be successful with default,
 //         // and the default compute_unit_limit is 2 times default: one for bpf ix, one for
 //         // builtin ix.

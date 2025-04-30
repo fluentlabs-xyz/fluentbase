@@ -1,7 +1,8 @@
 #![feature(error_in_core)]
 
-use solana_account_info::AccountInfo;
-use solana_program_entrypoint::{__msg, entrypoint, ProgramResult};
+use solana_account_info::{next_account_info, AccountInfo};
+use solana_program::{program::invoke, system_instruction};
+use solana_program_entrypoint::{__msg, entrypoint_no_alloc, ProgramResult};
 use solana_pubkey::Pubkey;
 
 pub fn process_instruction(
@@ -10,9 +11,28 @@ pub fn process_instruction(
     instruction_data: &[u8],
 ) -> ProgramResult {
     // log a message to the blockchain
-    __msg!("This is message from 'example solana program. program_id {:?} accounts {} instruction_data {:x?}", program_id, accounts.len(), instruction_data);
-    let message = "it is some message";
-    __msg!("message='{}'", &message);
+    __msg!(
+        "This is message from 'example solana program. program_id {:?} accounts.len {} instruction_data {:x?}",
+        program_id,
+        accounts.len(),
+        instruction_data,
+    );
+    for (account_idx, account) in accounts.iter().enumerate() {
+        __msg!("input account {}: {:?}", account_idx, account);
+    }
+
+    // simple transfer below
+    let amount = u64::from_be_bytes(instruction_data[0..8].try_into().unwrap());
+    // let accounts_iter = &mut accounts.iter();
+    // let payer = next_account_info(accounts_iter)?;
+    // let recipient = next_account_info(accounts_iter)?;
+    // let system_program = next_account_info(accounts_iter)?;
+    // invoke(
+    //     &system_instruction::transfer(payer.key, recipient.key, amount),
+    //     &[payer.clone(), recipient.clone(), system_program.clone()],
+    // )?;
+    __msg!("amount is {}", amount);
+
     // TODO bug in `keccak_hash` function doesnt allow to pass tests
     // let keccak_hash_res = keccak_hash(message.as_bytes());
     // msg!("message's keccak_hash_res={:x?}", &keccak_hash_res.to_bytes());
@@ -25,4 +45,4 @@ pub fn process_instruction(
     Ok(())
 }
 
-entrypoint!(process_instruction);
+entrypoint_no_alloc!(process_instruction);

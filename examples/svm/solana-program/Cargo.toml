@@ -13,3 +13,5 @@ solana-account-info = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.1
 solana-program-entrypoint = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-program-error = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-msg = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-program = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-sdk = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }

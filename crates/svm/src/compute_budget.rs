@@ -9,9 +9,23 @@
 use crate::compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT;
 use solana_program_entrypoint::HEAP_LENGTH;
 
-/// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
-/// default heap page cost = 0.5 * 15 ~= 8CU/page
+// /// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
+// /// default heap page cost = 0.5 * 15 ~= 8CU/page
 pub const DEFAULT_HEAP_COST: u64 = 8;
+
+/// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
+/// a transaction.
+pub const MAX_INSTRUCTION_STACK_DEPTH: usize = 5;
+
+/// Max call depth. This is the maximum nesting of SBF to SBF call that can happen within a program.
+pub const MAX_CALL_DEPTH: usize = 64;
+
+/// The size of one SBF stack frame.
+pub const STACK_FRAME_SIZE: usize = 4096;
+
+pub const MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT: u32 = 3_000;
+pub const MAX_HEAP_FRAME_BYTES: u32 = 256 * 1024;
+pub const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeBudget {

@@ -9,6 +9,7 @@ pub mod message;
 pub mod nonce;
 pub mod program_error;
 pub mod program_stubs;
+pub mod runtime;
 pub mod secp256k1_program;
 pub mod stake_history;
 pub mod sysvar;

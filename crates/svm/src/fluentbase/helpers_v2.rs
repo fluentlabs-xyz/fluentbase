@@ -178,6 +178,10 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
                 .push(program_accounts.len() as IndexOfAccount);
             program_accounts.push((account_key.clone(), program_account));
         }
+        // for idx in &instruction.accounts {
+        //     let account_key = account_keys.get(*idx as usize).unwrap();
+        //     program_accounts_to_warmup.push(account_key);
+        // }
     }
     for program_account_key in program_accounts_to_load {
         load_program_account(sdk, sapi, &mut program_accounts, program_account_key)?;
@@ -195,7 +199,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     });
 
     // TODO compute hardcoded parameters
-    let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
+    let transaction_context = TransactionContext::new(accounts, rent.clone(), 100, 200);
 
     let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
     register_builtins(&mut function_registry);
@@ -256,17 +260,17 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     };
 
     // TODO optimize accounts saving
-    let mut result_accounts: HashMap<Pubkey, AccountSharedData> =
+    let mut result_accounts =
         HashMap::with_capacity(transaction_context.get_number_of_accounts() as usize);
+    for account_idx in 0..transaction_context.get_number_of_accounts() {
+        let account_key = transaction_context.get_key_of_account_at_index(account_idx)?;
+        let account_data = transaction_context.get_account_at_index(account_idx)?;
+        result_accounts.insert(
+            account_key.clone(),
+            account_data.borrow().to_account_shared_data(),
+        );
+    }
     if flush_result_accounts {
-        for account_idx in 0..transaction_context.get_number_of_accounts() {
-            let account_key = transaction_context.get_key_of_account_at_index(account_idx)?;
-            let account_data = transaction_context.get_account_at_index(account_idx)?;
-            result_accounts.insert(
-                account_key.clone(),
-                account_data.borrow().to_account_shared_data(),
-            );
-        }
         flush_accounts(sdk, sapi, &result_accounts)?;
     }
 
