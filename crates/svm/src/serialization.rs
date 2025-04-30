@@ -9,6 +9,7 @@ use crate::{
     system_instruction::MAX_PERMITTED_DATA_LENGTH,
 };
 use byteorder::{ByteOrder, LittleEndian};
+use core::mem::{self, size_of};
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 use solana_program_entrypoint::{BPF_ALIGN_OF_U128, NON_DUP_MARKER};
 use solana_pubkey::Pubkey;
@@ -17,7 +18,6 @@ use solana_rbpf::{
     ebpf::{HOST_ALIGN, MM_INPUT_START},
     memory_region::{MemoryRegion, MemoryState},
 };
-use std::mem::{self, size_of};
 
 /// Maximum number of instruction accounts that can be serialized into the
 /// SBF VM.

@@ -270,8 +270,8 @@ mod tests {
         let amount = 1234u64;
         let instructions = vec![Instruction::new_with_bincode(
             pk_exec.clone(),
-            // &amount.to_be_bytes(),
-            &[0u8; 0],
+            &amount.to_be_bytes(),
+            // &[0u8; 0],
             vec![
                 // account_meta1
                 AccountMeta::new(pk_payer, false),

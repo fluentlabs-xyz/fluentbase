@@ -31,7 +31,7 @@ use itertools::Itertools;
 use solana_bincode::deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
-use solana_feature_set::FeatureSet;
+use solana_feature_set::{bpf_account_data_direct_mapping, FeatureSet};
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
@@ -245,6 +245,9 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
         },
     );
     let transaction_context = {
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&bpf_account_data_direct_mapping::id());
+
         let mut invoke_context = InvokeContext::new(
             transaction_context,
             sysvar_cache.clone(),
@@ -252,7 +255,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
             compute_budget.clone(),
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            feature_set.into(),
             *blockhash,
             0,
         );
