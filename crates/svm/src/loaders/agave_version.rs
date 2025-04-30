@@ -96,12 +96,19 @@ pub fn execute<'a, SDK: SharedAPI>(
 
         // vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         let (_compute_units_consumed, result) = vm.execute_program(executable.as_ref(), !use_jit);
-        MEMORY_POOL.with_borrow_mut(|memory_pool| {
+        {
+            let mut memory_pool = MEMORY_POOL.write();
             memory_pool.put_stack(stack);
             memory_pool.put_heap(heap);
             debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH);
             debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
-        });
+        }
+        // MEMORY_POOL.with_borrow_mut(|memory_pool| {
+        //     memory_pool.put_stack(stack);
+        //     memory_pool.put_heap(heap);
+        //     debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH);
+        //     debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
+        // });
         drop(vm);
         // if let Some(execute_time) = invoke_context.execute_time.as_mut() {
         //     execute_time.stop();

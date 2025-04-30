@@ -11,20 +11,15 @@ use crate::{
     solana_program::runtime::mem_pool::VmMemoryPool,
 };
 use alloc::{boxed::Box, rc::Rc, string::ToString, vec::Vec};
-use core::cell::RefCell;
 use fluentbase_sdk::SharedAPI;
+use lazy_static::lazy_static;
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 pub use solana_rbpf::vm::ContextObject;
-use solana_rbpf::{
-    aligned_memory::AlignedMemory,
-    ebpf::HOST_ALIGN,
-    elf::Executable,
-    memory_region::MemoryRegion,
-    vm::EbpfVm,
-};
+use solana_rbpf::{elf::Executable, memory_region::MemoryRegion, vm::EbpfVm};
+use spin::RwLock;
 
-thread_local! {
-    pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
+lazy_static! {
+    pub static ref MEMORY_POOL: RwLock<VmMemoryPool> = RwLock::new(VmMemoryPool::new());
 }
 
 /// Only used in macro, do not use directly!
@@ -77,57 +72,6 @@ pub fn create_vm<'a, 'b, SDK: SharedAPI>(
     ))
 }
 
-// /// Only used in macro, do not use directly!
-// pub fn create_vm<'a, 'b, SDK: SharedAPI>(
-//     program: &'b Executable<InvokeContext<'a, SDK>>,
-//     regions: Vec<MemoryRegion>,
-//     accounts_metadata: Vec<SerializedAccountMetadata>,
-//     invoke_context: &'b mut InvokeContext<'a, SDK>,
-//     stack: &mut AlignedMemory<{ HOST_ALIGN }>,
-//     heap: &mut AlignedMemory<{ HOST_ALIGN }>,
-// ) -> Result<EbpfVm<'b, InvokeContext<'a, SDK>>, Box<dyn core::error::Error>> {
-//     let stack_size = stack.len();
-//     let heap_size = heap.len();
-//     let accounts = Rc::clone(invoke_context.transaction_context.accounts());
-//     let memory_mapping = create_memory_mapping(
-//         program,
-//         stack,
-//         heap,
-//         regions,
-//         Some(Box::new(move |index_in_transaction| {
-//             // The two calls below can't really fail. If they fail because of a bug,
-//             // whatever is writing will trigger an EbpfError::AccessViolation like
-//             // if the region was readonly, and the transaction will fail gracefully.
-//             let mut account = accounts
-//                 .try_borrow_mut(index_in_transaction as IndexOfAccount)
-//                 .map_err(|_| ())?;
-//             accounts
-//                 .touch(index_in_transaction as IndexOfAccount)
-//                 .map_err(|_| ())?;
-//
-//             if account.is_shared() {
-//                 // See BorrowedAccount::make_data_mut() as to why we reserve extra
-//                 // MAX_PERMITTED_DATA_INCREASE bytes here.
-//                 account.reserve(MAX_PERMITTED_DATA_INCREASE);
-//             }
-//             Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
-//         })),
-//     );
-//     let memory_mapping = memory_mapping?;
-//     invoke_context.set_syscall_context(SyscallContext {
-//         allocator: BpfAllocator::new(heap_size as u64),
-//         accounts_metadata,
-//         trace_log: Vec::new(),
-//     })?;
-//     Ok(EbpfVm::<'b, InvokeContext<'a, SDK>>::new(
-//         program.get_loader().clone(),
-//         program.get_sbpf_version(),
-//         invoke_context,
-//         memory_mapping,
-//         stack_size,
-//     ))
-// }
-
 #[macro_export]
 macro_rules! create_vm {
     ($vm:ident, $program:expr, $regions:expr, $accounts_metadata:expr, $invoke_context:expr $(,)?) => {
@@ -139,8 +83,12 @@ macro_rules! create_vm {
                 $invoke_context.get_compute_budget().heap_cost,
             ));
         let $vm = heap_cost_result.and_then(|_| {
-            let (mut stack, mut heap) = $crate::macros::MEMORY_POOL
-                .with_borrow_mut(|pool| (pool.get_stack(stack_size), pool.get_heap(heap_size)));
+            let (mut stack, mut heap) = {
+                let mut pool = crate::macros::MEMORY_POOL.write();
+                (pool.get_stack(stack_size), pool.get_heap(heap_size))
+            };
+            // let (mut stack, mut heap) = crate::macros::MEMORY_POOL
+            //     .with_borrow_mut(|pool| (pool.get_stack(stack_size), pool.get_heap(heap_size)));
             let vm = $crate::macros::create_vm(
                 $program,
                 $regions,

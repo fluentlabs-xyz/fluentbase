@@ -8,6 +8,7 @@ use crate::{
     helpers::SerializedAccountMetadata,
     system_instruction::MAX_PERMITTED_DATA_LENGTH,
 };
+use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use core::mem::{self, size_of};
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;

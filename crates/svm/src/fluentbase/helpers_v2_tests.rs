@@ -266,17 +266,15 @@ mod tests {
 
         // exec
 
-        let mut account_meta1: AccountMeta = AccountMeta::new(pk_exec_data.clone(), false);
-        let amount = 1234u64;
+        let amount = 12u64;
         let instructions = vec![Instruction::new_with_bincode(
             pk_exec.clone(),
             &amount.to_be_bytes(),
-            // &[0u8; 0],
             vec![
                 // account_meta1
                 AccountMeta::new(pk_payer, false),
-                // AccountMeta::new(pk_exec, false),
-                // AccountMeta::new(system_program_id, false),
+                AccountMeta::new(pk_exec, false),
+                AccountMeta::new(system_program_id, false),
             ],
         )];
         let message = Message::new(&instructions, Some(&pk_exec));
@@ -297,6 +295,11 @@ mod tests {
         assert_eq!(account_data.lamports(), 0);
         assert_eq!(account_data.data().len(), buffer_len);
         assert_eq!(account_data.executable(), false);
+
+        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
+        assert_eq!(account_data.lamports(), 100);
+        // assert_eq!(account_data.data().len(), buffer_len);
+        // assert_eq!(account_data.executable(), false);
     }
 
     #[test]

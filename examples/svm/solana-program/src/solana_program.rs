@@ -22,16 +22,23 @@ pub fn process_instruction(
     }
 
     // simple transfer below
-    let amount = u64::from_be_bytes(instruction_data[0..8].try_into().unwrap());
-    // let accounts_iter = &mut accounts.iter();
-    // let payer = next_account_info(accounts_iter)?;
-    // let recipient = next_account_info(accounts_iter)?;
-    // let system_program = next_account_info(accounts_iter)?;
-    // invoke(
-    //     &system_instruction::transfer(payer.key, recipient.key, amount),
-    //     &[payer.clone(), recipient.clone(), system_program.clone()],
-    // )?;
+    let amount = u64::from_be_bytes(
+        instruction_data[0..core::mem::size_of::<u64>()]
+            .try_into()
+            .unwrap(),
+    );
     __msg!("amount is {}", amount);
+    let accounts_iter = &mut accounts.iter();
+    let payer = next_account_info(accounts_iter)?;
+    __msg!("payer.key: {:?}", payer.key.to_bytes());
+    let recipient = next_account_info(accounts_iter)?;
+    __msg!("recipient.key: {:?}", recipient.key.to_bytes());
+    let system_program = next_account_info(accounts_iter)?;
+    __msg!("system_program.key: {:?}", system_program.key.to_bytes());
+    invoke(
+        &system_instruction::transfer(payer.key, recipient.key, amount),
+        &[payer.clone(), recipient.clone(), system_program.clone()],
+    )?;
 
     // TODO bug in `keccak_hash` function doesnt allow to pass tests
     // let keccak_hash_res = keccak_hash(message.as_bytes());

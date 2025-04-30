@@ -538,7 +538,7 @@ pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
     heap: &'b mut [u8],
     additional_regions: Vec<MemoryRegion>,
     cow_cb: Option<MemoryCowCallback>,
-) -> Result<MemoryMapping<'a>, Box<dyn std::error::Error>> {
+) -> Result<MemoryMapping<'a>, Box<dyn core::error::Error>> {
     let config = executable.get_config();
     let sbpf_version = executable.get_sbpf_version();
     let regions: Vec<MemoryRegion> = vec![

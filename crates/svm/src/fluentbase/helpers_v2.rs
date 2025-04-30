@@ -26,7 +26,7 @@ use crate::{
 };
 use alloc::{sync::Arc, vec, vec::Vec};
 use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use itertools::Itertools;
 use solana_bincode::deserialize;
 use solana_clock::Clock;
