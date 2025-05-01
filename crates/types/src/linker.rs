@@ -66,8 +66,8 @@ const SHARED_IMPORT_LINKER: [(&str, SysFuncIdx, &[ValueType], &[ValueType], &[In
     ("_charge_fuel_manually", CHARGE_FUEL_MANUALLY, &[I64; 2], &[I64; 1], CHARGE_FUEL_MANUALLY_FUEL),
     ("_charge_fuel", CHARGE_FUEL, &[I64; 1], &[], CHARGE_FUEL_FUEL),
     ("_fuel", FUEL, &[], &[I64; 1], FUEL_FUEL),
-    ("_preimage_size", PREIMAGE_SIZE, &[I32; 1], &[I32; 1], PREIMAGE_SIZE_FUEL,),
-    ("_preimage_copy", PREIMAGE_COPY, &[I32; 2], &[], PREIMAGE_COPY_FUEL,),
+    ("_preimage_size", PREIMAGE_SIZE, &[I32; 1], &[I32; 1], PREIMAGE_SIZE_FUEL),
+    ("_preimage_copy", PREIMAGE_COPY, &[I32; 2], &[], PREIMAGE_COPY_FUEL),
     ("_debug_log", DEBUG_LOG, &[I32; 2], &[], DEBUG_LOG_FUEL),
     ("_secp256k1_recover", SECP256K1_RECOVER, &[I32; 4], &[I32; 1], SECP256K1_RECOVER_FUEL),
 ];

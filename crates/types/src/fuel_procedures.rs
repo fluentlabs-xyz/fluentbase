@@ -6,7 +6,11 @@ use rwasm::{
 
 /// Formula: cost = base_cost + word_cost * (x + 31) / 32, where x is one of the parameters
 /// of the builtin. What parameter is used depends on the builtin and defined by local_depth.
-/// Local depth equal to 1 means the last parameter, increase by 1 for each previous parameter.
+///
+/// Local depth equal to 1 means the last parameter, increase by 1 for each previous parameter. For
+/// more info on that checkout implementation of  local get visitor in the rwasm codebase (fn
+/// visit_local_get).
+///
 /// Word is defined as 32 bytes, the same as in the EVM.
 macro_rules! linear_fuel {
     ($local_depth:expr, $base_cost:expr, $word_cost:expr) => {
