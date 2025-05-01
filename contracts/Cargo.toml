@@ -1,0 +1,32 @@
+[package]
+name = "fluentbase-contracts"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+fluentbase-contracts-blake2f = { path = "./blake2f", default-features = false }
+fluentbase-contracts-bls12381 = { path = "./bls12381", default-features = false }
+fluentbase-contracts-bn256 = { path = "./bn256", default-features = false }
+fluentbase-contracts-ecrecover = { path = "./ecrecover", default-features = false }
+fluentbase-contracts-erc20 = { path = "./erc20", default-features = false }
+fluentbase-contracts-evm = { path = "./evm", default-features = false }
+fluentbase-contracts-fairblock = { path = "./fairblock", default-features = false }
+fluentbase-contracts-identity = { path = "./identity", default-features = false }
+fluentbase-contracts-kzg = { path = "./kzg", default-features = false }
+fluentbase-contracts-modexp = { path = "./modexp", default-features = false }
+fluentbase-contracts-multicall = { path = "./multicall", default-features = false }
+fluentbase-contracts-nitro = { path = "./nitro", default-features = false }
+fluentbase-contracts-oauth2 = { path = "./oauth2", default-features = false }
+fluentbase-contracts-ripemd160 = { path = "./ripemd160", default-features = false }
+fluentbase-contracts-secp256r1 = { path = "./secp256r1", default-features = false }
+fluentbase-contracts-sha256 = { path = "./sha256", default-features = false }
+fluentbase-contracts-webauthn = { path = "./webauthn", default-features = false }
