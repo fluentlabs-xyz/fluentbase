@@ -1,6 +1,6 @@
 extern crate test;
 
-use crate::{examples::EXAMPLE_ERC20, utils::EvmTestingContext};
+use crate::{utils::EvmTestingContext, EXAMPLE_ERC20};
 use fluentbase_sdk::Address;
 use hex_literal::hex;
 use test::Bencher;

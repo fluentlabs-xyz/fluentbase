@@ -1,12 +1,10 @@
 use crate::{
-    examples::{
-        EXAMPLE_GREETING,
-        EXAMPLE_PANIC,
-        EXAMPLE_ROUTER_SOLIDITY,
-        EXAMPLE_RWASM,
-        EXAMPLE_TINY_KECCAK256,
-    },
     utils::run_with_default_context,
+    EXAMPLE_GREETING,
+    EXAMPLE_PANIC,
+    EXAMPLE_ROUTER_SOLIDITY,
+    EXAMPLE_RWASM,
+    EXAMPLE_TINY_KECCAK256,
 };
 use core::str::from_utf8;
 use hex_literal::hex;

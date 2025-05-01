@@ -2380,6 +2380,7 @@ dependencies = [
  "revm",
  "rwasm",
  "tikv-jemallocator",
+ "wat",
 ]
 
 [[package]]

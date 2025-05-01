@@ -6,10 +6,17 @@ use fluentbase_sdk::{
     byteorder::ByteOrder,
     bytes,
     Address,
+    Bytes,
     SysFuncIdx,
     STATE_MAIN,
     SYSCALL_ID_CALL,
     U256,
+};
+use fluentbase_types::{
+    KECCAK_BASE_FUEL_COST,
+    KECCAK_WORD_FUEL_COST,
+    WRITE_BASE_FUEL_COST,
+    WRITE_WORD_FUEL_COST,
 };
 use hex_literal::hex;
 use revm::primitives::{ExecutionResult, Output};
@@ -166,13 +173,9 @@ fn test_deploy_gas_spend() {
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
 
-    let result = TxBuilder::create(
-        &mut ctx,
-        DEPLOYER_ADDRESS,
-        crate::examples::EXAMPLE_GREETING.into(),
-    )
-    .enable_rwasm_proxy()
-    .exec();
+    let result = TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, crate::EXAMPLE_GREETING.into())
+        .enable_rwasm_proxy()
+        .exec();
     if !result.is_success() {
         println!("{:?}", result);
         println!(
@@ -338,4 +341,76 @@ fn test_blended_gas_spend_evm_from_wasm() {
     // + 637 evm opcodes cost
     assert_eq!(result.gas_used(), 21000 + 1 + 2600 + 637 + 100 + 637);
     // TODO(dmitry123): "wasm code cost should be 2, not 1"
+}
+
+// 21000 is base tx cost
+// + 1 is denominated cost for execution of wasm opcodes
+// This can be changed in the future
+const BASE_TRANSACTION_GAS: u32 = 21000 + 1;
+
+#[test]
+fn test_keccak_builtin_charges_gas() {
+    let wat = r#"
+        (module
+          (import "fluentbase_v1preview" "_keccak256" (func $keccak256 (param i32 i32 i32)))
+          (memory 1)          ;; 1 page = 64KiB
+          (func $main
+            i32.const 0       ;; data offset
+            i32.const 32769   ;; data length 32*1024+1
+            i32.const 0       ;; output offset
+            call $keccak256
+          )
+          (export "main" (func $main))
+          (export "memory" (memory 0))
+        )
+    "#;
+    let wasm = wat::parse_str(wat).unwrap();
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, wasm.into());
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::default(),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+    let keccak_fuel = KECCAK_BASE_FUEL_COST + KECCAK_WORD_FUEL_COST * (32769 + 31) / 32;
+    let expected_gas = BASE_TRANSACTION_GAS + keccak_fuel / 1000; // cost is denominated
+    assert_eq!(expected_gas as u64, result.gas_used());
+    println!("Result: {:?}", result);
+}
+
+#[test]
+fn test_write_builtin_charges_gas() {
+    let wat = r#"
+        (module
+          (import "fluentbase_v1preview" "_write" (func $write (param i32 i32)))
+          (memory 1)          ;; 1 page = 64KiB
+          (func $main
+            i32.const 0       ;; data offset
+            i32.const 64512   ;; data length 63KiB
+            call $write
+          )
+          (export "main" (func $main))
+          (export "memory" (memory 0))
+        )
+    "#;
+    let wasm = wat::parse_str(wat).unwrap();
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, wasm.into());
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        contract_address,
+        Bytes::default(),
+        None,
+        None,
+    );
+    assert!(result.is_success());
+    let write_fuel = WRITE_BASE_FUEL_COST + WRITE_WORD_FUEL_COST * (64512 + 31) / 32;
+    let expected_gas = BASE_TRANSACTION_GAS + write_fuel / 1000;
+    assert_eq!(expected_gas as u64, result.gas_used());
+    println!("Result: {:?}", result);
 }
