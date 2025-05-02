@@ -26,6 +26,7 @@ pub mod tests {
         solana_program::{
             bpf_loader_upgradeable,
             bpf_loader_upgradeable::UpgradeableLoaderState,
+            feature_set::feature_set_default,
             loader_v4,
             message::{AccountKeys, LegacyMessage, Message, SanitizedMessage},
             sysvar,
@@ -180,7 +181,7 @@ pub mod tests {
             compute_budget,
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );
@@ -415,7 +416,7 @@ pub mod tests {
             compute_budget,
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );
@@ -603,7 +604,7 @@ pub mod tests {
             compute_budget,
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );
@@ -733,7 +734,7 @@ pub mod tests {
             compute_budget,
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );
@@ -948,7 +949,7 @@ pub mod tests {
             compute_budget,
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );
@@ -1184,7 +1185,7 @@ pub mod tests {
             compute_budget,
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );
@@ -1378,7 +1379,7 @@ pub mod tests {
             compute_budget.clone(),
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );
@@ -1458,7 +1459,7 @@ pub mod tests {
             compute_budget.clone(),
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );
@@ -1631,7 +1632,7 @@ pub mod tests {
             compute_budget.clone(),
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );
@@ -1807,7 +1808,7 @@ pub mod tests {
             compute_budget.clone(),
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );
@@ -2068,7 +2069,7 @@ pub mod tests {
             compute_budget.clone(),
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(feature_set_default()),
             blockhash,
             0,
         );

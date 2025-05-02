@@ -75,6 +75,9 @@ mod tests {
         let pk_payer = Pubkey::new_unique();
         let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
 
+        let pk_tmp = Pubkey::new_unique();
+        let pk_tmp_account = AccountSharedData::new(100, 0, &system_program_id);
+
         let pk_exec = Pubkey::from([8; 32]);
 
         let pk_exec_data = Pubkey::from([3; 32]);
@@ -85,7 +88,7 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            "../../examples/svm/solana-program/assets/solana_program.so",
+            "../../examples/svm/solana-program-with-state/assets/solana_program.so",
             // "./test_elfs/out/noop_aligned.so",
         );
 
@@ -108,6 +111,7 @@ mod tests {
         let mut sapi = MemStorage::new();
 
         storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
+        storage_write_account_data(&mut sapi, &pk_tmp, &pk_tmp_account).unwrap();
         storage_write_account_data(&mut sapi, &pk_authority, &pk_authority_account).unwrap();
         // storage_write_account_data(&mut sapi, &pk_exec_data, &pk_exec_data_account).unwrap();
         storage_write_account_data(
@@ -273,7 +277,7 @@ mod tests {
             vec![
                 // account_meta1
                 AccountMeta::new(pk_payer, false),
-                AccountMeta::new(pk_exec, false),
+                AccountMeta::new(pk_tmp, false),
                 AccountMeta::new(system_program_id, false),
             ],
         )];
@@ -287,9 +291,9 @@ mod tests {
                 ..Default::default()
             })
             .with_input(serialize(&message).unwrap());
+        println!("exec started");
         let result_accounts = main_single_message(sdk.clone(), Some(&mut sapi));
         println!("result_accounts.len: {}", result_accounts.len());
-        for account in &result_accounts {}
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
         assert_eq!(account_data.lamports(), 0);

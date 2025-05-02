@@ -224,6 +224,7 @@ pub fn serialize_parameters(
                 let account = instruction_context
                     .try_borrow_instruction_account(transaction_context, instruction_account_index)
                     .unwrap();
+                let account_key = account.get_key();
                 SerializeAccount::Account(instruction_account_index, account)
             }
         })
@@ -468,7 +469,8 @@ fn serialize_parameters_aligned(
                 s.write::<u8>(borrowed_account.is_writable() as u8);
                 s.write::<u8>(borrowed_account.is_executable() as u8);
                 s.write_all(&[0u8, 0, 0, 0]);
-                let vm_key_addr = s.write_all(borrowed_account.get_key().as_ref());
+                let account_key = borrowed_account.get_key().as_ref();
+                let vm_key_addr = s.write_all(account_key);
                 let vm_owner_addr = s.write_all(borrowed_account.get_owner().as_ref());
                 let vm_lamports_addr = s.write::<u64>(borrowed_account.get_lamports().to_le());
                 s.write::<u64>((borrowed_account.get_data().len() as u64).to_le());

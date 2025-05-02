@@ -62,7 +62,6 @@ solana-program-entrypoint = { git = "https://github.com/fluentlabs-xyz/agave", b
 solana-feature-set = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-memory = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-stable-layout = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-msg = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 #solana-pubkey = { path = "../agave/sdk/pubkey", default-features = false }
 #solana-instruction = { path = "../agave/sdk/instruction", default-features = false }
@@ -88,7 +87,6 @@ solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "fe
 #solana-feature-set = { path = "../agave/sdk/feature-set", default-features = false }
 #solana-program-memory = { path = "../agave/sdk/program-memory", default-features = false }
 #solana-stable-layout = { path = "../agave/sdk/stable-layout", default-features = false }
-#solana-msg = { path = "../agave/sdk/msg", default-features = false }
 #solana-bincode = { path = "../agave/sdk/bincode", default-features = false }
 
 #solana-poseidon = { path = "../agave/poseidon", default-features = false }

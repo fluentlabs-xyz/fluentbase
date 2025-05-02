@@ -18,6 +18,7 @@ use crate::{
     solana_program::{
         bpf_loader_upgradeable,
         bpf_loader_upgradeable::UpgradeableLoaderState,
+        feature_set::feature_set_default,
         message::{legacy, LegacyMessage, SanitizedMessage},
     },
     system_processor,
@@ -31,7 +32,6 @@ use itertools::Itertools;
 use solana_bincode::deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
-use solana_feature_set::{bpf_account_data_direct_mapping, FeatureSet};
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
@@ -245,8 +245,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
         },
     );
     let transaction_context = {
-        let mut feature_set = FeatureSet::all_enabled();
-        feature_set.deactivate(&bpf_account_data_direct_mapping::id());
+        let mut feature_set = feature_set_default();
 
         let mut invoke_context = InvokeContext::new(
             transaction_context,

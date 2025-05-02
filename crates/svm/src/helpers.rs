@@ -843,7 +843,7 @@ macro_rules! with_mock_invoke_context {
             compute_budget,
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new($crate::solana_program::feature_set::feature_set_default()),
             Hash::default(),
             0,
         );

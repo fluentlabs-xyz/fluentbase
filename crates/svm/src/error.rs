@@ -2,6 +2,7 @@ use alloc::string::String;
 use core::fmt::{Display, Formatter};
 use fluentbase_sdk::ExitCode;
 use serde::{Deserialize, Serialize};
+use solana_rbpf::{elf::ElfError, error::EbpfError};
 
 /// Reasons the runtime might have rejected an instruction.
 ///
@@ -580,6 +581,8 @@ impl core::error::Error for TransactionError {}
 
 #[derive(Debug)]
 pub enum SvmError {
+    ElfError(ElfError),
+    EbpfError(EbpfError),
     TransactionError(TransactionError),
     BincodeEncodeError(bincode::error::EncodeError),
     BincodeDecodeError(bincode::error::DecodeError),
@@ -614,5 +617,17 @@ impl From<bincode::error::DecodeError> for SvmError {
 impl From<InstructionError> for SvmError {
     fn from(value: InstructionError) -> Self {
         SvmError::InstructionError(value)
+    }
+}
+
+impl From<ElfError> for SvmError {
+    fn from(value: ElfError) -> Self {
+        SvmError::ElfError(value)
+    }
+}
+
+impl From<EbpfError> for SvmError {
+    fn from(value: EbpfError) -> Self {
+        SvmError::EbpfError(value)
     }
 }

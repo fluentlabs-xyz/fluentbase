@@ -176,20 +176,13 @@ pub fn execute<'a, SDK: SharedAPI>(
                                 instruction_account_index as IndexOfAccount,
                             )?;
 
-                            error = EbpfError::SyscallError(Box::new(
-                                #[allow(deprecated)]
-                                // if !invoke_context
-                                // .get_feature_set()
-                                // .is_active(&remove_accounts_executable_flag_checks::id())
-                                // &&
-                                if account.is_executable() {
-                                    InstructionError::ExecutableDataModified
-                                } else if account.is_writable() {
-                                    InstructionError::ExternalAccountDataModified
-                                } else {
-                                    InstructionError::ReadonlyDataModified
-                                },
-                            ));
+                            error = EbpfError::SyscallError(Box::new(if account.is_executable() {
+                                InstructionError::ExecutableDataModified
+                            } else if account.is_writable() {
+                                InstructionError::ExternalAccountDataModified
+                            } else {
+                                InstructionError::ReadonlyDataModified
+                            }));
                         }
                     }
                 }

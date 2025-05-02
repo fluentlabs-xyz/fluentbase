@@ -3,6 +3,7 @@ use crate::{
     bpf_loader_deprecated,
     clock::{Epoch, Slot},
     context::{BuiltinFunctionWithContext, InvokeContext},
+    error::SvmError,
     pubkey::Pubkey,
     solana_program::{bpf_loader_upgradeable, loader_v4},
 };
@@ -13,7 +14,7 @@ use core::{
 };
 use fluentbase_sdk::{HashMap, SharedAPI};
 use solana_rbpf::{
-    elf::Executable,
+    elf::{ElfError, Executable},
     program::{BuiltinProgram, FunctionRegistry},
     verifier::RequisiteVerifier,
     vm::Config,
@@ -132,7 +133,7 @@ impl<'a, 'b, SDK: SharedAPI> LoadedProgram<'a, SDK> {
         elf_bytes: &[u8],
         account_size: usize,
         // metrics: &mut LoadProgramMetrics,
-    ) -> Result<Self, Box<dyn core::error::Error>> {
+    ) -> Result<Self, SvmError> {
         Self::new_internal(
             loader_key,
             program_runtime_environment,
@@ -163,7 +164,7 @@ impl<'a, 'b, SDK: SharedAPI> LoadedProgram<'a, SDK> {
         elf_bytes: &[u8],
         account_size: usize,
         // metrics: &mut LoadProgramMetrics,
-    ) -> Result<Self, Box<dyn core::error::Error>> {
+    ) -> Result<Self, SvmError> {
         Self::new_internal(
             loader_key,
             program_runtime_environment,
@@ -187,12 +188,11 @@ impl<'a, 'b, SDK: SharedAPI> LoadedProgram<'a, SDK> {
         account_size: usize,
         // metrics: &mut LoadProgramMetrics,
         reloading: bool,
-    ) -> Result<Self, Box<dyn core::error::Error>> {
+    ) -> Result<Self, SvmError> {
         // let mut load_elf_time = Measure::start("load_elf_time");
         // The following unused_mut exception is needed for architectures that do not
         // support JIT compilation.
         let executable = Executable::load(elf_bytes, program_runtime_environment.clone());
-        #[allow(unused_mut)]
         let mut executable = executable?;
         // load_elf_time.stop();
         // metrics.load_elf_us = load_elf_time.as_us();

@@ -16,6 +16,7 @@ use crate::{
     loaders::{bpf_loader_v4, bpf_loader_v4::get_state},
     message_processor::MessageProcessor,
     solana_program::{
+        feature_set::feature_set_default,
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status},
         message::{legacy, LegacyMessage, SanitizedMessage},
@@ -25,13 +26,12 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
+use fluentbase_sdk::{debug_log, BlockContextReader, SharedAPI, StorageAPI};
 use hashbrown::{HashMap, HashSet};
 use itertools::Itertools;
 use solana_bincode::deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
-use solana_feature_set::{bpf_account_data_direct_mapping, FeatureSet};
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
@@ -112,11 +112,11 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     let loader_id = loader_v4::id();
 
     let mut working_accounts = vec![];
-    let mut program_accounts: Vec<(Pubkey, AccountSharedData)> = vec![];
+    let mut program_accounts = vec![];
     let mut program_indices = vec![];
     let account_keys = message.account_keys();
 
-    let mut program_accounts_to_load: Vec<&Pubkey> = vec![];
+    let mut program_accounts_to_load: Vec<&Pubkey> = Default::default();
 
     let mut program_account_found = false;
     for account_key in account_keys.iter() {
@@ -139,10 +139,18 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
         if account_data.executable() {
             continue; // this is program account?
         }
+        // loader-v4 doesn't mark account executable after deploy, so we need to check this condition
+        let state: Result<&LoaderV4State, InstructionError> = get_state(account_data.data());
+        if let Ok(state) = state {
+            match state.status {
+                LoaderV4Status::Deployed | LoaderV4Status::Finalized => continue,
+                _ => {}
+            }
+        }
         working_accounts.push((account_key.clone(), account_data));
     }
 
-    let mut program_accounts_to_warmup: Vec<&Pubkey> = vec![];
+    let mut program_accounts_to_warmup: Vec<&Pubkey> = Default::default();
     for instruction in message.instructions() {
         program_indices.push(vec![]);
         let account_key = account_keys
@@ -235,8 +243,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
         },
     );
     let transaction_context = {
-        let mut feature_set = FeatureSet::all_enabled();
-        feature_set.deactivate(&bpf_account_data_direct_mapping::id());
+        let mut feature_set = feature_set_default();
 
         let mut invoke_context = InvokeContext::new(
             transaction_context,

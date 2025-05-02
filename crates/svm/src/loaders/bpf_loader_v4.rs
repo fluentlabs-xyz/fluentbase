@@ -15,7 +15,7 @@ use crate::{
 };
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use core::sync::atomic::Ordering;
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{debug_log, SharedAPI};
 use solana_program_entrypoint::SUCCESS;
 use solana_rbpf::{
     aligned_memory::AlignedMemory,
@@ -458,6 +458,7 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
     )
     .map_err(|err| {
         // ic_logger_msg!(log_collector, "{}", err);
+        // debug_log!("error while LoadedProgram::new: {}", err);
         InstructionError::InvalidAccountData
     })?;
     // load_program_metrics.submit_datapoint(&mut invoke_context.timings);
@@ -487,6 +488,7 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
     invoke_context
         .programs_modified_by_tx
         .replenish(*program.get_key(), Arc::new(executor));
+    // program.set_executable(true)?;
     Ok(())
 }
 
