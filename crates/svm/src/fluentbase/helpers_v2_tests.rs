@@ -80,7 +80,7 @@ mod tests {
 
         let pk_exec = Pubkey::from([8; 32]);
 
-        let pk_exec_data = Pubkey::from([3; 32]);
+        // let pk_exec_data = Pubkey::from([3; 32]);
         // let pk_exec_data_account = AccountSharedData::new(0, 0, &pk_exec);
 
         let pk_authority = Pubkey::from([9; 32]);
@@ -276,8 +276,8 @@ mod tests {
             &amount.to_be_bytes(),
             vec![
                 // account_meta1
+                AccountMeta::new(pk_tmp, true),
                 AccountMeta::new(pk_payer, false),
-                AccountMeta::new(pk_tmp, false),
                 AccountMeta::new(system_program_id, false),
             ],
         )];

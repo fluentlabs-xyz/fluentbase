@@ -9,13 +9,10 @@ use core::{
     fmt::{Display, Formatter, Write},
     str::from_utf8,
 };
-use solana_bincode::{deserialize, serialize, serialize_into, serialized_size};
+use solana_bincode::{deserialize, serialize, serialized_size};
 use solana_rbpf::{
-    aligned_memory::AlignedMemory,
     ebpf,
-    ebpf::HOST_ALIGN,
     elf::Executable,
-    error::EbpfError,
     memory_region::{AccessType, MemoryCowCallback, MemoryMapping, MemoryRegion},
     vm::ContextObject,
 };
@@ -105,13 +102,13 @@ use crate::{
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
     context::InvokeContext,
-    error::SvmError,
+    error::{Error, SvmError},
     pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN},
     solana_program::sysvar::Sysvar,
     storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
-use fluentbase_sdk::{ExitCode, SharedAPI, StorageAPI};
-use solana_rbpf::{ebpf::MM_HEAP_START, error::ProgramResult};
+use fluentbase_sdk::{SharedAPI, StorageAPI};
+use solana_rbpf::ebpf::MM_HEAP_START;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
 
@@ -213,8 +210,6 @@ macro_rules! ic_msg {
 }
 
 /// Error definitions
-
-pub type Error = Box<dyn core::error::Error>;
 
 #[derive(Debug, /*ThisError,*/ PartialEq, Eq)]
 pub enum SyscallError {

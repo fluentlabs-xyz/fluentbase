@@ -46,6 +46,7 @@ solana-stable-layout = { workspace = true, default-features = false, features = 
 solana-bincode = { workspace = true, default-features = false, features = [] }
 #solana-poseidon = { workspace = true, default-features = false, features = ["serde", "sysvar"] }
 
+scopeguard = { workspace = true }
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
 serde_json = { workspace = true, default-features = false, features = ["alloc"] }
 blake3 = { workspace = true, default-features = false, features = ["serde"] }

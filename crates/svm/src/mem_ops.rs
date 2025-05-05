@@ -1,10 +1,10 @@
-use crate::common::Error;
+use super::*;
+use crate::error::Error;
 use alloc::boxed::Box;
-use solana_rbpf::memory_region::{AccessType, MemoryMapping};
-use {
-    super::*,
-    core::slice,
-    solana_rbpf::{error::EbpfError, memory_region::MemoryRegion},
+use core::slice;
+use solana_rbpf::{
+    error::EbpfError,
+    memory_region::{AccessType, MemoryMapping, MemoryRegion},
 };
 
 // fn mem_op_consume<SDK: SharedAPI>(invoke_context: &mut InvokeContext<SDK>, n: u64) -> Result<(), Error> {

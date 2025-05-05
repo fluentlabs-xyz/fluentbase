@@ -2747,6 +2747,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "rand 0.9.1",
+ "scopeguard",
  "serde",
  "serde_bytes",
  "serde_json",

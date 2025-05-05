@@ -205,7 +205,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // but performed on a very small slice and requires no heap allocations.
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
         let mut deduplicated_instruction_accounts: Vec<InstructionAccount> = Vec::new();
-        let mut duplicate_indicies = Vec::with_capacity(instruction.accounts.len());
+        let mut duplicate_indices = Vec::with_capacity(instruction.accounts.len());
         for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
             let index_in_transaction = self
                 .transaction_context
@@ -225,7 +225,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                         instruction_account.index_in_transaction == index_in_transaction
                     })
             {
-                duplicate_indicies.push(duplicate_index);
+                duplicate_indices.push(duplicate_index);
                 let instruction_account = deduplicated_instruction_accounts
                     .get_mut(duplicate_index)
                     .ok_or(InstructionError::NotEnoughAccountKeys)?;
@@ -245,7 +245,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                         // );
                         InstructionError::MissingAccount
                     })?;
-                duplicate_indicies.push(deduplicated_instruction_accounts.len());
+                duplicate_indices.push(deduplicated_instruction_accounts.len());
                 deduplicated_instruction_accounts.push(InstructionAccount {
                     index_in_transaction,
                     index_in_caller,
@@ -284,7 +284,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 return Err(InstructionError::PrivilegeEscalation);
             }
         }
-        let instruction_accounts = duplicate_indicies
+        let instruction_accounts = duplicate_indices
             .into_iter()
             .map(|duplicate_index| {
                 Ok(deduplicated_instruction_accounts

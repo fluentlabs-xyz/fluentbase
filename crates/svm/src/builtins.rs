@@ -3,6 +3,7 @@ use crate::{
     common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
+    error::Error,
     helpers::{
         is_nonoverlapping,
         memcmp,
@@ -12,10 +13,9 @@ use crate::{
         translate_slice_mut,
         translate_string_and_do,
         translate_type_mut,
-        Error,
         SyscallError,
     },
-    loaders::bpf_loader_upgradeable,
+    loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
     mem_ops::{memcmp_non_contiguous, memset_non_contiguous},
     types::SVM_ADDRESS_PREFIX,
 };
@@ -82,6 +82,10 @@ pub fn register_builtins<SDK: SharedAPI>(
         .unwrap();
     function_registry
         .register_function_hashed("sol_memset_", SyscallMemset::vm)
+        .unwrap();
+
+    function_registry
+        .register_function_hashed("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
         .unwrap();
 
     // function_registry
@@ -786,6 +790,30 @@ declare_builtin_function!(
             // consume_compute_meter(invoke_context, cost)?;
         }
         Ok(1)
+    }
+);
+
+declare_builtin_function!(
+    /// Cross-program invocation called from Rust
+    SyscallInvokeSignedRust<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        instruction_addr: u64,
+        account_infos_addr: u64,
+        account_infos_len: u64,
+        signers_seeds_addr: u64,
+        signers_seeds_len: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        cpi_common::<SDK, Self>(
+            invoke_context,
+            instruction_addr,
+            account_infos_addr,
+            account_infos_len,
+            signers_seeds_addr,
+            signers_seeds_len,
+            memory_mapping,
+        )
     }
 );
 

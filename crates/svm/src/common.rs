@@ -30,7 +30,7 @@ use crate::{
     pubkey::Pubkey,
     solana_program::loader_v4,
 };
-use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
+use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
 use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
 use solana_bincode::limited_deserialize;
@@ -56,9 +56,14 @@ pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 ///   8 bytes is the size of the fragment header
 pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
 
+#[cfg(target_pointer_width = "64")]
+pub(crate) type PtrSizedType = u64;
+#[cfg(target_pointer_width = "32")]
+pub(crate) type PtrSizedType = u32;
+
 use crate::{
     account::WritableAccount,
-    error::SvmError,
+    error::{Error, SvmError},
     solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
     types::SVM_ADDRESS_PREFIX,
 };
@@ -218,8 +223,6 @@ impl<SDK: SharedAPI> HasherImpl for PoseidonHasher<SDK> {
 // pub fn create_loadable_account_for_test(name: &str, owner: Pubkey) -> AccountSharedData {
 //     create_loadable_account_with_fields(name, owner, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
 // }
-
-pub type Error = Box<dyn core::error::Error>;
 
 macro_rules! register_feature_gated_function {
     ($result:expr, $is_feature_active:expr, $name:expr, $call:expr $(,)?) => {

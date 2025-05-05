@@ -3,7 +3,7 @@ use crate::{
     common::limited_deserialize_packet_size,
     compute_budget::ComputeBudget,
     context::{InstructionContext, InvokeContext},
-    error::InstructionError,
+    error::{Error, InstructionError},
     loaded_programs::{LoadedProgram, LoadedProgramType, DELAY_VISIBILITY_SLOT_OFFSET},
     loaders,
     pubkey::Pubkey,
@@ -134,7 +134,7 @@ fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
 pub fn create_vm_exec_program<'a, SDK: SharedAPI>(
     invoke_context: &mut InvokeContext<'a, SDK>,
     program: Arc<Executable<InvokeContext<'a, SDK>>>,
-) -> Result<(u64, ProgramResult), Box<dyn core::error::Error>> {
+) -> Result<(u64, ProgramResult), Error> {
     let config = program.get_config();
     let sbpf_version = program.get_sbpf_version();
     let compute_budget = invoke_context.get_compute_budget();
@@ -169,7 +169,7 @@ pub fn create_vm_exec_program<'a, SDK: SharedAPI>(
 fn execute<'a, SDK: SharedAPI>(
     invoke_context: &mut InvokeContext<'a, SDK>,
     executable: Arc<Executable<InvokeContext<'a, SDK>>>,
-) -> Result<(), Box<dyn core::error::Error>> {
+) -> Result<(), Error> {
     // We dropped the lifetime tracking in the Executor by setting it to 'static,
     // thus we need to reintroduce the correct lifetime of InvokeContext here again.
     // let executable =
@@ -618,14 +618,14 @@ declare_builtin_function!(
         _arg3: u64,
         _arg4: u64,
         _memory_mapping: &mut MemoryMapping,
-    ) -> Result<u64, Box<dyn core::error::Error>> {
+    ) -> Result<u64, Error> {
         process_instruction_inner(invoke_context)
     }
 );
 
 pub fn process_instruction_inner<SDK: SharedAPI>(
     invoke_context: &mut InvokeContext<SDK>,
-) -> Result<u64, Box<dyn core::error::Error>> {
+) -> Result<u64, Error> {
     // let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
@@ -647,7 +647,7 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
             }
             LoaderV4Instruction::Finalize => process_instruction_finalize(invoke_context),
         }
-        .map_err(|err| Box::new(err) as Box<dyn core::error::Error>)
+        .map_err(|err| Box::new(err) as Error)
     } else {
         let program = instruction_context.try_borrow_last_program_account(transaction_context)?;
         if !loader_v4::check_id(program.get_owner()) {
@@ -686,7 +686,7 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
             | LoadedProgramType::Closed
             | LoadedProgramType::DelayVisibility => {
                 // ic_logger_msg!(log_collector, "Program is not deployed");
-                Err(Box::new(InstructionError::InvalidAccountData) as Box<dyn core::error::Error>)
+                Err(Box::new(InstructionError::InvalidAccountData) as Error)
             }
             LoadedProgramType::Typed(executable) => {
                 // bpf_loader_upgradable::execute(executable.clone(), invoke_context)
@@ -694,7 +694,7 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
                 // execute(invoke_context, executable.clone())
                 loaders::agave_version::execute(executable.clone(), invoke_context)
             }
-            _ => Err(Box::new(InstructionError::IncorrectProgramId) as Box<dyn core::error::Error>),
+            _ => Err(Box::new(InstructionError::IncorrectProgramId) as Error),
         }
     }
     .map(|_| 0)

@@ -1,8 +1,10 @@
-use alloc::string::String;
+use alloc::{boxed::Box, string::String};
 use core::fmt::{Display, Formatter};
 use fluentbase_sdk::ExitCode;
 use serde::{Deserialize, Serialize};
 use solana_rbpf::{elf::ElfError, error::EbpfError};
+
+pub type Error = Box<dyn core::error::Error>;
 
 /// Reasons the runtime might have rejected an instruction.
 ///
