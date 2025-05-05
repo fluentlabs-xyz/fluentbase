@@ -16,5 +16,9 @@ quote = "1.0"
 fluentbase-sdk-derive-core = { path = "./derive-core", default-features = false }
 syn = { workspace = true, features = ["full"] }
 
+[dev-dependencies]
+trybuild = "1.0.104"
+fluentbase-sdk = { workspace = true }
+
 [lib]
 proc-macro = true

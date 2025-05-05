@@ -477,3 +477,26 @@ pub fn keccak256(signature: &str) -> [u8; 4] {
 pub fn get_sol_signature(fn_name: &str, args: &[String]) -> String {
     format!("{}({})", fn_name, args.join(","))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use insta::assert_snapshot;
+    use proc_macro2::TokenStream as TokenStream2;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_route_to_tokens() {
+        let trait_method: TraitItemFn = parse_quote! {
+            fn transfer(&self, to: String, amount: u64) -> bool;
+        };
+
+        let route =
+            Route::try_from(&trait_method).expect("Failed to convert trait method to Route");
+
+        let mut tokens = TokenStream2::new();
+        route.to_tokens(&mut tokens);
+
+        assert_snapshot!("route_expansion", tokens.to_string());
+    }
+}

@@ -1,45 +1,47 @@
 # SDK Derive Macros
 
-This documentation covers two main macros for building Solidity-compatible smart contracts in Rust: `router` and `client`. These macros enable seamless interaction with Solidity-style contracts in a no_std environment.
+This documentation covers two main macros for building Solidity-compatible smart contracts in Rust: `router` and
+`client`. These macros enable seamless interaction with Solidity-style contracts in a no_std environment.
 
 - [SDK Derive Macros](#sdk-derive-macros)
-  - [Router Macro](#router-macro)
-    - [Key Features](#key-features)
-    - [Encoding Modes](#encoding-modes)
-    - [Function ID Definition and Validation](#function-id-definition-and-validation)
-      - [Specifying Function IDs](#specifying-function-ids)
-      - [Validation System](#validation-system)
-        - [How Validation Works](#how-validation-works)
-        - [Disabling Validation](#disabling-validation)
-        - [Error Messages](#error-messages)
-    - [Method Visibility](#method-visibility)
-      - [Trait Implementation](#trait-implementation)
-      - [Direct Implementation](#direct-implementation)
-    - [Special Methods](#special-methods)
-    - [Testing](#testing)
-    - [Arguments and Types](#arguments-and-types)
-      - [Type Mappings](#type-mappings)
-      - [Basic Usage](#basic-usage)
-      - [Using Structures](#using-structures)
-  - [Client Macro](#client-macro)
-    - [Key Features](#key-features-1)
-    - [Encoding Modes](#encoding-modes-1)
-    - [Example](#example)
-    - [Common Features for Both Macros](#common-features-for-both-macros)
-  - [Storage Macro](#storage-macro)
-    - [Understanding Solidity Storage](#understanding-solidity-storage)
-    - [Storage Macro Key Features](#storage-macro-key-features)
-    - [Supported Storage Types](#supported-storage-types)
-    - [Type Requirements](#type-requirements)
-    - [Complete Example](#complete-example)
-    - [Testing Storage Layout](#testing-storage-layout)
-    - [Generated Methods](#generated-methods)
-    - [Type Mappings](#type-mappings-1)
-    - [Notes](#notes)
+    - [Router Macro](#router-macro)
+        - [Key Features](#key-features)
+        - [Encoding Modes](#encoding-modes)
+        - [Function ID Definition and Validation](#function-id-definition-and-validation)
+            - [Specifying Function IDs](#specifying-function-ids)
+            - [Validation System](#validation-system)
+                - [How Validation Works](#how-validation-works)
+                - [Disabling Validation](#disabling-validation)
+                - [Error Messages](#error-messages)
+        - [Method Visibility](#method-visibility)
+            - [Trait Implementation](#trait-implementation)
+            - [Direct Implementation](#direct-implementation)
+        - [Special Methods](#special-methods)
+        - [Testing](#testing)
+        - [Arguments and Types](#arguments-and-types)
+            - [Type Mappings](#type-mappings)
+            - [Basic Usage](#basic-usage)
+            - [Using Structures](#using-structures)
+    - [Client Macro](#client-macro)
+        - [Key Features](#key-features-1)
+        - [Encoding Modes](#encoding-modes-1)
+        - [Example](#example)
+        - [Common Features for Both Macros](#common-features-for-both-macros)
+    - [Storage Macro](#storage-macro)
+        - [Understanding Solidity Storage](#understanding-solidity-storage)
+        - [Storage Macro Key Features](#storage-macro-key-features)
+        - [Supported Storage Types](#supported-storage-types)
+        - [Type Requirements](#type-requirements)
+        - [Complete Example](#complete-example)
+        - [Testing Storage Layout](#testing-storage-layout)
+        - [Generated Methods](#generated-methods)
+        - [Type Mappings](#type-mappings-1)
+        - [Notes](#notes)
 
 ## Router Macro
 
-The `router` macro provides a streamlined way to handle Solidity-compatible contract interactions. In Fluentbase, all contract interactions go through a `main` function that serves as the primary entry point. Each transaction includes:
+The `router` macro provides a streamlined way to handle Solidity-compatible contract interactions. In Fluentbase, all
+contract interactions go through a `main` function that serves as the primary entry point. Each transaction includes:
 
 - A function selector (first 4 bytes of the keccak256 hash of the function signature)
 - Function arguments (formatted according to the Solidity ABI standard)
@@ -79,8 +81,8 @@ basic_entrypoint!(ROUTER);
 - **Automatic Function Routing**: Generates code to route function calls based on function selectors
 - **Argument Handling**: Automatic decoding of function arguments and encoding of results
 - **Function ID Support**:
-  - Custom function IDs via attributes
-  - Solidity signature-based function IDs
+    - Custom function IDs via attributes
+    - Solidity signature-based function IDs
 - **Fallback Support**: Optional fallback function for unmatched selectors
 - **Error Handling**: Built-in handling for unknown function selectors
 
@@ -110,7 +112,8 @@ The router supports two modes of operation:
 
 ### Function ID Definition and Validation
 
-The router macro supports function identification through custom attributes with built-in validation. The function ID is a 4-byte selector that identifies the function in the contract.
+The router macro supports function identification through custom attributes with built-in validation. The function ID is
+a 4-byte selector that identifies the function in the contract.
 
 #### Specifying Function IDs
 
@@ -145,7 +148,8 @@ fn transfer(&self, to: Address, amount: U256) -> bool {
 
 #### Validation System
 
-The validation system ensures that the specified function ID matches the one calculated from the function signature. This helps prevent routing errors and maintains consistency between your Rust implementation and Solidity interface.
+The validation system ensures that the specified function ID matches the one calculated from the function signature.
+This helps prevent routing errors and maintains consistency between your Rust implementation and Solidity interface.
 
 ```rust
 // With validation (default)
@@ -218,7 +222,8 @@ This helps catch potential routing issues early in the development process.
 
 ### Method Visibility
 
-The router macro handles methods differently depending on whether you're implementing a trait or writing standalone implementation:
+The router macro handles methods differently depending on whether you're implementing a trait or writing standalone
+implementation:
 
 #### Trait Implementation
 
@@ -295,12 +300,13 @@ fn test_contract_works() {
 
 ### Arguments and Types
 
-The router macro supports automatic type conversion between Solidity and Rust types. Any type that implements both `SolidityType` and `Encoder` traits can be used as an argument.
+The router macro supports automatic type conversion between Solidity and Rust types. Any type that implements both
+`SolidityType` and `Encoder` traits can be used as an argument.
 
 #### Type Mappings
 
 | Solidity Type | Rust Type        | Notes                                                       |
-| ------------- | ---------------- | ----------------------------------------------------------- |
+|---------------|------------------|-------------------------------------------------------------|
 | uint          | u\*              | uint8 to uint256 maps to u8 to U256                         |
 | int           | i\*              | int8 to int256 maps to i8 to I256                           |
 | bool          | bool             |                                                             |
@@ -354,14 +360,16 @@ impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
 
 ## Client Macro
 
-The `client` macro generates type-safe client code for interacting with Solidity-compatible smart contracts. It handles both contract interface and implementation requirements, simplifying encoding and decoding of function calls and supporting no_std environments.
+The `client` macro generates type-safe client code for interacting with Solidity-compatible smart contracts. It handles
+both contract interface and implementation requirements, simplifying encoding and decoding of function calls and
+supporting no_std environments.
 
 ### Key Features
 
 - **Seamless ABI Encoding/Decoding**: Automatically formats data for Solidity ABI.
 - **Gas and Value Management**: Provides options for managing gas limits and value transfers.
 - **Function ID Support**:
-  - Allows both custom function IDs and Solidity signature-based selectors.
+    - Allows both custom function IDs and Solidity signature-based selectors.
 - **Deployment Handling**: Optional support for deployment logic.
 
 ### Encoding Modes
@@ -417,7 +425,8 @@ In Solidity, contract storage is organized as a persistent key-value store where
 - For dynamic arrays, the slot stores the array length, with array data starting at `keccak256(slot)`
 - For nested structures, data is stored contiguously starting at a given slot
 
-The `solidity_storage` macro implements these patterns, handling all the complexity of slot management and key calculations.
+The `solidity_storage` macro implements these patterns, handling all the complexity of slot management and key
+calculations.
 
 ### Storage Macro Key Features
 
@@ -577,7 +586,7 @@ fn set<SDK: SharedAPI>(sdk: &mut SDK, ...args, value: T);
 ### Type Mappings
 
 | Solidity Type | Rust Type     | Storage Layout |
-| ------------- | ------------- | -------------- |
+|---------------|---------------|----------------|
 | uint256       | U256          | Single slot    |
 | address       | Address       | Single slot    |
 | bytes         | Bytes         | Single slot    |
@@ -594,4 +603,5 @@ fn set<SDK: SharedAPI>(sdk: &mut SDK, ...args, value: T);
 3. **Key Calculation**: Follows Solidity's standard algorithm for compatibility
 4. **Gas Optimization**: Generated code is optimized for minimal gas usage
 
-The macro handles all the low-level storage management, allowing you to focus on your contract's business logic while maintaining full compatibility with Solidity's storage layout.
+The macro handles all the low-level storage management, allowing you to focus on your contract's business logic while
+maintaining full compatibility with Solidity's storage layout.

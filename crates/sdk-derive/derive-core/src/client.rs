@@ -214,3 +214,31 @@ impl ToTokens for ClientGenerator {
         tokens.extend(client_impl);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use insta::assert_snapshot;
+    use prettyplease;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_generate_client() {
+        let trait_ast: syn::ItemTrait = parse_quote! {
+            pub trait TestContract {
+                fn first_method(&self, value: u32) -> u32;
+                fn second_method(&self, a: String, b: bool) -> (String, bool);
+            }
+        };
+
+        let args = RouterArgs::new(RouterMode::default());
+        let generator = ClientGenerator { args, trait_ast };
+
+        let generated_tokens = generator.generate_client();
+        let file = syn::parse_file(&generated_tokens.to_string()).unwrap();
+
+        let formatted_code = prettyplease::unparse(&file);
+
+        assert_snapshot!("generate_client", formatted_code);
+    }
+}

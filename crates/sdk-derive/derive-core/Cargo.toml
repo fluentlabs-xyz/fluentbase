@@ -25,3 +25,5 @@ tracing = { version = "0.1.40", default-features = false }
 
 [dev-dependencies]
 bytes = "1.0"
+insta = { version = "1.43.1", features = ["yaml"] }
+prettyplease = "0.2.32"

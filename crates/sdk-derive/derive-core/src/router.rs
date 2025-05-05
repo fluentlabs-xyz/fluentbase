@@ -218,3 +218,40 @@ fn parse_implementation_methods(implementation: &ItemImpl) -> Result<Vec<Route>>
             .unwrap())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use insta::assert_snapshot;
+    use prettyplease;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_generate_router() {
+        let implementation: ItemImpl = parse_quote! {
+            impl TestContract {
+                pub fn first_method(&mut self, value: u32) -> u32 {
+                    // Implementation details
+                    value * 2
+                }
+
+                pub fn second_method(&mut self, a: String, b: bool) -> (String, bool) {
+                    // Implementation details
+                    (a, b)
+                }
+            }
+        };
+
+        let router = syn::parse2::<Router>(quote! { #implementation }).unwrap();
+
+        // Set the router mode explicitly if needed
+        // router.mode = RouterMode::Solidity;
+
+        let generated_tokens = router.to_token_stream();
+        let file = syn::parse_file(&generated_tokens.to_string()).unwrap();
+
+        let formatted_code = prettyplease::unparse(&file);
+
+        assert_snapshot!("generate_router", formatted_code);
+    }
+}

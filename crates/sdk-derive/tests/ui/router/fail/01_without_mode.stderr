@@ -1,0 +1,7 @@
+error: mode is required
+  --> tests/ui/router/fail/01_without_mode.rs:16:1
+   |
+16 | #[router]
+   | ^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `router` (in Nightly builds, run with -Z macro-backtrace for more info)
