@@ -23,7 +23,6 @@ use crate::{
     system_program,
 };
 use alloc::{vec, vec::Vec};
-use bincode::serde::Compat;
 #[allow(deprecated)]
 pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
 use core::{convert::TryFrom, str::FromStr};

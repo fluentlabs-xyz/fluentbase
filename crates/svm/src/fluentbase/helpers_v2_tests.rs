@@ -281,7 +281,7 @@ mod tests {
                 AccountMeta::new(system_program_id, false),
             ],
         )];
-        let message = Message::new(&instructions, Some(&pk_exec));
+        let message = Message::new(&instructions, None);
         sdk = sdk
             .with_shared_context_input(SharedContextInputV1 {
                 block: BlockContextV1 {

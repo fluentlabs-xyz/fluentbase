@@ -6,12 +6,9 @@ use crate::solana_program::{
         MessageHeader,
     },
 };
+use alloc::{collections::BTreeMap, vec::Vec};
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
-use {
-    alloc::{collections::BTreeMap, vec, vec::Vec},
-    // thiserror::Error,
-};
 
 /// A helper struct to collect pubkeys compiled for a set of instructions
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
