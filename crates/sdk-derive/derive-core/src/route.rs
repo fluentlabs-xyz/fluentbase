@@ -7,6 +7,7 @@ use crate::{
 use convert_case::{Case, Casing};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, ToTokens};
+use serde_json::{json, Value};
 use syn::{
     parse::{Parse, ParseStream},
     parse_quote,
@@ -314,6 +315,71 @@ impl Route {
     fn get_function_call_params(&self) -> TokenStream2 {
         let params = self.args.iter().map(|param| param.to_call_token());
         quote! { #(#params),* }
+    }
+
+    /// Generates ABI JSON for the method
+    pub fn to_abi_json(&self) -> Value {
+        // Create inputs array
+        let inputs = self
+            .args
+            .iter()
+            .enumerate()
+            .map(|(i, param)| {
+                let sol_type = rust_type_to_sol(&param.ty)
+                    .map(|t| t.to_string())
+                    .unwrap_or_else(|_| "unknown".to_string());
+                json!({
+                    "name": param.ident.to_string(),
+                    "type": sol_type.trim(),
+                    "internalType": sol_type.trim()
+                })
+            })
+            .collect::<Vec<Value>>();
+
+        // Create outputs array
+        let outputs = self
+            .return_types
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| {
+                let sol_type = rust_type_to_sol(ty)
+                    .map(|t| t.to_string())
+                    .unwrap_or_else(|_| "unknown".to_string());
+                json!({
+                    "name": format!("return_{}", i),
+                    "type": sol_type.trim(),
+                    "internalType": sol_type.trim()
+                })
+            })
+            .collect::<Vec<Value>>();
+
+        // Determine state mutability
+        let state_mutability = match &self.original_fn {
+            MethodType::Impl(m) => {
+                if m.sig.inputs.iter().any(|arg| {
+                    if let FnArg::Typed(pat_type) = arg {
+                        if let Type::Reference(type_ref) = &*pat_type.ty {
+                            return type_ref.mutability.is_some();
+                        }
+                    }
+                    false
+                }) {
+                    "nonpayable"
+                } else {
+                    "view"
+                }
+            }
+            MethodType::Trait(_) => "nonpayable", // Default for trait methods
+        };
+
+        // Create the function ABI entry
+        json!({
+            "name": self.fn_name,
+            "type": "function",
+            "inputs": inputs,
+            "outputs": outputs,
+            "stateMutability": state_mutability
+        })
     }
 }
 

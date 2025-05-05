@@ -16,6 +16,8 @@ use tracing::{debug, warn};
 pub struct RouterArgs {
     /// The routing mode to use
     pub(crate) mode: RouterMode,
+    /// Path to the artifacts directory
+    pub(crate) artifacts_path: Option<String>,
 }
 
 impl RouterArgs {
@@ -26,7 +28,10 @@ impl RouterArgs {
 
     /// Creates a new RouterArgs instance directly
     pub fn new(mode: RouterMode) -> Self {
-        Self { mode }
+        Self {
+            mode,
+            artifacts_path: None,
+        }
     }
 
     /// Extracts RouterArgs from a Meta item
@@ -45,6 +50,20 @@ impl RouterArgs {
                             warn!("Invalid mode value: {}", e);
                             e
                         })?,
+                        artifacts_path: None,
+                    }));
+                }
+            } else if m.path.is_ident("artifacts") {
+                debug!("Found artifacts attribute");
+                if let Expr::Lit(ExprLit {
+                    lit: Lit::Str(lit_str),
+                    ..
+                }) = &m.value
+                {
+                    return Ok(Some(RouterArgs {
+                        mode: RouterMode::Solidity, /* Default mode, will be overridden if mode
+                                                     * is also specified */
+                        artifacts_path: Some(lit_str.value()),
                     }));
                 }
             }
@@ -62,12 +81,19 @@ impl RouterArgs {
 #[derive(Default)]
 pub struct RouterArgsBuilder {
     mode: Option<RouterMode>,
+    artifacts_path: Option<String>,
 }
 
 impl RouterArgsBuilder {
     /// Sets the routing mode
     pub fn mode(mut self, mode: RouterMode) -> Self {
         self.mode = Some(mode);
+        self
+    }
+
+    /// Sets the artifacts path
+    pub fn artifacts_path(mut self, path: String) -> Self {
+        self.artifacts_path = Some(path);
         self
     }
 
@@ -78,7 +104,10 @@ impl RouterArgsBuilder {
             RouterError::InvalidMode("Mode must be specified".to_string())
         })?;
 
-        Ok(RouterArgs { mode })
+        Ok(RouterArgs {
+            mode,
+            artifacts_path: self.artifacts_path,
+        })
     }
 }
 
@@ -87,14 +116,29 @@ impl Parse for RouterArgs {
         let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
         debug!("Parsing router arguments");
 
+        let mut mode = None;
+        let mut artifacts_path = None;
+
         for meta in metas {
-            if let Some(args) = Self::from_meta(&meta).map_err(syn::Error::from)? {
-                debug!("Successfully parsed router arguments");
-                return Ok(args);
+            if let Some(args) = Self::from_meta(&meta)? {
+                if args.mode != RouterMode::Solidity || mode.is_none() {
+                    mode = Some(args.mode);
+                }
+                if args.artifacts_path.is_some() {
+                    artifacts_path = args.artifacts_path;
+                }
             }
         }
 
-        Err(syn::Error::new(input.span(), "mode is required"))
+        if let Some(mode) = mode {
+            debug!("Successfully parsed router arguments");
+            Ok(RouterArgs {
+                mode,
+                artifacts_path,
+            })
+        } else {
+            Err(syn::Error::new(input.span(), "mode is required"))
+        }
     }
 }
 

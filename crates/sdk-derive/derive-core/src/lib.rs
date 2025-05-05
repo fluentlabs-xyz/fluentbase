@@ -2,13 +2,16 @@
 //! This crate provides the base functionality used by the proc-macro crate.
 
 pub use fluentbase_codec::bytes::{Buf, BufMut, Bytes, BytesMut};
+use mode::RouterMode;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use router::Router;
 use storage::Storage;
 use tracing::{debug, error, info};
 
+pub mod abi;
 pub mod args;
+pub mod artifacts;
 pub mod client;
 pub mod codec;
 pub mod error;
@@ -35,8 +38,16 @@ pub fn router_core(attr: TokenStream2, input: TokenStream2) -> Result<TokenStrea
 
     let mut router = parse_router_input(input)?;
     router.mode = args.mode;
+    router.artifacts_path = args.artifacts_path;
+    if let Some(artifacts_path) = &router.artifacts_path {
+        info!("Artifacts will be generated at: {}", artifacts_path);
 
-    Ok(quote!(#router).into())
+        if router.mode == RouterMode::Solidity {
+            router.generate_artifacts(artifacts_path);
+        }
+    }
+
+    Ok(quote!(#router))
 }
 
 /// Parses router arguments from the attribute TokenStream.

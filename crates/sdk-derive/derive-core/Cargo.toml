@@ -11,16 +11,20 @@ readme.workspace = true
 repository.workspace = true
 
 [dependencies]
-convert_case = "0.6.0"
+anyhow.workspace = true
+convert_case = "0.8.0"
 crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
 darling = "0.20.10"
 hex = "0.4.3"
 fluentbase-codec = { workspace = true }
 proc-macro2 = "1.0"
+proc-macro-error = { version = "1", default-features = false }
 quote = "1.0"
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = "1.0"
 syn = { workspace = true, features = ["full"] }
-syn-solidity = { version = "0.7", default-features = false }
-thiserror = "1.0"
+syn-solidity = { version = "1.1.0", default-features = false }
+thiserror = "2.0.12"
 tracing = { version = "0.1.40", default-features = false }
 
 [dev-dependencies]

@@ -154,7 +154,6 @@ This helps prevent routing errors and maintains consistency between your Rust im
 ```rust
 // With validation (default)
 #[function_id("transfer(address,uint256)", validate(true))]
-
 // Without validation
 #[function_id("transfer(address,uint256)", validate(false))]
 ```

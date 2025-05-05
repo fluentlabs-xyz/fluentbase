@@ -1,6 +1,7 @@
-use crate::{mode::RouterMode, route::Route};
+use crate::{artifacts::generate_sol_interface, mode::RouterMode, route::Route};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens};
+use std::{fs, path::Path};
 use syn::{
     parse::{Parse, ParseStream},
     spanned::Spanned,
@@ -16,6 +17,8 @@ use syn::{
 pub struct Router {
     /// The routing mode (Solidity or Fluent)
     pub mode: RouterMode,
+    /// Path to the artifacts directory
+    pub artifacts_path: Option<String>,
     /// The original implementation AST
     implementation: ItemImpl,
     /// Collection of available method routes
@@ -156,6 +159,7 @@ impl Parse for Router {
 
         Ok(Router {
             mode: RouterMode::Solidity, // default mode
+            artifacts_path: None,
             implementation,
             method_routes: available_routes,
             has_fallback_handler,
@@ -180,6 +184,59 @@ impl ToTokens for Router {
             #(#method_codecs)*
             #router
         });
+    }
+}
+
+impl Router {
+    // Generate Solidity interface artifacts
+    pub fn generate_artifacts(&self, artifacts_path: &str) {
+        // Extract contract name from implementation
+        let contract_name = if let Some((_, trait_path, _)) = &self.implementation.trait_ {
+            trait_path
+                .segments
+                .last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_else(|| "Contract".to_string())
+        } else {
+            // If no trait, use the type name
+            let type_name = &self.implementation.self_ty;
+            format!("{}", quote!(#type_name))
+        };
+
+        // Create functions ABI
+        let functions_abi = self
+            .method_routes
+            .iter()
+            .filter(|route| route.fn_name != "fallback")
+            .map(|route| route.to_abi_json())
+            .collect::<Vec<_>>();
+
+        // Create directory if it doesn't exist
+        if let Err(e) = fs::create_dir_all(artifacts_path) {
+            eprintln!("Failed to create artifacts directory: {}", e);
+            return;
+        }
+
+        // Generate Solidity interface
+        if let Ok(interface) = generate_sol_interface(&contract_name, &functions_abi) {
+            // Write interface file
+            let interface_path = Path::new(artifacts_path).join(format!("I{}.sol", contract_name));
+            if let Err(e) = fs::write(&interface_path, interface) {
+                eprintln!("Failed to write interface file: {}", e);
+            }
+        }
+
+        // Generate JSON ABI
+        let abi_json = serde_json::to_string_pretty(&functions_abi).unwrap_or_else(|e| {
+            eprintln!("Failed to serialize ABI JSON: {}", e);
+            "[]".to_string()
+        });
+
+        // Write ABI JSON file
+        let abi_path = Path::new(artifacts_path).join(format!("{}.json", contract_name));
+        if let Err(e) = fs::write(&abi_path, abi_json) {
+            eprintln!("Failed to write ABI JSON file: {}", e);
+        }
     }
 }
 

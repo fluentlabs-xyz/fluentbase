@@ -21,7 +21,15 @@ pub trait RouterAPI {
     fn custom_greeting(&self, message: String) -> String;
 }
 
-#[router(mode = "solidity")]
+// TODO(d1r1): Prevent creation of intermediate directories during attribute typing.
+// When IDE runs automatic cargo check while user is typing the artifacts path,
+// unwanted directories are created (a/, ar/, art/, etc). Consider using a deferred
+// approach where artifacts location is stored in configuration rather than directly
+// in attribute parameters.
+#[router(
+    mode = "solidity",
+    artifacts = "/Users/danilnaumov/dev/src/github.com/fluentlabs-xyz/fluentbase-v3/examples/router-solidity/artifacts"
+)]
 impl<SDK: SharedAPI> RouterAPI for App<SDK> {
     #[function_id("greeting(string)")]
     fn greeting(&self, message: String) -> String {

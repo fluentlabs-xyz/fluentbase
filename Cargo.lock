@@ -1223,6 +1223,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "convert_case"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2212,7 +2221,7 @@ dependencies = [
 name = "fluentbase-codec-derive"
 version = "0.1.0"
 dependencies = [
- "convert_case",
+ "convert_case 0.6.0",
  "crypto-hashes",
  "proc-macro2",
  "quote",
@@ -2587,19 +2596,23 @@ dependencies = [
 name = "fluentbase-sdk-derive-core"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "bytes",
- "convert_case",
+ "convert_case 0.8.0",
  "crypto-hashes",
  "darling",
  "fluentbase-codec",
  "hex",
  "insta",
  "prettyplease",
+ "proc-macro-error",
  "proc-macro2",
  "quote",
+ "serde",
+ "serde_json",
  "syn 2.0.100",
- "syn-solidity 0.7.7",
- "thiserror 1.0.69",
+ "syn-solidity 1.1.0",
+ "thiserror 2.0.12",
  "tracing",
 ]
 
@@ -6193,9 +6206,9 @@ dependencies = [
 
 [[package]]
 name = "syn-solidity"
-version = "0.7.7"
+version = "0.8.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c837dc8852cb7074e46b444afb81783140dab12c58867b49fb3898fbafedf7ea"
+checksum = "4560533fbd6914b94a8fb5cc803ed6801c3455668db3b810702c57612bac9412"
 dependencies = [
  "paste",
  "proc-macro2",
@@ -6205,9 +6218,9 @@ dependencies = [
 
 [[package]]
 name = "syn-solidity"
-version = "0.8.25"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4560533fbd6914b94a8fb5cc803ed6801c3455668db3b810702c57612bac9412"
+checksum = "3d0f0d4760f4c2a0823063b2c70e97aa2ad185f57be195172ccc0e23c4b787c4"
 dependencies = [
  "paste",
  "proc-macro2",
