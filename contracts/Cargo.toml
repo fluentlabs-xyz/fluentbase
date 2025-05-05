@@ -13,20 +13,76 @@ categories.workspace = true
 path = "lib.rs"
 
 [dependencies]
-fluentbase-contracts-blake2f = { path = "./blake2f", default-features = false }
-fluentbase-contracts-bls12381 = { path = "./bls12381", default-features = false }
-fluentbase-contracts-bn256 = { path = "./bn256", default-features = false }
-fluentbase-contracts-ecrecover = { path = "./ecrecover", default-features = false }
-fluentbase-contracts-erc20 = { path = "./erc20", default-features = false }
-fluentbase-contracts-evm = { path = "./evm", default-features = false }
-fluentbase-contracts-fairblock = { path = "./fairblock", default-features = false }
-fluentbase-contracts-identity = { path = "./identity", default-features = false }
-fluentbase-contracts-kzg = { path = "./kzg", default-features = false }
-fluentbase-contracts-modexp = { path = "./modexp", default-features = false }
-fluentbase-contracts-multicall = { path = "./multicall", default-features = false }
-fluentbase-contracts-nitro = { path = "./nitro", default-features = false }
-fluentbase-contracts-oauth2 = { path = "./oauth2", default-features = false }
-fluentbase-contracts-ripemd160 = { path = "./ripemd160", default-features = false }
-fluentbase-contracts-secp256r1 = { path = "./secp256r1", default-features = false }
-fluentbase-contracts-sha256 = { path = "./sha256", default-features = false }
-fluentbase-contracts-webauthn = { path = "./webauthn", default-features = false }
+
+[build-dependencies]
+# Genesis
+fluentbase-contracts-blake2f = { path = "./genesis/blake2f", default-features = false, optional = true }
+fluentbase-contracts-bls12381 = { path = "./genesis/bls12381", default-features = false, optional = true }
+fluentbase-contracts-bn256 = { path = "./genesis/bn256", default-features = false, optional = true }
+fluentbase-contracts-ecrecover = { path = "./genesis/ecrecover", default-features = false, optional = true }
+fluentbase-contracts-erc20 = { path = "./genesis/erc20", default-features = false, optional = true }
+fluentbase-contracts-evm = { path = "./genesis/evm", default-features = false, optional = true }
+fluentbase-contracts-fairblock = { path = "./genesis/fairblock", default-features = false, optional = true }
+fluentbase-contracts-identity = { path = "./genesis/identity", default-features = false, optional = true }
+fluentbase-contracts-kzg = { path = "./genesis/kzg", default-features = false, optional = true }
+fluentbase-contracts-modexp = { path = "./genesis/modexp", default-features = false, optional = true }
+fluentbase-contracts-multicall = { path = "./genesis/multicall", default-features = false, optional = true }
+fluentbase-contracts-nitro = { path = "./genesis/nitro", default-features = false, optional = true }
+fluentbase-contracts-oauth2 = { path = "./genesis/oauth2", default-features = false, optional = true }
+fluentbase-contracts-ripemd160 = { path = "./genesis/ripemd160", default-features = false, optional = true }
+fluentbase-contracts-secp256r1 = { path = "./genesis/secp256r1", default-features = false, optional = true }
+fluentbase-contracts-sha256 = { path = "./genesis/sha256", default-features = false, optional = true }
+fluentbase-contracts-webauthn = { path = "./genesis/webauthn", default-features = false, optional = true }
+# Examples
+fluentbase-examples-abi-solidity = { path = "./examples/abi-solidity", default-features = false, optional = true }
+fluentbase-examples-checkmate = { path = "./examples/checkmate", default-features = false, optional = true }
+fluentbase-examples-client-solidity = { path = "./examples/client-solidity", default-features = false, optional = true }
+fluentbase-examples-constructor-params = { path = "./examples/constructor-params", default-features = false, optional = true }
+fluentbase-examples-erc20 = { path = "./examples/erc20", default-features = false, optional = true }
+fluentbase-examples-greeting = { path = "./examples/greeting", default-features = false, optional = true }
+fluentbase-examples-json = { path = "./examples/json", default-features = false, optional = true }
+fluentbase-examples-panic = { path = "./examples/panic", default-features = false, optional = true }
+fluentbase-examples-router-solidity = { path = "./examples/router-solidity", default-features = false, optional = true }
+fluentbase-examples-rwasm = { path = "./examples/rwasm", default-features = false, optional = true }
+fluentbase-examples-secp256k1 = { path = "./examples/secp256k1", default-features = false, optional = true }
+fluentbase-examples-simple-storage = { path = "./examples/simple-storage", default-features = false, optional = true }
+fluentbase-examples-storage = { path = "./examples/storage", default-features = false, optional = true }
+fluentbase-examples-tiny-keccak = { path = "./examples/tiny-keccak", default-features = false, optional = true }
+
+[features]
+default = []
+genesis = [
+    "dep:fluentbase-contracts-blake2f",
+    "dep:fluentbase-contracts-bls12381",
+    "dep:fluentbase-contracts-bn256",
+    "dep:fluentbase-contracts-ecrecover",
+    "dep:fluentbase-contracts-erc20",
+    "dep:fluentbase-contracts-evm",
+    "dep:fluentbase-contracts-fairblock",
+    "dep:fluentbase-contracts-identity",
+    "dep:fluentbase-contracts-kzg",
+    "dep:fluentbase-contracts-modexp",
+    "dep:fluentbase-contracts-multicall",
+    "dep:fluentbase-contracts-nitro",
+    "dep:fluentbase-contracts-oauth2",
+    "dep:fluentbase-contracts-ripemd160",
+    "dep:fluentbase-contracts-secp256r1",
+    "dep:fluentbase-contracts-sha256",
+    "dep:fluentbase-contracts-webauthn"
+]
+examples = [
+    "dep:fluentbase-examples-abi-solidity",
+    "dep:fluentbase-examples-checkmate",
+    "dep:fluentbase-examples-client-solidity",
+    "dep:fluentbase-examples-constructor-params",
+    "dep:fluentbase-examples-erc20",
+    "dep:fluentbase-examples-greeting",
+    "dep:fluentbase-examples-json",
+    "dep:fluentbase-examples-panic",
+    "dep:fluentbase-examples-router-solidity",
+    "dep:fluentbase-examples-rwasm",
+    "dep:fluentbase-examples-secp256k1",
+    "dep:fluentbase-examples-simple-storage",
+    "dep:fluentbase-examples-storage",
+    "dep:fluentbase-examples-tiny-keccak"
+]

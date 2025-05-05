@@ -5,6 +5,30 @@ fn main() {
         return;
     }
 
+    let features: Vec<String> = env::vars()
+        .filter_map(|(k, _)| {
+            k.strip_prefix("CARGO_FEATURE_")
+                .map(|f| f.to_lowercase().replace('_', "-"))
+        })
+        .collect();
+    let features = features.join(" ");
+
+    let mut args = vec![];
+    args.push("build".to_string());
+    args.push("--target".to_string());
+    args.push("wasm32-unknown-unknown".to_string());
+    // Always build release because wasm artifacts compiled in debug mode are too large (25+ MB
+    // each). It's too slow to include ~500MB of debug symbols in the final artifact
+    args.push("--release".to_string());
+    args.push("--manifest-path".to_string());
+    args.push("./Cargo.toml".to_string());
+    args.push("--target-dir".to_string());
+    args.push("../target/target2".to_string());
+    if !features.is_empty() {
+        args.push("--features".to_string());
+        args.push(features);
+    }
+
     let rust_flags = [
         "-C".to_string(),
         format!("link-arg=-zstack-size={}", 128 * 1024),
@@ -15,21 +39,9 @@ fn main() {
     ];
     let rust_flags = rust_flags.join("\x1f");
 
-    let build_arguments = vec![
-        "build".to_string(),
-        "--target".to_string(),
-        "wasm32-unknown-unknown".to_string(),
-        "--release".to_string(),
-        "--manifest-path".to_string(),
-        "./Cargo.toml".to_string(),
-        "--target-dir".to_string(),
-        "../target/target2".to_string(),
-        "--no-default-features".to_string(),
-    ];
-
     let status = Command::new("cargo")
         .env("CARGO_ENCODED_RUSTFLAGS", rust_flags)
-        .args(build_arguments)
+        .args(args)
         .status()
         .expect("WASM compilation failure");
     if !status.success() {

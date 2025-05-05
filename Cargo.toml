@@ -1,10 +1,10 @@
 [workspace]
 members = [
     "contracts",
-    "contracts/*",
+    "contracts/genesis/*",
+    "contracts/examples/*",
     "crates/*",
     "revm/crates/*",
-    "examples/*",
     "e2e",
 ]
 exclude = [
@@ -35,6 +35,7 @@ fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
+fluentbase-contracts = { path = "./contracts", default-features = false }
 
 # rwasm
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
