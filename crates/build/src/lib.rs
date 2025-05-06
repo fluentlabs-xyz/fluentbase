@@ -4,42 +4,10 @@ use cargo_metadata::{camino::Utf8PathBuf, CrateType, Metadata, MetadataCommand, 
 pub use config::*;
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Command,
     str::from_utf8,
 };
-
-/// Forces cargo to rerun the build script when any source file in the package or its
-/// dependency change.
-pub fn cargo_rerun_if_changed(metadata: &Metadata) {
-    let root_package = &metadata
-        .root_package()
-        .expect("should be executed within a Cargo package directory");
-    let manifest_path: PathBuf = root_package.manifest_path.clone().into_std_path_buf();
-    let package_dir_path: &Path = &manifest_path.parent().unwrap();
-    let watch_paths = vec![
-        package_dir_path.join("src"),
-        package_dir_path.join("bin"),
-        package_dir_path.join("Cargo.toml"),
-        package_dir_path.join("lib.rs"),
-        package_dir_path.join("go.mod"),
-        package_dir_path.join("go.sum"),
-        package_dir_path.join("main.go"),
-    ];
-    for path in watch_paths {
-        if path.exists() {
-            println!(
-                "cargo:rerun-if-changed={}",
-                path.canonicalize().unwrap().display()
-            );
-        }
-    }
-    for dependency in &root_package.dependencies {
-        if let Some(path) = &dependency.path {
-            println!("cargo:rerun-if-changed={}", path.as_str());
-        }
-    }
-}
 
 fn root_crate_name(metadata: &Metadata) -> String {
     let root_id = metadata
@@ -95,8 +63,6 @@ pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBu
         .manifest_path(cargo_manifest_path)
         .exec()
         .unwrap();
-
-    cargo_rerun_if_changed(&metadata);
 
     if config.is_tarpaulin_build {
         println!("cargo:warning=build skipped due to the tarpaulin build");

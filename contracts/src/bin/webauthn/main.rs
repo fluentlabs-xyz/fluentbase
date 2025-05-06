@@ -1,4 +1,4 @@
-#![cfg_attr(target_arch = "wasm32", no_std)]
+#![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate alloc;
 
 use fluentbase_sdk::{
@@ -28,7 +28,7 @@ const VERIFY_SELECTOR: [u8; 4] = [0x94, 0x51, 0x6d, 0xde];
 /// - Daimo: https://github.com/daimo-eth/p256-verifier/blob/master/src/WebAuthn.sol
 /// - Coinbase: https://github.com/base-org/webauthn-sol/blob/main/src/WebAuthn.sol
 
-pub fn main(mut sdk: impl SharedAPI) {
+fn call(mut sdk: impl SharedAPI) {
     // Read input
     let input_length = sdk.input_size();
     assert!(
@@ -76,12 +76,13 @@ pub fn main(mut sdk: impl SharedAPI) {
     sdk.write(&result[..]);
 }
 
-func_entrypoint!(main);
+func_entrypoint!(call);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{testing::TestingContext, Bytes, ContractContextV1, B256};
+    use fluentbase_sdk::{Bytes, ContractContextV1, B256};
+use fluentbase_sdk_test::testing::TestingContext;
 
     fn assert_call_eq(input: &[u8], expected: &[u8]) {
         let gas_limit = 100_000;
@@ -92,7 +93,7 @@ mod tests {
                 ..Default::default()
             });
 
-        main(sdk.clone());
+        call(sdk.clone());
 
         let output = sdk.take_output();
         assert_eq!(output.len(), expected.len(), "Output length mismatch");

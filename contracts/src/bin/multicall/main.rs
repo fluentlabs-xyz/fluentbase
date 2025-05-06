@@ -1,4 +1,4 @@
-#![cfg_attr(target_arch = "wasm32", no_std)]
+#![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate alloc;
 extern crate fluentbase_sdk;
 
@@ -17,7 +17,7 @@ use fluentbase_sdk::{
 /// A selector for "multicall(bytes[])" - 0xac9650d8
 const MULTICALL_SELECTOR: [u8; 4] = [0xac, 0x96, 0x50, 0xd8];
 
-pub fn main(mut sdk: impl SharedAPI) {
+fn call(mut sdk: impl SharedAPI) {
     // Read full input data
     let input_length = sdk.input_size();
     assert!(input_length >= 4, "multicall: insufficient input length");
@@ -60,4 +60,4 @@ pub fn main(mut sdk: impl SharedAPI) {
     sdk.write(&clean_output);
 }
 
-func_entrypoint!(main);
+func_entrypoint!(call);

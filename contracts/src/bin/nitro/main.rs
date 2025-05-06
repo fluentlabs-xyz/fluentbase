@@ -1,4 +1,4 @@
-#![cfg_attr(target_arch = "wasm32", no_std)]
+#![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 #![allow(dead_code)]
 
 extern crate alloc;
@@ -8,19 +8,19 @@ mod attestation;
 
 use fluentbase_sdk::{alloc_slice, func_entrypoint, SharedAPI};
 
-pub fn main(sdk: impl SharedAPI) {
+fn call(sdk: impl SharedAPI) {
     let input_size = sdk.input_size();
     let input = alloc_slice(input_size as usize);
     sdk.read(input, 0);
     attestation::parse_and_verify(&input);
 }
 
-func_entrypoint!(main);
+func_entrypoint!(call);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::testing::TestingContext;
+    use fluentbase_sdk_test::testing::TestingContext;
 
     #[test]
     fn test_nitro_attestation_verification() {
@@ -32,6 +32,6 @@ mod tests {
         let doc = attestation::parse_and_verify(&data);
         assert_eq!(doc.digest, "SHA384");
         let sdk = TestingContext::default().with_input(data);
-        main(sdk);
+        call(sdk);
     }
 }

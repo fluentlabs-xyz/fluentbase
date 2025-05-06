@@ -1,4 +1,4 @@
-#![cfg_attr(target_arch = "wasm32", no_std)]
+#![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
@@ -9,7 +9,7 @@ use revm_precompile::{
     identity::{IDENTITY_BASE, IDENTITY_PER_WORD},
 };
 
-pub fn main(mut sdk: impl SharedAPI) {
+fn call(mut sdk: impl SharedAPI) {
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     // fail fast if we don't have enough fuel for the call
@@ -24,12 +24,13 @@ pub fn main(mut sdk: impl SharedAPI) {
     sdk.write(input);
 }
 
-func_entrypoint!(main);
+func_entrypoint!(call);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{testing::TestingContext, Bytes, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{Bytes, ContractContextV1, FUEL_DENOM_RATE};
+use fluentbase_sdk_test::testing::TestingContext;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 100_000;
@@ -40,7 +41,7 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        main(sdk.clone());
+        call(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;

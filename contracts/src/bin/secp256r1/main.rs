@@ -1,4 +1,4 @@
-#![cfg_attr(target_arch = "wasm32", no_std)]
+#![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
@@ -24,7 +24,7 @@ use fluentbase_sdk::{
 /// Output:
 /// - Returns a single byte with value 1 if the signature is valid
 /// - Returns an empty byte array if the signature is invalid
-pub fn main(mut sdk: impl SharedAPI) {
+fn call(mut sdk: impl SharedAPI) {
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
@@ -37,12 +37,13 @@ pub fn main(mut sdk: impl SharedAPI) {
     sdk.write(result.bytes.as_ref());
 }
 
-func_entrypoint!(main);
+func_entrypoint!(call);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, testing::TestingContext, ContractContextV1, B256, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, ContractContextV1, B256, FUEL_DENOM_RATE};
+use fluentbase_sdk_test::testing::TestingContext;
     use p256::{
         ecdsa::{signature::Verifier, SigningKey, VerifyingKey},
         elliptic_curve::rand_core::OsRng,
@@ -57,7 +58,7 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        main(sdk.clone());
+        call(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;

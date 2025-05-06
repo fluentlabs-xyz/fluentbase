@@ -1,4 +1,4 @@
-#![cfg_attr(target_arch = "wasm32", no_std)]
+#![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
@@ -20,7 +20,7 @@ use revm_precompile::bn128::{
     pair::{ISTANBUL_PAIR_BASE, ISTANBUL_PAIR_PER_POINT},
 };
 
-pub fn main(mut sdk: impl SharedAPI) {
+fn call(mut sdk: impl SharedAPI) {
     // read full input data
     let bytecode_address = sdk.context().contract_bytecode_address();
     let gas_limit = sdk.context().contract_gas_limit();
@@ -50,19 +50,13 @@ pub fn main(mut sdk: impl SharedAPI) {
     sdk.write(result.bytes.as_ref());
 }
 
-func_entrypoint!(main);
+func_entrypoint!(call);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{
-        hex,
-        testing::TestingContext,
-        Address,
-        Bytes,
-        ContractContextV1,
-        FUEL_DENOM_RATE,
-    };
+    use fluentbase_sdk::{hex, Address, Bytes, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk_test::testing::TestingContext;
 
     fn exec_evm_precompile(address: Address, inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 100_000;
@@ -75,7 +69,7 @@ mod tests {
                 ..Default::default()
             })
             .with_gas_limit(gas_limit);
-        main(sdk.clone());
+        call(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;

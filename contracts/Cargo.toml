@@ -11,15 +11,34 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-revm-precompile = { workspace = true }
+fluentbase-evm = { workspace = true, default-features = false }
+revm-precompile = { workspace = true, features = ["secp256r1", "blst", "kzg-rs"] }
+coset = { version = "0.3.8", default-features = false }
+ciborium = { version = "^0.2.1", default-features = false }
+x509-cert = { version = "0.2.5", default-features = false, features = ["pem"] }
+der = { version = "0.7.9", default-features = false, features = ["alloc"] }
+ecdsa = { version = "0.16.9", default-features = false, features = ["digest", "alloc", "der"] }
+p384 = { version = "0.13.0", default-features = false, features = ["ecdsa-core", "ecdsa"] }
+base64 = { version = "0.22.0", default-features = false, features = ["alloc"] }
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
 
 [dev-dependencies]
 fluentbase-sdk-test = { workspace = true }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"] }
+
+[build-dependencies]
+fluentbase-build = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
     "fluentbase-sdk/std",
+    "fluentbase-evm/std",
     "revm-precompile/std",
     "fluentbase-sdk-test/std",
+    "sha2/std",
+    "base64/std",
+    "hex/std",
 ]
+debug-print = ["fluentbase-sdk/debug-print"]
