@@ -10,6 +10,8 @@ mod bench;
 #[cfg(test)]
 mod bridge;
 #[cfg(test)]
+mod builtins;
+#[cfg(test)]
 mod constructor;
 #[cfg(test)]
 mod deployer;

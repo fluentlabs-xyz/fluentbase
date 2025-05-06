@@ -3,6 +3,7 @@ use alloc::{boxed::Box, string::ToString, vec};
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
+    Config,
     Error,
 };
 
@@ -11,8 +12,9 @@ pub struct RwasmCompilationResult {
     pub constructor_params: Bytes,
 }
 
-pub fn rwasm_config() -> RwasmConfig {
-    RwasmConfig {
+pub fn default_rwasm_config() -> Config {
+    let mut config = RwasmModule::default_config(None);
+    config.rwasm_config(RwasmConfig {
         state_router: Some(StateRouterConfig {
             states: Box::new([
                 ("deploy".to_string(), STATE_DEPLOY),
@@ -26,18 +28,15 @@ pub fn rwasm_config() -> RwasmConfig {
         translate_drop_keep: false,
         allow_malformed_entrypoint_func_type: false,
         use_32bit_mode: false,
-    }
+        builtins_consume_fuel: true,
+    });
+    config
 }
 
-pub fn compile_wasm_to_rwasm_gasless(
+pub fn compile_wasm_to_rwasm_with_config(
     wasm_binary: &[u8],
-    gasless: bool,
+    config: Config,
 ) -> Result<RwasmCompilationResult, Error> {
-    let mut config = RwasmModule::default_config(None);
-    if gasless {
-        config.consume_fuel(false);
-    }
-    config.rwasm_config(rwasm_config());
     let (rwasm_module, constructor_params) =
         RwasmModule::compile_and_retrieve_input(wasm_binary, &config)?;
     let length = rwasm_module.encoded_length();
@@ -54,5 +53,5 @@ pub fn compile_wasm_to_rwasm_gasless(
 
 #[inline(always)]
 pub fn compile_wasm_to_rwasm(wasm_binary: &[u8]) -> Result<RwasmCompilationResult, Error> {
-    compile_wasm_to_rwasm_gasless(wasm_binary, false)
+    compile_wasm_to_rwasm_with_config(wasm_binary, default_rwasm_config())
 }
