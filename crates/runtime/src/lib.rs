@@ -5,6 +5,7 @@ extern crate core;
 pub mod instruction;
 
 mod context;
+mod context_wrapper;
 mod runtime;
 mod storage;
 #[cfg(test)]
@@ -14,5 +15,6 @@ mod utils;
 mod wasmtime;
 
 pub use context::*;
+pub use context_wrapper::*;
 pub use runtime::*;
 pub use storage::*;

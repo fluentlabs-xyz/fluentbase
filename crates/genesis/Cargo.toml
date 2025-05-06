@@ -15,14 +15,13 @@ serde = { workspace = true, default-features = false }
 serde_json = { version = "1.0", default-features = false }
 alloy-genesis = { workspace = true, default-features = false }
 lazy_static = { workspace = true }
-#fluentbase-contracts = { workspace = true, features = ["genesis"] }
 
 [build-dependencies]
 fluentbase-types = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-fluentbase-contracts = { workspace = true, features = ["genesis"] }
+fluentbase-contracts = { workspace = true }
 
 [features]
 default = ["std"]

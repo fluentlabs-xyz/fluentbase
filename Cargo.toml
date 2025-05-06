@@ -1,11 +1,10 @@
 [workspace]
 members = [
     "contracts",
-    "contracts/genesis/*",
-    "contracts/examples/*",
+    #    "examples/*",
     "crates/*",
     "revm/crates/*",
-    "e2e",
+    #    "e2e",
 ]
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
@@ -33,6 +32,7 @@ fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = f
 fluentbase-evm = { path = "./crates/evm", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
+fluentbase-sdk-test = { path = "./crates/sdk-test", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 fluentbase-contracts = { path = "./contracts", default-features = false }

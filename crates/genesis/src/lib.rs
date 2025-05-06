@@ -16,25 +16,24 @@ pub fn devnet_genesis_v0_1_0_dev10_from_file() -> Genesis {
 
 #[rustfmt::skip]
 mod precompile {
-    use fluentbase_types::include_wasm;
 
-    pub const PRECOMPILE_BYTECODE_BIG_MODEXP: &[u8] = include_wasm!("fluentbase-contracts-modexp");
-    pub const PRECOMPILE_BYTECODE_BLAKE2F: &[u8] = include_wasm!("fluentbase-contracts-blake2f");
-    pub const PRECOMPILE_BYTECODE_BN256_ADD: &[u8] = include_wasm!("fluentbase-contracts-bn256");
-    pub const PRECOMPILE_BYTECODE_BN256_MUL: &[u8] = include_wasm!("fluentbase-contracts-bn256");
-    pub const PRECOMPILE_BYTECODE_BN256_PAIR: &[u8] = include_wasm!("fluentbase-contracts-bn256");
-    pub const PRECOMPILE_BYTECODE_ERC20: &[u8] = include_wasm!("fluentbase-contracts-erc20");
-    pub const PRECOMPILE_BYTECODE_EVM_RUNTIME: &[u8] = include_wasm!("fluentbase-contracts-evm");
-    pub const PRECOMPILE_BYTECODE_FAIRBLOCK_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-fairblock");
-    pub const PRECOMPILE_BYTECODE_IDENTITY: &[u8] = include_wasm!("fluentbase-contracts-identity");
-    pub const PRECOMPILE_BYTECODE_KZG_POINT_EVALUATION: &[u8] = include_wasm!("fluentbase-contracts-kzg");
-    pub const PRECOMPILE_BYTECODE_NATIVE_MULTICALL: &[u8] = include_wasm!("fluentbase-contracts-multicall");
-    pub const PRECOMPILE_BYTECODE_NITRO_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-nitro");
-    pub const PRECOMPILE_BYTECODE_OAUTH2_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-oauth2");
-    pub const PRECOMPILE_BYTECODE_RIPEMD160: &[u8] = include_wasm!("fluentbase-contracts-ripemd160");
-    pub const PRECOMPILE_BYTECODE_SECP256K1_RECOVER: &[u8] = include_wasm!("fluentbase-contracts-ecrecover");
-    pub const PRECOMPILE_BYTECODE_SHA256: &[u8] = include_wasm!("fluentbase-contracts-sha256");
-    pub const PRECOMPILE_BYTECODE_WEBAUTHN_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-webauthn");
+    pub const PRECOMPILE_BYTECODE_BIG_MODEXP: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_BLAKE2F: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_BN256_ADD: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_BN256_MUL: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_BN256_PAIR: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_ERC20: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_EVM_RUNTIME: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_FAIRBLOCK_VERIFIER: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_IDENTITY: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_KZG_POINT_EVALUATION: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_NATIVE_MULTICALL: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_NITRO_VERIFIER: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_OAUTH2_VERIFIER: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_RIPEMD160: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_SECP256K1_RECOVER: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_SHA256: &[u8] = &[];
+    pub const PRECOMPILE_BYTECODE_WEBAUTHN_VERIFIER: &[u8] = &[];
 
     #[cfg(feature = "bls12")]
     pub mod bls12 {

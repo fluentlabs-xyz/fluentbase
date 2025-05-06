@@ -5,14 +5,6 @@ fn main() {
         return;
     }
 
-    let features: Vec<String> = env::vars()
-        .filter_map(|(k, _)| {
-            k.strip_prefix("CARGO_FEATURE_")
-                .map(|f| f.to_lowercase().replace('_', "-"))
-        })
-        .collect();
-    let features = features.join(" ");
-
     let mut args = vec![];
     args.push("build".to_string());
     args.push("--target".to_string());
@@ -24,10 +16,7 @@ fn main() {
     args.push("./Cargo.toml".to_string());
     args.push("--target-dir".to_string());
     args.push("../target/target2".to_string());
-    if !features.is_empty() {
-        args.push("--features".to_string());
-        args.push(features);
-    }
+    args.push("--no-default-features".to_string());
 
     let rust_flags = [
         "-C".to_string(),

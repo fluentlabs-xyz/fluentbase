@@ -1,9 +1,9 @@
-use crate::{runtime::RuntimeContextWrapper, Address, Bytes, B256, U256};
-use alloc::{rc::Rc, vec::Vec};
 use core::cell::RefCell;
-use fluentbase_runtime::RuntimeContext;
+use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_types::{
     native_api::NativeAPI,
+    Address,
+    Bytes,
     ContractContextV1,
     ExitCode,
     IsAccountEmpty,
@@ -12,9 +12,12 @@ use fluentbase_types::{
     SharedContextInputV1,
     SharedContextReader,
     SyscallResult,
+    B256,
     FUEL_DENOM_RATE,
+    U256,
 };
 use hashbrown::HashMap;
+use std::rc::Rc;
 
 #[derive(Clone)]
 pub struct TestingContext {
