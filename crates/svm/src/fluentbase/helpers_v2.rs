@@ -84,22 +84,22 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     exec_svm_message(sdk, message, flush_result_accounts, sapi)
 }
 
-pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
+pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: StorageAPI>(
     sdk: &mut SDK,
     message: legacy::Message,
-    flush_result_accounts: bool,
     sapi: &mut Option<&mut SAPI>,
-) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
+) -> Result<
+    ((
+        SanitizedMessage,
+        Vec<(Pubkey, AccountSharedData)>,
+        Vec<Vec<IndexOfAccount>>,
+        Vec<Pubkey>,
+    )),
+    SvmError,
+> {
     let message: SanitizedMessage =
         SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
 
-    let config = init_config();
-
-    // TODO validate blockhash?
-    let blockhash = message.recent_blockhash();
-    let block_number = sdk.context().block_number();
-
-    let compute_budget = ComputeBudget::default();
     let mut sysvar_cache = SysvarCache::default();
     let rent = Rent::free();
     let clock = Clock::default();
@@ -108,13 +108,11 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sysvar_cache.set_clock(clock);
     sysvar_cache.set_epoch_schedule(epoch_schedule);
 
-    let system_program_id = system_program::id();
-    let loader_id = loader_v4::id();
-
     let mut working_accounts = vec![];
     let mut program_accounts = vec![];
     let mut program_indices = vec![];
-    let account_keys = message.account_keys();
+    let message_clone = message.clone();
+    let account_keys = message_clone.account_keys();
 
     let mut program_accounts_to_load: Vec<&Pubkey> = Default::default();
 
@@ -186,10 +184,6 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
                 .push(program_accounts.len() as IndexOfAccount);
             program_accounts.push((account_key.clone(), program_account));
         }
-        // for idx in &instruction.accounts {
-        //     let account_key = account_keys.get(*idx as usize).unwrap();
-        //     program_accounts_to_warmup.push(account_key);
-        // }
     }
     for program_account_key in program_accounts_to_load {
         load_program_account(sdk, sapi, &mut program_accounts, program_account_key)?;
@@ -205,6 +199,42 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
                 *program_sub_index += working_accounts_count;
             })
     });
+
+    Ok((
+        message,
+        accounts,
+        program_indices,
+        program_accounts_to_warmup.into_iter().cloned().collect(),
+    ))
+}
+
+pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
+    sdk: &mut SDK,
+    message: legacy::Message,
+    flush_result_accounts: bool,
+    sapi: &mut Option<&mut SAPI>,
+) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
+    // let message: SanitizedMessage =
+    //     SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
+    //
+    let config = init_config();
+
+    let block_number = sdk.context().block_number();
+
+    let compute_budget = ComputeBudget::default();
+    let mut sysvar_cache = SysvarCache::default();
+    let rent = Rent::free();
+    let clock = Clock::default();
+    let epoch_schedule = EpochSchedule::default();
+    sysvar_cache.set_rent(rent.clone());
+    sysvar_cache.set_clock(clock);
+    sysvar_cache.set_epoch_schedule(epoch_schedule);
+
+    let system_program_id = system_program::id();
+    let loader_id = loader_v4::id();
+
+    let (message, accounts, program_indices, program_accounts_to_warmup) =
+        prepare_data_for_tx_ctx1(sdk, message, sapi)?;
 
     // TODO compute hardcoded parameters
     let transaction_context = TransactionContext::new(accounts, rent.clone(), 100, 200);
@@ -242,6 +272,8 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
             program_runtime_v2: loader.clone(),
         },
     );
+
+    // TODO validate blockhash?
     let transaction_context = {
         let mut feature_set = feature_set_default();
 
@@ -253,10 +285,10 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
             feature_set.into(),
-            *blockhash,
+            *message.recent_blockhash(),
             0,
         );
-        for pk in program_accounts_to_warmup {
+        for pk in &program_accounts_to_warmup {
             let loaded_program = invoke_context.load_program(pk, false);
             if let Some(v) = loaded_program {
                 invoke_context
