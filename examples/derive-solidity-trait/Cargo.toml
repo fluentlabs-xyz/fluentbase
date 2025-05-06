@@ -1,0 +1,26 @@
+[package]
+edition = "2021"
+name = "fluentbase-examples-derive-solidity-trait"
+version = "0.1.0"
+
+[dependencies]
+alloy-sol-types.workspace = true
+fluentbase-sdk = { workspace = true }
+
+
+[dev-dependencies]
+hex = "0.4.3"
+hex-literal = "1.0.0"
+
+[build-dependencies]
+fluentbase-build = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std",
+]

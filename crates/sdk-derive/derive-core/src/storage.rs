@@ -292,19 +292,6 @@ impl StorageSlot {
         }
     }
 
-    // fn format_args(&self) -> (TokenStream2, Vec<&Ident>) {
-    //     let args_tokens: Vec<_> = self.args.iter().map(ToTokens::to_token_stream).collect();
-    //     let arg_names: Vec<_> = self.args.iter().map(|arg| &arg.name).collect();
-
-    //     let method_args = if self.args.is_empty() {
-    //         quote! { sdk: &SDK }
-    //     } else {
-    //         quote! { sdk: &SDK, #(#args_tokens),* }
-    //     };
-
-    //     (method_args, arg_names)
-    // }
-
     fn getter_definition(&self) -> TokenStream2 {
         let arguments: Vec<TokenStream2> =
             self.args.iter().map(|arg| arg.to_token_stream()).collect();

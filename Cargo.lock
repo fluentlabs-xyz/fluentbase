@@ -451,7 +451,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e10ae8e9a91d328ae954c22542415303919aabe976fe7a92eb06db1b68fd59f2"
 dependencies = [
  "alloy-sol-macro-expander",
- "alloy-sol-macro-input",
+ "alloy-sol-macro-input 0.8.25",
  "proc-macro-error2",
  "proc-macro2",
  "quote",
@@ -464,7 +464,7 @@ version = "0.8.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83ad5da86c127751bc607c174d6c9fe9b85ef0889a9ca0c641735d77d4f98f26"
 dependencies = [
- "alloy-sol-macro-input",
+ "alloy-sol-macro-input 0.8.25",
  "const-hex",
  "heck",
  "indexmap",
@@ -490,6 +490,22 @@ dependencies = [
  "quote",
  "syn 2.0.100",
  "syn-solidity 0.8.25",
+]
+
+[[package]]
+name = "alloy-sol-macro-input"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3de663412dadf9b64f4f92f507f78deebcc92339d12cf15f88ded65d41c7935"
+dependencies = [
+ "const-hex",
+ "dunce",
+ "heck",
+ "macro-string",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+ "syn-solidity 1.1.0",
 ]
 
 [[package]]
@@ -2436,6 +2452,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-examples-derive-solidity-trait"
+version = "0.1.0"
+dependencies = [
+ "alloy-sol-types",
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "hex",
+ "hex-literal 1.0.0",
+]
+
+[[package]]
 name = "fluentbase-examples-erc20"
 version = "0.1.0"
 dependencies = [
@@ -2583,10 +2610,12 @@ dependencies = [
 name = "fluentbase-sdk-derive"
 version = "0.1.0"
 dependencies = [
+ "alloy-sol-macro-input 1.1.0",
  "crypto-hashes",
  "fluentbase-sdk",
  "fluentbase-sdk-derive-core",
  "proc-macro-error",
+ "proc-macro2",
  "quote",
  "syn 2.0.100",
  "trybuild",
@@ -2596,6 +2625,7 @@ dependencies = [
 name = "fluentbase-sdk-derive-core"
 version = "0.0.0"
 dependencies = [
+ "alloy-sol-macro-input 1.1.0",
  "anyhow",
  "bytes",
  "convert_case 0.8.0",
