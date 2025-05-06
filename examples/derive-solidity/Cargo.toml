@@ -1,10 +1,9 @@
 [package]
 edition = "2021"
-name = "fluentbase-examples-derive-solidity-trait"
+name = "fluentbase-examples-derive-solidity"
 version = "0.1.0"
 
 [dependencies]
-alloy-sol-types.workspace = true
 fluentbase-sdk = { workspace = true }
 
 

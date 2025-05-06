@@ -2452,10 +2452,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-examples-derive-solidity-trait"
+name = "fluentbase-examples-derive-solidity"
 version = "0.1.0"
 dependencies = [
- "alloy-sol-types",
  "fluentbase-build",
  "fluentbase-sdk",
  "hex",

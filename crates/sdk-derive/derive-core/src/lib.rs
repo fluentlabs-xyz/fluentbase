@@ -18,11 +18,11 @@ pub mod artifacts;
 pub mod client;
 pub mod codec;
 pub mod error;
-pub mod expand_from_sol_input;
 pub mod function_id;
 pub mod mode;
 pub mod route;
 pub mod router;
+pub mod sol_input;
 pub mod storage;
 pub mod utils;
 
@@ -126,48 +126,3 @@ fn parse_storage_input(input: TokenStream2) -> Result<storage::Storage, syn::Err
     debug!("Parsing storage implementation");
     syn::parse2(input)
 }
-
-// pub fn expand_from_sol_input(input: SolInput) -> Result<TokenStream2, syn::Error> {
-//     let file = match input.kind {
-//         SolInputKind::Sol(sol_file) => sol_file,
-//         SolInputKind::Type(_) => {
-//             return Err(syn::Error::new(
-//                 proc_macro2::Span::call_site(),
-//                 "expected solidity file or interface",
-//             ))
-//         }
-//         #[cfg(feature = "json")]
-//         SolInputKind::Json(_, _) => {
-//             return Err(syn::Error::new(
-//                 proc_macro2::Span::call_site(),
-//                 "JSON ABI not supported in this macro",
-//             ))
-//         }
-//     };
-
-//     let mut functions = vec![];
-
-//     for item in file.items {
-//         if let Item::Contract(interface) = item {
-//             for i in &interface.body {
-//                 if let Item::Function(ItemFunction {
-//                     name: Some(name), ..
-//                 }) = i
-//                 {
-//                     let fn_name = format_ident!("{}", name);
-//                     functions.push(quote! {
-//                         fn #fn_name(&self) {
-//                             println!("called {}", stringify!(#fn_name));
-//                         }
-//                     });
-//                 }
-//             }
-//         }
-//     }
-
-//     Ok(quote! {
-//         pub trait DebugGenerated {
-//             #(#functions)*
-//         }
-//     })
-// }
