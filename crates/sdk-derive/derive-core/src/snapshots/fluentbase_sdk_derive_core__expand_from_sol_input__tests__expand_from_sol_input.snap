@@ -1,0 +1,13 @@
+---
+source: crates/sdk-derive/derive-core/src/expand_from_sol_input.rs
+expression: formatted
+---
+#[derive(::fluentbase_sdk::codec::Codec, Debug, Clone, PartialEq, Eq)]
+pub struct Greeting {
+    pub prefix: String,
+    pub name: String,
+}
+pub trait IMyProgramWithStruct {
+    fn greeting(&self, input: Greeting) -> Greeting;
+    fn custom_greeting(&self, input: Greeting) -> Greeting;
+}

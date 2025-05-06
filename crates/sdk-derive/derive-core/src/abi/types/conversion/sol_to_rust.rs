@@ -1,4 +1,5 @@
 use crate::abi::{error::ABIError, types::sol::SolType};
+use quote::format_ident;
 use syn::{parse_quote, Type};
 
 /// Converts a Solidity type to a corresponding Rust type
@@ -29,7 +30,10 @@ pub fn sol_to_rust(sol_type: &SolType) -> Result<Type, ABIError> {
         SolType::Tuple(types) => to_rust_tuple(types),
 
         // User-defined types
-        SolType::Struct { name, .. } => Ok(parse_quote!(#name)),
+        SolType::Struct { name, .. } => {
+            let ident = format_ident!("{}", name);
+            Ok(parse_quote!(#ident))
+        }
     }
 }
 

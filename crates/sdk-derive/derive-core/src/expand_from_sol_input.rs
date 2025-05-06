@@ -6,27 +6,32 @@ use alloy_sol_macro_input::{SolInput, SolInputKind};
 use convert_case::{Case, Casing};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::Ident;
+use syn::{Ident, Type};
 use syn_solidity::{
     visit::{visit_file, Visit},
     File,
     Item,
     ItemFunction,
+    ItemStruct,
     Mutability,
     Spanned,
     VariableDeclaration,
 };
-pub struct FunctionCollector<'a> {
+
+pub struct ItemCollector<'a> {
     pub functions: Vec<&'a ItemFunction>,
+    pub structs: Vec<&'a ItemStruct>,
 }
 
-impl<'a> Visit<'a> for FunctionCollector<'a> {
+impl<'a> Visit<'a> for ItemCollector<'a> {
     fn visit_item_function(&mut self, func: &'a ItemFunction) {
         self.functions.push(func);
     }
+    fn visit_item_struct(&mut self, s: &'a ItemStruct) {
+        self.structs.push(s);
+    }
 }
 
-/// Expand the input from Solidity file or JSON ABI to a Rust trait.
 pub fn expand_from_sol_input(input: SolInput) -> syn::Result<TokenStream> {
     let file = match input.kind {
         SolInputKind::Sol(sol_file) => sol_file,
@@ -45,18 +50,30 @@ pub fn expand_from_sol_input(input: SolInput) -> syn::Result<TokenStream> {
         }
     };
 
-    let mut visitor = FunctionCollector { functions: vec![] };
+    let mut visitor = ItemCollector {
+        functions: vec![],
+        structs: vec![],
+    };
     visit_file(&mut visitor, &file);
+
+    let trait_name = resolve_trait_name(&file);
+
+    let mut structs = Vec::new();
+    for s in visitor.structs {
+        structs.push(generate_rust_struct(s)?);
+    }
 
     let mut trait_fns = Vec::new();
     for func in visitor.functions {
         let tokens = generate_trait_function(func)?;
+        if tokens.is_empty() {
+            continue;
+        }
         trait_fns.push(tokens);
     }
 
-    let trait_name = resolve_trait_name(&file);
-
     Ok(quote! {
+        #(#structs)*
         pub trait #trait_name {
             #(#trait_fns)*
         }
@@ -83,6 +100,34 @@ pub fn resolve_receiver(func: &ItemFunction) -> TokenStream {
     } else {
         quote! { &mut self }
     }
+}
+
+fn generate_rust_struct(sol_struct: &ItemStruct) -> syn::Result<TokenStream> {
+    let name = &sol_struct.name;
+    let fields = sol_struct
+        .fields
+        .iter()
+        .map(|field| {
+            let field_name = field
+                .name
+                .as_ref()
+                .map(|n| Ident::new(&n.to_string(), n.span()))
+                .unwrap_or_else(|| Ident::new("_", field.ty.span()));
+            let sol_ty = convert_solidity_type(&field.ty)?;
+            eprintln!("sol_ty: {:?}", sol_ty);
+            let rust_ty: Type = sol_to_rust(&sol_ty).map_err(|e| {
+                syn::Error::new(field.ty.span(), format!("Struct field type error: {e}"))
+            })?;
+            Ok(quote! { pub #field_name: #rust_ty })
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    Ok(quote! {
+        #[derive(::fluentbase_sdk::codec::Codec, Debug, Clone, PartialEq, Eq)]
+        pub struct #name {
+            #(#fields),*
+        }
+    })
 }
 
 pub fn generate_trait_function(func: &ItemFunction) -> syn::Result<TokenStream> {
@@ -152,5 +197,55 @@ pub fn generate_fn_return(func: &ItemFunction) -> syn::Result<TokenStream> {
             .collect::<syn::Result<_>>()?;
 
         Ok(quote! { -> (#(#rust_types),*) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use insta::assert_snapshot;
+    use prettyplease;
+    use syn::parse_str;
+
+    #[test]
+    fn test_generate_rust_struct() {
+        let sol = r#"
+            struct User {
+                string name;
+                uint256 age;
+            }
+        "#;
+
+        let item: syn_solidity::ItemStruct = parse_str(sol).unwrap();
+        let tokens = generate_rust_struct(&item).unwrap();
+        let file = syn::parse_file(&tokens.to_string()).unwrap();
+        let formatted_code = prettyplease::unparse(&file);
+
+        assert_snapshot!("generate_rust_struct", formatted_code);
+    }
+
+    #[test]
+    fn test_expand_from_sol_input() {
+        let solidity_code = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IMyProgramWithStruct {
+    struct Greeting {
+        string prefix;
+        string name;
+    }
+
+    function greeting(Greeting calldata input) external view returns (Greeting calldata return_0);
+    function customGreeting(Greeting calldata input) external view returns (Greeting calldata return_0);
+}
+"#;
+        let input: alloy_sol_macro_input::SolInput = parse_str(solidity_code).unwrap();
+
+        let generated = expand_from_sol_input(input).unwrap();
+        let parsed = syn::parse_file(&generated.to_string()).unwrap();
+        let formatted = prettyplease::unparse(&parsed);
+
+        assert_snapshot!("expand_from_sol_input", formatted);
     }
 }

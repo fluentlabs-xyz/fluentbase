@@ -5,16 +5,18 @@ use alloc::string::String;
 use alloy_sol_types::{sol, SolCall};
 use core::u64;
 use fluentbase_sdk::{
+    codec::Codec,
     derive::{client, derive_solidity_client, derive_solidity_trait},
     Address,
     SharedAPI,
     U256,
 };
 
-// sol!("abi/IRouterAPI.sol");
+// sol!("abi/IMyProgramWithStruct.sol");
 
 sol!(
     interface IRouter {
+
         function swap(address tokenIn, address tokenOut, uint amount) external returns (uint);
     }
 );
@@ -27,3 +29,11 @@ derive_solidity_trait!(
         function customGreeting(string calldata message) external view returns (string calldata return_0);
     }
 );
+
+// derive_solidity_trait!("abi/IMyProgramWithStruct.sol");
+
+#[derive(::fluentbase_sdk::codec::Codec, Debug, Clone, PartialEq, Eq)]
+pub struct User {
+    pub name: String,
+    pub age: U256,
+}

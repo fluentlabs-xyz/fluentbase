@@ -1,0 +1,9 @@
+---
+source: crates/sdk-derive/derive-core/src/expand_from_sol_input.rs
+expression: formatted_code
+---
+#[derive(::fluentbase_sdk::codec::Codec, Debug, Clone, PartialEq, Eq)]
+pub struct User {
+    pub name: String,
+    pub age: U256,
+}
