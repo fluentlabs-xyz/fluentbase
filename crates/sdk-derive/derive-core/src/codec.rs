@@ -1,379 +1,488 @@
-use crate::mode::RouterMode;
+use crate::{
+    attr::Mode,
+    method::{MethodLike, ParsedMethod},
+};
 use convert_case::{Case, Casing};
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
-use syn::Index;
+use syn::{FnArg, Result, ReturnType, Type};
 
-/// Generates codec implementation for route methods.
-pub struct CodecGenerator<'a> {
-    /// Method name
-    fn_name: &'a str,
-    /// Function selector
-    function_id: &'a [u8; 4],
-    /// Function signature
-    signature: &'a str,
-    /// Input parameter types
-    input_types: Vec<&'a syn::Type>,
-    /// Return types
-    return_types: Vec<&'a syn::Type>,
-    /// Router mode
-    mode: &'a RouterMode,
+/// Handles generation of encoding/decoding code for contract function parameters and return values
+///
+/// This generator creates type definitions and implementations for both function calls and returns,
+/// allowing for seamless serialization and deserialization of contract interactions.
+#[derive(Debug)]
+pub struct CodecGenerator<'a, T: MethodLike> {
+    /// Parsed method containing function signature and metadata
+    route: &'a ParsedMethod<T>,
+    /// Router mode configuration (Solidity or Fluent)
+    mode: Mode,
 }
 
-impl<'a> CodecGenerator<'a> {
-    /// Creates a new CodecGenerator instance.
-    pub fn new(
-        fn_name: &'a str,
-        function_id: &'a [u8; 4],
-        signature: &'a str,
-        input_types: Vec<&'a syn::Type>,
-        return_types: Vec<&'a syn::Type>,
-        mode: &'a RouterMode,
-    ) -> Self {
+impl<'a, T: MethodLike> CodecGenerator<'a, T> {
+    /// Creates a new CodecGenerator instance
+    pub fn new(route: &'a ParsedMethod<T>, mode: &Mode) -> Self {
         Self {
-            fn_name,
-            function_id,
-            signature,
-            input_types,
-            return_types,
-            mode,
+            route,
+            mode: *mode, // Copy the mode enum
         }
     }
 
-    /// Determines crate names based on the current package
-    fn determine_crate_name(&self) -> TokenStream2 {
-        let crate_name = std::env::var("CARGO_PKG_NAME").unwrap();
-        let crate_name = if crate_name == "fluentbase-codec" {
-            quote! { crate }
-        } else if crate_name == "fluentbase-sdk"
-            || crate_name == "fluentbase-types"
-            || crate_name == "fluentbase-runtime"
-        {
-            quote! { fluentbase_codec }
-        } else {
-            quote! { fluentbase_sdk::codec }
-        };
+    /// Generates the complete codec implementation
+    pub fn generate(&self) -> Result<TokenStream2> {
+        let call_codec = self.generate_call_codec()?;
+        let return_codec = self.generate_return_codec()?;
 
-        crate_name
+        Ok(quote! {
+            #call_codec
+            #return_codec
+        })
     }
 
-    /// Determines the codec type based on mode.
-    fn get_codec_type(&self) -> TokenStream2 {
-        let crate_name = self.determine_crate_name();
-        match self.mode {
-            RouterMode::Solidity => quote! { #crate_name::encoder::SolidityABI },
-            RouterMode::Fluent => quote! { #crate_name::encoder::CompactABI },
-        }
-    }
-
-    /// Generates the complete codec implementation.
-    pub fn generate(&self) -> TokenStream2 {
-        let struct_names = self.generate_struct_names();
+    /// Generates the codec implementation for function calls
+    fn generate_call_codec(&self) -> Result<TokenStream2> {
+        let crate_path = self.get_crate_path();
         let codec_type = self.get_codec_type();
-        let args_types = self.generate_args_types(&struct_names);
-        let (call_offset_handling, return_offset_handling) = self.generate_offset_handling(
-            &codec_type,
-            &struct_names.call_args,
-            &struct_names.return_args,
-        );
-        let field_encoders = self.generate_field_encoders();
+        let base_name = self
+            .route
+            .parsed_signature()
+            .rust_name()
+            .to_case(Case::Pascal);
 
-        self.generate_implementation(
-            struct_names,
-            codec_type,
-            args_types,
-            (call_offset_handling, return_offset_handling),
-            field_encoders,
-        )
+        // Define struct and type names
+        let call_struct = format_ident!("{}Call", base_name);
+        let call_args = format_ident!("{}CallArgs", base_name);
+
+        // Extract input parameter types
+        let input_types = self.extract_input_types();
+
+        // Generate the struct implementation
+        let struct_impl =
+            self.create_call_impl(&call_struct, &call_args, &crate_path, &codec_type)?;
+
+        // Generate the final codec
+        Ok(quote! {
+            pub type #call_args = (#(#input_types,)*);
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub struct #call_struct(pub #call_args);
+
+            #struct_impl
+        })
     }
 
-    /// Generates struct and type names.
-    fn generate_struct_names(&self) -> StructNames {
-        let pascal_name = self.fn_name.to_case(Case::Pascal);
-        StructNames {
-            call: format_ident!("{}Call", pascal_name),
-            call_args: format_ident!("{}CallArgs", pascal_name),
-            call_target: format_ident!("{}CallTarget", pascal_name),
-            return_: format_ident!("{}Return", pascal_name),
-            return_args: format_ident!("{}ReturnArgs", pascal_name),
-            return_target: format_ident!("{}ReturnTarget", pascal_name),
+    /// Generates the codec implementation for function returns
+    fn generate_return_codec(&self) -> Result<TokenStream2> {
+        let crate_path = self.get_crate_path();
+        let codec_type = self.get_codec_type();
+        let base_name = self
+            .route
+            .parsed_signature()
+            .rust_name()
+            .to_case(Case::Pascal);
+
+        // Define struct and type names
+        let return_struct = format_ident!("{}Return", base_name);
+        let return_args = format_ident!("{}ReturnArgs", base_name);
+
+        // Extract output types
+        let output_types = self.extract_output_types();
+
+        // Generate the struct implementation
+        let struct_impl =
+            self.create_return_impl(&return_struct, &return_args, &crate_path, &codec_type);
+
+        // Generate the final codec
+        Ok(quote! {
+            pub type #return_args = (#(#output_types,)*);
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub struct #return_struct(pub #return_args);
+
+            #struct_impl
+        })
+    }
+
+    /// Extracts input parameter types from the function signature
+    fn extract_input_types(&self) -> Vec<&Type> {
+        self.route
+            .parsed_signature()
+            .inputs()
+            .iter()
+            .filter_map(|arg| {
+                if let FnArg::Typed(pat_type) = arg {
+                    Some(&*pat_type.ty)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Extracts output types from the function signature
+    fn extract_output_types(&self) -> Vec<&Type> {
+        match &self.route.parsed_signature().output {
+            ReturnType::Default => Vec::new(),
+            ReturnType::Type(_, ty) => match &**ty {
+                Type::Tuple(tuple) => tuple.elems.iter().map(|ty| &*ty).collect(),
+                ty => vec![ty],
+            },
         }
     }
 
-    /// Generates argument types for input and output.
-    fn generate_args_types(&self, _names: &StructNames) -> ArgsTypes {
-        let input_types = self.input_types.clone();
-        let return_types = self.return_types.clone();
-        let input = if self.input_types.is_empty() {
-            quote! { () }
-        } else {
-            quote! { (#(#input_types,)*) }
-        };
-
-        let output = if self.return_types.is_empty() {
-            quote! { () }
-        } else {
-            quote! { (#(#return_types,)*) }
-        };
-
-        ArgsTypes { input, output }
-    }
-
-    /// Generates field encoders for input and output fields.
-    fn generate_field_encoders(&self) -> FieldEncoders {
-        let encode_input_fields = (0..self.input_types.len())
-            .map(|i| {
-                let index = Index::from(i);
-                quote! { self.0.clone().#index }
-            })
-            .collect();
-
-        let encode_output_fields = (0..self.return_types.len())
-            .map(|i| {
-                let index = Index::from(i);
-                quote! { self.0.clone().#index }
-            })
-            .collect();
-
-        FieldEncoders {
-            encode_input_fields,
-            encode_output_fields,
-        }
-    }
-
-    /// Generates dynamic offset handling code.
-    fn generate_offset_handling(
+    /// Creates implementation for call struct
+    fn create_call_impl(
         &self,
+        struct_name: &Ident,
+        args_type: &Ident,
+        crate_path: &TokenStream2,
         codec_type: &TokenStream2,
-        call_args: &syn::Ident,
-        return_args: &syn::Ident,
-    ) -> (OffsetHandling, OffsetHandling) {
-        let (call_encode_offset, call_decode_offset) = match self.mode {
-            RouterMode::Solidity => (
-                quote! {
-                    if #codec_type::<#call_args>::is_dynamic() {
-                        encoded_args[32..].to_vec()
-                    } else {
-                        encoded_args.to_vec()
-                    }
-                },
-                quote! {
-                    if #codec_type::<#call_args>::is_dynamic() {
-                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
-                    } else {
-                        ::alloc::vec::Vec::new()
-                    }
-                },
-            ),
-            RouterMode::Fluent => (
-                quote! {
-                    if #codec_type::<#call_args>::is_dynamic() {
-                        encoded_args[4..].to_vec()
-                    } else {
-                        encoded_args.to_vec()
-                    }
-                },
-                quote! {
-                    if #codec_type::<#call_args>::is_dynamic() {
-                        (4_u32).to_le_bytes().to_vec()
-                    } else {
-                        ::alloc::vec::Vec::new()
-                    }
-                },
-            ),
+    ) -> Result<TokenStream2> {
+        let selector = self.route.function_id();
+        let signature = self.route.parsed_signature().function_abi()?.signature()?;
+
+        // Create field indices for tuple access
+        let field_indices = (0..self
+            .route
+            .parsed_signature()
+            .inputs_without_receiver()
+            .len())
+            .map(syn::Index::from)
+            .collect::<Vec<_>>();
+
+        // Generate encoding implementation based on field count
+        let encode_impl = if field_indices.is_empty() {
+            quote! {
+                #codec_type::encode(&(), &mut buf, 0)
+                    .expect("Failed to encode values");
+            }
+        } else if field_indices.len() == 1 {
+            // Special case for single parameter to ensure proper tuple encoding
+            let index = &field_indices[0];
+            quote! {
+                let args = self.0.clone();
+                #codec_type::encode(&(args.#index,), &mut buf, 0)
+                    .expect("Failed to encode values");
+            }
+        } else {
+            quote! {
+                let args = self.0.clone();
+                #codec_type::encode(&(#(args.#field_indices),*), &mut buf, 0)
+                    .expect("Failed to encode values");
+            }
         };
 
-        let (return_encode_offset, return_decode_offset) = match self.mode {
-            RouterMode::Solidity => (
-                quote! {
-                    if #codec_type::<#return_args>::is_dynamic() {
-                        encoded_args[32..].to_vec()
-                    } else {
-                        encoded_args.to_vec()
-                    }
-                },
-                quote! {
-                    if #codec_type::<#return_args>::is_dynamic() {
-                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
-                    } else {
-                        ::alloc::vec::Vec::new()
-                    }
-                },
-            ),
-            RouterMode::Fluent => (
-                quote! {
-                    if #codec_type::<#return_args>::is_dynamic() {
-                        encoded_args[4..].to_vec()
-                    } else {
-                        encoded_args.to_vec()
-                    }
-                },
-                quote! {
-                    if #codec_type::<#return_args>::is_dynamic() {
-                        (4_u32).to_le_bytes().to_vec()
-                    } else {
-                        ::alloc::vec::Vec::new()
-                    }
-                },
-            ),
-        };
+        // Generate offset handling based on mode
+        let encode_offset = self.create_encode_offset_expr(codec_type, args_type);
+        let decode_offset = self.create_decode_offset_expr(codec_type, args_type);
 
-        (
-            OffsetHandling {
-                encode_offset: call_encode_offset,
-                decode_offset: call_decode_offset,
-            },
-            OffsetHandling {
-                encode_offset: return_encode_offset,
-                decode_offset: return_decode_offset,
-            },
-        )
-    }
-
-    /// Generates the final implementation code.
-    fn generate_implementation(
-        &self,
-        names: StructNames,
-        codec_type: TokenStream2,
-        args_types: ArgsTypes,
-        offset: (OffsetHandling, OffsetHandling),
-        encoders: FieldEncoders,
-    ) -> TokenStream2 {
-        let crate_name = self.determine_crate_name();
-        let function_id = self.function_id;
-        let signature = self.signature;
-
-        let StructNames {
-            call,
-            call_args,
-            call_target,
-            return_,
-            return_args,
-            return_target,
-        } = names;
-
-        let ArgsTypes { input, output } = args_types;
-        let (
-            OffsetHandling {
-                encode_offset: call_encode_offset,
-                decode_offset: call_decode_offset,
-            },
-            OffsetHandling {
-                encode_offset: return_encode_offset,
-                decode_offset: return_decode_offset,
-            },
-        ) = offset;
-        let FieldEncoders {
-            encode_input_fields,
-            encode_output_fields,
-        } = encoders;
-
-        quote! {
-            pub type #call_args = #input;
-            pub struct #call(#call_args);
-
-            impl #call {
-                pub const SELECTOR: [u8; 4] = [#(#function_id,)*];
+        // Generate the complete implementation
+        Ok(quote! {
+            impl #struct_name {
+                pub const SELECTOR: [u8; 4] = [#(#selector,)*];
                 pub const SIGNATURE: &'static str = #signature;
 
-                pub fn new(args: #call_args) -> Self {
+                /// Creates a new call instance from arguments
+                pub fn new(args: #args_type) -> Self {
                     Self(args)
                 }
 
-                pub fn encode(&self) -> #crate_name::bytes::Bytes {
-                    let mut buf = #crate_name::bytes::BytesMut::new();
-                    #codec_type::encode(&(#(#encode_input_fields,)*), &mut buf, 0).unwrap();
+                /// Encodes this call to bytes including selector
+                pub fn encode(&self) -> #crate_path::bytes::Bytes {
+                    let mut buf = #crate_path::bytes::BytesMut::new();
+                    #encode_impl
                     let encoded_args = buf.freeze();
-                    let clean_args = #call_encode_offset;
-
+                    let clean_args = #encode_offset;
                     Self::SELECTOR.iter().copied().chain(clean_args).collect()
                 }
 
-                pub fn decode(buf: &impl #crate_name::bytes::Buf) -> ::core::result::Result<Self,  #crate_name::CodecError> {
-                    use #crate_name::bytes::BufMut;
-                    let dynamic_offset = #call_decode_offset;
-                    let mut combined_buf = #crate_name::bytes::BytesMut::new();
-                    combined_buf.put_slice(&dynamic_offset);
+                /// Decodes call arguments from bytes
+                pub fn decode(buf: &impl #crate_path::bytes::Buf) -> Result<Self, #crate_path::CodecError> {
+                    use #crate_path::bytes::BufMut;
+
+                    let mut combined_buf = #crate_path::bytes::BytesMut::new();
+                    combined_buf.put_slice(&#decode_offset);
                     combined_buf.put_slice(buf.chunk());
 
-                    let args = #codec_type::<#call_args>::decode(&combined_buf.freeze(), 0)?;
+                    let args = #codec_type::<self::#args_type>::decode(&combined_buf.freeze(), 0)?;
                     Ok(Self(args))
                 }
             }
 
-            impl ::core::ops::Deref for #call {
-                type Target = #call_args;
-                fn deref(&self) -> &Self::Target { &self.0 }
+            impl ::core::ops::Deref for #struct_name {
+                type Target = #args_type;
+                fn deref(&self) -> &Self::Target {
+                    &self.0
+                }
             }
+        })
+    }
 
-            pub type #call_target = <#call as ::core::ops::Deref>::Target;
+    /// Creates implementation for return struct
+    fn create_return_impl(
+        &self,
+        struct_name: &Ident,
+        args_type: &Ident,
+        crate_path: &TokenStream2,
+        codec_type: &TokenStream2,
+    ) -> TokenStream2 {
+        // Check if return type is unit (empty tuple or void)
+        let is_unit_type = match &self.route.parsed_signature().output {
+            ReturnType::Default => true,
+            ReturnType::Type(_, ty) => match &**ty {
+                Type::Tuple(tuple) => tuple.elems.is_empty(),
+                _ => false,
+            },
+        };
 
-            pub type #return_args = #output;
+        // Get output types count for special handling of single-value returns
+        let output_types_count = self.extract_output_types().len();
 
-            #[derive(Debug)]
-            pub struct #return_(#return_args);
+        // Generate encoding implementation based on return type
+        let encode_impl = if is_unit_type {
+            quote! {
+                #codec_type::encode(&(), &mut buf, 0)
+                    .expect("Failed to encode values");
+            }
+        } else if output_types_count == 1 {
+            // Special case for single return value to ensure proper tuple encoding
+            quote! {
+                let args = self.0.clone();
+                #codec_type::encode(&(args.0,), &mut buf, 0)
+                    .expect("Failed to encode values");
+            }
+        } else {
+            quote! {
+                let args = self.0.clone();
+                #codec_type::encode(&args, &mut buf, 0)
+                    .expect("Failed to encode values");
+            }
+        };
 
-            impl #return_ {
-                pub fn new(args: #return_args) -> Self {
+        // Generate offset handling based on mode
+        let encode_offset = self.create_encode_offset_expr(codec_type, args_type);
+        let decode_offset = self.create_decode_offset_expr(codec_type, args_type);
+
+        // Generate the complete implementation
+        quote! {
+            impl #struct_name {
+                /// Creates a new return instance from values
+                pub fn new(args: #args_type) -> Self {
                     Self(args)
                 }
 
-                pub fn encode(&self) -> #crate_name::bytes::Bytes {
-                    let mut buf = #crate_name::bytes::BytesMut::new();
-                    #codec_type::encode(&(#(#encode_output_fields,)*), &mut buf, 0).unwrap();
+                /// Encodes the return values to bytes
+                pub fn encode(&self) -> #crate_path::bytes::Bytes {
+                    let mut buf = #crate_path::bytes::BytesMut::new();
+                    #encode_impl
                     let encoded_args = buf.freeze();
-                    let clean_args = #return_encode_offset;
-
+                    let clean_args = #encode_offset;
                     clean_args.into()
                 }
 
-                pub fn decode(buf: &impl #crate_name::bytes::Buf) -> ::core::result::Result<Self,  #crate_name::CodecError> {
-                    use #crate_name::bytes::BufMut;
-                    let dynamic_offset = #return_decode_offset;
-                    let mut combined_buf = #crate_name::bytes::BytesMut::new();
-                    combined_buf.put_slice(&dynamic_offset);
+                /// Decodes return values from bytes
+                pub fn decode(buf: &impl #crate_path::bytes::Buf) -> Result<Self, #crate_path::CodecError> {
+                    use #crate_path::bytes::BufMut;
+
+                    let mut combined_buf = #crate_path::bytes::BytesMut::new();
+                    combined_buf.put_slice(&#decode_offset);
                     combined_buf.put_slice(buf.chunk());
 
-                    let args = #codec_type::<#return_args>::decode(&combined_buf.freeze(), 0)?;
+                    let args = #codec_type::<#args_type>::decode(&combined_buf.freeze(), 0)?;
                     Ok(Self(args))
                 }
             }
 
-            impl ::core::ops::Deref for #return_ {
-                type Target = #return_args;
-                fn deref(&self) -> &Self::Target { &self.0 }
+            impl ::core::ops::Deref for #struct_name {
+                type Target = #args_type;
+                fn deref(&self) -> &Self::Target {
+                    &self.0
+                }
             }
+        }
+    }
 
-            pub type #return_target = <#return_ as ::core::ops::Deref>::Target;
+    /// Creates the encode offset expression based on the mode
+    /// Important: Dynamic types need the first 32/4 bytes removed
+    fn create_encode_offset_expr(
+        &self,
+        codec_type: &TokenStream2,
+        type_name: &Ident,
+    ) -> TokenStream2 {
+        match self.mode {
+            Mode::Solidity => quote! {
+                if #codec_type::<#type_name>::is_dynamic() {
+                    encoded_args[32..].to_vec()
+                } else {
+                    encoded_args.to_vec()
+                }
+            },
+            Mode::Fluent => quote! {
+                if #codec_type::<#type_name>::is_dynamic() {
+                    encoded_args[4..].to_vec()
+                } else {
+                    encoded_args.to_vec()
+                }
+            },
+        }
+    }
+
+    /// Creates the decode offset expression based on the mode
+    fn create_decode_offset_expr(
+        &self,
+        codec_type: &TokenStream2,
+        type_name: &Ident,
+    ) -> TokenStream2 {
+        match self.mode {
+            Mode::Solidity => quote! {
+                if #codec_type::<#type_name>::is_dynamic() {
+                    ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                } else {
+                    ::alloc::vec::Vec::new()
+                }
+            },
+            Mode::Fluent => quote! {
+                if #codec_type::<#type_name>::is_dynamic() {
+                    (4_u32).to_le_bytes().to_vec()
+                } else {
+                    ::alloc::vec::Vec::new()
+                }
+            },
+        }
+    }
+
+    /// Determines the appropriate crate path to use for codec implementations
+    fn get_crate_path(&self) -> TokenStream2 {
+        match std::env::var("CARGO_PKG_NAME").as_deref() {
+            Ok("fluentbase-codec") => quote! { crate },
+            Ok("fluentbase-sdk" | "fluentbase-types" | "fluentbase-runtime") => {
+                quote! { fluentbase_codec }
+            }
+            _ => quote! { fluentbase_sdk::codec },
+        }
+    }
+
+    /// Gets the appropriate codec type based on router mode
+    fn get_codec_type(&self) -> TokenStream2 {
+        let crate_path = self.get_crate_path();
+        match self.mode {
+            Mode::Solidity => quote! { #crate_path::encoder::SolidityABI },
+            Mode::Fluent => quote! { #crate_path::encoder::FluentABI },
         }
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use insta::assert_snapshot;
+    use syn::{parse_quote, ImplItemFn};
 
-/// Helper struct for storing generated struct names
-#[derive(Clone)]
-struct StructNames {
-    call: syn::Ident,
-    call_args: syn::Ident,
-    call_target: syn::Ident,
-    return_: syn::Ident,
-    return_args: syn::Ident,
-    return_target: syn::Ident,
-}
+    fn create_route(item: ImplItemFn) -> ParsedMethod<ImplItemFn> {
+        ParsedMethod::from_ref(&item).unwrap()
+    }
 
-/// Helper struct for storing generated argument types
-struct ArgsTypes {
-    input: TokenStream2,
-    output: TokenStream2,
-}
+    fn create_generator(
+        route: &ParsedMethod<ImplItemFn>,
+        mode: Mode,
+    ) -> CodecGenerator<ImplItemFn> {
+        CodecGenerator::new(route, &mode)
+    }
 
-/// Helper struct for storing offset handling code
-struct OffsetHandling {
-    encode_offset: TokenStream2,
-    decode_offset: TokenStream2,
-}
+    #[test]
+    fn test_simple_transfer_solidity() {
+        let func: ImplItemFn = parse_quote! {
+            fn transfer(&mut self, amount: u64, recipient: String) -> String {
+                // implementation
+            }
+        };
+        let route = create_route(func);
+        let generator = create_generator(&route, Mode::Solidity);
+        let result = generator.generate().unwrap();
 
-/// Helper struct for storing field encoders
-struct FieldEncoders {
-    encode_input_fields: Vec<TokenStream2>,
-    encode_output_fields: Vec<TokenStream2>,
+        assert_snapshot!("simple_transfer_solidity", result.to_string());
+    }
+
+    #[test]
+    fn test_simple_transfer_fluent() {
+        let func: ImplItemFn = parse_quote! {
+            fn transfer(&mut self, amount: u64, recipient: String) -> String {
+                // implementation
+            }
+        };
+        let route = create_route(func);
+        let generator = create_generator(&route, Mode::Fluent);
+        let result = generator.generate().unwrap();
+
+        assert_snapshot!("simple_transfer_fluent", result.to_string());
+    }
+
+    #[test]
+    fn test_complex_function() {
+        let func: ImplItemFn = parse_quote! {
+            fn complex_op(&mut self, data: Vec<u8>, pairs: Vec<(u64, String)>) -> (u64, String, Vec<u8>) {
+                // implementation
+            }
+        };
+        let route = create_route(func);
+        let generator = create_generator(&route, Mode::Solidity);
+        let result = generator.generate().unwrap();
+
+        assert_snapshot!("complex_function", result.to_string());
+    }
+
+    #[test]
+    fn test_no_params() {
+        let func: ImplItemFn = parse_quote! {
+            fn no_params(&mut self) {
+                // implementation
+            }
+        };
+        let route = create_route(func);
+        let generator = create_generator(&route, Mode::Solidity);
+        let result = generator.generate().unwrap();
+
+        assert_snapshot!("no_params", result.to_string());
+    }
+
+    #[test]
+    fn test_multiple_returns() {
+        let func: ImplItemFn = parse_quote! {
+            fn multi_return(&mut self) -> (u64, String, bool) {
+                // implementation
+            }
+        };
+        let route = create_route(func);
+        let generator = create_generator(&route, Mode::Solidity);
+        let result = generator.generate().unwrap();
+
+        assert_snapshot!("multiple_returns", result.to_string());
+    }
+
+    #[test]
+    fn test_empty_return() {
+        let func: ImplItemFn = parse_quote! {
+            fn empty_return(&mut self) -> () {
+                // implementation
+            }
+        };
+        let route = create_route(func);
+        let generator = create_generator(&route, Mode::Solidity);
+        let result = generator.generate().unwrap();
+
+        assert_snapshot!("empty_return", result.to_string());
+    }
+
+    #[test]
+    fn test_single_dynamic_param() {
+        let func: ImplItemFn = parse_quote! {
+            fn custom_greeting(&mut self, message: String) -> String {
+                // implementation
+            }
+        };
+        let route = create_route(func);
+        let generator = create_generator(&route, Mode::Solidity);
+        let result = generator.generate().unwrap();
+
+        assert_snapshot!("single_dynamic_param", result.to_string());
+    }
 }

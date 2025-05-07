@@ -2452,16 +2452,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-examples-derive-solidity"
-version = "0.1.0"
-dependencies = [
- "fluentbase-build",
- "fluentbase-sdk",
- "hex",
- "hex-literal 1.0.0",
-]
-
-[[package]]
 name = "fluentbase-examples-erc20"
 version = "0.1.0"
 dependencies = [

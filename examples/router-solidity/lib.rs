@@ -7,8 +7,10 @@ extern crate fluentbase_sdk;
 use alloc::string::String;
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{function_id, router, Contract},
+    derive::{router, Contract},
+    Address,
     SharedAPI,
+    U256,
 };
 
 #[derive(Contract)]
@@ -17,26 +19,16 @@ struct App<SDK> {
 }
 
 pub trait RouterAPI {
-    fn greeting(&self, message: String) -> String;
+    fn greeting(&self, addr: Address, amount: U256, message: String) -> String;
     fn custom_greeting(&self, message: String) -> String;
 }
 
-// TODO(d1r1): Prevent creation of intermediate directories during attribute typing.
-// When IDE runs automatic cargo check while user is typing the artifacts path,
-// unwanted directories are created (a/, ar/, art/, etc). Consider using a deferred
-// approach where artifacts location is stored in configuration rather than directly
-// in attribute parameters.
-#[router(
-    mode = "solidity",
-    artifacts = "/Users/danilnaumov/dev/src/github.com/fluentlabs-xyz/fluentbase-v3/examples/router-solidity/artifacts"
-)]
+#[router(mode = "solidity")]
 impl<SDK: SharedAPI> RouterAPI for App<SDK> {
-    #[function_id("greeting(string)")]
-    fn greeting(&self, message: String) -> String {
+    fn greeting(&self, addr: Address, amount: U256, message: String) -> String {
         message
     }
 
-    #[function_id("customGreeting(string)")]
     fn custom_greeting(&self, message: String) -> String {
         message
     }
@@ -58,46 +50,24 @@ mod tests {
 
     #[test]
     fn test_greeting() {
-        let input = GreetingCall::new(("Hello, World".to_string(),)).encode();
-        sol!(
-            function greeting(string message);
-        );
-        let input_sol = greetingCall {
-            message: "Hello, World".to_string(),
-        }
-        .abi_encode();
-        assert_eq!(hex::encode(&input), hex::encode(&input_sol));
-        println!("greeting(string) input: {:?}", hex::encode(&input));
-        let sdk = TestingContext::default().with_input(input);
-        let mut router = App::new(sdk.clone());
-        router.deploy();
-        router.main();
-        let encoded_output = &sdk.take_output();
-        println!("output: {:?}", hex::encode(&encoded_output));
-        let output = GreetingReturn::decode(&encoded_output.as_slice()).unwrap();
-        println!("output: {:?}", &output.0);
-        assert_eq!(output.0 .0, "Hello, World".to_string());
+        let input = router_api_app::GreetingCall::new((
+            Address::from_slice(&hex::decode("2fbafa312f219b32c007f683491aaf54d9173561").unwrap()),
+            U256::from(12345),
+            "Hello, World".to_string(),
+        ))
+        .encode();
+
+        let expected_output = "4e8563f80000000000000000000000002fbafa312f219b32c007f683491aaf54d917356100000000000000000000000000000000000000000000000000000000000030390000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000c48656c6c6f2c20576f726c640000000000000000000000000000000000000000";
+
+        assert_eq!(hex::encode(&input), expected_output);
     }
 
     #[test]
     fn test_custom_greeting() {
         let s = String::from("Custom Hello, World!!");
-        let input = CustomGreetingCall::new((s.clone(),)).encode();
-        // SOL INPUT
-        sol!(
-            function customGreeting(string message);
-        );
-        let input_sol = customGreetingCall { message: s.clone() }.abi_encode();
-        assert_eq!(hex::encode(&input), hex::encode(&input_sol));
-        println!("customGreeting(string) input: {:?}", hex::encode(&input));
-        let sdk = TestingContext::default().with_input(input);
-        let mut router = App::new(sdk.clone());
-        router.deploy();
-        router.main();
-        let encoded_output = &sdk.take_output();
-        println!("output: {:?}", hex::encode(&encoded_output));
-        let output = CustomGreetingReturn::decode(&encoded_output.as_slice()).unwrap();
-        println!("output: {:?}", &output.0);
-        assert_eq!(output.0 .0, s);
+        let input = router_api_app::CustomGreetingCall::new((s.clone(),)).encode();
+        let expected_output = "36b83a9a00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000015437573746f6d2048656c6c6f2c20576f726c6421210000000000000000000000";
+
+        assert_eq!(hex::encode(&input), expected_output);
     }
 }

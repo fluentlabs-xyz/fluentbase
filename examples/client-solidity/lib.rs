@@ -32,7 +32,7 @@ impl<SDK: SharedAPI> RouterAPIClient<SDK> {
         gas_limit: u64,
         message: String,
     ) -> String {
-        self.greeting(contract_address, value, gas_limit, message).0
+        self.greeting(contract_address, value, gas_limit, message)
     }
 
     pub fn deploy(&self) {
@@ -60,8 +60,13 @@ mod tests {
         let contract_address = address!("f91c20c0cafbfdc150adff51bbfc5808edde7cb5");
         let value = U256::from(0);
         let gas_limit = 21_000;
-        let input =
-            GreetingClientCall::new((contract_address, value, gas_limit, msg.clone())).encode();
+        let input = router_api_client::GreetingClientCall::new((
+            contract_address,
+            value,
+            gas_limit,
+            msg.clone(),
+        ))
+        .encode();
         let expected_encoded = "f60ea708000000000000000000000000f91c20c0cafbfdc150adff51bbfc5808edde7cb5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000052080000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000b48656c6c6f20576f726c64000000000000000000000000000000000000000000";
         assert_eq!(hex::encode(&input), expected_encoded);
         let mut decode_buf = BytesMut::new();
