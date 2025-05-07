@@ -375,6 +375,9 @@ mod tests {
 
         let generated = client.generate().unwrap();
 
-        assert_snapshot!("generate_client", generated.to_string());
+        let parsed = syn::parse_file(&generated.to_string()).unwrap();
+        let formatted = prettyplease::unparse(&parsed);
+
+        assert_snapshot!("generate_client", formatted.to_string());
     }
 }

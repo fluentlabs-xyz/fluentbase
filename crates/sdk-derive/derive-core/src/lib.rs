@@ -3,7 +3,7 @@
 
 mod abi;
 mod artifacts;
-mod attr;
+pub mod attr;
 pub mod client;
 mod codec;
 mod method;

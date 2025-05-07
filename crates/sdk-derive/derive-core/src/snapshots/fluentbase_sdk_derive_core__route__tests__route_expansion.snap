@@ -1,5 +1,0 @@
----
-source: crates/sdk-derive/derive-core/src/route.rs
-expression: tokens.to_string()
----
-TransferCall :: SELECTOR => { let (to , amount) = match TransferCall :: decode (& params) { Ok (decoded) => (decoded . 0. 0 , decoded . 0. 1) , Err (err) => panic ! ("Failed to decode input parameters: {:?}" , err) , } ; let output = self . transfer (to , amount) ; let encoded_output = TransferReturn :: new ((output ,)) . encode () ; self . sdk . write (& encoded_output) ; }

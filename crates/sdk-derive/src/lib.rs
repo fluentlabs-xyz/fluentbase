@@ -8,14 +8,19 @@ mod contract;
 mod utils;
 use syn::parse_macro_input;
 
+/// Internal attribute used by the router macro.
+/// This is not meant to be used directly by users.
+#[doc(hidden)]
+#[proc_macro_attribute]
+pub fn _function_id(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
 #[doc = include_str!("../docs/router.md")]
 #[proc_macro_attribute]
 #[proc_macro_error]
 pub fn router(attr: TokenStream, input: TokenStream) -> TokenStream {
-    let attr_ts = proc_macro2::TokenStream::from(attr);
-    let input_items = parse_macro_input!(input as syn::ItemImpl);
-
-    match router::process_router(attr_ts, input_items.to_token_stream()) {
+    match router::process_router(attr.into(), input.into()) {
         Ok(router) => router.to_token_stream().into(),
         Err(err) => err.to_compile_error().into(),
     }

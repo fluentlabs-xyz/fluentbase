@@ -346,19 +346,10 @@ pub(crate) fn create_function_id_mismatch_error(
     signature: String,
 ) -> Error {
     let error_msg = format!(
-        "Function ID mismatch\n\
-        \n\
-        Expected: 0x{}\n\
-        Got:     0x{}\n\
-        \n\
-        Rust method signature: {}\n\
-        \n\
-        Note: Function IDs are calculated based on the method signature\n\
-              and used for method dispatching only\n\
-        \n",
+        "Function ID mismatch: Expected 0x{} for '{}', but got 0x{}",
         hex::encode(calculated_id),
-        hex::encode(attr_id),
         signature,
+        hex::encode(attr_id),
     );
 
     Error::new(span, error_msg)

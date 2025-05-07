@@ -288,9 +288,12 @@ where
 
         // Build the base output
         let output = quote! {
+            #[allow(unused_imports)]
+            use ::fluentbase_sdk::derive::_function_id as function_id;
             #impl_block
             pub mod #module_name {
                 use super::*;
+
                 #(#method_codecs)*
             }
             #dispatch_method

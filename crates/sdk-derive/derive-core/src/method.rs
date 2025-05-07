@@ -2,6 +2,7 @@ use crate::{
     attr::{function_id::create_function_id_mismatch_error, FunctionIDAttribute},
     signature::ParsedSignature,
 };
+use proc_macro2::Span;
 use syn::{spanned::Spanned, Attribute, ImplItemFn, Signature, TraitItemFn};
 
 /// Trait defining common behavior for trait and impl methods
@@ -9,11 +10,15 @@ pub trait MethodLike: Sized {
     fn sig(&self) -> &Signature;
     fn attrs(&self) -> &Vec<Attribute>;
 
-    fn function_id_attr(&self) -> syn::Result<Option<FunctionIDAttribute>> {
+    fn function_id_attr(&self) -> syn::Result<Option<(FunctionIDAttribute, Span)>> {
         self.attrs()
             .iter()
             .find(|a| a.path().is_ident("function_id"))
-            .map(|attr| attr.parse_args::<FunctionIDAttribute>())
+            .map(|attr| {
+                let content_span = attr.meta.require_list()?.tokens.span();
+                attr.parse_args::<FunctionIDAttribute>()
+                    .map(|parsed| (parsed, content_span))
+            })
             .transpose()
     }
 }
@@ -59,13 +64,13 @@ impl<T: MethodLike> ParsedMethod<T> {
         let sig = ParsedSignature::new(inner.sig().clone());
         let function_id = sig.function_abi()?.function_id()?;
 
-        if let Some(attr) = inner.function_id_attr()? {
+        if let Some((attr, attr_span)) = inner.function_id_attr()? {
             let function_id_attr = attr.function_id_bytes()?;
 
             if attr.is_validation_enabled() {
                 if function_id_attr != function_id {
                     return Err(create_function_id_mismatch_error(
-                        inner.sig().span(),
+                        attr_span,
                         &function_id,
                         &function_id_attr,
                         sig.function_abi()?.signature()?,
