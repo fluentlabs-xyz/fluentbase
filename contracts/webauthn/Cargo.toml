@@ -13,6 +13,7 @@ revm-precompile = { workspace = true, features = ["secp256r1"] }
 sha2 = { version = "0.10", default-features = false }
 
 [dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"] }
 
 [lib]

@@ -47,7 +47,8 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{bytes::BytesMut, testing::TestingContext};
+    use fluentbase_sdk::{bytes::BytesMut};
+    use fluentbase_sdk_testing::HostTestingContext;
 
     #[test]
     #[should_panic(expected = "not a checkmate")]
@@ -62,7 +63,7 @@ mod tests {
             0,
         )
         .unwrap();
-        let sdk = TestingContext::default().with_input(input.to_vec());
+        let sdk = HostTestingContext::default().with_input(input.to_vec());
         main(sdk.clone());
         assert_eq!(sdk.exit_code(), 0);
     }
@@ -79,7 +80,7 @@ mod tests {
             0,
         )
         .unwrap();
-        let sdk = TestingContext::default().with_input(input.to_vec());
+        let sdk = HostTestingContext::default().with_input(input.to_vec());
         main(sdk.clone());
         assert_eq!(sdk.exit_code(), 0);
     }
@@ -89,7 +90,7 @@ mod tests {
     fn test_is_board_valid_invalid() {
         let mut input = BytesMut::new();
         SolidityABI::encode(&123u64, &mut input, 0).unwrap();
-        let sdk = TestingContext::default().with_input(input.to_vec());
+        let sdk = HostTestingContext::default().with_input(input.to_vec());
         main(sdk.clone());
     }
 }

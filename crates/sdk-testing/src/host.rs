@@ -1,9 +1,9 @@
-use crate::{runtime::RuntimeContextWrapper, Address, Bytes, B256, U256};
-use alloc::{rc::Rc, vec::Vec};
 use core::cell::RefCell;
-use fluentbase_runtime::RuntimeContext;
+use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_types::{
     native_api::NativeAPI,
+    Address,
+    Bytes,
     ContractContextV1,
     ExitCode,
     IsAccountEmpty,
@@ -12,18 +12,21 @@ use fluentbase_types::{
     SharedContextInputV1,
     SharedContextReader,
     SyscallResult,
+    B256,
     FUEL_DENOM_RATE,
+    U256,
 };
 use hashbrown::HashMap;
+use std::rc::Rc;
 
 #[derive(Clone)]
-pub struct TestingContext {
+pub struct HostTestingContext {
     inner: Rc<RefCell<TestingContextInner>>,
 }
 
-pub type TestingContextNativeAPI = RuntimeContextWrapper;
+pub type HostTestingContextNativeAPI = RuntimeContextWrapper;
 
-impl TestingContext {
+impl HostTestingContext {
     pub fn with_contract_context(self, contract_context: ContractContextV1) -> Self {
         self.inner.borrow_mut().shared_context_input_v1.contract = contract_context;
         self
@@ -69,7 +72,7 @@ struct TestingContextInner {
     preimages: HashMap<B256, Bytes>,
 }
 
-impl Default for TestingContext {
+impl Default for HostTestingContext {
     fn default() -> Self {
         Self {
             inner: Rc::new(RefCell::new(TestingContextInner {
@@ -84,7 +87,7 @@ impl Default for TestingContext {
     }
 }
 
-impl SharedAPI for TestingContext {
+impl SharedAPI for HostTestingContext {
     fn context(&self) -> impl SharedContextReader {
         self.inner.borrow().shared_context_input_v1.clone()
     }

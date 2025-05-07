@@ -5,7 +5,6 @@ use fluentbase_sdk::{
     bytes::BytesMut,
     calc_create_address,
     codec::CompactABI,
-    testing::{TestingContext, TestingContextNativeAPI},
     Address,
     Bytes,
     ExitCode,
@@ -15,6 +14,7 @@ use fluentbase_sdk::{
     STATE_MAIN,
     U256,
 };
+use fluentbase_sdk_testing::{HostTestingContext, HostTestingContextNativeAPI};
 use fluentbase_types::compile_wasm_to_rwasm;
 use revm::{
     primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, TransactTo},
@@ -26,7 +26,7 @@ use rwasm::rwasm::{instruction::InstructionExtra, BinaryFormat, RwasmModule};
 
 #[allow(dead_code)]
 pub(crate) struct EvmTestingContext {
-    pub sdk: TestingContext,
+    pub sdk: HostTestingContext,
     pub genesis: Genesis,
     pub db: InMemoryDB,
 }
@@ -59,7 +59,7 @@ impl EvmTestingContext {
             db.insert_account_info(*k, info);
         }
         Self {
-            sdk: TestingContext::default(),
+            sdk: HostTestingContext::default(),
             genesis,
             db,
         }
@@ -144,7 +144,7 @@ impl EvmTestingContext {
         }
         println!("deployment gas used: {}", result.gas_used());
         assert!(result.is_success());
-        let contract_address = calc_create_address::<TestingContextNativeAPI>(&deployer, 0);
+        let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, 0);
         assert_eq!(contract_address, deployer.create(0));
         (contract_address, result.gas_used())
     }
@@ -166,7 +166,7 @@ impl EvmTestingContext {
             );
         }
         assert!(result.is_success());
-        let contract_address = calc_create_address::<TestingContextNativeAPI>(&deployer, nonce);
+        let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, nonce);
         assert_eq!(contract_address, deployer.create(nonce));
 
         (contract_address, result.gas_used())

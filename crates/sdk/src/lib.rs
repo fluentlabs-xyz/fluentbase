@@ -11,14 +11,10 @@ pub mod entrypoint;
 pub mod leb128;
 mod macros;
 pub mod panic;
-#[cfg(feature = "std")]
-pub mod runtime;
 #[cfg(not(feature = "std"))]
 pub mod rwasm;
 pub mod shared;
 pub mod storage;
-#[cfg(feature = "std")]
-pub mod testing;
 
 pub use allocator::*;
 pub use fluentbase_codec as codec;

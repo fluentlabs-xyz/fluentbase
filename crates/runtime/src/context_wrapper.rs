@@ -1,5 +1,4 @@
-use alloc::rc::Rc;
-use fluentbase_runtime::{
+use crate::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
@@ -23,7 +22,7 @@ use fluentbase_runtime::{
     RuntimeContext,
 };
 use fluentbase_types::{native_api::NativeAPI, BytecodeOrHash, Bytes, UnwrapExitCode, B256};
-use std::{cell::RefCell, mem::take};
+use std::{cell::RefCell, mem::take, rc::Rc};
 
 #[derive(Default, Clone)]
 pub struct RuntimeContextWrapper {

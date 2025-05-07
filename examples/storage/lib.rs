@@ -38,11 +38,12 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod test {
     use super::*;
-    use fluentbase_sdk::{hex, testing::TestingContext, ContractContextV1};
+    use fluentbase_sdk::{hex, ContractContextV1};
+    use fluentbase_sdk_testing::HostTestingContext;
     use serial_test::serial;
 
-    fn with_test_input<T: Into<Bytes>>(input: T, caller: Option<Address>) -> TestingContext {
-        TestingContext::default()
+    fn with_test_input<T: Into<Bytes>>(input: T, caller: Option<Address>) -> HostTestingContext {
+        HostTestingContext::default()
             .with_contract_context(ContractContextV1 {
                 caller: caller.unwrap_or_default(),
                 ..Default::default()

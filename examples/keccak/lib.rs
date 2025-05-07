@@ -16,11 +16,12 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, testing::TestingContext};
+    use fluentbase_sdk::{hex};
+    use fluentbase_sdk_testing::HostTestingContext;
 
     #[test]
     fn test_contract_works() {
-        let sdk = TestingContext::default().with_input("Hello, World");
+        let sdk = HostTestingContext::default().with_input("Hello, World");
         main(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(

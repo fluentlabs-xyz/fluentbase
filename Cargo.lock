@@ -2225,6 +2225,7 @@ name = "fluentbase-contracts-blake2f"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "revm-precompile",
 ]
 
@@ -2233,6 +2234,7 @@ name = "fluentbase-contracts-bls12381"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "revm-precompile",
 ]
 
@@ -2241,6 +2243,7 @@ name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "revm-precompile",
 ]
 
@@ -2249,6 +2252,7 @@ name = "fluentbase-contracts-ecrecover"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "revm-precompile",
 ]
 
@@ -2265,6 +2269,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-evm",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
 ]
 
 [[package]]
@@ -2276,6 +2281,7 @@ name = "fluentbase-contracts-identity"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "revm-precompile",
 ]
 
@@ -2284,6 +2290,7 @@ name = "fluentbase-contracts-kzg"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "revm-precompile",
 ]
 
@@ -2292,6 +2299,7 @@ name = "fluentbase-contracts-modexp"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "revm-precompile",
 ]
 
@@ -2311,6 +2319,7 @@ dependencies = [
  "der",
  "ecdsa",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "hex",
  "p384",
  "x509-cert",
@@ -2328,6 +2337,7 @@ name = "fluentbase-contracts-ripemd160"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "revm-precompile",
 ]
 
@@ -2337,6 +2347,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "hex",
  "p256",
  "revm-precompile",
@@ -2348,6 +2359,7 @@ name = "fluentbase-contracts-sha256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "revm-precompile",
 ]
 
@@ -2357,6 +2369,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "hex",
  "p256",
  "revm-precompile",
@@ -2374,6 +2387,7 @@ dependencies = [
  "fluentbase-genesis",
  "fluentbase-runtime",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "fluentbase-types",
  "hex",
  "hex-literal 1.0.0",
@@ -2390,6 +2404,8 @@ dependencies = [
  "bincode 2.0.1",
  "bitvec",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
+ "url",
 ]
 
 [[package]]
@@ -2398,6 +2414,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "hex-literal 1.0.0",
 ]
 
@@ -2407,6 +2424,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "shakmaty",
 ]
 
@@ -2425,6 +2443,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
 ]
 
 [[package]]
@@ -2434,6 +2453,7 @@ dependencies = [
  "alloy-sol-types",
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "hex-literal 0.4.1",
  "serial_test",
 ]
@@ -2444,6 +2464,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
 ]
 
 [[package]]
@@ -2452,8 +2473,10 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "serde",
  "serde-json-core",
+ "serde_json",
 ]
 
 [[package]]
@@ -2461,6 +2484,7 @@ name = "fluentbase-examples-keccak"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
 ]
 
 [[package]]
@@ -2469,6 +2493,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
 ]
 
 [[package]]
@@ -2478,6 +2503,7 @@ dependencies = [
  "alloy-sol-types",
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "hex",
 ]
 
@@ -2496,6 +2522,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "hex",
  "hex-literal 1.0.0",
  "libsecp256k1",
@@ -2509,6 +2536,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "hex-literal 0.4.1",
 ]
 
@@ -2518,6 +2546,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "serial_test",
 ]
 
@@ -2527,6 +2556,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "tiny-keccak",
 ]
 
@@ -2572,7 +2602,6 @@ name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
  "fluentbase-codec",
- "fluentbase-runtime",
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.15.2",
@@ -2605,6 +2634,17 @@ dependencies = [
  "syn-solidity 0.7.7",
  "thiserror 1.0.69",
  "tracing",
+]
+
+[[package]]
+name = "fluentbase-sdk-testing"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-codec",
+ "fluentbase-runtime",
+ "fluentbase-sdk-derive",
+ "fluentbase-types",
+ "hashbrown 0.15.2",
 ]
 
 [[package]]

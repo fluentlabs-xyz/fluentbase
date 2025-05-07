@@ -19,11 +19,11 @@ func_entrypoint!(main, deploy);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::testing::TestingContext;
+    use fluentbase_sdk_testing::HostTestingContext;
 
     #[test]
     fn test_simple_storage_set_and_get() {
-        let sdk = TestingContext::default();
+        let sdk = HostTestingContext::default();
         deploy(sdk.clone());
         main(sdk.clone());
     }

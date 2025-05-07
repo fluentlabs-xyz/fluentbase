@@ -12,6 +12,7 @@ categories.workspace = true
 [dependencies]
 fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
+fluentbase-sdk-testing = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
 fluentbase-types = { workspace = true }

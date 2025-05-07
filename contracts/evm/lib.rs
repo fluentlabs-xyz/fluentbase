@@ -281,7 +281,8 @@ func_entrypoint!(main, deploy);
 mod tests {
     use crate::{deploy, main};
     use core::str::from_utf8;
-    use fluentbase_sdk::{hex, testing::TestingContext, Address, ContractContextV1, U256};
+    use fluentbase_sdk::{hex, Address, ContractContextV1, U256};
+    use fluentbase_sdk_testing::HostTestingContext;
 
     #[test]
     fn test_deploy_greeting() {
@@ -289,7 +290,7 @@ mod tests {
             189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111, 164, 142,
             177,
         ]);
-        let mut sdk = TestingContext::default()
+        let mut sdk = HostTestingContext::default()
             .with_contract_context(ContractContextV1 {
                 address: CONTRACT_ADDRESS,
                 bytecode_address: CONTRACT_ADDRESS,

@@ -123,11 +123,13 @@ mod tests {
         pop,
         push,
     };
-    use fluentbase_sdk::{testing::TestingContext, uint, U256};
+    use fluentbase_sdk::{uint, U256};
+    use fluentbase_sdk_testing::HostTestingContext;
+    use url::Host;
 
     #[test]
     fn test_shift_left() {
-        let mut sdk = TestingContext::default();
+        let mut sdk = HostTestingContext::default();
         let mut evm = EVM::new(&mut sdk, AnalyzedBytecode::default(), &[], u64::MAX);
 
         struct TestCase {
@@ -207,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_logical_shift_right() {
-        let mut sdk = TestingContext::default();
+        let mut sdk = HostTestingContext::default();
         let mut evm = EVM::new(&mut sdk, AnalyzedBytecode::default(), &[], u64::MAX);
 
         struct TestCase {
@@ -287,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_arithmetic_shift_right() {
-        let mut sdk = TestingContext::default();
+        let mut sdk = HostTestingContext::default();
         let mut evm = EVM::new(&mut sdk, AnalyzedBytecode::default(), &[], u64::MAX);
 
         struct TestCase {
@@ -398,7 +400,7 @@ mod tests {
             expected: U256,
         }
 
-        let mut sdk = TestingContext::default();
+        let mut sdk = HostTestingContext::default();
         let mut evm = EVM::new(&mut sdk, AnalyzedBytecode::default(), &[], u64::MAX);
 
         let input_value = U256::from(0x1234567890abcdef1234567890abcdef_u128);

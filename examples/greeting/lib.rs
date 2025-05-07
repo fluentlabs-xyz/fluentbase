@@ -27,11 +27,11 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::testing::TestingContext;
+    use fluentbase_sdk_testing::HostTestingContext;
 
     #[test]
     fn test_contract_works() {
-        let sdk = TestingContext::default();
+        let sdk = HostTestingContext::default();
         main(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(&output, "Hello, World".as_bytes());

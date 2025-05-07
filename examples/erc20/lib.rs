@@ -195,7 +195,8 @@ basic_entrypoint!(ERC20);
 #[cfg(test)]
 mod test {
     use super::*;
-    use fluentbase_sdk::{address, testing::TestingContext, ContractContextV1};
+    use fluentbase_sdk::{address, ContractContextV1};
+    use fluentbase_sdk_testing::HostTestingContext;
     use hex_literal::hex;
     use serial_test::serial;
 
@@ -205,7 +206,7 @@ mod test {
         let owner_address = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
         let owner_balance = U256::from_str_radix("1000000000000000000000000", 10).unwrap();
         // set up the test input with the owner's address as the contract caller
-        let sdk = TestingContext::default().with_contract_context(ContractContextV1 {
+        let sdk = HostTestingContext::default().with_contract_context(ContractContextV1 {
             caller: owner_address,
             ..Default::default()
         });
@@ -221,7 +222,7 @@ mod test {
     #[test]
     pub fn test_name() {
         let call_name = NameCall::new(()).encode();
-        let sdk = TestingContext::default().with_input(call_name);
+        let sdk = HostTestingContext::default().with_input(call_name);
         let mut erc20 = ERC20::new(sdk.clone());
         erc20.deploy();
         erc20.main();
@@ -235,7 +236,7 @@ mod test {
     #[test]
     pub fn test_symbol() {
         let call_symbol = SymbolCall::new(()).encode();
-        let sdk = TestingContext::default().with_input(call_symbol);
+        let sdk = HostTestingContext::default().with_input(call_symbol);
         let mut erc20 = ERC20::new(sdk.clone());
         erc20.deploy();
         erc20.main();
@@ -250,7 +251,7 @@ mod test {
     pub fn test_balance_of() {
         let owner_address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let expected_balance = "1000000000000000000000000";
-        let sdk = TestingContext::default().with_contract_context(ContractContextV1 {
+        let sdk = HostTestingContext::default().with_contract_context(ContractContextV1 {
             caller: owner_address,
             ..Default::default()
         });
@@ -275,7 +276,7 @@ mod test {
         let from = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let to = address!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3");
         let value = U256::from_str_radix("100000000000000000000", 10).unwrap();
-        let sdk = TestingContext::default().with_contract_context(ContractContextV1 {
+        let sdk = HostTestingContext::default().with_contract_context(ContractContextV1 {
             caller: from,
             ..Default::default()
         });
@@ -310,7 +311,7 @@ mod test {
         let spender = address!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3");
         let approve_call = ApproveCall::new((spender, U256::from(1000))).encode();
 
-        let sdk = TestingContext::default()
+        let sdk = HostTestingContext::default()
             .with_contract_context(ContractContextV1 {
                 caller: owner,
                 ..Default::default()
@@ -339,7 +340,7 @@ mod test {
         let spender = address!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3");
         let recipient = address!("6dDb6e7F3b7e4991e3f75121aE3De2e1edE3bF19");
 
-        let sdk = TestingContext::default().with_contract_context(ContractContextV1 {
+        let sdk = HostTestingContext::default().with_contract_context(ContractContextV1 {
             caller: owner,
             ..Default::default()
         });

@@ -20,7 +20,7 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::testing::TestingContext;
+    use fluentbase_sdk_testing::HostTestingContext;
 
     #[test]
     fn test_nitro_attestation_verification() {
@@ -31,7 +31,7 @@ mod tests {
             .into();
         let doc = attestation::parse_and_verify(&data);
         assert_eq!(doc.digest, "SHA384");
-        let sdk = TestingContext::default().with_input(data);
+        let sdk = HostTestingContext::default().with_input(data);
         main(sdk);
     }
 }

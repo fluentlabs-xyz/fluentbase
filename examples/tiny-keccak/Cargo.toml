@@ -8,6 +8,7 @@ fluentbase-sdk = { workspace = true }
 tiny-keccak = { workspace = true }
 
 [dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }

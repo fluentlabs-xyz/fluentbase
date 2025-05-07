@@ -81,11 +81,12 @@ func_entrypoint!(main);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{testing::TestingContext, Bytes, ContractContextV1, B256};
+    use fluentbase_sdk::{Bytes, ContractContextV1, B256};
+    use fluentbase_sdk_testing::HostTestingContext;
 
     fn assert_call_eq(input: &[u8], expected: &[u8]) {
         let gas_limit = 100_000;
-        let sdk = TestingContext::default()
+        let sdk = HostTestingContext::default()
             .with_input(Bytes::copy_from_slice(input))
             .with_contract_context(ContractContextV1 {
                 gas_limit,

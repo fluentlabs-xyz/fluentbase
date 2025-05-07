@@ -4,11 +4,11 @@ use fluentbase_sdk::{
     address,
     bytes,
     calc_create_address,
-    testing::TestingContextNativeAPI,
     Address,
     Bytes,
     U256,
 };
+use fluentbase_sdk_testing::HostTestingContextNativeAPI;
 use hex_literal::hex;
 use revm::primitives::{ExecutionResult, Output};
 
@@ -20,7 +20,7 @@ fn test_bridge_contract() {
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     let gas_price = U256::from(0);
     // now send success tx
-    let contract_address = calc_create_address::<TestingContextNativeAPI>(&SENDER_ADDRESS, 0);
+    let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 0);
     let mut tx_builder = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
