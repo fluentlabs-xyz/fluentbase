@@ -12,7 +12,7 @@ pub struct RwasmCompilationResult {
     pub constructor_params: Bytes,
 }
 
-pub fn default_rwasm_config() -> Config {
+pub fn default_compilation_config() -> Config {
     let mut config = RwasmModule::default_config(None);
     config.rwasm_config(RwasmConfig {
         state_router: Some(StateRouterConfig {
@@ -51,7 +51,6 @@ pub fn compile_wasm_to_rwasm_with_config(
     })
 }
 
-#[inline(always)]
 pub fn compile_wasm_to_rwasm(wasm_binary: &[u8]) -> Result<RwasmCompilationResult, Error> {
-    compile_wasm_to_rwasm_with_config(wasm_binary, default_rwasm_config())
+    compile_wasm_to_rwasm_with_config(wasm_binary, default_compilation_config())
 }

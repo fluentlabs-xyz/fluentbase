@@ -47,7 +47,8 @@ mod genesis_builder {
     use fluentbase_build::{build_wasm_program, cargo_rerun_if_changed, WasmBuildConfig};
     use fluentbase_types::{
         address,
-        compile_wasm_to_rwasm,
+        compile_wasm_to_rwasm_with_config,
+        default_compilation_config,
         Address,
         Bytes,
         B256,
@@ -98,7 +99,11 @@ mod genesis_builder {
         binary_data: Vec<u8>,
     ) {
         let bytecode: Bytes = if binary_data.starts_with(&WASM_SIG) {
-            let result = compile_wasm_to_rwasm(&binary_data).unwrap();
+            let mut config = default_compilation_config();
+            // genesis contracts self-manage gas via `charge_fuel_manually` syscall, and additional
+            // charging for each builtin is not expected.
+            config.builtins_consume_fuel(false);
+            let result = compile_wasm_to_rwasm_with_config(&binary_data, config).unwrap();
             if !result.constructor_params.is_empty() {
                 panic!(
                     "rwasm contract ({}) should not have constructor params",
