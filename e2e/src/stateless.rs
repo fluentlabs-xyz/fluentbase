@@ -1,12 +1,10 @@
 use crate::{
-    examples::{
-        EXAMPLE_GREETING,
-        EXAMPLE_KECCAK256,
-        EXAMPLE_PANIC,
-        EXAMPLE_ROUTER_SOLIDITY,
-        EXAMPLE_RWASM,
-    },
     utils::run_with_default_context,
+    EXAMPLE_GREETING,
+    EXAMPLE_PANIC,
+    EXAMPLE_ROUTER_SOLIDITY,
+    EXAMPLE_RWASM,
+    EXAMPLE_TINY_KECCAK256,
 };
 use core::str::from_utf8;
 use hex_literal::hex;
@@ -22,7 +20,7 @@ fn test_example_greeting() {
 #[test]
 fn test_example_keccak256() {
     let (output, exit_code) =
-        run_with_default_context(EXAMPLE_KECCAK256.to_vec(), "Hello, World".as_bytes());
+        run_with_default_context(EXAMPLE_TINY_KECCAK256.to_vec(), "Hello, World".as_bytes());
     assert_eq!(exit_code, 0);
     assert_eq!(
         output[0..32],
