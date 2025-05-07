@@ -277,9 +277,9 @@ fn parse_validate_attribute(input: ParseStream) -> Result<Option<bool>> {
 
             match &nested[0] {
                 syn::Expr::Lit(syn::ExprLit {
-                                   lit: syn::Lit::Bool(lit_bool),
-                                   ..
-                               }) => Ok(Some(lit_bool.value)),
+                    lit: syn::Lit::Bool(lit_bool),
+                    ..
+                }) => Ok(Some(lit_bool.value)),
                 _ => Err(syn::Error::new(
                     nested[0].span(),
                     "Expected a boolean literal for 'validate'",
