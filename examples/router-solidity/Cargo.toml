@@ -5,9 +5,9 @@ version = "0.1.0"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
+alloy-sol-types = { workspace = true, default-features = false }
 
 [dev-dependencies]
-alloy-sol-types = { workspace = true, default-features = false }
 hex = "0.4.3"
 
 [build-dependencies]

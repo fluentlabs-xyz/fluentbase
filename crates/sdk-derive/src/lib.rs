@@ -12,7 +12,7 @@ use syn::parse_macro_input;
 /// This is not meant to be used directly by users.
 #[doc(hidden)]
 #[proc_macro_attribute]
-pub fn _function_id(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn function_id(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 

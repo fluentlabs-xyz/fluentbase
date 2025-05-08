@@ -207,7 +207,7 @@ impl Router {
         // Build the base output
         let output = quote! {
             #[allow(unused_imports)]
-            use ::fluentbase_sdk::derive::_function_id as function_id;
+            use ::fluentbase_sdk::derive::function_id;
             #impl_block
 
             #(#method_codecs)*

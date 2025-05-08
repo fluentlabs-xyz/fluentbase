@@ -1,3 +1,4 @@
+#[doc = include_str!("../../../../../docs/type_conversion.md")]
 mod rust_to_sol;
 mod sol_to_rust;
 mod syn_sol_to_internal;

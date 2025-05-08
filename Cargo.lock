@@ -2229,7 +2229,7 @@ dependencies = [
  "fluentbase-codec-derive",
  "hashbrown 0.15.2",
  "hex",
- "hex-literal 0.4.1",
+ "hex-literal 1.0.0",
  "serde",
 ]
 
@@ -2237,8 +2237,11 @@ dependencies = [
 name = "fluentbase-codec-derive"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "convert_case 0.6.0",
  "crypto-hashes",
+ "insta",
+ "prettyplease",
  "proc-macro2",
  "quote",
  "serde",

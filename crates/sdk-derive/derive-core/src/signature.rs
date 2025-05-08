@@ -3,7 +3,7 @@ use convert_case::{Case, Casing};
 use quote::ToTokens;
 use std::ops::Deref;
 use syn::{spanned::Spanned, FnArg, ReturnType, Signature};
-// Import the Spanned trait for the span() method
+
 
 /// Wrapper around `syn::Signature`
 #[derive(Debug, Clone)]

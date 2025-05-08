@@ -18,7 +18,11 @@ crypto-hashes = { version = "0.10.0", default-features = false, features = ["inc
 proc-macro2 = { version = "1.0", default-features = false }
 
 
+
 [dev-dependencies]
+bytes = "1.0"
+insta = { version = "1.43.1", features = ["yaml"] }
+prettyplease = "0.2.32"
 
 [lib]
 proc-macro = true

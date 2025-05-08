@@ -3,7 +3,7 @@ source: crates/sdk-derive/derive-core/src/router.rs
 expression: formatted
 ---
 #[allow(unused_imports)]
-use ::fluentbase_sdk::derive::_function_id as function_id;
+use ::fluentbase_sdk::derive::function_id;
 impl<SDK: SharedAPI> RouterAPI for App<SDK> {
     #[function_id("greeting(string)")]
     fn greeting(&self, message: String) -> String {

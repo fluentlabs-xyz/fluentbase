@@ -154,6 +154,12 @@ fn convert_array_type(array: &syn::TypeArray) -> Result<SolType, ConversionError
     }
 
     let elem_type = rust_to_sol(&array.elem)?;
+    if let SolType::Uint(8) = elem_type {
+        if len <= 32 {
+            return Ok(SolType::FixedBytes(len));
+        }
+    }
+
     Ok(SolType::FixedArray(Box::new(elem_type), len))
 }
 
@@ -189,7 +195,6 @@ fn convert_fixed_bytes(type_name: &str, args: &PathArguments) -> Result<SolType,
         "{type_name} requires a size parameter between 1 and 32"
     )))
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,6 +227,7 @@ mod tests {
         assert_type("U256", SolType::Uint(256));
         assert_type("i8", SolType::Int(8));
         assert_type("i256", SolType::Int(256));
+        assert_type("I256", SolType::Int(256));
         assert_type("Address", SolType::Address);
         assert_type("String", SolType::String);
         assert_type("Bytes", SolType::Bytes);
@@ -229,11 +235,11 @@ mod tests {
 
     #[test]
     fn test_array_types() {
-        // Fixed size arrays
-        assert_type(
-            "[u8; 5]",
-            SolType::FixedArray(Box::new(SolType::Uint(8)), 5),
-        );
+        // Fixed size arrays of u8 up to 32 bytes are now converted to FixedBytes
+        assert_type("[u8; 5]", SolType::FixedBytes(5));
+        assert_type("[u8; 32]", SolType::FixedBytes(32));
+
+        // Other fixed size arrays remain as FixedArray
         assert_type(
             "[bool; 10]",
             SolType::FixedArray(Box::new(SolType::Bool), 10),
@@ -243,19 +249,16 @@ mod tests {
             SolType::FixedArray(Box::new(SolType::Address), 3),
         );
 
-        // Nested arrays
+        // Nested arrays - now with updated inner type
         assert_type(
             "[[u8; 5]; 3]",
-            SolType::FixedArray(
-                Box::new(SolType::FixedArray(Box::new(SolType::Uint(8)), 5)),
-                3,
-            ),
+            SolType::FixedArray(Box::new(SolType::FixedBytes(5)), 3),
         );
 
-        // Vec with fixed size arrays
+        // Vec with fixed size arrays - now with updated inner type
         assert_type(
             "Vec<[u8; 5]>",
-            SolType::Array(Box::new(SolType::FixedArray(Box::new(SolType::Uint(8)), 5))),
+            SolType::Array(Box::new(SolType::FixedBytes(5))),
         );
 
         // Dynamic arrays
@@ -263,6 +266,26 @@ mod tests {
         assert_type(
             "Vec<Vec<bool>>",
             SolType::Array(Box::new(SolType::Array(Box::new(SolType::Bool)))),
+        );
+    }
+
+    #[test]
+    fn test_u8_arrays_to_fixed_bytes() {
+        // Test various sizes to ensure conversion is working
+        assert_type("[u8; 1]", SolType::FixedBytes(1));
+        assert_type("[u8; 16]", SolType::FixedBytes(16));
+        assert_type("[u8; 32]", SolType::FixedBytes(32));
+
+        // Test that arrays larger than 32 remain as FixedArray
+        assert_type(
+            "[u8; 33]",
+            SolType::FixedArray(Box::new(SolType::Uint(8)), 33),
+        );
+
+        // Test that arrays of other types remain as FixedArray, even if length <= 32
+        assert_type(
+            "[u16; 32]",
+            SolType::FixedArray(Box::new(SolType::Uint(16)), 32),
         );
     }
 
@@ -314,10 +337,9 @@ mod tests {
         assert_type("&u8", SolType::Uint(8));
         assert_type("&mut bool", SolType::Bool);
         assert_type("&Vec<u8>", SolType::Array(Box::new(SolType::Uint(8))));
-        assert_type(
-            "&[u8; 5]",
-            SolType::FixedArray(Box::new(SolType::Uint(8)), 5),
-        );
+
+        // Fixed size array of u8 is now treated as FixedBytes
+        assert_type("&[u8; 5]", SolType::FixedBytes(5));
     }
 
     #[test]

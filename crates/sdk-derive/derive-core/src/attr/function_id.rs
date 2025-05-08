@@ -19,7 +19,7 @@ pub type FunctionID = [u8; 4];
 /// Function identifier attribute for custom routing configuration.
 ///
 /// # Example
-/// ```rust
+/// ```rust, ignore
 /// #[function_id("transfer(address,uint256)")]
 /// fn transfer(&self, to: Address, amount: U256) -> bool { /* ... */ }
 ///

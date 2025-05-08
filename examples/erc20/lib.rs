@@ -220,13 +220,13 @@ mod test {
     #[serial]
     #[test]
     pub fn test_name() {
-        let call_name = erc_20_api_erc_20::NameCall::new(()).encode();
+        let call_name = NameCall::new(()).encode();
         let sdk = TestingContext::default().with_input(call_name);
         let mut erc20 = ERC20::new(sdk.clone());
         erc20.deploy();
         erc20.main();
         let result = sdk.take_output();
-        let val = erc_20_api_erc_20::SymbolReturn::decode(&result.as_slice()).unwrap();
+        let val = SymbolReturn::decode(&result.as_slice()).unwrap();
         let symbol = String::from_utf8_lossy(&val.0 .0);
         assert_eq!(symbol, "Token");
     }
@@ -234,13 +234,13 @@ mod test {
     #[serial]
     #[test]
     pub fn test_symbol() {
-        let call_symbol = erc_20_api_erc_20::SymbolCall::new(()).encode();
+        let call_symbol = SymbolCall::new(()).encode();
         let sdk = TestingContext::default().with_input(call_symbol);
         let mut erc20 = ERC20::new(sdk.clone());
         erc20.deploy();
         erc20.main();
         let result = sdk.take_output();
-        let val = erc_20_api_erc_20::SymbolReturn::decode(&result.as_slice()).unwrap();
+        let val = SymbolReturn::decode(&result.as_slice()).unwrap();
         let symbol = String::from_utf8_lossy(&val.0 .0);
         assert_eq!(symbol, "TOK");
     }
@@ -290,7 +290,7 @@ mod test {
         );
         assert_eq!(Balance::get(&mut erc20.sdk, to).to_string(), "0");
         // transfer funds (100 tokens)
-        let _sdk = sdk.with_input(erc_20_api_erc_20::TransferCall((to, value)).encode());
+        let _sdk = sdk.with_input(TransferCall((to, value)).encode());
         erc20.main();
         // check balances again
         assert_eq!(
@@ -308,8 +308,7 @@ mod test {
     pub fn test_allowance() {
         let owner = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let spender = address!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3");
-        let approve_call =
-            erc_20_api_erc_20::ApproveCall::new((spender, U256::from(1000))).encode();
+        let approve_call = ApproveCall::new((spender, U256::from(1000))).encode();
 
         let sdk = TestingContext::default()
             .with_contract_context(ContractContextV1 {
@@ -325,7 +324,7 @@ mod test {
         sdk.take_output();
 
         // check allowance
-        let allowance_call = erc_20_api_erc_20::AllowanceCall::new((owner, spender)).encode();
+        let allowance_call = AllowanceCall::new((owner, spender)).encode();
         let sdk = sdk.with_input(allowance_call);
         erc20.main();
         let result = sdk.take_output();
@@ -354,14 +353,13 @@ mod test {
             "1000000000000000000000000"
         );
 
-        let approve_call =
-            erc_20_api_erc_20::ApproveCall::new((spender, U256::from(1000))).encode();
+        let approve_call = ApproveCall::new((spender, U256::from(1000))).encode();
         let sdk = sdk.with_input(approve_call);
         erc20.main();
 
         // Transfer from owner to recipient via spender
         let transfer_from_call =
-            erc_20_api_erc_20::TransferFromCall::new((owner, recipient, U256::from(100))).encode();
+            TransferFromCall::new((owner, recipient, U256::from(100))).encode();
         sdk.with_input(transfer_from_call)
             .with_contract_context(ContractContextV1 {
                 caller: spender,

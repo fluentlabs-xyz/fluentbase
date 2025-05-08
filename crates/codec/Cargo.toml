@@ -1,33 +1,33 @@
 [package]
-name = "fluentbase-codec"
-version = "0.1.0"
 authors.workspace = true
-repository.workspace = true
-edition.workspace = true
-readme.workspace = true
-license.workspace = true
-keywords.workspace = true
 categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "fluentbase-codec"
+readme.workspace = true
+repository.workspace = true
+version = "0.1.0"
 
 [dependencies]
-byteorder = { workspace = true }
-alloy-primitives = { workspace = true }
-hashbrown = { workspace = true }
-serde = { workspace = true, default-features = false }
-bytes = { workspace = true, default-features = false }
-fluentbase-codec-derive = { workspace = true }
+alloy-primitives = {workspace = true}
+byteorder = {workspace = true}
+bytes = {workspace = true, default-features = false}
+fluentbase-codec-derive = {workspace = true}
+hashbrown = {workspace = true}
+serde = {workspace = true, default-features = false}
 
 [dev-dependencies]
-hex = "0.4.3"
-hex-literal = "0.4.1"
-alloy-sol-types = { workspace = true }
+alloy-sol-types = {workspace = true}
+hex = {workspace = true}
+hex-literal = {workspace = true}
 
 [features]
 default = ["std", "derive"]
-std = [
-    "byteorder/std",
-    "alloy-primitives/std",
-    "serde/std",
-    "bytes/std"
-]
 derive = []
+std = [
+  "byteorder/std",
+  "alloy-primitives/std",
+  "serde/std",
+  "bytes/std",
+]

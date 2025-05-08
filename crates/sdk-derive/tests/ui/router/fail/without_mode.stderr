@@ -1,5 +1,5 @@
-error: mode is required
-  --> tests/ui/router/fail/01_without_mode.rs:16:1
+error: Missing field `mode`
+  --> tests/ui/router/fail/without_mode.rs:16:1
    |
 16 | #[router]
    | ^^^^^^^^^

@@ -11,6 +11,7 @@ use syn::{
     Attribute,
     Error,
     ImplItemFn,
+    ReturnType,
     Signature,
     TraitItemFn,
     Visibility,
@@ -230,14 +231,38 @@ impl<T: MethodLike> MethodCollector<T> {
     pub fn add_error(&mut self, span: Span, message: String) {
         self.errors.push(Error::new(span, message));
     }
+
+    /// Validates the signature of the fallback method
+    fn validate_fallback_signature(&self, sig: &Signature) -> bool {
+        // Fallback should only have self parameter and no return type
+        let has_only_self = sig.inputs.len() == 1
+            && sig.inputs.iter().next().map_or(false, |arg| match arg {
+                syn::FnArg::Receiver(_) => true,
+                _ => false,
+            });
+
+        let has_no_return = matches!(sig.output, ReturnType::Default);
+
+        has_only_self && has_no_return
+    }
 }
 
 // Implementation for MethodCollector<TraitItemFn>
 impl Visit<'_> for MethodCollector<TraitItemFn> {
     fn visit_trait_item_fn(&mut self, method: &TraitItemFn) {
-        // Skip special methods like 'deploy' and 'fallback'
-        if method.sig.ident != "deploy" && method.sig.ident != "fallback" {
-            // Clone the method to create an owned value
+        // Handle reserved method names with validation
+        if method.sig.ident == "fallback" {
+            if !self.validate_fallback_signature(&method.sig) {
+                self.add_error(
+                    method.sig.span(),
+                    "Fallback method must have signature 'fn fallback(&self)' with no parameters and no return value".to_string(),
+                );
+            }
+            // Don't collect fallback even if valid
+        } else if method.sig.ident == "deploy" {
+            // Skip deploy without validating its signature - deploy can have any signature
+        } else {
+            // Process regular methods
             let method_owned = TraitItemFn {
                 attrs: method.attrs.clone(),
                 sig: method.sig.clone(),
@@ -268,32 +293,43 @@ impl Visit<'_> for MethodCollector<TraitItemFn> {
 // Implementation for MethodCollector<ImplItemFn>
 impl Visit<'_> for MethodCollector<ImplItemFn> {
     fn visit_impl_item_fn(&mut self, method: &ImplItemFn) {
-        // For trait implementations, include all methods
-        // For regular impls, only include public methods
-        let is_public = self.is_trait_impl || matches!(method.vis, Visibility::Public(_));
-        let is_not_deploy = method.sig.ident != "deploy";
+        // Handle reserved method names with validation
+        if method.sig.ident == "fallback" {
+            if !self.validate_fallback_signature(&method.sig) {
+                self.add_error(
+                    method.sig.span(),
+                    "Fallback method must have signature 'fn fallback(&self)' with no parameters and no return value".to_string(),
+                );
+            }
+            // Don't collect fallback even if valid
+        } else if method.sig.ident == "deploy" {
+            // Skip deploy without validating its signature - deploy can have any signature
+        } else {
+            // Process regular methods
+            let is_public = self.is_trait_impl || matches!(method.vis, Visibility::Public(_));
 
-        if is_public && is_not_deploy {
-            // Clone the method to create an owned value
-            let method_owned = ImplItemFn {
-                attrs: method.attrs.clone(),
-                vis: method.vis.clone(),
-                defaultness: method.defaultness,
-                sig: method.sig.clone(),
-                block: method.block.clone(),
-            };
+            if is_public {
+                // Clone the method to create an owned value
+                let method_owned = ImplItemFn {
+                    attrs: method.attrs.clone(),
+                    vis: method.vis.clone(),
+                    defaultness: method.defaultness,
+                    sig: method.sig.clone(),
+                    block: method.block.clone(),
+                };
 
-            // Try to parse the method
-            match ParsedMethod::new(method_owned) {
-                Ok(parsed_method) => {
-                    self.add_method(parsed_method);
-                }
-                Err(err) => {
-                    // Store the error with the method's span for accurate reporting
-                    self.add_error(
-                        method.sig.span(),
-                        format!("Failed to parse method: {}", err),
-                    );
+                // Try to parse the method
+                match ParsedMethod::new(method_owned) {
+                    Ok(parsed_method) => {
+                        self.add_method(parsed_method);
+                    }
+                    Err(err) => {
+                        // Store the error with the method's span for accurate reporting
+                        self.add_error(
+                            method.sig.span(),
+                            format!("Failed to parse method: {}", err),
+                        );
+                    }
                 }
             }
         }

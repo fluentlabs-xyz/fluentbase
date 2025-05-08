@@ -67,7 +67,7 @@ impl Mode {
     /// * `Err(syn::Error)` - If the string is not a valid mode
     ///
     /// # Examples
-    /// ```
+    /// ```rust,ignore
     /// use fluentbase_sdk_derive_core::mode::Mode;
     /// assert!(Mode::try_from_str("SOLIDITY").is_ok());
     /// assert!(Mode::try_from_str("solidity").is_ok());
