@@ -11,14 +11,14 @@ fn test_client_solidity() {
 
     let (contract_address, _) = ctx.deploy_evm_tx_with_nonce(
         DEPLOYER_ADDRESS,
-        crate::examples::EXAMPLE_ROUTER_SOLIDITY.into(),
+        crate::EXAMPLE_ROUTER_SOLIDITY.into(),
         0,
     );
     println!("contract_address: {:?}", contract_address);
 
     let (client_address, _) = ctx.deploy_evm_tx_with_nonce(
         DEPLOYER_ADDRESS,
-        crate::examples::EXAMPLE_CLIENT_SOLIDITY.into(),
+        crate::EXAMPLE_CLIENT_SOLIDITY.into(),
         1,
     );
     println!("client_address: {:?}", client_address);

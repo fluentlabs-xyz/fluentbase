@@ -2,8 +2,8 @@ use alloc::rc::Rc;
 use fluentbase_runtime::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
+        charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
-        ec_recover::SyscallEcrecover,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
@@ -16,6 +16,7 @@ use fluentbase_runtime::{
         read::SyscallRead,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
+        secp256k1_recover::SyscallSecp256k1Recover,
         state::SyscallState,
         write::SyscallWrite,
     },
@@ -46,8 +47,8 @@ impl NativeAPI for RuntimeContextWrapper {
         todo!("not implemented")
     }
 
-    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
-        SyscallEcrecover::fn_impl(digest, sig, rec_id).unwrap_exit_code()
+    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
+        SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
     }
 
     fn debug_log(message: &str) {
@@ -96,9 +97,14 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallFuel::fn_impl(&ctx)
     }
 
-    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
+    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
         let mut ctx = self.ctx.borrow_mut();
-        SyscallChargeFuel::fn_impl(&mut ctx, fuel_consumed, fuel_refunded)
+        SyscallChargeFuelManually::fn_impl(&mut ctx, fuel_consumed, fuel_refunded)
+    }
+
+    fn charge_fuel(&self, fuel_consumed: u64) {
+        let mut ctx = self.ctx.borrow_mut();
+        SyscallChargeFuel::fn_impl(&mut ctx, fuel_consumed);
     }
 
     fn exec<I: Into<BytecodeOrHash>>(

@@ -36,6 +36,7 @@ fn test_nitro_verifier_wasm_version() {
     );
 }
 
+#[ignore] // slow because it runs in the interpreter by default (wasmtime is not enabled by default)
 #[test]
 fn test_nitro_verifier_solidity_version() {
     let mut ctx = EvmTestingContext::default();

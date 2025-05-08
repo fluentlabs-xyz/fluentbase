@@ -49,7 +49,7 @@ fn test_evm_create_wasm_contract() {
     let owner: Address = Address::ZERO;
     let contract_address = deploy_via_deployer(
         &mut ctx,
-        crate::examples::EXAMPLE_GREETING.into(),
+        crate::EXAMPLE_GREETING.into(),
     );
     let result = ctx.call_evm_tx(owner, contract_address, Bytes::new(), None, None);
     println!("{:#?}", result);
@@ -63,6 +63,6 @@ fn test_evm_create_large_wasm_contract() {
     let mut ctx = EvmTestingContext::default();
     deploy_via_deployer(
         &mut ctx,
-        crate::examples::EXAMPLE_ERC20.into(),
+        crate::EXAMPLE_ERC20.into(),
     );
 }

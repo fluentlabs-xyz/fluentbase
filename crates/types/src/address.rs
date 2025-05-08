@@ -47,7 +47,7 @@ mod tests {
             todo!()
         }
 
-        fn ec_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> [u8; 65] {
+        fn secp256k1_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> Option<[u8; 65]> {
             todo!()
         }
 
@@ -91,7 +91,11 @@ mod tests {
             todo!()
         }
 
-        fn charge_fuel(&self, _fuel_consumed: u64, _fuel_refunded: i64) -> u64 {
+        fn charge_fuel_manually(&self, _fuel_consumed: u64, _fuel_refunded: i64) -> u64 {
+            todo!()
+        }
+
+        fn charge_fuel(&self, _fuel_consumed: u64) {
             todo!()
         }
 

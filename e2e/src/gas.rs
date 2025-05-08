@@ -166,13 +166,9 @@ fn test_deploy_gas_spend() {
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
 
-    let result = TxBuilder::create(
-        &mut ctx,
-        DEPLOYER_ADDRESS,
-        crate::examples::EXAMPLE_GREETING.into(),
-    )
-    .enable_rwasm_proxy()
-    .exec();
+    let result = TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, crate::EXAMPLE_GREETING.into())
+        .enable_rwasm_proxy()
+        .exec();
     if !result.is_success() {
         println!("{:?}", result);
         println!(

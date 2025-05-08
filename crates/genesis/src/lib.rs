@@ -1,6 +1,13 @@
 pub use alloy_genesis::Genesis;
 pub use fluentbase_types::genesis::*;
-use fluentbase_types::{compile_wasm_to_rwasm, keccak256, Address, HashMap, B256};
+use fluentbase_types::{
+    compile_wasm_to_rwasm_with_config,
+    default_compilation_config,
+    keccak256,
+    Address,
+    HashMap,
+    B256,
+};
 use lazy_static::lazy_static;
 
 #[cfg(feature = "generate-genesis")]
@@ -99,7 +106,9 @@ lazy_static! {
     static ref SYSTEM_PRECOMPILE_HASHES: HashMap<B256, Address> = {
         let mut map = HashMap::new();
         for (addr, data) in SYSTEM_PRECOMPILES.iter() {
-            let rwasm_bytecode = compile_wasm_to_rwasm(data.as_slice())
+            let mut config = default_compilation_config();
+            config.builtins_consume_fuel(false);
+            let rwasm_bytecode = compile_wasm_to_rwasm_with_config(data.as_slice(), config)
                 .expect("failed to compile system contract to rwasm");
             assert!(rwasm_bytecode.constructor_params.is_empty());
             let rwasm_bytecode: Vec<u8> = rwasm_bytecode.rwasm_bytecode.into();
