@@ -15,7 +15,7 @@ use core::str::from_utf8;
 use fluentbase_codec::{bytes::BytesMut, SolidityABI};
 use fluentbase_sdk::{bytes, Address, Bytes, U256};
 use hex_literal::hex;
-use rwasm::rwasm::RwasmModule;
+use rwasm::legacy::rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
 
 #[test]

@@ -5,7 +5,7 @@ use fluentbase_types::{
 };
 #[cfg(feature = "wasmtime")]
 use num::ToPrimitive;
-use rwasm_executor::{Caller, RwasmError};
+use rwasm::{Caller, RwasmError};
 
 pub struct SyscallResume;
 

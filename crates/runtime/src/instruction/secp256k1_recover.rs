@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::B256;
-use rwasm_executor::{Caller, RwasmError};
+use rwasm::{Caller, RwasmError};
 use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
     Message,

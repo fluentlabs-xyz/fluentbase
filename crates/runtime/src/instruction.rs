@@ -66,7 +66,7 @@ use crate::{
 };
 use fluentbase_types::SysFuncIdx;
 use num::BigUint;
-use rwasm_executor::{Caller, RwasmError};
+use rwasm::{Caller, RwasmError};
 use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{

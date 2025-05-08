@@ -22,7 +22,7 @@ use revm::{
     Evm,
     InMemoryDB,
 };
-use rwasm::rwasm::{instruction::InstructionExtra, BinaryFormat, RwasmModule};
+use rwasm::legacy::rwasm::{BinaryFormat, RwasmModule};
 
 #[allow(dead_code)]
 pub(crate) struct EvmTestingContext {
@@ -338,14 +338,7 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
             .unwrap_or_default();
         println!("execution trace ({} steps):", logs.len());
         for log in logs.iter().rev().take(100).rev() {
-            if let Some(value) = log.opcode.aux_value() {
-                println!(
-                    " - pc={} opcode={}({})",
-                    log.program_counter, log.opcode, value
-                );
-            } else {
-                println!(" - pc={} opcode={}", log.program_counter, log.opcode);
-            }
+            println!(" - pc={} opcode={}", log.program_counter, log.opcode);
         }
     } else {
         println!(

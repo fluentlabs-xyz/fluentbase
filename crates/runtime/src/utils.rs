@@ -20,36 +20,18 @@ pub(crate) fn trace_execution_logs(runtime: &Runtime, execution_result: &Executi
     let logs = &runtime.executor.tracer().unwrap().logs;
     println!("execution trace ({} steps):", logs.len());
     for log in logs.iter().rev().take(100).rev() {
-        use rwasm_executor::InstructionExtra;
-        if let Some(value) = log.opcode.aux_value() {
-            println!(
-                " - pc={} opcode={:?}({}) gas={} stack={:?}",
-                log.program_counter,
-                log.opcode,
-                value,
-                log.consumed_fuel,
-                log.stack
-                    .iter()
-                    .map(|v| v.to_string())
-                    .rev()
-                    .take(3)
-                    .rev()
-                    .collect::<Vec<_>>(),
-            );
-        } else {
-            println!(
-                " - pc={} opcode={:?} gas={} stack={:?}",
-                log.program_counter,
-                log.opcode,
-                log.consumed_fuel,
-                log.stack
-                    .iter()
-                    .map(|v| v.to_string())
-                    .rev()
-                    .take(3)
-                    .rev()
-                    .collect::<Vec<_>>(),
-            );
-        }
+        println!(
+            " - pc={} opcode={:?} gas={} stack={:?}",
+            log.program_counter,
+            log.opcode,
+            log.consumed_fuel,
+            log.stack
+                .iter()
+                .map(|v| v.to_string())
+                .rev()
+                .take(3)
+                .rev()
+                .collect::<Vec<_>>(),
+        );
     }
 }

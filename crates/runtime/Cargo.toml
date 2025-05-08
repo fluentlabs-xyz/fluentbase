@@ -15,7 +15,7 @@ fluentbase-codec = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-genesis = { workspace = true, optional = true }
 
-rwasm-executor = { workspace = true }
+rwasm = { workspace = true }
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
@@ -43,7 +43,7 @@ hex-literal = { workspace = true }
 [features]
 default = ["std"]
 std = [
-    "rwasm-executor/std",
+    "rwasm/std",
 ]
 rwasm = []
 debug-print = [

@@ -13,7 +13,7 @@ use fluentbase_sdk::{
 };
 use hex_literal::hex;
 use revm::primitives::{ExecutionResult, Output};
-use rwasm::{engine::DropKeep, instruction_set, rwasm::RwasmModule};
+use rwasm::legacy::{engine::DropKeep, instruction_set, rwasm::RwasmModule};
 
 #[test]
 fn test_simple_nested_call() {

@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use rwasm_executor::{Caller, RwasmError, TrapCode};
+use rwasm::{Caller, RwasmError};
 
 pub struct SyscallPreimageSize;
 
@@ -15,6 +15,6 @@ impl SyscallPreimageSize {
     }
 
     pub fn fn_impl(_ctx: &RuntimeContext, _hash: &[u8]) -> Result<u32, RwasmError> {
-        Err(RwasmError::TrapCode(TrapCode::UnreachableCodeReached))
+        Err(RwasmError::UnreachableCodeReached)
     }
 }

@@ -1,6 +1,6 @@
 use crate::ExecutionResult;
 use fluentbase_types::{BytecodeOrHash, Bytes, B256};
-use rwasm_executor::{RwasmError, TrapCode};
+use rwasm::RwasmError;
 
 pub struct RuntimeContext {
     // context inputs
@@ -154,7 +154,7 @@ impl RuntimeContext {
             .unwrap_or(u64::MAX);
         if !self.disable_fuel {
             if consumed_fuel > self.fuel_limit {
-                return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
+                return Err(RwasmError::OutOfFuel);
             }
         }
         self.execution_result.fuel_consumed = consumed_fuel;

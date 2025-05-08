@@ -41,7 +41,7 @@ use crate::{
     SysFuncIdx::CHARGE_FUEL,
 };
 use alloc::vec::Vec;
-use rwasm::{
+use rwasm::legacy::{
     core::{ImportLinker, ImportLinkerEntity, ValueType},
     engine::bytecode::Instruction,
     module::ImportName,
