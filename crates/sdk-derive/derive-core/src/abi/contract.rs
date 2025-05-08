@@ -12,6 +12,7 @@ pub struct ContractABI {
     pub metadata: HashMap<String, String>,
 }
 
+#[allow(dead_code)]
 impl ContractABI {
     pub fn new(id: impl Into<String>) -> Self {
         Self {

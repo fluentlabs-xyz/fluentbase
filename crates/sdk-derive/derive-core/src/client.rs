@@ -1,21 +1,14 @@
 use crate::{
     attr::{mode::Mode, Artifacts},
     codec::CodecGenerator,
-    method::{MethodLike, ParsedMethod},
+    method::{MethodCollector, MethodLike, ParsedMethod},
 };
 use convert_case::{Case, Casing};
 use darling::{ast::NestedMeta, FromMeta};
 use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro_error::{abort, abort_call_site, emit_error};
 use quote::{format_ident, quote, ToTokens};
-use syn::{
-    spanned::Spanned,
-    visit::{self, Visit},
-    Error,
-    Ident,
-    ItemTrait,
-    Result,
-    TraitItemFn,
-};
+use syn::{spanned::Spanned, visit, Error, Ident, ItemTrait, Result, TraitItemFn};
 
 /// Attributes for the client configuration.
 #[derive(Debug, FromMeta, Default, Clone)]
@@ -38,66 +31,8 @@ pub struct Client<T: MethodLike> {
     methods: Vec<ParsedMethod<T>>,
 }
 
-/// Visitor for collecting methods from a trait definition
-struct MethodCollector<T: MethodLike> {
-    methods: Vec<ParsedMethod<T>>,
-    span: Span,
-}
-
-impl<T: MethodLike> MethodCollector<T>
-where
-    ParsedMethod<T>: From<TraitItemFn>,
-{
-    fn new(span: Span) -> Self {
-        Self {
-            methods: Vec::new(),
-            span,
-        }
-    }
-
-    fn should_include_method(&self, method: &TraitItemFn) -> bool {
-        // Include all trait methods except those with special names
-        method.sig.ident != "deploy" && method.sig.ident != "fallback"
-    }
-}
-
-impl<T: MethodLike> Visit<'_> for MethodCollector<T>
-where
-    ParsedMethod<T>: From<TraitItemFn>,
-{
-    fn visit_trait_item_fn(&mut self, method: &TraitItemFn) {
-        if self.should_include_method(method) {
-            // Clone the method to create an owned value
-            let method_owned = TraitItemFn {
-                attrs: method.attrs.clone(),
-                sig: method.sig.clone(),
-                default: method.default.clone(),
-                semi_token: method.semi_token,
-            };
-
-            let parsed_method = ParsedMethod::from(method_owned);
-            self.methods.push(parsed_method);
-        }
-
-        // Continue visiting child nodes (if needed)
-        visit::visit_trait_item_fn(self, method);
-    }
-}
-
 /// Parses and validates a client from token streams.
-///
-/// This function serves as the main entry point for macro processing.
-///
-/// # Arguments
-/// * `attr` - Attributes TokenStream containing client configuration
-/// * `input` - Input TokenStream containing the trait definition
-///
-/// # Returns
-/// * `Result<Client<T>, syn::Error>` - Parsed and validated client or error
-pub fn process_client<T: MethodLike>(attr: TokenStream2, input: TokenStream2) -> Result<Client<T>>
-where
-    ParsedMethod<T>: From<TraitItemFn>,
-{
+pub fn process_client(attr: TokenStream2, input: TokenStream2) -> Result<Client<TraitItemFn>> {
     // Parse attributes
     let attributes = parse_attributes(attr)?;
 
@@ -116,37 +51,56 @@ fn parse_attributes(attr: TokenStream2) -> Result<ClientAttributes> {
     ClientAttributes::from_list(&meta).map_err(|e| Error::new(Span::call_site(), e.to_string()))
 }
 
-impl<T: MethodLike> Client<T>
-where
-    ParsedMethod<T>: From<TraitItemFn>,
-{
+// Теперь мы ограничиваем Client<T> до Client<TraitItemFn> для метода new
+impl Client<TraitItemFn> {
     /// Creates a new Client instance by parsing the trait definition.
-    ///
-    /// # Arguments
-    /// * `attributes` - Client configuration attributes
-    /// * `trait_def` - The trait definition to parse
-    ///
-    /// # Returns
-    /// * `Result<Self, syn::Error>` - Parsed client or error
     pub fn new(attributes: ClientAttributes, trait_def: ItemTrait) -> Result<Self> {
-        // Use visitor pattern to collect methods
-        let mut collector = MethodCollector::<T>::new(trait_def.span());
+        // Use visitor pattern to collect methods with improved error handling
+        let mut collector = MethodCollector::<TraitItemFn>::new(trait_def.span());
         visit::visit_item_trait(&mut collector, &trait_def);
 
-        let methods = collector.methods;
-
-        // Check if client has methods
-        if methods.is_empty() {
-            return Err(Error::new(trait_def.span(), "Client trait has no methods"));
+        // First, check if we found any methods at all
+        if collector.methods.is_empty() {
+            abort!(
+                collector.span,
+                "Client trait has no methods. Make sure your trait contains at least one method that is not named 'deploy' or 'fallback'.";
+                help = "A valid trait should contain at least one method declaration";
+                help = "Example: fn method_name(&self, param: Type) -> ReturnType;"
+            );
         }
 
+        // Then check for any parsing errors collected during visiting
+        if collector.has_errors() {
+            // Emit all errors
+            for err in &collector.errors {
+                emit_error!(err.span(), "{}", err.to_string());
+            }
+            // Abort with a summary message
+            abort_call_site!("Failed to process client trait due to method parsing errors");
+        }
+
+        // Finally check for selector collisions
+        if let Err(collision_error) = collector.validate_selectors() {
+            abort!(
+                collision_error.span(),
+                "{}",
+                collision_error.to_string();
+                help = "Function selectors must be unique across all methods in the trait";
+                help = "You can use custom selectors with #[function_id(\"custom_signature\")]";
+                help = "Or rename your methods to have different signatures"
+            );
+        }
+
+        // All validation passed, create the client
         Ok(Self {
             attributes,
             trait_def,
-            methods,
+            methods: collector.methods,
         })
     }
+}
 
+impl<T: MethodLike> Client<T> {
     /// Returns the client attributes.
     pub fn attributes(&self) -> &ClientAttributes {
         &self.attributes
@@ -336,22 +290,12 @@ where
     }
 }
 
-impl<T: MethodLike> ToTokens for Client<T>
-where
-    ParsedMethod<T>: From<TraitItemFn>,
-{
+impl ToTokens for Client<TraitItemFn> {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         match self.generate() {
             Ok(generated) => tokens.extend(generated),
             Err(e) => tokens.extend(Error::to_compile_error(&e)),
         }
-    }
-}
-
-// Add implementation of From<TraitItemFn> for ParsedMethod<TraitItemFn>
-impl From<TraitItemFn> for ParsedMethod<TraitItemFn> {
-    fn from(function: TraitItemFn) -> Self {
-        Self::new(function).expect("Failed to parse trait item function")
     }
 }
 
@@ -371,7 +315,7 @@ mod tests {
         };
 
         let attributes = ClientAttributes::default();
-        let client = Client::<TraitItemFn>::new(attributes, trait_def).unwrap();
+        let client = Client::new(attributes, trait_def).unwrap();
 
         let generated = client.generate().unwrap();
 

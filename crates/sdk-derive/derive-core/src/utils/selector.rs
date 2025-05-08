@@ -47,12 +47,6 @@ pub fn parse_hex_string(hex: &str) -> Result<Selector, Error> {
     Ok(selector)
 }
 
-/// Formats a selector as a hex string.
-#[must_use]
-pub fn format_selector_as_hex(selector: &Selector) -> String {
-    format!("0x{}", hex::encode(selector))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,28 +81,5 @@ mod tests {
     fn test_parse_hex_selector_invalid_chars() {
         let hex = "0x1234567g";
         assert!(parse_hex_string(hex).is_err());
-    }
-
-    #[test]
-    fn test_format_selector_as_hex() {
-        let selector = [0x12, 0x34, 0x56, 0x78];
-        assert_eq!(format_selector_as_hex(&selector), "0x12345678");
-    }
-
-    #[test]
-    fn test_round_trip() {
-        let original = "0x12345678";
-        let selector = parse_hex_string(original).unwrap();
-        let hex = format_selector_as_hex(&selector);
-        assert_eq!(original, hex);
-    }
-
-    #[test]
-    fn test_signature_to_hex() {
-        let signature = "transfer(address,uint256)";
-        let selector = calculate_keccak256(signature);
-        let hex = format_selector_as_hex(&selector);
-        assert!(hex.starts_with("0x"));
-        assert_eq!(hex.len(), 10);
     }
 }

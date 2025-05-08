@@ -1,23 +1,14 @@
 use crate::{
     attr::{mode::Mode, Artifacts},
     codec::CodecGenerator,
-    method::{MethodLike, ParsedMethod},
+    method::{MethodCollector, ParsedMethod},
 };
 use convert_case::{Case, Casing};
 use darling::{ast::NestedMeta, FromMeta};
 use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro_error::{abort, abort_call_site, emit_error};
 use quote::{format_ident, quote, ToTokens};
-use std::collections::HashSet;
-use syn::{
-    spanned::Spanned,
-    visit::{self, Visit},
-    Error,
-    Ident,
-    ImplItemFn,
-    ItemImpl,
-    Result,
-    Visibility,
-};
+use syn::{spanned::Spanned, visit, Error, Ident, ImplItemFn, ItemImpl, Result};
 
 /// Attributes for the router configuration.
 #[derive(Debug, FromMeta, Default, Clone)]
@@ -31,83 +22,19 @@ pub struct RouterAttributes {
 /// A router that handles method dispatch based on input selectors.
 /// Supports both Solidity-compatible and Fluent API modes.
 #[derive(Debug)]
-pub struct Router<T: MethodLike> {
+pub struct Router {
     /// Router configuration attributes
     attributes: RouterAttributes,
     /// The original implementation block
     impl_block: ItemImpl,
     /// Collection of available method routes
-    routes: Vec<ParsedMethod<T>>,
+    routes: Vec<ParsedMethod<ImplItemFn>>,
     /// Indicates whether this is a trait implementation
     is_trait_impl: bool,
 }
 
-/// Visitor for collecting methods from an impl block
-struct MethodCollector<T: MethodLike> {
-    routes: Vec<ParsedMethod<T>>,
-    is_trait_impl: bool,
-    span: Span,
-}
-
-impl<T: MethodLike> MethodCollector<T>
-where
-    ParsedMethod<T>: From<ImplItemFn>,
-{
-    fn new(is_trait_impl: bool, span: Span) -> Self {
-        Self {
-            routes: Vec::new(),
-            is_trait_impl,
-            span,
-        }
-    }
-
-    fn should_include_method(&self, method: &ImplItemFn) -> bool {
-        let is_public = self.is_trait_impl || matches!(method.vis, Visibility::Public(_));
-        // Exclude 'deploy' method from routing
-        let is_not_deploy = method.sig.ident != "deploy";
-
-        is_public && is_not_deploy
-    }
-}
-
-impl<T: MethodLike> Visit<'_> for MethodCollector<T>
-where
-    ParsedMethod<T>: From<ImplItemFn>,
-{
-    fn visit_impl_item_fn(&mut self, method: &ImplItemFn) {
-        if self.should_include_method(method) {
-            // Clone the method to create an owned value
-            let method_owned = ImplItemFn {
-                attrs: method.attrs.clone(),
-                vis: method.vis.clone(),
-                defaultness: method.defaultness,
-                sig: method.sig.clone(),
-                block: method.block.clone(),
-            };
-
-            let parsed_method = ParsedMethod::from(method_owned);
-            self.routes.push(parsed_method);
-        }
-
-        // Continue visiting child nodes (if needed)
-        visit::visit_impl_item_fn(self, method);
-    }
-}
-
 /// Parses and validates a router from token streams.
-///
-/// This function serves as the main entry point for macro processing.
-///
-/// # Arguments
-/// * `attr` - Attributes TokenStream containing router configuration
-/// * `input` - Input TokenStream containing the implementation block
-///
-/// # Returns
-/// * `Result<Router<T>, syn::Error>` - Parsed and validated router or error
-pub fn process_router<T: MethodLike>(attr: TokenStream2, input: TokenStream2) -> Result<Router<T>>
-where
-    ParsedMethod<T>: From<ImplItemFn>,
-{
+pub fn process_router(attr: TokenStream2, input: TokenStream2) -> Result<Router> {
     // Parse attributes
     let attributes = parse_attributes(attr)?;
 
@@ -116,9 +43,6 @@ where
 
     // Create router
     let router = Router::new(attributes, impl_block)?;
-
-    // Validate router
-    router.validate()?;
 
     Ok(router)
 }
@@ -129,66 +53,61 @@ fn parse_attributes(attr: TokenStream2) -> Result<RouterAttributes> {
     RouterAttributes::from_list(&meta).map_err(|e| Error::new(Span::call_site(), e.to_string()))
 }
 
-impl<T: MethodLike> Router<T>
-where
-    ParsedMethod<T>: From<ImplItemFn>,
-{
+impl Router {
     /// Creates a new Router instance by parsing the implementation block.
-    ///
-    /// # Arguments
-    /// * `attributes` - Router configuration attributes
-    /// * `impl_block` - The implementation block to parse
-    ///
-    /// # Returns
-    /// * `Result<Self, syn::Error>` - Parsed router or error
     pub fn new(attributes: RouterAttributes, impl_block: ItemImpl) -> Result<Self> {
         let is_trait_impl = impl_block.trait_.is_some();
 
-        // Use visitor pattern to collect methods
-        let mut collector = MethodCollector::<T>::new(is_trait_impl, impl_block.span());
+        // Use visitor pattern to collect methods with improved error handling
+        let mut collector =
+            MethodCollector::<ImplItemFn>::new_for_impl(impl_block.span(), is_trait_impl);
         visit::visit_item_impl(&mut collector, &impl_block);
 
-        let routes = collector.routes;
-
-        // Check if router has methods
-        if routes.is_empty() {
-            return Err(Error::new(impl_block.span(), "Router has no methods"));
+        // First, check if we found any methods at all
+        if collector.methods.is_empty() {
+            abort!(
+                collector.span,
+                "Router has no methods. Make sure your implementation contains at least one public method that is not named 'deploy'.";
+                help = "Check that methods are public (pub fn) for regular implementations";
+                help = if is_trait_impl {
+                    "For trait implementations, make sure the trait contains method declarations"
+                } else {
+                    "Consider marking your methods as public: pub fn method_name(...)"
+                }
+            );
         }
 
+        // Then check for any parsing errors collected during visiting
+        if collector.has_errors() {
+            // Emit all errors
+            for err in &collector.errors {
+                emit_error!(err.span(), "{}", err.to_string());
+            }
+            // Abort with a summary message
+            abort_call_site!(
+                "Failed to process router implementation due to method parsing errors"
+            );
+        }
+
+        // Finally check for selector collisions
+        if let Err(collision_error) = collector.validate_selectors() {
+            abort!(
+                collision_error.span(),
+                "{}",
+                collision_error.to_string();
+                help = "Function selectors must be unique across all methods";
+                help = "You can use custom selectors with #[function_id(\"custom_signature\")]";
+                help = "Or rename your methods to have different signatures"
+            );
+        }
+
+        // All validation passed, create the router
         Ok(Self {
             attributes,
             impl_block,
-            routes,
+            routes: collector.methods,
             is_trait_impl,
         })
-    }
-
-    /// Validates the router for errors.
-    pub fn validate(&self) -> Result<()> {
-        // Check for selector collisions
-        self.validate_selectors()
-    }
-
-    /// Validates that there are no function selector collisions.
-    fn validate_selectors(&self) -> Result<()> {
-        let mut seen_selectors = HashSet::new();
-
-        for route in &self.routes {
-            let selector = route.function_id();
-
-            if !seen_selectors.insert(selector) {
-                return Err(Error::new(
-                    route.parsed_signature().span(),
-                    format!(
-                        "Function selector collision detected for '{}'. Selector: {:02x}{:02x}{:02x}{:02x}",
-                        route.parsed_signature().rust_name(),
-                        selector[0], selector[1], selector[2], selector[3]
-                    ),
-                ));
-            }
-        }
-
-        Ok(())
     }
 
     /// Returns the router attributes.
@@ -202,12 +121,12 @@ where
     }
 
     /// Returns the list of parsed routes.
-    pub fn routes(&self) -> &[ParsedMethod<T>] {
+    pub fn routes(&self) -> &[ParsedMethod<ImplItemFn>] {
         &self.routes
     }
 
     /// Returns all available method routes excluding fallback.
-    pub fn available_methods(&self) -> Vec<&ParsedMethod<T>> {
+    pub fn available_methods(&self) -> Vec<&ParsedMethod<ImplItemFn>> {
         self.routes
             .iter()
             .filter(|route| route.parsed_signature().rust_name() != "fallback")
@@ -278,7 +197,6 @@ where
     pub fn generate(&self) -> Result<TokenStream2> {
         // Start with the implementation block
         let impl_block = self.impl_block();
-        let module_name = self.module_name();
 
         // Generate codec implementations
         let method_codecs = self.generate_codec_implementations()?;
@@ -291,11 +209,9 @@ where
             #[allow(unused_imports)]
             use ::fluentbase_sdk::derive::_function_id as function_id;
             #impl_block
-            pub mod #module_name {
-                use super::*;
 
-                #(#method_codecs)*
-            }
+            #(#method_codecs)*
+
             #dispatch_method
         };
 
@@ -379,11 +295,10 @@ where
     }
 
     /// Generates a single method match arm.
-    fn generate_method_arm(&self, route: &ParsedMethod<T>) -> Result<TokenStream2> {
+    fn generate_method_arm(&self, route: &ParsedMethod<ImplItemFn>) -> Result<TokenStream2> {
         let function_id = route.function_id();
         let fn_name_str = route.parsed_signature().rust_name();
         let fn_name = format_ident!("{}", fn_name_str);
-        let module_name = self.module_name();
 
         let call_struct = format_ident!("{}Call", fn_name_str.to_case(Case::Pascal));
         let return_struct = format_ident!("{}Return", fn_name_str.to_case(Case::Pascal));
@@ -397,7 +312,7 @@ where
             0 => quote! {},
             1 => {
                 quote! {
-                    let param0 = match #module_name::#call_struct::decode(&params) {
+                    let param0 = match #call_struct::decode(&params) {
                         Ok(decoded) => decoded.0.0,
                         Err(err) => {
                             panic!("Failed to decode parameters: {:?}", err);
@@ -413,7 +328,7 @@ where
                 let param_indices = (0..param_count).map(syn::Index::from).collect::<Vec<_>>();
 
                 quote! {
-                    let (#(#param_names),*) = match #module_name::#call_struct::decode(&params) {
+                    let (#(#param_names),*) = match #call_struct::decode(&params) {
                         Ok(decoded) => (#(decoded.0.#param_indices),*),
                         Err(err) => {
                             panic!("Failed to decode parameters: {:?}", err);
@@ -445,12 +360,12 @@ where
             },
             1 => quote! {
                 let output = #fn_call;
-                let encoded_output = #module_name::#return_struct::new((output,)).encode();
+                let encoded_output = #return_struct::new((output,)).encode();
                 self.sdk.write(&encoded_output);
             },
             _ => quote! {
                 let output = #fn_call;
-                let encoded_output = #module_name::#return_struct::new(output).encode();
+                let encoded_output = #return_struct::new(output).encode();
                 self.sdk.write(&encoded_output);
             },
         };
@@ -479,10 +394,7 @@ where
     }
 }
 
-impl<T: MethodLike> ToTokens for Router<T>
-where
-    ParsedMethod<T>: From<ImplItemFn>,
-{
+impl ToTokens for Router {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         match self.generate() {
             Ok(generated) => tokens.extend(generated),
@@ -490,12 +402,12 @@ where
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use insta::assert_snapshot;
     use prettyplease;
-    use proc_macro2::TokenStream;
     use quote::quote;
     use syn::{parse_file, parse_quote};
 
@@ -520,7 +432,7 @@ mod tests {
         let attr_tokens = quote! { mode = "solidity" };
 
         // Process the router
-        let router = process_router::<ImplItemFn>(attr_tokens, impl_block.into_token_stream())
+        let router = process_router(attr_tokens, impl_block.into_token_stream())
             .expect("Failed to process router");
 
         // Generate code

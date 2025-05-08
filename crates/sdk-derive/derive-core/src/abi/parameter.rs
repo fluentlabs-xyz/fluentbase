@@ -128,6 +128,7 @@ impl Parameter {
     }
 }
 
+#[allow(dead_code)]
 /// Helper function to get full path from `TypePath`
 fn get_full_path(type_path: &TypePath) -> Result<String, ConversionError> {
     let mut path = String::new();

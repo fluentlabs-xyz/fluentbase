@@ -7,7 +7,6 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Error,
     Lit,
     LitStr,
     Result,
@@ -295,9 +294,6 @@ fn parse_validate_attribute(input: ParseStream) -> Result<Option<bool>> {
 
 impl ToTokens for FunctionIDAttribute {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
-        // Get validation setting with default
-        let validate = self.validate.unwrap_or(false);
-
         // Get function ID or emit error if not set
         let function_id_bytes = match self.function_id_bytes() {
             Ok(bytes) => bytes,
@@ -325,35 +321,6 @@ impl ToTokens for FunctionIDAttribute {
     }
 }
 
-/// Creates a detailed error message for function ID mismatches.
-///
-/// This function formats a helpful error message when the expected
-/// function ID doesn't match the calculated one, providing guidance
-/// on how to fix the issue.
-///
-/// # Arguments
-/// * `span` - The span where the error should be reported
-/// * `calculated_id` - The function ID calculated from the method signature
-/// * `attr_id` - The function ID provided in the attribute
-/// * `signature` - The method signature used for calculation
-///
-/// # Returns
-/// * `Error` - Formatted error with detailed message
-pub(crate) fn create_function_id_mismatch_error(
-    span: Span,
-    calculated_id: &FunctionID,
-    attr_id: &FunctionID,
-    signature: String,
-) -> Error {
-    let error_msg = format!(
-        "Function ID mismatch: Expected 0x{} for '{}', but got 0x{}",
-        hex::encode(calculated_id),
-        signature,
-        hex::encode(attr_id),
-    );
-
-    Error::new(span, error_msg)
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -526,23 +493,5 @@ mod tests {
         let attr3 = FunctionIDAttribute::from_bytes(bytes);
         assert_eq!(attr3.function_id_bytes().unwrap(), bytes);
         assert_eq!(attr3.function_id_hex().unwrap(), hex);
-    }
-
-    #[test]
-    fn test_mismatch_error_formatting() {
-        // Test error message formatting for function ID mismatch
-        let span = Span::call_site();
-        let calculated_id = [0x12, 0x34, 0x56, 0x78];
-        let attr_id = [0xaa, 0xbb, 0xcc, 0xdd];
-        let signature = "transfer(address,uint256)".to_string();
-
-        let error = create_function_id_mismatch_error(span, &calculated_id, &attr_id, signature);
-
-        // Verify error message contents
-        let error_str = error.to_string();
-        assert!(error_str.contains("Function ID mismatch"));
-        assert!(error_str.contains("Expected: 0x12345678"));
-        assert!(error_str.contains("Got:     0xaabbccdd"));
-        assert!(error_str.contains("transfer(address,uint256)"));
     }
 }
