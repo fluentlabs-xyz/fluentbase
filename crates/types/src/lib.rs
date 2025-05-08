@@ -101,3 +101,10 @@ macro_rules! include_wasm {
         include_bytes!(env!(concat!("FLUENTBASE_WASM_BINARY_PATH_", $name)))
     }};
 }
+
+#[macro_export]
+macro_rules! include_this_wasm {
+    () => {
+        include_bytes!(env!("FLUENTBASE_WASM_ARTIFACT_PATH"))
+    };
+}

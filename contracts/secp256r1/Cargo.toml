@@ -10,7 +10,10 @@ revm-precompile = { workspace = true, features = ["secp256r1"] }
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
 hex = "0.4.3"
-p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"] }
+p256 = { version = "0.13.2", default-features = false, features = [
+    "ecdsa",
+    "arithmetic",
+] }
 sha2 = { version = "0.10", default-features = false }
 
 
@@ -18,12 +21,9 @@ sha2 = { version = "0.10", default-features = false }
 fluentbase-build = { workspace = true }
 
 [lib]
-crate-type = ["cdylib"]
 path = "lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [features]
 default = ["std"]
-std = [
-    "fluentbase-sdk/std",
-    "revm-precompile/std",
-]
+std = ["fluentbase-sdk/std", "revm-precompile/std"]

@@ -16,13 +16,13 @@ hex = "0.4.3"
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
 
+[build-dependencies]
+fluentbase-build = { workspace = true }
+
 [lib]
-crate-type = ["cdylib"]
 path = "lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [features]
 default = ["std", "fluentbase-sdk/debug-print"]
-std = [
-    "fluentbase-sdk/std"
-]
-
+std = ["fluentbase-sdk/std"]

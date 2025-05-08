@@ -10,13 +10,13 @@ revm-precompile = { workspace = true }
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
 
+[build-dependencies]
+fluentbase-build = { workspace = true }
+
 [lib]
-crate-type = ["cdylib"]
 path = "lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [features]
 default = ["std"]
-std = [
-    "fluentbase-sdk/std",
-    "revm-precompile/std",
-]
+std = ["fluentbase-sdk/std", "revm-precompile/std"]

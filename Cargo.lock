@@ -2221,9 +2221,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts"
+version = "0.1.0"
+
+[[package]]
 name = "fluentbase-contracts-blake2f"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "revm-precompile",
@@ -2233,6 +2238,7 @@ dependencies = [
 name = "fluentbase-contracts-bls12381"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "revm-precompile",
@@ -2242,6 +2248,7 @@ dependencies = [
 name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "revm-precompile",
@@ -2251,6 +2258,7 @@ dependencies = [
 name = "fluentbase-contracts-ecrecover"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "revm-precompile",
@@ -2260,13 +2268,16 @@ dependencies = [
 name = "fluentbase-contracts-erc20"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
 ]
 
 [[package]]
 name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-evm",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
@@ -2275,11 +2286,17 @@ dependencies = [
 [[package]]
 name = "fluentbase-contracts-fairblock"
 version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "fluentbase-sdk-testing",
+]
 
 [[package]]
 name = "fluentbase-contracts-identity"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "revm-precompile",
@@ -2289,6 +2306,7 @@ dependencies = [
 name = "fluentbase-contracts-kzg"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "revm-precompile",
@@ -2298,6 +2316,7 @@ dependencies = [
 name = "fluentbase-contracts-modexp"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "revm-precompile",
@@ -2307,7 +2326,9 @@ dependencies = [
 name = "fluentbase-contracts-multicall"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
 ]
 
 [[package]]
@@ -2318,6 +2339,7 @@ dependencies = [
  "coset",
  "der",
  "ecdsa",
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "hex",
@@ -2329,13 +2351,16 @@ dependencies = [
 name = "fluentbase-contracts-oauth2"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
+ "fluentbase-sdk-testing",
 ]
 
 [[package]]
 name = "fluentbase-contracts-ripemd160"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "revm-precompile",
@@ -2358,6 +2383,7 @@ dependencies = [
 name = "fluentbase-contracts-sha256"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "revm-precompile",
@@ -2368,6 +2394,7 @@ name = "fluentbase-contracts-webauthn"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "hex",
@@ -2565,8 +2592,23 @@ name = "fluentbase-genesis"
 version = "0.1.0"
 dependencies = [
  "alloy-genesis",
- "cargo_metadata",
- "fluentbase-build",
+ "fluentbase-contracts-blake2f",
+ "fluentbase-contracts-bls12381",
+ "fluentbase-contracts-bn256",
+ "fluentbase-contracts-ecrecover",
+ "fluentbase-contracts-erc20",
+ "fluentbase-contracts-evm",
+ "fluentbase-contracts-fairblock",
+ "fluentbase-contracts-identity",
+ "fluentbase-contracts-kzg",
+ "fluentbase-contracts-modexp",
+ "fluentbase-contracts-multicall",
+ "fluentbase-contracts-nitro",
+ "fluentbase-contracts-oauth2",
+ "fluentbase-contracts-ripemd160",
+ "fluentbase-contracts-secp256r1",
+ "fluentbase-contracts-sha256",
+ "fluentbase-contracts-webauthn",
  "fluentbase-types",
  "lazy_static",
  "serde",

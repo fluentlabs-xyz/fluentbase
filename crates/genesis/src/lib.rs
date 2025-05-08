@@ -1,5 +1,4 @@
 pub use alloy_genesis::Genesis;
-pub use fluentbase_types::genesis::*;
 use fluentbase_types::{
     compile_wasm_to_rwasm_with_config,
     default_compilation_config,
@@ -22,84 +21,38 @@ pub fn devnet_genesis_v0_1_0_dev10_from_file() -> Genesis {
 }
 
 #[rustfmt::skip]
-mod precompile {
-    use fluentbase_types::include_wasm;
-
-    pub const PRECOMPILE_BYTECODE_BIG_MODEXP: &[u8] = include_wasm!("fluentbase-contracts-modexp");
-    pub const PRECOMPILE_BYTECODE_BLAKE2F: &[u8] = include_wasm!("fluentbase-contracts-blake2f");
-    pub const PRECOMPILE_BYTECODE_BN256_ADD: &[u8] = include_wasm!("fluentbase-contracts-bn256");
-    pub const PRECOMPILE_BYTECODE_BN256_MUL: &[u8] = include_wasm!("fluentbase-contracts-bn256");
-    pub const PRECOMPILE_BYTECODE_BN256_PAIR: &[u8] = include_wasm!("fluentbase-contracts-bn256");
-    pub const PRECOMPILE_BYTECODE_ERC20: &[u8] = include_wasm!("fluentbase-contracts-erc20");
-    pub const PRECOMPILE_BYTECODE_EVM_RUNTIME: &[u8] = include_wasm!("fluentbase-contracts-evm");
-    pub const PRECOMPILE_BYTECODE_FAIRBLOCK_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-fairblock");
-    pub const PRECOMPILE_BYTECODE_IDENTITY: &[u8] = include_wasm!("fluentbase-contracts-identity");
-    pub const PRECOMPILE_BYTECODE_KZG_POINT_EVALUATION: &[u8] = include_wasm!("fluentbase-contracts-kzg");
-    pub const PRECOMPILE_BYTECODE_NATIVE_MULTICALL: &[u8] = include_wasm!("fluentbase-contracts-multicall");
-    pub const PRECOMPILE_BYTECODE_NITRO_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-nitro");
-    pub const PRECOMPILE_BYTECODE_OAUTH2_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-oauth2");
-    pub const PRECOMPILE_BYTECODE_RIPEMD160: &[u8] = include_wasm!("fluentbase-contracts-ripemd160");
-    pub const PRECOMPILE_BYTECODE_SECP256K1_RECOVER: &[u8] = include_wasm!("fluentbase-contracts-ecrecover");
-    pub const PRECOMPILE_BYTECODE_SHA256: &[u8] = include_wasm!("fluentbase-contracts-sha256");
-    pub const PRECOMPILE_BYTECODE_WEBAUTHN_VERIFIER: &[u8] = include_wasm!("fluentbase-contracts-webauthn");
-
-    #[cfg(feature = "bls12")]
-    pub mod bls12 {
-        use fluentbase_types::include_wasm;
-
-        pub const PRECOMPILE_BYTECODE_BLS12_381_G1_ADD: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-        pub const PRECOMPILE_BYTECODE_BLS12_381_G1_MSM: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-        pub const PRECOMPILE_BYTECODE_BLS12_381_G2_ADD: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-        pub const PRECOMPILE_BYTECODE_BLS12_381_G2_MSM: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-        pub const PRECOMPILE_BYTECODE_BLS12_381_MAP_G1: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-        pub const PRECOMPILE_BYTECODE_BLS12_381_MAP_G2: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-        pub const PRECOMPILE_BYTECODE_BLS12_381_PAIRING: &[u8] = include_wasm!("fluentbase-contracts-bls12381");
-    }
-}
-
-#[cfg(feature = "bls12")]
-pub use precompile::bls12::*;
-pub use precompile::*;
+pub const GENESIS_CONTRACTS: &[(&str, Address, &[u8])] = &[
+    ("fluentbase-contracts-blake2f", fluentbase_types::PRECOMPILE_BLAKE2F, fluentbase_contracts_blake2f::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G2_ADD, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G2_MSM, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-bn256", fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-ecrecover", fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_ecrecover::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-erc20", fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-evm", fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-fairblock", fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-identity", fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts_identity::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-kzg", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_kzg::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-modexp", fluentbase_types::PRECOMPILE_BIG_MODEXP, fluentbase_contracts_modexp::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-multicall", fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-nitro", fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts_nitro::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-oauth2", fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts_oauth2::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-ripemd160", fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts_ripemd160::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-secp256r1", fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_secp256r1::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-sha256", fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts_sha256::FLUENTBASE_WASM_BYTECODE),
+    ("fluentbase-contracts-webauthn", fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts_webauthn::FLUENTBASE_WASM_BYTECODE),
+];
 
 lazy_static! {
     static ref SYSTEM_PRECOMPILES: HashMap<Address, Vec<u8>> = {
-        let mut arr = Vec::new();
-        #[rustfmt::skip]
-        arr.extend([
-            (PRECOMPILE_BIG_MODEXP, PRECOMPILE_BYTECODE_BIG_MODEXP.to_vec()),
-            (PRECOMPILE_BLAKE2F, PRECOMPILE_BYTECODE_BLAKE2F.to_vec()),
-            (PRECOMPILE_BN256_ADD, PRECOMPILE_BYTECODE_BN256_ADD.to_vec()),
-            (PRECOMPILE_BN256_MUL, PRECOMPILE_BYTECODE_BN256_MUL.to_vec()),
-            (PRECOMPILE_BN256_PAIR, PRECOMPILE_BYTECODE_BN256_PAIR.to_vec()),
-            (PRECOMPILE_ERC20, PRECOMPILE_BYTECODE_ERC20.to_vec()),
-            (PRECOMPILE_EVM_RUNTIME, PRECOMPILE_BYTECODE_EVM_RUNTIME.to_vec()),
-            (PRECOMPILE_FAIRBLOCK_VERIFIER, PRECOMPILE_BYTECODE_FAIRBLOCK_VERIFIER.to_vec()),
-            (PRECOMPILE_IDENTITY, PRECOMPILE_BYTECODE_IDENTITY.to_vec()),
-            (PRECOMPILE_KZG_POINT_EVALUATION, PRECOMPILE_BYTECODE_KZG_POINT_EVALUATION.to_vec()),
-            (PRECOMPILE_NATIVE_MULTICALL, PRECOMPILE_BYTECODE_NATIVE_MULTICALL.to_vec()),
-            (PRECOMPILE_NITRO_VERIFIER, PRECOMPILE_BYTECODE_NITRO_VERIFIER.to_vec()),
-            (PRECOMPILE_OAUTH2_VERIFIER, PRECOMPILE_BYTECODE_OAUTH2_VERIFIER.to_vec()),
-            (PRECOMPILE_RIPEMD160, PRECOMPILE_BYTECODE_RIPEMD160.to_vec()),
-            (PRECOMPILE_SECP256K1_RECOVER, PRECOMPILE_BYTECODE_SECP256K1_RECOVER.to_vec()),
-            (PRECOMPILE_SHA256, PRECOMPILE_BYTECODE_SHA256.to_vec()),
-            (PRECOMPILE_WEBAUTHN_VERIFIER, PRECOMPILE_BYTECODE_WEBAUTHN_VERIFIER.to_vec()),
-        ]);
-        #[cfg(feature = "bls12")]
-        {
-            #[rustfmt::skip]
-            arr.extend([
-                (PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BYTECODE_BLS12_381_G1_ADD.to_vec()),
-                (PRECOMPILE_BLS12_381_G1_MSM, PRECOMPILE_BYTECODE_BLS12_381_G1_MSM.to_vec()),
-                (PRECOMPILE_BLS12_381_G2_ADD, PRECOMPILE_BYTECODE_BLS12_381_G2_ADD.to_vec()),
-                (PRECOMPILE_BLS12_381_G2_MSM, PRECOMPILE_BYTECODE_BLS12_381_G2_MSM.to_vec()),
-                (PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BYTECODE_BLS12_381_MAP_G1.to_vec()),
-                (PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BYTECODE_BLS12_381_MAP_G2.to_vec()),
-                (PRECOMPILE_BLS12_381_PAIRING, PRECOMPILE_BYTECODE_BLS12_381_PAIRING.to_vec()),
-            ]);
-        }
         let mut map = HashMap::new();
-        for (addr, data) in arr {
-            map.insert(addr, data);
+        for (_, addr, data) in GENESIS_CONTRACTS {
+            map.insert(addr.clone(), data.to_vec());
         }
         map
     };

@@ -1,5 +1,5 @@
 use cargo_metadata::camino::Utf8PathBuf;
-use fluentbase_build::{build_wasm_program, WasmBuildConfig};
+use fluentbase_build::{build_wasm_program, Config};
 use std::fs;
 
 pub fn build_all_examples() -> Vec<(String, Utf8PathBuf)> {
@@ -17,7 +17,7 @@ pub fn build_all_examples() -> Vec<(String, Utf8PathBuf)> {
     let mut available_example_contracts = Vec::new();
     for dir in dirs {
         // build wasm bytecode for each contract in contracts/**
-        let config = WasmBuildConfig::default().with_cargo_manifest_dir(dir);
+        let config = Config::default().with_cargo_manifest_dir(dir);
         let (target_name, wasm_path) = build_wasm_program(config).unwrap();
         println!(
             "compiled example contract \"{}\" to {}",

@@ -15,14 +15,48 @@ serde = { workspace = true, default-features = false }
 serde_json = { version = "1.0", default-features = false }
 alloy-genesis = { workspace = true, default-features = false }
 lazy_static = { workspace = true }
+fluentbase-contracts-blake2f = { workspace = true }
+fluentbase-contracts-bls12381 = { workspace = true }
+fluentbase-contracts-bn256 = { workspace = true }
+fluentbase-contracts-ecrecover = { workspace = true }
+fluentbase-contracts-erc20 = { workspace = true }
+fluentbase-contracts-evm = { workspace = true }
+fluentbase-contracts-fairblock = { workspace = true }
+fluentbase-contracts-identity = { workspace = true }
+fluentbase-contracts-kzg = { workspace = true }
+fluentbase-contracts-modexp = { workspace = true }
+fluentbase-contracts-multicall = { workspace = true }
+fluentbase-contracts-nitro = { workspace = true }
+fluentbase-contracts-oauth2 = { workspace = true }
+fluentbase-contracts-ripemd160 = { workspace = true }
+fluentbase-contracts-secp256r1 = { workspace = true }
+fluentbase-contracts-sha256 = { workspace = true }
+fluentbase-contracts-webauthn = { workspace = true }
+
 
 [build-dependencies]
 fluentbase-types = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-fluentbase-build = { workspace = true }
-cargo_metadata = "0.19.1"
+fluentbase-contracts-blake2f = { workspace = true }
+fluentbase-contracts-bls12381 = { workspace = true }
+fluentbase-contracts-bn256 = { workspace = true }
+fluentbase-contracts-ecrecover = { workspace = true }
+fluentbase-contracts-erc20 = { workspace = true }
+fluentbase-contracts-evm = { workspace = true }
+fluentbase-contracts-fairblock = { workspace = true }
+fluentbase-contracts-identity = { workspace = true }
+fluentbase-contracts-kzg = { workspace = true }
+fluentbase-contracts-modexp = { workspace = true }
+fluentbase-contracts-multicall = { workspace = true }
+fluentbase-contracts-nitro = { workspace = true }
+fluentbase-contracts-oauth2 = { workspace = true }
+fluentbase-contracts-ripemd160 = { workspace = true }
+fluentbase-contracts-secp256r1 = { workspace = true }
+fluentbase-contracts-sha256 = { workspace = true }
+fluentbase-contracts-webauthn = { workspace = true }
+
 
 [features]
 default = ["std"]
@@ -34,4 +68,3 @@ std = [
     "generate-genesis",
 ]
 generate-genesis = []
-bls12 = []
