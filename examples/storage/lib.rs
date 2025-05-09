@@ -6,7 +6,9 @@ use fluentbase_sdk::{
     Address,
     Bytes,
     ExitCode,
+    FixedBytes,
     SharedAPI,
+    I256,
     U256,
 };
 
@@ -19,6 +21,15 @@ pub struct MyStruct {
 }
 
 solidity_storage! {
+    // For this types DirectStorage is used (it's allows to reduce code size by avoiding redundant encoding/decoding)
+    FixedBytes<32> CustomFixedBytes;
+    [u8; 32] CustomFixedBytesArray;
+    U256 CustomU256;
+    I256 CustomI256;
+    u64 CustomU64;
+    i64 CustomI64;
+
+    // For this types SolidityStorage is used (it's allows to use dynamic types like Vec<u8> or String)
     mapping(Address => U256) Balance;
     mapping(Address => mapping(Address => U256)) Allowance;
     U256[] Arr;
@@ -143,5 +154,76 @@ mod test {
         MyStructMap::set(&mut sdk, addr, my_struct.clone());
         let result = MyStructMap::get(&sdk, addr);
         assert_eq!(result, my_struct.clone());
+    }
+
+    #[serial]
+    #[test]
+    pub fn test_storage_key_reference_values() {
+        let sdk = with_test_input(vec![], None);
+
+        assert_eq!(CustomFixedBytes::SLOT, U256::from_limbs([0, 0, 0, 0]));
+        assert_eq!(CustomFixedBytesArray::SLOT, U256::from_limbs([1, 0, 0, 0]));
+        assert_eq!(Balance::SLOT, U256::from_limbs([6, 0, 0, 0]));
+        assert_eq!(Allowance::SLOT, U256::from_limbs([7, 0, 0, 0]));
+        assert_eq!(Owner::SLOT, U256::from_limbs([10, 0, 0, 0]));
+
+        let addr1 = Address::from(hex!("f39fd6e51aad88f6f4ce6ab8827279cfffb92266"));
+        let addr2 = Address::from(hex!("70997970c51812dc3a010c7d01b50e0d17dc79c8"));
+
+        // Balance[addr1]
+        let expected_balance_key = U256::from_str_radix(
+            "c50c4d60f8bbb6a70920d195c8852bc6d816d9f7bc643b500261fc4d9a03f08c",
+            16,
+        )
+        .unwrap();
+        let actual_balance_key = Balance::key(&sdk, addr1);
+        assert_eq!(
+            actual_balance_key, expected_balance_key,
+            "Balance key mismatch: expected {:?}, got {:?}",
+            expected_balance_key, actual_balance_key
+        );
+
+        // Allowance[addr1][addr2]
+        let expected_allowance_key = U256::from_str_radix(
+            "9497c69828ddf28f6ad649ddac9a7c28d7e9228a5a06a6acf21099fe94d38327",
+            16,
+        )
+        .unwrap();
+        let actual_allowance_key = Allowance::key(&sdk, addr1, addr2);
+        assert_eq!(
+            actual_allowance_key, expected_allowance_key,
+            "Allowance key mismatch: expected {:?}, got {:?}",
+            expected_allowance_key, actual_allowance_key
+        );
+
+        // Arr[42]
+        let idx = U256::from(42);
+        let expected_array_key = U256::from_str_radix(
+            "f3f7a9fe364faab93b216da50a3214154f22a0a2b415b23a84c8169e8b636f0d",
+            16,
+        )
+        .unwrap();
+        let actual_array_key = Arr::key(&sdk, idx);
+        assert_eq!(
+            actual_array_key, expected_array_key,
+            "Array key mismatch: expected {:?}, got {:?}",
+            expected_array_key, actual_array_key
+        );
+
+        // NestedArr[0][0][0]
+        let idx1 = U256::from(0);
+        let idx2 = U256::from(0);
+        let idx3 = U256::from(0);
+        let expected_nested_key = U256::from_str_radix(
+            "7e36832397f38490551808dffc4af389da37450fee8ca1202b2419425bcdb132",
+            16,
+        )
+        .unwrap();
+        let actual_nested_key = NestedArr::key(&sdk, idx1, idx2, idx3);
+        assert_eq!(
+            actual_nested_key, expected_nested_key,
+            "NestedArr key mismatch: expected {:?}, got {:?}",
+            expected_nested_key, actual_nested_key
+        );
     }
 }
