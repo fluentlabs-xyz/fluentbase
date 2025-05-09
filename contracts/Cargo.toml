@@ -1,32 +1,27 @@
 [package]
 name = "fluentbase-contracts"
 version = "0.1.0"
-authors.workspace = true
-repository.workspace = true
-edition.workspace = true
-readme.workspace = true
-license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+edition = "2021"
 
 [lib]
 path = "lib.rs"
 
 [dependencies]
-#fluentbase-contracts-blake2f = { path = "blake2f" }
-#fluentbase-contracts-bls12381 = { path = "bls12381" }
-#fluentbase-contracts-bn256 = { path = "bn256" }
-#fluentbase-contracts-ecrecover = { path = "ecrecover" }
-#fluentbase-contracts-erc20 = { path = "erc20" }
-#fluentbase-contracts-evm = { path = "evm" }
-#fluentbase-contracts-fairblock = { path = "fairblock" }
-#fluentbase-contracts-identity = { path = "identity" }
-#fluentbase-contracts-kzg = { path = "kzg" }
-#fluentbase-contracts-modexp = { path = "modexp" }
-#fluentbase-contracts-multicall = { path = "multicall" }
-#fluentbase-contracts-nitro = { path = "nitro" }
-#fluentbase-contracts-oauth2 = { path = "oauth2" }
-#fluentbase-contracts-ripemd160 = { path = "ripemd160" }
-#fluentbase-contracts-secp256r1 = { path = "secp256r1" }
-#fluentbase-contracts-sha256 = { path = "sha256" }
-#fluentbase-contracts-webauthn = { path = "webauthn" }
+fluentbase-types = { workspace = true }
+fluentbase-contracts-blake2f = { path = "./blake2f" }
+fluentbase-contracts-bls12381 = { path = "./bls12381" }
+fluentbase-contracts-bn256 = { path = "./bn256" }
+fluentbase-contracts-ecrecover = { path = "./ecrecover" }
+fluentbase-contracts-erc20 = { path = "./erc20" }
+fluentbase-contracts-evm = { path = "./evm" }
+fluentbase-contracts-fairblock = { path = "./fairblock" }
+fluentbase-contracts-identity = { path = "./identity" }
+fluentbase-contracts-kzg = { path = "./kzg" }
+fluentbase-contracts-modexp = { path = "./modexp" }
+fluentbase-contracts-multicall = { path = "./multicall" }
+fluentbase-contracts-nitro = { path = "./nitro" }
+fluentbase-contracts-oauth2 = { path = "./oauth2" }
+fluentbase-contracts-ripemd160 = { path = "./ripemd160" }
+fluentbase-contracts-secp256r1 = { path = "./secp256r1" }
+fluentbase-contracts-sha256 = { path = "./sha256" }
+fluentbase-contracts-webauthn = { path = "./webauthn" }

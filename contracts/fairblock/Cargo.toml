@@ -14,7 +14,7 @@ fluentbase-build = { workspace = true }
 
 [lib]
 path = "lib.rs"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["cdylib"]
 
 [features]
 tinygo = []

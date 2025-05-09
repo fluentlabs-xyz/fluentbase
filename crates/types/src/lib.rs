@@ -103,6 +103,28 @@ macro_rules! include_wasm {
 }
 
 #[macro_export]
+macro_rules! include_wasm_2 {
+    ($wasm_name:literal) => {{
+        include_bytes!(concat!(
+            env!("CARGO_TARGET_DIR"),
+            "/target2/wasm32-unknown-unknown/release/deps/",
+            $wasm_name
+        ))
+    }};
+}
+
+#[macro_export]
+macro_rules! wasm_artifact_path {
+    ($wasm_name:literal) => {{
+        concat!(
+            env!("CARGO_TARGET_DIR"),
+            "/target2/wasm32-unknown-unknown/release/deps/",
+            $wasm_name
+        )
+    }};
+}
+
+#[macro_export]
 macro_rules! include_this_wasm {
     () => {
         include_bytes!(env!("FLUENTBASE_WASM_ARTIFACT_PATH"))

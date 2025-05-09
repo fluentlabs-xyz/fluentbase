@@ -1,17 +1,1 @@
-// pub const WASM_BLAKE2F: &[u8] = fluentbase_contracts_blake2f::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_BLS12381: &[u8] = fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_BN256: &[u8] = fluentbase_contracts_bn256::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_ECRECOVER: &[u8] = fluentbase_contracts_ecrecover::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_ERC20: &[u8] = fluentbase_contracts_erc20::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_EVM: &[u8] = fluentbase_contracts_evm::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_FAIRBLOCK: &[u8] = fluentbase_contracts_fairblock::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_IDENTITY: &[u8] = fluentbase_contracts_identity::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_KZG: &[u8] = fluentbase_contracts_kzg::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_MODEXP: &[u8] = fluentbase_contracts_modexp::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_MULTICALL: &[u8] = fluentbase_contracts_multicall::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_NITRO: &[u8] = fluentbase_contracts_nitro::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_OAUTH2: &[u8] = fluentbase_contracts_oauth2::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_RIPEMD160: &[u8] = fluentbase_contracts_ripemd160::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_SECP256R1: &[u8] = fluentbase_contracts_secp256r1::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_SHA256: &[u8] = fluentbase_contracts_sha256::FLUENTBASE_WASM_BYTECODE;
-// pub const WASM_WEBAUTHN: &[u8] = fluentbase_contracts_webauthn::FLUENTBASE_WASM_BYTECODE;
+

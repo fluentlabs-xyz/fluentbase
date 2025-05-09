@@ -9,6 +9,24 @@ use fluentbase_types::{
 };
 use lazy_static::lazy_static;
 
+pub const WASM_BLAKE2F: &[u8] = include_bytes!("../../../contracts/blake2f/lib.wasm");
+pub const WASM_BLS12381: &[u8] = include_bytes!("../../../contracts/bls12381/lib.wasm");
+pub const WASM_BN256: &[u8] = include_bytes!("../../../contracts/bn256/lib.wasm");
+pub const WASM_ECRECOVER: &[u8] = include_bytes!("../../../contracts/ecrecover/lib.wasm");
+pub const WASM_ERC20: &[u8] = include_bytes!("../../../contracts/erc20/lib.wasm");
+pub const WASM_EVM: &[u8] = include_bytes!("../../../contracts/evm/lib.wasm");
+pub const WASM_FAIRBLOCK: &[u8] = include_bytes!("../../../contracts/fairblock/lib.wasm");
+pub const WASM_IDENTITY: &[u8] = include_bytes!("../../../contracts/identity/lib.wasm");
+pub const WASM_KZG: &[u8] = include_bytes!("../../../contracts/kzg/lib.wasm");
+pub const WASM_MODEXP: &[u8] = include_bytes!("../../../contracts/modexp/lib.wasm");
+pub const WASM_MULTICALL: &[u8] = include_bytes!("../../../contracts/multicall/lib.wasm");
+pub const WASM_NITRO: &[u8] = include_bytes!("../../../contracts/nitro/lib.wasm");
+pub const WASM_OAUTH2: &[u8] = include_bytes!("../../../contracts/oauth2/lib.wasm");
+pub const WASM_RIPEMD160: &[u8] = include_bytes!("../../../contracts/ripemd160/lib.wasm");
+pub const WASM_SECP256R1: &[u8] = include_bytes!("../../../contracts/secp256r1/lib.wasm");
+pub const WASM_SHA256: &[u8] = include_bytes!("../../../contracts/sha256/lib.wasm");
+pub const WASM_WEBAUTHN: &[u8] = include_bytes!("../../../contracts/webauthn/lib.wasm");
+
 #[cfg(feature = "generate-genesis")]
 pub fn devnet_genesis_from_file() -> Genesis {
     let json_file = include_str!("../assets/genesis-devnet.json");
@@ -22,30 +40,30 @@ pub fn devnet_genesis_v0_1_0_dev10_from_file() -> Genesis {
 
 #[rustfmt::skip]
 pub const GENESIS_CONTRACTS: &[(&str, Address, &[u8])] = &[
-    ("fluentbase-contracts-blake2f", fluentbase_types::PRECOMPILE_BLAKE2F, fluentbase_contracts_blake2f::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G2_ADD, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G2_MSM, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-bls12381", fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts_bls12381::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-bn256", fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-ecrecover", fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_ecrecover::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-erc20", fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-evm", fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-fairblock", fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-identity", fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts_identity::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-kzg", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_kzg::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-modexp", fluentbase_types::PRECOMPILE_BIG_MODEXP, fluentbase_contracts_modexp::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-multicall", fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-nitro", fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts_nitro::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-oauth2", fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts_oauth2::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-ripemd160", fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts_ripemd160::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-secp256r1", fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_secp256r1::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-sha256", fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts_sha256::FLUENTBASE_WASM_BYTECODE),
-    ("fluentbase-contracts-webauthn", fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts_webauthn::FLUENTBASE_WASM_BYTECODE),
+    ("blake2f", fluentbase_types::PRECOMPILE_BLAKE2F, WASM_BLAKE2F),
+    ("bls12381", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, WASM_BLS12381),
+    ("bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, WASM_BLS12381),
+    ("bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, WASM_BLS12381),
+    ("bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G2_ADD, WASM_BLS12381),
+    ("bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G2_MSM, WASM_BLS12381),
+    ("bls12381", fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, WASM_BLS12381),
+    ("bls12381", fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, WASM_BLS12381),
+    ("bls12381", fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, WASM_BLS12381),
+    ("bn256", fluentbase_types::PRECOMPILE_BN256_PAIR, WASM_BN256),
+    ("ecrecover", fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, WASM_ECRECOVER),
+    ("erc20", fluentbase_types::PRECOMPILE_ERC20, WASM_ERC20),
+    ("evm", fluentbase_types::PRECOMPILE_EVM_RUNTIME, WASM_EVM),
+    ("fairblock", fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, WASM_FAIRBLOCK),
+    ("identity", fluentbase_types::PRECOMPILE_IDENTITY, WASM_IDENTITY),
+    ("kzg", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, WASM_KZG),
+    ("modexp", fluentbase_types::PRECOMPILE_BIG_MODEXP, WASM_MODEXP),
+    ("multicall", fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, WASM_MULTICALL),
+    ("nitro", fluentbase_types::PRECOMPILE_NITRO_VERIFIER, WASM_NITRO),
+    ("oauth2", fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, WASM_OAUTH2),
+    ("ripemd160", fluentbase_types::PRECOMPILE_RIPEMD160, WASM_RIPEMD160),
+    ("secp256r1", fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, WASM_SECP256R1),
+    ("sha256", fluentbase_types::PRECOMPILE_SHA256, WASM_SHA256),
+    ("webauthn", fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, WASM_WEBAUTHN),
 ];
 
 lazy_static! {

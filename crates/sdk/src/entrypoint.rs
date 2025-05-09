@@ -21,8 +21,6 @@ macro_rules! basic_entrypoint {
         $crate::define_panic_handler!();
         #[cfg(target_arch = "wasm32")]
         $crate::define_allocator!();
-        #[cfg(not(target_arch = "wasm32"))]
-        pub const FLUENTBASE_WASM_BYTECODE: &[u8] = $crate::include_this_wasm!();
     };
 }
 
@@ -55,8 +53,6 @@ macro_rules! func_entrypoint {
             $crate::define_panic_handler!();
             $crate::define_allocator!();
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        pub const FLUENTBASE_WASM_BYTECODE: &[u8] = $crate::include_this_wasm!();
     };
     ($main_func:ident) => {
         #[cfg(target_arch = "wasm32")]
@@ -77,7 +73,5 @@ macro_rules! func_entrypoint {
             $crate::define_panic_handler!();
             $crate::define_allocator!();
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        pub const FLUENTBASE_WASM_BYTECODE: &[u8] = $crate::include_this_wasm!();
     };
 }

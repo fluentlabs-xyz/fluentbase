@@ -24,12 +24,12 @@ fluentbase-build = { workspace = true }
 
 [lib]
 path = "lib.rs"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["cdylib"]
 
 [features]
 default = ["std"]
 std = [
-    "fluentbase-sdk/std",  #   "p256/std",
+    "fluentbase-sdk/std", #   "p256/std",
     "sha2/std",
     "base64/std",
     "hex/std",

@@ -38,24 +38,6 @@ fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false
 fluentbase-sdk-testing = { path = "./crates/sdk-testing", default-features = false }
 fluentbase-types = { path = "./crates/types", default-features = false }
 
-fluentbase-contracts-blake2f = { path = "./contracts/blake2f", default-features = true }
-fluentbase-contracts-bls12381 = { path = "./contracts/bls12381", default-features = true }
-fluentbase-contracts-bn256 = { path = "./contracts/bn256", default-features = true }
-fluentbase-contracts-ecrecover = { path = "./contracts/ecrecover", default-features = true }
-fluentbase-contracts-erc20 = { path = "./contracts/erc20", default-features = true }
-fluentbase-contracts-evm = { path = "./contracts/evm", default-features = true }
-fluentbase-contracts-fairblock = { path = "./contracts/fairblock", default-features = true }
-fluentbase-contracts-identity = { path = "./contracts/identity", default-features = true }
-fluentbase-contracts-kzg = { path = "./contracts/kzg", default-features = true }
-fluentbase-contracts-modexp = { path = "./contracts/modexp", default-features = true }
-fluentbase-contracts-multicall = { path = "./contracts/multicall", default-features = true }
-fluentbase-contracts-nitro = { path = "./contracts/nitro", default-features = true }
-fluentbase-contracts-oauth2 = { path = "./contracts/oauth2", default-features = true }
-fluentbase-contracts-ripemd160 = { path = "./contracts/ripemd160", default-features = true }
-fluentbase-contracts-secp256r1 = { path = "./contracts/secp256r1", default-features = true }
-fluentbase-contracts-sha256 = { path = "./contracts/sha256", default-features = true }
-fluentbase-contracts-webauthn = { path = "./contracts/webauthn", default-features = true }
-
 # rwasm
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 rwasm-executor = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
