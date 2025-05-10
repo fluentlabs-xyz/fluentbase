@@ -47,6 +47,30 @@ pub fn solidity_storage(input: TokenStream) -> TokenStream {
     storage.to_token_stream().into()
 }
 
+
+#[doc = include_str!("../docs/solidity_trait.md")]
+#[proc_macro]
+#[proc_macro_error]
+pub fn derive_solidity_trait(input: TokenStream) -> TokenStream {
+    let parsed = syn::parse_macro_input!(input as alloy_sol_macro_input::SolInput);
+
+    fluentbase_sdk_derive_core::sol_input::to_rust_trait(parsed)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+#[doc = include_str!("../docs/solidity_client.md")]
+#[proc_macro]
+#[proc_macro_error]
+pub fn derive_solidity_client(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as alloy_sol_macro_input::SolInput);
+
+    fluentbase_sdk_derive_core::sol_input::to_sol_client(parsed)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+
 #[proc_macro]
 pub fn derive_keccak256_id(token: TokenStream) -> TokenStream {
     let signature = token.to_string();

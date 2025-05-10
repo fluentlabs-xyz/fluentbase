@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use darling::FromMeta;
 use std::{
     fmt,

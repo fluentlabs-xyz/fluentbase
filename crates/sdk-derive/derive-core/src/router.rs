@@ -1,5 +1,5 @@
 use crate::{
-    attr::{mode::Mode, Artifacts},
+    attr::mode::Mode,
     codec::CodecGenerator,
     method::{MethodCollector, ParsedMethod},
 };

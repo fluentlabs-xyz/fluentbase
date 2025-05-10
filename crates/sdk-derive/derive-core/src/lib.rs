@@ -8,6 +8,7 @@ mod codec;
 mod method;
 pub mod router;
 mod signature;
+pub mod sol_input;
 
 pub mod storage;
 mod utils;
