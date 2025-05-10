@@ -18,7 +18,7 @@ fn get_epoch_stake(var_addr: *const u8) -> u64 {
 
 /// Get the current epoch's total stake.
 pub fn get_epoch_total_stake() -> u64 {
-    get_epoch_stake(std::ptr::null::<Pubkey>() as *const u8)
+    get_epoch_stake(core::ptr::null::<Pubkey>() as *const u8)
 }
 
 /// Get the current epoch stake for a given vote address.

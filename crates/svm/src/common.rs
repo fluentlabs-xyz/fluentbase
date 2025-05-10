@@ -19,10 +19,8 @@ use crate::{
         // SyscallPoseidon,
         SyscallTryFindProgramAddress,
     },
-    compute_budget::ComputeBudget,
     context::{InstructionContext, InvokeContext, TransactionContext},
-    error::InstructionError,
-    loaded_programs::{LoadedProgram, DELAY_VISIBILITY_SLOT_OFFSET},
+    loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
 };
 use crate::{
     clock::Slot,
@@ -42,6 +40,7 @@ use solana_feature_set::{
     reject_callx_r10,
     FeatureSet,
 };
+use solana_instruction::error::InstructionError;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
@@ -63,7 +62,9 @@ pub(crate) type PtrSizedType = u32;
 
 use crate::{
     account::WritableAccount,
+    compute_budget::compute_budget::ComputeBudget,
     error::{Error, SvmError},
+    loaded_programs::ProgramCacheEntry,
     solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
     types::SVM_ADDRESS_PREFIX,
 };
@@ -483,29 +484,29 @@ pub fn load_program_from_bytes<'a, SDK: SharedAPI>(
     deployment_slot: Slot,
     program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'a, SDK>>>,
     reloading: bool,
-) -> Result<LoadedProgram<'a, SDK>, InstructionError> {
+) -> Result<ProgramCacheEntry<'a, SDK>, InstructionError> {
     let effective_slot = deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET);
     let loaded_program = if reloading {
         // Safety: this is safe because the program is being reloaded in the cache.
         unsafe {
-            LoadedProgram::reload(
+            ProgramCacheEntry::reload(
                 loader_key,
                 program_runtime_environment,
                 deployment_slot,
                 effective_slot,
-                None,
+                // None,
                 programdata,
                 account_size,
                 // load_program_metrics,
             )
         }
     } else {
-        LoadedProgram::new(
+        ProgramCacheEntry::new(
             loader_key,
             program_runtime_environment,
             deployment_slot,
             effective_slot,
-            None,
+            // None,
             programdata,
             account_size,
             // load_program_metrics,
@@ -578,7 +579,7 @@ macro_rules! deploy_program {
             environments.program_runtime_v1.clone(),
             true,
         )?;
-        if let Some(old_entry) = $invoke_context.find_program_in_cache(&$program_id) {
+        if let Some(old_entry) = $invoke_context.program_cache_for_tx_batch.find(&$program_id) {
             executor.tx_usage_counter.store(
                 old_entry.tx_usage_counter.load(Ordering::Relaxed),
                 Ordering::Relaxed
@@ -591,7 +592,7 @@ macro_rules! deploy_program {
         $drop
         // load_program_metrics.program_id = $program_id.to_string();
         // load_program_metrics.submit_datapoint(&mut $invoke_context.timings);
-        $invoke_context.programs_modified_by_tx.replenish($program_id, Arc::new(executor));
+        $invoke_context.program_cache_for_tx_batch.replenish($program_id, Arc::new(executor));
     }};
 }
 

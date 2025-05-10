@@ -3,28 +3,8 @@
 use crate::{pubkey::Pubkey, solana_program::instruction::CompiledInstruction};
 use alloc::{vec, vec::Vec};
 use lazy_static::lazy_static;
-use solana_decode_error::DecodeError;
 use solana_feature_set::FeatureSet;
-
-/// Precompile errors
-#[derive(/*Error, */ Debug, Clone, PartialEq, Eq)]
-pub enum PrecompileError {
-    // #[error("public key is not valid")]
-    InvalidPublicKey,
-    // #[error("id is not valid")]
-    InvalidRecoveryId,
-    // #[error("signature is not valid")]
-    InvalidSignature,
-    // #[error("offset not valid")]
-    InvalidDataOffsets,
-    // #[error("instruction is incorrect size")]
-    InvalidInstructionDataSize,
-}
-impl<T> DecodeError<T> for PrecompileError {
-    fn type_of() -> &'static str {
-        "PrecompileError"
-    }
-}
+use solana_precompile_error::PrecompileError;
 
 /// All precompiled programs must implement the `Verify` function
 pub type Verify = fn(&[u8], &[&[u8]], &FeatureSet) -> core::result::Result<(), PrecompileError>;

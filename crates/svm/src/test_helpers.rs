@@ -1,3 +1,4 @@
+use crate::loaded_programs::ProgramCacheEntry;
 use crate::{
     account::{AccountSharedData, WritableAccount},
     builtins::register_builtins,
@@ -9,9 +10,8 @@ use crate::{
         InvokeContext,
         TransactionAccount,
     },
-    error::InstructionError,
     helpers::{create_account_shared_data_for_test, test_utils},
-    loaded_programs::LoadedProgram,
+    // loaded_programs::LoadedProgram,
     loaders::bpf_loader_upgradeable,
     native_loader,
     solana_program::{instruction::AccountMeta, sysvar},
@@ -21,6 +21,7 @@ use alloc::sync::Arc;
 use core::cell::RefCell;
 use fluentbase_sdk::{testing::TestingContext, Address, ContractContextV1, SharedAPI, U256};
 use solana_epoch_schedule::EpochSchedule;
+use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
@@ -134,9 +135,9 @@ pub(crate) fn mock_process_instruction<
         transaction_accounts
     );
 
-    invoke_context.programs_loaded_for_tx_batch.replenish(
+    invoke_context.program_cache_for_tx_batch.replenish(
         *loader_id,
-        Arc::new(LoadedProgram::new_builtin(0, 0, builtin_function)),
+        Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
     );
     pre_adjustments(&mut invoke_context);
     let result = invoke_context.process_instruction(

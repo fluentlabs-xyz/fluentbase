@@ -183,7 +183,7 @@ macro_rules! declare_process_instruction {
             ) -> core::result::Result<u64, Box<dyn core::error::Error>> {
                 fn process_instruction_inner <$($generic_ident : $generic_type),+>(
                     $invoke_context: &mut $crate::context::InvokeContext <$($generic_ident),+>,
-                ) -> core::result::Result<(), $crate::error::InstructionError>
+                ) -> core::result::Result<(), solana_instruction::error::InstructionError>
                     $inner
 
                 let consumption_result = if $cu_to_consume > 0

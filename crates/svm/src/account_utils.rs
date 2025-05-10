@@ -2,12 +2,12 @@
 
 use crate::{
     account::{Account, AccountSharedData, ReadableAccount},
-    error::InstructionError,
     solana_program::sysvar::Sysvar,
 };
 use bincode::error::EncodeError;
 use core::cell::Ref;
 use solana_bincode::deserialize;
+use solana_instruction::error::InstructionError;
 
 /// Convenience trait to covert bincode errors to instruction errors.
 pub trait StateMut<T> {

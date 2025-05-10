@@ -2,11 +2,9 @@
 mod tests {
     use crate::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        compute_budget::ComputeBudget,
         context::{IndexOfAccount, InvokeContext},
-        error::InstructionError,
         helpers::create_account_shared_data_for_test,
-        loaded_programs::LoadedProgram,
+        // loaded_programs::LoadedProgram,
         loaders::{
             bpf_loader_v4,
             bpf_loader_v4::{create_program_runtime_environment_v2, get_state_mut},
@@ -22,9 +20,14 @@ mod tests {
         },
         test_helpers::{mock_process_instruction, new_test_sdk},
     };
+    use crate::{
+        compute_budget::compute_budget::ComputeBudget,
+        loaded_programs::ProgramCacheEntry,
+    };
     use fluentbase_sdk::SharedAPI;
     use solana_bincode::serialize;
     use solana_clock::Slot;
+    use solana_instruction::error::InstructionError;
     use solana_pubkey::Pubkey;
     use std::{fs::File, io::Read, path::Path, sync::Arc};
 
@@ -49,23 +52,24 @@ mod tests {
                     .data()
                     .get(loader_v4::LoaderV4State::program_data_offset()..)
                 {
-                    if let Ok(loaded_program) = LoadedProgram::new(
+                    if let Ok(loaded_program) = ProgramCacheEntry::new(
                         &loader_v4::id(),
                         invoke_context
-                            .programs_modified_by_tx
+                            .program_cache_for_tx_batch
                             .environments
                             .program_runtime_v2
                             .clone(),
                         0,
                         0,
-                        None,
                         programdata,
                         account.data().len(),
                         // &mut load_program_metrics,
                     ) {
-                        invoke_context.programs_modified_by_tx.set_slot_for_tests(0);
                         invoke_context
-                            .programs_modified_by_tx
+                            .program_cache_for_tx_batch
+                            .set_slot_for_tests(0);
+                        invoke_context
+                            .program_cache_for_tx_batch
                             .replenish(*pubkey, Arc::new(loaded_program));
                     }
                 }
@@ -102,7 +106,7 @@ mod tests {
             bpf_loader_v4::Entrypoint::vm,
             |invoke_context| {
                 invoke_context
-                    .programs_modified_by_tx
+                    .program_cache_for_tx_batch
                     .environments
                     .program_runtime_v2 = Arc::new(create_program_runtime_environment_v2(
                     &ComputeBudget::default(),
@@ -148,8 +152,8 @@ mod tests {
         create_account_shared_data_for_test(&clock)
     }
 
-    fn test_loader_instruction_general_errors<SDK: SharedAPI>(
-        sdk: &SDK,
+    fn test_loader_instruction_general_errors(
+        // sdk: &SDK,
         instruction: LoaderV4Instruction,
     ) {
         let sdk = new_test_sdk();
@@ -356,7 +360,7 @@ mod tests {
         );
 
         test_loader_instruction_general_errors(
-            &sdk,
+            // &sdk,
             LoaderV4Instruction::Write {
                 offset: 0,
                 bytes: Vec::new(),
@@ -634,7 +638,10 @@ mod tests {
             Err(InstructionError::InsufficientFunds),
         );
 
-        test_loader_instruction_general_errors(&sdk, LoaderV4Instruction::Truncate { new_size: 0 });
+        test_loader_instruction_general_errors(
+            // &sdk,
+            LoaderV4Instruction::Truncate { new_size: 0 },
+        );
     }
 
     #[test]
@@ -793,7 +800,10 @@ mod tests {
             Err(InstructionError::InvalidArgument),
         );
 
-        test_loader_instruction_general_errors(&sdk, LoaderV4Instruction::Deploy);
+        test_loader_instruction_general_errors(
+            // &sdk,
+            LoaderV4Instruction::Deploy,
+        );
     }
 
     #[test]
@@ -879,7 +889,7 @@ mod tests {
             Err(InstructionError::InvalidArgument),
         );
 
-        test_loader_instruction_general_errors(&sdk, LoaderV4Instruction::Retract);
+        test_loader_instruction_general_errors(/*&sdk, */ LoaderV4Instruction::Retract);
     }
 
     #[test]
@@ -986,7 +996,9 @@ mod tests {
             Err(InstructionError::MissingRequiredSignature),
         );
 
-        test_loader_instruction_general_errors(&sdk, LoaderV4Instruction::TransferAuthority);
+        test_loader_instruction_general_errors(
+            /*&sdk, */ LoaderV4Instruction::TransferAuthority,
+        );
     }
 
     #[ignore]

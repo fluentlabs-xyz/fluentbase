@@ -5,7 +5,7 @@ use crate::{
     bpf_loader_deprecated,
     builtins::SyscallInvokeSignedRust,
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
-    error::{Error, InstructionError},
+    error::Error,
     helpers::{SerializedAccountMetadata, SyscallError},
     native_loader,
     precompiles::is_precompile,
@@ -18,7 +18,7 @@ use fluentbase_sdk::SharedAPI;
 use scopeguard::defer;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix};
-use solana_instruction::AccountMeta;
+use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS};
 use solana_pubkey::{Pubkey, MAX_SEEDS};
 use solana_rbpf::{

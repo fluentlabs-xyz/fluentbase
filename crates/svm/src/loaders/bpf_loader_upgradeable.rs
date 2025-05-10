@@ -12,8 +12,7 @@ use crate::{
     create_vm,
     declare_builtin_function,
     deploy_program,
-    error::InstructionError,
-    loaded_programs::{LoadedProgram, LoadedProgramType},
+    // loaded_programs::{LoadedProgram, LoadedProgramType},
     native_loader,
     serialization,
     solana_program::{
@@ -26,6 +25,11 @@ use crate::{
     system_instruction::MAX_PERMITTED_DATA_LENGTH,
     sysvar_cache::get_sysvar_with_account_check,
 };
+use crate::{
+    common::UPGRADEABLE_LOADER_COMPUTE_UNITS,
+    context::{InstructionContext, TransactionContext},
+    loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use fluentbase_sdk::SharedAPI;
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
@@ -35,6 +39,7 @@ use solana_feature_set::{
     enable_bpf_loader_extend_program_ix,
     enable_bpf_loader_set_authority_checked_ix,
 };
+use solana_instruction::error::InstructionError;
 use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::{declare_id, Pubkey, PubkeyError};
 use solana_rbpf::{
@@ -83,6 +88,7 @@ pub(crate) fn execute<'a, SDK: SharedAPI>(
     // #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
     // let use_jit = executable.get_compiled_program().is_some();
     let direct_mapping = invoke_context
+        .environment_config
         .feature_set
         .is_active(&bpf_account_data_direct_mapping::id());
 
@@ -252,10 +258,11 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
         drop(program_account);
         let program_id =
             instruction_context.get_last_program_key(&invoke_context.transaction_context)?;
+        let program_id =
+            instruction_context.get_last_program_key(&invoke_context.transaction_context)?;
         return if bpf_loader_upgradeable::check_id(program_id) {
-            // invoke_context.consume_checked(UPGRADEABLE_LOADER_COMPUTE_UNITS)?;
+            invoke_context.consume_checked(UPGRADEABLE_LOADER_COMPUTE_UNITS)?;
             process_loader_upgradeable_instruction(invoke_context)
-            // Ok(SUCCESS)
         } else if bpf_loader::check_id(program_id) {
             invoke_context.consume_checked(DEFAULT_LOADER_COMPUTE_UNITS)?;
             // ic_logger_msg!(
@@ -282,8 +289,9 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
     }
 
     // let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
-    let loaded_program = invoke_context
-        .find_program_in_cache(program_account_key)
+    let executor = invoke_context
+        .program_cache_for_tx_batch
+        .find(program_account_key)
         .ok_or_else(|| {
             // ic_logger_msg!(log_collector, "Program is not cached");
             InstructionError::InvalidAccountData
@@ -298,15 +306,14 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
     // executor.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
     // let executor_program = &executor.program;
     // let executor_program_ref = executor_program.as_ref();
-    let result: Result<(), Box<dyn core::error::Error>> = match loaded_program.program.as_ref() {
-        LoadedProgramType::FailedVerification(_)
-        | LoadedProgramType::Closed
-        | LoadedProgramType::DelayVisibility => {
+    let result: Result<(), Box<dyn core::error::Error>> = match &executor.program {
+        ProgramCacheEntryType::FailedVerification(_)
+        | ProgramCacheEntryType::Closed
+        | ProgramCacheEntryType::DelayVisibility => {
             // ic_logger_msg!(log_collector, "Program is not deployed");
             Err(Box::new(InstructionError::InvalidAccountData) as Box<dyn core::error::Error>)
         }
-        LoadedProgramType::LegacyV0(executable) => execute(executable.clone(), invoke_context),
-        LoadedProgramType::LegacyV1(executable) => execute(executable.clone(), invoke_context),
+        ProgramCacheEntryType::Loaded(executable) => execute(executable.clone(), invoke_context),
         _ => Err(Box::new(InstructionError::IncorrectProgramId) as Box<dyn core::error::Error>),
     };
 
@@ -810,6 +817,7 @@ fn process_loader_upgradeable_instruction<SDK: SharedAPI>(
         }
         UpgradeableLoaderInstruction::SetAuthorityChecked => {
             if !invoke_context
+                .environment_config
                 .feature_set
                 .is_active(&enable_bpf_loader_set_authority_checked_ix::id())
             {
@@ -962,13 +970,16 @@ fn process_loader_upgradeable_instruction<SDK: SharedAPI>(
                                 // &log_collector,
                             )?;
                             let clock = invoke_context.get_sysvar_cache().get_clock()?;
-                            invoke_context.programs_modified_by_tx.replenish(
-                                program_key,
-                                Arc::new(LoadedProgram::new_tombstone(
-                                    clock.slot,
-                                    LoadedProgramType::Closed,
-                                )),
-                            );
+                            invoke_context
+                                .program_cache_for_tx_batch
+                                .store_modified_entry(
+                                    program_key,
+                                    Arc::new(ProgramCacheEntry::new_tombstone(
+                                        clock.slot,
+                                        ProgramCacheEntryOwner::LoaderV3,
+                                        ProgramCacheEntryType::Closed,
+                                    )),
+                                );
                         }
                         _ => {
                             // ic_logger_msg!(log_collector, "Invalid Program account");
@@ -986,6 +997,7 @@ fn process_loader_upgradeable_instruction<SDK: SharedAPI>(
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
             if !invoke_context
+                .environment_config
                 .feature_set
                 .is_active(&enable_bpf_loader_extend_program_ix::ID)
             {

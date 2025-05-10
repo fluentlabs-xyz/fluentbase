@@ -1,5 +1,6 @@
 #[cfg(test)]
 pub mod tests {
+    // use crate::helpers::test_utils;
     use crate::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         account_utils::StateMut,
@@ -7,9 +8,7 @@ pub mod tests {
         bpf_loader_deprecated,
         context::InvokeContext,
         deploy_program,
-        error::InstructionError,
-        helpers::{calculate_heap_cost, create_account_shared_data_for_test, test_utils},
-        loaded_programs::{LoadedProgram, LoadedProgramType, LoadedProgramsForTxBatch},
+        helpers::{calculate_heap_cost, create_account_shared_data_for_test},
         loaders::bpf_loader_upgradeable::Entrypoint,
         solana_program::{
             bpf_loader_upgradeable,

@@ -4,7 +4,6 @@ mod tests {
         account::{Account, AccountSharedData, ReadableAccount},
         common::TestSdkType,
         context::InvokeContext,
-        error::InstructionError,
         hash::{hash, Hash},
         helpers::create_account_shared_data_for_test,
         native_loader,
@@ -36,6 +35,7 @@ mod tests {
     use fluentbase_sdk::SharedAPI;
     use solana_bincode::serialize;
     use solana_fee_calculator::FeeCalculator;
+    use solana_instruction::error::InstructionError;
 
     fn process_instruction<SDK: SharedAPI>(
         sdk: &SDK,
@@ -1138,7 +1138,7 @@ mod tests {
             Ok(()),
             Entrypoint::vm,
             |invoke_context: &mut InvokeContext<TestSdkType>| {
-                invoke_context.blockhash = hash(&serialize(&0).unwrap());
+                invoke_context.environment_config.blockhash = hash(&serialize(&0).unwrap());
             },
             |_invoke_context| {},
         );
@@ -1528,7 +1528,7 @@ mod tests {
             Err(SystemError::NonceNoRecentBlockhashes.into()),
             Entrypoint::vm,
             |invoke_context: &mut InvokeContext<TestSdkType>| {
-                invoke_context.blockhash = hash(&serialize(&0).unwrap());
+                invoke_context.environment_config.blockhash = hash(&serialize(&0).unwrap());
             },
             |_invoke_context| {},
         );

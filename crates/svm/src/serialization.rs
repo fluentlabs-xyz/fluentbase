@@ -4,7 +4,6 @@ use crate::{
     account::BorrowedAccount,
     bpf_loader_deprecated,
     context::{IndexOfAccount, InstructionContext, TransactionContext},
-    error::InstructionError,
     helpers::SerializedAccountMetadata,
     system_instruction::MAX_PERMITTED_DATA_LENGTH,
 };
@@ -12,6 +11,7 @@ use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use core::mem::{self, size_of};
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
+use solana_instruction::error::InstructionError;
 use solana_program_entrypoint::{BPF_ALIGN_OF_U128, NON_DUP_MARKER};
 use solana_pubkey::Pubkey;
 use solana_rbpf::{

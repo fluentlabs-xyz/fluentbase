@@ -1,9 +1,8 @@
 use crate::{
     bpf_loader_deprecated,
-    compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
+    compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
     context::{IndexOfAccount, InvokeContext},
     create_vm,
-    error::InstructionError,
     macros::MEMORY_POOL,
     serialization,
 };
@@ -11,6 +10,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use fluentbase_sdk::SharedAPI;
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 use solana_feature_set::bpf_account_data_direct_mapping;
+use solana_instruction::error::InstructionError;
 use solana_program_entrypoint::SUCCESS;
 use solana_rbpf::{
     elf::Executable,

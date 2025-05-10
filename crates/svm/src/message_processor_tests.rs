@@ -1,5 +1,7 @@
 #[cfg(test)]
 pub mod tests {
+    // use crate::loaded_programs::LoadedProgram;
+    // use crate::loaded_programs::LoadedProgramsForTxBatch;
     use crate::{
         account::{
             AccountSharedData,
@@ -11,12 +13,12 @@ pub mod tests {
         builtins::register_builtins,
         clock::Clock,
         common::{calculate_max_chunk_size, compile_accounts_for_tx_ctx, TestSdkType},
-        context::{IndexOfAccount, InvokeContext, TransactionContext},
+        compute_budget::compute_budget::ComputeBudget,
+        context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
         declare_process_instruction,
         epoch_schedule::EpochSchedule,
-        error::{InstructionError, TransactionError},
         hash::Hash,
-        loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
+        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
         message_processor::MessageProcessor,
         native_loader,
         native_loader::create_loadable_account_for_test,
@@ -27,7 +29,6 @@ pub mod tests {
             bpf_loader_upgradeable,
             bpf_loader_upgradeable::UpgradeableLoaderState,
             feature_set::feature_set_default,
-            loader_v4,
             message::{AccountKeys, LegacyMessage, Message, SanitizedMessage},
             sysvar,
         },
@@ -41,13 +42,12 @@ pub mod tests {
     use fluentbase_sdk::SharedAPI;
     use serde::{Deserialize, Serialize};
     use solana_bincode::deserialize;
-    use solana_feature_set::FeatureSet;
-    use solana_instruction::{AccountMeta, Instruction};
+    use solana_instruction::{error::InstructionError, AccountMeta, Instruction};
     use solana_rbpf::{
-        declare_builtin_function,
         program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
         vm::Config,
     };
+    use solana_transaction_error::TransactionError;
 
     #[test]
     fn test_process_message_readonly_handling_mocked() {
@@ -135,23 +135,16 @@ pub mod tests {
             }
         });
 
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             mock_system_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, MockBuiltin::vm)),
-        );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
-            Default::default(),
-            ProgramRuntimeEnvironments {
-                program_runtime_v1: loader.clone(),
-                program_runtime_v2: loader.clone(),
-            },
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
         );
 
         let message = SanitizedMessage::Legacy(LegacyMessage::new(
@@ -172,18 +165,21 @@ pub mod tests {
             &Default::default(),
         ));
 
-        let compute_budget = crate::compute_budget::ComputeBudget::default();
+        let compute_budget = crate::compute_budget::compute_budget::ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache,
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache,
-            &sdk,
+            programs_cache_for_tx_batch,
+            environment_config,
             compute_budget,
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
+            &sdk,
         );
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
@@ -351,16 +347,16 @@ pub mod tests {
         ];
         let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3);
         let program_indices = vec![vec![2]];
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
         );
         let account_metas = vec![
             AccountMeta::new(
@@ -389,36 +385,39 @@ pub mod tests {
             &Default::default(),
         ));
 
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        let compute_budget = crate::compute_budget::ComputeBudget::default();
+        let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache,
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache,
-            &sdk,
+            programs_cache_for_tx_batch,
+            environment_config,
             compute_budget,
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
+            &sdk,
         );
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
@@ -446,16 +445,16 @@ pub mod tests {
             ),
             &Default::default(),
         ));
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
         );
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
@@ -480,16 +479,16 @@ pub mod tests {
             ),
             &Default::default(),
         ));
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
         );
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
@@ -572,22 +571,22 @@ pub mod tests {
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 system_processor::Entrypoint::vm,
             )),
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
@@ -595,18 +594,21 @@ pub mod tests {
             },
         );
 
-        let compute_budget = crate::compute_budget::ComputeBudget::default();
+        let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache,
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache,
-            &sdk,
+            programs_cache_for_tx_batch,
+            environment_config,
             compute_budget,
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
+            &sdk,
         );
 
         let message = SanitizedMessage::Legacy(LegacyMessage::new(
@@ -702,22 +704,22 @@ pub mod tests {
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 system_processor::Entrypoint::vm,
             )),
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
@@ -725,18 +727,21 @@ pub mod tests {
             },
         );
 
-        let compute_budget = crate::compute_budget::ComputeBudget::default();
+        let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache,
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache,
-            &sdk,
+            programs_cache_for_tx_batch,
+            environment_config,
             compute_budget,
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
+            &sdk,
         );
 
         let message = SanitizedMessage::Legacy(LegacyMessage::new(
@@ -917,22 +922,22 @@ pub mod tests {
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 system_processor::Entrypoint::vm,
             )),
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
@@ -940,18 +945,21 @@ pub mod tests {
             },
         );
 
-        let compute_budget = crate::compute_budget::ComputeBudget::default();
+        let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache,
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache,
-            &sdk,
+            programs_cache_for_tx_batch,
+            environment_config,
             compute_budget,
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
+            &sdk,
         );
 
         let number_of_accounts = invoke_context.transaction_context.get_number_of_accounts();
@@ -1153,22 +1161,22 @@ pub mod tests {
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 system_processor::Entrypoint::vm,
             )),
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
@@ -1176,18 +1184,21 @@ pub mod tests {
             },
         );
 
-        let compute_budget = crate::compute_budget::ComputeBudget::default();
+        let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache,
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache,
-            &sdk,
+            programs_cache_for_tx_batch,
+            environment_config,
             compute_budget,
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
+            &sdk,
         );
 
         let number_of_accounts = invoke_context.transaction_context.get_number_of_accounts();
@@ -1277,7 +1288,7 @@ pub mod tests {
 
         let rent = Rent::free();
 
-        let compute_budget = crate::compute_budget::ComputeBudget::default();
+        let compute_budget = ComputeBudget::default();
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.set_rent(rent.clone());
         sysvar_cache.set_clock(Clock::default());
@@ -1342,46 +1353,49 @@ pub mod tests {
             FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 system_processor::Entrypoint::vm,
             )),
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             bpf_loader_upgradeable_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache.clone(),
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache.clone(),
+            programs_cache_for_tx_batch,
+            environment_config,
+            compute_budget,
             &sdk,
-            compute_budget.clone(),
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
         );
 
         // INIT BUFFER
@@ -1422,46 +1436,49 @@ pub mod tests {
             FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
         register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 system_processor::Entrypoint::vm,
             )),
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             bpf_loader_upgradeable_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache.clone(),
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache.clone(),
+            programs_cache_for_tx_batch,
+            environment_config,
+            compute_budget,
             &sdk,
-            compute_budget.clone(),
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
         );
 
         let program_indices = vec![
@@ -1595,46 +1612,49 @@ pub mod tests {
         );
         let accounts_count = accounts.len();
         let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             system_program::id(),
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 system_processor::Entrypoint::vm,
             )),
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             bpf_loader_upgradeable::id(),
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache.clone(),
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache.clone(),
+            programs_cache_for_tx_batch,
+            environment_config,
+            compute_budget,
             &sdk,
-            compute_budget.clone(),
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
         );
 
         let program_indices = vec![vec![working_accounts_count]];
@@ -1771,46 +1791,49 @@ pub mod tests {
         );
         let accounts_count = accounts.len();
         let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 system_processor::Entrypoint::vm,
             )),
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             bpf_loader_upgradeable_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache.clone(),
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache.clone(),
+            programs_cache_for_tx_batch,
+            environment_config,
+            compute_budget,
             &sdk,
-            compute_budget.clone(),
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
         );
 
         let instructions = bpf_loader_upgradeable::deploy_with_max_program_len(
@@ -2023,60 +2046,63 @@ pub mod tests {
         );
         let accounts_count = accounts.len();
         let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             system_program_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 system_processor::Entrypoint::vm,
             )),
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             bpf_loader_upgradeable_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
-        programs_loaded_for_tx_batch.replenish(
+        programs_cache_for_tx_batch.replenish(
             bpf_loader_id,
-            Arc::new(LoadedProgram::new_builtin(
+            Arc::new(ProgramCacheEntry::new_builtin(
                 0,
                 0,
                 crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
             )),
         );
 
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache,
+        );
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache.clone(),
+            programs_cache_for_tx_batch,
+            environment_config,
+            compute_budget,
             &sdk,
-            compute_budget.clone(),
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(feature_set_default()),
-            blockhash,
-            0,
         );
         let loaded_program = invoke_context.load_program(&account_exec_pk, false);
         if let Some(v) = loaded_program {
             invoke_context
-                .programs_loaded_for_tx_batch
+                .program_cache_for_tx_batch
                 .replenish(account_exec_pk.clone(), v);
         };
 

@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
+    use crate::loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironments};
     use crate::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         context::InstructionAccount,
         declare_process_instruction,
-        error::InstructionError,
-        loaded_programs::LoadedProgram,
+        // loaded_programs::LoadedProgram,
         native_loader,
         pubkey::Pubkey,
         solana_program::instruction::{AccountMeta, Instruction},
@@ -19,6 +19,7 @@ mod tests {
     use fluentbase_sdk::SharedAPI;
     use serde::{Deserialize, Serialize};
     use solana_bincode::{deserialize, serialize};
+    use solana_instruction::error::InstructionError;
     use solana_stable_layout::stable_instruction::StableInstruction;
 
     #[derive(Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
@@ -180,18 +181,18 @@ mod tests {
             loader,
             transaction_accounts
         );
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        programs_loaded_for_tx_batch.replenish(
+        program_cache_for_tx_batch.replenish(
             callee_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 1, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
         );
-        invoke_context.programs_loaded_for_tx_batch = programs_loaded_for_tx_batch;
+        invoke_context.program_cache_for_tx_batch = program_cache_for_tx_batch;
 
         // Account modification tests
         let cases = vec![

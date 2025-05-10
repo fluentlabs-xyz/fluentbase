@@ -6,7 +6,10 @@
 //     }
 // }
 
-use crate::compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT;
+use crate::{
+    compute_budget::compute_budget_limits::ComputeBudgetLimits,
+    compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT,
+};
 use solana_program_entrypoint::HEAP_LENGTH;
 
 // /// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
@@ -23,10 +26,6 @@ pub const MAX_CALL_DEPTH: usize = 64;
 /// The size of one SBF stack frame.
 pub const STACK_FRAME_SIZE: usize = 4096;
 
-pub const MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT: u32 = 3_000;
-pub const MAX_HEAP_FRAME_BYTES: u32 = 256 * 1024;
-pub const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeBudget {
     /// Number of compute units that a transaction or individual instruction is
@@ -40,11 +39,11 @@ pub struct ComputeBudget {
     /// Number of compute units consumed by an invoke call (not including the cost incurred by
     /// the called program)
     pub invoke_units: u64,
-    /// Maximum program instruction invocation stack height. Invocation stack
-    /// height starts at 1 for transaction instructions and the stack height is
+    /// Maximum program instruction invocation stack depth. Invocation stack
+    /// depth starts at 1 for transaction instructions and the stack depth is
     /// incremented each time a program invokes an instruction and decremented
     /// when a program returns.
-    pub max_invoke_stack_height: usize,
+    pub max_instruction_stack_depth: usize,
     /// Maximum cross-program invocation and instructions per transaction
     pub max_instruction_trace_length: usize,
     /// Base number of compute units consumed to call SHA256
@@ -112,8 +111,12 @@ pub struct ComputeBudget {
     /// + alt_bn128_pairing_one_pair_cost_other * (num_elems - 1)
     pub alt_bn128_pairing_one_pair_cost_first: u64,
     pub alt_bn128_pairing_one_pair_cost_other: u64,
-    /// Big integer modular exponentiation cost
-    pub big_modular_exponentiation_cost: u64,
+    /// Big integer modular exponentiation base cost
+    pub big_modular_exponentiation_base_cost: u64,
+    /// Big integer moduler exponentiation cost divisor
+    /// The modular exponentiation cost is computed as
+    /// `input_length`/`big_modular_exponentiation_cost_divisor` + `big_modular_exponentiation_base_cost`
+    pub big_modular_exponentiation_cost_divisor: u64,
     /// Coefficient `a` of the quadratic function which determines the number
     /// of compute units consumed to call poseidon syscall for a given number
     /// of inputs.
@@ -140,6 +143,16 @@ impl Default for ComputeBudget {
     }
 }
 
+impl From<ComputeBudgetLimits> for ComputeBudget {
+    fn from(compute_budget_limits: ComputeBudgetLimits) -> Self {
+        ComputeBudget {
+            compute_unit_limit: u64::from(compute_budget_limits.compute_unit_limit),
+            heap_size: compute_budget_limits.updated_heap_bytes,
+            ..ComputeBudget::default()
+        }
+    }
+}
+
 impl ComputeBudget {
     pub fn new(compute_unit_limit: u64) -> Self {
         ComputeBudget {
@@ -147,13 +160,13 @@ impl ComputeBudget {
             log_64_units: 100,
             create_program_address_units: 1500,
             invoke_units: 1000,
-            max_invoke_stack_height: 5,
+            max_instruction_stack_depth: MAX_INSTRUCTION_STACK_DEPTH,
             max_instruction_trace_length: 64,
             sha256_base_cost: 85,
             sha256_byte_cost: 1,
             sha256_max_slices: 20_000,
-            max_call_depth: 64,
-            stack_frame_size: 4_096,
+            max_call_depth: MAX_CALL_DEPTH,
+            stack_frame_size: STACK_FRAME_SIZE,
             log_pubkey_units: 100,
             max_cpi_instruction_size: 1280, // IPv6 Min MTU size
             cpi_bytes_per_unit: 250,        // ~50MB at 200,000 units
@@ -179,7 +192,8 @@ impl ComputeBudget {
             alt_bn128_multiplication_cost: 3_840,
             alt_bn128_pairing_one_pair_cost_first: 36_364,
             alt_bn128_pairing_one_pair_cost_other: 12_121,
-            big_modular_exponentiation_cost: 33,
+            big_modular_exponentiation_base_cost: 190,
+            big_modular_exponentiation_cost_divisor: 2,
             poseidon_cost_coefficient_a: 61,
             poseidon_cost_coefficient_c: 542,
             get_remaining_compute_units_cost: 100,
@@ -189,17 +203,6 @@ impl ComputeBudget {
             alt_bn128_g2_decompress: 13610,
         }
     }
-
-    // pub fn try_from_instructions<'a>(
-    //     instructions: impl Iterator<Item=(&'a Pubkey, &'a CompiledInstruction)>,
-    // ) -> Result<Self> {
-    //     let compute_budget_limits = process_compute_budget_instructions(instructions)?;
-    //     Ok(ComputeBudget {
-    //         compute_unit_limit: u64::from(compute_budget_limits.compute_unit_limit),
-    //         heap_size: compute_budget_limits.updated_heap_bytes,
-    //         ..ComputeBudget::default()
-    //     })
-    // }
 
     /// Returns cost of the Poseidon hash function for the given number of
     /// inputs is determined by the following quadratic function:

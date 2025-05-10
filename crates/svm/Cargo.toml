@@ -20,7 +20,7 @@ solana_rbpf = { workspace = true, default-features = false, features = [] }
 
 solana-pubkey = { workspace = true, default-features = false, features = ["serde", "bytemuck"] }
 solana-instruction = { workspace = true, default-features = false, features = ["serde", "bincode"] }
-solana-account-info = { workspace = true, default-features = false, features = [] }
+solana-account-info = { workspace = true, default-features = false, features = ["bincode"] }
 solana-clock = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
 solana-epoch-schedule = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
 solana-rent = { workspace = true, default-features = false, features = ["serde", "sysvar"] }
@@ -44,6 +44,9 @@ solana-program-memory = { workspace = true, default-features = false, features =
 static_assertions = { workspace = true, default-features = false, features = [] }
 solana-stable-layout = { workspace = true, default-features = false, features = [] }
 solana-bincode = { workspace = true, default-features = false, features = [] }
+solana-precompile-error = { workspace = true, default-features = false, features = [] }
+solana-native-token = { workspace = true, default-features = false, features = [] }
+#solana-compute-budget = { workspace = true, default-features = false, features = [] }
 #solana-poseidon = { workspace = true, default-features = false, features = ["serde", "sysvar"] }
 
 scopeguard = { workspace = true }

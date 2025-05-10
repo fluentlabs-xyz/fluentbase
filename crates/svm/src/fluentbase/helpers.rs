@@ -3,9 +3,9 @@ use crate::{
     account_utils::StateMut,
     builtins::register_builtins,
     common::compile_accounts_for_tx_ctx,
-    compute_budget::ComputeBudget,
-    context::{IndexOfAccount, InvokeContext, TransactionContext},
-    error::{InstructionError, SvmError},
+    compute_budget::compute_budget::ComputeBudget,
+    context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
+    error::SvmError,
     fluentbase::common::{
         extract_account_data_or_default,
         flush_accounts,
@@ -13,7 +13,7 @@ use crate::{
         BatchMessage,
         SYSTEM_PROGRAMS_KEYS,
     },
-    loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
+    loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     message_processor::MessageProcessor,
     solana_program::{
         bpf_loader_upgradeable,
@@ -32,6 +32,8 @@ use itertools::Itertools;
 use solana_bincode::deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
+use solana_hash::Hash;
+use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
@@ -214,55 +216,54 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
     register_builtins(&mut function_registry);
     let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
-    let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+    let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
         block_number,
         ProgramRuntimeEnvironments {
             program_runtime_v1: loader.clone(),
             program_runtime_v2: loader.clone(),
         },
     );
-    programs_loaded_for_tx_batch.replenish(
+    program_cache_for_tx_batch.replenish(
         system_program_id,
-        Arc::new(LoadedProgram::new_builtin(
+        Arc::new(ProgramCacheEntry::new_builtin(
             0,
             0,
             system_processor::Entrypoint::vm,
         )),
     );
-    programs_loaded_for_tx_batch.replenish(
+    program_cache_for_tx_batch.replenish(
         bpf_loader_upgradeable_id,
-        Arc::new(LoadedProgram::new_builtin(
+        Arc::new(ProgramCacheEntry::new_builtin(
             0,
             0,
             crate::loaders::bpf_loader_upgradeable::Entrypoint::vm,
         )),
     );
-    let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
-        block_number,
-        ProgramRuntimeEnvironments {
-            program_runtime_v1: loader.clone(),
-            program_runtime_v2: loader.clone(),
-        },
-    );
+    // let programs_modified_by_tx = ProgramCacheForTxBatch::new2(
+    //     block_number,
+    //     ProgramRuntimeEnvironments {
+    //         program_runtime_v1: loader.clone(),
+    //         program_runtime_v2: loader.clone(),
+    //     },
+    // );
     let transaction_context = {
-        let mut feature_set = feature_set_default();
+        let feature_set = Arc::new(feature_set_default());
+
+        let environment_config =
+            EnvironmentConfig::new(Hash::default(), None, feature_set, 0, sysvar_cache);
 
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache.clone(),
-            sdk,
+            program_cache_for_tx_batch,
+            environment_config,
             compute_budget.clone(),
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            feature_set.into(),
-            *blockhash,
-            0,
+            sdk,
         );
         for pk in program_accounts_to_warmup {
             let loaded_program = invoke_context.load_program(pk, false);
             if let Some(v) = loaded_program {
                 invoke_context
-                    .programs_loaded_for_tx_batch
+                    .program_cache_for_tx_batch
                     .replenish(pk.clone(), v);
             };
         }

@@ -1,3 +1,19 @@
+use crate::solana_program::{
+    stake_history::StakeHistory,
+    sysvar::{
+        clock,
+        epoch_rewards,
+        epoch_schedule,
+        fees,
+        fees::Fees,
+        last_restart_slot,
+        recent_blockhashes,
+        recent_blockhashes::RecentBlockhashes,
+        rent,
+        slot_hashes,
+        stake_history,
+    },
+};
 use crate::{
     clock::Clock,
     epoch_rewards::EpochRewards,
@@ -8,27 +24,9 @@ use crate::{
     // slot_hashes::SlotHashes,
     // sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes, SysvarId},
 };
-use crate::{
-    error::InstructionError,
-    solana_program::{
-        stake_history::StakeHistory,
-        sysvar::{
-            clock,
-            epoch_rewards,
-            epoch_schedule,
-            fees,
-            fees::Fees,
-            last_restart_slot,
-            recent_blockhashes,
-            recent_blockhashes::RecentBlockhashes,
-            rent,
-            slot_hashes,
-            stake_history,
-        },
-    },
-};
 use alloc::sync::Arc;
 use solana_bincode::deserialize;
+use solana_instruction::error::InstructionError;
 use solana_last_restart_slot::LastRestartSlot;
 use solana_slot_hashes::SlotHashes;
 // #[cfg(RUSTC_WITH_SPECIALIZATION)]
@@ -264,12 +262,12 @@ pub mod get_sysvar_with_account_check {
     use crate::{
         clock::Clock,
         context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
-        error::InstructionError,
         rent::Rent,
         solana_program::sysvar::{recent_blockhashes::RecentBlockhashes, Sysvar},
     };
     use alloc::sync::Arc;
     use fluentbase_sdk::SharedAPI;
+    use solana_instruction::error::InstructionError;
 
     pub fn rent<SDK: SharedAPI>(
         invoke_context: &InvokeContext<SDK>,

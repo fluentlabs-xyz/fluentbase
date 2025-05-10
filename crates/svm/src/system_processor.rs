@@ -4,7 +4,6 @@ use crate::{
     common::limited_deserialize_packet_size,
     context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
     declare_process_instruction,
-    error::InstructionError,
     solana_program::{nonce, nonce::state::Versions},
     system_instruction::{SystemError, SystemInstruction, MAX_PERMITTED_DATA_LENGTH},
     system_program,
@@ -13,6 +12,7 @@ use crate::{
 use alloc::boxed::Box;
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashSet;
+use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_rbpf::declare_builtin_function;
 

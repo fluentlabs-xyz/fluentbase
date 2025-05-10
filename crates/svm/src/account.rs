@@ -1,7 +1,6 @@
 use crate::{
     clock::{Epoch, INITIAL_RENT_EPOCH},
     context::{IndexOfAccount, InstructionContext, TransactionContext},
-    error::InstructionError,
     helpers::is_zeroed,
     solana_program::sysvar::Sysvar,
     system_instruction::{
@@ -18,7 +17,7 @@ use core::{
 use serde::{Deserialize, Serialize};
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 use solana_bincode::{deserialize, serialize, serialize_into, serialized_size};
-use solana_instruction::error::LamportsError;
+use solana_instruction::error::{InstructionError, LamportsError};
 use solana_pubkey::Pubkey;
 
 pub type InheritableAccountFields = (u64, Epoch);

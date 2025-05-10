@@ -1,10 +1,12 @@
+// use crate::loaded_programs::LoadedProgram;
+// use crate::loaded_programs::LoadedProgramType;
 use crate::{
     account::BorrowedAccount,
     common::limited_deserialize_packet_size,
-    compute_budget::ComputeBudget,
+    compute_budget::compute_budget::ComputeBudget,
     context::{InstructionContext, InvokeContext},
-    error::{Error, InstructionError},
-    loaded_programs::{LoadedProgram, LoadedProgramType, DELAY_VISIBILITY_SLOT_OFFSET},
+    error::Error,
+    loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET},
     loaders,
     pubkey::Pubkey,
     solana_program::{
@@ -16,6 +18,7 @@ use crate::{
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use core::sync::atomic::Ordering;
 use fluentbase_sdk::{debug_log, SharedAPI};
+use solana_instruction::error::InstructionError;
 use solana_program_entrypoint::SUCCESS;
 use solana_rbpf::{
     aligned_memory::AlignedMemory,
@@ -446,12 +449,11 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
     //     program_id: buffer.get_key().to_string(),
     //     ..LoadProgramMetrics::default()
     // };
-    let executor = LoadedProgram::new(
+    let executor = ProgramCacheEntry::new(
         &loader_v4::id(),
         environments.program_runtime_v2.clone(),
         deployment_slot,
         effective_slot,
-        None,
         programdata,
         buffer.get_data().len(),
         // &mut load_program_metrics,
@@ -475,7 +477,10 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
     state.slot = current_slot;
     state.status = LoaderV4Status::Deployed;
 
-    if let Some(old_entry) = invoke_context.find_program_in_cache(program.get_key()) {
+    if let Some(old_entry) = invoke_context
+        .program_cache_for_tx_batch
+        .find(program.get_key())
+    {
         executor.tx_usage_counter.store(
             old_entry.tx_usage_counter.load(Ordering::Relaxed),
             Ordering::Relaxed,
@@ -486,7 +491,7 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
         );
     }
     invoke_context
-        .programs_modified_by_tx
+        .program_cache_for_tx_batch
         .replenish(*program.get_key(), Arc::new(executor));
     // program.set_executable(true)?;
     Ok(())
@@ -665,7 +670,8 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
         }
         // let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
         let loaded_program = invoke_context
-            .find_program_in_cache(program.get_key())
+            .program_cache_for_tx_batch
+            .find(program.get_key())
             .ok_or_else(|| {
                 // ic_logger_msg!(log_collector, "Program is not cached");
                 InstructionError::InvalidAccountData
@@ -679,22 +685,21 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
         // loaded_program
         //     .ix_usage_counter
         //     .fetch_add(1, Ordering::Relaxed);
-        let executor_program = loaded_program.program.clone();
-        let executor_program_ref = executor_program.as_ref();
-        match executor_program_ref {
-            LoadedProgramType::FailedVerification(_)
-            | LoadedProgramType::Closed
-            | LoadedProgramType::DelayVisibility => {
+        let loaded_program = &loaded_program.program;
+        // let executor_program_ref = executor_program.as_ref();
+        match loaded_program {
+            ProgramCacheEntryType::FailedVerification(_)
+            | ProgramCacheEntryType::Closed
+            | ProgramCacheEntryType::DelayVisibility => {
                 // ic_logger_msg!(log_collector, "Program is not deployed");
-                Err(Box::new(InstructionError::InvalidAccountData) as Error)
+                Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn core::error::Error>)
             }
-            LoadedProgramType::Typed(executable) => {
-                // bpf_loader_upgradable::execute(executable.clone(), invoke_context)
-                // TODO figure out why native 'execute' doesnt work (doesnt setup/init EbpfVm properly)
-                // execute(invoke_context, executable.clone())
-                loaders::agave_version::execute(executable.clone(), invoke_context)
+            ProgramCacheEntryType::Loaded(executable) => {
+                execute(invoke_context, executable.clone())
             }
-            _ => Err(Box::new(InstructionError::IncorrectProgramId) as Error),
+            _ => {
+                Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn core::error::Error>)
+            }
         }
     }
     .map(|_| 0)

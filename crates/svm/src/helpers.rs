@@ -104,7 +104,7 @@ use crate::{
     context::InvokeContext,
     error::{Error, SvmError},
     pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN},
-    solana_program::sysvar::Sysvar,
+    solana_program::{feature_set::feature_set_default, sysvar::Sysvar},
     storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
 use fluentbase_sdk::{SharedAPI, StorageAPI};
@@ -771,6 +771,80 @@ pub fn create_account_shared_data_for_test<S: Sysvar>(sysvar: &S) -> AccountShar
     ))
 }
 
+// #[macro_export]
+// macro_rules! with_mock_invoke_context {
+//     (
+//         $invoke_context:ident,
+//         $transaction_context:ident,
+//         $sdk:expr,
+//         $loader:expr,
+//         $transaction_accounts:expr $(,)?
+//     ) => {
+//         use crate::{
+//             account::ReadableAccount,
+//             context::TransactionContext,
+//             hash::Hash,
+//             loaded_programs::{LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
+//             rent::Rent,
+//             sysvar_cache::SysvarCache,
+//         };
+//         use alloc::sync::Arc;
+//         use solana_feature_set::FeatureSet;
+//         use $crate::context::InvokeContext;
+//         let compute_budget = $crate::compute_budget::ComputeBudget::default();
+//         let $transaction_context = TransactionContext::new(
+//             $transaction_accounts,
+//             Rent::default(),
+//             compute_budget.max_invoke_stack_height,
+//             compute_budget.max_instruction_trace_length,
+//         );
+//         let mut sysvar_cache = SysvarCache::default();
+//         sysvar_cache.fill_missing_entries(|pubkey, callback| {
+//             for index in 0..$transaction_context.get_number_of_accounts() {
+//                 if $transaction_context
+//                     .get_key_of_account_at_index(index)
+//                     .unwrap()
+//                     == pubkey
+//                 {
+//                     callback(
+//                         $transaction_context
+//                             .get_account_at_index(index)
+//                             .unwrap()
+//                             .borrow()
+//                             .data(),
+//                     );
+//                 }
+//             }
+//         });
+//         let programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+//             Default::default(),
+//             ProgramRuntimeEnvironments {
+//                 program_runtime_v1: $loader.clone(),
+//                 program_runtime_v2: $loader.clone(),
+//             },
+//         );
+//         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+//             Default::default(),
+//             ProgramRuntimeEnvironments {
+//                 program_runtime_v1: $loader.clone(),
+//                 program_runtime_v2: $loader.clone(),
+//             },
+//         );
+//         let mut $invoke_context = InvokeContext::new(
+//             $transaction_context,
+//             sysvar_cache,
+//             $sdk,
+//             // Some(LogCollector::new_ref()),
+//             compute_budget,
+//             programs_loaded_for_tx_batch,
+//             programs_modified_by_tx,
+//             Arc::new($crate::solana_program::feature_set::feature_set_default()),
+//             Hash::default(),
+//             0,
+//         );
+//     };
+// }
+
 #[macro_export]
 macro_rules! with_mock_invoke_context {
     (
@@ -780,22 +854,23 @@ macro_rules! with_mock_invoke_context {
         $loader:expr,
         $transaction_accounts:expr $(,)?
     ) => {
-        use crate::{
-            account::ReadableAccount,
-            context::TransactionContext,
-            hash::Hash,
-            loaded_programs::{LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
-            rent::Rent,
-            sysvar_cache::SysvarCache,
-        };
         use alloc::sync::Arc;
         use solana_feature_set::FeatureSet;
-        use $crate::context::InvokeContext;
-        let compute_budget = $crate::compute_budget::ComputeBudget::default();
-        let $transaction_context = TransactionContext::new(
+        use solana_rent::Rent;
+        // use solana_log_collector::LogCollector;
+        use $crate::{account::ReadableAccount, context::TransactionContext, hash::Hash};
+        use $crate::{
+            compute_budget::compute_budget::ComputeBudget,
+            context::{EnvironmentConfig, InvokeContext},
+            loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+            solana_program::feature_set::feature_set_default,
+            sysvar_cache::SysvarCache,
+        };
+        let compute_budget = ComputeBudget::default();
+        let mut $transaction_context = TransactionContext::new(
             $transaction_accounts,
             Rent::default(),
-            compute_budget.max_invoke_stack_height,
+            compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
         );
         let mut sysvar_cache = SysvarCache::default();
@@ -816,14 +891,14 @@ macro_rules! with_mock_invoke_context {
                 }
             }
         });
-        let programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
-            Default::default(),
-            ProgramRuntimeEnvironments {
-                program_runtime_v1: $loader.clone(),
-                program_runtime_v2: $loader.clone(),
-            },
+        let environment_config = EnvironmentConfig::new(
+            Hash::default(),
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache,
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: $loader.clone(),
@@ -832,16 +907,100 @@ macro_rules! with_mock_invoke_context {
         );
         let mut $invoke_context = InvokeContext::new(
             $transaction_context,
-            sysvar_cache,
-            $sdk,
+            program_cache_for_tx_batch,
+            environment_config,
             // Some(LogCollector::new_ref()),
             compute_budget,
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new($crate::solana_program::feature_set::feature_set_default()),
-            Hash::default(),
-            0,
+            $sdk,
         );
+    };
+}
+
+// pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
+//     loader_id: &Pubkey,
+//     mut program_indices: Vec<IndexOfAccount>,
+//     instruction_data: &[u8],
+//     mut transaction_accounts: Vec<TransactionAccount>,
+//     instruction_account_metas: Vec<AccountMeta>,
+//     expected_result: Result<(), InstructionError>,
+//     builtin_function: BuiltinFunctionWithContext,
+//     mut pre_adjustments: F,
+//     mut post_adjustments: G,
+// ) -> Vec<AccountSharedData> {
+//     let mut instruction_accounts: Vec<InstructionAccount> =
+//         Vec::with_capacity(instruction_account_metas.len());
+//     for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate() {
+//         let index_in_transaction = transaction_accounts
+//             .iter()
+//             .position(|(key, _account)| *key == account_meta.pubkey)
+//             .unwrap_or(transaction_accounts.len())
+//             as IndexOfAccount;
+//         let index_in_callee = instruction_accounts
+//             .get(0..instruction_account_index)
+//             .unwrap()
+//             .iter()
+//             .position(|instruction_account| {
+//                 instruction_account.index_in_transaction == index_in_transaction
+//             })
+//             .unwrap_or(instruction_account_index) as IndexOfAccount;
+//         instruction_accounts.push(InstructionAccount {
+//             index_in_transaction,
+//             index_in_caller: index_in_transaction,
+//             index_in_callee,
+//             is_signer: account_meta.is_signer,
+//             is_writable: account_meta.is_writable,
+//         });
+//     }
+//     if program_indices.is_empty() {
+//         program_indices.insert(0, transaction_accounts.len() as IndexOfAccount);
+//         let processor_account = AccountSharedData::new(0, 0, &native_loader::id());
+//         transaction_accounts.push((*loader_id, processor_account));
+//     }
+//     let pop_epoch_schedule_account = if !transaction_accounts
+//         .iter()
+//         .any(|(key, _)| *key == sysvar::epoch_schedule::id())
+//     {
+//         transaction_accounts.push((
+//             sysvar::epoch_schedule::id(),
+//             create_account_shared_data_for_test(&EpochSchedule::default()),
+//         ));
+//         true
+//     } else {
+//         false
+//     };
+//     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+//     let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+//     program_cache_for_tx_batch.replenish(
+//         *loader_id,
+//         Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
+//     );
+//     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
+//     pre_adjustments(&mut invoke_context);
+//     let result = invoke_context.process_instruction(
+//         instruction_data,
+//         &instruction_accounts,
+//         &program_indices,
+//         &mut 0,
+//         &mut ExecuteTimings::default(),
+//     );
+//     assert_eq!(result, expected_result);
+//     post_adjustments(&mut invoke_context);
+//     let mut transaction_accounts = transaction_context.deconstruct_without_keys().unwrap();
+//     if pop_epoch_schedule_account {
+//         transaction_accounts.pop();
+//     }
+//     transaction_accounts.pop();
+//     transaction_accounts
+// }
+
+#[macro_export]
+macro_rules! choose_storage {
+    ($option:expr, $alt:expr, $callback:expr) => {
+        if let Some(v) = $option {
+            $callback(*v)
+        } else {
+            $callback($alt)
+        }
     };
 }
 
@@ -850,7 +1009,7 @@ pub fn storage_read_account_data<SAPI: StorageAPI>(
     pubkey: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
     let mut buffer = vec![];
-    let mut storage_writer = StorageChunksWriter {
+    let storage_writer = StorageChunksWriter {
         slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
         _phantom: Default::default(),
     };
@@ -881,16 +1040,18 @@ pub mod test_utils {
     };
     use alloc::sync::Arc;
     use fluentbase_sdk::SharedAPI;
+    use solana_rbpf::program::BuiltinProgram;
 
     pub fn load_all_invoked_programs<SDK: SharedAPI>(invoke_context: &mut InvokeContext<SDK>) {
         // let mut load_program_metrics = LoadProgramMetrics::default();
-        let program_runtime_environment = create_program_runtime_environment_v1(
-            &invoke_context.feature_set,
-            invoke_context.get_compute_budget(),
-            false,
-            false,
-        )
-        .unwrap();
+        let program_runtime_environment: BuiltinProgram<InvokeContext<SDK>> =
+            create_program_runtime_environment_v1(
+                &invoke_context.environment_config.feature_set,
+                invoke_context.get_compute_budget(),
+                false,
+                false,
+            )
+            .unwrap();
         let program_runtime_environment = Arc::new(program_runtime_environment);
         let num_accounts = invoke_context.transaction_context.get_number_of_accounts();
         for index in 0..num_accounts {
@@ -918,11 +1079,8 @@ pub mod test_utils {
                     false,
                 ) {
                     invoke_context
-                        .programs_modified_by_tx
-                        .set_slot(DELAY_VISIBILITY_SLOT_OFFSET);
-                    invoke_context
-                        .programs_modified_by_tx
-                        .replenish(*pubkey, Arc::new(loaded_program));
+                        .program_cache_for_tx_batch
+                        .set_slot_for_tests(DELAY_VISIBILITY_SLOT_OFFSET);
                 }
             }
         }

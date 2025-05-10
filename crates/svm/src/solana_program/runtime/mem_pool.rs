@@ -1,9 +1,7 @@
 use crate::{
     compute_budget::{
-        MAX_CALL_DEPTH,
-        MAX_INSTRUCTION_STACK_DEPTH,
-        MIN_HEAP_FRAME_BYTES,
-        STACK_FRAME_SIZE,
+        compute_budget::{MAX_CALL_DEPTH, MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE},
+        compute_budget_limits::MIN_HEAP_FRAME_BYTES,
     },
     compute_budget_processor::MAX_HEAP_FRAME_BYTES,
 };
@@ -67,8 +65,8 @@ impl Reset for AlignedMemory<{ HOST_ALIGN }> {
 }
 
 pub struct VmMemoryPool {
-    stack: Pool<AlignedMemory<{ HOST_ALIGN }>, MAX_INSTRUCTION_STACK_DEPTH>,
-    heap: Pool<AlignedMemory<{ HOST_ALIGN }>, MAX_INSTRUCTION_STACK_DEPTH>,
+    stack: Pool<AlignedMemory<{ HOST_ALIGN }>, { MAX_INSTRUCTION_STACK_DEPTH }>,
+    heap: Pool<AlignedMemory<{ HOST_ALIGN }>, { MAX_INSTRUCTION_STACK_DEPTH }>,
 }
 
 impl VmMemoryPool {

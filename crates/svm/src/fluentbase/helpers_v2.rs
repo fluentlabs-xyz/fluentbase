@@ -1,10 +1,13 @@
+// use crate::loaded_programs::LoadedProgram;
+// use crate::loaded_programs::LoadedProgramsForTxBatch;
 use crate::{
-    account::{AccountSharedData, ReadableAccount},
+    account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     builtins::register_builtins,
+    choose_storage,
     common::compile_accounts_for_tx_ctx,
-    compute_budget::ComputeBudget,
-    context::{IndexOfAccount, InvokeContext, TransactionContext},
-    error::{InstructionError, SvmError},
+    compute_budget::compute_budget::ComputeBudget,
+    context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
+    error::SvmError,
     fluentbase::common::{
         extract_account_data_or_default,
         flush_accounts,
@@ -12,32 +15,44 @@ use crate::{
         BatchMessage,
         SYSTEM_PROGRAMS_KEYS,
     },
-    loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
+    helpers::storage_read_account_data,
+    loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     loaders::{bpf_loader_v4, bpf_loader_v4::get_state},
     message_processor::MessageProcessor,
+    native_loader,
+    solana_program,
     solana_program::{
         feature_set::feature_set_default,
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status},
         message::{legacy, LegacyMessage, SanitizedMessage},
+        svm_message::SVMMessage,
+        sysvar::instructions::{
+            construct_instructions_data,
+            BorrowedAccountMeta,
+            BorrowedInstruction,
+        },
     },
     system_processor,
     system_program,
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{debug_log, BlockContextReader, SharedAPI, StorageAPI};
+use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
 use hashbrown::{HashMap, HashSet};
 use itertools::Itertools;
 use solana_bincode::deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
+use solana_feature_set::{disable_account_loader_special_case, FeatureSet};
+use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
 };
-use solana_rent::Rent;
+use solana_rent::{sysvar, Rent};
+use solana_transaction_error::TransactionError;
 
 pub fn init_config() -> Config {
     Config {
@@ -86,20 +101,17 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
 
 pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: StorageAPI>(
     sdk: &mut SDK,
-    message: legacy::Message,
+    message: &impl SVMMessage,
     sapi: &mut Option<&mut SAPI>,
 ) -> Result<
     ((
-        SanitizedMessage,
+        // SanitizedMessage,
         Vec<(Pubkey, AccountSharedData)>,
         Vec<Vec<IndexOfAccount>>,
         Vec<Pubkey>,
     )),
     SvmError,
 > {
-    let message: SanitizedMessage =
-        SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
-
     let mut sysvar_cache = SysvarCache::default();
     let rent = Rent::free();
     let clock = Clock::default();
@@ -149,7 +161,7 @@ pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: StorageAPI>(
     }
 
     let mut program_accounts_to_warmup: Vec<&Pubkey> = Default::default();
-    for instruction in message.instructions() {
+    for instruction in message.instructions_iter() {
         program_indices.push(vec![]);
         let account_key = account_keys
             .get(instruction.program_id_index as usize)
@@ -201,10 +213,326 @@ pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: StorageAPI>(
     });
 
     Ok((
-        message,
+        // message,
         accounts,
         program_indices,
         program_accounts_to_warmup.into_iter().cloned().collect(),
+    ))
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub struct LoadedTransactionAccount {
+    pub(crate) account: AccountSharedData,
+    pub(crate) loaded_size: usize,
+    pub(crate) rent_collected: u64,
+}
+
+fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedData {
+    let account_keys = message.account_keys();
+    let mut decompiled_instructions = Vec::with_capacity(message.num_instructions());
+    for (program_id, instruction) in message.program_instructions_iter() {
+        let accounts = instruction
+            .accounts
+            .iter()
+            .map(|account_index| {
+                let account_index = usize::from(*account_index);
+                BorrowedAccountMeta {
+                    is_signer: message.is_signer(account_index),
+                    is_writable: message.is_writable(account_index),
+                    pubkey: account_keys.get(account_index).unwrap(),
+                }
+            })
+            .collect();
+
+        decompiled_instructions.push(BorrowedInstruction {
+            accounts,
+            data: &instruction.data,
+            program_id,
+        });
+    }
+
+    AccountSharedData::from(Account {
+        data: construct_instructions_data(&decompiled_instructions),
+        owner: sysvar::id(),
+        ..Account::default()
+    })
+}
+
+fn account_shared_data_from_program(
+    key: &Pubkey,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
+) -> Result<AccountSharedData, SvmError> {
+    // It's an executable program account. The program is already loaded in the cache.
+    // So the account data is not needed. Return a dummy AccountSharedData with meta
+    // information.
+    let mut program_account = AccountSharedData::default();
+    let (program_owner, _count) = program_accounts
+        .get(key)
+        .ok_or(TransactionError::AccountNotFound)?;
+    program_account.set_owner(**program_owner);
+    program_account.set_executable(true);
+    Ok(program_account)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_transaction_account<'a, SDK: SharedAPI, SAPI: StorageAPI>(
+    // callbacks: &CB,
+    sapi: &SAPI,
+    message: &impl SVMMessage,
+    account_key: &Pubkey,
+    account_index: usize,
+    instruction_accounts: &[&u8],
+    // account_overrides: Option<&AccountOverrides>,
+    feature_set: &FeatureSet,
+    // rent_collector: &dyn SVMRentCollector,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
+    loaded_programs: &ProgramCacheForTxBatch<'a, SDK>,
+) -> Result<(LoadedTransactionAccount, bool), SvmError> {
+    let mut account_found = true;
+    let disable_account_loader_special_case =
+        feature_set.is_active(&disable_account_loader_special_case::id());
+    let is_instruction_account = u8::try_from(account_index)
+        .map(|i| instruction_accounts.contains(&&i))
+        .unwrap_or(false);
+    let is_writable = message.is_writable(account_index);
+    let loaded_account = if solana_program::sysvar::instructions::check_id(account_key) {
+        // Since the instructions sysvar is constructed by the SVM and modified
+        // for each transaction instruction, it cannot be overridden.
+        LoadedTransactionAccount {
+            loaded_size: 0,
+            account: construct_instructions_account(message),
+            rent_collected: 0,
+        }
+    // } else if let Some(account_override) =
+    //     account_overrides.and_then(|overrides| overrides.get(account_key))
+    // {
+    //     LoadedTransactionAccount {
+    //         loaded_size: account_override.data().len(),
+    //         account: account_override.clone(),
+    //         rent_collected: 0,
+    //     }
+    } else if let Some(program) =
+        (!disable_account_loader_special_case && !is_instruction_account && !is_writable)
+            .then_some(())
+            .and_then(|_| loaded_programs.find(account_key))
+    {
+        // Optimization to skip loading of accounts which are only used as
+        // programs in top-level instructions and not passed as instruction accounts.
+        LoadedTransactionAccount {
+            loaded_size: program.account_size,
+            account: account_shared_data_from_program(account_key, program_accounts)?,
+            rent_collected: 0,
+        }
+    } else {
+        // callbacks
+        //     .get_account_shared_data(account_key)
+        storage_read_account_data(sapi, account_key)
+            .map(|mut account| {
+                // Inspect the account prior to collecting rent, since
+                // rent collection can modify the account.
+                // callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
+
+                // let rent_collected = if is_writable {
+                //     collect_rent_from_account(
+                //         feature_set,
+                //         rent_collector,
+                //         account_key,
+                //         &mut account,
+                //     )
+                //     .rent_amount
+                // } else {
+                //     0
+                // };
+
+                LoadedTransactionAccount {
+                    loaded_size: account.data().len(),
+                    account,
+                    rent_collected: 0,
+                }
+            })
+            .unwrap_or_else(|_| {
+                // callbacks.inspect_account(account_key, AccountState::Dead, is_writable);
+
+                account_found = false;
+                let mut default_account = AccountSharedData::default();
+
+                // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
+                // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
+                // with this field already set would allow us to skip rent collection for these accounts.
+                default_account
+                    .set_rent_epoch(crate::solana_program::rent_collector::RENT_EXEMPT_RENT_EPOCH);
+                LoadedTransactionAccount {
+                    loaded_size: default_account.data().len(),
+                    account: default_account,
+                    rent_collected: 0,
+                }
+            })
+    };
+
+    Ok((loaded_account, account_found))
+}
+
+pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
+    sdk: &mut SDK,
+    message: &impl SVMMessage,
+    sapi: &mut Option<&mut SAPI>,
+    feature_set: &FeatureSet,
+    // rent_collector,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
+    loaded_programs: &ProgramCacheForTxBatch<SDK>,
+) -> Result<
+    ((
+        // SanitizedMessage,
+        Vec<(Pubkey, AccountSharedData)>,
+        Vec<Vec<IndexOfAccount>>,
+        // Vec<Pubkey>,
+    )),
+    SvmError,
+> {
+    let account_keys = message.account_keys();
+    let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::with_capacity(account_keys.len());
+    let mut accounts_found = Vec::with_capacity(account_keys.len());
+
+    let count = message
+        .instructions_iter()
+        .fold(0, |accum, instr| accum + instr.accounts.len());
+    let mut unique_items = HashSet::with_capacity(count);
+    let instruction_accounts = message
+        .instructions_iter()
+        .flat_map(|instruction| instruction.accounts)
+        .filter(|v| unique_items.insert(*v))
+        .collect::<Vec<&u8>>();
+
+    let mut collect_loaded_account =
+        |key: &Pubkey, (loaded_account, found)| -> Result<(), SvmError> {
+            // let LoadedTransactionAccount {
+            //     account,
+            //     loaded_size,
+            //     rent_collected,
+            // } = loaded_account;
+
+            // accumulate_and_check_loaded_account_data_size(
+            //     &mut accumulated_accounts_data_size,
+            //     loaded_size,
+            //     compute_budget_limits.loaded_accounts_bytes,
+            //     error_metrics,
+            // )?;
+
+            // tx_rent += rent_collected;
+            // rent_debits.insert(key, rent_collected, account.lamports());
+
+            accounts.push((*key, loaded_account));
+            accounts_found.push(found);
+            Ok(())
+        };
+
+    // Since the fee payer is always the first account, collect it first. Note
+    // that account overrides are already applied during fee payer validation so
+    // it's fine to use the fee payer directly here rather than checking account
+    // overrides again.
+    let fee_payer = message.fee_payer();
+    // let loaded_fee_payer_account = storage_read_account_data();
+    // collect_loaded_account(fee_payer, (loaded_fee_payer_account, true))?;
+
+    // Attempt to load and collect remaining non-fee payer accounts
+    for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
+        // let (loaded_account, account_found) = load_transaction_account(
+        //     // callbacks,
+        //     sapi.unwrap(),
+        //     &message,
+        //     account_key,
+        //     account_index,
+        //     &instruction_accounts[..],
+        //     // account_overrides,
+        //     feature_set,
+        //     // rent_collector,
+        //     program_accounts,
+        //     loaded_programs,
+        // )?;
+        let (loaded_account, account_found) = choose_storage!(sapi, sdk, |v| {
+            load_transaction_account(
+                // callbacks,
+                v,
+                message,
+                account_key,
+                account_index,
+                &instruction_accounts[..],
+                // account_overrides,
+                feature_set,
+                // rent_collector,
+                program_accounts,
+                loaded_programs,
+            )
+        })?;
+        collect_loaded_account(account_key, (loaded_account.account, account_found))?;
+    }
+
+    let builtins_start_index = accounts.len();
+    let program_indices = message
+        .instructions_iter()
+        .map(|instruction| {
+            let mut account_indices = Vec::with_capacity(2);
+            let program_index = instruction.program_id_index as usize;
+            // This command may never return error, because the transaction is sanitized
+            let (program_id, program_account) = accounts
+                .get(program_index)
+                .ok_or(TransactionError::ProgramAccountNotFound)?;
+            if native_loader::check_id(program_id) {
+                return Ok(account_indices);
+            }
+
+            let account_found = accounts_found.get(program_index).unwrap_or(&true);
+            if !account_found {
+                // error_metrics.account_not_found += 1;
+                return Err(TransactionError::ProgramAccountNotFound);
+            }
+
+            if !program_account.executable() {
+                // error_metrics.invalid_program_for_execution += 1;
+                return Err(TransactionError::InvalidProgramForExecution);
+            }
+            account_indices.insert(0, program_index as IndexOfAccount);
+            let owner_id = program_account.owner();
+            if native_loader::check_id(owner_id) {
+                return Ok(account_indices);
+            }
+            if !accounts
+                .get(builtins_start_index..)
+                .ok_or(TransactionError::ProgramAccountNotFound)?
+                .iter()
+                .any(|(key, _)| key == owner_id)
+            {
+                // if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
+                if let Ok(owner_account) =
+                    choose_storage!(sapi, sdk, |v| { storage_read_account_data(v, owner_id) })
+                {
+                    if !native_loader::check_id(owner_account.owner())
+                        || !owner_account.executable()
+                    {
+                        // error_metrics.invalid_program_for_execution += 1;
+                        return Err(TransactionError::InvalidProgramForExecution);
+                    }
+                    // accumulate_and_check_loaded_account_data_size(
+                    //     &mut accumulated_accounts_data_size,
+                    //     owner_account.data().len(),
+                    //     compute_budget_limits.loaded_accounts_bytes,
+                    //     error_metrics,
+                    // )?;
+                    accounts.push((*owner_id, owner_account));
+                } else {
+                    // error_metrics.account_not_found += 1;
+                    return Err(TransactionError::ProgramAccountNotFound);
+                }
+            }
+            Ok(account_indices)
+        })
+        .collect::<Result<Vec<Vec<IndexOfAccount>>, TransactionError>>()?;
+
+    Ok((
+        // message,
+        accounts,
+        program_indices,
+        // program_accounts_to_warmup.into_iter().cloned().collect(),
     ))
 }
 
@@ -233,8 +561,11 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     let system_program_id = system_program::id();
     let loader_id = loader_v4::id();
 
-    let (message, accounts, program_indices, program_accounts_to_warmup) =
-        prepare_data_for_tx_ctx1(sdk, message, sapi)?;
+    let message: SanitizedMessage =
+        SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
+
+    let (accounts, program_indices, program_accounts_to_warmup) =
+        prepare_data_for_tx_ctx1(sdk, &message, sapi)?;
 
     // TODO compute hardcoded parameters
     let transaction_context = TransactionContext::new(accounts, rent.clone(), 100, 200);
@@ -242,57 +573,54 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
     register_builtins(&mut function_registry);
     let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
-    let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
+    let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
         block_number,
         ProgramRuntimeEnvironments {
             program_runtime_v1: loader.clone(),
             program_runtime_v2: loader.clone(),
         },
     );
-    programs_loaded_for_tx_batch.replenish(
+    program_cache_for_tx_batch.replenish(
         system_program_id,
-        Arc::new(LoadedProgram::new_builtin(
+        Arc::new(ProgramCacheEntry::new_builtin(
             0,
             0,
             system_processor::Entrypoint::vm,
         )),
     );
-    programs_loaded_for_tx_batch.replenish(
+    program_cache_for_tx_batch.replenish(
         loader_id,
-        Arc::new(LoadedProgram::new_builtin(
+        Arc::new(ProgramCacheEntry::new_builtin(
             0,
             0,
             bpf_loader_v4::Entrypoint::vm,
         )),
     );
-    let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
-        block_number,
-        ProgramRuntimeEnvironments {
-            program_runtime_v1: loader.clone(),
-            program_runtime_v2: loader.clone(),
-        },
-    );
 
-    // TODO validate blockhash?
     let transaction_context = {
-        let mut feature_set = feature_set_default();
+        let feature_set = feature_set_default();
+
+        // TODO need specific blockhash?
+        let environment_config = EnvironmentConfig::new(
+            *message.recent_blockhash(),
+            None,
+            Arc::new(feature_set),
+            0,
+            sysvar_cache,
+        );
 
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache.clone(),
-            sdk,
+            program_cache_for_tx_batch,
+            environment_config,
             compute_budget.clone(),
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            feature_set.into(),
-            *message.recent_blockhash(),
-            0,
+            sdk,
         );
         for pk in &program_accounts_to_warmup {
             let loaded_program = invoke_context.load_program(pk, false);
             if let Some(v) = loaded_program {
                 invoke_context
-                    .programs_loaded_for_tx_batch
+                    .program_cache_for_tx_batch
                     .replenish(pk.clone(), v);
             };
         }

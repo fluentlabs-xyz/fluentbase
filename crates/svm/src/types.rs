@@ -1,7 +1,7 @@
-use byteorder::ByteOrder;
-use crate::error::InstructionError;
 use alloc::vec::Vec;
+use byteorder::ByteOrder;
 use hex_literal::hex;
+use solana_instruction::error::InstructionError;
 
 pub const SVM_ADDRESS_PREFIX: [u8; 12] = hex!("838677656868828082697088"); // SVMADDRPREFX
 

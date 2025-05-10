@@ -1,5 +1,4 @@
 use crate::{
-    error::InstructionError,
     solana_program::{
         ed25519_program,
         instruction::CompiledInstruction,
@@ -22,6 +21,7 @@ use core::convert::TryFrom;
 use hashbrown::HashSet;
 use solana_bincode::limited_deserialize;
 use solana_hash::Hash;
+use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_sanitize::Sanitize;
 #[deprecated(

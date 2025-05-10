@@ -276,12 +276,12 @@ mod tests {
             &amount.to_be_bytes(),
             vec![
                 // account_meta1
-                AccountMeta::new(pk_tmp, true),
+                AccountMeta::new(pk_tmp, false),
                 AccountMeta::new(pk_payer, false),
                 AccountMeta::new(system_program_id, false),
             ],
         )];
-        let message = Message::new(&instructions, None);
+        let message = Message::new(&instructions, Some(&pk_payer));
         sdk = sdk
             .with_shared_context_input(SharedContextInputV1 {
                 block: BlockContextV1 {

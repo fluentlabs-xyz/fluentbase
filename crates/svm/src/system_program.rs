@@ -2,7 +2,6 @@ use crate::{
     account::BorrowedAccount,
     common::checked_add,
     context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
-    error::InstructionError,
     solana_program::nonce::{
         state::{AuthorizeNonceError, Data, DurableNonce, Versions},
         State,
@@ -11,6 +10,7 @@ use crate::{
 };
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashSet;
+use solana_instruction::error::InstructionError;
 use solana_pubkey::{declare_id, Pubkey};
 use solana_rent::Rent;
 
@@ -41,7 +41,8 @@ pub fn advance_nonce_account<SDK: SharedAPI>(
                 // );
                 return Err(InstructionError::MissingRequiredSignature);
             }
-            let next_durable_nonce = DurableNonce::from_blockhash(&invoke_context.blockhash);
+            let next_durable_nonce =
+                DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash);
             if data.durable_nonce == next_durable_nonce {
                 // ic_msg!(
                 //     invoke_context,
@@ -53,7 +54,7 @@ pub fn advance_nonce_account<SDK: SharedAPI>(
             let new_data = Data::new(
                 data.authority,
                 next_durable_nonce,
-                invoke_context.lamports_per_signature,
+                invoke_context.environment_config.lamports_per_signature,
             );
             account.set_state(&Versions::new(State::Initialized(new_data)))
         }
@@ -105,7 +106,8 @@ pub fn withdraw_nonce_account<SDK: SharedAPI>(
         }
         State::Initialized(ref data) => {
             if lamports == from.get_lamports() {
-                let durable_nonce = DurableNonce::from_blockhash(&invoke_context.blockhash);
+                let durable_nonce =
+                    DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash);
                 if data.durable_nonce == durable_nonce {
                     // ic_msg!(
                     //     invoke_context,
@@ -176,11 +178,12 @@ pub fn initialize_nonce_account<SDK: SharedAPI>(
                 // );
                 return Err(InstructionError::InsufficientFunds);
             }
-            let durable_nonce = DurableNonce::from_blockhash(&invoke_context.blockhash);
+            let durable_nonce =
+                DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash);
             let data = Data::new(
                 *nonce_authority,
                 durable_nonce,
-                invoke_context.lamports_per_signature,
+                invoke_context.environment_config.lamports_per_signature,
             );
             let state = State::Initialized(data);
             account.set_state(&Versions::new(state))
