@@ -1,0 +1,17 @@
+---
+source: crates/sdk-derive/derive-core/src/sol_input.rs
+expression: formatted
+---
+#[derive(::fluentbase_sdk::codec::Codec, Debug, Clone, PartialEq, Eq)]
+pub struct Inner {
+    pub x: U256,
+}
+#[derive(::fluentbase_sdk::codec::Codec, Debug, Clone, PartialEq, Eq)]
+pub struct Outer {
+    pub inner: Inner,
+    pub note: String,
+}
+#[client(mode = "solidity")]
+pub trait IProgram {
+    fn ping(&self, input: Outer) -> Outer;
+}
