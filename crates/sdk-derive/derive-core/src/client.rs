@@ -1,5 +1,5 @@
 use crate::{
-    attr::{mode::Mode, Artifacts},
+    attr::mode::Mode,
     codec::CodecGenerator,
     method::{MethodCollector, MethodLike, ParsedMethod},
 };
@@ -15,8 +15,6 @@ use syn::{spanned::Spanned, visit, Error, Ident, ItemTrait, Result, TraitItemFn}
 pub struct ClientAttributes {
     /// The client mode (Solidity or Fluent)
     pub mode: Mode,
-    /// Optional path for saving artifacts
-    pub artifacts: Option<Artifacts>,
 }
 
 /// A client that provides function calls to contracts.
