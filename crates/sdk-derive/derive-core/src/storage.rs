@@ -364,7 +364,7 @@ impl Parse for StorageKind {
             let ident_fork = input.fork();
             let ident: Ident = ident_fork.parse()?;
 
-            if ident.to_string() == "FixedBytes" {
+            if ident == "FixedBytes" {
                 // Consume the FixedBytes identifier
                 let _: Ident = input.parse()?;
 
@@ -384,7 +384,7 @@ impl Parse for StorageKind {
             if content.peek(Ident::peek_any) {
                 let elem_type: Ident = content.parse()?;
 
-                if elem_type.to_string() == "u8" && content.peek(Token![;]) {
+                if elem_type == "u8" && content.peek(Token![;]) {
                     // Parse the semicolon and size
                     let _: Token![;] = content.parse()?;
                     let size_lit: syn::LitInt = content.parse()?;
@@ -557,20 +557,18 @@ impl StorageSlot {
                     }
                 }
             }
-        } else {
-            if arguments.is_empty() {
-                quote! {
-                    fn get<SDK: fluentbase_sdk::SharedAPI>(#get_args) -> #output {
-                        let key = Self::key(sdk);
-                        <#output as fluentbase_sdk::storage::StorageValueSolidity<SDK, #output>>::get(sdk, key)
-                    }
+        } else if arguments.is_empty() {
+            quote! {
+                fn get<SDK: fluentbase_sdk::SharedAPI>(#get_args) -> #output {
+                    let key = Self::key(sdk);
+                    <#output as fluentbase_sdk::storage::StorageValueSolidity<SDK, #output>>::get(sdk, key)
                 }
-            } else {
-                quote! {
-                    fn get<SDK: fluentbase_sdk::SharedAPI>(#get_args) -> #output {
-                        let key = Self::key(sdk, #(#arg_names),*);
-                        <#output as fluentbase_sdk::storage::StorageValueSolidity<SDK, #output>>::get(sdk, key)
-                    }
+            }
+        } else {
+            quote! {
+                fn get<SDK: fluentbase_sdk::SharedAPI>(#get_args) -> #output {
+                    let key = Self::key(sdk, #(#arg_names),*);
+                    <#output as fluentbase_sdk::storage::StorageValueSolidity<SDK, #output>>::get(sdk, key)
                 }
             }
         }

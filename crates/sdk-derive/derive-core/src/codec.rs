@@ -236,7 +236,7 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
         match &self.route.parsed_signature().output {
             ReturnType::Default => Vec::new(),
             ReturnType::Type(_, ty) => match &**ty {
-                Type::Tuple(tuple) => tuple.elems.iter().map(|ty| &*ty).collect(),
+                Type::Tuple(tuple) => tuple.elems.iter().collect(),
                 ty => vec![ty],
             },
         }

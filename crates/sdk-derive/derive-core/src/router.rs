@@ -402,8 +402,7 @@ mod tests {
     fn test_trait_router_generation() {
         let impl_block: syn::ItemImpl = parse_quote! {
             impl<SDK: SharedAPI> RouterAPI for App<SDK> {
-                #[function_id("greeting(string)")]
-                fn greeting(&self, message: String) -> String {
+                fn greeting(&self, message: String, owner: Address, amount: U256) -> String {
                     message
                 }
 

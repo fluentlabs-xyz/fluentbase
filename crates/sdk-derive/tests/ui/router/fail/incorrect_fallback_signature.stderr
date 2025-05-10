@@ -1,4 +1,4 @@
-error: Fallback method must have signature 'fn fallback(&self)' with no parameters and no return value
+error: fallback method must have signature 'fn fallback(&self)' with no parameters and no return value
   --> tests/ui/router/fail/incorrect_fallback_signature.rs:25:5
    |
 25 |     fn fallback(&self, data: u64) -> bool {

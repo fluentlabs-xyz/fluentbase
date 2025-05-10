@@ -4,7 +4,6 @@ use quote::ToTokens;
 use std::ops::Deref;
 use syn::{spanned::Spanned, FnArg, ReturnType, Signature};
 
-
 /// Wrapper around `syn::Signature`
 #[derive(Debug, Clone)]
 pub struct ParsedSignature(Signature);
@@ -93,10 +92,7 @@ impl ParsedSignature {
         self.0
             .inputs
             .iter()
-            .filter(|arg| match arg {
-                FnArg::Receiver(_) => false,
-                _ => true,
-            })
+            .filter(|arg| !matches!(arg, FnArg::Receiver(_)))
             .collect()
     }
 
