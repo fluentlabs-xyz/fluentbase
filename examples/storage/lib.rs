@@ -181,6 +181,7 @@ mod test {
     pub fn test_storage_key_reference_values() {
         let sdk = with_test_input(vec![], None);
 
+        // Test slot values
         assert_eq!(CustomFixedBytes::SLOT, U256::from_limbs([0, 0, 0, 0]));
         assert_eq!(CustomFixedBytesArray::SLOT, U256::from_limbs([1, 0, 0, 0]));
         assert_eq!(Balance::SLOT, U256::from_limbs([6, 0, 0, 0]));
@@ -191,6 +192,7 @@ mod test {
         let addr2 = Address::from(hex!("70997970c51812dc3a010c7d01b50e0d17dc79c8"));
 
         // Balance[addr1]
+        // Expected format: keccak256(abi.encodePacked(bytes32(address), bytes32(slot)))
         let expected_balance_key = U256::from_str_radix(
             "c50c4d60f8bbb6a70920d195c8852bc6d816d9f7bc643b500261fc4d9a03f08c",
             16,
@@ -204,6 +206,8 @@ mod test {
         );
 
         // Allowance[addr1][addr2]
+        // Expected format: keccak256(abi.encodePacked(bytes32(addr2),
+        // keccak256(abi.encodePacked(bytes32(addr1), bytes32(slot)))))
         let expected_allowance_key = U256::from_str_radix(
             "9497c69828ddf28f6ad649ddac9a7c28d7e9228a5a06a6acf21099fe94d38327",
             16,
@@ -217,6 +221,7 @@ mod test {
         );
 
         // Arr[42]
+        // Expected format: keccak256(abi.encodePacked(bytes32(slot))) + index
         let idx = U256::from(42);
         let expected_array_key = U256::from_str_radix(
             "f3f7a9fe364faab93b216da50a3214154f22a0a2b415b23a84c8169e8b636f0d",
@@ -231,6 +236,7 @@ mod test {
         );
 
         // NestedArr[0][0][0]
+        // Complex nested array calculation
         let idx1 = U256::from(0);
         let idx2 = U256::from(0);
         let idx3 = U256::from(0);
