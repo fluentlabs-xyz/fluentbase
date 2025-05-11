@@ -170,57 +170,57 @@ pub fn create_vm_exec_program<'a, SDK: SharedAPI>(
     Ok(res)
 }
 
-// fn execute<'a, SDK: SharedAPI>(
-//     invoke_context: &mut InvokeContext<'a, SDK>,
-//     executable: Arc<Executable<InvokeContext<'a, SDK>>>,
-// ) -> Result<(), Error> {
-//     // We dropped the lifetime tracking in the Executor by setting it to 'static,
-//     // thus we need to reintroduce the correct lifetime of InvokeContext here again.
-//     // let executable =
-//     //     unsafe { std::mem::transmute::<_, &'a Executable<InvokeContext<'b>>>(executable) };
-//     // let log_collector = invoke_context.get_log_collector();
-//     // let stack_height = invoke_context.get_stack_height();
-//     // let transaction_context = &invoke_context.transaction_context;
-//     // let instruction_context = transaction_context.get_current_instruction_context()?;
-//     // let program_id = *instruction_context.get_last_program_key(transaction_context)?;
-//     #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
-//     let use_jit = false;
-//     // #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-//     // let use_jit = executable.get_compiled_program().is_some();
-//
-//     // let compute_meter_prev = invoke_context.get_remaining();
-//     // let mut create_vm_time = Measure::start("create_vm");
-//     // let mut vm = create_vm(invoke_context, executable.clone())?;
-//     // let (_, result) = create_vm_exec(invoke_context, executable.clone())?;
-//     // create_vm_time.stop();
-//
-//     // let mut execute_time = Measure::start("execute");
-//     // stable_log::program_invoke(&log_collector, &program_id, stack_height);
-//     let (_compute_units_consumed, result) =
-//         create_vm_exec_program(invoke_context, executable.clone())?;
-//     // drop(vm);
-//     // ic_logger_msg!(
-//     //     log_collector,
-//     //     "Program {} consumed {} of {} compute units",
-//     //     &program_id,
-//     //     compute_units_consumed,
-//     //     compute_meter_prev
-//     // );
-//     // execute_time.stop();
-//
-//     // let timings = &mut invoke_context.timings;
-//     // timings.create_vm_us = timings.create_vm_us.saturating_add(create_vm_time.as_us());
-//     // timings.execute_us = timings.execute_us.saturating_add(execute_time.as_us());
-//
-//     match result {
-//         ProgramResult::Ok(status) if status != SUCCESS => {
-//             let error: InstructionError = status.into();
-//             Err(error.into())
-//         }
-//         ProgramResult::Err(error) => Err(error.into()),
-//         _ => Ok(()),
-//     }
-// }
+/*fn execute<'a, SDK: SharedAPI>(
+    invoke_context: &mut InvokeContext<'a, SDK>,
+    executable: Arc<Executable<InvokeContext<'a, SDK>>>,
+) -> Result<(), Error> {
+    // We dropped the lifetime tracking in the Executor by setting it to 'static,
+    // thus we need to reintroduce the correct lifetime of InvokeContext here again.
+    // let executable =
+    //     unsafe { std::mem::transmute::<_, &'a Executable<InvokeContext<'b>>>(executable) };
+    // let log_collector = invoke_context.get_log_collector();
+    // let stack_height = invoke_context.get_stack_height();
+    // let transaction_context = &invoke_context.transaction_context;
+    // let instruction_context = transaction_context.get_current_instruction_context()?;
+    // let program_id = *instruction_context.get_last_program_key(transaction_context)?;
+    #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
+    let use_jit = false;
+    // #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+    // let use_jit = executable.get_compiled_program().is_some();
+
+    // let compute_meter_prev = invoke_context.get_remaining();
+    // let mut create_vm_time = Measure::start("create_vm");
+    // let mut vm = create_vm(invoke_context, executable.clone())?;
+    // let (_, result) = create_vm_exec(invoke_context, executable.clone())?;
+    // create_vm_time.stop();
+
+    // let mut execute_time = Measure::start("execute");
+    // stable_log::program_invoke(&log_collector, &program_id, stack_height);
+    let (_compute_units_consumed, result) =
+        create_vm_exec_program(invoke_context, executable.clone())?;
+    // drop(vm);
+    // ic_logger_msg!(
+    //     log_collector,
+    //     "Program {} consumed {} of {} compute units",
+    //     &program_id,
+    //     compute_units_consumed,
+    //     compute_meter_prev
+    // );
+    // execute_time.stop();
+
+    // let timings = &mut invoke_context.timings;
+    // timings.create_vm_us = timings.create_vm_us.saturating_add(create_vm_time.as_us());
+    // timings.execute_us = timings.execute_us.saturating_add(execute_time.as_us());
+
+    match result {
+        ProgramResult::Ok(status) if status != SUCCESS => {
+            let error: InstructionError = status.into();
+            Err(error.into())
+        }
+        ProgramResult::Err(error) => Err(error.into()),
+        _ => Ok(()),
+    }
+}*/
 
 fn check_program_account(
     // log_collector: &Option<Rc<RefCell<LogCollector>>>,

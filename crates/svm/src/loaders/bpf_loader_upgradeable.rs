@@ -29,6 +29,7 @@ use crate::{
     common::UPGRADEABLE_LOADER_COMPUTE_UNITS,
     context::{InstructionContext, TransactionContext},
     loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+    loaders::agave_version::execute,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use fluentbase_sdk::SharedAPI;
@@ -63,7 +64,7 @@ declare_builtin_function!(
     }
 );
 
-pub(crate) fn execute<'a, SDK: SharedAPI>(
+/*pub(crate) fn execute<'a, SDK: SharedAPI>(
     executable: Arc<Executable<InvokeContext<'a, SDK>>>,
     invoke_context: &mut InvokeContext<'a, SDK>,
 ) -> Result<(), Box<dyn core::error::Error>> {
@@ -238,7 +239,7 @@ pub(crate) fn execute<'a, SDK: SharedAPI>(
     //     .saturating_add(deserialize_time.as_us());
 
     execute_or_deserialize_result
-}
+}*/
 
 pub fn process_instruction_inner<SDK: SharedAPI>(
     invoke_context: &mut InvokeContext<SDK>,
