@@ -1,2 +1,0 @@
-# we need to allow lib.wasm here because CI/CD doesn't have TinyGo
-!lib.wasm
