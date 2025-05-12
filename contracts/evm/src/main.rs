@@ -256,7 +256,7 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
 /// ### Assumptions:
 /// - The SDK instance conforms to the `SharedAPI` interface.
 /// - Bytecode is preloaded and valid for the specific context where the function is executed.
-pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
+pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let Some(evm_bytecode) = load_evm_bytecode::<{ CACHE_ANALYZED_EVM_BYTECODE }, SDK>(&sdk) else {
         return;
     };
@@ -275,11 +275,11 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     sdk.write(result.output.as_ref());
 }
 
-func_entrypoint!(main, deploy);
+func_entrypoint!(main_entry, deploy);
 
 #[cfg(test)]
 mod tests {
-    use crate::{deploy, main};
+    use crate::{deploy, main_entry};
     use core::str::from_utf8;
     use fluentbase_sdk::{hex, Address, ContractContextV1, U256};
     use fluentbase_sdk_testing::HostTestingContext;

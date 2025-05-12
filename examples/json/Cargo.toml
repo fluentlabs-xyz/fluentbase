@@ -15,12 +15,6 @@ serde_json = "1.0"
 [build-dependencies]
 fluentbase-build = { workspace = true }
 
-[lib]
-crate-type = ["cdylib"]
-path = "lib.rs"
-
 [features]
 default = ["std"]
-std = [
-    "fluentbase-sdk/std"
-]
+std = ["fluentbase-sdk/std"]

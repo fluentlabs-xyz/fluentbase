@@ -9,12 +9,9 @@ fluentbase-sdk = { workspace = true }
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
 
-[lib]
-crate-type = ["cdylib"]
-path = "lib.rs"
+[build-dependencies]
+fluentbase-build = { workspace = true }
 
 [features]
 default = ["std"]
-std = [
-    "fluentbase-sdk/std"
-]
+std = ["fluentbase-sdk/std"]

@@ -31,9 +31,8 @@ func_entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, include_this_wasm, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, ContractContextV1, FUEL_DENOM_RATE};
     use fluentbase_sdk_testing::HostTestingContext;
-    const WASM_BYTECODE: &[u8] = include_this_wasm!();
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 10_000_000;

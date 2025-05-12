@@ -1,12 +1,6 @@
 use crate::utils::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use core::str::from_utf8;
-use fluentbase_sdk::{
-    address,
-    bytes,
-    calc_create_address,
-    Address,
-    U256,
-};
+use fluentbase_sdk::{address, bytes, calc_create_address, Address, U256};
 use fluentbase_sdk_testing::HostTestingContextNativeAPI;
 use hex_literal::hex;
 use revm::interpreter::opcode;
@@ -125,11 +119,7 @@ fn test_evm_create_and_send() {
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     let gas_price = U256::from(2e9);
-    let result = TxBuilder::create(
-        &mut ctx,
-        SENDER_ADDRESS,
-        crate::EXAMPLE_GREETING.into(),
-    )
+    let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, crate::EXAMPLE_GREETING.into())
         .enable_rwasm_proxy()
         .gas_price(gas_price)
         .value(U256::from(1e18))
@@ -159,11 +149,7 @@ fn test_evm_revert() {
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(2e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(0e18));
     // now send success tx
-    let result = TxBuilder::create(
-        &mut ctx,
-        SENDER_ADDRESS,
-        crate::EXAMPLE_GREETING.into(),
-    )
+    let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, crate::EXAMPLE_GREETING.into())
         .enable_rwasm_proxy()
         .gas_price(gas_price)
         .value(U256::from(1e18))
@@ -190,10 +176,10 @@ fn test_evm_self_destruct() {
         SENDER_ADDRESS,
         hex!("6003600c60003960036000F36003ff").into(),
     )
-        .enable_rwasm_proxy()
-        .gas_price(gas_price)
-        .value(U256::from(1e18))
-        .exec();
+    .enable_rwasm_proxy()
+    .gas_price(gas_price)
+    .value(U256::from(1e18))
+    .exec();
     let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 53842);
@@ -223,8 +209,8 @@ fn test_evm_self_destruct() {
         SENDER_ADDRESS,
         hex!("6000600060006000600073f91c20c0cafbfdc150adff51bbfc5808edde7cb561FFFFF1").into(),
     )
-        .enable_rwasm_proxy()
-        .exec();
+    .enable_rwasm_proxy()
+    .exec();
     if !result.is_success() {
         println!("status: {:?}", result);
         try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref());

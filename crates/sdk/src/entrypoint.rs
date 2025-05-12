@@ -21,6 +21,8 @@ macro_rules! basic_entrypoint {
         $crate::define_panic_handler!();
         #[cfg(target_arch = "wasm32")]
         $crate::define_allocator!();
+        #[cfg(not(target_arch = "wasm32"))]
+        fn main() {}
     };
 }
 

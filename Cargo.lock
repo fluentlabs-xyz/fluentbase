@@ -2407,6 +2407,22 @@ dependencies = [
  "cargo_metadata",
  "fluentbase-build",
  "fluentbase-codec",
+ "fluentbase-contracts-nitro",
+ "fluentbase-examples-abi-solidity",
+ "fluentbase-examples-checkmate",
+ "fluentbase-examples-client-solidity",
+ "fluentbase-examples-constructor-params",
+ "fluentbase-examples-erc20",
+ "fluentbase-examples-greeting",
+ "fluentbase-examples-json",
+ "fluentbase-examples-keccak",
+ "fluentbase-examples-panic",
+ "fluentbase-examples-router-solidity",
+ "fluentbase-examples-rwasm",
+ "fluentbase-examples-secp256k1",
+ "fluentbase-examples-simple-storage",
+ "fluentbase-examples-storage",
+ "fluentbase-examples-tiny-keccak",
  "fluentbase-genesis",
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -2506,6 +2522,7 @@ dependencies = [
 name = "fluentbase-examples-keccak"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
 ]
