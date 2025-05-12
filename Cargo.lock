@@ -2251,6 +2251,14 @@ dependencies = [
  "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
+]
+
+[[package]]
+name = "fluentbase-contracts-blake2f-contract"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-sdk-testing",
  "revm-precompile",
 ]
 

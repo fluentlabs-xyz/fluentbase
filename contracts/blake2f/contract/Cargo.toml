@@ -1,0 +1,19 @@
+[package]
+name = "fluentbase-contracts-blake2f-contract"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+revm-precompile = { workspace = true }
+
+[dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
+
+[lib]
+path = "lib.rs"
+crate-type = ["cdylib"]
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std", "revm-precompile/std"]
