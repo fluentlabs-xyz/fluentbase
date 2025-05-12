@@ -30,6 +30,7 @@ mod genesis_builder {
         ("ecrecover", fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_ecrecover::WASM_BYTECODE),
         ("erc20", fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::WASM_BYTECODE),
         ("evm", fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::WASM_BYTECODE),
+        #[cfg(feature = "fairblock")]
         ("fairblock", fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::WASM_BYTECODE),
         ("identity", fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts_identity::WASM_BYTECODE),
         ("kzg", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_kzg::WASM_BYTECODE),
