@@ -98,11 +98,6 @@ pub fn build_wasm_program(config: WasmBuildConfig) -> Option<(String, Utf8PathBu
 
     cargo_rerun_if_changed(&metadata);
 
-    if config.is_tarpaulin_build {
-        println!("cargo:warning=build skipped due to the tarpaulin build");
-        return None;
-    }
-
     let crate_name = root_crate_name(&metadata);
 
     let mut artefact_path = compile_rust_to_wasm(&config, &metadata);
