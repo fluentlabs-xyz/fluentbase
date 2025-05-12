@@ -38,7 +38,7 @@ pub fn compile_go_to_wasm(config: Config) {
     ];
 
     let status = Command::new("tinygo")
-        .current_dir(&config.parent_manifest_dir)
+        .current_dir(&config.cargo_manifest_dir)
         .args(args)
         .status()
         .expect("WASM compilation failed");
@@ -59,10 +59,11 @@ fn copy_wasm_to_src(config: &Config, wasm_artifact_path: &Utf8PathBuf) {
     if config.output_file_name.is_none() {
         return;
     }
-    let cargo_manifest_dir = Utf8PathBuf::from(config.parent_manifest_dir.clone());
+    let cargo_manifest_dir = Utf8PathBuf::from(config.cargo_manifest_dir.clone());
     let file_name = config.output_file_name.clone().unwrap();
     let wasm_output = cargo_manifest_dir.join(file_name.clone());
     let wat_output = cargo_manifest_dir.join(file_name.replace(".wasm", ".wat"));
+
     fs::copy(&wasm_artifact_path, &wasm_output).unwrap();
     let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
     if wasm_to_wat.is_ok() {
@@ -74,8 +75,7 @@ pub fn compile_rust_to_wasm(config: Config) {
     if skip() {
         return;
     }
-    let cargo_manifest_dir =
-        PathBuf::from(config.parent_manifest_dir.clone()).join(&config.contract_dir_name);
+    let cargo_manifest_dir = PathBuf::from(config.cargo_manifest_dir.clone());
     let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
     let mut metadata_cmd = MetadataCommand::new();
     let metadata = metadata_cmd
@@ -91,7 +91,7 @@ pub fn compile_rust_to_wasm(config: Config) {
         config.target.clone(),
         "--release".to_string(),
         "--manifest-path".to_string(),
-        format!("{}/Cargo.toml", cargo_manifest_dir.to_str().unwrap()),
+        format!("{}/Cargo.toml", config.cargo_manifest_dir),
         "--target-dir".to_string(),
         target2_dir.to_string(),
     ];
@@ -135,7 +135,7 @@ pub fn compile_rust_to_wasm(config: Config) {
         "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
         wasm_artifact_path
     );
-    println!("cargo:rerun-if-changed={}", &config.contract_dir_name);
+    // println!("cargo:rerun-if-changed={}", config.cargo_manifest_dir);
     copy_wasm_to_src(&config, &wasm_artifact_path);
 }
 
@@ -196,7 +196,7 @@ fn get_wasm_artifact_name(metadata: &Metadata) -> String {
             .find(|p| p.id == program_crate)
             .unwrap_or_else(|| panic!("cannot find package for {}", program_crate));
         for bin_target in program.targets.iter().filter(|t| {
-            t.kind.contains(&TargetKind::CDyLib) && t.crate_types.contains(&CrateType::CDyLib)
+            t.kind.contains(&TargetKind::Bin) && t.crate_types.contains(&CrateType::Bin)
         }) {
             let bin_name = bin_target.name.clone() + ".wasm";
             result.push(bin_name);
@@ -220,7 +220,7 @@ pub fn build_wasm_program(config: Config) -> Option<(String, Utf8PathBuf)> {
     if skip() {
         return None;
     }
-    let cargo_manifest_dir = PathBuf::from(config.parent_manifest_dir.clone());
+    let cargo_manifest_dir = PathBuf::from(config.cargo_manifest_dir.clone());
     let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
 
     let mut metadata_cmd = MetadataCommand::new();
@@ -283,7 +283,7 @@ pub fn compile_rust_to_wasm_2(config: &Config, metadata: &Metadata) -> Utf8PathB
         config.target.clone(),
         "--release".to_string(),
         "--manifest-path".to_string(),
-        format!("{}/Cargo.toml", config.parent_manifest_dir),
+        format!("{}/Cargo.toml", config.cargo_manifest_dir),
         "--target-dir".to_string(),
         target2_dir.to_string(),
     ];
@@ -314,10 +314,10 @@ pub fn compile_rust_to_wasm_2(config: &Config, metadata: &Metadata) -> Utf8PathB
 }
 
 pub fn compile_go_to_wasm_2(config: &Config) -> Option<Utf8PathBuf> {
-    let cargo_manifest_dir = PathBuf::from(config.parent_manifest_dir.clone());
+    let cargo_manifest_dir = PathBuf::from(config.cargo_manifest_dir.clone());
     let name = config.output_file_name.clone().unwrap().clone();
     let status = Command::new("tinygo")
-        .current_dir(&config.parent_manifest_dir)
+        .current_dir(&config.cargo_manifest_dir)
         .args(&["build", "-o", &name, "--target", "wasm-unknown"])
         .status();
 

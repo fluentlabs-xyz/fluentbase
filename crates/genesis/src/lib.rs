@@ -40,7 +40,7 @@ pub fn devnet_genesis_v0_1_0_dev10_from_file() -> Genesis {
 
 #[rustfmt::skip]
 pub const GENESIS_CONTRACTS: &[(&str, Address, &[u8])] = &[
-    ("blake2f", fluentbase_types::PRECOMPILE_BLAKE2F, WASM_BLAKE2F),
+    ("blake2f", fluentbase_types::PRECOMPILE_BLAKE2F, fluentbase_contracts_blake2f::WASM_BYTECODE),
     ("bls12381", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, WASM_BLS12381),
     ("bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, WASM_BLS12381),
     ("bls12381", fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, WASM_BLS12381),
