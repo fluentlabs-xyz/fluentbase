@@ -5,7 +5,6 @@ pub use config::*;
 use std::{
     env,
     fs,
-    io::Read,
     path::{Path, PathBuf},
     process::Command,
     str::from_utf8,
@@ -25,6 +24,7 @@ pub fn compile_go_to_wasm(config: Config) {
     if skip() {
         return;
     }
+
     let out_dir = Utf8PathBuf::from(env::var("OUT_DIR").unwrap());
     let wasm_artifact_name = "main.wasm".to_string();
     let wasm_artifact_path = out_dir.join(wasm_artifact_name);
@@ -51,6 +51,10 @@ pub fn compile_go_to_wasm(config: Config) {
         "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
         wasm_artifact_path
     );
+
+    for path in &config.rerun_if_changed {
+        println!("cargo:rerun-if-changed={}", path);
+    }
 
     copy_wasm_to_src(&config, &wasm_artifact_path);
 }
@@ -94,6 +98,7 @@ pub fn compile_rust_to_wasm(config: Config) {
         format!("{}/Cargo.toml", config.cargo_manifest_dir),
         "--target-dir".to_string(),
         target2_dir.to_string(),
+        "--color=always".to_string(),
     ];
     if config.no_default_features {
         args.push("--no-default-features".to_string());
@@ -135,7 +140,11 @@ pub fn compile_rust_to_wasm(config: Config) {
         "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
         wasm_artifact_path
     );
-    // println!("cargo:rerun-if-changed={}", config.cargo_manifest_dir);
+
+    for path in &config.rerun_if_changed {
+        println!("cargo:rerun-if-changed={}", path);
+    }
+
     copy_wasm_to_src(&config, &wasm_artifact_path);
 }
 

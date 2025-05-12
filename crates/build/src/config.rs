@@ -8,6 +8,7 @@ pub struct Config {
     pub features: Vec<String>,
     pub no_default_features: bool,
     pub target: String,
+    pub rerun_if_changed: Vec<String>,
 }
 
 impl Default for Config {
@@ -19,6 +20,14 @@ impl Default for Config {
             features: vec![],
             no_default_features: true,
             target: "wasm32-unknown-unknown".to_string(),
+            rerun_if_changed: vec![],
         }
+    }
+}
+
+impl Config {
+    pub fn with_rerun_if_changed(mut self, path: &str) -> Self {
+        self.rerun_if_changed.push(path.to_string());
+        self
     }
 }

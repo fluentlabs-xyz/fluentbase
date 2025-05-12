@@ -12,3 +12,7 @@ fluentbase-sdk-testing = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std", "revm-precompile/std"]
