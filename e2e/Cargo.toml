@@ -18,7 +18,7 @@ fluentbase-types = { workspace = true }
 
 fluentbase-svm = { workspace = true, default-features = false }
 
-rwasm = { workspace = true }
+rwasm = { workspace = true, features = ["more-max-pages"] }
 revm = { workspace = true }
 hex = { workspace = true }
 hex-literal = { workspace = true }
