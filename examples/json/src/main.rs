@@ -2,7 +2,7 @@
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, func_entrypoint, SharedAPI};
+use fluentbase_sdk::{alloc_slice, entrypoint, SharedAPI};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -22,7 +22,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.write(json_input.message.as_bytes());
 }
 
-func_entrypoint!(main_entry);
+entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

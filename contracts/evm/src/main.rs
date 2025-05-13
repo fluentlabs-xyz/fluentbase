@@ -5,7 +5,7 @@ extern crate core;
 
 use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, result::InterpreterResult, EVM};
 use fluentbase_sdk::{
-    func_entrypoint,
+    entrypoint,
     Bytes,
     ContractContextReader,
     ExitCode,
@@ -275,7 +275,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     sdk.write(result.output.as_ref());
 }
 
-func_entrypoint!(main_entry, deploy);
+entrypoint!(main_entry, deploy);
 
 #[cfg(test)]
 mod tests {

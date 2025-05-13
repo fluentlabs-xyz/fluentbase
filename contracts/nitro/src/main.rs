@@ -6,7 +6,7 @@ extern crate fluentbase_sdk;
 
 mod attestation;
 
-use fluentbase_sdk::{alloc_slice, func_entrypoint, SharedAPI};
+use fluentbase_sdk::{alloc_slice, entrypoint, SharedAPI};
 
 pub fn main_entry(sdk: impl SharedAPI) {
     let input_size = sdk.input_size();
@@ -15,7 +15,7 @@ pub fn main_entry(sdk: impl SharedAPI) {
     attestation::parse_and_verify(&input);
 }
 
-func_entrypoint!(main_entry);
+entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

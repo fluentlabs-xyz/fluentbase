@@ -2,7 +2,7 @@
 use fluentbase_sdk::{
     codec::Codec,
     derive::solidity_storage,
-    func_entrypoint,
+    entrypoint,
     Address,
     Bytes,
     ExitCode,
@@ -33,7 +33,7 @@ pub fn main_entry(sdk: impl SharedAPI) {
     sdk.exit(ExitCode::Ok);
 }
 
-func_entrypoint!(main_entry);
+entrypoint!(main_entry);
 
 #[cfg(test)]
 mod test {

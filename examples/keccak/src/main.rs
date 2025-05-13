@@ -1,7 +1,7 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, func_entrypoint, SharedAPI};
+use fluentbase_sdk::{alloc_slice, entrypoint, SharedAPI};
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     let input_size = sdk.input_size();
@@ -11,7 +11,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.write(&hash.as_slice());
 }
 
-func_entrypoint!(main_entry);
+entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

@@ -2,14 +2,14 @@
 #![allow(unused)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{func_entrypoint, SharedAPI};
+use fluentbase_sdk::{entrypoint, SharedAPI};
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     // panic with some message
     panic!("it's panic time");
 }
 
-func_entrypoint!(main_entry);
+entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

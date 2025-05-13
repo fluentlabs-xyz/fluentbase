@@ -2,7 +2,7 @@
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{func_entrypoint, SharedAPI};
+use fluentbase_sdk::{entrypoint, SharedAPI};
 use libsecp256k1::{verify, Message, PublicKey, Signature};
 
 pub fn main_entry(sdk: impl SharedAPI) {
@@ -32,7 +32,7 @@ pub fn main_entry(sdk: impl SharedAPI) {
     assert!(is_ok, "signature verification failed");
 }
 
-func_entrypoint!(main_entry);
+entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

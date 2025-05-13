@@ -7,7 +7,7 @@ use fluentbase_sdk::{
     alloc_slice,
     bytes::Buf,
     codec::{bytes::BytesMut, encoder::SolidityABI},
-    func_entrypoint,
+    entrypoint,
     Bytes,
     ContractContextReader,
     SharedAPI,
@@ -60,4 +60,4 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.write(&clean_output);
 }
 
-func_entrypoint!(main_entry);
+entrypoint!(main_entry);

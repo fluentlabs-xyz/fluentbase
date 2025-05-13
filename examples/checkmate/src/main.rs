@@ -1,7 +1,7 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate alloc;
 use alloc::string::String;
-use fluentbase_sdk::{codec::SolidityABI, func_entrypoint, SharedAPI};
+use fluentbase_sdk::{codec::SolidityABI, entrypoint, SharedAPI};
 use shakmaty::{fen::Fen, san::San, CastlingMode, Chess, FromSetup, Position, Setup};
 
 pub fn is_checkmate(board: String, mv: String) -> bool {
@@ -42,7 +42,7 @@ pub fn main_entry(sdk: impl SharedAPI) {
     }
 }
 
-func_entrypoint!(main_entry);
+entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

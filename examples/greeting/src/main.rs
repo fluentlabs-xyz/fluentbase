@@ -2,7 +2,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{func_entrypoint, SharedAPI};
+use fluentbase_sdk::{entrypoint, SharedAPI};
 
 #[allow(dead_code)]
 fn fib(n: i32) -> i32 {
@@ -22,7 +22,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.write("Hello, World".as_bytes());
 }
 
-func_entrypoint!(main_entry);
+entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

@@ -140,11 +140,15 @@ fn get_wasm_artifact_name(metadata: &Metadata) -> String {
             .iter()
             .find(|p| p.id == program_crate)
             .unwrap_or_else(|| panic!("cannot find package for {}", program_crate));
-        for bin_target in program.targets.iter().filter(|t| {
-            t.kind.contains(&TargetKind::Bin) && t.crate_types.contains(&CrateType::Bin)
-        }) {
-            let bin_name = bin_target.name.clone() + ".wasm";
-            result.push(bin_name);
+        for bin_target in program.targets.iter() {
+            let is_bin = bin_target.kind.contains(&TargetKind::Bin)
+                && bin_target.crate_types.contains(&CrateType::Bin);
+            let is_cdylib = bin_target.kind.contains(&TargetKind::CDyLib)
+                && bin_target.crate_types.contains(&CrateType::CDyLib);
+            if is_cdylib || is_bin {
+                let bin_name = bin_target.name.clone() + ".wasm";
+                result.push(bin_name);
+            }
         }
     }
     if result.len() == 0 {

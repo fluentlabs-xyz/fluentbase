@@ -1,5 +1,5 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
-use fluentbase_sdk::{derive::solidity_storage, func_entrypoint, Address, SharedAPI, U256};
+use fluentbase_sdk::{derive::solidity_storage, entrypoint, Address, SharedAPI, U256};
 
 solidity_storage! {
     mapping(Address => U256) Values;
@@ -14,7 +14,7 @@ pub fn main_entry(sdk: impl SharedAPI) {
     assert_eq!(value.data, U256::from(2));
 }
 
-func_entrypoint!(main_entry, deploy);
+entrypoint!(main_entry, deploy);
 
 #[cfg(test)]
 mod tests {

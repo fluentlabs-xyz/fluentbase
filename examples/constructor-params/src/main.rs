@@ -3,7 +3,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{derive::solidity_storage, func_entrypoint, SharedAPI, U256};
+use fluentbase_sdk::{derive::solidity_storage, entrypoint, SharedAPI, U256};
 
 solidity_storage! {
     U256 Value;
@@ -21,7 +21,7 @@ fn main_entry(mut sdk: impl SharedAPI) {
     sdk.write(&value.to_le_bytes::<32>());
 }
 
-func_entrypoint!(main_entry, deploy);
+entrypoint!(main_entry, deploy);
 
 #[cfg(test)]
 mod tests {

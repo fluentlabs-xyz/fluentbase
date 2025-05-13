@@ -1,7 +1,7 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{bytes::BytesMut, codec::SolidityABI, func_entrypoint, SharedAPI, U256};
+use fluentbase_sdk::{bytes::BytesMut, codec::SolidityABI, entrypoint, SharedAPI, U256};
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     let input = sdk.input();
@@ -13,7 +13,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.write(&output);
 }
 
-func_entrypoint!(main_entry);
+entrypoint!(main_entry);
 
 #[cfg(test)]
 mod tests {

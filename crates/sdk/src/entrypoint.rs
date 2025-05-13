@@ -22,7 +22,7 @@ macro_rules! basic_entrypoint {
         #[cfg(target_arch = "wasm32")]
         $crate::define_allocator!();
         #[cfg(not(target_arch = "wasm32"))]
-        fn main() {}
+        pub fn main() {}
     };
 }
 
@@ -55,8 +55,6 @@ macro_rules! func_entrypoint {
             $crate::define_panic_handler!();
             $crate::define_allocator!();
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        fn main() {}
     };
     ($main_func:ident) => {
         #[cfg(target_arch = "wasm32")]
@@ -77,6 +75,18 @@ macro_rules! func_entrypoint {
             $crate::define_panic_handler!();
             $crate::define_allocator!();
         }
+    };
+}
+
+#[macro_export]
+macro_rules! entrypoint {
+    ($main_func:ident, $deploy_func:ident) => {
+        $crate::func_entrypoint!($main_func, $deploy_func);
+        #[cfg(not(target_arch = "wasm32"))]
+        fn main() {}
+    };
+    ($main_func:ident) => {
+        $crate::func_entrypoint!($main_func);
         #[cfg(not(target_arch = "wasm32"))]
         fn main() {}
     };
