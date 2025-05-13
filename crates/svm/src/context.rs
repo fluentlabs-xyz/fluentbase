@@ -91,7 +91,7 @@ pub struct InstructionAccount {
 pub type TransactionAccount = (Pubkey, AccountSharedData);
 
 // #[derive(Debug)]
-pub(crate) enum ProgramAccountLoadResult {
+pub enum ProgramAccountLoadResult {
     InvalidAccountData(ProgramCacheEntryOwner),
     ProgramOfLoaderV1(AccountSharedData),
     ProgramOfLoaderV2(AccountSharedData),
@@ -556,7 +556,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             .set_return_data(program_id, Vec::new())?;
         // let logger = self.get_log_collector();
         // stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
-        let pre_remaining_units = self.get_remaining();
+        // let pre_remaining_units = self.get_remaining();
         // In program-runtime v2 we will create this VM instance only once per transaction.
         // `program_runtime_environment_v2.get_config()` will be used instead of `mock_config`.
         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.

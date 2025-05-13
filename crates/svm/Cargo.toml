@@ -46,6 +46,7 @@ solana-stable-layout = { workspace = true, default-features = false, features = 
 solana-bincode = { workspace = true, default-features = false, features = [] }
 solana-precompile-error = { workspace = true, default-features = false, features = [] }
 solana-native-token = { workspace = true, default-features = false, features = [] }
+#solana-account = { workspace = true, default-features = false, features = [] }
 #solana-compute-budget = { workspace = true, default-features = false, features = [] }
 #solana-poseidon = { workspace = true, default-features = false, features = ["serde", "sysvar"] }
 

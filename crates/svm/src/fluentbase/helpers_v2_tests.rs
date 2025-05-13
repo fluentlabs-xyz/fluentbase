@@ -67,6 +67,7 @@ mod tests {
         // setup
 
         let system_program_id = system_program::id();
+        println!("system_program_id: {:?}", system_program_id.to_bytes());
         let native_loader_id = native_loader::id();
         let loader_id = loader_v4::id();
         let sysvar_clock_id = sysvar::clock::id();
@@ -84,10 +85,11 @@ mod tests {
         // let pk_exec_data_account = AccountSharedData::new(0, 0, &pk_exec);
 
         let pk_authority = Pubkey::from([9; 32]);
-        let pk_authority_account = AccountSharedData::new(100, 0, &system_program_id);
+        // let pk_authority_account = AccountSharedData::new(100, 0, &system_program_id);
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
+            // "../../examples/svm/solana-program/assets/solana_program.so",
             "../../examples/svm/solana-program-with-state/assets/solana_program.so",
             // "./test_elfs/out/noop_aligned.so",
         );
@@ -112,8 +114,6 @@ mod tests {
 
         storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
         storage_write_account_data(&mut sapi, &pk_tmp, &pk_tmp_account).unwrap();
-        storage_write_account_data(&mut sapi, &pk_authority, &pk_authority_account).unwrap();
-        // storage_write_account_data(&mut sapi, &pk_exec_data, &pk_exec_data_account).unwrap();
         storage_write_account_data(
             &mut sapi,
             &system_program_id,
@@ -160,11 +160,11 @@ mod tests {
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
-        let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &pk_authority).unwrap();
-        assert_eq!(account_data.lamports(), 100);
-        assert_eq!(account_data.data().len(), 0);
-        assert_eq!(account_data.executable(), false);
+        // let account_data: AccountSharedData =
+        //     storage_read_account_data(&sapi, &pk_authority).unwrap();
+        // assert_eq!(account_data.lamports(), 100);
+        // assert_eq!(account_data.data().len(), 0);
+        // assert_eq!(account_data.executable(), false);
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
         assert_eq!(account_data.lamports(), 0);
@@ -239,11 +239,11 @@ mod tests {
         assert_eq!(account_data.data().len(), buffer_len);
         assert_eq!(account_data.executable(), false);
 
-        let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &pk_authority).unwrap();
-        assert_eq!(account_data.lamports(), 100);
-        assert_eq!(account_data.data().len(), 0);
-        assert_eq!(account_data.executable(), false);
+        // let account_data: AccountSharedData =
+        //     storage_read_account_data(&sapi, &pk_authority).unwrap();
+        // assert_eq!(account_data.lamports(), 100);
+        // assert_eq!(account_data.data().len(), 0);
+        // assert_eq!(account_data.executable(), false);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&sapi, &system_program_id).unwrap();
@@ -276,12 +276,12 @@ mod tests {
             &amount.to_be_bytes(),
             vec![
                 // account_meta1
-                AccountMeta::new(pk_tmp, false),
+                AccountMeta::new(pk_tmp, true),
                 AccountMeta::new(pk_payer, false),
                 AccountMeta::new(system_program_id, false),
             ],
         )];
-        let message = Message::new(&instructions, Some(&pk_payer));
+        let message = Message::new(&instructions, None);
         sdk = sdk
             .with_shared_context_input(SharedContextInputV1 {
                 block: BlockContextV1 {
@@ -301,7 +301,7 @@ mod tests {
         assert_eq!(account_data.executable(), false);
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
-        assert_eq!(account_data.lamports(), 100);
+        assert_eq!(account_data.lamports(), 112);
         // assert_eq!(account_data.data().len(), buffer_len);
         // assert_eq!(account_data.executable(), false);
     }
@@ -314,12 +314,17 @@ mod tests {
         let system_program_id = system_program::id();
         let native_loader_id = native_loader::id();
         let loader_id = loader_v4::id();
+        let sysvar_clock_id = sysvar::clock::id();
+        let sysvar_rent_id = sysvar::rent::id();
 
         const CONTRACT_CALLER: Address = address!("1231238908230948230948209348203984029834");
         const CONTRACT_ADDRESS: Address = address!("0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5");
 
         let pk_payer = pubkey_from_address(CONTRACT_CALLER);
-        let account_payer = AccountSharedData::new(1000000000, 0, &system_program_id);
+        let pk_payer_account = AccountSharedData::new(1000000000, 0, &system_program_id);
+
+        let pk_tmp = Pubkey::new_unique();
+        let pk_tmp_account = AccountSharedData::new(100, 0, &system_program_id);
 
         let pk_exec = pubkey_from_address(CONTRACT_ADDRESS);
 
@@ -328,13 +333,15 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             "../../examples/svm/solana-program/assets/solana_program.so",
+            // "../../examples/svm/solana-program-with-state/assets/solana_program.so",
             // "./test_elfs/out/noop_aligned.so",
         );
 
         let program_len = account_with_program.data().len();
         let buffer_len = LoaderV4State::program_data_offset().saturating_add(program_len);
 
-        storage_write_account_data(&mut sapi, &pk_payer, &account_payer).unwrap();
+        storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
+        storage_write_account_data(&mut sapi, &pk_tmp, &pk_tmp_account).unwrap();
         storage_write_account_data(
             &mut sapi,
             &system_program_id,
@@ -345,6 +352,18 @@ mod tests {
             &mut sapi,
             &loader_id,
             &create_loadable_account_for_test("loader_id", &native_loader_id),
+        )
+        .unwrap();
+        storage_write_account_data(
+            &mut sapi,
+            &sysvar_clock_id,
+            &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
+        )
+        .unwrap();
+        storage_write_account_data(
+            &mut sapi,
+            &sysvar_rent_id,
+            &create_loadable_account_for_test("sysvar_rent_id", &system_program_id),
         )
         .unwrap();
 
@@ -406,12 +425,18 @@ mod tests {
         )
         .unwrap();
 
+        let amount = 12u64;
         let instructions = vec![Instruction::new_with_bincode(
             pk_exec.clone(),
-            &[0u8; 0],
-            vec![],
+            &amount.to_be_bytes(),
+            vec![
+                // account_meta1
+                AccountMeta::new(pk_tmp, true),
+                AccountMeta::new(pk_payer, false),
+                AccountMeta::new(system_program_id, false),
+            ],
         )];
-        let message = Message::new(&instructions, Some(&pk_exec));
+        let message = Message::new(&instructions, None);
         batch_message.clear().append_one(message);
         sdk = sdk
             .with_shared_context_input(SharedContextInputV1 {

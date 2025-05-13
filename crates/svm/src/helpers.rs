@@ -994,9 +994,9 @@ macro_rules! with_mock_invoke_context {
 // }
 
 #[macro_export]
-macro_rules! choose_storage {
-    ($option:expr, $alt:expr, $callback:expr) => {
-        if let Some(v) = $option {
+macro_rules! select_sapi {
+    ($optional:expr, $alt:expr, $callback:expr) => {
+        if let Some(v) = $optional {
             $callback(*v)
         } else {
             $callback($alt)

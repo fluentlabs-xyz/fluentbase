@@ -34,10 +34,10 @@ pub fn process_instruction(
     __msg!("recipient.key: {:?}", recipient.key.to_bytes());
     let system_program = next_account_info(accounts_iter)?;
     __msg!("system_program.key: {:?}", system_program.key.to_bytes());
-    // invoke(
-    //     &system_instruction::transfer(payer.key, recipient.key, transfer_amount),
-    //     &[payer.clone(), recipient.clone(), system_program.clone()],
-    // )?;
+    invoke(
+        &system_instruction::transfer(payer.key, recipient.key, transfer_amount),
+        &[payer.clone(), recipient.clone(), system_program.clone()],
+    )?;
 
     // TODO bug in `keccak_hash` function doesnt allow to pass tests
     // let keccak_hash_res = keccak_hash(message.as_bytes());

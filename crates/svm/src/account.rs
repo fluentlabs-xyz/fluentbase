@@ -1,8 +1,10 @@
 use crate::{
+    bpf_loader,
+    bpf_loader_deprecated,
     clock::{Epoch, INITIAL_RENT_EPOCH},
     context::{IndexOfAccount, InstructionContext, TransactionContext},
     helpers::is_zeroed,
-    solana_program::sysvar::Sysvar,
+    solana_program::{bpf_loader_upgradeable, loader_v4, sysvar::Sysvar},
     system_instruction::{
         MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         MAX_PERMITTED_DATA_LENGTH,
@@ -22,6 +24,19 @@ use solana_pubkey::Pubkey;
 
 pub type InheritableAccountFields = (u64, Epoch);
 pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITIAL_RENT_EPOCH);
+/// Replacement for the executable flag: An account being owned by one of these contains a program.
+pub const PROGRAM_OWNERS: &[Pubkey] = &[
+    bpf_loader_upgradeable::id(),
+    bpf_loader::id(),
+    bpf_loader_deprecated::id(),
+    loader_v4::id(),
+];
+pub fn is_executable_by_owner(pk: &Pubkey) -> bool {
+    PROGRAM_OWNERS.contains(pk)
+}
+pub fn is_executable_account(account: &AccountSharedData) -> bool {
+    is_executable_by_owner(account.owner())
+}
 
 fn shared_deserialize_data<T: serde::de::DeserializeOwned, U: ReadableAccount>(
     account: &U,

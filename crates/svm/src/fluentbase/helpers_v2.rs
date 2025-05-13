@@ -1,9 +1,15 @@
 // use crate::loaded_programs::LoadedProgram;
 // use crate::loaded_programs::LoadedProgramsForTxBatch;
 use crate::{
-    account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+    account::{
+        is_executable_account,
+        Account,
+        AccountSharedData,
+        ReadableAccount,
+        WritableAccount,
+        PROGRAM_OWNERS,
+    },
     builtins::register_builtins,
-    choose_storage,
     common::compile_accounts_for_tx_ctx,
     compute_budget::compute_budget::ComputeBudget,
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
@@ -20,6 +26,8 @@ use crate::{
     loaders::{bpf_loader_v4, bpf_loader_v4::get_state},
     message_processor::MessageProcessor,
     native_loader,
+    saturating_add_assign,
+    select_sapi,
     solana_program,
     solana_program::{
         feature_set::feature_set_default,
@@ -39,8 +47,7 @@ use crate::{
 };
 use alloc::{sync::Arc, vec, vec::Vec};
 use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
-use hashbrown::{HashMap, HashSet};
-use itertools::Itertools;
+use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
@@ -83,8 +90,8 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let mut result_accounts = HashMap::new();
     for message in batch_message.messages() {
-        for acc in exec_svm_message(sdk, message.clone(), flush_result_accounts, sapi)? {
-            result_accounts.insert(acc.0, acc.1);
+        for (pk, data) in exec_svm_message(sdk, message.clone(), flush_result_accounts, sapi)? {
+            result_accounts.insert(pk, data);
         }
     }
     Ok(result_accounts)
@@ -327,7 +334,7 @@ fn load_transaction_account<'a, SDK: SharedAPI, SAPI: StorageAPI>(
         // callbacks
         //     .get_account_shared_data(account_key)
         storage_read_account_data(sapi, account_key)
-            .map(|mut account| {
+            .map(|account| {
                 // Inspect the account prior to collecting rent, since
                 // rent collection can modify the account.
                 // callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
@@ -431,8 +438,9 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
     // it's fine to use the fee payer directly here rather than checking account
     // overrides again.
     let fee_payer = message.fee_payer();
-    // let loaded_fee_payer_account = storage_read_account_data();
-    // collect_loaded_account(fee_payer, (loaded_fee_payer_account, true))?;
+    let loaded_fee_payer_account =
+        select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, fee_payer) })?;
+    collect_loaded_account(fee_payer, (loaded_fee_payer_account, true))?;
 
     // Attempt to load and collect remaining non-fee payer accounts
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
@@ -449,10 +457,10 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
         //     program_accounts,
         //     loaded_programs,
         // )?;
-        let (loaded_account, account_found) = choose_storage!(sapi, sdk, |v| {
+        let (loaded_account, account_found) = select_sapi!(sapi, sdk, |sapi| {
             load_transaction_account(
                 // callbacks,
-                v,
+                sapi,
                 message,
                 account_key,
                 account_index,
@@ -487,7 +495,8 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
                 return Err(TransactionError::ProgramAccountNotFound);
             }
 
-            if !program_account.executable() {
+            // if !program_account.executable() {
+            if !is_executable_account(&program_account) && !program_account.executable() {
                 // error_metrics.invalid_program_for_execution += 1;
                 return Err(TransactionError::InvalidProgramForExecution);
             }
@@ -504,7 +513,7 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
             {
                 // if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
                 if let Ok(owner_account) =
-                    choose_storage!(sapi, sdk, |v| { storage_read_account_data(v, owner_id) })
+                    select_sapi!(sapi, sdk, |v| { storage_read_account_data(v, owner_id) })
                 {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
@@ -536,15 +545,54 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
     ))
 }
 
+fn filter_executable_program_accounts<'a, SDK: SharedAPI, SAPI: StorageAPI>(
+    // callbacks: &CB,
+    sdk: &SDK,
+    sapi: &mut Option<&mut SAPI>,
+    txs: &[&impl SVMMessage],
+    // validation_results: &[TransactionValidationResult],
+    program_owners: &'a [Pubkey],
+) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
+    let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> = HashMap::new();
+
+    txs.iter().for_each(|etx| {
+        if let tx = etx {
+            tx.account_keys()
+                .iter()
+                .for_each(|key| match result.entry(*key) {
+                    Entry::Occupied(mut entry) => {
+                        let (_, count) = entry.get_mut();
+                        saturating_add_assign!(*count, 1);
+                    }
+                    Entry::Vacant(entry) => {
+                        // if let Some(index) = callbacks.account_matches_owners(key, program_owners) {
+                        let account =
+                            select_sapi!(sapi, sdk, |v| { storage_read_account_data(v, key) });
+                        if let Ok(acc) = account {
+                            // if acc.lamports() <= 0 {
+                            //     return;
+                            // }
+                            if let Some(index) =
+                                program_owners.iter().position(|k| k == acc.owner())
+                            {
+                                if let Some(owner) = program_owners.get(index) {
+                                    entry.insert((owner, 1));
+                                }
+                            }
+                        }
+                    }
+                });
+        }
+    });
+    result
+}
+
 pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sdk: &mut SDK,
     message: legacy::Message,
     flush_result_accounts: bool,
     sapi: &mut Option<&mut SAPI>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
-    // let message: SanitizedMessage =
-    //     SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
-    //
     let config = init_config();
 
     let block_number = sdk.context().block_number();
@@ -563,12 +611,6 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
 
     let message: SanitizedMessage =
         SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
-
-    let (accounts, program_indices, program_accounts_to_warmup) =
-        prepare_data_for_tx_ctx1(sdk, &message, sapi)?;
-
-    // TODO compute hardcoded parameters
-    let transaction_context = TransactionContext::new(accounts, rent.clone(), 100, 200);
 
     let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
     register_builtins(&mut function_registry);
@@ -597,6 +639,24 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
         )),
     );
 
+    let feature_set = feature_set_default();
+    // let (accounts, program_indices, program_accounts_to_warmup) =
+    //     prepare_data_for_tx_ctx1(sdk, &message, sapi)?;
+    let program_accounts =
+        filter_executable_program_accounts(sdk, sapi, &[&message], &PROGRAM_OWNERS);
+    let result = prepare_data_for_tx_ctx2(
+        sdk,
+        &message,
+        sapi,
+        &feature_set,
+        &program_accounts,
+        &program_cache_for_tx_batch,
+    );
+    let (accounts, program_indices) = result?;
+
+    // TODO compute hardcoded parameters
+    let transaction_context = TransactionContext::new(accounts, rent.clone(), 100, 200);
+
     let transaction_context = {
         let feature_set = feature_set_default();
 
@@ -616,7 +676,8 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
             compute_budget.clone(),
             sdk,
         );
-        for pk in &program_accounts_to_warmup {
+        let program_accounts_to_warmup: Vec<&Pubkey> = program_accounts.keys().collect();
+        for pk in program_accounts_to_warmup {
             let loaded_program = invoke_context.load_program(pk, false);
             if let Some(v) = loaded_program {
                 invoke_context

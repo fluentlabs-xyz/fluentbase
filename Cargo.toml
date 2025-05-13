@@ -92,6 +92,7 @@ solana-stable-layout = { path = "../agave/sdk/stable-layout", default-features =
 solana-bincode = { path = "../agave/sdk/bincode", default-features = false }
 solana-precompile-error = { path = "../agave/sdk/precompile-error", default-features = false }
 solana-native-token = { path = "../agave/sdk/native-token", default-features = false }
+#solana-account = { path = "../agave/sdk/account", default-features = false }
 
 #solana-poseidon = { path = "../agave/poseidon", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
