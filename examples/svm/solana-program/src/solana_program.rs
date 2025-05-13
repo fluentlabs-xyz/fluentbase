@@ -19,21 +19,6 @@ pub fn process_instruction(
         __msg!("input account {}: {:?}", account_idx, account);
     }
 
-    // simple transfer
-    let transfer_amount = u64::from_be_bytes(
-        instruction_data[0..core::mem::size_of::<u64>()]
-            .try_into()
-            .unwrap(),
-    );
-    __msg!("transfer_amount is {}", transfer_amount);
-    let accounts_iter = &mut accounts.iter();
-    let payer = next_account_info(accounts_iter)?;
-    __msg!("payer.key: {:?}", payer.key.to_bytes());
-    let recipient = next_account_info(accounts_iter)?;
-    __msg!("recipient.key: {:?}", recipient.key.to_bytes());
-    let system_program = next_account_info(accounts_iter)?;
-    __msg!("system_program.key: {:?}", system_program.key.to_bytes());
-
     Ok(())
 }
 
