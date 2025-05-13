@@ -8,7 +8,7 @@ use fluentbase_types::{
     B256,
     CALL_STACK_LIMIT,
 };
-use rwasm_executor::{Caller, HostError, RwasmError, TrapCode};
+use rwasm::{Caller, HostError, RwasmError};
 use std::{
     cmp::min,
     fmt::{Debug, Display, Formatter},
@@ -52,7 +52,7 @@ impl SyscallExec {
             let _fuel_refund = LittleEndian::read_i64(&fuel_buffer[8..]);
             if fuel_limit > 0 {
                 if fuel_limit != u64::MAX && fuel_limit > remaining_fuel && !disable_fuel {
-                    return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
+                    return Err(RwasmError::OutOfFuel);
                 }
                 min(fuel_limit, remaining_fuel)
             } else {

@@ -1,39 +1,46 @@
 use crate::{Runtime, RuntimeContext};
-use fluentbase_types::ExitCode;
+use fluentbase_types::{
+    byteorder::{ByteOrder, LittleEndian},
+    ExitCode,
+};
 #[cfg(feature = "wasmtime")]
 use num::ToPrimitive;
-use rwasm_executor::{Caller, RwasmError};
+use rwasm::{Caller, RwasmError};
 
 pub struct SyscallResume;
 
 impl SyscallResume {
-    pub fn fn_handler(_caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        todo!("make sure this function works in the root mode");
-        // let [call_id, return_data_ptr, return_data_len, exit_code, fuel16_ptr] =
-        //     caller.stack_pop_n();
-        // let return_data = caller
-        //     .memory_read_vec(return_data_ptr.as_usize(), return_data_len.as_usize())?
-        //     .to_vec();
-        // let fuel16_ptr = fuel16_ptr.as_usize();
-        // let (fuel_consumed, fuel_refunded) = if fuel16_ptr > 0 {
-        //     let mut fuel_buffer = [0u8; 16];
-        //     caller.memory_read(fuel16_ptr, &mut fuel_buffer)?;
-        //     let fuel_consumed = LittleEndian::read_i64(&fuel_buffer[..8]) as u64;
-        //     let fuel_refunded = LittleEndian::read_i64(&fuel_buffer[8..]);
-        //     (fuel_consumed, fuel_refunded)
-        // } else {
-        //     (0, 0)
-        // };
-        // let (fuel_consumed, fuel_refunded, exit_code) = Self::fn_impl(
-        //     caller.data_mut(),
-        //     call_id.as_u32(),
-        //     return_data,
-        //     exit_code.as_i32(),
-        //     fuel_consumed,
-        //     fuel_refunded,
-        // );
-        // caller.stack_push(exit_code);
-        // Ok(())
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+        let [call_id, return_data_ptr, return_data_len, exit_code, fuel16_ptr] =
+            caller.stack_pop_n();
+        let return_data = caller
+            .memory_read_vec(return_data_ptr.as_usize(), return_data_len.as_usize())?
+            .to_vec();
+        let fuel16_ptr = fuel16_ptr.as_usize();
+        let (fuel_consumed, fuel_refunded) = if fuel16_ptr > 0 {
+            let mut fuel_buffer = [0u8; 16];
+            caller.memory_read(fuel16_ptr, &mut fuel_buffer)?;
+            let fuel_consumed = LittleEndian::read_i64(&fuel_buffer[..8]) as u64;
+            let fuel_refunded = LittleEndian::read_i64(&fuel_buffer[8..]);
+            (fuel_consumed, fuel_refunded)
+        } else {
+            (0, 0)
+        };
+        let (fuel_consumed, fuel_refunded, exit_code) = Self::fn_impl(
+            caller.context_mut(),
+            call_id.as_u32(),
+            return_data,
+            exit_code.as_i32(),
+            fuel_consumed,
+            fuel_refunded,
+            fuel16_ptr as u32,
+        );
+        if fuel16_ptr > 0 {
+            caller.memory_write(fuel16_ptr, &fuel_consumed.to_le_bytes())?;
+            caller.memory_write(fuel16_ptr + 8, &fuel_refunded.to_le_bytes())?;
+        }
+        caller.stack_push(exit_code);
+        Ok(())
     }
 
     pub fn fn_impl(

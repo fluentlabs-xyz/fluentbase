@@ -1,5 +1,5 @@
 use revm_primitives::{PrecompileError, PrecompileErrors};
-use rwasm::core::{Trap, TrapCode};
+use rwasm::RwasmError;
 use strum_macros::{Display, FromRepr};
 
 /// Exit codes representing various execution outcomes and error conditions.
@@ -142,58 +142,31 @@ impl ExitCode {
     pub const fn into_i32(self) -> i32 {
         self as i32
     }
-
-    pub fn into_trap(self) -> Trap {
-        Trap::i32_exit(self as i32)
-    }
 }
 
-impl From<TrapCode> for ExitCode {
-    fn from(value: TrapCode) -> Self {
+impl From<RwasmError> for ExitCode {
+    fn from(value: RwasmError) -> Self {
         Self::from(&value)
     }
 }
 
-impl From<&TrapCode> for ExitCode {
-    fn from(value: &TrapCode) -> Self {
+impl From<&RwasmError> for ExitCode {
+    fn from(value: &RwasmError) -> Self {
         match value {
-            TrapCode::UnreachableCodeReached => ExitCode::UnreachableCodeReached,
-            TrapCode::MemoryOutOfBounds => ExitCode::MemoryOutOfBounds,
-            TrapCode::TableOutOfBounds => ExitCode::TableOutOfBounds,
-            TrapCode::IndirectCallToNull => ExitCode::IndirectCallToNull,
-            TrapCode::IntegerDivisionByZero => ExitCode::IntegerDivisionByZero,
-            TrapCode::IntegerOverflow => ExitCode::IntegerOverflow,
-            TrapCode::BadConversionToInteger => ExitCode::BadConversionToInteger,
-            TrapCode::StackOverflow => ExitCode::StackOverflow,
-            TrapCode::BadSignature => ExitCode::BadSignature,
-            TrapCode::OutOfFuel => ExitCode::OutOfFuel,
-            TrapCode::GrowthOperationLimited => ExitCode::GrowthOperationLimited,
-            TrapCode::UnresolvedFunction => ExitCode::UnresolvedFunction,
+            RwasmError::UnreachableCodeReached => ExitCode::UnreachableCodeReached,
+            RwasmError::MemoryOutOfBounds => ExitCode::MemoryOutOfBounds,
+            RwasmError::TableOutOfBounds => ExitCode::TableOutOfBounds,
+            RwasmError::IndirectCallToNull => ExitCode::IndirectCallToNull,
+            RwasmError::IntegerDivisionByZero => ExitCode::IntegerDivisionByZero,
+            RwasmError::IntegerOverflow => ExitCode::IntegerOverflow,
+            RwasmError::BadConversionToInteger => ExitCode::BadConversionToInteger,
+            RwasmError::StackOverflow => ExitCode::StackOverflow,
+            RwasmError::BadSignature => ExitCode::BadSignature,
+            RwasmError::OutOfFuel => ExitCode::OutOfFuel,
+            RwasmError::GrowthOperationLimited => ExitCode::GrowthOperationLimited,
+            RwasmError::UnresolvedFunction => ExitCode::UnresolvedFunction,
+            _ => ExitCode::UnknownError,
         }
-    }
-}
-
-impl Into<Trap> for ExitCode {
-    fn into(self) -> Trap {
-        self.into_trap()
-    }
-}
-
-impl From<Trap> for ExitCode {
-    fn from(value: Trap) -> Self {
-        ExitCode::from(&value)
-    }
-}
-
-impl From<&Trap> for ExitCode {
-    fn from(value: &Trap) -> Self {
-        if let Some(trap_code) = value.trap_code() {
-            return ExitCode::from(trap_code);
-        }
-        if let Some(exit_code) = value.i32_exit_status() {
-            return ExitCode::from(exit_code);
-        }
-        ExitCode::UnknownError
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::{keccak256, B256};
-use rwasm_executor::{Caller, RwasmError};
+use rwasm::{Caller, RwasmError};
 
 pub struct SyscallKeccak256;
 

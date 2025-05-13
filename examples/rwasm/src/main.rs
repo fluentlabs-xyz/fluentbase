@@ -2,7 +2,7 @@
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{alloc_slice, create_import_linker, func_entrypoint, SharedAPI};
-use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
+use rwasm::legacy::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     let wasm_binary = sdk.input();

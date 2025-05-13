@@ -1,4 +1,3 @@
-use rwasm::engine::bytecode::FuncIdx;
 use strum_macros::{Display, FromRepr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Display, FromRepr)]
@@ -96,8 +95,8 @@ impl Into<u32> for SysFuncIdx {
     }
 }
 
-impl Into<FuncIdx> for SysFuncIdx {
-    fn into(self) -> FuncIdx {
+impl Into<rwasm::legacy::engine::bytecode::FuncIdx> for SysFuncIdx {
+    fn into(self) -> rwasm::legacy::engine::bytecode::FuncIdx {
         (self as u32).into()
     }
 }

@@ -1,19 +1,18 @@
-/// In this file we define the fuel procedures that will be inserted by the rwasm translator
+/// In this file, we define the fuel procedures that will be inserted by the rwasm translator
 /// before the builtin calls. Each fuel procedure is a set of rwasm instructions that will be
 /// executed. Fuel procedures can potentially access the variables of the function they are
 /// inserted into.
 use crate::SysFuncIdx::CHARGE_FUEL;
-use rwasm::{
+use rwasm::legacy::{
     core::UntypedValue,
     engine::bytecode::{FuncIdx, Instruction, LocalDepth},
 };
-
 
 /// Formula: cost = base_cost + word_cost * (x + 31) / 32, where x is one of the parameters
 /// of the builtin. What parameter is used depends on the builtin and defined by local_depth.
 ///
 /// Local depth equal to 1 means the last parameter, increase by 1 for each previous parameter. For
-/// more info on that checkout implementation of  local get visitor in the rwasm codebase (fn
+/// more info on that, checkout implementation of local gets a visitor in the rwasm codebase (fn
 /// visit_local_get).
 ///
 /// Word is defined as 32 bytes, the same as in the EVM.

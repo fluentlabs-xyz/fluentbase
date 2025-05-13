@@ -1,6 +1,6 @@
 use crate::{create_import_linker, sys_func_idx::SysFuncIdx, Bytes, STATE_DEPLOY, STATE_MAIN};
 use alloc::{boxed::Box, string::ToString, vec};
-use rwasm::{
+use rwasm::legacy::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
     Config,
