@@ -48,5 +48,5 @@ install-nextest:
 .PHONY: test
 test: install-nextest
 	cargo nextest run --no-fail-fast
-	@echo "Running doctests (not supported by nextest yet https://github.com/nextest-rs/nextest/issues/16)..."
+	@echo "Running doc tests (not supported by nextest yet https://github.com/nextest-rs/nextest/issues/16)..."
 	cargo test --doc
