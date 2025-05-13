@@ -341,7 +341,6 @@ mod tests {
         let buffer_len = LoaderV4State::program_data_offset().saturating_add(program_len);
 
         storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
-        storage_write_account_data(&mut sapi, &pk_tmp, &pk_tmp_account).unwrap();
         storage_write_account_data(
             &mut sapi,
             &system_program_id,
@@ -412,6 +411,7 @@ mod tests {
         let mut sapi = MemStorage::new();
 
         storage_write_account_data(&mut sapi, &pk_exec, &exec_account).unwrap();
+        storage_write_account_data(&mut sapi, &pk_tmp, &pk_tmp_account).unwrap();
         storage_write_account_data(
             &mut sapi,
             &system_program_id,

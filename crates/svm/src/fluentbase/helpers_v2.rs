@@ -90,7 +90,7 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let mut result_accounts = HashMap::new();
     for message in batch_message.messages() {
-        for (pk, data) in exec_svm_message(sdk, message.clone(), flush_result_accounts, sapi)? {
+        for (pk, data) in exec_svm_message(sdk, sapi, message.clone(), flush_result_accounts)? {
             result_accounts.insert(pk, data);
         }
     }
@@ -103,7 +103,7 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sapi: &mut Option<&mut SAPI>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let message = deserialize(message)?;
-    exec_svm_message(sdk, message, flush_result_accounts, sapi)
+    exec_svm_message(sdk, sapi, message, flush_result_accounts)
 }
 
 pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: StorageAPI>(
@@ -589,9 +589,9 @@ fn filter_executable_program_accounts<'a, SDK: SharedAPI, SAPI: StorageAPI>(
 
 pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sdk: &mut SDK,
+    sapi: &mut Option<&mut SAPI>,
     message: legacy::Message,
     flush_result_accounts: bool,
-    sapi: &mut Option<&mut SAPI>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let config = init_config();
 
