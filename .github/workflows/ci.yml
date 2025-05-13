@@ -35,8 +35,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
-      - name: Run tests
-        run: cargo test --no-fail-fast
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run tests with nextest
+        run: cargo nextest run --no-fail-fast
+      - name: Run doctests (not supported by nextest)
+        run: cargo test --doc
 
   coverage:
     name: Coverage
