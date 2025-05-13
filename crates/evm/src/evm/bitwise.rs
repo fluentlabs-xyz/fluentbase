@@ -125,7 +125,6 @@ mod tests {
     };
     use fluentbase_sdk::{uint, U256};
     use fluentbase_sdk_testing::HostTestingContext;
-    use url::Host;
 
     #[test]
     fn test_shift_left() {

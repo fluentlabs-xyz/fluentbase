@@ -2450,7 +2450,6 @@ dependencies = [
  "bitvec",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
- "url",
 ]
 
 [[package]]
@@ -2705,7 +2704,7 @@ dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk-derive",
  "fluentbase-types",
- "hashbrown 0.15.2",
+ "hashbrown 0.15.3",
 ]
 
 [[package]]

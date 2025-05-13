@@ -13,7 +13,6 @@ categories.workspace = true
 fluentbase-sdk = { workspace = true }
 bitvec = { workspace = true }
 bincode = { workspace = true }
-url = { version = "2.5.4", features = [] }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
