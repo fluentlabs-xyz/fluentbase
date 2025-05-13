@@ -2701,10 +2701,14 @@ name = "fluentbase-sdk-testing"
 version = "0.1.0"
 dependencies = [
  "fluentbase-codec",
+ "fluentbase-genesis",
  "fluentbase-runtime",
- "fluentbase-sdk-derive",
+ "fluentbase-sdk",
  "fluentbase-types",
  "hashbrown 0.15.3",
+ "hex",
+ "revm",
+ "rwasm",
 ]
 
 [[package]]

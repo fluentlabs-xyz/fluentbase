@@ -1,4 +1,4 @@
-use crate::utils::{EvmTestingContext, TxBuilder};
+use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};
 use core::str::from_utf8;
 use fluentbase_codec::byteorder::LittleEndian;
 use fluentbase_sdk::{

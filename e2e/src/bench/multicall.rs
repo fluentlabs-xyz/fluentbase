@@ -1,7 +1,8 @@
 extern crate test;
 
-use crate::{utils::EvmTestingContext, EXAMPLE_ROUTER_SOLIDITY};
+use crate::EXAMPLE_ROUTER_SOLIDITY;
 use fluentbase_sdk::Address;
+use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
 use test::Bencher;
 

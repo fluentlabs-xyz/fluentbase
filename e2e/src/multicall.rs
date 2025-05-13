@@ -1,4 +1,4 @@
-use crate::utils::EvmTestingContext;
+use fluentbase_sdk_testing::EvmTestingContext;
 use alloc::vec::Vec;
 use core::str::from_utf8;
 use fluentbase_codec::SolidityABI;

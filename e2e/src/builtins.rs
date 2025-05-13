@@ -1,4 +1,4 @@
-use crate::utils::{EvmTestingContext, TxBuilder};
+use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};
 use fluentbase_sdk::{Address, Bytes};
 use fluentbase_sdk_testing::HostTestingContextNativeAPI;
 use fluentbase_types::{

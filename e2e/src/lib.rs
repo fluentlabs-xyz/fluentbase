@@ -27,8 +27,6 @@ mod router;
 #[cfg(test)]
 mod stateless;
 #[cfg(test)]
-mod utils;
-#[cfg(test)]
 mod wasm;
 
 pub const EXAMPLE_ABI_SOLIDITY: &[u8] = fluentbase_examples_abi_solidity::WASM_BYTECODE;

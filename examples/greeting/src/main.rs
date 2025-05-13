@@ -27,7 +27,8 @@ func_entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_sdk_testing::{include_this_wasm, run_with_default_context, HostTestingContext};
+    const WASM_BYTECODE: &[u8] = include_this_wasm!();
 
     #[test]
     fn test_contract_works() {
@@ -35,5 +36,13 @@ mod tests {
         main_entry(sdk.clone());
         let output = sdk.take_output();
         assert_eq!(&output, "Hello, World".as_bytes());
+    }
+
+    #[test]
+    fn test_contract_works_in_emulated_environment() {
+        let (output, exit_code) =
+            run_with_default_context(WASM_BYTECODE.to_vec(), "Hello, World".as_bytes());
+        assert_eq!(exit_code, 0);
+        assert_eq!(output.clone(), "Hello, World".as_bytes().to_vec());
     }
 }

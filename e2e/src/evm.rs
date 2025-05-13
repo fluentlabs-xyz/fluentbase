@@ -1,4 +1,4 @@
-use crate::utils::{try_print_utf8_error, EvmTestingContext, TxBuilder};
+use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use core::str::from_utf8;
 use fluentbase_sdk::{address, bytes, calc_create_address, Address, U256};
 use fluentbase_sdk_testing::HostTestingContextNativeAPI;

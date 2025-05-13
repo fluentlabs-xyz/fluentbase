@@ -1,3 +1,4 @@
+use crate::{HostTestingContext, HostTestingContextNativeAPI};
 use core::{mem::take, str::from_utf8};
 use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
 use fluentbase_runtime::{Runtime, RuntimeContext};
@@ -14,7 +15,6 @@ use fluentbase_sdk::{
     STATE_MAIN,
     U256,
 };
-use fluentbase_sdk_testing::{HostTestingContext, HostTestingContextNativeAPI};
 use fluentbase_types::compile_wasm_to_rwasm;
 use revm::{
     primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, TransactTo},
@@ -25,7 +25,7 @@ use revm::{
 use rwasm::legacy::rwasm::{BinaryFormat, RwasmModule};
 
 #[allow(dead_code)]
-pub(crate) struct EvmTestingContext {
+pub struct EvmTestingContext {
     pub sdk: HostTestingContext,
     pub genesis: Genesis,
     pub db: InMemoryDB,
@@ -65,7 +65,7 @@ impl EvmTestingContext {
         }
     }
 
-    pub(crate) fn add_wasm_contract<I: Into<RwasmModule>>(
+    pub fn add_wasm_contract<I: Into<RwasmModule>>(
         &mut self,
         address: Address,
         rwasm_module: I,
@@ -89,7 +89,7 @@ impl EvmTestingContext {
         info
     }
 
-    pub(crate) fn add_bytecode(&mut self, address: Address, bytecode: Bytes) -> AccountInfo {
+    pub fn add_bytecode(&mut self, address: Address, bytecode: Bytes) -> AccountInfo {
         let mut info: AccountInfo = AccountInfo {
             balance: U256::ZERO,
             nonce: 0,
@@ -101,17 +101,17 @@ impl EvmTestingContext {
         info
     }
 
-    pub(crate) fn get_balance(&mut self, address: Address) -> U256 {
+    pub fn get_balance(&mut self, address: Address) -> U256 {
         let account = self.db.load_account(address).unwrap();
         account.info.balance
     }
 
-    pub(crate) fn get_nonce(&mut self, address: Address) -> u64 {
+    pub fn get_nonce(&mut self, address: Address) -> u64 {
         let account = self.db.load_account(address).unwrap();
         account.info.nonce
     }
 
-    pub(crate) fn add_balance(&mut self, address: Address, value: U256) {
+    pub fn add_balance(&mut self, address: Address, value: U256) {
         let account = self.db.load_account(address).unwrap();
         account.info.balance += value;
         let mut revm_account = revm::primitives::Account::from(account.info.clone());
@@ -119,12 +119,12 @@ impl EvmTestingContext {
         self.db.commit(HashMap::from([(address, revm_account)]));
     }
 
-    pub(crate) fn deploy_evm_tx(&mut self, deployer: Address, init_bytecode: Bytes) -> Address {
+    pub fn deploy_evm_tx(&mut self, deployer: Address, init_bytecode: Bytes) -> Address {
         let (contract_address, _) = self.deploy_evm_tx_with_gas(deployer, init_bytecode);
         contract_address
     }
 
-    pub(crate) fn deploy_evm_tx_with_gas(
+    pub fn deploy_evm_tx_with_gas(
         &mut self,
         deployer: Address,
         init_bytecode: Bytes,
@@ -149,7 +149,7 @@ impl EvmTestingContext {
         (contract_address, result.gas_used())
     }
 
-    pub(crate) fn deploy_evm_tx_with_nonce(
+    pub fn deploy_evm_tx_with_nonce(
         &mut self,
         deployer: Address,
         init_bytecode: Bytes,
@@ -172,7 +172,7 @@ impl EvmTestingContext {
         (contract_address, result.gas_used())
     }
 
-    pub(crate) fn call_evm_tx_simple(
+    pub fn call_evm_tx_simple(
         &mut self,
         caller: Address,
         callee: Address,
@@ -188,7 +188,7 @@ impl EvmTestingContext {
         tx_builder.exec()
     }
 
-    pub(crate) fn call_evm_tx(
+    pub fn call_evm_tx(
         &mut self,
         caller: Address,
         callee: Address,
@@ -201,9 +201,9 @@ impl EvmTestingContext {
     }
 }
 
-pub(crate) struct TxBuilder<'a> {
-    pub(crate) ctx: &'a mut EvmTestingContext,
-    pub(crate) env: Env,
+pub struct TxBuilder<'a> {
+    pub ctx: &'a mut EvmTestingContext,
+    pub env: Env,
 }
 
 #[allow(dead_code)]
@@ -281,7 +281,7 @@ impl<'a> TxBuilder<'a> {
     }
 }
 
-pub(crate) fn try_print_utf8_error(mut output: &[u8]) {
+pub fn try_print_utf8_error(mut output: &[u8]) {
     if output.starts_with(&[0x08, 0xc3, 0x79, 0xa0]) {
         output = &output[68..];
     }
@@ -294,7 +294,7 @@ pub(crate) fn try_print_utf8_error(mut output: &[u8]) {
     );
 }
 
-pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {
+pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {
     let rwasm_binary = if wasm_binary[0] == 0xef {
         wasm_binary
     } else {
@@ -354,7 +354,7 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
 }
 
 #[allow(dead_code)]
-pub(crate) fn catch_panic(ctx: &fluentbase_runtime::ExecutionResult) {
+pub fn catch_panic(ctx: &fluentbase_runtime::ExecutionResult) {
     if ctx.exit_code != -1 {
         return;
     }

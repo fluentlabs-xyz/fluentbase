@@ -1,6 +1,6 @@
 extern crate test;
 
-use crate::utils::{EvmTestingContext, TxBuilder};
+use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::address;
 use std::time::Instant;

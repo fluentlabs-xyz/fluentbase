@@ -21,3 +21,11 @@ pub use fluentbase_codec as codec;
 pub use fluentbase_sdk_derive as derive;
 pub use fluentbase_types::*;
 pub use hashbrown;
+
+#[cfg(feature = "std")]
+#[macro_export]
+macro_rules! include_this_wasm {
+    () => {
+        include_bytes!(env!("FLUENTBASE_WASM_ARTIFACT_PATH"))
+    };
+}

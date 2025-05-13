@@ -11,7 +11,23 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-codec = { workspace = true }
-fluentbase-types = { workspace = true }
-fluentbase-sdk-derive = { workspace = true }
+fluentbase-genesis = { workspace = true }
 fluentbase-runtime = { workspace = true, features = ["std"] }
+fluentbase-sdk = { workspace = true }
+fluentbase-types = { workspace = true }
+
 hashbrown = { workspace = true }
+revm = { workspace = true }
+rwasm = { workspace = true }
+hex = { workspace = true }
+
+[features]
+default = ["std", "fluentbase-runtime/debug-print"]
+std = [
+    "fluentbase-codec/std",
+    "fluentbase-genesis/std",
+    "fluentbase-runtime/std",
+    "fluentbase-sdk/std",
+    "rwasm/std",
+    "revm/std",
+]
