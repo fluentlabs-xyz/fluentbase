@@ -2,6 +2,7 @@ use alloc::rc::Rc;
 use fluentbase_runtime::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
+        charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
         exec::SyscallExec,
         exit::SyscallExit,
@@ -96,9 +97,14 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallFuel::fn_impl(&ctx)
     }
 
-    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
+    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
         let mut ctx = self.ctx.borrow_mut();
-        SyscallChargeFuel::fn_impl(&mut ctx, fuel_consumed, fuel_refunded)
+        SyscallChargeFuelManually::fn_impl(&mut ctx, fuel_consumed, fuel_refunded)
+    }
+
+    fn charge_fuel(&self, fuel_consumed: u64) {
+        let mut ctx = self.ctx.borrow_mut();
+        SyscallChargeFuel::fn_impl(&mut ctx, fuel_consumed);
     }
 
     fn exec<I: Into<BytecodeOrHash>>(

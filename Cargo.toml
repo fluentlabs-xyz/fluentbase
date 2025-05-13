@@ -99,11 +99,7 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 
 # rwasm
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/svm", default-features = false }
-rwasm-executor = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/svm", default-features = false }
-#rwasm = { path = "../rwasm/rwasm", default-features = false }
-#rwasm-executor = { path = "../rwasm/executor", default-features = false }
-
-casey = { version = "0.4" }
+#rwasm = { path = "../rwasm", default-features = false }
 
 # revm
 revm-interpreter = { path = "revm/crates/interpreter", default-features = false }

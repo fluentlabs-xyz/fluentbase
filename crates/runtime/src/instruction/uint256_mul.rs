@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use num::{BigUint, One, Zero};
-use rwasm_executor::{Caller, RwasmError};
+use rwasm::{Caller, RwasmError};
 use sp1_curves::edwards::WORDS_FIELD_ELEMENT;
 
 pub struct SyscallUint256Mul;

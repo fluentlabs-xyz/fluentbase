@@ -136,11 +136,11 @@ impl SharedAPI for TestingContext {
         self.inner.borrow().native_sdk.input_size()
     }
 
-    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64) {
+    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
         self.inner
             .borrow()
             .native_sdk
-            .charge_fuel(fuel_consumed, fuel_refunded);
+            .charge_fuel_manually(fuel_consumed, fuel_refunded);
     }
 
     fn fuel(&self) -> u64 {

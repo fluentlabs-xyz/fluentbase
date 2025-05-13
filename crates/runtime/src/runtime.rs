@@ -15,14 +15,14 @@ use fluentbase_types::{
     B256,
 };
 use hashbrown::{hash_map::Entry, HashMap};
-use rwasm_executor::{
+use rwasm::{
     make_instruction_table,
     Caller,
     ExecutorConfig,
     InstructionTable,
     RwasmError,
     RwasmExecutor,
-    RwasmModule2,
+    RwasmModule,
 };
 use std::{
     cell::RefCell,
@@ -56,7 +56,7 @@ impl ExecutionResult {
 pub struct CachingRuntime {
     // TODO(dmitry123): "add LRU cache to this map to avoid memory leak"
     cached_bytecode: HashMap<B256, Bytes>,
-    modules: HashMap<B256, Arc<RwasmModule2>>,
+    modules: HashMap<B256, Arc<RwasmModule>>,
     recoverable_runtimes: HashMap<u32, Runtime>,
 }
 
@@ -69,7 +69,7 @@ impl CachingRuntime {
         }
     }
 
-    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<RwasmModule2> {
+    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<RwasmModule> {
         let rwasm_bytecode = self
             .cached_bytecode
             .get(&rwasm_hash)
@@ -78,12 +78,12 @@ impl CachingRuntime {
             Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
             Entry::Vacant(entry) => entry,
         };
-        let reduced_module = Arc::new(RwasmModule2::new_or_empty(rwasm_bytecode));
+        let reduced_module = Arc::new(RwasmModule::new_or_empty(rwasm_bytecode));
         entry.insert(reduced_module.clone());
         reduced_module
     }
 
-    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<RwasmModule2>> {
+    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<RwasmModule>> {
         self.modules.get(rwasm_hash).cloned()
     }
 }
@@ -115,11 +115,9 @@ pub(crate) static CALL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 impl Runtime {
     pub fn catch_trap(err: &RwasmError) -> i32 {
         let err = match err {
-            RwasmError::TrapCode(err) => err,
             RwasmError::ExecutionHalted(exit_code) => return *exit_code,
-            _ => return ExitCode::UnknownError as i32,
+            err => err,
         };
-        // for i32 error code (raw error) just return result
         ExitCode::from(err).into_i32()
     }
 
@@ -275,10 +273,6 @@ impl Runtime {
                     RwasmError::MalformedBinary => {
                         unreachable!("runtime: binary format error is not possible here")
                     }
-                    RwasmError::TrapCode(trap_code) => {
-                        execution_result.exit_code = ExitCode::from(trap_code).into_i32();
-                        break;
-                    }
                     RwasmError::UnknownExternalFunction(func_idx) => {
                         unreachable!(
                             "runtime: unknown external function ({}) error is not possible here",
@@ -290,10 +284,6 @@ impl Runtime {
                             "runtime: execution halted ({}) error must be unwrapped",
                             exit_code
                         )
-                    }
-                    RwasmError::MemoryError(_) => {
-                        execution_result.exit_code = ExitCode::MemoryOutOfBounds.into_i32();
-                        break;
                     }
                     RwasmError::HostInterruption(host_error) => {
                         let resumable_state = host_error
@@ -318,6 +308,10 @@ impl Runtime {
                     }
                     RwasmError::NotAllowedInFuelMode => {
                         unreachable!("runtime: now allowed in fuel mode")
+                    }
+                    err => {
+                        execution_result.exit_code = ExitCode::from(err).into_i32();
+                        break;
                     }
                 },
             }

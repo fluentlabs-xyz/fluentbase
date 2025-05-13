@@ -4,7 +4,6 @@ use std::env;
 pub struct WasmBuildConfig {
     pub cargo_manifest_dir: String,
     pub current_target: String,
-    pub is_tarpaulin_build: bool,
     pub stack_size: u32,
     pub output_file_name: String,
     pub features: Vec<String>,
@@ -18,7 +17,6 @@ impl Default for WasmBuildConfig {
         Self {
             cargo_manifest_dir: env::var("CARGO_MANIFEST_DIR").unwrap(),
             current_target: env::var("TARGET").unwrap(),
-            is_tarpaulin_build: env::var("CARGO_CFG_TARPAULIN").is_ok(),
             stack_size: 128 * 1024,
             output_file_name: "lib.wasm".to_string(),
             features: vec![],

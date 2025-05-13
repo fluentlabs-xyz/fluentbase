@@ -130,7 +130,7 @@ pub(crate) fn load_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
 /// the correct handling and propagation of results from the EVM context.
 fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult) {
     let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
-    sdk.charge_fuel(consumed_diff, refund_diff);
+    sdk.charge_fuel_manually(consumed_diff, refund_diff);
     sdk.write(result.output.as_ref());
     sdk.exit(if result.is_revert() {
         ExitCode::Panic
@@ -215,7 +215,7 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     }
 
     let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
-    sdk.charge_fuel(consumed_diff, refund_diff);
+    sdk.charge_fuel_manually(consumed_diff, refund_diff);
 
     // we intentionally don't charge gas for these opcodes
     // to keep full compatibility with an EVM deployment process
@@ -270,7 +270,7 @@ pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
     }
 
     let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
-    sdk.charge_fuel(consumed_diff, refund_diff);
+    sdk.charge_fuel_manually(consumed_diff, refund_diff);
 
     sdk.write(result.output.as_ref());
 }

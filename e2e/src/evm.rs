@@ -128,12 +128,12 @@ fn test_evm_create_and_send() {
     let result = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
-        crate::examples::EXAMPLE_GREETING.into(),
+        crate::EXAMPLE_GREETING.into(),
     )
-    .enable_rwasm_proxy()
-    .gas_price(gas_price)
-    .value(U256::from(1e18))
-    .exec();
+        .enable_rwasm_proxy()
+        .gas_price(gas_price)
+        .value(U256::from(1e18))
+        .exec();
     let contract_address = calc_create_address::<TestingContextNativeAPI>(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     let tx_cost = gas_price * U256::from(result.gas_used());
@@ -162,12 +162,12 @@ fn test_evm_revert() {
     let result = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
-        crate::examples::EXAMPLE_GREETING.into(),
+        crate::EXAMPLE_GREETING.into(),
     )
-    .enable_rwasm_proxy()
-    .gas_price(gas_price)
-    .value(U256::from(1e18))
-    .exec();
+        .enable_rwasm_proxy()
+        .gas_price(gas_price)
+        .value(U256::from(1e18))
+        .exec();
     println!("{:?}", result);
     // here nonce must be 1 because we increment nonce for failed txs
     let contract_address = calc_create_address::<TestingContextNativeAPI>(&SENDER_ADDRESS, 1);
@@ -190,10 +190,10 @@ fn test_evm_self_destruct() {
         SENDER_ADDRESS,
         hex!("6003600c60003960036000F36003ff").into(),
     )
-    .enable_rwasm_proxy()
-    .gas_price(gas_price)
-    .value(U256::from(1e18))
-    .exec();
+        .enable_rwasm_proxy()
+        .gas_price(gas_price)
+        .value(U256::from(1e18))
+        .exec();
     let contract_address = calc_create_address::<TestingContextNativeAPI>(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 53842);
@@ -223,8 +223,8 @@ fn test_evm_self_destruct() {
         SENDER_ADDRESS,
         hex!("6000600060006000600073f91c20c0cafbfdc150adff51bbfc5808edde7cb561FFFFF1").into(),
     )
-    .enable_rwasm_proxy()
-    .exec();
+        .enable_rwasm_proxy()
+        .exec();
     if !result.is_success() {
         println!("status: {:?}", result);
         try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref());
@@ -254,7 +254,7 @@ fn test_evm_erc20() {
         let result = ctx.call_evm_tx(
             OWNER_ADDRESS,
             contract_address,
-            hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into(),             None,
+            hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into(), None,
             None,
         );
         println!("{:?}", result);
@@ -322,7 +322,7 @@ fn test_evm_balance() {
 fn test_wasm_erc20() {
     let mut ctx = EvmTestingContext::default();
     const OWNER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, crate::examples::EXAMPLE_ERC20.into());
+    let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, crate::EXAMPLE_ERC20.into());
     let transfer_coin = |ctx: &mut EvmTestingContext| {
         let result = ctx.call_evm_tx(
             OWNER_ADDRESS,

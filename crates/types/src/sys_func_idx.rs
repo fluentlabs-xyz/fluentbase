@@ -1,4 +1,3 @@
-use rwasm::engine::bytecode::FuncIdx;
 use strum_macros::{Display, FromRepr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Display, FromRepr)]
@@ -16,11 +15,12 @@ pub enum SysFuncIdx {
     EXEC = 0x0009,
     RESUME = 0x000a,
     FORWARD_OUTPUT = 0x000b,
-    CHARGE_FUEL = 0x000c,
+    CHARGE_FUEL_MANUALLY = 0x000c,
     FUEL = 0x000d,
     PREIMAGE_SIZE = 0x000e,
     PREIMAGE_COPY = 0x000f,
     DEBUG_LOG = 0x0010,
+    CHARGE_FUEL = 0x0011,
 
     // hashing
     KECCAK256 = 0x0101,
@@ -95,8 +95,8 @@ impl Into<u32> for SysFuncIdx {
     }
 }
 
-impl Into<FuncIdx> for SysFuncIdx {
-    fn into(self) -> FuncIdx {
+impl Into<rwasm::legacy::engine::bytecode::FuncIdx> for SysFuncIdx {
+    fn into(self) -> rwasm::legacy::engine::bytecode::FuncIdx {
         (self as u32).into()
     }
 }

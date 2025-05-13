@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use rwasm_executor::{Caller, RwasmError};
+use rwasm::{Caller, RwasmError};
 
 pub struct SyscallInputSize;
 

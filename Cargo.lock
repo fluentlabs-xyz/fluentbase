@@ -1919,6 +1919,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
+name = "downcast-rs"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea8a8b81cacc08888170eef4d13b775126db426d0b348bee9d18c2c1eaf123cf"
+
+[[package]]
 name = "dtor"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2502,10 +2508,10 @@ dependencies = [
  "fluentbase-types",
  "hex",
  "hex-literal 1.0.0",
- "paste",
  "revm",
  "rwasm",
  "tikv-jemallocator",
+ "wat",
 ]
 
 [[package]]
@@ -2579,6 +2585,13 @@ dependencies = [
  "fluentbase-sdk",
  "serde",
  "serde-json-core",
+]
+
+[[package]]
+name = "fluentbase-examples-keccak"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
 ]
 
 [[package]]
@@ -2675,7 +2688,7 @@ dependencies = [
  "hex-literal 1.0.0",
  "k256",
  "num",
- "rwasm-executor",
+ "rwasm",
  "secp256k1",
  "sha2 0.10.8",
  "sp1-curves",
@@ -5700,11 +5713,30 @@ dependencies = [
 
 [[package]]
 name = "rwasm"
+version = "0.0.0"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Fsvm#a25df2019344826080b7365d08b3e31098e83d42"
+dependencies = [
+ "bincode 2.0.1",
+ "bitvec",
+ "bytes",
+ "downcast-rs 2.0.1",
+ "hashbrown 0.15.2",
+ "libm",
+ "num-traits",
+ "num_enum",
+ "paste",
+ "rwasm-legacy",
+ "tiny-keccak",
+ "wasmparser-nostd",
+]
+
+[[package]]
+name = "rwasm-legacy"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Fsvm#fa507650684cb7d25081c8549303cf45beb922b6"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Fsvm#a25df2019344826080b7365d08b3e31098e83d42"
 dependencies = [
  "byteorder",
- "downcast-rs",
+ "downcast-rs 1.2.1",
  "hashbrown 0.15.2",
  "libm",
  "num-traits",
@@ -5714,20 +5746,6 @@ dependencies = [
  "strum 0.27.1",
  "strum_macros 0.27.1",
  "wasmparser-nostd",
-]
-
-[[package]]
-name = "rwasm-executor"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Fsvm#fa507650684cb7d25081c8549303cf45beb922b6"
-dependencies = [
- "byteorder",
- "bytes",
- "hashbrown 0.15.2",
- "num_enum",
- "paste",
- "rwasm",
- "tiny-keccak",
 ]
 
 [[package]]

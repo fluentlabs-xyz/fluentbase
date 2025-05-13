@@ -71,7 +71,7 @@ impl<'a, SDK: SharedAPI> EVM<'a, SDK> {
         if remaining_diff == 0 && refunded_diff == 0 {
             return false;
         }
-        self.sdk.charge_fuel(
+        self.sdk.charge_fuel_manually(
             remaining_diff * FUEL_DENOM_RATE,
             refunded_diff * FUEL_DENOM_RATE as i64,
         );

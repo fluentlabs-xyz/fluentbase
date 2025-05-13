@@ -40,11 +40,11 @@ pub trait SharedAPI: StorageAPI {
         buffer
     }
 
-    fn charge_fuel(&self, fuel_consumed: u64, fuel_refunded: i64);
+    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64);
 
     fn sync_evm_gas(&self, gas_consumed: u64, gas_refunded: i64) {
         // TODO(dmitry123): "do we care about overflow here?"
-        self.charge_fuel(
+        self.charge_fuel_manually(
             gas_consumed * FUEL_DENOM_RATE,
             gas_refunded * FUEL_DENOM_RATE as i64,
         );

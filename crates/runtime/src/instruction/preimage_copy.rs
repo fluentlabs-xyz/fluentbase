@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::Bytes;
-use rwasm_executor::{Caller, RwasmError, TrapCode};
+use rwasm::{Caller, RwasmError};
 
 pub struct SyscallPreimageCopy;
 
@@ -14,6 +14,6 @@ impl SyscallPreimageCopy {
     }
 
     pub fn fn_impl(_ctx: &RuntimeContext, _hash: &[u8]) -> Result<Bytes, RwasmError> {
-        Err(RwasmError::TrapCode(TrapCode::UnreachableCodeReached))
+        Err(RwasmError::UnreachableCodeReached)
     }
 }

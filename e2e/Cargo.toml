@@ -23,7 +23,7 @@ revm = { workspace = true }
 hex = { workspace = true }
 hex-literal = { workspace = true }
 alloy-sol-types = { workspace = true }
-paste = { workspace = true }
+wat = { version = "1.223.0" }
 
 tikv-jemallocator = "0.6.0"
 

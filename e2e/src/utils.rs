@@ -5,7 +5,6 @@ use fluentbase_sdk::{
     bytes::BytesMut,
     calc_create_address,
     codec::CompactABI,
-    rwasm_config,
     testing::{TestingContext, TestingContextNativeAPI},
     Address,
     BlockContextReader,
@@ -18,16 +17,14 @@ use fluentbase_sdk::{
     STATE_MAIN,
     U256,
 };
+use fluentbase_types::compile_wasm_to_rwasm;
 use revm::{
     primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, TransactTo},
     DatabaseCommit,
     Evm,
     InMemoryDB,
 };
-use rwasm::{
-    rwasm::{instruction::InstructionExtra, BinaryFormat, BinaryFormatWriter, RwasmModule},
-    Error,
-};
+use rwasm::legacy::rwasm::{BinaryFormat, RwasmModule};
 
 #[allow(dead_code)]
 pub(crate) struct EvmTestingContext {
@@ -279,6 +276,11 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
+    pub fn disable_builtins_consume_fuel(mut self) -> Self {
+        self.env.cfg.disable_builtins_consume_fuel = true;
+        self
+    }
+
     pub fn exec(&mut self) -> ExecutionResult {
         let db = take(&mut self.ctx.db);
         let mut evm = Evm::builder()
@@ -304,32 +306,14 @@ pub(crate) fn try_print_utf8_error(mut output: &[u8]) {
     );
 }
 
-fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
-    let mut config = RwasmModule::default_config(None);
-    config.rwasm_config(rwasm_config());
-    RwasmModule::compile_with_config(wasm_binary, &config)
-}
-
-fn wasm2rwasm(wasm_binary: &[u8]) -> Vec<u8> {
-    let rwasm_module = rwasm_module(wasm_binary);
-    if rwasm_module.is_err() {
-        panic!("failed to compile wasm to rwasm: {:?}", rwasm_module.err());
-    }
-    let rwasm_module = rwasm_module.unwrap();
-    let length = rwasm_module.encoded_length();
-    let mut rwasm_bytecode = vec![0u8; length];
-    let mut binary_format_writer = BinaryFormatWriter::new(&mut rwasm_bytecode);
-    rwasm_module
-        .write_binary(&mut binary_format_writer)
-        .expect("failed to encode rwasm bytecode");
-    rwasm_bytecode
-}
-
 pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {
     let rwasm_binary = if wasm_binary[0] == 0xef {
         wasm_binary
     } else {
-        wasm2rwasm(wasm_binary.as_slice())
+        compile_wasm_to_rwasm(&wasm_binary)
+            .unwrap()
+            .rwasm_bytecode
+            .into()
     };
 
     let context_input = {
@@ -366,14 +350,7 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
             .unwrap_or_default();
         println!("execution trace ({} steps):", logs.len());
         for log in logs.iter().rev().take(100).rev() {
-            if let Some(value) = log.opcode.aux_value() {
-                println!(
-                    " - pc={} opcode={}({})",
-                    log.program_counter, log.opcode, value
-                );
-            } else {
-                println!(" - pc={} opcode={}", log.program_counter, log.opcode);
-            }
+            println!(" - pc={} opcode={}", log.program_counter, log.opcode);
         }
     } else {
         println!(
