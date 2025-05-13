@@ -65,7 +65,5 @@ std = [
     "alloy-genesis/std",
     "serde/std",
     "serde_json/std",
-    "generate-genesis",
 ]
-generate-genesis = []
 fairblock = ["dep:fluentbase-contracts-fairblock"]

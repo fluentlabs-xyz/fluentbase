@@ -9,7 +9,6 @@ use fluentbase_types::{
 };
 use lazy_static::lazy_static;
 
-#[cfg(feature = "generate-genesis")]
 pub fn devnet_genesis_from_file() -> Genesis {
     let json_file = include_str!("../assets/genesis-devnet.json");
     serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
@@ -29,7 +28,8 @@ pub const GENESIS_CONTRACTS: &[(&str, Address, &[u8])] = &[
     ("fluentbase-contracts-bn256", fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::WASM_BYTECODE),
     ("fluentbase-contracts-erc20", fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::WASM_BYTECODE),
     ("fluentbase-contracts-evm", fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::WASM_BYTECODE),
-    // ("fluentbase-contracts-fairblock", fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::WASM_BYTECODE),
+    #[cfg(feature = "fairblock")]
+    ("fluentbase-contracts-fairblock", fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::WASM_BYTECODE),
     ("fluentbase-contracts-identity", fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts_identity::WASM_BYTECODE),
     ("fluentbase-contracts-kzg", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_kzg::WASM_BYTECODE),
     ("fluentbase-contracts-multicall", fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::WASM_BYTECODE),
