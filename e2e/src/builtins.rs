@@ -1,5 +1,6 @@
-use crate::utils::{EvmTestingContext, TxBuilder};
-use fluentbase_sdk::{testing::TestingContextNativeAPI, Address, Bytes};
+use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};
+use fluentbase_sdk::{Address, Bytes};
+use fluentbase_sdk_testing::HostTestingContextNativeAPI;
 use fluentbase_types::{
     calc_create_address,
     CHARGE_FUEL_BASE_COST,
@@ -56,7 +57,7 @@ fn run_main(
     }
     let result = builder.exec();
     assert!(result.is_success(), "failed to deploy contract");
-    let contract_address = calc_create_address::<TestingContextNativeAPI>(&deployer, 0);
+    let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, 0);
     let result = ctx.call_evm_tx(
         deployer,
         contract_address,

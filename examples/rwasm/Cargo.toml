@@ -10,13 +10,6 @@ rwasm = { workspace = true }
 [build-dependencies]
 fluentbase-build = { workspace = true }
 
-[lib]
-crate-type = ["cdylib"]
-path = "lib.rs"
-
 [features]
 default = ["std"]
-std = [
-    "fluentbase-sdk/std",
-    "rwasm/std"
-]
+std = ["fluentbase-sdk/std", "rwasm/std"]

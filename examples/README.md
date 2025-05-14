@@ -56,9 +56,6 @@ If you don't want to use EVM features then just disable `evm` feature flag.
 Additionally add these lines into your `Cargo.toml` file:
 
 ```toml
-[lib]
-crate-type = ["cdylib"]
-
 [profile.release]
 panic = "abort"
 lto = true

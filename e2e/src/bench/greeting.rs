@@ -1,7 +1,8 @@
 extern crate test;
 
-use crate::{utils::EvmTestingContext, EXAMPLE_GREETING};
+use crate::EXAMPLE_GREETING;
 use fluentbase_sdk::{Address, Bytes};
+use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
 use test::Bencher;
 
