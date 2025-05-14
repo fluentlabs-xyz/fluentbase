@@ -1,0 +1,19 @@
+[package]
+name = "fluentbase-examples-multiply"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+
+
+[dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
+rand = "0.8.5"
+
+[build-dependencies]
+fluentbase-build = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std"]

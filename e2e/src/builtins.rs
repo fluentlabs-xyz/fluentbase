@@ -15,23 +15,6 @@ use revm::primitives::ExecutionResult;
 
 const WAT_TEMPLATE: &str = r#"
     (module
-        (import "fluentbase_v1preview" "_charge_fuel"         (func $_charge_fuel         (param i64)))
-        (import "fluentbase_v1preview" "_charge_fuel_manually"(func $_charge_fuel_manually(param i64 i64) (result i64)))
-        (import "fluentbase_v1preview" "_debug_log"           (func $_debug_log           (param i32 i32)))
-        (import "fluentbase_v1preview" "_exec"                (func $_exec                (param i32 i32 i32 i32 i32) (result i32)))
-        (import "fluentbase_v1preview" "_exit"                (func $_exit                (param i32)))
-        (import "fluentbase_v1preview" "_forward_output"      (func $_forward_output      (param i32 i32)))
-        (import "fluentbase_v1preview" "_fuel"                (func $_fuel                (result i64)))
-        (import "fluentbase_v1preview" "_input_size"          (func $_input_size          (result i32)))
-        (import "fluentbase_v1preview" "_keccak256"           (func $_keccak256           (param i32 i32 i32)))
-        (import "fluentbase_v1preview" "_output_size"         (func $_output_size         (result i32)))
-        (import "fluentbase_v1preview" "_preimage_copy"       (func $_preimage_copy       (param i32 i32)))
-        (import "fluentbase_v1preview" "_preimage_size"       (func $_preimage_size       (param i32) (result i32)))
-        (import "fluentbase_v1preview" "_read"                (func $_read                (param i32 i32 i32)))
-        (import "fluentbase_v1preview" "_read_output"         (func $_read_output         (param i32 i32 i32)))
-        (import "fluentbase_v1preview" "_resume"              (func $_resume              (param i32 i32 i32 i32 i32) (result i32)))
-        (import "fluentbase_v1preview" "_secp256k1_recover"   (func $_secp256k1_recover   (param i32 i32 i32 i32) (result i32)))
-        (import "fluentbase_v1preview" "_state"               (func $_state               (result i32)))
         (import "fluentbase_v1preview" "_write"               (func $_write               (param i32 i32)))
         (func $main
             {{MAIN_BODY}}

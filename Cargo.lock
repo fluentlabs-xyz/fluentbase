@@ -2533,6 +2533,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-examples-multiply"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "fluentbase-sdk-testing",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "fluentbase-examples-panic"
 version = "0.1.0"
 dependencies = [

@@ -33,6 +33,27 @@ pub fn default_compilation_config() -> Config {
     config
 }
 
+pub fn default_compilation_config2() -> Config {
+    let mut config = RwasmModule::default_config(None);
+    config.rwasm_config(RwasmConfig {
+        state_router: Some(StateRouterConfig {
+            states: Box::new([
+                ("deploy".to_string(), STATE_DEPLOY),
+                ("main".to_string(), STATE_MAIN),
+            ]),
+            opcode: Instruction::Call(SysFuncIdx::STATE.into()),
+        }),
+        entrypoint_name: None,
+        import_linker: Some(create_import_linker()),
+        wrap_import_functions: true,
+        translate_drop_keep: true,
+        allow_malformed_entrypoint_func_type: true,
+        use_32bit_mode: true,
+        builtins_consume_fuel: false,
+    });
+    config
+}
+
 pub fn compile_wasm_to_rwasm_with_config(
     wasm_binary: &[u8],
     config: Config,

@@ -182,6 +182,7 @@ impl EvmTestingContext {
     ) -> ExecutionResult {
         // call greeting EVM contract
         let mut tx_builder = TxBuilder::call(self, caller, callee, value).input(input);
+
         if let Some(gas_limit) = gas_limit {
             tx_builder = tx_builder.gas_limit(gas_limit);
         }
