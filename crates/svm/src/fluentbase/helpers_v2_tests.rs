@@ -90,7 +90,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../../examples/svm/solana-program/assets/solana_program.so",
-            "../../examples/svm/solana-program-with-state/assets/solana_program.so",
+            "../../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
             // "./test_elfs/out/noop_aligned.so",
         );
 
@@ -275,7 +275,6 @@ mod tests {
             pk_exec.clone(),
             &amount.to_be_bytes(),
             vec![
-                // account_meta1
                 AccountMeta::new(pk_tmp, true),
                 AccountMeta::new(pk_payer, false),
                 AccountMeta::new(system_program_id, false),
@@ -302,8 +301,6 @@ mod tests {
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
         assert_eq!(account_data.lamports(), 112);
-        // assert_eq!(account_data.data().len(), buffer_len);
-        // assert_eq!(account_data.executable(), false);
     }
 
     #[test]
@@ -333,7 +330,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             "../../examples/svm/solana-program/assets/solana_program.so",
-            // "../../examples/svm/solana-program-with-state/assets/solana_program.so",
+            // "../../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
             // "./test_elfs/out/noop_aligned.so",
         );
 

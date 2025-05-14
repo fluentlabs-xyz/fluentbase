@@ -27,7 +27,7 @@ build_solana_program:
 	$(LD_V1) -o assets/solana_program.so assets/solana_program.o
 	rm assets/*.o
 
-INPUT_NAME=solana_program_with_state
+INPUT_NAME=solana_program_transfer_with_cpi
 OUTPUT_NAME=solana_program
 .PHONY: build_cargo_powered_solana_program
 build_cargo_powered_solana_program:

@@ -1,6 +1,4 @@
-#![feature(error_in_core)]
-
-use solana_account_info::{next_account_info, AccountInfo};
+use solana_account_info::AccountInfo;
 use solana_program_entrypoint::{__msg, entrypoint_no_alloc, ProgramResult};
 use solana_pubkey::Pubkey;
 

@@ -51,7 +51,7 @@ mod tests {
             &loader_id,
             // "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
             "../examples/svm/solana-program/assets/solana_program.so",
-            // "../examples/svm/solana-program-with-state/assets/solana_program.so",
+            // "../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
         );
 
         let program_bytes = account_with_program.data().to_vec();
@@ -75,7 +75,7 @@ mod tests {
             &loader_id,
             // "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
             "../examples/svm/solana-program/assets/solana_program.so",
-            // "../examples/svm/solana-program-with-state/assets/solana_program.so",
+            // "../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
         );
 
         // init buffer, fill buffer, deploy
