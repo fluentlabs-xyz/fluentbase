@@ -98,7 +98,7 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/svm", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "next", default-features = false }
 #rwasm = { path = "../rwasm", default-features = false }
 
 # revm
