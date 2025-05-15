@@ -3,9 +3,7 @@ use core::{mem::take, str::from_utf8};
 use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
-    bytes::BytesMut,
     calc_create_address,
-    codec::CompactABI,
     Address,
     Bytes,
     ExitCode,
@@ -15,7 +13,7 @@ use fluentbase_sdk::{
     STATE_MAIN,
     U256,
 };
-use fluentbase_types::compile_wasm_to_rwasm;
+use fluentbase_types::{bytes::BytesMut, compile_wasm_to_rwasm};
 use revm::{
     primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, TransactTo},
     DatabaseCommit,
@@ -311,7 +309,7 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
             contract: Default::default(),
         };
         let mut buf = BytesMut::new();
-        CompactABI::encode(&shared_ctx, &mut buf, 0).unwrap();
+        buf.extend(shared_ctx.encode_to_vec().unwrap());
         buf.extend_from_slice(input_data);
         buf.freeze().to_vec()
     };

@@ -30,4 +30,24 @@ impl Config {
         self.rerun_if_changed.push(path.to_string());
         self
     }
+
+    pub fn with_output_file_name(mut self, filename: Option<String>) -> Self {
+        self.output_file_name = filename;
+        self
+    }
+
+    pub fn with_stack_size(mut self, stack_size: u32) -> Self {
+        self.stack_size = stack_size;
+        self
+    }
+
+    pub fn with_features(mut self, features: Vec<String>) -> Self {
+        self.features = features;
+        self
+    }
+
+    pub fn with_no_default_features(mut self, no_default_features: bool) -> Self {
+        self.no_default_features = no_default_features;
+        self
+    }
 }
