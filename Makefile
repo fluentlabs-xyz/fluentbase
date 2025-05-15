@@ -1,5 +1,16 @@
 all: build
 
+.PHONY: help
+help:
+	@echo "Available targets:"
+	@echo "  help      - Display this help message"
+	@echo "  all       - Same as 'build'"
+	@echo "  build     - Build the library"
+	@echo "  examples  - Build examples"
+	@echo "  clean     - Clean build artifacts (including examples if SKIP_EXAMPLES=n)"
+	@echo "  test      - Run all tests (includes evm-e2e tests)"
+	@echo "  evm-e2e   - Run only the EVM end-to-end tests"
+
 .PHONY: build
 build:
 	# build examples & contracts by triggering "build.rs"
@@ -16,37 +27,29 @@ clean:
 	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE) clean; fi
 	cargo clean
 
-.PHONY: install-nextest
-install-nextest:
-	@echo "Checking for nextest..."
-	@if ! command -v cargo-nextest >/dev/null 2>&1; then \
-		echo "Installing nextest..."; \
-		case "$$(uname -s)" in \
-			Linux*) \
-				curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C $${CARGO_HOME:-~/.cargo}/bin ;; \
-			Darwin*) \
-				curl -LsSf https://get.nexte.st/latest/mac | tar zxf - -C $${CARGO_HOME:-~/.cargo}/bin ;; \
-			MINGW*|MSYS*|CYGWIN*) \
-				if command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then \
-					curl -LsSf https://get.nexte.st/latest/windows-tar | tar zxf - -C $${CARGO_HOME:-~/.cargo}/bin; \
-				else \
-					powershell -Command " \
-						\$$tmp = New-TemporaryFile | Rename-Item -NewName { \$$_ -replace 'tmp$$', 'zip' } -PassThru; \
-						Invoke-WebRequest -OutFile \$$tmp https://get.nexte.st/latest/windows; \
-						\$$outputDir = if (\$$Env:CARGO_HOME) { Join-Path \$$Env:CARGO_HOME 'bin' } else { '~/.cargo/bin' }; \
-						\$$tmp | Expand-Archive -DestinationPath \$$outputDir -Force; \
-						\$$tmp | Remove-Item"; \
-				fi;; \
-			*) \
-				echo "Unsupported platform, please install nextest manually: https://nexte.st/docs/installation/pre-built-binaries/"; \
-				exit 1;; \
-		esac; \
-	else \
-		echo "nextest already installed"; \
-	fi
+# EVM tests use custom initialization output that confuses nextest
+# so we'll use regular cargo test for these
+.PHONY: evm-e2e
+evm-e2e:
+	@echo "Running EVM e2e tests..."
+	cd revm/e2e && cargo test --release --package revm-rwasm-e2e --bin revm-rwasm-e2e -q
 
 .PHONY: test
-test: install-nextest
-	cargo nextest run --no-fail-fast
-	@echo "Running doc tests (not supported by nextest yet https://github.com/nextest-rs/nextest/issues/16)..."
-	cargo test --doc
+test:
+	@echo "Running unit tests..."
+	@if command -v cargo-nextest >/dev/null 2>&1; then \
+		echo "Using nextest for testing..."; \
+		cargo nextest run --no-fail-fast \
+			--status-level=none \
+			--final-status-level=fail \
+			--failure-output=immediate; \
+	else \
+		echo "Using standard cargo test..."; \
+		cargo test --no-fail-fast -q; \
+	fi
+
+	@echo "Running doc tests..."
+	@cargo test --doc --workspace -q
+
+	@echo "Running EVM end-to-end tests..."
+	@$(MAKE) evm-e2e
