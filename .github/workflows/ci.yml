@@ -33,6 +33,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
       - name: Install Go 1.23
         uses: actions/setup-go@v5
         with:
@@ -62,6 +64,10 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Run cargo check
+        run: cargo check
 
       - name: Install Go 1.23
         uses: actions/setup-go@v5
