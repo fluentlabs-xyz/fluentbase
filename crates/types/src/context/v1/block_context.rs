@@ -1,8 +1,7 @@
 use crate::context::BlockContextReader;
 use alloy_primitives::{Address, B256, U256};
-use fluentbase_codec::Codec;
 
-#[derive(Codec, Default, Clone)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct BlockContextV1 {
     pub chain_id: u64,
     pub coinbase: Address,
