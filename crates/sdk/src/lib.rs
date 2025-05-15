@@ -25,7 +25,15 @@ pub use hashbrown;
 #[cfg(feature = "std")]
 #[macro_export]
 macro_rules! include_this_wasm {
-    () => {
-        include_bytes!(env!("FLUENTBASE_WASM_ARTIFACT_PATH"))
-    };
+    () => {{
+        #[cfg(tarpaulin)]
+        {
+            // Return empty bytes when running under tarpaulin
+            &[]
+        }
+        #[cfg(not(tarpaulin))]
+        {
+            include_bytes!(env!("FLUENTBASE_WASM_ARTIFACT_PATH"))
+        }
+    }};
 }
