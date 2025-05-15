@@ -121,4 +121,4 @@ jobs:
         run: make sync_tests
       - name: Run ethereum tests
         working-directory: revm/e2e
-        run: make run_general_state_tests
+        run: cargo test --release --package revm-rwasm-e2e --bin revm-rwasm-e2e
