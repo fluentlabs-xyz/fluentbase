@@ -1,4 +1,4 @@
-use crate::{utils::trace_execution_logs, Runtime, RuntimeContext};
+use crate::{Runtime, RuntimeContext};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     BytecodeOrHash,
