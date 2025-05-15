@@ -12,6 +12,18 @@ crates/rwasm/spec/target
 .vscode
 .DS_Store
 libzktrie.so
+.wake
 
 /tmp/*
 !/tmp/.gitkeep
+
+# exclude all wat, wasm and genesis files
+*.wat
+contracts/**/lib.wasm
+examples/**/lib.wasm
+
+revm/e2e/Cargo.lock
+revm/e2e/tests
+
+genesis-devnet.json
+node_modules

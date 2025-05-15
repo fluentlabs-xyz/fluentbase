@@ -1,11 +1,14 @@
 [workspace]
 members = [
+    "contracts/*",
     "crates/*",
+    "revm/crates/*",
+    "examples/*",
     "e2e",
-    "examples",
 ]
 exclude = [
-    "crates/core"
+    # exclude revm e2e testing suite to let it be a separate crate
+    "revm/e2e",
 ]
 resolver = "2"
 
@@ -13,7 +16,7 @@ resolver = "2"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
-repository = "https://github.com/wasm0/fuentbase"
+repository = "https://github.com/fluentlabs-xyz/fuentbase"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
@@ -21,17 +24,52 @@ keywords = ["wasm", "webassembly", "interpreter", "vm"]
 categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
-rwasm-codegen = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "main", default-features = false }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "main", default-features = false }
-#rwasm-codegen = { path = "../rwasm/codegen", default-features = false }
-#rwasm = { path = "../rwasm/rwasm", default-features = false }
+# fluentbase
+fluentbase-build = { path = "./crates/build", default-features = false }
+fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"] }
+fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
+fluentbase-contracts = { path = "./contracts", default-features = false }
+fluentbase-evm = { path = "./crates/evm", default-features = false }
+fluentbase-genesis = { path = "./crates/genesis", default-features = false }
+fluentbase-runtime = { path = "./crates/runtime", default-features = false }
+fluentbase-sdk = { path = "./crates/sdk", default-features = false }
+fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
+fluentbase-sdk-testing = { path = "./crates/sdk-testing" }
+fluentbase-types = { path = "./crates/types", default-features = false }
+
+# rwasm
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.1.0-dev", default-features = false }
+
+# revm
+revm-interpreter = { path = "revm/crates/interpreter", default-features = false }
+revm-primitives = { path = "revm/crates/primitives", default-features = false }
+revm-precompile = { path = "revm/crates/precompile", default-features = false }
+revm = { path = "revm/crates/revm", default-features = false, features = [
+    "std",
+    "hashbrown",
+] }
+
+# misc
 byteorder = { version = "1.5.0", default-features = false }
-alloy-primitives = { version = "0.5.2", default-features = false, features = ["rlp"] }
-hashbrown = "0.14.3"
-serde = { version = "1.0.193", default-features = false }
-casey = "0.4.0"
-halo2curves = { git = "https://github.com/scroll-tech/halo2curves", branch = "0.3.1-derive-serde" }
-paste = "1.0"
+alloy-primitives = { version = "=0.8.21", default-features = false, features = ["rlp", "map"] }
+alloy-rlp = { version = "0.3.10", default-features = false, features = ["derive"] }
+alloy-genesis = { version = "=0.11.1", default-features = false }
+alloy-sol-types = { version = "=0.8.20", default-features = false }
+hashbrown = { version = "0.15.0", default-features = false, features = ["default-hasher", "inline-more"] }
+serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
+serde_json = { version = "1.0", default-features = false }
+paste = { version = "1.0", default-features = false }
+auto_impl = { version = "1.2", default-features = false }
+bytes = { version = "1.10.1", default-features = false }
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+hex-literal = { version = "1.0.0" }
+strum_macros = { version = "0.27.1" }
+lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
+anyhow = { version = "1.0.86", default-features = false }
+syn = "2.0"
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+bitvec = { version = "1", default-features = false, features = ["alloc"] }
+bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
 
 [profile.bench]
 lto = "fat"
@@ -46,15 +84,3 @@ debug = false
 debug-assertions = false
 rpath = false
 codegen-units = 1
-
-#[profile.release]
-#opt-level = 1
-#debug = false
-#debug-assertions = false
-#overflow-checks = false
-#lto = true
-#panic = "abort"
-#incremental = false
-#codegen-units = 1
-#rpath = false
-#strip = true

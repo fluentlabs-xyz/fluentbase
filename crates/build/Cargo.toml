@@ -1,0 +1,16 @@
+[package]
+name = "fluentbase-build"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+cargo_metadata = "0.19.1"
+
+[features]
+default = []

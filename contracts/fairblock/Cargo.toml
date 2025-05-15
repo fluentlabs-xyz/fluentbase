@@ -1,0 +1,16 @@
+[package]
+name = "fluentbase-contracts-fairblock"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+
+[dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
+
+[build-dependencies]
+fluentbase-build = { workspace = true }
+
+[lib]
+path = "lib.rs"

@@ -1,15 +1,22 @@
 #![allow(dead_code, unreachable_patterns, unused_macros)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![warn(unused_crate_dependencies)]
+extern crate core;
 
 pub mod instruction;
-mod macros;
+
+mod context;
+#[cfg(feature = "std")]
+mod context_wrapper;
 mod runtime;
-pub use runtime::*;
 mod storage;
-pub use storage::*;
-mod journal;
-pub use journal::*;
 #[cfg(test)]
 mod tests;
-pub mod types;
-pub(crate) mod zktrie;
+mod utils;
+#[cfg(feature = "wasmtime")]
+mod wasmtime;
+
+pub use context::*;
+#[cfg(feature = "std")]
+pub use context_wrapper::*;
+pub use runtime::*;
+pub use storage::*;

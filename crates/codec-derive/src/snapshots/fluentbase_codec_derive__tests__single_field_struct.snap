@@ -1,0 +1,584 @@
+---
+source: crates/codec-derive/src/lib.rs
+expression: get_generated_code(input)
+---
+impl<
+    B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
+    const ALIGN: usize,
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { true }> for SingleFieldStruct
+where
+    u64: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { true }>,
+{
+    const HEADER_SIZE: usize = 0
+        + <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { true },
+        >>::HEADER_SIZE;
+    const IS_DYNAMIC: bool = false
+        || <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { true },
+        >>::IS_DYNAMIC;
+    fn encode(
+        &self,
+        buf: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
+        offset: usize,
+    ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
+        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let is_dynamic = <Self as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { true },
+        >>::IS_DYNAMIC;
+        let aligned_header_size = 0
+            + if <u64 as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { true },
+                { true },
+            >>::IS_DYNAMIC {
+                32
+            } else {
+                ::fluentbase_sdk::codec::align_up::<
+                    ALIGN,
+                >(
+                    <u64 as ::fluentbase_sdk::codec::Encoder<
+                        B,
+                        ALIGN,
+                        { true },
+                        { true },
+                    >>::HEADER_SIZE,
+                )
+            };
+        let mut tail = if is_dynamic {
+            let buf_len = buf.len();
+            let offset = if buf_len != 0 { buf_len } else { 32 };
+            ::fluentbase_sdk::codec::write_u32_aligned::<
+                B,
+                ALIGN,
+            >(buf, aligned_offset, offset as u32);
+            if buf.len() < aligned_header_size + offset {
+                buf.resize(aligned_header_size + offset, 0);
+            }
+            buf.split_off(offset)
+        } else {
+            if buf.len() < aligned_offset + aligned_header_size {
+                buf.resize(aligned_offset + aligned_header_size, 0);
+            }
+            buf.split_off(aligned_offset)
+        };
+        let mut tail_offset = 0;
+        if <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { true },
+        >>::IS_DYNAMIC {
+            <u64 as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { true },
+                { true },
+            >>::encode(&self.value, &mut tail, tail_offset)?;
+            tail_offset += ::fluentbase_sdk::codec::align_up::<ALIGN>(4);
+        } else {
+            <u64 as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { true },
+                { true },
+            >>::encode(&self.value, &mut tail, tail_offset)?;
+            tail_offset
+                += ::fluentbase_sdk::codec::align_up::<
+                    ALIGN,
+                >(
+                    <u64 as ::fluentbase_sdk::codec::Encoder<
+                        B,
+                        ALIGN,
+                        { true },
+                        { true },
+                    >>::HEADER_SIZE,
+                );
+        }
+        buf.unsplit(tail);
+        Ok(())
+    }
+    fn decode(
+        buf: &impl ::fluentbase_sdk::codec::bytes::Buf,
+        offset: usize,
+    ) -> Result<Self, ::fluentbase_sdk::codec::CodecError> {
+        let mut aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let mut tmp = if <Self as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { true },
+        >>::IS_DYNAMIC {
+            let offset = ::fluentbase_sdk::codec::read_u32_aligned::<
+                B,
+                ALIGN,
+            >(&buf.chunk(), aligned_offset)? as usize;
+            &buf.chunk()[offset..]
+        } else {
+            &buf.chunk()[aligned_offset..]
+        };
+        let mut current_offset = 0;
+        let value = <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { true },
+        >>::decode(&mut tmp, current_offset)?;
+        current_offset
+            += if <u64 as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { true },
+                { true },
+            >>::IS_DYNAMIC {
+                32
+            } else {
+                ::fluentbase_sdk::codec::align_up::<
+                    ALIGN,
+                >(
+                    <u64 as ::fluentbase_sdk::codec::Encoder<
+                        B,
+                        ALIGN,
+                        { true },
+                        { true },
+                    >>::HEADER_SIZE,
+                )
+            };
+        Ok(SingleFieldStruct { value })
+    }
+    fn partial_decode(
+        buffer: &impl ::fluentbase_sdk::codec::bytes::Buf,
+        offset: usize,
+    ) -> Result<(usize, usize), ::fluentbase_sdk::codec::CodecError> {
+        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        if <Self as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { true },
+        >>::IS_DYNAMIC {
+            let data_offset = ::fluentbase_sdk::codec::read_u32_aligned::<
+                B,
+                ALIGN,
+            >(&buffer.chunk(), aligned_offset)? as usize;
+            Ok((
+                data_offset,
+                <Self as ::fluentbase_sdk::codec::Encoder<
+                    B,
+                    ALIGN,
+                    { true },
+                    { true },
+                >>::HEADER_SIZE,
+            ))
+        } else {
+            Ok((
+                aligned_offset,
+                <Self as ::fluentbase_sdk::codec::Encoder<
+                    B,
+                    ALIGN,
+                    { true },
+                    { true },
+                >>::HEADER_SIZE,
+            ))
+        }
+    }
+}
+impl<
+    B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
+    const ALIGN: usize,
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { false }> for SingleFieldStruct
+where
+    u64: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { false }>,
+{
+    const HEADER_SIZE: usize = 0
+        + <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { false },
+        >>::HEADER_SIZE;
+    const IS_DYNAMIC: bool = false
+        || <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { false },
+        >>::IS_DYNAMIC;
+    fn encode(
+        &self,
+        buf: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
+        offset: usize,
+    ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
+        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let is_dynamic = <Self as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { false },
+        >>::IS_DYNAMIC;
+        let aligned_header_size = 0
+            + if <u64 as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { true },
+                { false },
+            >>::IS_DYNAMIC {
+                32
+            } else {
+                ::fluentbase_sdk::codec::align_up::<
+                    ALIGN,
+                >(
+                    <u64 as ::fluentbase_sdk::codec::Encoder<
+                        B,
+                        ALIGN,
+                        { true },
+                        { false },
+                    >>::HEADER_SIZE,
+                )
+            };
+        let mut tail = if is_dynamic {
+            let buf_len = buf.len();
+            let offset = if buf_len != 0 { buf_len } else { 32 };
+            ::fluentbase_sdk::codec::write_u32_aligned::<
+                B,
+                ALIGN,
+            >(buf, aligned_offset, offset as u32);
+            if buf.len() < aligned_header_size + offset {
+                buf.resize(aligned_header_size + offset, 0);
+            }
+            buf.split_off(offset)
+        } else {
+            if buf.len() < aligned_offset + aligned_header_size {
+                buf.resize(aligned_offset + aligned_header_size, 0);
+            }
+            buf.split_off(aligned_offset)
+        };
+        let mut tail_offset = 0;
+        if <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { false },
+        >>::IS_DYNAMIC {
+            <u64 as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { true },
+                { false },
+            >>::encode(&self.value, &mut tail, tail_offset)?;
+            tail_offset += ::fluentbase_sdk::codec::align_up::<ALIGN>(4);
+        } else {
+            <u64 as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { true },
+                { false },
+            >>::encode(&self.value, &mut tail, tail_offset)?;
+            tail_offset
+                += ::fluentbase_sdk::codec::align_up::<
+                    ALIGN,
+                >(
+                    <u64 as ::fluentbase_sdk::codec::Encoder<
+                        B,
+                        ALIGN,
+                        { true },
+                        { false },
+                    >>::HEADER_SIZE,
+                );
+        }
+        buf.unsplit(tail);
+        Ok(())
+    }
+    fn decode(
+        buf: &impl ::fluentbase_sdk::codec::bytes::Buf,
+        offset: usize,
+    ) -> Result<Self, ::fluentbase_sdk::codec::CodecError> {
+        let mut aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let mut tmp = if <Self as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { false },
+        >>::IS_DYNAMIC {
+            let offset = ::fluentbase_sdk::codec::read_u32_aligned::<
+                B,
+                ALIGN,
+            >(&buf.chunk(), aligned_offset)? as usize;
+            &buf.chunk()[offset..]
+        } else {
+            &buf.chunk()[aligned_offset..]
+        };
+        let mut current_offset = 0;
+        let value = <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { false },
+        >>::decode(&mut tmp, current_offset)?;
+        current_offset
+            += if <u64 as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { true },
+                { false },
+            >>::IS_DYNAMIC {
+                32
+            } else {
+                ::fluentbase_sdk::codec::align_up::<
+                    ALIGN,
+                >(
+                    <u64 as ::fluentbase_sdk::codec::Encoder<
+                        B,
+                        ALIGN,
+                        { true },
+                        { false },
+                    >>::HEADER_SIZE,
+                )
+            };
+        Ok(SingleFieldStruct { value })
+    }
+    fn partial_decode(
+        buffer: &impl ::fluentbase_sdk::codec::bytes::Buf,
+        offset: usize,
+    ) -> Result<(usize, usize), ::fluentbase_sdk::codec::CodecError> {
+        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        if <Self as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { false },
+        >>::IS_DYNAMIC {
+            let data_offset = ::fluentbase_sdk::codec::read_u32_aligned::<
+                B,
+                ALIGN,
+            >(&buffer.chunk(), aligned_offset)? as usize;
+            Ok((
+                data_offset,
+                <Self as ::fluentbase_sdk::codec::Encoder<
+                    B,
+                    ALIGN,
+                    { true },
+                    { false },
+                >>::HEADER_SIZE,
+            ))
+        } else {
+            Ok((
+                aligned_offset,
+                <Self as ::fluentbase_sdk::codec::Encoder<
+                    B,
+                    ALIGN,
+                    { true },
+                    { false },
+                >>::HEADER_SIZE,
+            ))
+        }
+    }
+}
+impl<
+    B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
+    const ALIGN: usize,
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { true }> for SingleFieldStruct
+where
+    u64: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { true }>,
+{
+    const HEADER_SIZE: usize = 0
+        + ::fluentbase_sdk::codec::align_up::<
+            ALIGN,
+        >(
+            <u64 as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { false },
+                { true },
+            >>::HEADER_SIZE,
+        );
+    const IS_DYNAMIC: bool = false
+        || <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { false },
+            { true },
+        >>::IS_DYNAMIC;
+    fn encode(
+        &self,
+        buf: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
+        offset: usize,
+    ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
+        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let header_size = <Self as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { false },
+            { true },
+        >>::HEADER_SIZE;
+        if buf.len() < current_offset + header_size {
+            buf.resize(current_offset + header_size, 0);
+        }
+        <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { false },
+            { true },
+        >>::encode(&self.value, buf, current_offset)?;
+        current_offset
+            += ::fluentbase_sdk::codec::align_up::<
+                ALIGN,
+            >(
+                <u64 as ::fluentbase_sdk::codec::Encoder<
+                    B,
+                    ALIGN,
+                    { false },
+                    { true },
+                >>::HEADER_SIZE,
+            );
+        Ok(())
+    }
+    fn decode(
+        buf: &impl ::fluentbase_sdk::codec::bytes::Buf,
+        offset: usize,
+    ) -> Result<Self, ::fluentbase_sdk::codec::CodecError> {
+        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let value = <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { false },
+            { true },
+        >>::decode(buf, current_offset)?;
+        current_offset
+            += ::fluentbase_sdk::codec::align_up::<
+                ALIGN,
+            >(
+                <u64 as ::fluentbase_sdk::codec::Encoder<
+                    B,
+                    ALIGN,
+                    { false },
+                    { true },
+                >>::HEADER_SIZE,
+            );
+        Ok(SingleFieldStruct { value })
+    }
+    fn partial_decode(
+        buffer: &impl ::fluentbase_sdk::codec::bytes::Buf,
+        offset: usize,
+    ) -> Result<(usize, usize), ::fluentbase_sdk::codec::CodecError> {
+        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        Ok((
+            aligned_offset,
+            <Self as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { false },
+                { true },
+            >>::HEADER_SIZE,
+        ))
+    }
+}
+impl<
+    B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
+    const ALIGN: usize,
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { false }> for SingleFieldStruct
+where
+    u64: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { false }>,
+{
+    const HEADER_SIZE: usize = 0
+        + ::fluentbase_sdk::codec::align_up::<
+            ALIGN,
+        >(
+            <u64 as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { false },
+                { false },
+            >>::HEADER_SIZE,
+        );
+    const IS_DYNAMIC: bool = false
+        || <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { false },
+            { false },
+        >>::IS_DYNAMIC;
+    fn encode(
+        &self,
+        buf: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
+        offset: usize,
+    ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
+        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let header_size = <Self as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { false },
+            { false },
+        >>::HEADER_SIZE;
+        if buf.len() < current_offset + header_size {
+            buf.resize(current_offset + header_size, 0);
+        }
+        <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { false },
+            { false },
+        >>::encode(&self.value, buf, current_offset)?;
+        current_offset
+            += ::fluentbase_sdk::codec::align_up::<
+                ALIGN,
+            >(
+                <u64 as ::fluentbase_sdk::codec::Encoder<
+                    B,
+                    ALIGN,
+                    { false },
+                    { false },
+                >>::HEADER_SIZE,
+            );
+        Ok(())
+    }
+    fn decode(
+        buf: &impl ::fluentbase_sdk::codec::bytes::Buf,
+        offset: usize,
+    ) -> Result<Self, ::fluentbase_sdk::codec::CodecError> {
+        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let value = <u64 as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { false },
+            { false },
+        >>::decode(buf, current_offset)?;
+        current_offset
+            += ::fluentbase_sdk::codec::align_up::<
+                ALIGN,
+            >(
+                <u64 as ::fluentbase_sdk::codec::Encoder<
+                    B,
+                    ALIGN,
+                    { false },
+                    { false },
+                >>::HEADER_SIZE,
+            );
+        Ok(SingleFieldStruct { value })
+    }
+    fn partial_decode(
+        buffer: &impl ::fluentbase_sdk::codec::bytes::Buf,
+        offset: usize,
+    ) -> Result<(usize, usize), ::fluentbase_sdk::codec::CodecError> {
+        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        Ok((
+            aligned_offset,
+            <Self as ::fluentbase_sdk::codec::Encoder<
+                B,
+                ALIGN,
+                { false },
+                { false },
+            >>::HEADER_SIZE,
+        ))
+    }
+}

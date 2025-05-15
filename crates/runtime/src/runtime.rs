@@ -1,460 +1,359 @@
 use crate::{
+    context::RuntimeContext,
     instruction::{
-        runtime_register_shared_handlers,
-        runtime_register_shared_linkers,
-        runtime_register_sovereign_handlers,
-        runtime_register_sovereign_linkers,
+        exec::{SysExecResumable, SyscallExec},
+        invoke_runtime_handler,
     },
-    journal::IJournaledTrie,
-    types::RuntimeError,
 };
-use fluentbase_types::{AccountDb, Address, ExitCode, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT};
-use rwasm_codegen::{
-    rwasm::{
-        engine::Tracer,
-        AsContextMut,
-        Config,
-        Engine,
-        FuelConsumptionMode,
-        Func,
-        FuncType,
-        Instance,
-        IntoFunc,
-        Linker,
-        Module,
-        StackLimits,
-        Store,
+use fluentbase_codec::{bytes::BytesMut, CompactABI};
+use fluentbase_types::{
+    byteorder::{ByteOrder, LittleEndian},
+    BytecodeOrHash,
+    Bytes,
+    ExitCode,
+    SysFuncIdx,
+    B256,
+};
+use hashbrown::{hash_map::Entry, HashMap};
+use rwasm::{
+    make_instruction_table,
+    Caller,
+    ExecutorConfig,
+    InstructionTable,
+    RwasmError,
+    RwasmExecutor,
+    RwasmModule,
+};
+use std::{
+    cell::RefCell,
+    fmt::Debug,
+    mem::take,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
     },
-    ImportLinker,
-    InstructionSet,
-    ReducedModule,
-    ReducedModuleError,
 };
-use std::{cell::RefCell, mem::take, rc::Rc};
 
-pub struct RuntimeContext<'t, T> {
-    pub context: Option<&'t mut T>,
-    // context inputs
-    pub(crate) bytecode: Vec<u8>,
-    pub(crate) fuel_limit: u32,
-    pub(crate) state: u32,
-    pub(crate) is_shared: bool,
-    pub(crate) catch_trap: bool,
-    pub(crate) input: Vec<u8>,
-    pub(crate) is_static: bool,
-    pub(crate) caller: Address,
-    pub(crate) address: Address,
-    pub(crate) func_type: Option<FuncType>,
-    // context outputs
-    pub(crate) exit_code: i32,
-    pub(crate) output: Vec<u8>,
-    pub(crate) consumed_fuel: u32,
-    pub(crate) return_data: Vec<u8>,
-    // storage
-    pub(crate) account_db: Option<Rc<RefCell<dyn AccountDb>>>,
-    pub(crate) jzkt: Option<Rc<RefCell<dyn IJournaledTrie>>>,
+#[derive(Default, Clone, Debug)]
+pub struct ExecutionResult {
+    pub exit_code: i32,
+    pub fuel_consumed: u64,
+    pub fuel_refunded: i64,
+    pub return_data: Vec<u8>,
+    pub output: Vec<u8>,
+    pub interrupted: bool,
 }
 
-impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
-    fn clone(&self) -> Self {
+impl ExecutionResult {
+    pub fn new_error(exit_code: i32) -> Self {
         Self {
-            context: None,
-            func_type: None,
-            bytecode: self.bytecode.clone(),
-            fuel_limit: self.fuel_limit.clone(),
-            state: self.state.clone(),
-            is_shared: self.is_shared.clone(),
-            catch_trap: self.catch_trap.clone(),
-            input: self.input.clone(),
-            is_static: self.is_static.clone(),
-            caller: self.caller.clone(),
-            address: self.address.clone(),
-            exit_code: self.exit_code.clone(),
-            output: self.output.clone(),
-            consumed_fuel: self.consumed_fuel.clone(),
-            return_data: self.return_data.clone(),
-            account_db: self.account_db.clone(),
-            jzkt: self.jzkt.clone(),
-        }
-    }
-}
-
-impl<'t, T> Default for RuntimeContext<'t, T> {
-    fn default() -> Self {
-        Self {
-            context: None,
-            func_type: None,
-            bytecode: vec![],
-            fuel_limit: 0,
-            state: 0,
-            is_shared: false,
-            catch_trap: true,
-            input: vec![],
-            is_static: false,
-            caller: Default::default(),
-            address: Default::default(),
-            exit_code: 0,
-            output: vec![],
-            consumed_fuel: 0,
-            return_data: vec![],
-            account_db: None,
-            jzkt: None,
-        }
-    }
-}
-
-impl<'t, T> RuntimeContext<'t, T> {
-    pub fn new<I: Into<Vec<u8>>>(bytecode: I) -> Self {
-        Self {
-            bytecode: bytecode.into(),
+            exit_code,
             ..Default::default()
         }
     }
-
-    pub fn with_func_type(mut self, func_type: FuncType) -> Self {
-        self.func_type = Some(func_type);
-        self
-    }
-
-    pub fn with_context(mut self, context: &'t mut T) -> Self {
-        self.context = Some(context);
-        self
-    }
-
-    pub fn with_input(mut self, input_data: Vec<u8>) -> Self {
-        self.input = input_data;
-        self
-    }
-
-    pub fn with_is_static(mut self, is_static: bool) -> Self {
-        self.is_static = is_static;
-        self
-    }
-
-    pub fn with_state(mut self, state: u32) -> Self {
-        self.state = state;
-        self
-    }
-
-    pub fn with_is_shared(mut self, is_shared: bool) -> Self {
-        self.is_shared = is_shared;
-        self
-    }
-
-    pub fn with_catch_trap(mut self, catch_trap: bool) -> Self {
-        self.catch_trap = catch_trap;
-        self
-    }
-
-    pub fn with_fuel_limit(mut self, fuel_limit: u32) -> Self {
-        self.fuel_limit = fuel_limit;
-        self
-    }
-
-    pub fn with_caller(mut self, caller: Address) -> Self {
-        self.caller = caller;
-        self
-    }
-
-    pub fn with_address(mut self, address: Address) -> Self {
-        self.address = address;
-        self
-    }
-
-    pub fn with_account_db(mut self, account: Rc<RefCell<dyn AccountDb>>) -> Self {
-        self.account_db = Some(account);
-        self
-    }
-
-    pub fn with_jzkt(mut self, jzkt: Rc<RefCell<dyn IJournaledTrie>>) -> Self {
-        self.jzkt = Some(jzkt);
-        self
-    }
-
-    pub fn take_context<F>(&mut self, func: F)
-    where
-        F: FnOnce(&&'t mut T),
-    {
-        if let Some(context) = &self.context {
-            func(context)
-        }
-    }
-
-    pub fn exit_code(&self) -> i32 {
-        self.exit_code
-    }
-
-    pub fn input(&self) -> &Vec<u8> {
-        self.input.as_ref()
-    }
-
-    pub fn input_count(&self) -> u32 {
-        self.input.len() as u32
-    }
-
-    pub fn input_size(&self) -> u32 {
-        self.input.len() as u32
-    }
-
-    pub fn argv_buffer(&self) -> Vec<u8> {
-        self.input().clone()
-    }
-
-    pub fn output(&self) -> &Vec<u8> {
-        &self.output
-    }
-
-    pub fn state(&self) -> u32 {
-        self.state
-    }
-
-    pub fn clean_output(&mut self) {
-        self.output = vec![];
-    }
 }
 
-pub struct ExecutionResult<'t, T> {
-    runtime_context: RuntimeContext<'t, T>,
-    tracer: Tracer,
-    fuel_consumed: Option<u64>,
+pub struct CachingRuntime {
+    // TODO(dmitry123): "add LRU cache to this map to avoid memory leak"
+    cached_bytecode: HashMap<B256, Bytes>,
+    modules: HashMap<B256, Arc<RwasmModule>>,
+    recoverable_runtimes: HashMap<u32, Runtime>,
 }
 
-impl<'t, T> ExecutionResult<'t, T> {
-    pub fn cloned(store: &Store<RuntimeContext<'t, T>>) -> Self {
+impl CachingRuntime {
+    pub fn new() -> Self {
         Self {
-            runtime_context: store.data().clone(),
-            tracer: store.tracer().clone(),
-            fuel_consumed: store.fuel_consumed(),
+            cached_bytecode: HashMap::new(),
+            modules: HashMap::new(),
+            recoverable_runtimes: HashMap::new(),
         }
     }
 
-    pub fn taken(store: &mut Store<RuntimeContext<'t, T>>) -> Self {
-        let fuel_consumed = store.fuel_consumed();
-        Self {
-            runtime_context: take(store.data_mut()),
-            tracer: take(store.tracer_mut()),
-            fuel_consumed,
-        }
+    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<RwasmModule> {
+        let rwasm_bytecode = self
+            .cached_bytecode
+            .get(&rwasm_hash)
+            .expect("runtime: missing cached bytecode");
+        let entry = match self.modules.entry(rwasm_hash) {
+            Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
+            Entry::Vacant(entry) => entry,
+        };
+        let reduced_module = Arc::new(RwasmModule::new_or_empty(rwasm_bytecode));
+        entry.insert(reduced_module.clone());
+        reduced_module
     }
 
-    pub fn bytecode(&self) -> &Vec<u8> {
-        &self.runtime_context.bytecode
-    }
-
-    pub fn tracer(&self) -> &Tracer {
-        &self.tracer
-    }
-
-    pub fn data(&self) -> &RuntimeContext<'t, T> {
-        &self.runtime_context
-    }
-
-    pub fn fuel_consumed(&self) -> Option<u64> {
-        self.fuel_consumed
+    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<RwasmModule>> {
+        self.modules.get(rwasm_hash).cloned()
     }
 }
 
-#[allow(dead_code)]
-pub struct Runtime<'t, T> {
-    engine: Engine,
-    bytecode: InstructionSet,
-    module: Module,
-    linker: Linker<RuntimeContext<'t, T>>,
-    store: Store<RuntimeContext<'t, T>>,
-    instance: Option<Instance>,
+thread_local! {
+    static CACHING_RUNTIME: RefCell<CachingRuntime> = RefCell::new(CachingRuntime::new());
 }
 
-impl<'t, T> Runtime<'t, T> {
-    pub fn new_sovereign_linker() -> ImportLinker {
-        let mut import_linker = ImportLinker::default();
-        runtime_register_sovereign_linkers::<T>(&mut import_linker);
-        import_linker
+#[derive(Default)]
+pub struct RuntimeSyscallHandler {}
+
+fn runtime_syscall_handler(
+    caller: Caller<RuntimeContext>,
+    func_idx: u32,
+) -> Result<(), RwasmError> {
+    let sys_func_idx =
+        SysFuncIdx::from_repr(func_idx).ok_or(RwasmError::UnknownExternalFunction(func_idx))?;
+    invoke_runtime_handler(caller, sys_func_idx)
+}
+
+pub struct Runtime {
+    pub executor: RwasmExecutor<RuntimeContext>,
+}
+
+const INSTRUCTION_TABLE: InstructionTable<RuntimeContext> = make_instruction_table();
+
+pub(crate) static CALL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+
+impl Runtime {
+    pub fn catch_trap(err: &RwasmError) -> i32 {
+        let err = match err {
+            RwasmError::ExecutionHalted(exit_code) => return *exit_code,
+            err => err,
+        };
+        ExitCode::from(err).into_i32()
     }
 
-    pub fn new_shared_linker() -> ImportLinker {
-        let mut import_linker = ImportLinker::default();
-        runtime_register_shared_linkers::<T>(&mut import_linker);
-        import_linker
+    pub fn run_with_context(runtime_context: RuntimeContext) -> ExecutionResult {
+        Self::new(runtime_context).call()
     }
 
-    pub fn run_with_context(
-        mut runtime_context: RuntimeContext<'t, T>,
-        import_linker: &ImportLinker,
-    ) -> Result<ExecutionResult<'t, T>, RuntimeError> {
-        let catch_error = runtime_context.catch_trap;
-        let runtime = Self::new(runtime_context.clone(), import_linker);
-        if catch_error && runtime.is_err() {
-            runtime_context.exit_code = Self::catch_trap(runtime.err().unwrap());
-            Ok(ExecutionResult {
+    pub fn new(mut runtime_context: RuntimeContext) -> Self {
+        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+            // make sure bytecode hash is resolved
+            runtime_context.bytecode = runtime_context.bytecode.with_resolved_hash();
+
+            let bytecode_repr = take(&mut runtime_context.bytecode);
+
+            // resolve cached module or init it
+            let rwasm_module = match &bytecode_repr {
+                BytecodeOrHash::Bytecode(bytecode, hash) => {
+                    let hash = hash.unwrap();
+                    // if we have a cached module then use it, otherwise create a new one and cache
+                    if let Some(module) = caching_runtime.resolve_module(&hash) {
+                        module
+                    } else {
+                        caching_runtime
+                            .cached_bytecode
+                            .insert(hash, bytecode.clone());
+                        caching_runtime.init_module(hash)
+                    }
+                }
+                BytecodeOrHash::Hash(hash) => {
+                    // if we have only hash, then try to load module or fail fast
+                    match caching_runtime.resolve_module(hash) {
+                        Some(module) => module,
+                        None => caching_runtime.init_module(*hash),
+                    }
+                }
+            };
+
+            // return bytecode
+            runtime_context.bytecode = bytecode_repr;
+
+            let mut executor = RwasmExecutor::new(
+                rwasm_module.clone(),
+                ExecutorConfig::new()
+                    .fuel_limit(runtime_context.fuel_limit)
+                    .trace_enabled(runtime_context.trace)
+                    .fuel_enabled(!runtime_context.disable_fuel),
                 runtime_context,
-                tracer: Default::default(),
-                fuel_consumed: None,
-            })
-        } else {
-            let mut runtime = runtime?;
-            runtime.data_mut().clean_output();
-            runtime.call()
-        }
-    }
-
-    pub fn new(
-        runtime_context: RuntimeContext<'t, T>,
-        import_linker: &ImportLinker,
-    ) -> Result<Self, RuntimeError> {
-        let mut result = Self::new_uninit(runtime_context, import_linker)?;
-        result.register_bindings();
-        result.instantiate()?;
-        Ok(result)
-    }
-
-    pub fn new_uninit(
-        runtime_context: RuntimeContext<'t, T>,
-        import_linker: &ImportLinker,
-    ) -> Result<Self, RuntimeError> {
-        let fuel_limit = runtime_context.fuel_limit;
-
-        let engine = {
-            let mut config = Config::default();
-            config.set_stack_limits(
-                StackLimits::new(STACK_MAX_HEIGHT, STACK_MAX_HEIGHT, RECURSIVE_MAX_DEPTH).unwrap(),
             );
-            config.floats(false);
-            if fuel_limit > 0 {
-                config.fuel_consumption_mode(FuelConsumptionMode::Eager);
-                config.consume_fuel(true);
-            }
-            Engine::new(&config)
-        };
-
-        let (module, bytecode) = {
-            let reduced_module = ReducedModule::new(runtime_context.bytecode.as_slice())
-                .map_err(Into::<RuntimeError>::into)?;
-            let func_type = runtime_context
-                .func_type
-                .clone()
-                .unwrap_or(FuncType::new([], []));
-            let module_builder =
-                reduced_module.to_module_builder(&engine, import_linker, func_type);
-            (module_builder.finish(), reduced_module.bytecode().clone())
-        };
-
-        let linker = Linker::<RuntimeContext<T>>::new(&engine);
-        let mut store = Store::<RuntimeContext<T>>::new(&engine, runtime_context);
-
-        if fuel_limit > 0 {
-            store.add_fuel(fuel_limit as u64).unwrap();
-        }
-
-        let result = Self {
-            engine,
-            bytecode,
-            module,
-            linker,
-            store,
-            instance: None,
-        };
-
-        Ok(result)
+            executor.set_syscall_handler(runtime_syscall_handler);
+            Self { executor }
+        })
     }
 
-    pub fn instantiate(&mut self) -> Result<(), RuntimeError> {
-        let instance = self
-            .linker
-            .instantiate(&mut self.store, &self.module)
-            .map_err(Into::<RuntimeError>::into)?
-            .start(&mut self.store)
-            .map_err(Into::<RuntimeError>::into)?;
-        self.instance = Some(instance);
-        Ok(())
+    pub fn is_warm_bytecode(hash: &B256) -> bool {
+        CACHING_RUNTIME
+            .with_borrow(|caching_runtime| caching_runtime.cached_bytecode.contains_key(hash))
     }
 
-    pub fn call(&mut self) -> Result<ExecutionResult<'t, T>, RuntimeError> {
-        let func = self
-            .instance
-            .unwrap()
-            .get_func(&mut self.store, "main")
-            .ok_or(RuntimeError::ReducedModule(
-                ReducedModuleError::MissingEntrypoint,
-            ))?;
-        let res = func
-            .call(&mut self.store, &[], &mut [])
-            .map_err(Into::<RuntimeError>::into);
-        if self.store.data().catch_trap && res.is_err() {
-            self.store.data_mut().exit_code = Self::catch_trap(res.err().unwrap());
-        } else {
-            res?;
-        }
-        // we need to restore trace to recover missing opcode values
-        self.restore_trace();
-        let execution_result = ExecutionResult::cloned(&self.store);
-        Ok(execution_result)
+    pub fn warmup_bytecode(hash: B256, bytecode: Bytes) {
+        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+            caching_runtime.cached_bytecode.insert(hash, bytecode);
+        });
     }
 
-    pub fn add_binding<Params, Results>(
+    pub fn call(&mut self) -> ExecutionResult {
+        let fuel_consumed_before_the_call = self.executor.fuel_consumed();
+        let fuel_refunded_before_the_call = self.executor.fuel_refunded();
+        let result = self.executor.run();
+        self.handle_execution_result(
+            result,
+            fuel_consumed_before_the_call,
+            fuel_refunded_before_the_call,
+        )
+    }
+
+    pub fn resume(
         &mut self,
-        module: &'static str,
-        name: &'static str,
-        func: impl IntoFunc<RuntimeContext<'t, T>, Params, Results>,
-    ) {
-        self.linker
-            .define(
-                module,
-                name,
-                Func::wrap::<RuntimeContext<'t, T>, Params, Results>(
-                    self.store.as_context_mut(),
-                    func,
-                ),
-            )
-            .unwrap();
-    }
-
-    pub fn register_bindings(&mut self) {
-        if !self.data().is_shared {
-            runtime_register_sovereign_handlers(&mut self.linker, &mut self.store)
-        } else {
-            runtime_register_shared_handlers(&mut self.linker, &mut self.store)
-        }
-    }
-
-    pub fn catch_trap(err: RuntimeError) -> i32 {
-        let err = match err {
-            RuntimeError::Rwasm(err) => err,
-            _ => return ExitCode::UnknownError as i32,
-        };
-        let err = match err {
-            rwasm::Error::Trap(err) => err,
-            _ => return ExitCode::UnknownError as i32,
-        };
-        // for i32 error code (raw error) just return result
-        if let Some(exit_status) = err.i32_exit_status() {
-            return exit_status;
-        }
-        // for trap code (wasmi error) convert error to i32
-        if let Some(trap_code) = err.trap_code() {
-            return Into::<ExitCode>::into(trap_code) as i32;
-        }
-        // otherwise its just an unknown error
-        ExitCode::UnknownError as i32
-    }
-
-    fn restore_trace(&mut self) {
-        // we need to fix logs, because we lost information about instr meta during conversion
-        let tracer = self.store.tracer_mut();
-        let call_id = tracer.logs.first().map(|v| v.call_id).unwrap_or_default();
-        for log in tracer.logs.iter_mut() {
-            if log.call_id != call_id {
-                continue;
+        fuel16_ptr: u32,
+        fuel_consumed: u64,
+        fuel_refunded: i64,
+        exit_code: i32,
+    ) -> ExecutionResult {
+        let fuel_consumed_before_the_call = self.executor.fuel_consumed();
+        let fuel_refunded_before_the_call = self.executor.fuel_refunded();
+        let mut caller = Caller::new(&mut self.executor);
+        if fuel16_ptr > 0 {
+            let mut buffer = [0u8; 16];
+            LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
+            LittleEndian::write_i64(&mut buffer[8..], fuel_refunded);
+            // if we can't write a result into memory, then process it as an error
+            if let Err(err) = caller.memory_write(fuel16_ptr as usize, &buffer) {
+                return self.handle_execution_result(
+                    Err(err),
+                    fuel_consumed_before_the_call,
+                    fuel_refunded_before_the_call,
+                );
             }
-            let instr = self.bytecode.get(log.index).unwrap();
-            log.opcode = *instr;
         }
+        caller.stack_push(exit_code);
+        let result = self.executor.run();
+        self.handle_execution_result(
+            result,
+            fuel_consumed_before_the_call,
+            fuel_refunded_before_the_call,
+        )
     }
 
-    pub fn data(&self) -> &RuntimeContext<'t, T> {
-        self.store.data()
+    pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
+        // save the current runtime state for future recovery
+        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+            // TODO(dmitry123): "don't use global call counter"
+            let call_id = CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+            // root_ctx.call_counter += 1;
+            // let call_id = root_ctx.call_counter;
+            caching_runtime.recoverable_runtimes.insert(call_id, self);
+            call_id as i32
+        })
     }
 
-    pub fn data_mut(&mut self) -> &mut RuntimeContext<'t, T> {
-        self.store.data_mut()
+    pub(crate) fn recover_runtime(call_id: u32) -> Runtime {
+        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+            caching_runtime
+                .recoverable_runtimes
+                .remove(&call_id)
+                .expect("runtime: can't resolve runtime by id, it should never happen")
+        })
+    }
+
+    fn handle_execution_result(
+        &mut self,
+        mut next_result: Result<i32, RwasmError>,
+        fuel_consumed_before_the_call: u64,
+        fuel_refunded_before_the_call: i64,
+    ) -> ExecutionResult {
+        let mut execution_result = take(&mut self.executor.context_mut().execution_result);
+        // once fuel is calculated, we must adjust our fuel limit,
+        // because we don't know what gas conversion policy is used,
+        // if there is rounding then it can cause miscalculations
+        execution_result.fuel_consumed =
+            self.executor.fuel_consumed() - fuel_consumed_before_the_call;
+        execution_result.fuel_refunded =
+            self.executor.fuel_refunded() - fuel_refunded_before_the_call;
+        loop {
+            match next_result {
+                Ok(exit_code) => {
+                    if exit_code != ExitCode::Ok.into_i32() {
+                        execution_result.exit_code = exit_code;
+                    }
+                    break;
+                }
+                Err(err) => match err {
+                    RwasmError::MalformedBinary => {
+                        unreachable!("runtime: binary format error is not possible here")
+                    }
+                    RwasmError::UnknownExternalFunction(func_idx) => {
+                        unreachable!(
+                            "runtime: unknown external function ({}) error is not possible here",
+                            func_idx
+                        )
+                    }
+                    RwasmError::ExecutionHalted(exit_code) => {
+                        unreachable!(
+                            "runtime: execution halted ({}) error must be unwrapped",
+                            exit_code
+                        )
+                    }
+                    RwasmError::HostInterruption(host_error) => {
+                        let resumable_state = host_error
+                            .downcast_ref::<SysExecResumable>()
+                            .expect("runtime: invalid resumable state");
+
+                        if resumable_state.is_root {
+                            // TODO(dmitry123): "validate this logic, might not be ok in STF mode"
+                            let (_, _, exit_code) = SyscallExec::fn_continue(
+                                Caller::new(&mut self.executor),
+                                resumable_state,
+                            );
+                            next_result = Ok(exit_code);
+                            continue;
+                        }
+
+                        self.handle_resumable_state(&mut execution_result, resumable_state);
+                        break;
+                    }
+                    RwasmError::FloatsAreDisabled => {
+                        unreachable!("runtime: floats are disabled")
+                    }
+                    RwasmError::NotAllowedInFuelMode => {
+                        unreachable!("runtime: now allowed in fuel mode")
+                    }
+                    err => {
+                        execution_result.exit_code = ExitCode::from(err).into_i32();
+                        break;
+                    }
+                },
+            }
+        }
+        execution_result
+    }
+
+    fn handle_resumable_state(
+        &mut self,
+        execution_result: &mut ExecutionResult,
+        sys_exec_resumable: &SysExecResumable,
+    ) {
+        // we disallow nested calls at non-root levels
+        // so we must save the current state
+        // to interrupt execution and delegate decision-making
+        // to the root execution
+        let output = self.executor.context_mut().output_mut();
+        output.clear();
+        assert!(output.is_empty(), "runtime: return data must be empty");
+        // serialize delegated execution state,
+        // but we don't serialize registers and stack state,
+        // instead we remember it inside the internal structure
+        // and assign a special identifier for recovery
+        let mut encoded_state = BytesMut::new();
+        CompactABI::encode(&sys_exec_resumable.params, &mut encoded_state, 0)
+            .expect("runtime: can't encode resumable state");
+        execution_result
+            .output
+            .extend(encoded_state.freeze().to_vec());
+        // interruption is a special exit code that indicates to the root what happened inside
+        // the call
+        execution_result.interrupted = true;
+    }
+
+    pub fn context(&self) -> &RuntimeContext {
+        self.executor.context()
+    }
+
+    pub fn context_mut(&mut self) -> &mut RuntimeContext {
+        self.executor.context_mut()
+    }
+
+    pub fn take_context(&mut self) -> RuntimeContext {
+        take(self.executor.context_mut())
     }
 }

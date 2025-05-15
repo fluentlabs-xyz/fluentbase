@@ -1,36 +1,19 @@
-Examples
+# Examples
+
 ========
 
-In this repository we provide examples for running apps in Fluent network.
-All these apps are developed using Fluentbase SDK and can be proven using our circuits (coming soon).
+In this repository, we provide examples of running apps in Fluent network.
+All these apps are developed using Fluentbase SDK and can be proven to use our circuits (coming soon).
 
-In the make file you can find commands for building apps.
-We require to install `wasm32-unknown-unknown` compilation target, WASI support is coming later.
+To init, build and deploy these examples, you can use the [gblend cli](https://github.com/fluentlabs-xyz/gblend).
 
-```bash
-rustup target add wasm32-unknown-unknown
-```
+By the way, we also have a Makefile for building examples, so you can use it as well.
 
-To compile examples (btw compiled artifacts are presented in the bin folder already) just run next command:
-You also can compile specific test by passing it to the make command:
+## Creating a new app
 
-```bash
-# to compile everything
-make all
-# to compile specific example
-make greeting
-make keccak256
-make storage
-```
+### From scratch
 
-For the simplicity we store all apps inside one crate and manage its compilation using features.
-If you want to add new example into repo then don't forget to modify `Cargo.toml` and `Makefile` with you new feature.
-
-But we suggest to create new crate.
-
-## Creating new app
-
-To create your own repository with example just create an empty crate and add fluentbase SDK dependency.
+To create your own repository with example, create an empty crate and add fluentbase SDK dependency.
 
 ```bash
 cargo new hello_world --lib
@@ -56,7 +39,8 @@ extern "C" fn main() {
 }
 ```
 
-As you can see there two functions that must be exported with exact names:
+As you can see, there are two functions that must be exported with exact names:
+
 - `deploy` - this function is called before creating app (similar to Solidity's constructor)
 - `main` - this one is getting called on each contract interaction
 
@@ -64,7 +48,7 @@ To add Fluentbase SDK dependency add the following dep in your `Cargo.toml` file
 
 ```toml
 [dependencies]
-fluentbase-sdk = { path = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false, features = ["evm"] }
+fluentbase-sdk = { path = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false }
 ```
 
 If you don't want to use EVM features then just disable `evm` feature flag.
@@ -72,9 +56,6 @@ If you don't want to use EVM features then just disable `evm` feature flag.
 Additionally add these lines into your `Cargo.toml` file:
 
 ```toml
-[lib]
-crate-type = ["cdylib"]
-
 [profile.release]
 panic = "abort"
 lto = true
@@ -82,47 +63,140 @@ opt-level = 'z'
 strip = true
 ```
 
-You compiled WASM binary is located here `target/wasm32-unknown-unknown/release/hello_world.wasm`.
+### Using templates (with gblend)
 
-You can convert your WASM binary into WAT format to see textual representation.
+## Choose template
 
-```bash
-wasm2wat target/wasm32-unknown-unknown/release/hello_world.wasm
-```
+The `gblend init` command helps you bootstrap new projects using templates:
 
-## Deploy your app to the Fluent
-
-We provide a JS script for deploying apps, so before running it you must install required dependencies.
-Also make sure you have NodeJS installed.
+### List Templates
 
 ```bash
-yarn
+# List all available templates
+gblend init rust -l
 ```
 
-Now you can call `deploy-contract.js` script to deploy your just compiled app.
+### Creating New Project
 
 ```bash
-node deploy-contract.js --dev target/wasm32-unknown-unknown/release/hello_world.wasm
+# Initialize project from template
+gblend init rust -t greeting -p ./greeting
 ```
 
-Flag `--dev` here means dev network.
-You can use `--local` if you're running and testing Fluent locally.
+> [!NOTE]
+> Replace `greeting` with any template name and `./greeting` with your desired project path.
 
-You can also provide a private key using `DEPLOYER_PRIVATE_KEY` env, but there is hardcoded one inside the script.
+### Post-Initialization Steps
 
-In the script output you can see transaction and receipt info, contract address and output message.
-In our case we can see `Hello, World` message.
-This script invokes contract after deployment with empty parameters.
+After project creation, you'll want to:
 
-For example, we can also call one of existing apps, lets say `keccak256` using the following command:
+1. Review the generated code in `lib.rs`
+2. [Build your project](#build)
+3. [Deploy your contract](#deploy)
+
+> [!TIP]
+> Templates provide a quick start with working examples and proper project structure. They're the recommended way to
+> begin new Fluent Network projects.
+
+## Build
+
+The `gblend build` command compiles your smart contracts for deployment:
+
+### Build Basic Usage
 
 ```bash
-node deploy-contract.js --dev ./bin/keccak256.wasm
+# Build project in release mode with .wat file generation
+gblend build rust -r --wat
 ```
 
-It returns next message `0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470` that is equal to empty Keccak256 hash.
+### Build Options
 
-## Codecs and contexts
+- Use `-r, --release` for optimized release builds
+- Add `--wat` to generate WebAssembly text format
+- Specify custom path with `-p, --path`
 
-We haven't standardized code yet, so we can't pass block/tx context elements inside app right now.
-But we're going to bring it to the next devnet version.
+### Using Makefiles
+
+The repository uses a two-level Makefile structure:
+
+1. Root Makefile for building all examples:
+
+```bash
+# Build all examples
+make all
+
+# Build specific example
+make greeting
+make keccak256
+```
+
+2. Each example has its own Makefile with WASM compilation settings
+
+### Project Structure
+
+For simplicity, all examples are stored inside one crate and managed through Cargo features.
+
+> [!NOTE]
+> When adding new examples, remember to update both `Cargo.toml` and `Makefile` with your new features.
+
+### Prerequisites
+
+Install the required WebAssembly target:
+
+```bash
+rustup target add wasm32-unknown-unknown
+```
+
+> [!NOTE]
+> Your compiled WASM binary will be located at `target/wasm32-unknown-unknown/release/<name>.wasm`
+
+> [!TIP]
+> Use `wasm2wat` tool to inspect the WebAssembly text format of your compiled binary:
+>
+> ```bash
+> wasm2wat target/wasm32-unknown-unknown/release/hello_world.wasm
+> ```
+
+The next step is to [deploy your contract](./deploy.md).
+
+## Deploy
+
+The `gblend deploy` command provides several options for deploying your application:
+
+### Network Selection
+
+- Use `--local` for deploying to a local network
+- Use `--dev` for deploying to the development network
+- Specify a custom RPC endpoint with `--rpc <URL>` and `--chain-id <CHAIN_ID>` for other networks
+
+### Authentication
+
+You can provide your private key in several ways:
+
+1. Command line: `--private-key <KEY>`
+2. Environment variable: `DEPLOY_PRIVATE_KEY`
+3. Environment file: Create `.env` file with `DEPLOY_PRIVATE_KEY=<your-key>`
+
+### Deploy Basic Usage
+
+```bash
+# Deploy to local network
+gblend deploy --local path/to/contract.wasm
+
+# Deploy to devnet
+gblend deploy --dev path/to/contract.wasm
+
+# Deploy with custom RPC
+gblend deploy --rpc https://your-node.network --chain-id 1234 path/to/contract.wasm
+```
+
+> [!TIP]
+> Using environment files is recommended for managing private keys securely. Create a `.env` file in your project root:
+>
+> ```
+> DEPLOY_PRIVATE_KEY=0x...
+> ```
+
+> [!NOTE]
+> Additional parameters like `gas-limit`, `gas-price`, and `confirmations` can also be configured through environment
+> variables or command line flags.

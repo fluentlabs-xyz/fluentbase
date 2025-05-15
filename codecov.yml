@@ -1,0 +1,6 @@
+ignore:
+  - "crates/build"  # build crate
+  - "crates/rwasm/e2e"  # rwasm e2e testing suite
+  - "e2e" # e2e tests for runtime
+  - "examples" # examples
+  - "revm/e2e" # revm e2e testing suite

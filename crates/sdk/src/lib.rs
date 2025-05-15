@@ -1,42 +1,31 @@
-#![cfg_attr(not(feature = "runtime"), no_std)]
-#![warn(unused_crate_dependencies)]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
 extern crate core;
-extern crate lol_alloc;
 
-pub struct LowLevelSDK;
-
-#[cfg(feature = "evm")]
-pub mod evm;
-
-mod sdk;
-pub use sdk::LowLevelAPI;
-
-#[cfg(not(feature = "runtime"))]
+mod allocator;
+#[cfg(not(feature = "std"))]
 mod bindings;
-#[cfg(feature = "runtime")]
-mod runtime;
-#[cfg(not(feature = "runtime"))]
-mod rwasm;
-mod types;
-
-pub use types::Bytes32;
-
+pub mod constructor;
+pub mod entrypoint;
+pub mod leb128;
+mod macros;
+pub mod panic;
 #[cfg(not(feature = "std"))]
-#[panic_handler]
-#[cfg(target_arch = "wasm32")]
-#[inline(always)]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
-        LowLevelSDK::sys_write(panic_message.as_bytes());
-    }
-    LowLevelSDK::sys_halt(-71);
-    loop {}
+pub mod rwasm;
+pub mod shared;
+pub mod storage;
+
+pub use allocator::*;
+pub use fluentbase_codec as codec;
+pub use fluentbase_sdk_derive as derive;
+pub use fluentbase_types::*;
+pub use hashbrown;
+
+#[cfg(feature = "std")]
+#[macro_export]
+macro_rules! include_this_wasm {
+    () => {
+        include_bytes!(env!("FLUENTBASE_WASM_ARTIFACT_PATH"))
+    };
 }
-
-#[cfg(not(feature = "std"))]
-#[global_allocator]
-#[cfg(target_arch = "wasm32")]
-static ALLOCATOR: lol_alloc::AssumeSingleThreaded<lol_alloc::LeakingAllocator> =
-    unsafe { lol_alloc::AssumeSingleThreaded::new(lol_alloc::LeakingAllocator::new()) };
