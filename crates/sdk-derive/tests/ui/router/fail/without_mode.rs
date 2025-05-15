@@ -21,5 +21,3 @@ impl<SDK: SharedAPI> MyContract<SDK> {
 }
 
 basic_entrypoint!(MyContract);
-
-fn main() {}

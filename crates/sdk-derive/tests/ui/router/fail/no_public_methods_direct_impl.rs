@@ -30,5 +30,3 @@ impl<SDK: SharedAPI> App<SDK> {
 }
 
 basic_entrypoint!(App);
-
-fn main() {}
