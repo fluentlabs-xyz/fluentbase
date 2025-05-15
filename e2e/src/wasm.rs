@@ -64,7 +64,6 @@ fn test_wasm_tiny_keccak256() {
 }
 
 #[test]
-#[ignore]
 fn test_wasm_secp256k1() {
     // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
@@ -117,6 +116,10 @@ fn test_wasm_json() {
     let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
     println!("{:?}", result);
     assert!(result.is_success());
+    assert_eq!(
+        result.output().unwrap_or_default().as_ref(),
+        "Hello, World".as_bytes()
+    );
 }
 
 #[test]
