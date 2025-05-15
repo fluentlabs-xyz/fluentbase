@@ -12,12 +12,6 @@ hex = "0.4.3"
 [build-dependencies]
 fluentbase-build = { workspace = true }
 
-[lib]
-crate-type = ["cdylib"]
-path = "lib.rs"
-
 [features]
 default = ["std"]
-std = [
-    "fluentbase-sdk/std",
-]
+std = ["fluentbase-sdk/std"]

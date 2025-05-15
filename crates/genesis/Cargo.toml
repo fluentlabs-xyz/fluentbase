@@ -16,13 +16,47 @@ serde_json = { version = "1.0", default-features = false }
 alloy-genesis = { workspace = true, default-features = false }
 lazy_static = { workspace = true }
 
+fluentbase-contracts-blake2f = { path = "../../contracts/blake2f" }
+fluentbase-contracts-bls12381 = { path = "../../contracts/bls12381" }
+fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
+fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
+fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }
+fluentbase-contracts-evm = { path = "../../contracts/evm" }
+fluentbase-contracts-fairblock = { path = "../../contracts/fairblock", optional = true }
+fluentbase-contracts-identity = { path = "../../contracts/identity" }
+fluentbase-contracts-kzg = { path = "../../contracts/kzg" }
+fluentbase-contracts-modexp = { path = "../../contracts/modexp" }
+fluentbase-contracts-multicall = { path = "../../contracts/multicall" }
+fluentbase-contracts-nitro = { path = "../../contracts/nitro" }
+fluentbase-contracts-oauth2 = { path = "../../contracts/oauth2" }
+fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160" }
+fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1" }
+fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
+fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
+
 [build-dependencies]
 fluentbase-types = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-fluentbase-build = { workspace = true }
-cargo_metadata = "0.19.1"
+
+fluentbase-contracts-blake2f = { path = "../../contracts/blake2f" }
+fluentbase-contracts-bls12381 = { path = "../../contracts/bls12381" }
+fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
+fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
+fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }
+fluentbase-contracts-evm = { path = "../../contracts/evm" }
+fluentbase-contracts-fairblock = { path = "../../contracts/fairblock", optional = true }
+fluentbase-contracts-identity = { path = "../../contracts/identity" }
+fluentbase-contracts-kzg = { path = "../../contracts/kzg" }
+fluentbase-contracts-modexp = { path = "../../contracts/modexp" }
+fluentbase-contracts-multicall = { path = "../../contracts/multicall" }
+fluentbase-contracts-nitro = { path = "../../contracts/nitro" }
+fluentbase-contracts-oauth2 = { path = "../../contracts/oauth2" }
+fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160" }
+fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1" }
+fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
+fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
 
 [features]
 default = ["std"]
@@ -31,7 +65,6 @@ std = [
     "alloy-genesis/std",
     "serde/std",
     "serde_json/std",
-    "generate-genesis",
 ]
-generate-genesis = []
-bls12 = []
+fairblock = ["dep:fluentbase-contracts-fairblock"]
+generate-genesis = [] # this feature is doing nothing now (genesis is always generated), kept it for backward compatibility, and will remove it once ready

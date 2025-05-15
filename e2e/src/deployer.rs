@@ -1,4 +1,4 @@
-use crate::utils::EvmTestingContext;
+use fluentbase_sdk_testing::EvmTestingContext;
 use alloy_sol_types::{sol, SolCall, SolValue};
 use fluentbase_sdk::{Address, Bytes};
 

@@ -10,9 +10,6 @@ fluentbase-types = { workspace = true }
 fluentbase-sdk-derive = { workspace = true }
 hashbrown = { workspace = true }
 
-# runtime mode
-fluentbase-runtime = { workspace = true, optional = true }
-
 [dev-dependencies]
 
 [features]
@@ -20,7 +17,5 @@ default = ["std"]
 std = [
     "fluentbase-types/std",
     "fluentbase-codec/std",
-    "dep:fluentbase-runtime",
-    "fluentbase-runtime?/std",
 ]
 debug-print = []

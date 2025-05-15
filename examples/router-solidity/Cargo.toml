@@ -8,17 +8,12 @@ fluentbase-sdk = { workspace = true }
 
 [dev-dependencies]
 alloy-sol-types = { workspace = true, default-features = false }
+fluentbase-sdk-testing = { workspace = true }
 hex = "0.4.3"
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
 
-[lib]
-crate-type = ["cdylib"]
-path = "lib.rs"
-
 [features]
 default = ["std"]
-std = [
-    "fluentbase-sdk/std",
-]
+std = ["fluentbase-sdk/std"]
