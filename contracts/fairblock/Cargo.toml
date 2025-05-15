@@ -14,3 +14,7 @@ fluentbase-build = { workspace = true }
 
 [lib]
 path = "lib.rs"
+
+[features]
+default = []
+enable_go = []

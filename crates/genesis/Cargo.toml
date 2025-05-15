@@ -66,5 +66,5 @@ std = [
     "serde/std",
     "serde_json/std",
 ]
-fairblock = ["dep:fluentbase-contracts-fairblock"]
+fairblock = ["dep:fluentbase-contracts-fairblock", "fluentbase-contracts-fairblock/enable_go"]
 generate-genesis = [] # this feature is doing nothing now (genesis is always generated), kept it for backward compatibility, and will remove it once ready
