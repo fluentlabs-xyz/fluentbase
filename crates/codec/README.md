@@ -59,10 +59,13 @@ SolidityABI::encode(&value, &mut buf, 0)
 
 Primitives are encoded without additional metadata, providing zero-cost encoding:
 
-TODO: add all types
-
 - Integer types: `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`
+- Boolean type: `bool`
+- Unit type: `()`
 - Static arrays: `[T; N]`
+- Tuples: `(T,)`, `(T1, T2)`, etc.
+- Option type: `Option<T>`
+- Large integers: `U128`, `U256`, `I128`, `I256` (from alloy_primitives)
 
 ### Non-Primitive Types
 
