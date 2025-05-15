@@ -1,6 +1,6 @@
 pub mod charge_fuel;
+pub mod charge_fuel_manually;
 pub mod debug_log;
-pub mod ec_recover;
 pub mod ed_add;
 pub mod ed_decompress;
 pub mod exec;
@@ -14,13 +14,12 @@ pub mod input_size;
 pub mod keccak256;
 pub mod keccak256_permute;
 pub mod output_size;
-pub mod poseidon;
-pub mod poseidon_hash;
 pub mod preimage_copy;
 pub mod preimage_size;
 pub mod read;
 pub mod read_output;
 pub mod resume;
+pub mod secp256k1_recover;
 pub mod sha256_compress;
 pub mod sha256_extend;
 pub mod state;
@@ -33,8 +32,8 @@ pub mod write;
 use crate::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
+        charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
-        ec_recover::SyscallEcrecover,
         ed_add::SyscallEdwardsAddAssign,
         ed_decompress::SyscallEdwardsDecompress,
         exec::SyscallExec,
@@ -48,13 +47,12 @@ use crate::{
         keccak256::SyscallKeccak256,
         keccak256_permute::SyscallKeccak256Permute,
         output_size::SyscallOutputSize,
-        poseidon::SyscallPoseidon,
-        poseidon_hash::SyscallPoseidonHash,
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
+        secp256k1_recover::SyscallSecp256k1Recover,
         sha256_compress::SyscallSha256Compress,
         sha256_extend::SyscallSha256Extend,
         state::SyscallState,
@@ -66,9 +64,9 @@ use crate::{
     },
     RuntimeContext,
 };
-use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::SysFuncIdx;
 use num::BigUint;
+use rwasm::{Caller, RwasmError};
 use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{
@@ -93,6 +91,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::EXEC => SyscallExec::fn_handler(caller),
         SysFuncIdx::RESUME => SyscallResume::fn_handler(caller),
         SysFuncIdx::FORWARD_OUTPUT => SyscallForwardOutput::fn_handler(caller),
+        SysFuncIdx::CHARGE_FUEL_MANUALLY => SyscallChargeFuelManually::fn_handler(caller),
         SysFuncIdx::CHARGE_FUEL => SyscallChargeFuel::fn_handler(caller),
         SysFuncIdx::FUEL => SyscallFuel::fn_handler(caller),
         SysFuncIdx::PREIMAGE_SIZE => SyscallPreimageSize::fn_handler(caller),
@@ -100,13 +99,11 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::DEBUG_LOG => SyscallDebugLog::fn_handler(caller),
         SysFuncIdx::KECCAK256 => SyscallKeccak256::fn_handler(caller),
         SysFuncIdx::KECCAK256_PERMUTE => SyscallKeccak256Permute::fn_handler(caller),
-        SysFuncIdx::POSEIDON => SyscallPoseidon::fn_handler(caller),
-        SysFuncIdx::POSEIDON_HASH => SyscallPoseidonHash::fn_handler(caller),
         SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller),
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller),
         SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller),
-        SysFuncIdx::SECP256K1_RECOVER => SyscallEcrecover::fn_handler(caller),
+        SysFuncIdx::SECP256K1_RECOVER => SyscallSecp256k1Recover::fn_handler(caller),
         SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller),
         SysFuncIdx::SECP256K1_DECOMPRESS => {
             SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller)

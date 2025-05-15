@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use core::cell::Cell;
-use fluentbase_rwasm::{Caller, RwasmError};
+use rwasm::{Caller, RwasmError};
 
 pub struct SyscallDebugLog;
 

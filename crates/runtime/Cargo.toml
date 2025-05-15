@@ -10,21 +10,30 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+# fluentbase
 fluentbase-codec = { workspace = true }
-fluentbase-poseidon = { workspace = true }
 fluentbase-types = { workspace = true }
-fluentbase-rwasm = { workspace = true }
-halo2curves = { workspace = true, default-features = false }
+fluentbase-genesis = { workspace = true, optional = true }
+
+rwasm = { workspace = true }
 
 # misc
-keccak-hash = { version = "0.11.0" }
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
+secp256k1 = { version = ">=0.28, <=0.29", default-features = false, features = [
+    "alloc",
+    "recovery",
+    "rand",
+    "global-context",
+] }
 hashbrown = { workspace = true }
 hex = { version = "0.4.3", optional = true }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 num = "0.4.3"
 sp1-curves = { version = "4.1.0" }
 sp1-primitives = { version = "4.1.0" }
+wasmtime = { version = "31.0.0", optional = true }
+anyhow = { version = "1.0.97", optional = true }
+ctor = { version = "0.4.1", optional = true }
 
 [dev-dependencies]
 sha2 = { version = "0.10.8" }
@@ -34,10 +43,11 @@ hex-literal = { workspace = true }
 [features]
 default = ["std"]
 std = [
-    "fluentbase-rwasm/std",
+    "rwasm/std",
 ]
 rwasm = []
 debug-print = [
     "dep:hex"
 ]
 optimism = ["fluentbase-types/optimism"]
+wasmtime = ["dep:wasmtime", "dep:ctor", "dep:anyhow", "dep:fluentbase-genesis"]

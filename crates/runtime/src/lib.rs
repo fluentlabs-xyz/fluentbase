@@ -5,11 +5,18 @@ extern crate core;
 pub mod instruction;
 
 mod context;
+#[cfg(feature = "std")]
+mod context_wrapper;
 mod runtime;
 mod storage;
 #[cfg(test)]
 mod tests;
+mod utils;
+#[cfg(feature = "wasmtime")]
+mod wasmtime;
 
 pub use context::*;
+#[cfg(feature = "std")]
+pub use context_wrapper::*;
 pub use runtime::*;
 pub use storage::*;

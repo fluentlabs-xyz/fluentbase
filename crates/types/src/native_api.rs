@@ -6,7 +6,7 @@ use alloy_primitives::{Bytes, B256};
 pub trait NativeAPI {
     fn keccak256(data: &[u8]) -> B256;
     fn sha256(data: &[u8]) -> B256;
-    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65];
+    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
     fn debug_log(message: &str);
 
     fn read(&self, target: &mut [u8], offset: u32);
@@ -18,7 +18,8 @@ pub trait NativeAPI {
     fn read_output(&self, target: &mut [u8], offset: u32);
     fn state(&self) -> u32;
     fn fuel(&self) -> u64;
-    fn charge_fuel(&self, value: u64) -> u64;
+    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64;
+    fn charge_fuel(&self, fuel_consumed: u64);
     fn exec<I: Into<BytecodeOrHash>>(
         &self,
         code_hash: I,

@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
-use fluentbase_types::B256;
+use fluentbase_types::{keccak256, B256};
+use rwasm::{Caller, RwasmError};
 
 pub struct SyscallKeccak256;
 
@@ -13,8 +13,6 @@ impl SyscallKeccak256 {
     }
 
     pub fn fn_impl(data: &[u8]) -> B256 {
-        let mut result = [0u8; 32];
-        keccak_hash::write_keccak(data, &mut result);
-        result.into()
+        keccak256(data)
     }
 }

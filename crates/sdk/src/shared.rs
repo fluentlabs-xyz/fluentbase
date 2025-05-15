@@ -7,7 +7,6 @@ use crate::{
 };
 use alloc::vec;
 use core::cell::RefCell;
-use fluentbase_codec::{CompactABI, FluentEncoder};
 use fluentbase_types::{
     native_api::NativeAPI,
     Address,
@@ -39,7 +38,6 @@ use fluentbase_types::{
     SYSCALL_ID_STATIC_CALL,
     SYSCALL_ID_STORAGE_READ,
     SYSCALL_ID_STORAGE_WRITE,
-    SYSCALL_ID_SYNC_EVM_GAS,
     SYSCALL_ID_TRANSIENT_READ,
     SYSCALL_ID_TRANSIENT_WRITE,
     SYSCALL_ID_WRITE_PREIMAGE,
@@ -64,13 +62,13 @@ impl<API: NativeAPI> SharedContextImpl<API> {
         shared_context_input_v1.get_or_insert_with(|| {
             let input_size = self.native_sdk.input_size() as usize;
             assert!(
-                input_size >= SharedContextInputV1::FLUENT_HEADER_SIZE,
+                input_size >= SharedContextInputV1::SIZE,
                 "malformed input header"
             );
-            let mut header_input: [u8; SharedContextInputV1::FLUENT_HEADER_SIZE] =
-                [0u8; SharedContextInputV1::FLUENT_HEADER_SIZE];
+            let mut header_input: [u8; SharedContextInputV1::SIZE] =
+                [0u8; SharedContextInputV1::SIZE];
             self.native_sdk.read(&mut header_input, 0);
-            let result = CompactABI::<SharedContextInputV1>::decode(&&header_input[..], 0)
+            let result = SharedContextInputV1::decode_from_slice(&header_input)
                 .unwrap_or_else(|_| unreachable!("fluentbase: malformed input header"));
             result
         });
@@ -93,23 +91,22 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
-        self.native_sdk.read(
-            target,
-            SharedContextInputV1::FLUENT_HEADER_SIZE as u32 + offset,
-        )
+        self.native_sdk
+            .read(target, SharedContextInputV1::SIZE as u32 + offset)
     }
 
     fn input_size(&self) -> u32 {
         let input_size = self.native_sdk.input_size();
         assert!(
-            input_size >= SharedContextInputV1::FLUENT_HEADER_SIZE as u32,
+            input_size >= SharedContextInputV1::SIZE as u32,
             "input less than context header"
         );
-        input_size - SharedContextInputV1::FLUENT_HEADER_SIZE as u32
+        input_size - SharedContextInputV1::SIZE as u32
     }
 
-    fn charge_fuel(&self, value: u64) {
-        self.native_sdk.charge_fuel(value);
+    fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
+        self.native_sdk
+            .charge_fuel_manually(fuel_consumed, fuel_refunded);
     }
 
     fn fuel(&self) -> u64 {
@@ -212,17 +209,6 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             fuel_refunded,
             exit_code,
         )
-    }
-
-    fn sync_evm_gas(&self, gas_remaining: u64, gas_refunded: i64) -> SyscallResult<()> {
-        let mut input = [0u8; 16];
-        LittleEndian::write_u64(&mut input[..8], gas_remaining);
-        LittleEndian::write_i64(&mut input[8..], gas_refunded);
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk
-                .exec(SYSCALL_ID_SYNC_EVM_GAS, &input, None, STATE_MAIN);
-        assert!(SyscallResult::is_ok(exit_code), "sdk: yield can't fail");
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes> {

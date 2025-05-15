@@ -10,8 +10,12 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-sdk = { workspace = true, default-features = false }
-bitvec = { version = "1", default-features = false, features = ["alloc"] }
+fluentbase-sdk = { workspace = true }
+bitvec = { workspace = true }
+bincode = { workspace = true }
+
+[dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
 
 [features]
 default = ["std"]

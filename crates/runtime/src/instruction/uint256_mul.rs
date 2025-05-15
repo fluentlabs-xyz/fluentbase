@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
 use num::{BigUint, One, Zero};
+use rwasm::{Caller, RwasmError};
 use sp1_curves::edwards::WORDS_FIELD_ELEMENT;
 
 pub struct SyscallUint256Mul;

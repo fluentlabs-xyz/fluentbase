@@ -1,4 +1,4 @@
-use crate::utils::{EvmTestingContext, TxBuilder};
+use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};
 use core::str::from_utf8;
 use fluentbase_codec::byteorder::LittleEndian;
 use fluentbase_sdk::{
@@ -13,7 +13,7 @@ use fluentbase_sdk::{
 };
 use hex_literal::hex;
 use revm::primitives::{ExecutionResult, Output};
-use rwasm::{engine::DropKeep, instruction_set, rwasm::RwasmModule};
+use rwasm::legacy::{engine::DropKeep, instruction_set, rwasm::RwasmModule};
 
 #[test]
 fn test_simple_nested_call() {
@@ -166,13 +166,9 @@ fn test_deploy_gas_spend() {
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
 
-    let result = TxBuilder::create(
-        &mut ctx,
-        DEPLOYER_ADDRESS,
-        include_bytes!("../../examples/greeting/lib.wasm").into(),
-    )
-    .enable_rwasm_proxy()
-    .exec();
+    let result = TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, crate::EXAMPLE_GREETING.into())
+        .enable_rwasm_proxy()
+        .exec();
     if !result.is_success() {
         println!("{:?}", result);
         println!(

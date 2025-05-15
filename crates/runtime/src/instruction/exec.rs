@@ -1,5 +1,4 @@
 use crate::{Runtime, RuntimeContext};
-use fluentbase_rwasm::{Caller, HostError, RwasmError, TrapCode};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     BytecodeOrHash,
@@ -9,6 +8,7 @@ use fluentbase_types::{
     B256,
     CALL_STACK_LIMIT,
 };
+use rwasm::{Caller, HostError, RwasmError};
 use std::{
     cmp::min,
     fmt::{Debug, Display, Formatter},
@@ -40,8 +40,8 @@ impl HostError for SysExecResumable {}
 
 impl SyscallExec {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let remaining_fuel = caller.store().remaining_fuel().unwrap_or(u64::MAX);
-        let disable_fuel = caller.data().disable_fuel;
+        let remaining_fuel = caller.vm().remaining_fuel().unwrap_or(u64::MAX);
+        let disable_fuel = caller.context().disable_fuel;
         let [hash32_ptr, input_ptr, input_len, fuel16_ptr, state] = caller.stack_pop_n();
         // make sure we have enough fuel for this call
         let fuel16_ptr = fuel16_ptr.as_usize();
@@ -52,7 +52,7 @@ impl SyscallExec {
             let _fuel_refund = LittleEndian::read_i64(&fuel_buffer[8..]);
             if fuel_limit > 0 {
                 if fuel_limit != u64::MAX && fuel_limit > remaining_fuel && !disable_fuel {
-                    return Err(RwasmError::TrapCode(TrapCode::OutOfFuel));
+                    return Err(RwasmError::OutOfFuel);
                 }
                 min(fuel_limit, remaining_fuel)
             } else {
@@ -72,7 +72,7 @@ impl SyscallExec {
                 state: state.as_u32(),
                 fuel16_ptr: fuel16_ptr as u32,
             },
-            is_root: caller.store().context().call_depth == 0,
+            is_root: caller.vm().context().call_depth == 0,
         })))
     }
 
@@ -82,7 +82,7 @@ impl SyscallExec {
     ) -> (u64, i64, i32) {
         let fuel_limit = context.params.fuel_limit;
         let (fuel_consumed, fuel_refunded, exit_code) = Self::fn_impl(
-            caller.store_mut().context_mut(),
+            caller.context_mut(),
             context.params.code_hash,
             context.params.input.as_ref(),
             fuel_limit,
@@ -103,66 +103,30 @@ impl SyscallExec {
             return (fuel_limit, 0, ExitCode::CallDepthOverflow.into_i32());
         }
 
+        let bytecode_or_hash = code_hash.into().with_resolved_hash();
+
+        #[cfg(feature = "wasmtime")]
+        {
+            use fluentbase_genesis::is_system_precompile_hash;
+            let hash = bytecode_or_hash.resolve_hash();
+            if is_system_precompile_hash(&hash) {
+                let (fuel_consumed, fuel_refunded, exit_code, output) =
+                    crate::wasmtime::execute(&hash, input.to_vec(), fuel_limit, state);
+                ctx.execution_result.return_data = output;
+                return (fuel_consumed, fuel_refunded, exit_code);
+            }
+        }
+
         // create a new runtime instance with the context
-        let ctx2 = RuntimeContext::new(code_hash)
+        let ctx2 = RuntimeContext::new(bytecode_or_hash)
             .with_input(Bytes::copy_from_slice(input))
             .with_fuel_limit(fuel_limit)
             .with_state(state)
             .with_call_depth(ctx.call_depth + 1)
             .with_disable_fuel(ctx.disable_fuel);
+
         let mut runtime = Runtime::new(ctx2);
         let mut execution_result = runtime.call();
-
-        // let trace = runtime.store().tracer().unwrap().logs.len();
-        // println!("execution trace ({} steps):", trace);
-
-        // println!("EXEC, interrupted: {}", execution_result.interrupted);
-        // println!(
-        //     "exit_code: {} ({})",
-        //     execution_result.exit_code,
-        //     ExitCode::from(execution_result.exit_code)
-        // );
-        // println!(
-        //     "output: 0x{} ({})",
-        //     fluentbase_types::hex::encode(&execution_result.output),
-        //     std::str::from_utf8(&execution_result.output).unwrap_or("can't decode utf-8")
-        // );
-        // println!("fuel consumed: {}", execution_result.fuel_consumed);
-        // let logs = &runtime.store().tracer().unwrap().logs;
-        // println!("execution trace ({} steps):", logs.len());
-        // for log in logs.iter().rev().take(100).rev() {
-        //     use fluentbase_rwasm::InstructionExtra;
-        //     if let Some(value) = log.opcode.aux_value() {
-        //         println!(
-        //             " - pc={} opcode={:?}({}) gas={} stack={:?}",
-        //             log.program_counter,
-        //             log.opcode,
-        //             value,
-        //             log.consumed_fuel,
-        //             log.stack
-        //                 .iter()
-        //                 .map(|v| v.to_string())
-        //                 .rev()
-        //                 .take(3)
-        //                 .rev()
-        //                 .collect::<Vec<_>>(),
-        //         );
-        //     } else {
-        //         println!(
-        //             " - pc={} opcode={:?} gas={} stack={:?}",
-        //             log.program_counter,
-        //             log.opcode,
-        //             log.consumed_fuel,
-        //             log.stack
-        //                 .iter()
-        //                 .map(|v| v.to_string())
-        //                 .rev()
-        //                 .take(3)
-        //                 .rev()
-        //                 .collect::<Vec<_>>(),
-        //         );
-        //     }
-        // }
 
         // if execution was interrupted,
         if execution_result.interrupted {
@@ -171,13 +135,11 @@ impl SyscallExec {
             execution_result.exit_code = runtime.remember_runtime(ctx);
         }
 
-        // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
-
         ctx.execution_result.return_data = execution_result.output.clone();
 
         (
             execution_result.fuel_consumed,
-            0,
+            execution_result.fuel_refunded,
             execution_result.exit_code,
         )
     }

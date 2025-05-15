@@ -1,8 +1,7 @@
 use crate::context::TxContextReader;
 use alloy_primitives::{Address, U256};
-use fluentbase_codec::Codec;
 
-#[derive(Codec, Default, Clone)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct TxContextV1 {
     pub gas_limit: u64,
     pub nonce: u64,

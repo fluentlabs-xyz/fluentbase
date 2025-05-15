@@ -1,3 +1,3 @@
 fn main() {
-    fluentbase_build::build_wasm_program_from_env();
+    fluentbase_build::compile_rust_to_wasm(Default::default());
 }

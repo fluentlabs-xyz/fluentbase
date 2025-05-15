@@ -92,8 +92,7 @@ impl<'a> ContractContextReader for SharedContextReaderImpl<'a> {
     }
 
     fn contract_gas_limit(&self) -> u64 {
-        // self.0.borrow().as_ref().unwrap().contract.gas_limit
-        100_000_000
+        self.0.borrow().as_ref().unwrap().contract.gas_limit
     }
 }
 

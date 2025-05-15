@@ -1,16 +1,15 @@
 use crate::context::{BlockContextReader, ContractContextReader, TxContextReader};
 use alloc::vec;
 use alloy_primitives::{Address, Bytes, U256};
-use fluentbase_codec::Codec;
 
-#[derive(Default, Codec, Clone, Debug)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct ContractContextV1 {
     pub address: Address,
     pub bytecode_address: Address,
     pub caller: Address,
     pub is_static: bool,
     pub value: U256,
-    // pub gas_limit: u64,
+    pub gas_limit: u64,
 }
 
 impl ContractContextReader for ContractContextV1 {
@@ -35,8 +34,7 @@ impl ContractContextReader for ContractContextV1 {
     }
 
     fn contract_gas_limit(&self) -> u64 {
-        // self.gas_limit
-        100_000_000
+        self.gas_limit
     }
 }
 

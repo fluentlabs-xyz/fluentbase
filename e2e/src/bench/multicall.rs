@@ -1,7 +1,8 @@
 extern crate test;
 
-use crate::utils::EvmTestingContext;
+use crate::EXAMPLE_ROUTER_SOLIDITY;
 use fluentbase_sdk::Address;
+use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
 use test::Bencher;
 
@@ -44,10 +45,7 @@ fn bench_wasm_multicall(b: &mut Bencher) {
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
 
     // Deploy Router contract (WASM version)
-    let router_address = ctx.deploy_evm_tx(
-        DEPLOYER_ADDRESS,
-        include_bytes!("../../../examples/router-solidity/lib.wasm").into(),
-    );
+    let router_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_ROUTER_SOLIDITY.into());
 
     let call_multicall = |ctx: &mut EvmTestingContext| {
         // Same multicall invocation as in EVM version

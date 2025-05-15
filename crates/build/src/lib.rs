@@ -2,191 +2,175 @@ mod config;
 
 use cargo_metadata::{camino::Utf8PathBuf, CrateType, Metadata, MetadataCommand, TargetKind};
 pub use config::*;
-use std::{
-    env,
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-    str::from_utf8,
-};
+use std::{env, fs, path::PathBuf, process::Command, str::from_utf8};
 
-/// Forces cargo to rerun the build script when any source file in the package or its
-/// dependency change.
-pub fn cargo_rerun_if_changed(metadata: &Metadata) {
-    let root_package = &metadata
-        .root_package()
-        .expect("should be executed within a Cargo package directory");
-    let manifest_path: PathBuf = root_package.manifest_path.clone().into_std_path_buf();
-    let package_dir_path: &Path = &manifest_path.parent().unwrap();
-    let watch_paths = vec![
-        package_dir_path.join("src"),
-        package_dir_path.join("bin"),
-        package_dir_path.join("Cargo.toml"),
-        package_dir_path.join("lib.rs"),
-    ];
-    for path in watch_paths {
-        if path.exists() {
-            println!(
-                "cargo:rerun-if-changed={}",
-                path.canonicalize().unwrap().display()
-            );
-        }
+pub fn compile_rust_to_wasm(config: Config) {
+    if skip() {
+        return;
     }
-    for dependency in &root_package.dependencies {
-        if let Some(path) = &dependency.path {
-            println!("cargo:rerun-if-changed={}", path.as_str());
-        }
-    }
-}
-
-pub fn calc_wasm_artefact_paths(
-    metadata: &Metadata,
-    config: &WasmBuildConfig,
-) -> Vec<(String, Utf8PathBuf)> {
-    let mut result = vec![];
-    let packages_to_iterate = metadata.workspace_default_members.to_vec();
-    for program_crate in packages_to_iterate {
-        let program = metadata
-            .packages
-            .iter()
-            .find(|p| p.id == program_crate)
-            .unwrap_or_else(|| panic!("cannot find package for {}", program_crate));
-        for bin_target in program.targets.iter().filter(|t| {
-            t.kind.contains(&TargetKind::CDyLib) && t.crate_types.contains(&CrateType::CDyLib)
-        }) {
-            let bin_name = bin_target.name.clone() + ".wasm";
-            let wasm_path = metadata
-                .target_directory
-                .join(config.target.clone())
-                .join("release")
-                .join(&bin_name);
-            result.push((bin_name.to_owned(), wasm_path));
-        }
-    }
-    result
-}
-
-pub fn build_wasm_program_from_env() {
-    build_wasm_program(WasmBuildConfig::default())
-}
-
-pub fn build_wasm_program(config: WasmBuildConfig) {
     let cargo_manifest_dir = PathBuf::from(config.cargo_manifest_dir.clone());
     let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
-
     let mut metadata_cmd = MetadataCommand::new();
     let metadata = metadata_cmd
         .manifest_path(cargo_manifest_path)
         .exec()
         .unwrap();
+    let target_dir = metadata.target_directory.clone();
+    let target2_dir = target_dir.join("target2");
 
-    cargo_rerun_if_changed(&metadata);
-
-    if config.current_target.contains("wasm32") {
-        println!(
-            "cargo:warning=build skipped due to wasm32 compilation target ({})",
-            config.current_target
-        );
-        return;
-    }
-    if config.is_tarpaulin_build {
-        println!("cargo:warning=build skipped due to the tarpaulin build");
-        return;
-    }
-
-    let artefact_paths = calc_wasm_artefact_paths(&metadata, &config);
-    if artefact_paths.is_empty() {
-        panic!("there is no WASM artefact to build");
-    } else if artefact_paths.len() > 1 {
-        panic!("multiple WASM artefacts are supported");
-    }
-
-    // Build the project as a WASM binary
-    let mut arguments = vec![
+    let mut args = vec![
         "build".to_string(),
         "--target".to_string(),
-        config.target,
+        config.target.clone(),
         "--release".to_string(),
+        "--manifest-path".to_string(),
+        format!("{}/Cargo.toml", config.cargo_manifest_dir),
+        "--target-dir".to_string(),
+        target2_dir.to_string(),
+        "--color=always".to_string(),
     ];
     if config.no_default_features {
-        arguments.push("--no-default-features".to_string());
+        args.push("--no-default-features".to_string());
     }
     if !config.features.is_empty() {
-        arguments.push("--features".to_string());
-        arguments.extend_from_slice(&config.features);
+        args.push("--features".to_string());
+        args.extend_from_slice(&config.features);
     }
+    let flags = [
+        "-C".to_string(),
+        format!("link-arg=-zstack-size={}", config.stack_size),
+        "-C".to_string(),
+        "panic=abort".to_string(),
+        "-C".to_string(),
+        "target-feature=+bulk-memory".to_string(),
+    ];
+    let flags = flags.join("\x1f");
+
     let status = Command::new("cargo")
-        .args(arguments)
-        .env(
-            "RUSTFLAGS",
-            format!(
-                "-C link-arg=-zstack-size={} -C target-feature=+bulk-memory",
-                config.stack_size
-            ),
-        )
+        .env("CARGO_ENCODED_RUSTFLAGS", flags)
+        .args(args)
         .status()
-        .expect("WASM compilation failure");
+        .expect("WASM compilation failure: failed to run cargo build");
+
     if !status.success() {
         panic!(
-            "WASM compilation failure with code: {}",
+            "WASM compilation failure: failed to run cargo build with code: {}",
             status.code().unwrap_or(1)
         );
     }
 
-    let wasm_output = cargo_manifest_dir.join(config.output_file_name.clone());
+    let wasm_artifact_name = get_wasm_artifact_name(&metadata);
+    let wasm_artifact_path = target2_dir
+        .join(config.target.clone())
+        .join("release")
+        .join(wasm_artifact_name);
 
-    for (_target_name, wasm_path) in artefact_paths.iter() {
-        println!("cargo:rustc-env=FLUENTBASE_WASM_BINARY_PATH={}", wasm_path);
-        fs::copy(&wasm_path, &wasm_output).unwrap();
+    println!(
+        "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
+        wasm_artifact_path
+    );
+
+    for path in &config.rerun_if_changed {
+        println!("cargo:rerun-if-changed={}", path);
     }
 
-    // Build the project as a WASM binary
+    copy_wasm_to_src(&config, &wasm_artifact_path);
+}
+
+pub fn compile_go_to_wasm(config: Config) {
+    if skip() {
+        return;
+    }
+
+    let out_dir = Utf8PathBuf::from(env::var("OUT_DIR").unwrap());
+    let wasm_artifact_name = "main.wasm".to_string();
+    let wasm_artifact_path = out_dir.join(wasm_artifact_name);
+
+    let args: Vec<String> = vec![
+        "build".to_string(),
+        "-o".to_string(),
+        wasm_artifact_path.to_string(),
+        "--target".to_string(),
+        "wasm-unknown".to_string(),
+    ];
+
+    let status = Command::new("tinygo")
+        .current_dir(&config.cargo_manifest_dir)
+        .args(args)
+        .status()
+        .expect("WASM compilation failed");
+
+    if !status.success() {
+        panic!("WASM compilation failure: failed to run \"tinygo build\"");
+    }
+
+    println!(
+        "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
+        wasm_artifact_path
+    );
+
+    for path in &config.rerun_if_changed {
+        println!("cargo:rerun-if-changed={}", path);
+    }
+
+    copy_wasm_to_src(&config, &wasm_artifact_path);
+}
+
+fn copy_wasm_to_src(config: &Config, wasm_artifact_path: &Utf8PathBuf) {
+    if config.output_file_name.is_none() {
+        return;
+    }
+    let cargo_manifest_dir = Utf8PathBuf::from(config.cargo_manifest_dir.clone());
+    let file_name = config.output_file_name.clone().unwrap();
+    let wasm_output = cargo_manifest_dir.join(file_name.clone());
+    let wat_output = cargo_manifest_dir.join(file_name.replace(".wasm", ".wat"));
+
+    fs::copy(&wasm_artifact_path, &wasm_output).unwrap();
     let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
     if wasm_to_wat.is_ok() {
-        let wast_output = cargo_manifest_dir.join(config.output_file_name.replace(".wasm", ".wat"));
-        fs::write(
-            wast_output,
-            from_utf8(&wasm_to_wat.unwrap().stdout).unwrap(),
-        )
-        .unwrap();
+        fs::write(wat_output, from_utf8(&wasm_to_wat.unwrap().stdout).unwrap()).unwrap();
     }
 }
 
-pub fn build_go_program_from_env(program_name: &'static str) {
-    let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-
-    println!("cargo:rerun-if-changed=go.mod");
-    println!("cargo:rerun-if-changed=go.sum");
-    println!("cargo:rerun-if-changed=main.go");
-    println!("cargo:rerun-if-changed=lib.wasm");
-
-    let is_success = Command::new("tinygo")
-        .args(&[
-            "build",
-            "-o",
-            "lib.wasm",
-            "--target",
-            "wasm-unknown",
-            program_name,
-        ])
-        .status()
-        .ok()
-        .filter(|s| s.success())
-        .is_some();
-    if !is_success {
-        println!("cargo:warning=missing TinyGo, build might be outdated");
+fn get_wasm_artifact_name(metadata: &Metadata) -> String {
+    let mut result = vec![];
+    for program_crate in metadata.workspace_default_members.to_vec() {
+        let program = metadata
+            .packages
+            .iter()
+            .find(|p| p.id == program_crate)
+            .unwrap_or_else(|| panic!("cannot find package for {}", program_crate));
+        for bin_target in program.targets.iter() {
+            let is_bin = bin_target.kind.contains(&TargetKind::Bin)
+                && bin_target.crate_types.contains(&CrateType::Bin);
+            let is_cdylib = bin_target.kind.contains(&TargetKind::CDyLib)
+                && bin_target.crate_types.contains(&CrateType::CDyLib);
+            if is_cdylib || is_bin {
+                let bin_name = bin_target.name.clone() + ".wasm";
+                result.push(bin_name);
+            }
+        }
     }
-
-    let wasm_output = cargo_manifest_dir.join("lib.wasm");
-    let wast_output = cargo_manifest_dir.join("lib.wat");
-
-    // Build the project as a WASM binary
-    let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
-    if wasm_to_wat.is_ok() {
-        fs::write(
-            wast_output,
-            from_utf8(&wasm_to_wat.unwrap().stdout).unwrap(),
-        )
-        .unwrap();
+    if result.len() == 0 {
+        panic!(
+            "there is no WASM artifact to build for crate {}",
+            metadata.workspace_members.first().unwrap()
+        );
+    } else if result.len() > 1 {
+        panic!(
+            "multiple WASM artefacts to build for crate {}",
+            metadata.workspace_members.first().unwrap()
+        );
     }
+    result.first().unwrap().clone()
+}
+
+fn skip() -> bool {
+    if env::var("CARGO_CFG_TARPAULIN").is_ok() {
+        return true;
+    }
+    if env::var("TARGET").unwrap() == "wasm32-unknown-unknown" {
+        return true;
+    }
+    false
 }

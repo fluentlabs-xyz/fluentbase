@@ -1,4 +1,3 @@
-use rwasm::engine::bytecode::FuncIdx;
 use strum_macros::{Display, FromRepr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Display, FromRepr)]
@@ -16,17 +15,18 @@ pub enum SysFuncIdx {
     EXEC = 0x0009,
     RESUME = 0x000a,
     FORWARD_OUTPUT = 0x000b,
-    CHARGE_FUEL = 0x000c,
+    CHARGE_FUEL_MANUALLY = 0x000c,
     FUEL = 0x000d,
     PREIMAGE_SIZE = 0x000e,
     PREIMAGE_COPY = 0x000f,
     DEBUG_LOG = 0x0010,
+    CHARGE_FUEL = 0x0011,
 
     // hashing
     KECCAK256 = 0x0101,
     KECCAK256_PERMUTE = 0x0102,
-    POSEIDON = 0x0103,
-    POSEIDON_HASH = 0x0104,
+    // POSEIDON = 0x0103,
+    // POSEIDON_HASH = 0x0104,
     SHA256_EXTEND = 0x0105,
     SHA256_COMPRESS = 0x0106,
 
@@ -83,8 +83,6 @@ impl SysFuncIdx {
             SysFuncIdx::INPUT_SIZE => 1,
             SysFuncIdx::WRITE_OUTPUT => 1,
             SysFuncIdx::KECCAK256 => 1,
-            SysFuncIdx::POSEIDON => 1,
-            SysFuncIdx::POSEIDON_HASH => 1,
             SysFuncIdx::SECP256K1_RECOVER => 1,
             _ => 1, //unreachable!("not configured fuel for opcode: {:?}", self),
         }
@@ -97,8 +95,8 @@ impl Into<u32> for SysFuncIdx {
     }
 }
 
-impl Into<FuncIdx> for SysFuncIdx {
-    fn into(self) -> FuncIdx {
+impl Into<rwasm::legacy::engine::bytecode::FuncIdx> for SysFuncIdx {
+    fn into(self) -> rwasm::legacy::engine::bytecode::FuncIdx {
         (self as u32).into()
     }
 }

@@ -1,13 +1,13 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
+use rwasm::{Caller, RwasmError};
 
 pub struct SyscallRead;
 
 impl SyscallRead {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
         let [target_ptr, offset, length] = caller.stack_pop_n();
-        let input = Self::fn_impl(caller.data(), offset.as_u32(), length.as_u32())?;
+        let input = Self::fn_impl(caller.context(), offset.as_u32(), length.as_u32())?;
         let _ = caller.memory_write(target_ptr.as_usize(), &input)?;
         Ok(())
     }

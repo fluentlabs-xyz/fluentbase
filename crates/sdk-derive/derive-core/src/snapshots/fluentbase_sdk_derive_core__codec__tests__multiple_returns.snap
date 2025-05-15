@@ -1,0 +1,113 @@
+---
+source: crates/sdk-derive/derive-core/src/codec.rs
+expression: formatted
+---
+pub type MultiReturnCallArgs = ();
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultiReturnCall(pub MultiReturnCallArgs);
+pub type MultiReturnReturnArgs = (u64, String, bool);
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultiReturnReturn(pub MultiReturnReturnArgs);
+const _: () = {
+    impl MultiReturnCall {
+        pub const SELECTOR: [u8; 4] = [254u8, 184u8, 187u8, 163u8];
+        pub const SIGNATURE: &'static str = "multiReturn()";
+        /// Creates a new call instance from arguments
+        pub fn new(args: MultiReturnCallArgs) -> Self {
+            Self(args)
+        }
+        /// Encodes this call to bytes including selector
+        pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(), &mut buf, 0)
+                .expect("Failed to encode values");
+            let encoded_args = buf.freeze();
+            let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
+                MultiReturnCallArgs,
+            >::is_dynamic() {
+                encoded_args[32..].to_vec()
+            } else {
+                encoded_args.to_vec()
+            };
+            Self::SELECTOR.iter().copied().chain(clean_args).collect()
+        }
+        /// Decodes call arguments from bytes
+        pub fn decode(
+            buf: &impl fluentbase_sdk::codec::bytes::Buf,
+        ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
+            use fluentbase_sdk::codec::bytes::BufMut;
+            let mut combined_buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            combined_buf
+                .put_slice(
+                    &if fluentbase_sdk::codec::encoder::SolidityABI::<
+                        MultiReturnCallArgs,
+                    >::is_dynamic() {
+                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                    } else {
+                        ::alloc::vec::Vec::new()
+                    },
+                );
+            combined_buf.put_slice(buf.chunk());
+            let args = fluentbase_sdk::codec::encoder::SolidityABI::<
+                MultiReturnCallArgs,
+            >::decode(&combined_buf.freeze(), 0)?;
+            Ok(Self(args))
+        }
+    }
+    impl ::core::ops::Deref for MultiReturnCall {
+        type Target = MultiReturnCallArgs;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl MultiReturnReturn {
+        /// Creates a new return instance from values
+        pub fn new(args: MultiReturnReturnArgs) -> Self {
+            Self(args)
+        }
+        /// Encodes the return values to bytes
+        pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            let args = self.0.clone();
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&args, &mut buf, 0)
+                .expect("Failed to encode values");
+            let encoded_args = buf.freeze();
+            let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
+                MultiReturnReturnArgs,
+            >::is_dynamic() {
+                encoded_args[32..].to_vec()
+            } else {
+                encoded_args.to_vec()
+            };
+            clean_args.into()
+        }
+        /// Decodes return values from bytes
+        pub fn decode(
+            buf: &impl fluentbase_sdk::codec::bytes::Buf,
+        ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
+            use fluentbase_sdk::codec::bytes::BufMut;
+            let mut combined_buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            combined_buf
+                .put_slice(
+                    &if fluentbase_sdk::codec::encoder::SolidityABI::<
+                        MultiReturnReturnArgs,
+                    >::is_dynamic() {
+                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                    } else {
+                        ::alloc::vec::Vec::new()
+                    },
+                );
+            combined_buf.put_slice(buf.chunk());
+            let args = fluentbase_sdk::codec::encoder::SolidityABI::<
+                MultiReturnReturnArgs,
+            >::decode(&combined_buf.freeze(), 0)?;
+            Ok(Self(args))
+        }
+    }
+    impl ::core::ops::Deref for MultiReturnReturn {
+        type Target = MultiReturnReturnArgs;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+};

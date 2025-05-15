@@ -5,7 +5,7 @@ use crate::{
     result::{InstructionResult, InterpreterResult},
     stack::Stack,
 };
-use fluentbase_sdk::{Bytes, ContractContextReader, SharedAPI};
+use fluentbase_sdk::{Bytes, ContractContextReader, SharedAPI, FUEL_DENOM_RATE};
 
 mod arithmetic;
 mod bitwise;
@@ -25,23 +25,28 @@ pub type Instruction<SDK> = fn(&mut EVM<SDK>);
 pub type InstructionTable<SDK> = [Instruction<SDK>; 0x100];
 
 pub struct EVM<'a, SDK: SharedAPI> {
-    pub(crate) sdk: &'a mut SDK,
-    pub(crate) analyzed_bytecode: AnalyzedBytecode,
-    pub(crate) input: &'a [u8],
-    pub(crate) gas: Gas,
-    pub(crate) ip: *const u8,
-    pub(crate) state: InstructionResult,
-    pub(crate) return_data_buffer: Bytes,
-    pub(crate) is_static: bool,
-    pub(crate) output: Option<InterpreterResult>,
-    pub(crate) memory: SharedMemory,
-    pub(crate) stack: Stack,
+    pub sdk: &'a mut SDK,
+    pub analyzed_bytecode: AnalyzedBytecode,
+    pub input: &'a [u8],
+    pub gas: Gas,
+    pub committed_gas: Gas,
+    pub ip: *const u8,
+    pub state: InstructionResult,
+    pub return_data_buffer: Bytes,
+    pub is_static: bool,
+    pub output: Option<InterpreterResult>,
+    pub memory: SharedMemory,
+    pub stack: Stack,
 }
 
 impl<'a, SDK: SharedAPI> EVM<'a, SDK> {
-    pub fn new(sdk: &'a mut SDK, bytecode: &'a [u8], input: &'a [u8], gas_limit: u64) -> Self {
+    pub fn new(
+        sdk: &'a mut SDK,
+        analyzed_bytecode: AnalyzedBytecode,
+        input: &'a [u8],
+        gas_limit: u64,
+    ) -> Self {
         let is_static = sdk.context().contract_is_static();
-        let analyzed_bytecode = AnalyzedBytecode::new(bytecode);
         let ip = analyzed_bytecode.bytecode.as_ptr();
         let gas = Gas::new(gas_limit);
         Self {
@@ -49,6 +54,7 @@ impl<'a, SDK: SharedAPI> EVM<'a, SDK> {
             analyzed_bytecode,
             input,
             gas,
+            committed_gas: gas,
             ip,
             state: InstructionResult::Continue,
             return_data_buffer: Default::default(),
@@ -57,6 +63,20 @@ impl<'a, SDK: SharedAPI> EVM<'a, SDK> {
             memory: Default::default(),
             stack: Default::default(),
         }
+    }
+
+    pub fn sync_evm_gas(&mut self) -> bool {
+        let remaining_diff = self.committed_gas.remaining() - self.gas.remaining();
+        let refunded_diff = self.gas.refunded() - self.committed_gas.refunded();
+        if remaining_diff == 0 && refunded_diff == 0 {
+            return false;
+        }
+        self.sdk.charge_fuel_manually(
+            remaining_diff * FUEL_DENOM_RATE,
+            refunded_diff * FUEL_DENOM_RATE as i64,
+        );
+        self.committed_gas = self.gas;
+        true
     }
 
     pub fn exec(&mut self) -> InterpreterResult {
@@ -73,6 +93,7 @@ impl<'a, SDK: SharedAPI> EVM<'a, SDK> {
             result: self.state,
             output: Bytes::new(),
             gas: self.gas,
+            committed_gas: self.committed_gas,
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::utils::EvmTestingContext;
+use fluentbase_sdk_testing::EvmTestingContext;
 use fluentbase_codec::SolidityABI;
 use fluentbase_sdk::{address, Address, U256};
 use hex_literal::hex;
@@ -11,14 +11,14 @@ fn test_client_solidity() {
 
     let (contract_address, _) = ctx.deploy_evm_tx_with_nonce(
         DEPLOYER_ADDRESS,
-        include_bytes!("../../examples/router-solidity/lib.wasm").into(),
+        crate::EXAMPLE_ROUTER_SOLIDITY.into(),
         0,
     );
     println!("contract_address: {:?}", contract_address);
 
     let (client_address, _) = ctx.deploy_evm_tx_with_nonce(
         DEPLOYER_ADDRESS,
-        include_bytes!("../../examples/client-solidity/lib.wasm").into(),
+        crate::EXAMPLE_CLIENT_SOLIDITY.into(),
         1,
     );
     println!("client_address: {:?}", client_address);

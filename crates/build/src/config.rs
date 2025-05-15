@@ -1,40 +1,53 @@
 use std::env;
 
 #[derive(Debug, Clone)]
-pub struct WasmBuildConfig {
+pub struct Config {
     pub cargo_manifest_dir: String,
-    pub current_target: String,
-    pub is_tarpaulin_build: bool,
     pub stack_size: u32,
-    pub output_file_name: String,
+    pub output_file_name: Option<String>,
     pub features: Vec<String>,
     pub no_default_features: bool,
     pub target: String,
+    pub rerun_if_changed: Vec<String>,
 }
 
-impl Default for WasmBuildConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             cargo_manifest_dir: env::var("CARGO_MANIFEST_DIR").unwrap(),
-            current_target: env::var("TARGET").unwrap(),
-            is_tarpaulin_build: env::var("CARGO_CFG_TARPAULIN").is_ok(),
-            stack_size: 262144,
-            output_file_name: "lib.wasm".to_string(),
+            stack_size: 128 * 1024,
+            output_file_name: Some("lib.wasm".to_string()),
             features: vec![],
             no_default_features: true,
             target: "wasm32-unknown-unknown".to_string(),
+            rerun_if_changed: vec![],
         }
     }
 }
 
-impl WasmBuildConfig {
-    pub fn with_feature(mut self, feature: impl Into<String>) -> Self {
-        self.features.push(feature.into());
+impl Config {
+    pub fn with_rerun_if_changed(mut self, path: &str) -> Self {
+        self.rerun_if_changed.push(path.to_string());
         self
     }
 
-    pub fn with_taget(mut self, target: impl Into<String>) -> Self {
-        self.target = target.into();
+    pub fn with_output_file_name(mut self, filename: Option<String>) -> Self {
+        self.output_file_name = filename;
+        self
+    }
+
+    pub fn with_stack_size(mut self, stack_size: u32) -> Self {
+        self.stack_size = stack_size;
+        self
+    }
+
+    pub fn with_features(mut self, features: Vec<String>) -> Self {
+        self.features = features;
+        self
+    }
+
+    pub fn with_no_default_features(mut self, no_default_features: bool) -> Self {
+        self.no_default_features = no_default_features;
         self
     }
 }

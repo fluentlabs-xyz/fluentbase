@@ -67,6 +67,7 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
         if pages_needed > 0 {
             let new_pages = core::arch::wasm32::memory_grow::<0>(pages_needed);
             if new_pages == usize::MAX {
+                // TODO(dmitry123): "don't panic here, return OutOfMemory error with punishment"
                 unreachable!("out of memory");
             }
         }

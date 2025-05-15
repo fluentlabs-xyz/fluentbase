@@ -14,16 +14,11 @@ hex-literal = { version = "0.4.1", default-features = false }
 
 [dev-dependencies]
 serial_test = "3.0.0"
+fluentbase-sdk-testing = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
 
-[lib]
-crate-type = ["cdylib"]
-path = "lib.rs"
-
 [features]
 default = ["std"]
-std = [
-    "fluentbase-sdk/std"
-]
+std = ["fluentbase-sdk/std"]

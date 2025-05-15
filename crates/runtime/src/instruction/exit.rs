@@ -1,13 +1,13 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{Caller, RwasmError};
 use fluentbase_types::ExitCode;
+use rwasm::{Caller, RwasmError};
 
 pub struct SyscallExit;
 
 impl SyscallExit {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
         let exit_code: i32 = caller.stack_pop_as();
-        let exit_code = Self::fn_impl(caller.data_mut(), exit_code).unwrap_err();
+        let exit_code = Self::fn_impl(caller.context_mut(), exit_code).unwrap_err();
         Err(RwasmError::ExecutionHalted(exit_code.into_i32()))
     }
 
