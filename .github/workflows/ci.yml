@@ -35,14 +35,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
-      - name: Install Go 1.23
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-      - name: Install TinyGo
-        run: |
-          wget https://github.com/tinygo-org/tinygo/releases/download/v0.30.0/tinygo_0.30.0_amd64.deb
-          sudo dpkg -i tinygo_0.30.0_amd64.deb
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run tests with nextest
@@ -68,15 +60,6 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
       - name: Run cargo check
         run: cargo check
-
-      - name: Install Go 1.23
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-      - name: Install TinyGo
-        run: |
-          wget https://github.com/tinygo-org/tinygo/releases/download/v0.30.0/tinygo_0.30.0_amd64.deb
-          sudo dpkg -i tinygo_0.30.0_amd64.deb
       - name: Generate code coverage
         run: |
           cargo install cargo-tarpaulin
