@@ -144,7 +144,7 @@ where
         }
 
         // Write offset size
-        write_u32_aligned::<B, ALIGN>(buf, offset, (32) as u32);
+        write_u32_aligned::<B, ALIGN>(buf, offset, 32_u32);
 
         // Write map size
         write_u32_aligned::<B, ALIGN>(buf, offset + 32, self.len() as u32);
@@ -191,14 +191,11 @@ where
         // Check if there's enough data to read the header
         let header_end = offset
             .checked_add(Self::HEADER_SIZE)
-            .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
-        if buf.remaining()
-            < usize::try_from(header_end)
-                .map_err(|_| CodecError::Decoding(DecodingError::Overflow))?
-        {
+        if buf.remaining() < header_end {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: header_end as usize,
+                expected: header_end,
                 found: buf.remaining(),
                 msg: "Not enough data to decode HashMap header".to_string(),
             }));
@@ -210,7 +207,7 @@ where
         // Calculate start offset
         let start_offset = offset
             .checked_add(data_offset)
-            .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
         // Read length
         let length = read_u32_aligned::<B, ALIGN>(buf, start_offset)? as usize;
@@ -227,11 +224,11 @@ where
         let keys_start = keys_offset
             .checked_add(start_offset)
             .and_then(|sum| sum.checked_add(KEYS_OFFSET))
-            .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
         let values_start = values_offset
             .checked_add(start_offset)
             .and_then(|sum| sum.checked_add(VALUES_OFFSET))
-            .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
         let mut result = HashMap::with_capacity(length);
 
@@ -241,10 +238,10 @@ where
         for i in 0..length {
             let key_offset = align_up::<ALIGN>(K::HEADER_SIZE)
                 .checked_mul(i)
-                .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
+                .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
             let value_offset = align_up::<ALIGN>(V::HEADER_SIZE)
                 .checked_mul(i)
-                .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
+                .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
             let key = K::decode(&keys_data, key_offset)?;
             let value = V::decode(&values_data, value_offset)?;
@@ -391,7 +388,7 @@ where
         }
 
         // Write offset size
-        write_u32_aligned::<B, ALIGN>(buf, aligned_offset, 32 as u32);
+        write_u32_aligned::<B, ALIGN>(buf, aligned_offset, 32_u32);
 
         // Write set size
         write_u32_aligned::<B, ALIGN>(buf, aligned_offset + 32, self.len() as u32);
@@ -425,14 +422,11 @@ where
         // Check if there's enough data to read the header
         let header_end = aligned_offset
             .checked_add(Self::HEADER_SIZE)
-            .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
-        if buf.remaining()
-            < usize::try_from(header_end)
-                .map_err(|_| CodecError::Decoding(DecodingError::Overflow))?
-        {
+        if buf.remaining() < header_end {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: header_end as usize,
+                expected: header_end,
                 found: buf.remaining(),
                 msg: "Not enough data to decode HashSet header".to_string(),
             }));
@@ -444,7 +438,7 @@ where
         // Calculate start offset
         let start_offset = aligned_offset
             .checked_add(data_offset)
-            .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
         // Read length
         let length = read_u32_aligned::<B, ALIGN>(buf, start_offset)? as usize;
@@ -459,7 +453,7 @@ where
         let values_start = values_offset
             .checked_add(start_offset)
             .and_then(|sum| sum.checked_add(DATA_OFFSET))
-            .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
         let mut result = HashSet::with_capacity(length);
 
@@ -468,7 +462,7 @@ where
         for i in 0..length {
             let value_offset = align_up::<ALIGN>(T::HEADER_SIZE)
                 .checked_mul(i)
-                .ok_or_else(|| CodecError::Decoding(DecodingError::Overflow))?;
+                .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
             let value = T::decode(&values_data, value_offset)?;
             result.insert(value);

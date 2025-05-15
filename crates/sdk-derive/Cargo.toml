@@ -11,10 +11,16 @@ version = "0.1.0"
 
 [dependencies]
 crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
+proc-macro2 = "1.0"
 proc-macro-error = { version = "1", default-features = false }
 quote = "1.0"
 fluentbase-sdk-derive-core = { path = "./derive-core", default-features = false }
-syn = { workspace = true, features = ["full"] }
+syn = { workspace = true, features = ["full", "visit"] }
+alloy-sol-macro-input = "1.1.0"
+
+[dev-dependencies]
+trybuild = "1.0.104"
+fluentbase-sdk = { workspace = true }
 
 [lib]
 proc-macro = true

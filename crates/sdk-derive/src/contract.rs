@@ -9,7 +9,7 @@ pub(crate) fn impl_derive_contract(ast: &syn::DeriveInput) -> TokenStream {
         .iter()
         .find(|param| match param {
             GenericParam::Lifetime(_) => false,
-            GenericParam::Type(val) => val.ident.to_string() == "SDK",
+            GenericParam::Type(val) => val.ident == "SDK",
             GenericParam::Const(_) => false,
         })
         .unwrap_or_else(|| panic!("missing SDK generic inside struct: {}", struct_name));
