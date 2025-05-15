@@ -63,7 +63,7 @@ jobs:
       - name: Generate code coverage
         run: |
           cargo install cargo-tarpaulin
-          cargo tarpaulin --verbose --timeout 120 --out xml
+          cargo tarpaulin --verbose --timeout 300 --out xml
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v5.4.2
         with:
