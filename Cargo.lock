@@ -2265,16 +2265,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-bls12381"
-version = "0.1.0"
-dependencies = [
- "fluentbase-build",
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "revm-precompile",
-]
-
-[[package]]
 name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
@@ -2639,7 +2629,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-genesis",
  "fluentbase-contracts-blake2f",
- "fluentbase-contracts-bls12381",
  "fluentbase-contracts-bn256",
  "fluentbase-contracts-ecrecover",
  "fluentbase-contracts-erc20",
