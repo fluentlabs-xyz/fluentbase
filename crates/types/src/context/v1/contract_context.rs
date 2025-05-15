@@ -1,9 +1,8 @@
 use crate::context::{BlockContextReader, ContractContextReader, TxContextReader};
 use alloc::vec;
 use alloy_primitives::{Address, Bytes, U256};
-use fluentbase_codec::Codec;
 
-#[derive(Default, Codec, Clone, Debug)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct ContractContextV1 {
     pub address: Address,
     pub bytecode_address: Address,

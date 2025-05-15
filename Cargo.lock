@@ -2722,6 +2722,7 @@ dependencies = [
  "byteorder",
  "fluentbase-codec",
  "hashbrown 0.15.3",
+ "hex-literal 1.0.0",
  "revm-primitives",
  "rwasm",
  "serde",

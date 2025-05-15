@@ -1,7 +1,5 @@
-use crate::bytes::{Buf, BytesMut};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use auto_impl::auto_impl;
-use fluentbase_codec::{CodecError, CompactABI};
 
 mod v1;
 
@@ -45,6 +43,7 @@ pub trait SharedContextReader:
 {
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum SharedContextInput {
     V1(SharedContextInputV1),
 }
@@ -56,25 +55,19 @@ impl SharedContextInput {
         }
     }
 
-    pub fn decode(buf: &impl Buf) -> Result<Self, CodecError> {
-        // let version = buf.chunk()[0];
-        // Ok(match version {
-        //     0x01 => Self::V1(CompactABI::<SharedContextInputV1>::decode(buf, 1)?),
-        //     _ => unreachable!("unexpected version"),
-        // })
-        Ok(Self::V1(CompactABI::<SharedContextInputV1>::decode(
-            buf, 0,
-        )?))
+    pub fn decode(buf: &[u8]) -> Result<Self, bincode::error::DecodeError> {
+        let config = bincode::config::legacy();
+        let result = bincode::decode_from_slice(buf, config)?;
+        Ok(Self::V1(result.0))
     }
 
-    pub fn encode(&self) -> Result<Bytes, CodecError> {
-        let mut buf = BytesMut::new();
-        // buf.put_u8(self.version());
+    pub fn encode(&self) -> Result<Bytes, bincode::error::EncodeError> {
         match self {
             SharedContextInput::V1(value) => {
-                CompactABI::encode(value, &mut buf, 0)?;
+                let config = bincode::config::legacy();
+                let result: Bytes = bincode::encode_to_vec(value, config)?.into();
+                Ok(result)
             }
         }
-        Ok(buf.freeze().into())
     }
 }
