@@ -2,12 +2,12 @@ name: Test
 
 on:
   push:
-    branches: [ main, devel ]
+    branches: [ main, devel, next ]
     paths-ignore:
       - "**.md"
       - "docs/**"
   pull_request:
-    branches: [ main, devel ]
+    branches: [ main, devel, next ]
     paths-ignore:
       - "**.md"
       - "docs/**"
@@ -35,8 +35,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
-      - name: Run tests
-        run: cargo test --no-fail-fast
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run tests with nextest
+        run: cargo nextest run --no-fail-fast
+      - name: Run doctests (not supported by nextest)
+        run: cargo test --doc
 
   coverage:
     name: Coverage
@@ -59,7 +63,7 @@ jobs:
       - name: Generate code coverage
         run: |
           cargo install cargo-tarpaulin
-          cargo tarpaulin --verbose --timeout 120 --out xml
+          cargo tarpaulin --verbose --timeout 300 --out xml
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v5.4.2
         with:
@@ -108,6 +112,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "18"
+      - name: Install Go 1.23
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -117,4 +125,4 @@ jobs:
         run: make sync_tests
       - name: Run ethereum tests
         working-directory: revm/e2e
-        run: make run_general_state_tests
+        run: cargo test --release --package revm-rwasm-e2e --bin revm-rwasm-e2e
