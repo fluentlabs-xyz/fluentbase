@@ -24,7 +24,7 @@ use fluentbase_sdk::{
 };
 use solana_bincode::{deserialize, serialize};
 
-pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
+pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log!("loader_v4: deploy started");
     let mut mem_storage = MemStorage::new();
 
