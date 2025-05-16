@@ -115,7 +115,6 @@ impl From<Versions> for State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pubkey::Pubkey;
     use core::iter::repeat_with;
     use solana_fee_calculator::FeeCalculator;
     use solana_hash::Hash;

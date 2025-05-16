@@ -1,5 +1,4 @@
 use crate::{
-    pubkey::Pubkey,
     solana_program::{
         address_lookup_table,
         address_lookup_table::program::id,
@@ -11,6 +10,7 @@ use alloc::{vec, vec::Vec};
 use serde::{Deserialize, Serialize};
 use solana_clock::Slot;
 use solana_instruction::Instruction;
+use solana_pubkey::Pubkey;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 pub enum ProgramInstruction {

@@ -22,8 +22,6 @@ pub mod tests {
         message_processor::MessageProcessor,
         native_loader,
         native_loader::create_loadable_account_for_test,
-        pubkey,
-        pubkey::Pubkey,
         rent::Rent,
         solana_program::{
             bpf_loader_upgradeable,
@@ -43,6 +41,7 @@ pub mod tests {
     use serde::{Deserialize, Serialize};
     use solana_bincode::deserialize;
     use solana_instruction::{error::InstructionError, AccountMeta, Instruction};
+    use solana_pubkey::{Pubkey, PubkeyError};
     use solana_rbpf::{
         program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
         vm::Config,
@@ -333,11 +332,11 @@ pub mod tests {
         let mock_program_id = Pubkey::from([2u8; 32]);
         let accounts = vec![
             (
-                Pubkey::from(rand::random::<[u8; pubkey::PUBKEY_BYTES]>()),
+                Pubkey::from(rand::random::<[u8; solana_pubkey::PUBKEY_BYTES]>()),
                 AccountSharedData::new(100, 1, &mock_program_id),
             ),
             (
-                Pubkey::from(rand::random::<[u8; pubkey::PUBKEY_BYTES]>()),
+                Pubkey::from(rand::random::<[u8; solana_pubkey::PUBKEY_BYTES]>()),
                 AccountSharedData::new(0, 1, &mock_program_id),
             ),
             (

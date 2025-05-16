@@ -1001,7 +1001,6 @@ mod tests {
         );
     }
 
-    #[ignore]
     #[test]
     fn test_execute_program() {
         let sdk = new_test_sdk();

@@ -15,14 +15,13 @@
 //!
 //! [`loader_upgradeable_instruction`]: crate::loader_upgradeable_instruction
 use crate::{
-    pubkey::Pubkey,
     solana_program::{loader_upgradeable_instruction::UpgradeableLoaderInstruction, sysvar},
     system_instruction,
 };
 use alloc::{vec, vec::Vec};
 use serde::{Deserialize, Serialize};
 use solana_instruction::{error::InstructionError, AccountMeta, Instruction};
-use solana_pubkey::declare_id;
+use solana_pubkey::{declare_id, Pubkey};
 
 declare_id!("BPFLoaderUpgradeab1e11111111111111111111111");
 

@@ -50,11 +50,11 @@ pub fn lamports_per_signature_of(account: &AccountSharedData) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::{
-        pubkey::Pubkey,
         solana_program::nonce::state::{Data, DurableNonce},
         system_program,
     };
     use solana_fee_calculator::FeeCalculator;
+    use solana_pubkey::Pubkey;
 
     #[test]
     fn test_verify_bad_account_owner_fails() {

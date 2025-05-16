@@ -3,8 +3,6 @@ use byteorder::ByteOrder;
 use hex_literal::hex;
 use solana_instruction::error::InstructionError;
 
-pub const SVM_ADDRESS_PREFIX: [u8; 12] = hex!("838677656868828082697088"); // SVMADDRPREFX
-
 pub struct VecU8 {
     pub vec: Vec<u8>,
 }

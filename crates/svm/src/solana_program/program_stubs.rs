@@ -2,12 +2,13 @@
 
 #![cfg(not(target_os = "solana"))]
 
-use crate::{account_info::AccountInfo, program_error::UNSUPPORTED_SYSVAR, pubkey::Pubkey};
+use crate::{account_info::AccountInfo, program_error::UNSUPPORTED_SYSVAR};
 use alloc::{boxed::Box, format, sync::Arc, vec, vec::Vec};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use solana_instruction::Instruction;
 use solana_program_error::ProgramResult;
 use solana_program_memory::stubs;
+use solana_pubkey::Pubkey;
 use spin::RwLock;
 
 lazy_static::lazy_static! {

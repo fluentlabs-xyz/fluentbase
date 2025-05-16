@@ -17,13 +17,12 @@ use crate::{
     },
     loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
     mem_ops::{memcmp_non_contiguous, memset_non_contiguous},
-    types::SVM_ADDRESS_PREFIX,
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::{slice::from_raw_parts, str::from_utf8};
-use fluentbase_sdk::{debug_log, SharedAPI, U256};
+use fluentbase_sdk::{debug_log, SharedAPI, B256, U256};
 use solana_feature_set;
-use solana_pubkey::{bytes_are_curve_point, Pubkey, PubkeyError};
+use solana_pubkey::Pubkey;
 use solana_rbpf::{
     error::EbpfError,
     memory_region::{AccessType, MemoryMapping},
@@ -646,41 +645,6 @@ declare_builtin_function!(
 //     }
 // );
 
-pub fn create_program_address<SDK: SharedAPI>(
-    sdk: &SDK,
-    program_id: &Pubkey,
-    seeds: &Vec<&[u8]>,
-) -> Result<[u8; 32], Error> {
-    let deployer = program_id.to_bytes();
-    // TODO do we need this check?
-    if deployer[0..SVM_ADDRESS_PREFIX.len()] != SVM_ADDRESS_PREFIX {
-        return Err(SyscallError::ProgramNotSupported(program_id.clone()).into());
-    }
-    // let deployer: [u8; 20] = deployer[SVM_ADDRESS_PREFIX.len()..].try_into().unwrap();
-    // let deployer = Address::new(deployer);
-    let salt;
-    if seeds.len() <= 0 {
-        return Err(SyscallError::InvalidLength.into());
-    } else {
-        let mut seeds_bytes = Vec::new();
-        seeds.iter().for_each(|&v| {
-            seeds_bytes.extend_from_slice(&v);
-        });
-        salt = U256::from_be_bytes(sdk.keccak256(&seeds_bytes).0);
-    }
-    // TODO what to use as a code hash
-    // let init_code_hash = B256::default();
-    // TODO
-    // let evm_address = calc_create2_address::<SDK>(&deployer, &salt, &init_code_hash);
-    let mut new_address = [0u8; 32];
-    new_address[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
-    // new_address[SVM_ADDRESS_PREFIX.len()..].copy_from_slice(evm_address.as_slice());
-    if bytes_are_curve_point(new_address.as_slice()) {
-        return Err(SyscallError::BadSeeds(PubkeyError::InvalidSeeds).into());
-    }
-    Ok(new_address)
-}
-
 declare_builtin_function!(
     /// Create a program address
     SyscallCreateProgramAddress<SDK: SharedAPI>,
@@ -713,7 +677,7 @@ declare_builtin_function!(
         // let Ok(new_address) = Pubkey::create_program_address(&seeds, program_id) else {
         //     return Ok(1);
         // };
-        let new_address = create_program_address::<SDK>(&invoke_context.sdk, program_id, &seeds)?;
+        let new_address = Pubkey::create_program_address(&seeds, program_id)?;
         let address = translate_slice_mut::<u8>(
             memory_mapping,
             address_addr,
@@ -750,13 +714,13 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
         )?;
 
-        let mut bump_seed = [core::u8::MAX];
-        for _ in 0..core::u8::MAX {
+        let mut bump_seed = [u8::MAX];
+        for _ in 0..u8::MAX {
             {
                 let mut seeds_with_bump = seeds.to_vec();
                 seeds_with_bump.push(&bump_seed);
 
-                let new_address = create_program_address::<SDK>(&invoke_context.sdk, program_id, &seeds_with_bump);
+                let new_address = Pubkey::create_program_address(&seeds_with_bump, program_id);
                 if let Ok(new_address) =
                     // Pubkey::create_program_address(&seeds_with_bump, program_id)
                     new_address

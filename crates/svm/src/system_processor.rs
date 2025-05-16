@@ -4,6 +4,7 @@ use crate::{
     common::limited_deserialize_packet_size,
     context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
     declare_process_instruction,
+    pubkey::Pubkey,
     solana_program::{nonce, nonce::state::Versions},
     system_instruction::{SystemError, SystemInstruction, MAX_PERMITTED_DATA_LENGTH},
     system_program,
@@ -13,7 +14,6 @@ use alloc::boxed::Box;
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashSet;
 use solana_instruction::error::InstructionError;
-use solana_pubkey::Pubkey;
 use solana_rbpf::declare_builtin_function;
 
 // represents an address that may or may not have been generated
@@ -578,8 +578,7 @@ pub fn get_system_account_kind(account: &AccountSharedData) -> Option<SystemAcco
 
 #[cfg(test)]
 mod tests {
-    use crate::system_processor::Address;
-    use solana_pubkey::Pubkey;
+    use crate::{pubkey::Pubkey, system_processor::Address};
 
     impl From<Pubkey> for Address {
         fn from(address: Pubkey) -> Self {

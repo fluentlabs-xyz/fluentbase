@@ -9,7 +9,6 @@ use crate::{
     loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET},
     loaders,
     loaders::agave_version::execute,
-    pubkey::Pubkey,
     solana_program::{
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status, DEPLOYMENT_COOLDOWN_IN_SLOTS},
@@ -21,6 +20,7 @@ use core::sync::atomic::Ordering;
 use fluentbase_sdk::{debug_log, SharedAPI};
 use solana_instruction::error::InstructionError;
 use solana_program_entrypoint::SUCCESS;
+use solana_pubkey::Pubkey;
 use solana_rbpf::{
     aligned_memory::AlignedMemory,
     declare_builtin_function,

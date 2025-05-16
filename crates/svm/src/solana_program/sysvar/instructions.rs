@@ -31,7 +31,6 @@
 
 use crate::{
     account_info::AccountInfo,
-    pubkey::Pubkey,
     solana_program::{
         instruction::{AccountMeta, Instruction},
         program_error::ProgramError,
@@ -40,6 +39,7 @@ use crate::{
 use alloc::{boxed::Box, string::String, vec::Vec};
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+use solana_pubkey::Pubkey;
 use solana_sanitize::SanitizeError;
 use solana_serialize_utils::{read_pubkey, read_slice, read_u16, read_u8};
 use solana_sysvar_id::declare_sysvar_id;
@@ -297,12 +297,9 @@ pub fn get_instruction_relative(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        pubkey::Pubkey,
-        solana_program::{
-            instruction::AccountMeta,
-            message::{Message as LegacyMessage, SanitizedMessage},
-        },
+    use crate::solana_program::{
+        instruction::AccountMeta,
+        message::{Message as LegacyMessage, SanitizedMessage},
     };
     use hashbrown::HashSet;
 

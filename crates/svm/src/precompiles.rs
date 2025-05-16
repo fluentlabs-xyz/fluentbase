@@ -1,10 +1,11 @@
 //! Solana precompiled programs.
 
-use crate::{pubkey::Pubkey, solana_program::instruction::CompiledInstruction};
+use crate::solana_program::instruction::CompiledInstruction;
 use alloc::{vec, vec::Vec};
 use lazy_static::lazy_static;
 use solana_feature_set::FeatureSet;
 use solana_precompile_error::PrecompileError;
+use solana_pubkey::Pubkey;
 
 /// All precompiled programs must implement the `Verify` function
 pub type Verify = fn(&[u8], &[&[u8]], &FeatureSet) -> core::result::Result<(), PrecompileError>;

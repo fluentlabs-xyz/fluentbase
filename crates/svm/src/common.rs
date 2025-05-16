@@ -25,7 +25,6 @@ use crate::{
 use crate::{
     clock::Slot,
     hash::{Hash, Hasher},
-    pubkey::Pubkey,
     solana_program::loader_v4,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
@@ -41,6 +40,7 @@ use solana_feature_set::{
     FeatureSet,
 };
 use solana_instruction::error::InstructionError;
+use solana_pubkey::{Pubkey, SVM_ADDRESS_PREFIX};
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
@@ -66,7 +66,6 @@ use crate::{
     error::{Error, SvmError},
     loaded_programs::ProgramCacheEntry,
     solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
-    types::SVM_ADDRESS_PREFIX,
 };
 #[cfg(test)]
 use fluentbase_sdk::testing::TestingContext;

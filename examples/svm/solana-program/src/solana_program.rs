@@ -2,6 +2,8 @@ use solana_account_info::AccountInfo;
 use solana_program_entrypoint::{__msg, entrypoint_no_alloc, ProgramResult};
 use solana_pubkey::Pubkey;
 
+entrypoint_no_alloc!(process_instruction);
+
 pub fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -19,5 +21,3 @@ pub fn process_instruction(
 
     Ok(())
 }
-
-entrypoint_no_alloc!(process_instruction);

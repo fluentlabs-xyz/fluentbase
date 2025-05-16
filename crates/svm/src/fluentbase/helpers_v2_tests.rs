@@ -20,6 +20,7 @@ mod tests {
         system_program,
         test_helpers::load_program_account_from_elf_file,
     };
+    use byteorder::WriteBytesExt;
     use core::str::from_utf8;
     use fluentbase_sdk::{
         address,
@@ -30,11 +31,15 @@ mod tests {
         SharedAPI,
         SharedContextInputV1,
         StorageAPI,
+        B256,
+        U256,
     };
+    use fluentbase_types::calc_create2_address_no_sdk;
     use hashbrown::HashMap;
+    use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
     use solana_bincode::serialize;
     use solana_instruction::AccountMeta;
-    use solana_pubkey::Pubkey;
+    use solana_pubkey::{Pubkey, SVM_ADDRESS_PREFIX};
 
     fn main_single_message<SAPI: StorageAPI>(
         mut sdk: impl SharedAPI,
@@ -301,6 +306,310 @@ mod tests {
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
         assert_eq!(account_data.lamports(), 112);
+    }
+
+    #[test]
+    fn test_create_fill_deploy_exec_with_state() {
+        // setup
+
+        let system_program_id = system_program::id();
+        println!("system_program_id: {:?}", system_program_id.to_bytes());
+        let native_loader_id = native_loader::id();
+        let loader_id = loader_v4::id();
+        let sysvar_clock_id = sysvar::clock::id();
+        let sysvar_rent_id = sysvar::rent::id();
+
+        let pk_payer = Pubkey::new_unique();
+        let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
+
+        let mut pk_exec = Pubkey::from([8; 32]);
+        pk_exec.as_mut()[0..SVM_ADDRESS_PREFIX.len()]
+            .copy_from_slice(SVM_ADDRESS_PREFIX.as_slice());
+        // let pk_exec = Pubkey::new_unique();
+
+        let pk_tmp = Pubkey::new_unique();
+        let pk_tmp_account = AccountSharedData::new(100, 0, &pk_exec);
+
+        let seed1 = b"my_seed";
+        let seed2 = pk_payer.as_ref();
+        let seeds = &[seed1, seed2];
+        let (pk_new, bump) = Pubkey::find_program_address(seeds, &pk_exec);
+        println!("pk_payer: {:x?}", pk_payer.to_bytes());
+        println!("pk_exec: {:x?}", pk_exec.to_bytes());
+        println!("pk_new: {:x?} bump: {}", pk_new.to_bytes(), bump);
+
+        let pk_authority = Pubkey::from([9; 32]);
+        // let pk_authority_account = AccountSharedData::new(100, 0, &system_program_id);
+
+        let account_with_program = load_program_account_from_elf_file(
+            &loader_id,
+            // "../../examples/svm/solana-program/assets/solana_program.so",
+            "../../examples/svm/solana-program-state-usage/assets/solana_program.so",
+            // "./test_elfs/out/noop_aligned.so",
+        );
+
+        let program_len = account_with_program.data().len();
+        let buffer_len = LoaderV4State::program_data_offset().saturating_add(program_len);
+
+        let shared_context = SharedContextInputV1 {
+            block: Default::default(),
+            tx: Default::default(),
+            contract: ContractContextV1 {
+                address: Default::default(),
+                bytecode_address: Default::default(),
+                caller: Default::default(),
+                is_static: false,
+                value: Default::default(),
+                gas_limit: 0,
+            },
+        };
+        let mut sdk = TestingContext::default().with_shared_context_input(shared_context);
+        let mut sapi = MemStorage::new();
+
+        storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
+        storage_write_account_data(&mut sapi, &pk_tmp, &pk_tmp_account).unwrap();
+        storage_write_account_data(
+            &mut sapi,
+            &system_program_id,
+            &create_loadable_account_for_test("system_program_id", &native_loader_id),
+        )
+        .unwrap();
+        storage_write_account_data(
+            &mut sapi,
+            &loader_id,
+            &create_loadable_account_for_test("loader_id", &native_loader_id),
+        )
+        .unwrap();
+        storage_write_account_data(
+            &mut sapi,
+            &sysvar_clock_id,
+            &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
+        )
+        .unwrap();
+        storage_write_account_data(
+            &mut sapi,
+            &sysvar_rent_id,
+            &create_loadable_account_for_test("sysvar_rent_id", &system_program_id),
+        )
+        .unwrap();
+
+        // init buffer
+
+        let instructions = create_buffer(
+            &pk_payer,
+            &pk_exec,
+            0,
+            &pk_authority,
+            program_len as u32,
+            &pk_payer,
+        );
+        let message = Message::new(&instructions, Some(&pk_payer));
+        let mut sdk = sdk.with_input(serialize(&message).unwrap());
+        main_single_message(sdk.clone(), Some(&mut sapi));
+        let output = sdk.take_output();
+        assert_eq!(from_utf8(&output).unwrap(), "");
+
+        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
+        assert_eq!(account_data.lamports(), 100);
+        assert_eq!(account_data.data().len(), 0);
+        assert_eq!(account_data.executable(), false);
+
+        // let account_data: AccountSharedData =
+        //     storage_read_account_data(&sapi, &pk_authority).unwrap();
+        // assert_eq!(account_data.lamports(), 100);
+        // assert_eq!(account_data.data().len(), 0);
+        // assert_eq!(account_data.executable(), false);
+
+        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
+        assert_eq!(account_data.lamports(), 0);
+        assert_eq!(account_data.data().len(), buffer_len);
+        assert_eq!(account_data.executable(), false);
+
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &system_program_id).unwrap();
+        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.data().len(), 17);
+        assert_eq!(account_data.executable(), true);
+
+        let account_data: AccountSharedData = storage_read_account_data(&sapi, &loader_id).unwrap();
+        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.data().len(), "loader_id".len());
+        assert_eq!(account_data.executable(), true);
+
+        // fill buffer
+
+        let create_msg = |offset: u32, bytes: Vec<u8>| {
+            let instruction = loader_v4::write(&pk_exec, &pk_authority, offset, bytes);
+            let instructions = vec![instruction];
+            Message::new(&instructions, Some(&pk_payer))
+        };
+        let mut write_messages = vec![];
+        let chunk_size = calculate_max_chunk_size(&create_msg);
+        for (chunk, i) in account_with_program.data().chunks(chunk_size).zip(0..) {
+            let offset = i * chunk_size;
+            let msg = create_msg(offset as u32, chunk.to_vec());
+            write_messages.push(msg);
+        }
+        for (_, message) in write_messages.iter().enumerate() {
+            sdk = sdk.with_input(serialize(&message).unwrap());
+            main_single_message(sdk.clone(), Some(&mut sapi));
+        }
+
+        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
+        assert_eq!(account_data.lamports(), 100);
+        assert_eq!(account_data.data().len(), 0);
+        assert_eq!(account_data.executable(), false);
+
+        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
+        assert_eq!(account_data.lamports(), 0);
+        assert_eq!(account_data.data().len(), buffer_len);
+        assert_eq!(account_data.executable(), false);
+
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &system_program_id).unwrap();
+        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.data().len(), 17);
+        assert_eq!(account_data.executable(), true);
+
+        let account_data: AccountSharedData = storage_read_account_data(&sapi, &loader_id).unwrap();
+        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.data().len(), "loader_id".len());
+        assert_eq!(account_data.executable(), true);
+
+        // deploy
+
+        let instruction = loader_v4::deploy(&pk_exec, &pk_authority);
+        let message = Message::new(&[instruction], Some(&pk_payer));
+        sdk = sdk.with_input(serialize(&message).unwrap());
+        main_single_message(sdk.clone(), Some(&mut sapi));
+
+        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
+        assert_eq!(account_data.lamports(), 100);
+        assert_eq!(account_data.data().len(), 0);
+        assert_eq!(account_data.executable(), false);
+
+        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
+        assert_eq!(account_data.lamports(), 0);
+        assert_eq!(account_data.data().len(), buffer_len);
+        assert_eq!(account_data.executable(), false);
+
+        // let account_data: AccountSharedData =
+        //     storage_read_account_data(&sapi, &pk_authority).unwrap();
+        // assert_eq!(account_data.lamports(), 100);
+        // assert_eq!(account_data.data().len(), 0);
+        // assert_eq!(account_data.executable(), false);
+
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &system_program_id).unwrap();
+        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.data().len(), 17);
+        assert_eq!(account_data.executable(), true);
+
+        let account_data: AccountSharedData = storage_read_account_data(&sapi, &loader_id).unwrap();
+        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.data().len(), "loader_id".len());
+        assert_eq!(account_data.executable(), true);
+
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &sysvar_clock_id).unwrap();
+        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.data().len(), "sysvar_clock_id".len());
+        assert_eq!(account_data.executable(), true);
+
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &sysvar_rent_id).unwrap();
+        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.data().len(), "sysvar_rent_id".len());
+        assert_eq!(account_data.executable(), true);
+
+        // // exec contract command '1': simple modifications to 2nd account
+        //
+        // let instructions = vec![Instruction::new_with_bincode(
+        //     pk_exec.clone(),
+        //     &[1],
+        //     vec![
+        //         AccountMeta::new(pk_payer, true),
+        //         AccountMeta::new(pk_tmp, false),
+        //         // AccountMeta::new(system_program_id, false),
+        //     ],
+        // )];
+        // let message = Message::new(&instructions, None);
+        // sdk = sdk
+        //     .with_shared_context_input(SharedContextInputV1 {
+        //         block: BlockContextV1 {
+        //             number: 1,
+        //             ..Default::default()
+        //         },
+        //         ..Default::default()
+        //     })
+        //     .with_input(serialize(&message).unwrap());
+        // println!("exec started");
+        // let result_accounts = main_single_message(sdk.clone(), Some(&mut sapi));
+        // println!("result_accounts.len: {}", result_accounts.len());
+        //
+        // let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_tmp).unwrap();
+        // assert_eq!(account_data.lamports(), 100);
+        // assert_eq!(account_data.data().len(), MAX_PERMITTED_DATA_INCREASE);
+        // assert_eq!(account_data.data()[0], 123);
+        // assert_eq!(account_data.executable(), false);
+        //
+        // // let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
+        // // assert_eq!(account_data.lamports(), 0);
+        // // assert_eq!(account_data.data().len(), buffer_len);
+        // // assert_eq!(account_data.executable(), false);
+        // //
+        // // let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
+        // // assert_eq!(account_data.lamports(), 100);
+        // // assert_eq!(account_data.data().len(), 0);
+        // // assert_eq!(account_data.executable(), false);
+
+        // exec contract command '2': create new account
+
+        let mut instruction_data = Vec::<u8>::new();
+        let lamports: u64 = 12;
+        let space: u32 = 101;
+        let seed1 = b"my_seed";
+        let seed_len: u8 = seed1.len() as u8;
+        let byte_n_to_set: u32 = 14;
+        let byte_n_val: u8 = 33;
+        instruction_data.push(2);
+        instruction_data.extend_from_slice(lamports.to_le_bytes().as_slice());
+        instruction_data.extend_from_slice(space.to_le_bytes().as_slice());
+        instruction_data.push(seed_len);
+        instruction_data.extend_from_slice(seed1);
+        instruction_data.extend_from_slice(byte_n_to_set.to_le_bytes().as_slice());
+        instruction_data.push(byte_n_val);
+        println!("instruction_data: {:x?}", instruction_data);
+
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_exec.clone(),
+            &instruction_data,
+            vec![
+                AccountMeta::new(pk_payer, true),
+                AccountMeta::new(pk_new, false),
+                AccountMeta::new(system_program_id, false),
+            ],
+        )];
+        let message = Message::new(&instructions, None);
+        sdk = sdk
+            .with_shared_context_input(SharedContextInputV1 {
+                block: BlockContextV1 {
+                    number: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .with_input(serialize(&message).unwrap());
+        println!("exec started");
+        let result_accounts = main_single_message(sdk.clone(), Some(&mut sapi));
+        println!("result_accounts.len: {}", result_accounts.len());
+
+        let account_data: AccountSharedData =
+            storage_read_account_data(&sapi, &pk_new).expect("account must exist in storage");
+        assert_eq!(account_data.lamports(), lamports);
+        assert_eq!(account_data.data().len(), space as usize);
+        assert_eq!(account_data.data()[byte_n_to_set as usize], byte_n_val);
+        assert_eq!(account_data.executable(), false);
     }
 
     #[test]

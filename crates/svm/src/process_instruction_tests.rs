@@ -7,7 +7,6 @@ mod tests {
         declare_process_instruction,
         // loaded_programs::LoadedProgram,
         native_loader,
-        pubkey::Pubkey,
         solana_program::instruction::{AccountMeta, Instruction},
         system_instruction::{SystemError, SystemInstruction},
         system_processor::Entrypoint,
@@ -20,6 +19,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use solana_bincode::{deserialize, serialize};
     use solana_instruction::error::InstructionError;
+    use solana_pubkey::Pubkey;
     use solana_stable_layout::stable_instruction::StableInstruction;
 
     #[derive(Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]

@@ -38,6 +38,8 @@ mod sysvar_ids {
     use super::*;
     use alloc::{vec, vec::Vec};
     use lazy_static::lazy_static;
+    use solana_pubkey::Pubkey;
+
     lazy_static! {
         // This will be deprecated and so this list shouldn't be modified
         pub static ref ALL_IDS: Vec<Pubkey> = vec![
@@ -171,19 +173,16 @@ fn get_sysvar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        pubkey::Pubkey,
-        solana_program::{
-            program_error::ProgramError,
-            program_stubs::{set_syscall_stubs, SyscallStubs},
-        },
+    use crate::solana_program::{
+        program_error::ProgramError,
+        program_stubs::{set_syscall_stubs, SyscallStubs},
     };
     use alloc::rc::Rc;
     use core::cell::RefCell;
     use serde::{Deserialize, Serialize};
     use solana_clock::Epoch;
     use solana_program_entrypoint::SUCCESS;
-    use solana_pubkey::declare_id;
+    use solana_pubkey::{declare_id, Pubkey};
 
     #[repr(C)]
     #[derive(
@@ -194,11 +193,11 @@ mod tests {
     }
     declare_id!("TestSysvar111111111111111111111111111111111");
     impl crate::solana_program::sysvar::SysvarId for TestSysvar {
-        fn id() -> crate::pubkey::Pubkey {
+        fn id() -> Pubkey {
             id()
         }
 
-        fn check_id(pubkey: &crate::pubkey::Pubkey) -> bool {
+        fn check_id(pubkey: &Pubkey) -> bool {
             check_id(pubkey)
         }
     }

@@ -10,6 +10,7 @@ use core::{
     str::from_utf8,
 };
 use solana_bincode::{deserialize, serialize, serialized_size};
+use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN};
 use solana_rbpf::{
     ebpf,
     elf::Executable,
@@ -103,7 +104,6 @@ use crate::{
     },
     context::InvokeContext,
     error::{Error, SvmError},
-    pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN},
     solana_program::{feature_set::feature_set_default, sysvar::Sysvar},
     storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };

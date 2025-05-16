@@ -26,7 +26,6 @@ use crate::{
     // bpf_loader_upgradeable::UpgradeableLoaderState,
     clock::Slot,
     hash::Hash,
-    pubkey::Pubkey,
     rent::Rent,
 };
 use crate::{
@@ -51,6 +50,7 @@ use core::{
 use fluentbase_sdk::{HashSet, SharedAPI};
 use solana_feature_set::{move_precompile_verification_to_svm, FeatureSet};
 use solana_instruction::error::InstructionError;
+use solana_pubkey::Pubkey;
 use solana_rbpf::{
     ebpf::MM_HEAP_START,
     error::{EbpfError, ProgramResult},
@@ -422,6 +422,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
 
             // To be signed in the callee,
             // it must be either signed in the caller or by the program
+            let borrowed_account_key = borrowed_account.get_key();
             if instruction_account.is_signer
                 && !(borrowed_account.is_signer() || signers.contains(borrowed_account.get_key()))
             {

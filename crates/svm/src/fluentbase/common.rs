@@ -3,7 +3,6 @@ use crate::{
     error::SvmError,
     helpers::{storage_read_account_data, storage_write_account_data},
     native_loader,
-    pubkey::Pubkey,
     solana_program::{loader_v4, message::legacy, sysvar},
     system_program,
 };
@@ -13,6 +12,7 @@ use hashbrown::{HashMap, HashSet};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use solana_pubkey::Pubkey;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 pub struct BatchMessage {

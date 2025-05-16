@@ -558,8 +558,8 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
                         )
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
-                let signer = Pubkey::create_program_address(&seeds, program_id)
-                    .map_err(SyscallError::BadSeeds)?;
+                let signer = Pubkey::create_program_address(&seeds, program_id);
+                let signer = signer.map_err(SyscallError::BadSeeds)?;
                 signers.push(signer);
             }
             Ok(signers)

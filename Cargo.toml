@@ -65,6 +65,7 @@ solana-stable-layout = { git = "https://github.com/fluentlabs-xyz/agave", branch
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-precompile-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-native-token = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 #solana-pubkey = { path = "../agave/sdk/pubkey", default-features = false }
 #solana-instruction = { path = "../agave/sdk/instruction", default-features = false }
 #solana-account-info = { path = "../agave/sdk/account-info", default-features = false }
@@ -92,6 +93,7 @@ solana-native-token = { git = "https://github.com/fluentlabs-xyz/agave", branch 
 #solana-bincode = { path = "../agave/sdk/bincode", default-features = false }
 #solana-precompile-error = { path = "../agave/sdk/precompile-error", default-features = false }
 #solana-native-token = { path = "../agave/sdk/native-token", default-features = false }
+#solana-atomic-u64 = { path = "../agave/sdk/atomic-u64", default-features = false }
 
 #solana-poseidon = { path = "../agave/poseidon", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
@@ -111,6 +113,8 @@ revm = { path = "revm/crates/revm", default-features = false, features = [
 ] }
 
 # misc
+five8_const = { version = "0.1.4", default-features = false }
+bs58 = { version = "0.5.1", default-features = false }
 scopeguard = { version = "1.2.0", default-features = false }
 bytemuck = { version = "1.19.0", default-features = false }
 bytemuck_derive = { version = ">=1.8.0, <1.9.0", default-features = false }
