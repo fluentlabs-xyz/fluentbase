@@ -25,15 +25,18 @@ use solana_bincode::{deserialize, serialize};
 
 pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log!("loader_v4: deploy started");
-    // debug_log!("deploy: block_number: {:?}", sdk.context().block_number());
     let mut mem_storage = MemStorage::new();
 
     let elf_program_bytes: Bytes = sdk.input().into();
     let program_len = elf_program_bytes.len();
     let loader_id = loader_v4::id();
 
-    let contract_caller = sdk.context().contract_caller();
-    let contract_address = sdk.context().contract_address();
+    let ctx = sdk.context();
+    let contract_caller = ctx.contract_caller();
+    let contract_address = ctx.contract_address();
+    ctx.contract_value();
+
+    drop(ctx);
 
     // TODO generate inter-dependant pubkey
     let pk_payer = pubkey_from_address(contract_caller.clone()); // must exist // caller
@@ -43,10 +46,6 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     let contract_caller_balance = sdk.balance(&contract_caller);
     let payer_balance_before = lamports_from_evm_balance(contract_caller_balance.data);
     let payer_account_data = AccountSharedData::new(payer_balance_before, 0, &system_program::id());
-    // debug_log!(
-    //     "before deploy: payer_account_data {:x?}",
-    //     payer_account_data
-    // );
 
     storage_write_account_data(
         &mut mem_storage,
