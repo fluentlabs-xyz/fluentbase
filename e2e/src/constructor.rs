@@ -1,4 +1,4 @@
-use crate::utils::EvmTestingContext;
+use fluentbase_sdk_testing::EvmTestingContext;
 use alloc::vec::Vec;
 use fluentbase_sdk::{constructor::encode_constructor_params, Address, Bytes};
 use hex_literal::hex;

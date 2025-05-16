@@ -69,7 +69,7 @@ pub fn write_bytes_solidity<B: ByteOrder, const ALIGN: usize>(
     let data_offset = buf.len();
 
     // Write length of the data (number of elements)
-    write_u32_aligned::<B, ALIGN>(buf, data_offset, elements as u32);
+    write_u32_aligned::<B, ALIGN>(buf, data_offset, elements);
 
     // Append the actual data
     buf.extend_from_slice(data);

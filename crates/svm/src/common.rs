@@ -68,10 +68,10 @@ use crate::{
     solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
 };
 #[cfg(test)]
-use fluentbase_sdk::testing::TestingContext;
+use fluentbase_sdk_testing::HostTestingContext;
 
 #[cfg(test)]
-pub type TestSdkType = TestingContext;
+pub type TestSdkType = HostTestingContext;
 
 pub trait HasherImpl {
     const NAME: &'static str;

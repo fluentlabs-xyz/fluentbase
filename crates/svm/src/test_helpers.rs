@@ -19,7 +19,8 @@ use crate::{
 use crate::{loaded_programs::ProgramCacheEntry, pubkey::Pubkey};
 use alloc::sync::Arc;
 use core::cell::RefCell;
-use fluentbase_sdk::{testing::TestingContext, Address, ContractContextV1, SharedAPI, U256};
+use fluentbase_sdk::{Address, ContractContextV1, SharedAPI, U256};
+use fluentbase_sdk_testing::HostTestingContext;
 use solana_epoch_schedule::EpochSchedule;
 use solana_instruction::error::InstructionError;
 use solana_rbpf::{
@@ -194,8 +195,8 @@ pub(crate) fn contract_context() -> ContractContextV1 {
         gas_limit: 0,
     }
 }
-pub(crate) fn journal_state() -> TestingContext {
-    let mut tc = TestingContext::default();
+pub(crate) fn journal_state() -> HostTestingContext {
+    let mut tc = HostTestingContext::default();
     let cc = contract_context();
     tc.with_contract_context(cc)
 }

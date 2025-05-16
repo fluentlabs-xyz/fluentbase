@@ -1,0 +1,286 @@
+---
+source: crates/sdk-derive/derive-core/src/client.rs
+expression: formatted.to_string()
+---
+#[derive(Debug)]
+pub struct TestContractClient<SDK> {
+    pub sdk: SDK,
+}
+pub type FirstMethodCallArgs = (u32,);
+#[derive(Debug, Clone, PartialEq)]
+pub struct FirstMethodCall(pub FirstMethodCallArgs);
+pub type FirstMethodReturnArgs = (u32,);
+#[derive(Debug, Clone, PartialEq)]
+pub struct FirstMethodReturn(pub FirstMethodReturnArgs);
+const _: () = {
+    impl FirstMethodCall {
+        pub const SELECTOR: [u8; 4] = [90u8, 193u8, 6u8, 45u8];
+        pub const SIGNATURE: &'static str = "firstMethod(uint32)";
+        /// Creates a new call instance from arguments
+        pub fn new(args: FirstMethodCallArgs) -> Self {
+            Self(args)
+        }
+        /// Encodes this call to bytes including selector
+        pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            let args = self.0.clone();
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(args.0,), &mut buf, 0)
+                .expect("Failed to encode values");
+            let encoded_args = buf.freeze();
+            let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
+                FirstMethodCallArgs,
+            >::is_dynamic() {
+                encoded_args[32..].to_vec()
+            } else {
+                encoded_args.to_vec()
+            };
+            Self::SELECTOR.iter().copied().chain(clean_args).collect()
+        }
+        /// Decodes call arguments from bytes
+        pub fn decode(
+            buf: &impl fluentbase_sdk::codec::bytes::Buf,
+        ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
+            use fluentbase_sdk::codec::bytes::BufMut;
+            let mut combined_buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            combined_buf
+                .put_slice(
+                    &if fluentbase_sdk::codec::encoder::SolidityABI::<
+                        FirstMethodCallArgs,
+                    >::is_dynamic() {
+                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                    } else {
+                        ::alloc::vec::Vec::new()
+                    },
+                );
+            combined_buf.put_slice(buf.chunk());
+            let args = fluentbase_sdk::codec::encoder::SolidityABI::<
+                FirstMethodCallArgs,
+            >::decode(&combined_buf.freeze(), 0)?;
+            Ok(Self(args))
+        }
+    }
+    impl ::core::ops::Deref for FirstMethodCall {
+        type Target = FirstMethodCallArgs;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl FirstMethodReturn {
+        /// Creates a new return instance from values
+        pub fn new(args: FirstMethodReturnArgs) -> Self {
+            Self(args)
+        }
+        /// Encodes the return values to bytes
+        pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            let args = self.0.clone();
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(args.0,), &mut buf, 0)
+                .expect("Failed to encode values");
+            let encoded_args = buf.freeze();
+            let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
+                FirstMethodReturnArgs,
+            >::is_dynamic() {
+                encoded_args[32..].to_vec()
+            } else {
+                encoded_args.to_vec()
+            };
+            clean_args.into()
+        }
+        /// Decodes return values from bytes
+        pub fn decode(
+            buf: &impl fluentbase_sdk::codec::bytes::Buf,
+        ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
+            use fluentbase_sdk::codec::bytes::BufMut;
+            let mut combined_buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            combined_buf
+                .put_slice(
+                    &if fluentbase_sdk::codec::encoder::SolidityABI::<
+                        FirstMethodReturnArgs,
+                    >::is_dynamic() {
+                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                    } else {
+                        ::alloc::vec::Vec::new()
+                    },
+                );
+            combined_buf.put_slice(buf.chunk());
+            let args = fluentbase_sdk::codec::encoder::SolidityABI::<
+                FirstMethodReturnArgs,
+            >::decode(&combined_buf.freeze(), 0)?;
+            Ok(Self(args))
+        }
+    }
+    impl ::core::ops::Deref for FirstMethodReturn {
+        type Target = FirstMethodReturnArgs;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+};
+pub type SecondMethodCallArgs = (String, bool);
+#[derive(Debug, Clone, PartialEq)]
+pub struct SecondMethodCall(pub SecondMethodCallArgs);
+pub type SecondMethodReturnArgs = (String, bool);
+#[derive(Debug, Clone, PartialEq)]
+pub struct SecondMethodReturn(pub SecondMethodReturnArgs);
+const _: () = {
+    impl SecondMethodCall {
+        pub const SELECTOR: [u8; 4] = [92u8, 23u8, 35u8, 57u8];
+        pub const SIGNATURE: &'static str = "secondMethod(string,bool)";
+        /// Creates a new call instance from arguments
+        pub fn new(args: SecondMethodCallArgs) -> Self {
+            Self(args)
+        }
+        /// Encodes this call to bytes including selector
+        pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            let args = self.0.clone();
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(
+                    &(args.0, args.1),
+                    &mut buf,
+                    0,
+                )
+                .expect("Failed to encode values");
+            let encoded_args = buf.freeze();
+            let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
+                SecondMethodCallArgs,
+            >::is_dynamic() {
+                encoded_args[32..].to_vec()
+            } else {
+                encoded_args.to_vec()
+            };
+            Self::SELECTOR.iter().copied().chain(clean_args).collect()
+        }
+        /// Decodes call arguments from bytes
+        pub fn decode(
+            buf: &impl fluentbase_sdk::codec::bytes::Buf,
+        ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
+            use fluentbase_sdk::codec::bytes::BufMut;
+            let mut combined_buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            combined_buf
+                .put_slice(
+                    &if fluentbase_sdk::codec::encoder::SolidityABI::<
+                        SecondMethodCallArgs,
+                    >::is_dynamic() {
+                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                    } else {
+                        ::alloc::vec::Vec::new()
+                    },
+                );
+            combined_buf.put_slice(buf.chunk());
+            let args = fluentbase_sdk::codec::encoder::SolidityABI::<
+                SecondMethodCallArgs,
+            >::decode(&combined_buf.freeze(), 0)?;
+            Ok(Self(args))
+        }
+    }
+    impl ::core::ops::Deref for SecondMethodCall {
+        type Target = SecondMethodCallArgs;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl SecondMethodReturn {
+        /// Creates a new return instance from values
+        pub fn new(args: SecondMethodReturnArgs) -> Self {
+            Self(args)
+        }
+        /// Encodes the return values to bytes
+        pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            let args = self.0.clone();
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&args, &mut buf, 0)
+                .expect("Failed to encode values");
+            let encoded_args = buf.freeze();
+            let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
+                SecondMethodReturnArgs,
+            >::is_dynamic() {
+                encoded_args[32..].to_vec()
+            } else {
+                encoded_args.to_vec()
+            };
+            clean_args.into()
+        }
+        /// Decodes return values from bytes
+        pub fn decode(
+            buf: &impl fluentbase_sdk::codec::bytes::Buf,
+        ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
+            use fluentbase_sdk::codec::bytes::BufMut;
+            let mut combined_buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            combined_buf
+                .put_slice(
+                    &if fluentbase_sdk::codec::encoder::SolidityABI::<
+                        SecondMethodReturnArgs,
+                    >::is_dynamic() {
+                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                    } else {
+                        ::alloc::vec::Vec::new()
+                    },
+                );
+            combined_buf.put_slice(buf.chunk());
+            let args = fluentbase_sdk::codec::encoder::SolidityABI::<
+                SecondMethodReturnArgs,
+            >::decode(&combined_buf.freeze(), 0)?;
+            Ok(Self(args))
+        }
+    }
+    impl ::core::ops::Deref for SecondMethodReturn {
+        type Target = SecondMethodReturnArgs;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+};
+impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
+    pub fn new(sdk: SDK) -> Self {
+        Self { sdk }
+    }
+    pub fn first_method(
+        &mut self,
+        contract_address: fluentbase_sdk::Address,
+        value: fluentbase_sdk::U256,
+        gas_limit: u64,
+        value: u32,
+    ) -> u32 {
+        use fluentbase_sdk::TxContextReader;
+        let input = fluentbase_sdk::Bytes::from(FirstMethodCall::new((value,)).encode());
+        {
+            let context = self.sdk.context();
+            if context.tx_value() < value {
+                ::core::panic!("Insufficient funds for transaction");
+            }
+            if context.tx_gas_limit() < gas_limit {
+                ::core::panic!("Insufficient gas limit for transaction");
+            }
+        }
+        let result = self.sdk.call(contract_address, value, &input, Some(gas_limit));
+        if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
+            ::core::panic!("Contract call failed");
+        }
+        FirstMethodReturn::decode(&result.data).expect("failed to decode result").0.0
+    }
+    pub fn second_method(
+        &mut self,
+        contract_address: fluentbase_sdk::Address,
+        value: fluentbase_sdk::U256,
+        gas_limit: u64,
+        a: String,
+        b: bool,
+    ) -> (String, bool) {
+        use fluentbase_sdk::TxContextReader;
+        let input = fluentbase_sdk::Bytes::from(SecondMethodCall::new((a, b)).encode());
+        {
+            let context = self.sdk.context();
+            if context.tx_value() < value {
+                ::core::panic!("Insufficient funds for transaction");
+            }
+            if context.tx_gas_limit() < gas_limit {
+                ::core::panic!("Insufficient gas limit for transaction");
+            }
+        }
+        let result = self.sdk.call(contract_address, value, &input, Some(gas_limit));
+        if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
+            ::core::panic!("Contract call failed");
+        }
+        SecondMethodReturn::decode(&result.data).expect("failed to decode result").0
+    }
+}

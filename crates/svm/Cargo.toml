@@ -79,6 +79,7 @@ memoffset = { workspace = true, default-features = false, features = [] }
 serial_test = { workspace = true }
 test-case = { workspace = true }
 bincode_v1_3_3 = { workspace = true }
+fluentbase-sdk-testing = { workspace = true }
 
 [features]
 default = [

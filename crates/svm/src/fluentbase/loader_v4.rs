@@ -130,7 +130,7 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     let _ = write_protected_preimage(&mut sdk, preimage);
 }
 
-pub fn main<SDK: SharedAPI>(mut sdk: SDK) {
+pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input = sdk.input();
     let preimage = read_protected_preimage(&sdk);
     let contract_address = sdk.context().contract_address();

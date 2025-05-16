@@ -21,7 +21,6 @@ mod tests {
     use core::str::from_utf8;
     use fluentbase_sdk::{
         address,
-        testing::TestingContext,
         Address,
         BlockContextV1,
         Bytes,
@@ -30,6 +29,7 @@ mod tests {
         SharedContextInputV1,
         StorageAPI,
     };
+    use fluentbase_sdk_testing::HostTestingContext;
     use solana_bincode::serialize;
     use solana_hash::Hash;
     use solana_instruction::{AccountMeta, Instruction};
@@ -107,7 +107,7 @@ mod tests {
                 gas_limit: 0,
             },
         };
-        let mut sdk = TestingContext::default().with_shared_context_input(shared_context);
+        let mut sdk = HostTestingContext::default().with_shared_context_input(shared_context);
         let mut sapi = MemStorage::new();
 
         storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
@@ -315,7 +315,7 @@ mod tests {
     // #[ignore] //
     #[test]
     fn test_create_fill_deploy_exec_messages_batch() {
-        let mut sdk = TestingContext::default();
+        let mut sdk = HostTestingContext::default();
         let mut sapi = MemStorage::new();
 
         let system_program_id = system_program::id();

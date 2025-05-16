@@ -7,13 +7,12 @@ edition = "2021"
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-evm = { workspace = true, default-features = false }
 
-[lib]
-crate-type = ["cdylib"]
-path = "lib.rs"
+[dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
+
+[build-dependencies]
+fluentbase-build = { workspace = true }
 
 [features]
 default = ["std"]
-std = [
-    "fluentbase-sdk/std",
-    "fluentbase-evm/std",
-]
+std = ["fluentbase-sdk/std", "fluentbase-evm/std"]

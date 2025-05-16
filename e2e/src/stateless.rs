@@ -1,5 +1,4 @@
 use crate::{
-    utils::run_with_default_context,
     EXAMPLE_GREETING,
     EXAMPLE_PANIC,
     EXAMPLE_ROUTER_SOLIDITY,
@@ -7,6 +6,7 @@ use crate::{
     EXAMPLE_TINY_KECCAK256,
 };
 use core::str::from_utf8;
+use fluentbase_sdk_testing::run_with_default_context;
 use hex_literal::hex;
 
 #[test]

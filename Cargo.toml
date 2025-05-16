@@ -10,7 +10,9 @@ members = [
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
-    "examples/svm"
+    "examples/svm",
+    # temporarly exclude bls12384 before prague
+    "contracts/bls12381"
 ]
 resolver = "2"
 
@@ -28,14 +30,14 @@ categories = ["wasm", "no-std", "virtualization"]
 [workspace.dependencies]
 # fluentbase
 fluentbase-build = { path = "./crates/build", default-features = false }
-fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"] }
 fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
+fluentbase-contracts = { path = "./contracts", default-features = false }
 fluentbase-evm = { path = "./crates/evm", default-features = false }
+fluentbase-genesis = { path = "./crates/genesis", default-features = false }
+fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
-fluentbase-runtime = { path = "./crates/runtime", default-features = false }
-fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
 
 solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
@@ -99,8 +101,11 @@ solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = 
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
+fluentbase-sdk-testing = { path = "./crates/sdk-testing" }
+fluentbase-types = { path = "./crates/types", default-features = false }
+
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.1.0-dev", default-features = false }
 #rwasm = { path = "../rwasm", default-features = false }
 
 # revm

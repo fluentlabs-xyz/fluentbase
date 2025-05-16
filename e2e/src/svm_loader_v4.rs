@@ -1,5 +1,4 @@
 mod tests {
-    use crate::utils::EvmTestingContext;
     use fluentbase_sdk::{
         address,
         Address,
@@ -9,6 +8,7 @@ mod tests {
         PRECOMPILE_SVM_RUNTIME,
         U256,
     };
+    use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         common::pubkey_from_address,
