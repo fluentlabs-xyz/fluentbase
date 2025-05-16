@@ -65,6 +65,15 @@ impl EvmTestingContext {
         }
     }
 
+    pub fn commit_storage(&mut self) {
+        let storage = self.sdk.dump_storage();
+        storage.iter().for_each(|((address, slot), value)| {
+            self.db
+                .insert_account_storage(*address, *slot, *value)
+                .unwrap();
+        })
+    }
+
     pub fn add_wasm_contract<I: Into<RwasmModule>>(
         &mut self,
         address: Address,

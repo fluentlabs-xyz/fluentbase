@@ -1,4 +1,5 @@
 mod tests {
+    use core::str::from_utf8;
     use fluentbase_sdk::{
         address,
         Address,
@@ -105,6 +106,11 @@ mod tests {
         ctx.sdk = ctx.sdk.with_block_number(1);
         assert_eq!(ctx.sdk.context().block_number(), 1);
         let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
+        let output = result.output().unwrap();
+        if output.len() > 0 {
+            let out_text = from_utf8(output).unwrap();
+            println!("output.len {} output '{}'", output.len(), out_text);
+        }
         match &result {
             ExecutionResult::Success { .. } => {}
             ExecutionResult::Revert { .. } => {}

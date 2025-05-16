@@ -13,6 +13,7 @@ use crate::{
     system_program,
 };
 use alloc::{vec, vec::Vec};
+use bincode::error::DecodeError;
 use fluentbase_sdk::{
     debug_log,
     BlockContextReader,
@@ -139,8 +140,18 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let loader_id = loader_v4::id();
 
     let pk_exec = pubkey_from_address(contract_address);
-    let mut exec_account_data: AccountSharedData =
-        deserialize(preimage.as_ref()).expect("preimage doesnt contain account data");
+    let mut exec_account_data: Result<AccountSharedData, DecodeError> =
+        deserialize(preimage.as_ref());
+    let mut exec_account_data = match exec_account_data {
+        Ok(v) => v,
+        Err(e) => {
+            panic!(
+                "preimage doesnt contain account data ({}): {}",
+                preimage.len(),
+                e
+            );
+        }
+    };
     exec_account_data.set_lamports(lamports_from_evm_balance(
         sdk.balance(&contract_address).data,
     ));

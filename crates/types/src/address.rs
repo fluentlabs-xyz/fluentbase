@@ -1,4 +1,4 @@
-use crate::{native_api::NativeAPI, Address, SharedAPI, B256, U256};
+use crate::{native_api::NativeAPI, Address, B256, U256};
 use tiny_keccak::Hasher;
 
 #[inline(always)]
