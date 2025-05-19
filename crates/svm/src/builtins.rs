@@ -18,9 +18,9 @@ use crate::{
     loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
     mem_ops::{memcmp_non_contiguous, memset_non_contiguous},
 };
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 use core::{slice::from_raw_parts, str::from_utf8};
-use fluentbase_sdk::{debug_log, SharedAPI, B256, U256};
+use fluentbase_sdk::{debug_log, SharedAPI};
 use solana_feature_set;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
@@ -256,6 +256,8 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Box<dyn core::error::Error>> {
+        #[cfg(target_arch = "wasm32")]
+        use fluentbase_sdk::debug_log;
         let host_addr: Result<u64, EbpfError> =
             memory_mapping.map(AccessType::Load, vm_addr, len).into();
         let host_addr = host_addr?;
@@ -284,6 +286,8 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
+        #[cfg(target_arch = "wasm32")]
+        use fluentbase_sdk::debug_log;
         // let cost = invoke_context
         //     .get_compute_budget()
         //     .syscall_base_cost
@@ -661,6 +665,7 @@ declare_builtin_function!(
         //     .get_compute_budget()
         //     .create_program_address_units;
         // consume_compute_meter(invoke_context, cost)?;
+        debug_log!("in SyscallTryFindProgramAddress");
 
         let (seeds, program_id) = translate_and_check_program_address_inputs(
             seeds_addr,
@@ -705,18 +710,26 @@ declare_builtin_function!(
         //     .get_compute_budget()
         //     .create_program_address_units;
         // consume_compute_meter(invoke_context, cost)?;
+        debug_log!("in SyscallTryFindProgramAddress: seeds_addr {} seeds_len {} program_id_addr {}", seeds_addr, seeds_len, program_id_addr);
 
-        let (seeds, program_id) = translate_and_check_program_address_inputs(
+        let result = translate_and_check_program_address_inputs(
             seeds_addr,
             seeds_len,
             program_id_addr,
             memory_mapping,
             invoke_context.get_check_aligned(),
-        )?;
+        );
+        debug_log!("in SyscallTryFindProgramAddress: after translate_and_check_program_address_inputs");
+        if let Err(e) = &result {
+            debug_log!("in SyscallTryFindProgramAddress: translate_and_check_program_address_inputs: {:?}", e);
+        }
+        let (seeds, program_id) = result?;
+        debug_log!("in SyscallTryFindProgramAddress: translate_and_check_program_address_inputs");
 
         let mut bump_seed = [u8::MAX];
-        for _ in 0..u8::MAX {
+        for i in 0..u8::MAX {
             {
+                debug_log!("in SyscallTryFindProgramAddress: i={}", i);
                 let mut seeds_with_bump = seeds.to_vec();
                 seeds_with_bump.push(&bump_seed);
 

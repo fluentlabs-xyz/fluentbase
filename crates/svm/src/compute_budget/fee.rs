@@ -6,8 +6,6 @@ use core::num::NonZeroU32;
 use serde::{Deserialize, Serialize};
 use solana_native_token::sol_to_lamports;
 
-#[cfg(not(target_os = "solana"))]
-
 /// A fee and its associated compute unit limit
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct FeeBin {
@@ -217,13 +215,6 @@ impl FeeStructure {
 impl Default for FeeStructure {
     fn default() -> Self {
         Self::new(0.000005, 0.0, vec![(1_400_000, 0.0)])
-    }
-}
-
-#[cfg(feature = "frozen-abi")]
-impl ::solana_frozen_abi::abi_example::AbiExample for FeeStructure {
-    fn example() -> Self {
-        FeeStructure::default()
     }
 }
 

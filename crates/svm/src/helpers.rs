@@ -1,6 +1,6 @@
 extern crate solana_rbpf;
 
-use crate::{alloc::string::ToString, helpers::SyscallError::UnalignedPointer, solana_program};
+use crate::{alloc::string::ToString, solana_program};
 use alloc::{boxed::Box, rc::Rc, str::Utf8Error, string::String, vec, vec::Vec};
 use core::{
     alloc::Layout,
@@ -87,7 +87,7 @@ fn translate(
     access_type: AccessType,
     vm_addr: u64,
     len: u64,
-) -> StdResult<u64, Box<dyn core::error::Error>> {
+) -> StdResult<u64, SvmError> {
     memory_mapping
         .map(access_type, vm_addr, len)
         .map_err(|err| err.into())
@@ -280,7 +280,7 @@ fn translate_type_inner<'a, T>(
     access_type: AccessType,
     vm_addr: u64,
     check_aligned: bool,
-) -> Result<&'a mut T, Box<dyn core::error::Error>> {
+) -> Result<&'a mut T, SvmError> {
     let host_addr = translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u64)?;
     if !check_aligned {
         #[cfg(target_pointer_width = "64")]
@@ -293,7 +293,7 @@ fn translate_type_inner<'a, T>(
         }
     } else if !address_is_aligned::<T>(host_addr) {
         // Err(EbpfError::SyscallError::UnalignedPointer.into())
-        Err(Box::new(UnalignedPointer))
+        Err(SyscallError::UnalignedPointer.into())
     } else {
         Ok(unsafe { &mut *(host_addr as *mut T) })
     }
@@ -302,14 +302,14 @@ pub fn translate_type_mut<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
-) -> Result<&'a mut T, Box<dyn core::error::Error>> {
+) -> Result<&'a mut T, SvmError> {
     translate_type_inner::<T>(memory_mapping, AccessType::Store, vm_addr, check_aligned)
 }
 pub fn translate_type<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
-) -> Result<&'a T, Box<dyn core::error::Error>> {
+) -> Result<&'a T, SvmError> {
     translate_type_inner::<T>(memory_mapping, AccessType::Load, vm_addr, check_aligned)
         .map(|value| &*value)
 }
@@ -320,7 +320,7 @@ fn translate_slice_inner<'a, T>(
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<&'a mut [T], Error> {
+) -> Result<&'a mut [T], SvmError> {
     if len == 0 {
         return Ok(&mut []);
     }
@@ -343,7 +343,7 @@ pub fn translate_slice<'a, T>(
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<&'a [T], Error> {
+) -> Result<&'a [T], SvmError> {
     translate_slice_inner::<T>(
         memory_mapping,
         AccessType::Load,
@@ -359,7 +359,7 @@ pub fn translate_slice_mut<'a, T>(
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<&'a mut [T], Error> {
+) -> Result<&'a mut [T], SvmError> {
     translate_slice_inner::<T>(
         memory_mapping,
         AccessType::Store,
@@ -455,7 +455,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
     program_id_addr: u64,
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
-) -> Result<(Vec<&'a [u8]>, &'a Pubkey), Error> {
+) -> Result<(Vec<&'a [u8]>, &'a Pubkey), SvmError> {
     let untranslated_seeds =
         translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
     if untranslated_seeds.len() > MAX_SEEDS {
@@ -474,7 +474,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
                 check_aligned,
             )
         })
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect::<Result<Vec<_>, SvmError>>()?;
     let program_id = translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned)?;
     Ok((seeds, program_id))
 }

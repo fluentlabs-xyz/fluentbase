@@ -1,3 +1,4 @@
+use crate::helpers::SyscallError;
 use alloc::{boxed::Box, string::String};
 use core::fmt::{Display, Formatter};
 use fluentbase_sdk::ExitCode;
@@ -592,6 +593,7 @@ pub enum SvmError {
     BincodeDecodeError(bincode::error::DecodeError),
     ExitCode(ExitCode),
     InstructionError(InstructionError),
+    SyscallError(SyscallError),
 }
 
 impl From<TransactionError> for SvmError {
@@ -633,5 +635,26 @@ impl From<ElfError> for SvmError {
 impl From<EbpfError> for SvmError {
     fn from(value: EbpfError) -> Self {
         SvmError::EbpfError(value)
+    }
+}
+
+impl From<SyscallError> for SvmError {
+    fn from(value: SyscallError) -> Self {
+        SvmError::SyscallError(value)
+    }
+}
+
+impl From<SvmError> for Error {
+    fn from(value: SvmError) -> Self {
+        match value {
+            SvmError::ElfError(e) => Box::new(e),
+            SvmError::EbpfError(e) => Box::new(e),
+            SvmError::TransactionError(e) => Box::new(e),
+            SvmError::BincodeEncodeError(e) => Box::new(e),
+            SvmError::BincodeDecodeError(e) => Box::new(e),
+            SvmError::ExitCode(e) => Box::new(e),
+            SvmError::InstructionError(e) => Box::new(e),
+            SvmError::SyscallError(e) => Box::new(e),
+        }
     }
 }

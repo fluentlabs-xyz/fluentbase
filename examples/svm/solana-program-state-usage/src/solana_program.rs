@@ -67,7 +67,10 @@ pub fn process_instruction(
     }
 
     let instruction_data: Vec<u8> = bincode::deserialize(instruction_data).map_err(|e| {
-        msg!("failed to deserialize 'instruction_data'");
+        msg!(
+            "failed to deserialize 'instruction_data' (len: {})",
+            instruction_data.len()
+        );
         ProgramError::InvalidInstructionData
     })?;
     msg!("instruction data: {:x?}", &instruction_data);

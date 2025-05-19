@@ -2,14 +2,7 @@ mod config;
 
 use cargo_metadata::{camino::Utf8PathBuf, CrateType, Metadata, MetadataCommand, TargetKind};
 pub use config::*;
-use std::{
-    collections::{HashMap, HashSet},
-    env,
-    fs,
-    path::PathBuf,
-    process::Command,
-    str::from_utf8,
-};
+use std::{collections::HashSet, env, fs, path::PathBuf, process::Command, str::from_utf8};
 
 pub fn compile_rust_to_wasm(config: Config) {
     if skip() {

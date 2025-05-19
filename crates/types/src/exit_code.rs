@@ -100,6 +100,8 @@ pub enum ExitCode {
     UnresolvedFunction = -2013,
 }
 
+impl core::error::Error for ExitCode {}
+
 pub trait UnwrapExitCode<T> {
     fn unwrap_exit_code(self) -> T;
 }

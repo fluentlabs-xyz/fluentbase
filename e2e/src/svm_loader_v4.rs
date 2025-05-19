@@ -17,7 +17,12 @@ mod tests {
         pubkey::Pubkey,
         rent::Rent,
         solana_bincode::serialize,
-        solana_program::{instruction::Instruction, loader_v4, message::Message},
+        solana_program::{
+            instruction::{AccountMeta, Instruction},
+            loader_v4,
+            message::Message,
+        },
+        system_program,
     };
     use hex_literal::hex;
     use revm::primitives::ExecutionResult;
@@ -72,31 +77,58 @@ mod tests {
         // setup
 
         let loader_id = loader_v4::id();
+        let system_program_id = system_program::id();
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
-            // "../examples/svm/solana-program/assets/solana_program.so",
+            "../examples/svm/solana-program/assets/solana_program.so",
             // "../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
-            "../examples/svm/solana-program-state-usage/assets/solana_program.so",
+            // "../examples/svm/solana-program-state-usage/assets/solana_program.so",
         );
 
         // init buffer, fill buffer, deploy
 
         let program_bytes = account_with_program.data().to_vec();
         ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1e18));
-        let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, program_bytes.into());
+        let (contract_address, _gas) =
+            ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
         println!("contract_address {:x?}", contract_address);
+
+        let pk_payer = pubkey_from_address(DEPLOYER_ADDRESS);
+
+        let pk_exec = pubkey_from_address(contract_address);
+        // println!("pk_exec {:x?}", &pk_exec.as_ref());
+
+        let seed1 = b"my_seed";
+        let seed2 = pk_payer.as_ref();
+        let seeds = &[seed1.as_slice(), seed2];
+        let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_exec);
 
         // exec
 
-        let pk_exec = pubkey_from_address(contract_address);
-        println!("test: pk_exec {:x?}", &pk_exec.as_ref());
+        let mut instruction_data = Vec::<u8>::new();
+        let lamports: u64 = 12;
+        let space: u32 = 101;
+        let seed_len: u8 = seed1.len() as u8;
+        let byte_n_to_set: u32 = 14;
+        let byte_n_val: u8 = 33;
+        instruction_data.push(2);
+        instruction_data.extend_from_slice(lamports.to_le_bytes().as_slice());
+        instruction_data.extend_from_slice(space.to_le_bytes().as_slice());
+        instruction_data.push(seed_len);
+        instruction_data.extend_from_slice(seed1);
+        instruction_data.extend_from_slice(byte_n_to_set.to_le_bytes().as_slice());
+        instruction_data.push(byte_n_val);
+        // println!("instruction_data: {:x?}", instruction_data);
 
         let instructions = vec![Instruction::new_with_bincode(
             pk_exec.clone(),
-            &[0u8; 0],
-            vec![],
+            &instruction_data,
+            vec![
+                AccountMeta::new(pk_payer, true),
+                AccountMeta::new(pk_new, false),
+                AccountMeta::new(system_program_id, false),
+            ],
         )];
         let message = Message::new(&instructions, Some(&pk_exec));
         let mut batch_message = BatchMessage::new(None);

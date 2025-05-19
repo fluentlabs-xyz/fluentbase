@@ -1,5 +1,3 @@
-// use crate::loaded_programs::LoadedProgram;
-// use crate::loaded_programs::LoadedProgramType;
 use crate::{
     account::BorrowedAccount,
     common::limited_deserialize_packet_size,
@@ -7,7 +5,6 @@ use crate::{
     context::{InstructionContext, InvokeContext},
     error::Error,
     loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET},
-    loaders,
     loaders::agave_version::execute,
     solana_program::{
         loader_v4,
@@ -17,9 +14,8 @@ use crate::{
 };
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use core::sync::atomic::Ordering;
-use fluentbase_sdk::{debug_log, SharedAPI};
+use fluentbase_sdk::SharedAPI;
 use solana_instruction::error::InstructionError;
-use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
     aligned_memory::AlignedMemory,

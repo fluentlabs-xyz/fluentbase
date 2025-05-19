@@ -38,7 +38,9 @@ fluentbase-examples-storage = { path = "../examples/storage" }
 fluentbase-examples-tiny-keccak = { path = "../examples/tiny-keccak" }
 
 rwasm = { workspace = true, features = ["more-max-pages"] }
-revm = { workspace = true, features = ["wasmtime"] }
+revm = { workspace = true, features = [
+    "wasmtime"
+] }
 hex = { workspace = true }
 hex-literal = { workspace = true }
 alloy-sol-types = { workspace = true }
