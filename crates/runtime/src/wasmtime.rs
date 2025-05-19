@@ -3,9 +3,8 @@ use crate::{
     runtime::CALL_ID_COUNTER,
 };
 use core::{error::Error as StdError, fmt};
-use ctor::ctor;
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
-use fluentbase_genesis::{get_all_precompile_hashes, get_precompile_wasm_bytecode_by_hash};
+use fluentbase_genesis::get_precompile_wasm_bytecode_by_hash;
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     get_import_linker_symbols,
@@ -16,47 +15,32 @@ use fluentbase_types::{
     STATE_DEPLOY,
     STATE_MAIN,
 };
+use once_cell::sync::Lazy;
 use std::{
     cell::RefCell,
     cmp::min,
     collections::HashMap,
     fmt::Debug,
-    sync::{atomic::Ordering, mpsc},
+    sync::{atomic::Ordering, mpsc, RwLock},
     thread,
     thread::JoinHandle,
 };
 use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store};
 
-/// Warms up all Wasmtime modules at program startup.
-#[ctor]
-static MODULES_CACHE: HashMap<B256, Module> = {
-    let start_time = std::time::Instant::now();
+fn compile_wasmtime_module(wasm_bytecode: &[u8]) -> Module {
     let mut config = Config::new();
-
-    #[cfg(debug_assertions)]
-    {
-        config.cranelift_opt_level(wasmtime::OptLevel::None);
-        println!("warming up wasmtime modules in debug mode (no optimizations)...");
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        config.cranelift_opt_level(wasmtime::OptLevel::Speed);
-        println!("warming up wasmtime modules in release mode (with optimizations)...");
-    }
     let engine = Engine::new(&config).unwrap();
-
-    let mut map = HashMap::new();
-    for hash in get_all_precompile_hashes() {
-        let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(&hash).unwrap();
-        let module = Module::new(&engine, wasm_bytecode).expect("bytecode should be preverified");
-        map.insert(hash, module);
+    let is_debug_mode = cfg!(debug_assertions);
+    if is_debug_mode {
+        // Use Winch strategy for debugging because it's faster to compile
+        // On my machine compilation is 5-10 times faster than Crane lift
+        config.strategy(wasmtime::Strategy::Winch);
+    } else {
+        config.strategy(wasmtime::Strategy::Cranelift);
+        config.cranelift_opt_level(wasmtime::OptLevel::Speed);
     }
-    println!(
-        "wasmtime modules were compiled in: {:?}",
-        start_time.elapsed()
-    );
-    map
-};
+    Module::new(&engine, wasm_bytecode).expect("failed to compile wasmtime module")
+}
 
 struct WorkerContext {
     sender: mpsc::Sender<Message>,
@@ -647,15 +631,33 @@ fn handle_one_step(mut executor: AsyncExecutor) -> (u64, i64, i32, Vec<u8>) {
     }
 }
 
+static MODULES_CACHE: Lazy<RwLock<HashMap<B256, Module>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+fn ensure_module_in_cache(hash: &B256) {
+    let read_guard = MODULES_CACHE.read().unwrap();
+    if !read_guard.contains_key(hash) {
+        drop(read_guard);
+        let mut write_guard = MODULES_CACHE.write().unwrap();
+        if !write_guard.contains_key(hash) {
+            // double check, since some other thread could compile it already
+            let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(hash)
+                .expect("bytecode for given hash should exist");
+            let module = compile_wasmtime_module(&wasm_bytecode);
+            write_guard.insert(hash.clone(), module);
+        }
+    }
+}
+
 pub fn execute(
     bytecode_hash: &B256,
     input: Vec<u8>,
     fuel_limit: u64,
     state: u32,
 ) -> (u64, i64, i32, Vec<u8>) {
-    let module = MODULES_CACHE
-        .get(bytecode_hash)
-        .expect("module should be cached");
+    ensure_module_in_cache(bytecode_hash);
+    let cache = MODULES_CACHE.read().unwrap();
+    let module = cache.get(bytecode_hash).unwrap();
     let executor = AsyncExecutor::launch(module, input, fuel_limit, state);
     handle_one_step(executor)
 }
