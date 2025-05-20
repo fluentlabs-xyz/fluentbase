@@ -112,6 +112,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "revm/e2e -> target"
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
       - name: Sync ethereum tests
         working-directory: revm/e2e
         run: make sync_tests
