@@ -18,6 +18,8 @@ sha2 = { version = "0.10", default-features = false }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
+revm-precompile = { workspace = true, features = ["secp256r1"] }
 
 [features]
 default = ["std"]

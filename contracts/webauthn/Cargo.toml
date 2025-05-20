@@ -21,12 +21,12 @@ p256 = { version = "0.13.2", default-features = false, features = [
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
-
+fluentbase-sdk = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
-    "fluentbase-sdk/std",  #   "p256/std",
+    "fluentbase-sdk/std", #   "p256/std",
     "sha2/std",
     "base64/std",
     "hex/std",

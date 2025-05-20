@@ -11,6 +11,7 @@ fluentbase-sdk-testing = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
 
 [features]
 default = ["std"]

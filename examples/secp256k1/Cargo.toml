@@ -23,6 +23,7 @@ hex-literal = "1.0.0"
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
 
 [features]
 default = ["std"]

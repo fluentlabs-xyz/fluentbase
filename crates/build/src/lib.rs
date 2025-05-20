@@ -174,3 +174,12 @@ fn skip() -> bool {
     }
     false
 }
+
+pub fn is_tinygo_installed() -> bool {
+    let output = Command::new("tinygo").arg("-v").output();
+    if output.is_err() {
+        false
+    } else {
+        true
+    }
+}
