@@ -22,7 +22,7 @@ fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
 fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
 fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }
 fluentbase-contracts-evm = { path = "../../contracts/evm" }
-fluentbase-contracts-fairblock = { path = "../../contracts/fairblock", optional = true }
+fluentbase-contracts-fairblock = { path = "../../contracts/fairblock" }
 fluentbase-contracts-identity = { path = "../../contracts/identity" }
 fluentbase-contracts-kzg = { path = "../../contracts/kzg" }
 fluentbase-contracts-modexp = { path = "../../contracts/modexp" }
@@ -46,7 +46,7 @@ fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
 fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
 fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }
 fluentbase-contracts-evm = { path = "../../contracts/evm" }
-fluentbase-contracts-fairblock = { path = "../../contracts/fairblock", optional = true }
+fluentbase-contracts-fairblock = { path = "../../contracts/fairblock" }
 fluentbase-contracts-identity = { path = "../../contracts/identity" }
 fluentbase-contracts-kzg = { path = "../../contracts/kzg" }
 fluentbase-contracts-modexp = { path = "../../contracts/modexp" }
@@ -60,11 +60,11 @@ fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
 
 [features]
 default = ["std"]
+wasmtime = []
 std = [
     "fluentbase-types/std",
     "alloy-genesis/std",
     "serde/std",
     "serde_json/std",
 ]
-fairblock = ["dep:fluentbase-contracts-fairblock"]
 generate-genesis = [] # this feature is doing nothing now (genesis is always generated), kept it for backward compatibility, and will remove it once ready

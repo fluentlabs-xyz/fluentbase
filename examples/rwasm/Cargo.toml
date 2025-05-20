@@ -9,6 +9,8 @@ rwasm = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
+rwasm = { workspace = true }
 
 [features]
 default = ["std"]

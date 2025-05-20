@@ -18,6 +18,8 @@ fluentbase-sdk-testing = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
+alloy-sol-types = { workspace = true }
 
 [features]
 default = ["std"]

@@ -11,6 +11,8 @@ fluentbase-sdk-testing = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
 
-[lib]
-path = "lib.rs"
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std"]
