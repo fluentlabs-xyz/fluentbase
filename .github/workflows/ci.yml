@@ -41,6 +41,7 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -93,7 +94,6 @@ jobs:
   evm-e2e-tests:
     name: EVM Testing Suite
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -117,4 +117,4 @@ jobs:
         run: make sync_tests
       - name: Run ethereum tests
         working-directory: revm/e2e
-        run: make run_general_state_tests
+        run: make run_all_tests
