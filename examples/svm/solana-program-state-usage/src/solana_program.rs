@@ -107,15 +107,15 @@ pub fn process_instruction(
                 ProgramError::InvalidInstructionData
             })?;
             msg!("Create account: seed_len1: {}", seed_len1);
+            // let mut seed1 = b"my_seed";
             let mut seed1 = vec![0u8; seed_len1 as usize];
             cursor.read_exact(&mut seed1).map_err(|e| {
                 msg!("failed to read 'seed1' param");
                 ProgramError::InvalidInstructionData
             })?;
-            let seed1 = seed1.as_slice();
             msg!(
                 "Create account: seed1: '{}'",
-                from_utf8(seed1).map_err(|e| ProgramError::InvalidInstructionData)?
+                from_utf8(&seed1).map_err(|e| ProgramError::InvalidInstructionData)?
             );
             let byte_n_to_set = read_u32(&mut cursor).map_err(|e| {
                 msg!("failed to read 'byte_n_to_set' param");
@@ -135,12 +135,18 @@ pub fn process_instruction(
             let system_program_account = next_account_info(account_info_iter)?;
 
             let seed2 = payer.key.as_ref();
-            let seeds = &[seed1, seed2];
-            msg!("deriving pda");
+            let seeds = &[&seed1, seed2];
+            let seeds_addr = seeds.as_ptr() as u64;
+            msg!(
+                "deriving pda: seeds {:x?} (addr:{}) program_id {:x?}",
+                seeds,
+                seeds_addr,
+                program_id.as_ref()
+            );
             let (pda, bump) = Pubkey::find_program_address(seeds, program_id);
             msg!("result pda: {:x?} bump: {}", &pda.to_bytes(), bump);
 
-            let signer_seeds = &[seed1, payer.key.as_ref(), &[bump]];
+            let signer_seeds = &[&seed1, payer.key.as_ref(), &[bump]];
 
             msg!("pda: {:x?}", pda.to_bytes());
             msg!("payer.key: {:x?}", payer.key.to_bytes());

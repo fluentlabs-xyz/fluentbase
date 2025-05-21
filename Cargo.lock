@@ -6665,7 +6665,6 @@ dependencies = [
 [[package]]
 name = "solana_rbpf"
 version = "0.8.5"
-source = "git+https://github.com/fluentlabs-xyz/rbpf?branch=feat%2Fsvm#1a02f27a4a67f6c3009dafd575fe8d0bf7f5a5c3"
 dependencies = [
  "byteorder",
  "combine",

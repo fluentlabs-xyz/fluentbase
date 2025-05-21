@@ -726,10 +726,20 @@ pub fn compile_accounts_for_tx_ctx(
 }
 
 pub fn pubkey_from_address(value: Address) -> Pubkey {
-    let mut new_address = [0u8; 32];
-    new_address[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
-    new_address[SVM_ADDRESS_PREFIX.len()..].copy_from_slice(value.as_slice());
-    Pubkey::new_from_array(new_address)
+    let mut new_pk = [0u8; 32];
+    new_pk[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
+    new_pk[SVM_ADDRESS_PREFIX.len()..].copy_from_slice(value.as_slice());
+    Pubkey::new_from_array(new_pk)
+}
+
+pub fn pubkey_from_pubkey(value: &Pubkey) -> Pubkey {
+    pubkey_from_address(Address::from_slice(
+        &value.as_ref()[SVM_ADDRESS_PREFIX.len()..],
+    ))
+}
+
+pub fn is_svm_pubkey(pk: &Pubkey) -> bool {
+    pk.as_ref().starts_with(&SVM_ADDRESS_PREFIX)
 }
 
 pub fn evm_address_from_pubkey<const VALIDATE_PREFIX: bool>(

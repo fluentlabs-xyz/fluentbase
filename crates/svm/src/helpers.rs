@@ -4,13 +4,14 @@ use crate::{alloc::string::ToString, solana_program};
 use alloc::{boxed::Box, rc::Rc, str::Utf8Error, string::String, vec, vec::Vec};
 use core::{
     alloc::Layout,
+    any::type_name,
     cell::RefCell,
     fmt,
     fmt::{Display, Formatter, Write},
     str::from_utf8,
 };
 use solana_bincode::{deserialize, serialize, serialized_size};
-use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN};
+use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, SVM_ADDRESS_PREFIX};
 use solana_rbpf::{
     ebpf,
     elf::Executable,
@@ -82,16 +83,17 @@ fn address_is_aligned<T>(address: u64) -> bool {
         .expect("T to be non-zero aligned")
 }
 
-fn translate(
+pub fn translate(
     memory_mapping: &MemoryMapping,
     access_type: AccessType,
     vm_addr: u64,
     len: u64,
 ) -> StdResult<u64, SvmError> {
-    memory_mapping
+    let result = memory_mapping
         .map(access_type, vm_addr, len)
         .map_err(|err| err.into())
-        .into()
+        .into();
+    result
 }
 
 use crate::{
@@ -102,12 +104,13 @@ use crate::{
         InheritableAccountFields,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
+    common::is_svm_pubkey,
     context::InvokeContext,
     error::{Error, SvmError},
     solana_program::{feature_set::feature_set_default, sysvar::Sysvar},
     storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
-use fluentbase_sdk::{SharedAPI, StorageAPI};
+use fluentbase_sdk::{debug_log, SharedAPI, StorageAPI};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
@@ -314,6 +317,17 @@ pub fn translate_type<'a, T>(
         .map(|value| &*value)
 }
 
+pub struct CustomSlice64 {
+    host_addr: u64,
+    len: u64,
+}
+
+impl CustomSlice64 {
+    pub fn new(host_addr: u64, len: u64) -> Self {
+        Self { host_addr, len }
+    }
+}
+
 fn translate_slice_inner<'a, T>(
     memory_mapping: &MemoryMapping,
     access_type: AccessType,
@@ -324,18 +338,36 @@ fn translate_slice_inner<'a, T>(
     if len == 0 {
         return Ok(&mut []);
     }
+    let type_name = type_name::<T>();
+    let size_of_t = size_of::<T>();
+    debug_log!(
+        "translate_slice_inner 1: len {} item type '{}' size_of_t {}",
+        len,
+        type_name,
+        size_of_t,
+    );
 
-    let total_size = len.saturating_mul(size_of::<T>() as u64);
+    let total_size = len.saturating_mul(size_of_t as u64);
     if isize::try_from(total_size).is_err() {
         return Err(SyscallError::InvalidLength.into());
     }
 
+    debug_log!(
+        "translate_slice_inner 2: access_type {:?} vm_addr {} total_size {}",
+        access_type,
+        vm_addr,
+        total_size
+    );
+
     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
+    debug_log!("translate_slice_inner 3: host_addr {}", host_addr);
 
     if check_aligned && !address_is_aligned::<T>(host_addr) {
         return Err(SyscallError::UnalignedPointer.into());
     }
-    Ok(unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) })
+    debug_log!("translate_slice_inner 4");
+    let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
+    Ok(result)
 }
 
 pub fn translate_slice<'a, T>(
@@ -458,6 +490,15 @@ pub fn translate_and_check_program_address_inputs<'a>(
 ) -> Result<(Vec<&'a [u8]>, &'a Pubkey), SvmError> {
     let untranslated_seeds =
         translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
+    debug_log!(
+        "translate_and_check_program_address_inputs 1: seeds_addr {} seeds_len {} untranslated_seeds.len {}",
+        seeds_addr,
+        seeds_len,
+        untranslated_seeds.len(),
+    );
+    for (idx, us) in untranslated_seeds.iter().enumerate() {
+        debug_log!("untranslated_seed {}: len {}", idx, us.len());
+    }
     if untranslated_seeds.len() > MAX_SEEDS {
         return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
     }
@@ -467,6 +508,11 @@ pub fn translate_and_check_program_address_inputs<'a>(
             if untranslated_seed.len() > MAX_SEED_LEN {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
+            // debug_log!(
+            //     "untranslated_seed: {:x?} ptr {}",
+            //     untranslated_seed,
+            //     untranslated_seed.as_ptr() as u64
+            // );
             translate_slice::<u8>(
                 memory_mapping,
                 untranslated_seed.as_ptr() as *const _ as u64,
@@ -475,7 +521,9 @@ pub fn translate_and_check_program_address_inputs<'a>(
             )
         })
         .collect::<Result<Vec<_>, SvmError>>()?;
+    debug_log!("translate_and_check_program_address_inputs 2");
     let program_id = translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned)?;
+    debug_log!("translate_and_check_program_address_inputs 3");
     Ok((seeds, program_id))
 }
 
@@ -1014,7 +1062,18 @@ pub fn storage_read_account_data<SAPI: StorageAPI>(
         _phantom: Default::default(),
     };
     storage_writer.read_data(sapi, &mut buffer)?;
-    Ok(deserialize(&buffer)?)
+    let deserialize_result = deserialize(&buffer);
+    // {
+    //     // debug
+    //     let is = is_svm_pubkey(&pubkey);
+    //     debug_log!(
+    //         "(ok?:{}) for pk {:x?} (is_svm?:{})",
+    //         deserialize_result.is_ok(),
+    //         &pubkey.as_ref()[(SVM_ADDRESS_PREFIX.len() * is as usize)..],
+    //         is
+    //     );
+    // }
+    Ok(deserialize_result?)
 }
 
 pub fn storage_write_account_data<SAPI: StorageAPI>(

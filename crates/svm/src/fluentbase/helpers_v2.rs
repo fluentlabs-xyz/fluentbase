@@ -46,7 +46,8 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
+use core::cell::Cell;
+use fluentbase_sdk::{debug_log, BlockContextReader, SharedAPI, StorageAPI};
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;
@@ -55,7 +56,8 @@ use solana_feature_set::{disable_account_loader_special_case, FeatureSet};
 use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
-    program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
+    memory_region::{AccessType, MemoryMapping, MemoryRegion, MemoryState},
+    program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
     vm::Config,
 };
 use solana_rent::{sysvar, Rent};
@@ -80,6 +82,7 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sapi: &mut Option<&mut SAPI>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let batch_message = deserialize(batch_message)?;
+    debug_log!("batch_message deserialized: {:?}", &batch_message);
     exec_svm_batch_message(sdk, batch_message, flush_result_accounts, sapi)
 }
 pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
@@ -89,7 +92,7 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sapi: &mut Option<&mut SAPI>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let mut result_accounts = HashMap::new();
-    for message in batch_message.messages() {
+    for (_message_idx, message) in batch_message.messages().iter().enumerate() {
         for (pk, data) in exec_svm_message(sdk, sapi, message.clone(), flush_result_accounts)? {
             result_accounts.insert(pk, data);
         }
@@ -106,126 +109,126 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     exec_svm_message(sdk, sapi, message, flush_result_accounts)
 }
 
-pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: StorageAPI>(
-    sdk: &mut SDK,
-    message: &impl SVMMessage,
-    sapi: &mut Option<&mut SAPI>,
-) -> Result<
-    ((
-        // SanitizedMessage,
-        Vec<(Pubkey, AccountSharedData)>,
-        Vec<Vec<IndexOfAccount>>,
-        Vec<Pubkey>,
-    )),
-    SvmError,
-> {
-    let mut sysvar_cache = SysvarCache::default();
-    let rent = Rent::free();
-    let clock = Clock::default();
-    let epoch_schedule = EpochSchedule::default();
-    sysvar_cache.set_rent(rent.clone());
-    sysvar_cache.set_clock(clock);
-    sysvar_cache.set_epoch_schedule(epoch_schedule);
-
-    let mut working_accounts = vec![];
-    let mut program_accounts = vec![];
-    let mut program_indices = vec![];
-    let message_clone = message.clone();
-    let account_keys = message_clone.account_keys();
-
-    let mut program_accounts_to_load: Vec<&Pubkey> = Default::default();
-
-    let mut program_account_found = false;
-    for account_key in account_keys.iter() {
-        let account_key_idx = working_accounts
-            .iter()
-            .position(|(pk, _)| pk == account_key);
-        if account_key_idx.is_some() {
-            continue;
-        }
-        if SYSTEM_PROGRAMS_KEYS.contains(account_key) || program_account_found {
-            program_accounts_to_load.push(account_key);
-            program_account_found = true;
-            continue;
-        }
-        let account_data = if let Some(sapi) = sapi {
-            extract_account_data_or_default(*sapi, account_key)?
-        } else {
-            extract_account_data_or_default(sdk, account_key)?
-        };
-        if account_data.executable() {
-            continue; // this is program account?
-        }
-        // loader-v4 doesn't mark account executable after deploy, so we need to check this condition
-        let state: Result<&LoaderV4State, InstructionError> = get_state(account_data.data());
-        if let Ok(state) = state {
-            match state.status {
-                LoaderV4Status::Deployed | LoaderV4Status::Finalized => continue,
-                _ => {}
-            }
-        }
-        working_accounts.push((account_key.clone(), account_data));
-    }
-
-    let mut program_accounts_to_warmup: Vec<&Pubkey> = Default::default();
-    for instruction in message.instructions_iter() {
-        program_indices.push(vec![]);
-        let account_key = account_keys
-            .get(instruction.program_id_index as usize)
-            .unwrap();
-        program_accounts_to_load.push(account_key);
-        let program_account_idx = program_accounts
-            .iter()
-            .position(|(pk, _)| pk == account_key);
-        if let Some(program_account_program_idx) = program_account_idx {
-            program_indices
-                .last_mut()
-                .unwrap()
-                .push(program_account_program_idx as IndexOfAccount);
-        } else {
-            let program_account = if let Some(sapi) = sapi {
-                extract_account_data_or_default(*sapi, account_key)?
-            } else {
-                extract_account_data_or_default(sdk, account_key)?
-            };
-            let state: Result<&LoaderV4State, InstructionError> = get_state(program_account.data());
-            if let Ok(state) = state {
-                match state.status {
-                    LoaderV4Status::Deployed | LoaderV4Status::Finalized => {
-                        program_accounts_to_warmup.push(account_key);
-                    }
-                    _ => {}
-                }
-            }
-            program_indices
-                .last_mut()
-                .unwrap()
-                .push(program_accounts.len() as IndexOfAccount);
-            program_accounts.push((account_key.clone(), program_account));
-        }
-    }
-    for program_account_key in program_accounts_to_load {
-        load_program_account(sdk, sapi, &mut program_accounts, program_account_key)?;
-    }
-
-    let (accounts, working_accounts_count) =
-        compile_accounts_for_tx_ctx(working_accounts, program_accounts);
-    // rearrange program indices
-    program_indices.iter_mut().for_each(|program_sub_indices| {
-        program_sub_indices
-            .iter_mut()
-            .for_each(|program_sub_index| {
-                *program_sub_index += working_accounts_count;
-            })
-    });
-
-    Ok((
-        // message,
-        accounts,
-        program_indices,
-        program_accounts_to_warmup.into_iter().cloned().collect(),
-    ))
-}
+// pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: StorageAPI>(
+//     sdk: &mut SDK,
+//     message: &impl SVMMessage,
+//     sapi: &mut Option<&mut SAPI>,
+// ) -> Result<
+//     ((
+//         // SanitizedMessage,
+//         Vec<(Pubkey, AccountSharedData)>,
+//         Vec<Vec<IndexOfAccount>>,
+//         Vec<Pubkey>,
+//     )),
+//     SvmError,
+// > {
+//     let mut sysvar_cache = SysvarCache::default();
+//     let rent = Rent::free();
+//     let clock = Clock::default();
+//     let epoch_schedule = EpochSchedule::default();
+//     sysvar_cache.set_rent(rent.clone());
+//     sysvar_cache.set_clock(clock);
+//     sysvar_cache.set_epoch_schedule(epoch_schedule);
+//
+//     let mut working_accounts = vec![];
+//     let mut program_accounts = vec![];
+//     let mut program_indices = vec![];
+//     let message_clone = message.clone();
+//     let account_keys = message_clone.account_keys();
+//
+//     let mut program_accounts_to_load: Vec<&Pubkey> = Default::default();
+//
+//     let mut program_account_found = false;
+//     for account_key in account_keys.iter() {
+//         let account_key_idx = working_accounts
+//             .iter()
+//             .position(|(pk, _)| pk == account_key);
+//         if account_key_idx.is_some() {
+//             continue;
+//         }
+//         if SYSTEM_PROGRAMS_KEYS.contains(account_key) || program_account_found {
+//             program_accounts_to_load.push(account_key);
+//             program_account_found = true;
+//             continue;
+//         }
+//         let account_data = if let Some(sapi) = sapi {
+//             extract_account_data_or_default(*sapi, account_key)?
+//         } else {
+//             extract_account_data_or_default(sdk, account_key)?
+//         };
+//         if account_data.executable() {
+//             continue; // this is program account?
+//         }
+//         // loader-v4 doesn't mark account executable after deploy, so we need to check this condition
+//         let state: Result<&LoaderV4State, InstructionError> = get_state(account_data.data());
+//         if let Ok(state) = state {
+//             match state.status {
+//                 LoaderV4Status::Deployed | LoaderV4Status::Finalized => continue,
+//                 _ => {}
+//             }
+//         }
+//         working_accounts.push((account_key.clone(), account_data));
+//     }
+//
+//     let mut program_accounts_to_warmup: Vec<&Pubkey> = Default::default();
+//     for instruction in message.instructions_iter() {
+//         program_indices.push(vec![]);
+//         let account_key = account_keys
+//             .get(instruction.program_id_index as usize)
+//             .unwrap();
+//         program_accounts_to_load.push(account_key);
+//         let program_account_idx = program_accounts
+//             .iter()
+//             .position(|(pk, _)| pk == account_key);
+//         if let Some(program_account_program_idx) = program_account_idx {
+//             program_indices
+//                 .last_mut()
+//                 .unwrap()
+//                 .push(program_account_program_idx as IndexOfAccount);
+//         } else {
+//             let program_account = if let Some(sapi) = sapi {
+//                 extract_account_data_or_default(*sapi, account_key)?
+//             } else {
+//                 extract_account_data_or_default(sdk, account_key)?
+//             };
+//             let state: Result<&LoaderV4State, InstructionError> = get_state(program_account.data());
+//             if let Ok(state) = state {
+//                 match state.status {
+//                     LoaderV4Status::Deployed | LoaderV4Status::Finalized => {
+//                         program_accounts_to_warmup.push(account_key);
+//                     }
+//                     _ => {}
+//                 }
+//             }
+//             program_indices
+//                 .last_mut()
+//                 .unwrap()
+//                 .push(program_accounts.len() as IndexOfAccount);
+//             program_accounts.push((account_key.clone(), program_account));
+//         }
+//     }
+//     for program_account_key in program_accounts_to_load {
+//         load_program_account(sdk, sapi, &mut program_accounts, program_account_key)?;
+//     }
+//
+//     let (accounts, working_accounts_count) =
+//         compile_accounts_for_tx_ctx(working_accounts, program_accounts);
+//     // rearrange program indices
+//     program_indices.iter_mut().for_each(|program_sub_indices| {
+//         program_sub_indices
+//             .iter_mut()
+//             .for_each(|program_sub_index| {
+//                 *program_sub_index += working_accounts_count;
+//             })
+//     });
+//
+//     Ok((
+//         // message,
+//         accounts,
+//         program_indices,
+//         program_accounts_to_warmup.into_iter().cloned().collect(),
+//     ))
+// }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct LoadedTransactionAccount {
@@ -367,7 +370,7 @@ fn load_transaction_account<'a, SDK: SharedAPI, SAPI: StorageAPI>(
                 // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
                 // with this field already set would allow us to skip rent collection for these accounts.
                 default_account
-                    .set_rent_epoch(crate::solana_program::rent_collector::RENT_EXEMPT_RENT_EPOCH);
+                    .set_rent_epoch(solana_program::rent_collector::RENT_EXEMPT_RENT_EPOCH);
                 LoadedTransactionAccount {
                     loaded_size: default_account.data().len(),
                     account: default_account,
@@ -439,7 +442,9 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
     // overrides again.
     let fee_payer = message.fee_payer();
     let loaded_fee_payer_account =
-        select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, fee_payer) })?;
+        // select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, fee_payer) })
+        select_sapi!(sapi, sdk, |s| { extract_account_data_or_default(s, fee_payer) }) // TODO should we throw error?
+            .expect("fee payer expected");
     collect_loaded_account(fee_payer, (loaded_fee_payer_account, true))?;
 
     // Attempt to load and collect remaining non-fee payer accounts
@@ -457,10 +462,10 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
         //     program_accounts,
         //     loaded_programs,
         // )?;
-        let (loaded_account, account_found) = select_sapi!(sapi, sdk, |sapi| {
+        let (loaded_account, account_found) = select_sapi!(sapi, sdk, |s| {
             load_transaction_account(
                 // callbacks,
-                sapi,
+                s,
                 message,
                 account_key,
                 account_index,
@@ -513,7 +518,7 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
             {
                 // if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
                 if let Ok(owner_account) =
-                    select_sapi!(sapi, sdk, |v| { storage_read_account_data(v, owner_id) })
+                    select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, owner_id) })
                 {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
@@ -567,7 +572,7 @@ fn filter_executable_program_accounts<'a, SDK: SharedAPI, SAPI: StorageAPI>(
                     Entry::Vacant(entry) => {
                         // if let Some(index) = callbacks.account_matches_owners(key, program_owners) {
                         let account =
-                            select_sapi!(sapi, sdk, |v| { storage_read_account_data(v, key) });
+                            select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, key) });
                         if let Ok(acc) = account {
                             // if acc.lamports() <= 0 {
                             //     return;
@@ -707,3 +712,32 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
 
     Ok(result_accounts)
 }
+
+// #[test]
+// fn mem_mapping_test() {
+//     let config = Config {
+//         max_call_depth: 64,
+//         stack_frame_size: 4096,
+//         enable_address_translation: true,
+//         enable_stack_frame_gaps: true,
+//         instruction_meter_checkpoint_distance: 10000,
+//         enable_instruction_meter: true,
+//         enable_instruction_tracing: false,
+//         enable_symbol_and_section_labels: false,
+//         reject_broken_elfs: true,
+//         noop_instruction_rate: 256,
+//         sanitize_user_provided_values: true,
+//         external_internal_function_hash_collision: true,
+//         reject_callx_r10: true,
+//         optimize_rodata: true,
+//         aligned_memory_mapping: true,
+//         enable_sbpf_v1: true,
+//         enable_sbpf_v2: true,
+//     };
+//     let mut regions = Vec::<MemoryRegion>::new();
+//     regions.push(MemoryRegion::new_for_testing(&[0u8; 0], 0x0, 0, MemoryState::Readable));
+//     let sbpf_version = SBPFVersion::V1;
+//     let mem_map = MemoryMapping::new(regions, &config, &sbpf_version).unwrap();
+//     let result = mem_map.map(AccessType::Load, 8589954744, 32);
+//     println!("{:?}", result);
+// }

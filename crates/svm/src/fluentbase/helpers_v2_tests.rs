@@ -1,7 +1,7 @@
 mod tests {
     use crate::{
         account::{AccountSharedData, ReadableAccount},
-        common::{calculate_max_chunk_size, pubkey_from_address},
+        common::{calculate_max_chunk_size, pubkey_from_address, pubkey_from_pubkey},
         fluentbase::{
             common::{BatchMessage, MemStorage},
             helpers_v2::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
@@ -322,13 +322,11 @@ mod tests {
         let pk_payer = Pubkey::new_unique();
         let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
 
-        let mut pk_exec = Pubkey::from([8; 32]);
-        pk_exec.as_mut()[0..SVM_ADDRESS_PREFIX.len()]
-            .copy_from_slice(SVM_ADDRESS_PREFIX.as_slice());
-        // let pk_exec = Pubkey::new_unique();
+        // let pk_exec = Pubkey::from([8; 32]);
+        let pk_exec = pubkey_from_pubkey(&Pubkey::from([8; 32]));
 
-        let pk_tmp = Pubkey::new_unique();
-        let pk_tmp_account = AccountSharedData::new(100, 0, &pk_exec);
+        // let pk_tmp = Pubkey::new_unique();
+        // let pk_tmp_account = AccountSharedData::new(100, 0, &pk_exec);
 
         let seed1 = b"my_seed";
         let seed2 = pk_payer.as_ref();
@@ -367,7 +365,7 @@ mod tests {
         let mut sapi = MemStorage::new();
 
         storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
-        storage_write_account_data(&mut sapi, &pk_tmp, &pk_tmp_account).unwrap();
+        // storage_write_account_data(&mut sapi, &pk_tmp, &pk_tmp_account).unwrap();
         storage_write_account_data(
             &mut sapi,
             &system_program_id,
@@ -627,20 +625,29 @@ mod tests {
         const CONTRACT_ADDRESS: Address = address!("0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5");
 
         let pk_payer = pubkey_from_address(CONTRACT_CALLER);
-        let pk_payer_account = AccountSharedData::new(1000000000, 0, &system_program_id);
+        let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
 
-        let pk_tmp = Pubkey::new_unique();
-        let pk_tmp_account = AccountSharedData::new(100, 0, &system_program_id);
+        // let pk_tmp = Pubkey::new_unique();
+        // let pk_tmp_account = AccountSharedData::new(100, 0, &system_program_id);
 
         let pk_exec = pubkey_from_address(CONTRACT_ADDRESS);
+
+        let seed1 = b"my_seed";
+        let seed2 = pk_payer.as_ref();
+        let seeds = &[seed1, seed2];
+        let (pk_new, bump) = Pubkey::find_program_address(seeds, &pk_exec);
+        println!("pk_payer: {:x?}", pk_payer.to_bytes());
+        println!("pk_exec: {:x?}", pk_exec.to_bytes());
+        println!("pk_new: {:x?} bump: {}", pk_new.to_bytes(), bump);
 
         let pk_authority = pk_payer.clone();
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            "../../examples/svm/solana-program/assets/solana_program.so",
-            // "../../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
             // "./test_elfs/out/noop_aligned.so",
+            // "../../examples/svm/solana-program/assets/solana_program.so",
+            // "../../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
+            "../../examples/svm/solana-program-state-usage/assets/solana_program.so",
         );
 
         let program_len = account_with_program.data().len();
@@ -712,12 +719,14 @@ mod tests {
         // exec
         // recreate storage to test if we need only specific accounts (other accounts dropped from storage)
 
-        let exec_account = storage_read_account_data(&mut sapi, &pk_exec).unwrap();
+        let pk_payer_account = storage_read_account_data(&mut sapi, &pk_payer).unwrap();
+        let pk_exec_account = storage_read_account_data(&mut sapi, &pk_exec).unwrap();
 
         let mut sapi = MemStorage::new();
 
-        storage_write_account_data(&mut sapi, &pk_exec, &exec_account).unwrap();
-        storage_write_account_data(&mut sapi, &pk_tmp, &pk_tmp_account).unwrap();
+        storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
+        storage_write_account_data(&mut sapi, &pk_exec, &pk_exec_account).unwrap();
+        // storage_write_account_data(&mut sapi, &pk_tmp, &pk_tmp_account).unwrap();
         storage_write_account_data(
             &mut sapi,
             &system_program_id,
@@ -731,14 +740,29 @@ mod tests {
         )
         .unwrap();
 
-        let amount = 12u64;
+        let mut instruction_data = Vec::<u8>::new();
+        let lamports: u64 = 12;
+        let space: u32 = 101;
+        let seed1 = b"my_seed";
+        let seed_len: u8 = seed1.len() as u8;
+        let byte_n_to_set: u32 = 14;
+        let byte_n_val: u8 = 33;
+        instruction_data.push(2);
+        instruction_data.extend_from_slice(lamports.to_le_bytes().as_slice());
+        instruction_data.extend_from_slice(space.to_le_bytes().as_slice());
+        instruction_data.push(seed_len);
+        instruction_data.extend_from_slice(seed1);
+        instruction_data.extend_from_slice(byte_n_to_set.to_le_bytes().as_slice());
+        instruction_data.push(byte_n_val);
+        println!("instruction_data: {:x?}", instruction_data);
+
         let instructions = vec![Instruction::new_with_bincode(
             pk_exec.clone(),
-            &amount.to_be_bytes(),
+            &instruction_data,
             vec![
                 // account_meta1
-                AccountMeta::new(pk_tmp, true),
-                AccountMeta::new(pk_payer, false),
+                AccountMeta::new(pk_payer, true),
+                AccountMeta::new(pk_new, false),
                 AccountMeta::new(system_program_id, false),
             ],
         )];

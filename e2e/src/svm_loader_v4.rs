@@ -81,20 +81,22 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            "../examples/svm/solana-program/assets/solana_program.so",
+            // "../examples/svm/solana-program/assets/solana_program.so",
             // "../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
-            // "../examples/svm/solana-program-state-usage/assets/solana_program.so",
+            "../examples/svm/solana-program-state-usage/assets/solana_program.so",
         );
 
-        // init buffer, fill buffer, deploy
+        // setup initial accounts
+
+        let pk_payer = pubkey_from_address(DEPLOYER_ADDRESS);
+        ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
+
+        // deploy and get exec contract
 
         let program_bytes = account_with_program.data().to_vec();
-        ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1e18));
         let (contract_address, _gas) =
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
         println!("contract_address {:x?}", contract_address);
-
-        let pk_payer = pubkey_from_address(DEPLOYER_ADDRESS);
 
         let pk_exec = pubkey_from_address(contract_address);
         // println!("pk_exec {:x?}", &pk_exec.as_ref());
@@ -130,11 +132,16 @@ mod tests {
                 AccountMeta::new(system_program_id, false),
             ],
         )];
-        let message = Message::new(&instructions, Some(&pk_exec));
+        let message = Message::new(&instructions, None);
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
-        println!("input.len {} input '{:?}'", input.len(), input.as_slice());
+        println!(
+            "input.len {} input '{:x?}' batch_message: {:?}",
+            input.len(),
+            input.as_slice(),
+            &batch_message
+        );
         ctx.sdk = ctx.sdk.with_block_number(1);
         assert_eq!(ctx.sdk.context().block_number(), 1);
         let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);

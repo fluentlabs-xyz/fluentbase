@@ -8,6 +8,7 @@ use crate::{
         is_nonoverlapping,
         memcmp,
         memmove,
+        translate,
         translate_and_check_program_address_inputs,
         translate_slice,
         translate_slice_mut,
@@ -19,7 +20,7 @@ use crate::{
     mem_ops::{memcmp_non_contiguous, memset_non_contiguous},
 };
 use alloc::boxed::Box;
-use core::{slice::from_raw_parts, str::from_utf8};
+use core::str::from_utf8;
 use fluentbase_sdk::{debug_log, SharedAPI};
 use solana_feature_set;
 use solana_pubkey::Pubkey;
@@ -262,7 +263,7 @@ declare_builtin_function!(
             memory_mapping.map(AccessType::Load, vm_addr, len).into();
         let host_addr = host_addr?;
         unsafe {
-            let c_buf = from_raw_parts(host_addr as *const u8, len as usize);
+            let c_buf = alloc::slice::from_raw_parts(host_addr as *const u8, len as usize);
             let len = c_buf.iter().position(|c| *c == 0).unwrap_or(len as usize);
             let message = from_utf8(&c_buf[0..len]).unwrap_or("Invalid UTF-8 String");
             #[cfg(test)]
@@ -710,8 +711,35 @@ declare_builtin_function!(
         //     .get_compute_budget()
         //     .create_program_address_units;
         // consume_compute_meter(invoke_context, cost)?;
-        debug_log!("in SyscallTryFindProgramAddress: seeds_addr {} seeds_len {} program_id_addr {}", seeds_addr, seeds_len, program_id_addr);
+        debug_log!(
+            "in SyscallTryFindProgramAddress: seeds_addr {} seeds_len {} program_id_addr {} invoke_context.get_check_aligned() {} memory_mapping {:?}",
+            seeds_addr,
+            seeds_len,
+            program_id_addr,
+            invoke_context.get_check_aligned(),
+            memory_mapping,
+        );
 
+        // let host_addr = memory_mapping.map(AccessType::Load, seeds_addr, 8).unwrap();
+        let word_size = size_of::<usize>();
+        let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, (word_size * seeds_len as usize) as u64).unwrap();
+        let untranslated_seeds = translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
+        let seeds_slice_fat_ptr_data =
+                unsafe { core::slice::from_raw_parts(host_addr as *const u8, word_size  * 2) };
+        // debug_log!("seeds_slice2 (addr:{} host_addr:{:?})", seeds_addr, host_addr);
+        debug_log!(
+            "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): seeds_slice {:x?} untranslated_seeds.len {}",
+            seeds_addr,
+            host_addr,
+            seeds_slice_fat_ptr_data,
+            untranslated_seeds.len(),
+        );
+        for untranslated_seed in untranslated_seeds.iter() {
+            debug_log!(
+                "untranslated_seed.len {}",
+                untranslated_seed.len(),
+            );
+        }
         let result = translate_and_check_program_address_inputs(
             seeds_addr,
             seeds_len,
@@ -719,7 +747,6 @@ declare_builtin_function!(
             memory_mapping,
             invoke_context.get_check_aligned(),
         );
-        debug_log!("in SyscallTryFindProgramAddress: after translate_and_check_program_address_inputs");
         if let Err(e) = &result {
             debug_log!("in SyscallTryFindProgramAddress: translate_and_check_program_address_inputs: {:?}", e);
         }

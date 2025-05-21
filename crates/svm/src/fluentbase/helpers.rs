@@ -15,6 +15,7 @@ use crate::{
     },
     loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     message_processor::MessageProcessor,
+    select_sapi,
     solana_program::{
         bpf_loader_upgradeable,
         bpf_loader_upgradeable::UpgradeableLoaderState,
@@ -131,11 +132,9 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
             program_account_found = true;
             continue;
         }
-        let account_data = if let Some(sapi) = sapi {
-            extract_account_data_or_default(*sapi, account_key)?
-        } else {
-            extract_account_data_or_default(sdk, account_key)?
-        };
+        let account_data = select_sapi!(sapi, sdk, |s| {
+            extract_account_data_or_default(s, account_key)
+        })?;
         if account_data.executable() {
             continue; // this is program account?
         }
@@ -170,12 +169,10 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
                 } = state
                 {
                     program_accounts_to_warmup.push(account_key);
-                    // TODO it must be executable, should we validate?
-                    let program_account = if let Some(sapi) = sapi {
-                        extract_account_data_or_default(*sapi, &programdata_address)?
-                    } else {
-                        extract_account_data_or_default(sdk, &programdata_address)?
-                    };
+                    // TODO it should be executable, should we validate?
+                    let program_account = select_sapi!(sapi, sdk, |s| {
+                        extract_account_data_or_default(s, &programdata_address)
+                    })?;
                     // if !program_account.executable() {
                     //     return Err(SvmError::TransactionError(TransactionError::InvalidProgramForExecution))
                     // }

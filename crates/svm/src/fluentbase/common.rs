@@ -3,6 +3,7 @@ use crate::{
     error::SvmError,
     helpers::{storage_read_account_data, storage_write_account_data},
     native_loader,
+    select_sapi,
     solana_program::{loader_v4, message::legacy, sysvar},
     system_program,
 };
@@ -63,11 +64,8 @@ pub(crate) fn extract_account_data_or_default<SAPI: StorageAPI>(
     sapi: &SAPI,
     account_key: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
-    let account_data = storage_read_account_data(sapi, account_key);
-    if let Ok(account_data) = account_data {
-        return Ok(account_data);
-    }
-    Ok(AccountSharedData::new(0, 0, &system_program::id()))
+    Ok(storage_read_account_data(sapi, account_key)
+        .unwrap_or_else(|_e| AccountSharedData::new(0, 0, &system_program::id())))
 }
 
 pub(crate) fn load_program_account<SDK: SharedAPI, SAPI: StorageAPI>(
@@ -82,11 +80,9 @@ pub(crate) fn load_program_account<SDK: SharedAPI, SAPI: StorageAPI>(
     if program_account_idx.is_some() {
         return Ok(false);
     }
-    let program_account = if let Some(sapi) = sapi {
-        extract_account_data_or_default(*sapi, account_key)?
-    } else {
-        extract_account_data_or_default(sdk, account_key)?
-    };
+    let program_account = select_sapi!(sapi, sdk, |s| {
+        extract_account_data_or_default(s, account_key)
+    })?;
     // TODO do we need this check?
     // if !program_account.executable() {
     //     return Err(TransactionError::InvalidProgramForExecution.into());
@@ -101,11 +97,12 @@ pub(crate) fn flush_accounts<SDK: SharedAPI, SAPI: StorageAPI>(
     accounts: &HashMap<Pubkey, AccountSharedData>,
 ) -> Result<(), SvmError> {
     for (key, data) in accounts {
-        if let Some(sapi) = sapi {
-            storage_write_account_data(*sapi, key, data)?;
-        } else {
-            storage_write_account_data(sdk, key, data)?;
-        }
+        select_sapi!(sapi, sdk, |s| { storage_write_account_data(s, key, data) })?;
+        // if let Some(sapi) = sapi {
+        //     storage_write_account_data(*sapi, key, data)?;
+        // } else {
+        //     storage_write_account_data(sdk, key, data)?;
+        // }
     }
     Ok(())
 }
