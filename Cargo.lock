@@ -2222,6 +2222,9 @@ name = "fluentbase-build"
 version = "0.1.0"
 dependencies = [
  "cargo_metadata",
+ "fluentbase-types",
+ "rwasm",
+ "wasmtime",
 ]
 
 [[package]]
@@ -2255,7 +2258,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-contracts-blake2f",
+ "fluentbase-contracts-bls12381",
+ "fluentbase-contracts-bn256",
+ "fluentbase-contracts-ecrecover",
+ "fluentbase-contracts-erc20",
+ "fluentbase-contracts-evm",
+ "fluentbase-contracts-fairblock",
+ "fluentbase-contracts-identity",
+ "fluentbase-contracts-kzg",
+ "fluentbase-contracts-modexp",
+ "fluentbase-contracts-multicall",
+ "fluentbase-contracts-nitro",
+ "fluentbase-contracts-oauth2",
+ "fluentbase-contracts-ripemd160",
+ "fluentbase-contracts-secp256r1",
+ "fluentbase-contracts-sha256",
+ "fluentbase-contracts-webauthn",
+]
+
+[[package]]
 name = "fluentbase-contracts-blake2f"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "fluentbase-sdk-testing",
+ "revm-precompile",
+]
+
+[[package]]
+name = "fluentbase-contracts-bls12381"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",

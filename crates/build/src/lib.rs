@@ -2,6 +2,7 @@ mod config;
 
 use cargo_metadata::{camino::Utf8PathBuf, CrateType, Metadata, MetadataCommand, TargetKind};
 pub use config::*;
+use fluentbase_types::{compile_wasm_to_rwasm_with_config, keccak256};
 use std::{env, fs, path::PathBuf, process::Command, str::from_utf8};
 
 pub fn compile_rust_to_wasm(config: Config) {
@@ -70,11 +71,35 @@ pub fn compile_rust_to_wasm(config: Config) {
         wasm_artifact_path
     );
 
+    copy_wasm_to_src(&config, &wasm_artifact_path);
+
+    let rwasm_artifact_path = config
+        .rwasm_compilation_config
+        .as_ref()
+        .map(|config| compile_wasm_to_rwasm(wasm_artifact_path.clone(), config));
+
+    generate_constants(wasm_artifact_path, rwasm_artifact_path, None);
+
     for path in &config.rerun_if_changed {
         println!("cargo:rerun-if-changed={}", path);
     }
+}
 
-    copy_wasm_to_src(&config, &wasm_artifact_path);
+fn compile_wasm_to_rwasm(
+    wasm_artifact_path: Utf8PathBuf,
+    config: &rwasm::legacy::Config,
+) -> Utf8PathBuf {
+    let wasm_bytecode = fs::read(&wasm_artifact_path).expect("failed to read wasm artifact");
+    let result = compile_wasm_to_rwasm_with_config(&wasm_bytecode, config.clone());
+    let result = result.expect("wasm to rwasm compilation failed");
+    assert!(result.constructor_params.is_empty());
+    let rwasm_bytecode: Vec<u8> = result.rwasm_bytecode.into();
+    // Write the rwasm bytecode to a file in the OUT_DIR
+    let out_dir = Utf8PathBuf::from(env::var("OUT_DIR").unwrap());
+    let rwasm_artifact_name = "lib.rwasm".to_string();
+    let rwasm_artifact_path = out_dir.join(rwasm_artifact_name);
+    fs::write(&rwasm_artifact_path, rwasm_bytecode).unwrap();
+    rwasm_artifact_path
 }
 
 pub fn compile_go_to_wasm(config: Config) {
@@ -83,7 +108,7 @@ pub fn compile_go_to_wasm(config: Config) {
     }
 
     let out_dir = Utf8PathBuf::from(env::var("OUT_DIR").unwrap());
-    let wasm_artifact_name = "main.wasm".to_string();
+    let wasm_artifact_name = "lib.wasm".to_string();
     let wasm_artifact_path = out_dir.join(wasm_artifact_name);
 
     let args: Vec<String> = vec![
@@ -141,6 +166,8 @@ fn get_wasm_artifact_name(metadata: &Metadata) -> String {
             .find(|p| p.id == program_crate)
             .unwrap_or_else(|| panic!("cannot find package for {}", program_crate));
         for bin_target in program.targets.iter() {
+            // Both `bin` and `cdylib` targets are valid for WASM compilation
+            // So we check if the target is either a `bin` or `cdylib` target
             let is_bin = bin_target.kind.contains(&TargetKind::Bin)
                 && bin_target.crate_types.contains(&CrateType::Bin);
             let is_cdylib = bin_target.kind.contains(&TargetKind::CDyLib)
@@ -151,14 +178,14 @@ fn get_wasm_artifact_name(metadata: &Metadata) -> String {
             }
         }
     }
-    if result.len() == 0 {
+    if result.is_empty() {
         panic!(
-            "there is no WASM artifact to build for crate {}",
+            "No WASM artifact found to build in package `{}`. Ensure the package defines exactly one `bin` or `cdylib` target.",
             metadata.workspace_members.first().unwrap()
         );
     } else if result.len() > 1 {
         panic!(
-            "multiple WASM artefacts to build for crate {}",
+            "Multiple WASM artifacts found in package `{}`. The package must define exactly one `bin` or `cdylib` target to avoid ambiguity.",
             metadata.workspace_members.first().unwrap()
         );
     }
@@ -182,4 +209,47 @@ pub fn is_tinygo_installed() -> bool {
     } else {
         true
     }
+}
+
+/// Generates constants.rs file which will be included in the contract
+pub fn generate_constants(
+    wasm_bytecode_path: Utf8PathBuf,
+    rwasm_bytecode_path: Option<Utf8PathBuf>,
+    wasmtime_module_path: Option<Utf8PathBuf>,
+) {
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let output_path = PathBuf::from(out_dir).join("constants.rs");
+
+    let mut code = String::new();
+
+    code.push_str(&format!(
+        "pub const CONTRACT_NAME: &str = \"{}\";\n",
+        env::var("CARGO_PKG_NAME").unwrap()
+    ));
+    code.push_str(&format!(
+        "pub const WASM_BYTECODE: &[u8] = include_bytes!(r\"{}\");\n",
+        wasm_bytecode_path
+    ));
+
+    if let Some(rwasm) = rwasm_bytecode_path {
+        code.push_str(&format!(
+            "pub const RWASM_BYTECODE: &[u8] = include_bytes!(r\"{}\");\n",
+            rwasm
+        ));
+
+        let rwasm_hash = keccak256(&fs::read(&rwasm).unwrap()).to_vec();
+        code.push_str(&format!(
+            "pub const RWASM_BYTECODE_HASH: [u8; 32]= {:?};\n",
+            rwasm_hash
+        ));
+    }
+
+    if let Some(wasmtime) = wasmtime_module_path {
+        code.push_str(&format!(
+            "pub const WASMTIME_MODULE_BYTES: &[u8] = include_bytes!(r\"{}\");\n",
+            wasmtime
+        ));
+    }
+
+    fs::write(&output_path, code).expect("Failed to write contract constants");
 }

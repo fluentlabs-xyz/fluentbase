@@ -9,6 +9,7 @@ pub struct Config {
     pub no_default_features: bool,
     pub target: String,
     pub rerun_if_changed: Vec<String>,
+    pub rwasm_compilation_config: Option<rwasm::legacy::Config>,
 }
 
 impl Default for Config {
@@ -21,6 +22,7 @@ impl Default for Config {
             no_default_features: true,
             target: "wasm32-unknown-unknown".to_string(),
             rerun_if_changed: vec![],
+            rwasm_compilation_config: None,
         }
     }
 }
@@ -48,6 +50,11 @@ impl Config {
 
     pub fn with_no_default_features(mut self, no_default_features: bool) -> Self {
         self.no_default_features = no_default_features;
+        self
+    }
+
+    pub fn with_rwasm_compilation_config(mut self, config: Option<rwasm::legacy::Config>) -> Self {
+        self.rwasm_compilation_config = config;
         self
     }
 }
