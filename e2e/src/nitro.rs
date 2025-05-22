@@ -1,15 +1,17 @@
 extern crate test;
 
-use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::address;
+use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};
 use std::time::Instant;
 
 #[ignore] // TODO(khasan) nitro has floats for some reason, investigate why and how to remove them
 #[test]
 fn test_nitro_verifier_wasm_version() {
     let caller = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    let bytecode = fluentbase_contracts_nitro::WASM_BYTECODE;
+    let bytecode = fluentbase_contracts_nitro::BUILD_OUTPUT
+        .wasm_bytecode
+        .to_vec();
     let mut ctx = EvmTestingContext::default();
     let address = ctx.deploy_evm_tx(caller, bytecode.into());
 

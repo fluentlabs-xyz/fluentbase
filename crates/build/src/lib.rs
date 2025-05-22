@@ -1,33 +1,30 @@
 mod config;
 
-use cargo_metadata::{camino::Utf8PathBuf, CrateType, Metadata, MetadataCommand, TargetKind};
+use cargo_metadata::{CrateType, Metadata, MetadataCommand, TargetKind};
 pub use config::*;
-use fluentbase_types::{compile_wasm_to_rwasm_with_config, keccak256};
+use fluentbase_types::{compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256};
 use std::{env, fs, path::PathBuf, process::Command, str::from_utf8};
 
-pub fn compile_rust_to_wasm(config: Config) {
-    if skip() {
-        return;
-    }
-    let cargo_manifest_dir = PathBuf::from(config.cargo_manifest_dir.clone());
-    let cargo_manifest_path = cargo_manifest_dir.join("Cargo.toml");
+pub fn rust_to_wasm(config: RustToWasmConfig) -> PathBuf {
+    let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let cargo_manifest_path = PathBuf::from(cargo_manifest_dir.clone()).join("Cargo.toml");
     let mut metadata_cmd = MetadataCommand::new();
     let metadata = metadata_cmd
         .manifest_path(cargo_manifest_path)
         .exec()
         .unwrap();
-    let target_dir = metadata.target_directory.clone();
+    let target_dir: PathBuf = metadata.target_directory.clone().into();
     let target2_dir = target_dir.join("target2");
 
     let mut args = vec![
         "build".to_string(),
         "--target".to_string(),
-        config.target.clone(),
+        "wasm32-unknown-unknown".to_string(),
         "--release".to_string(),
         "--manifest-path".to_string(),
-        format!("{}/Cargo.toml", config.cargo_manifest_dir),
+        format!("{}/Cargo.toml", cargo_manifest_dir.to_str().unwrap()),
         "--target-dir".to_string(),
-        target2_dir.to_string(),
+        target2_dir.to_str().unwrap().to_string(),
         "--color=always".to_string(),
     ];
     if config.no_default_features {
@@ -60,67 +57,44 @@ pub fn compile_rust_to_wasm(config: Config) {
         );
     }
 
-    let wasm_artifact_name = get_wasm_artifact_name(&metadata);
+    let wasm_artifact_name = calc_wasm_artifact_name(&metadata);
     let wasm_artifact_path = target2_dir
-        .join(config.target.clone())
+        .join("wasm32-unknown-unknown")
         .join("release")
         .join(wasm_artifact_name);
 
-    println!(
-        "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
-        wasm_artifact_path
-    );
-
-    copy_wasm_to_src(&config, &wasm_artifact_path);
-
-    let rwasm_artifact_path = config
-        .rwasm_compilation_config
-        .as_ref()
-        .map(|config| compile_wasm_to_rwasm(wasm_artifact_path.clone(), config));
-
-    generate_constants(wasm_artifact_path, rwasm_artifact_path, None);
-
-    for path in &config.rerun_if_changed {
-        println!("cargo:rerun-if-changed={}", path);
-    }
+    wasm_artifact_path
 }
 
-fn compile_wasm_to_rwasm(
-    wasm_artifact_path: Utf8PathBuf,
-    config: &rwasm::legacy::Config,
-) -> Utf8PathBuf {
-    let wasm_bytecode = fs::read(&wasm_artifact_path).expect("failed to read wasm artifact");
-    let result = compile_wasm_to_rwasm_with_config(&wasm_bytecode, config.clone());
-    let result = result.expect("wasm to rwasm compilation failed");
-    assert!(result.constructor_params.is_empty());
-    let rwasm_bytecode: Vec<u8> = result.rwasm_bytecode.into();
-    // Write the rwasm bytecode to a file in the OUT_DIR
-    let out_dir = Utf8PathBuf::from(env::var("OUT_DIR").unwrap());
-    let rwasm_artifact_name = "lib.rwasm".to_string();
-    let rwasm_artifact_path = out_dir.join(rwasm_artifact_name);
-    fs::write(&rwasm_artifact_path, rwasm_bytecode).unwrap();
-    rwasm_artifact_path
+pub fn wasm_to_wasmtime(wasm_path: &PathBuf) -> PathBuf {
+    let config = wasmtime::Config::new();
+    let engine = wasmtime::Engine::new(&config).unwrap();
+
+    let wasm_bytecode = fs::read(&wasm_path).unwrap();
+    let module =
+        wasmtime::Module::new(&engine, wasm_bytecode).expect("failed to compile wasmtime module");
+    let module_bytes = module
+        .serialize()
+        .expect("failed to serialize wasm bytecode");
+    let wasmtime_module_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib.cwasm");
+    fs::write(&wasmtime_module_path, module_bytes).unwrap();
+    wasmtime_module_path
 }
 
-pub fn compile_go_to_wasm(config: Config) {
-    if skip() {
-        return;
-    }
-
-    let out_dir = Utf8PathBuf::from(env::var("OUT_DIR").unwrap());
-    let wasm_artifact_name = "lib.wasm".to_string();
-    let wasm_artifact_path = out_dir.join(wasm_artifact_name);
+pub fn go_to_wasm() -> PathBuf {
+    let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let wasm_artifact_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib.wasm");
 
     let args: Vec<String> = vec![
         "build".to_string(),
         "-o".to_string(),
-        wasm_artifact_path.to_string(),
+        wasm_artifact_path.to_str().unwrap().to_string(),
         "--target".to_string(),
         "wasm-unknown".to_string(),
     ];
 
     let status = Command::new("tinygo")
-        .current_dir(&config.cargo_manifest_dir)
+        .current_dir(&cargo_manifest_dir)
         .args(args)
         .status()
         .expect("WASM compilation failed");
@@ -128,36 +102,32 @@ pub fn compile_go_to_wasm(config: Config) {
     if !status.success() {
         panic!("WASM compilation failure: failed to run \"tinygo build\"");
     }
-
-    println!(
-        "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
-        wasm_artifact_path
-    );
-
-    for path in &config.rerun_if_changed {
-        println!("cargo:rerun-if-changed={}", path);
-    }
-
-    copy_wasm_to_src(&config, &wasm_artifact_path);
+    wasm_artifact_path
 }
 
-fn copy_wasm_to_src(config: &Config, wasm_artifact_path: &Utf8PathBuf) {
-    if config.output_file_name.is_none() {
-        return;
-    }
-    let cargo_manifest_dir = Utf8PathBuf::from(config.cargo_manifest_dir.clone());
-    let file_name = config.output_file_name.clone().unwrap();
-    let wasm_output = cargo_manifest_dir.join(file_name.clone());
-    let wat_output = cargo_manifest_dir.join(file_name.replace(".wasm", ".wat"));
+pub fn wasm_to_rwasm(wasm_path: &PathBuf, config: rwasm::legacy::Config) -> PathBuf {
+    let wasm = fs::read(&wasm_path).unwrap();
+    let rwasm: Vec<u8> = compile_wasm_to_rwasm_with_config(wasm.as_slice(), config.clone())
+        .unwrap()
+        .rwasm_bytecode
+        .to_vec();
+    let rwasm_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib.rwasm");
+    fs::write(&rwasm_path, &rwasm).unwrap();
+    rwasm_path
+}
 
-    fs::copy(&wasm_artifact_path, &wasm_output).unwrap();
+pub fn copy_wasm_and_wat(wasm_path: &PathBuf) {
+    let dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let wasm_output = dir.join("lib.wasm");
+    let wat_output = dir.join("lib.wat");
+    fs::copy(&wasm_path, &wasm_output).unwrap();
     let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
     if wasm_to_wat.is_ok() {
         fs::write(wat_output, from_utf8(&wasm_to_wat.unwrap().stdout).unwrap()).unwrap();
     }
 }
 
-fn get_wasm_artifact_name(metadata: &Metadata) -> String {
+fn calc_wasm_artifact_name(metadata: &Metadata) -> String {
     let mut result = vec![];
     for program_crate in metadata.workspace_default_members.to_vec() {
         let program = metadata
@@ -166,12 +136,11 @@ fn get_wasm_artifact_name(metadata: &Metadata) -> String {
             .find(|p| p.id == program_crate)
             .unwrap_or_else(|| panic!("cannot find package for {}", program_crate));
         for bin_target in program.targets.iter() {
-            // Both `bin` and `cdylib` targets are valid for WASM compilation
-            // So we check if the target is either a `bin` or `cdylib` target
             let is_bin = bin_target.kind.contains(&TargetKind::Bin)
                 && bin_target.crate_types.contains(&CrateType::Bin);
             let is_cdylib = bin_target.kind.contains(&TargetKind::CDyLib)
                 && bin_target.crate_types.contains(&CrateType::CDyLib);
+            // Both `bin` and `cdylib` crates produce a `.wasm` file
             if is_cdylib || is_bin {
                 let bin_name = bin_target.name.clone() + ".wasm";
                 result.push(bin_name);
@@ -180,26 +149,16 @@ fn get_wasm_artifact_name(metadata: &Metadata) -> String {
     }
     if result.is_empty() {
         panic!(
-            "No WASM artifact found to build in package `{}`. Ensure the package defines exactly one `bin` or `cdylib` target.",
+            "No WASM artifact found to build in package `{}`. Ensure the package defines exactly one `bin` or `cdylib` crate.",
             metadata.workspace_members.first().unwrap()
         );
     } else if result.len() > 1 {
         panic!(
-            "Multiple WASM artifacts found in package `{}`. The package must define exactly one `bin` or `cdylib` target to avoid ambiguity.",
+            "Multiple WASM artifacts found in package `{}`. Ensure the package defines exactly one `bin` or `cdylib` crate.",
             metadata.workspace_members.first().unwrap()
         );
     }
     result.first().unwrap().clone()
-}
-
-fn skip() -> bool {
-    if env::var("CARGO_CFG_TARPAULIN").is_ok() {
-        return true;
-    }
-    if env::var("TARGET").unwrap() == "wasm32-unknown-unknown" {
-        return true;
-    }
-    false
 }
 
 pub fn is_tinygo_installed() -> bool {
@@ -211,45 +170,84 @@ pub fn is_tinygo_installed() -> bool {
     }
 }
 
-/// Generates constants.rs file which will be included in the contract
-pub fn generate_constants(
-    wasm_bytecode_path: Utf8PathBuf,
-    rwasm_bytecode_path: Option<Utf8PathBuf>,
-    wasmtime_module_path: Option<Utf8PathBuf>,
+/// Generates the `build_output.rs` file, which is included in the contract's `lib.rs`.
+pub fn generate_build_output_file(
+    wasm_path: &PathBuf,
+    rwasm_path: &PathBuf,
+    wasmtime_path: &PathBuf,
 ) {
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
-    let output_path = PathBuf::from(out_dir).join("constants.rs");
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
+    let build_output_path = format!("{}/build_output.rs", out_dir);
 
-    let mut code = String::new();
+    let package_name = env::var("CARGO_PKG_NAME").unwrap();
+    let rwasm_hash = keccak256(fs::read(rwasm_path).unwrap());
+    let rwasm_hash_hex = rwasm_hash.to_string();
+    let rwasm_hash = rwasm_hash.to_vec();
 
-    code.push_str(&format!(
-        "pub const CONTRACT_NAME: &str = \"{}\";\n",
-        env::var("CARGO_PKG_NAME").unwrap()
-    ));
-    code.push_str(&format!(
-        "pub const WASM_BYTECODE: &[u8] = include_bytes!(r\"{}\");\n",
-        wasm_bytecode_path
-    ));
+    let wasm_path = wasm_path.to_str().unwrap();
+    let rwasm_path = rwasm_path.to_str().unwrap();
+    let wasmtime_path = wasmtime_path.to_str().unwrap();
+    let code = format!(
+        r#"use fluentbase_sdk::GenesisContractBuildOutput;
 
-    if let Some(rwasm) = rwasm_bytecode_path {
-        code.push_str(&format!(
-            "pub const RWASM_BYTECODE: &[u8] = include_bytes!(r\"{}\");\n",
-            rwasm
-        ));
+pub const BUILD_OUTPUT: GenesisContractBuildOutput =
+    GenesisContractBuildOutput {{
+        name: "{package_name}",
+        wasm_bytecode: include_bytes!(r"{wasm_path}"),
+        rwasm_bytecode: include_bytes!(r"{rwasm_path}"),
+        rwasm_bytecode_hash: {rwasm_hash:?}, // {rwasm_hash_hex}
+        wasmtime_module_bytes: include_bytes!(r"{wasmtime_path}"),
+    }};
+"#
+    );
 
-        let rwasm_hash = keccak256(&fs::read(&rwasm).unwrap()).to_vec();
-        code.push_str(&format!(
-            "pub const RWASM_BYTECODE_HASH: [u8; 32]= {:?};\n",
-            rwasm_hash
-        ));
+    fs::write(&build_output_path, code).unwrap();
+}
+
+/// Compiles the Genesis contract to WASM, RWASM, and Wasmtime module formats,
+/// and generates the corresponding `build_output.rs` file.
+/// For non-standard configurations (e.g. custom configurations, source code structure, etc.),
+/// it's recommended to copy this function into your own `build.rs` and modify as needed.
+pub fn build_default_genesis_contract() {
+    if env::var("TARGET").unwrap() == "wasm32-unknown-unknown" {
+        return;
     }
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
 
-    if let Some(wasmtime) = wasmtime_module_path {
-        code.push_str(&format!(
-            "pub const WASMTIME_MODULE_BYTES: &[u8] = include_bytes!(r\"{}\");\n",
-            wasmtime
-        ));
+    // Compile Rust to WASM
+    let wasm_path = rust_to_wasm(RustToWasmConfig::default());
+    copy_wasm_and_wat(&wasm_path);
+
+    // Compile WASM to RWASM
+    let mut rwasm_config = default_compilation_config();
+    rwasm_config.builtins_consume_fuel(false);
+    let rwasm_path = wasm_to_rwasm(&wasm_path, rwasm_config);
+
+    // Compile WASM to WASMTIME module
+    let wasmtime_path = wasm_to_wasmtime(&wasm_path);
+
+    println!(
+        "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
+        wasm_path.to_str().unwrap()
+    );
+
+    generate_build_output_file(&wasm_path, &rwasm_path, &wasmtime_path);
+}
+
+pub fn build_default_example_contract() {
+    if env::var("TARGET").unwrap() == "wasm32-unknown-unknown" {
+        return;
     }
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
 
-    fs::write(&output_path, code).expect("Failed to write contract constants");
+    // Compile Rust to WASM
+    let wasm_path = rust_to_wasm(RustToWasmConfig::default());
+    copy_wasm_and_wat(&wasm_path);
+
+    println!(
+        "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
+        wasm_path.to_str().unwrap()
+    );
 }

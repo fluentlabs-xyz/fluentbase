@@ -13,7 +13,7 @@ categories.workspace = true
 cargo_metadata = "0.19.1"
 fluentbase-types = { workspace = true }
 rwasm = { workspace = true }
-wasmtime = { version = "31.0.0", features = ["winch"] }
+wasmtime = { workspace = true }
 
 [features]
 default = []

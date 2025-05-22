@@ -5,7 +5,7 @@ use crate::{
 use core::{error::Error as StdError, fmt};
 use ctor::ctor;
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
-use fluentbase_genesis::{get_all_precompile_hashes, get_precompile_wasm_bytecode_by_hash};
+use fluentbase_genesis::GENESIS_CONTRACTS_BY_HASH;
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     get_import_linker_symbols,
@@ -30,31 +30,18 @@ use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store};
 /// Warms up all Wasmtime modules at program startup.
 #[ctor]
 static MODULES_CACHE: HashMap<B256, Module> = {
-    let start_time = std::time::Instant::now();
-    let mut config = Config::new();
-
-    #[cfg(debug_assertions)]
-    {
-        config.cranelift_opt_level(wasmtime::OptLevel::None);
-        println!("warming up wasmtime modules in debug mode (no optimizations)...");
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        config.cranelift_opt_level(wasmtime::OptLevel::Speed);
-        println!("warming up wasmtime modules in release mode (with optimizations)...");
-    }
+    let config = Config::new();
     let engine = Engine::new(&config).unwrap();
 
     let mut map = HashMap::new();
-    for hash in get_all_precompile_hashes() {
-        let wasm_bytecode = get_precompile_wasm_bytecode_by_hash(&hash).unwrap();
-        let module = Module::new(&engine, wasm_bytecode).expect("bytecode should be preverified");
-        map.insert(hash, module);
+    for (hash, contract) in GENESIS_CONTRACTS_BY_HASH.iter() {
+        let module = unsafe {
+            // Unsafe because no validations are performed on the module bytes.
+            // So only trusted modules should be used.
+            Module::deserialize(&engine, &contract.wasmtime_module_bytes).unwrap()
+        };
+        map.insert(hash.clone(), module);
     }
-    println!(
-        "wasmtime modules were compiled in: {:?}",
-        start_time.elapsed()
-    );
     map
 };
 
