@@ -6,7 +6,7 @@ use crate::{
     builtins::SyscallInvokeSignedRust,
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     error::Error,
-    helpers::{SerializedAccountMetadata, SyscallError},
+    helpers::{translate_type, SerializedAccountMetadata, SyscallError},
     native_loader,
     precompiles::is_precompile,
     serialization::account_data_region_memory_state,
@@ -14,7 +14,7 @@ use crate::{
 };
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{marker::PhantomData, ptr};
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{debug_log, SharedAPI};
 use scopeguard::defer;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix};
@@ -435,17 +435,20 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
         memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext<SDK>,
     ) -> Result<StableInstruction, Error> {
+        debug_log!("SyscallInvokeSigned::translate_instruction1");
         let ix = translate_type::<StableInstruction>(
             memory_mapping,
             addr,
             invoke_context.get_check_aligned(),
         )?;
+        debug_log!("SyscallInvokeSigned::translate_instruction2");
         let account_metas = translate_slice::<AccountMeta>(
             memory_mapping,
             ix.accounts.as_ptr() as u64,
             ix.accounts.len() as u64,
             invoke_context.get_check_aligned(),
         )?;
+        debug_log!("SyscallInvokeSigned::translate_instruction3");
         let data = translate_slice::<u8>(
             memory_mapping,
             ix.data.as_ptr() as u64,
@@ -1101,10 +1104,15 @@ pub(crate) fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     //     saturating_add_assign!(invoke_context.timings.execute_us, execute_time.as_us());
     // }
 
+    debug_log!("cpi_common1");
     let instruction = S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
+    debug_log!("cpi_common2");
     let transaction_context = &invoke_context.transaction_context;
+    debug_log!("cpi_common3");
     let instruction_context = transaction_context.get_current_instruction_context()?;
+    debug_log!("cpi_common4");
     let caller_program_id = instruction_context.get_last_program_key(transaction_context)?;
+    debug_log!("cpi_common5");
     let signers = S::translate_signers(
         caller_program_id,
         signers_seeds_addr,
@@ -1112,6 +1120,7 @@ pub(crate) fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
         memory_mapping,
         invoke_context,
     )?;
+    debug_log!("cpi_common6");
     let is_loader_deprecated = *instruction_context
         .try_borrow_last_program_account(transaction_context)?
         .get_owner()
@@ -1120,6 +1129,7 @@ pub(crate) fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
         invoke_context.prepare_instruction(&instruction, &signers)?;
     check_authorized_program(&instruction.program_id, &instruction.data, invoke_context)?;
 
+    debug_log!("cpi_common7");
     let mut accounts = S::translate_accounts(
         &instruction_accounts,
         &program_indices,

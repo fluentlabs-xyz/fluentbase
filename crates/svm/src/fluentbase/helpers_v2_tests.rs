@@ -319,11 +319,15 @@ mod tests {
         let sysvar_clock_id = sysvar::clock::id();
         let sysvar_rent_id = sysvar::rent::id();
 
-        let pk_payer = Pubkey::new_unique();
+        const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+        // let pk_payer = Pubkey::new_unique();
+        let pk_payer = pubkey_from_address(&DEPLOYER_ADDRESS);
         let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
 
         // let pk_exec = Pubkey::from([8; 32]);
-        let pk_exec = pubkey_from_pubkey(&Pubkey::from([8; 32]));
+        const CONTRACT_ADDRESS: Address = address!("0xf91c20c0cafbfdc150adff51bbfc5808edde7cb5");
+        // let pk_exec = pubkey_from_pubkey(&Pubkey::from([8; 32]));
+        let pk_exec = pubkey_from_address(&CONTRACT_ADDRESS);
 
         // let pk_tmp = Pubkey::new_unique();
         // let pk_tmp_account = AccountSharedData::new(100, 0, &pk_exec);
@@ -624,13 +628,13 @@ mod tests {
         const CONTRACT_CALLER: Address = address!("1231238908230948230948209348203984029834");
         const CONTRACT_ADDRESS: Address = address!("0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5");
 
-        let pk_payer = pubkey_from_address(CONTRACT_CALLER);
+        let pk_payer = pubkey_from_address(&CONTRACT_CALLER);
         let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
 
         // let pk_tmp = Pubkey::new_unique();
         // let pk_tmp_account = AccountSharedData::new(100, 0, &system_program_id);
 
-        let pk_exec = pubkey_from_address(CONTRACT_ADDRESS);
+        let pk_exec = pubkey_from_address(&CONTRACT_ADDRESS);
 
         let seed1 = b"my_seed";
         let seed2 = pk_payer.as_ref();

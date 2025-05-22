@@ -55,6 +55,7 @@ solana-atomic-u64 = { workspace = true, default-features = false, features = [] 
 bs58 = { workspace = true, default-features = false, features = ["alloc"] }
 five8_const = { workspace = true, default-features = false, features = [] }
 tiny-keccak = { workspace = true }
+paste = { workspace = true }
 scopeguard = { workspace = true, default-features = false, features = [] }
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
 serde_json = { workspace = true, default-features = false, features = ["alloc"] }

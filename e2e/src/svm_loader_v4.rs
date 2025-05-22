@@ -88,7 +88,7 @@ mod tests {
 
         // setup initial accounts
 
-        let pk_payer = pubkey_from_address(DEPLOYER_ADDRESS);
+        let pk_payer = pubkey_from_address(&DEPLOYER_ADDRESS);
         ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
 
         // deploy and get exec contract
@@ -98,13 +98,13 @@ mod tests {
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
         println!("contract_address {:x?}", contract_address);
 
-        let pk_exec = pubkey_from_address(contract_address);
+        let pk_exec = pubkey_from_address(&contract_address);
         // println!("pk_exec {:x?}", &pk_exec.as_ref());
 
         let seed1 = b"my_seed";
         let seed2 = pk_payer.as_ref();
         let seeds = &[seed1.as_slice(), seed2];
-        let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_exec);
+        let (pk_new, bump) = Pubkey::find_program_address(seeds, &pk_exec);
 
         // exec
 
@@ -123,6 +123,9 @@ mod tests {
         instruction_data.push(byte_n_val);
         // println!("instruction_data: {:x?}", instruction_data);
 
+        println!("pk_payer: {:x?}", pk_payer.to_bytes());
+        println!("pk_exec: {:x?}", pk_exec.to_bytes());
+        println!("pk_new: {:x?} bump: {}", pk_new.to_bytes(), bump);
         let instructions = vec![Instruction::new_with_bincode(
             pk_exec.clone(),
             &instruction_data,
@@ -137,7 +140,7 @@ mod tests {
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
         println!(
-            "input.len {} input '{:x?}' batch_message: {:?}",
+            "input: len {} input '{:x?}' batch_message: {:?}",
             input.len(),
             input.as_slice(),
             &batch_message

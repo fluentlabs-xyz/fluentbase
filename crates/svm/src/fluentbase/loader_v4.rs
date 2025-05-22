@@ -111,8 +111,8 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     drop(ctx);
 
     // TODO generate inter-dependant pubkey
-    let pk_payer = pubkey_from_address(contract_caller.clone()); // must exist // caller
-    let pk_exec = pubkey_from_address(contract_address.clone()); // may not exist // contract_address
+    let pk_payer = pubkey_from_address(&contract_caller); // must exist // caller
+    let pk_exec = pubkey_from_address(&contract_address); // may not exist // contract_address
     let pk_authority = pk_payer.clone(); // must exist // caller
 
     let contract_caller_balance = sdk.balance(&contract_caller);
@@ -203,7 +203,6 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    // return;
     let input = sdk.input();
     let preimage = read_protected_preimage(&sdk);
     let contract_address = sdk.context().contract_address();
@@ -211,7 +210,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let mut mem_storage = MemStorage::new();
     let loader_id = loader_v4::id();
 
-    let pk_exec = pubkey_from_address(contract_address);
+    let pk_exec = pubkey_from_address(&contract_address);
     let mut exec_account_data: Result<AccountSharedData, DecodeError> =
         deserialize(preimage.as_ref());
     let mut exec_account_data = match exec_account_data {

@@ -725,7 +725,7 @@ pub fn compile_accounts_for_tx_ctx(
     (accounts, working_accounts_len)
 }
 
-pub fn pubkey_from_address(value: Address) -> Pubkey {
+pub fn pubkey_from_address(value: &Address) -> Pubkey {
     let mut new_pk = [0u8; 32];
     new_pk[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
     new_pk[SVM_ADDRESS_PREFIX.len()..].copy_from_slice(value.as_slice());
@@ -733,7 +733,7 @@ pub fn pubkey_from_address(value: Address) -> Pubkey {
 }
 
 pub fn pubkey_from_pubkey(value: &Pubkey) -> Pubkey {
-    pubkey_from_address(Address::from_slice(
+    pubkey_from_address(&Address::from_slice(
         &value.as_ref()[SVM_ADDRESS_PREFIX.len()..],
     ))
 }

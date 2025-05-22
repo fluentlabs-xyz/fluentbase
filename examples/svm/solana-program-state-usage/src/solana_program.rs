@@ -1,29 +1,23 @@
+extern crate alloc;
 use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
 use solana_program::{
-    program::{invoke, invoke_signed},
+    program::invoke_signed,
     serialize_utils::cursor::read_u64,
     system_instruction,
-    sysvar::Sysvar,
 };
 use solana_program_entrypoint::{entrypoint_no_alloc, ProgramResult};
 use solana_program_error::ProgramError;
 use solana_pubkey::Pubkey;
 use solana_sdk::{
     decode_error::DecodeError,
-    rent::Rent,
-    serialize_utils::{
-        cursor::{read_u32, read_u8},
-        read_slice,
-    },
+    serialize_utils::cursor::{read_u32, read_u8},
 };
 use std::{
     io::{Cursor, Read},
     str::from_utf8,
 };
-
-extern crate alloc;
 
 /// Custom program errors
 #[derive(Debug, Clone, PartialEq, FromPrimitive)]
@@ -149,8 +143,15 @@ pub fn process_instruction(
             let signer_seeds = &[&seed1, payer.key.as_ref(), &[bump]];
 
             msg!("pda: {:x?}", pda.to_bytes());
-            msg!("payer.key: {:x?}", payer.key.to_bytes());
-            msg!("new_account.key: {:x?}", new_account.key.to_bytes());
+            msg!(
+                "payer.key: {:x?} new_account.key: {:x?} lamports {} space {} program_id {:x?} signer_seeds {:x?}",
+                payer.key.to_bytes(),
+                new_account.key.to_bytes(),
+                lamports,
+                space,
+                program_id.to_bytes(),
+                signer_seeds
+            );
             msg!("calling invoke");
             // invoke(
             invoke_signed(

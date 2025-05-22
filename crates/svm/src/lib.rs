@@ -2,6 +2,7 @@
 #![feature(new_range_api)]
 #![feature(assert_matches)]
 // #![feature(liballoc_internals)]
+#![feature(trait_alias)]
 
 extern crate alloc;
 extern crate core;
@@ -59,6 +60,7 @@ pub mod sysvar_cache;
 #[cfg(test)]
 pub mod test_helpers;
 pub mod types;
+pub mod word_size_mismatch;
 // mod test_macroses;
 
 pub use bincode;

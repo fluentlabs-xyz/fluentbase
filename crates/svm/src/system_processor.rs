@@ -14,6 +14,7 @@ use alloc::boxed::Box;
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashSet;
 use solana_instruction::error::InstructionError;
+use solana_program_entrypoint::__msg;
 use solana_rbpf::declare_builtin_function;
 
 // represents an address that may or may not have been generated
@@ -298,6 +299,7 @@ fn transfer_with_seed<SDK: SharedAPI>(
 pub const DEFAULT_COMPUTE_UNITS: u64 = 150;
 
 declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, |invoke_context| {
+    __msg!("system_processor::Entrypoint");
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();

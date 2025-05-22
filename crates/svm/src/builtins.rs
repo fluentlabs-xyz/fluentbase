@@ -1,5 +1,5 @@
 use crate::{
-    alloc::string::ToString,
+    alloc::{string::ToString, vec::Vec},
     common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
@@ -18,6 +18,7 @@ use crate::{
     },
     loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
     mem_ops::{memcmp_non_contiguous, memset_non_contiguous},
+    word_size_mismatch::slice_64::{SliceFatPtr64, SLICE_FAT_PTR64_BYTE_SIZE},
 };
 use alloc::boxed::Box;
 use core::str::from_utf8;
@@ -149,45 +150,47 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
 
+        unimplemented!("SyscallMemcmp unimplemented yet");
+
         // mem_op_consume(invoke_context, n)?;
 
-        if invoke_context
-            .environment_config.feature_set
-            .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
-        {
-            let cmp_result = translate_type_mut::<i32>(
-                memory_mapping,
-                cmp_result_addr,
-                invoke_context.get_check_aligned(),
-            )?;
-            *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, memory_mapping)?;
-        } else {
-            let s1 = translate_slice::<u8>(
-                memory_mapping,
-                s1_addr,
-                n,
-                invoke_context.get_check_aligned(),
-            )?;
-            let s2 = translate_slice::<u8>(
-                memory_mapping,
-                s2_addr,
-                n,
-                invoke_context.get_check_aligned(),
-            )?;
-            let cmp_result = translate_type_mut::<i32>(
-                memory_mapping,
-                cmp_result_addr,
-                invoke_context.get_check_aligned(),
-            )?;
-
-            debug_assert_eq!(s1.len(), n as usize);
-            debug_assert_eq!(s2.len(), n as usize);
-            // Safety:
-            // memcmp is marked unsafe since it assumes that the inputs are at least
-            // `n` bytes long. `s1` and `s2` are guaranteed to be exactly `n` bytes
-            // long because `translate_slice` would have failed otherwise.
-            *cmp_result = unsafe { memcmp(s1, s2, n as usize) };
-        }
+        // if invoke_context
+        //     .environment_config.feature_set
+        //     .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
+        // {
+        //     let cmp_result = translate_type_mut::<i32>(
+        //         memory_mapping,
+        //         cmp_result_addr,
+        //         invoke_context.get_check_aligned(),
+        //     )?;
+        //     *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, memory_mapping)?;
+        // } else {
+        //     let s1 = translate_slice::<u8>(
+        //         memory_mapping,
+        //         s1_addr,
+        //         n,
+        //         invoke_context.get_check_aligned(),
+        //     )?;
+        //     let s2 = translate_slice::<u8>(
+        //         memory_mapping,
+        //         s2_addr,
+        //         n,
+        //         invoke_context.get_check_aligned(),
+        //     )?;
+        //     let cmp_result = translate_type_mut::<i32>(
+        //         memory_mapping,
+        //         cmp_result_addr,
+        //         invoke_context.get_check_aligned(),
+        //     )?;
+        //
+        //     debug_assert_eq!(s1.len(), n);
+        //     debug_assert_eq!(s2.len(), n);
+        //     // Safety:
+        //     // memcmp is marked unsafe since it assumes that the inputs are at least
+        //     // `n` bytes long. `s1` and `s2` are guaranteed to be exactly `n` bytes
+        //     // long because `translate_slice` would have failed otherwise.
+        //     *cmp_result = unsafe { memcmp(s1.as_slice(), s2.as_slice(), n as usize) };
+        // }
 
         Ok(0)
     }
@@ -233,7 +236,7 @@ declare_builtin_function!(
         {
             memset_non_contiguous(dst_addr, c as u8, n, memory_mapping)
         } else {
-            let s = translate_slice_mut::<u8>(
+            let mut s = translate_slice_mut::<u8>(
                 memory_mapping,
                 dst_addr,
                 n,
@@ -388,7 +391,7 @@ declare_builtin_function!(
 
         // consume_compute_meter(invoke_context, hash_base_cost)?;
 
-        let hash_result = translate_slice_mut::<u8>(
+        let mut hash_result = translate_slice_mut::<u8>(
             memory_mapping,
             result_addr,
             size_of::<H::Output>() as u64,
@@ -396,20 +399,21 @@ declare_builtin_function!(
         )?;
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
-            let vals = translate_slice::<&[u8]>(
+            let vals = translate_slice::<SliceFatPtr64<u8>>(
                 memory_mapping,
                 vals_addr,
                 vals_len,
                 invoke_context.get_check_aligned(),
             )?;
             for val in vals.iter() {
+                // TODO
                 let bytes = translate_slice::<u8>(
                     memory_mapping,
-                    val.as_ptr() as u64,
+                    val.first_item_fat_ptr_addr(),
                     val.len() as u64,
                     invoke_context.get_check_aligned(),
                 )?;
-                hasher.hash(bytes);
+                hasher.hash(&bytes.to_vec());
             }
         }
         hash_result.copy_from_slice(hasher.result().as_ref());
@@ -683,8 +687,8 @@ declare_builtin_function!(
         // let Ok(new_address) = Pubkey::create_program_address(&seeds, program_id) else {
         //     return Ok(1);
         // };
-        let new_address = Pubkey::create_program_address(&seeds, program_id)?;
-        let address = translate_slice_mut::<u8>(
+        let new_address = Pubkey::create_program_address(&seeds.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>(), program_id)?;
+        let mut address = translate_slice_mut::<u8>(
             memory_mapping,
             address_addr,
             32,
@@ -721,23 +725,23 @@ declare_builtin_function!(
         );
 
         // let host_addr = memory_mapping.map(AccessType::Load, seeds_addr, 8).unwrap();
-        let word_size = size_of::<usize>();
-        let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, (word_size * seeds_len as usize) as u64).unwrap();
-        let untranslated_seeds = translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
-        let seeds_slice_fat_ptr_data =
-                unsafe { core::slice::from_raw_parts(host_addr as *const u8, word_size  * 2) };
-        // debug_log!("seeds_slice2 (addr:{} host_addr:{:?})", seeds_addr, host_addr);
+        // let word_size = size_of::<usize>();
+        let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, SLICE_FAT_PTR64_BYTE_SIZE)
+            .expect("translate seeds failed");
+        let untranslated_seeds = translate_slice::<SliceFatPtr64<u8>>(memory_mapping, seeds_addr, seeds_len, true)?;
+        // let seeds_slice_fat_ptr_data =
+        //         unsafe { core::slice::from_raw_parts(host_addr as *const u8, SLICE_FAT_PTR64_BYTE_SIZE as usize) };
         debug_log!(
-            "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): seeds_slice {:x?} untranslated_seeds.len {}",
+            "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): untranslated_seeds ({})",
             seeds_addr,
             host_addr,
-            seeds_slice_fat_ptr_data,
             untranslated_seeds.len(),
         );
         for untranslated_seed in untranslated_seeds.iter() {
             debug_log!(
-                "untranslated_seed.len {}",
+                "untranslated_seed ({}): ",
                 untranslated_seed.len(),
+                // untranslated_seed.to_vec()
             );
         }
         let result = translate_and_check_program_address_inputs(
@@ -751,16 +755,19 @@ declare_builtin_function!(
             debug_log!("in SyscallTryFindProgramAddress: translate_and_check_program_address_inputs: {:?}", e);
         }
         let (seeds, program_id) = result?;
-        debug_log!("in SyscallTryFindProgramAddress: translate_and_check_program_address_inputs");
+        debug_log!("in SyscallTryFindProgramAddress: translate_and_check_program_address_inputs: seeds {:x?}", &seeds);
 
         let mut bump_seed = [u8::MAX];
         for i in 0..u8::MAX {
             {
                 debug_log!("in SyscallTryFindProgramAddress: i={}", i);
-                let mut seeds_with_bump = seeds.to_vec();
-                seeds_with_bump.push(&bump_seed);
+                let mut seeds_with_bump = seeds.clone();
+                seeds_with_bump.push(bump_seed.to_vec());
 
-                let new_address = Pubkey::create_program_address(&seeds_with_bump, program_id);
+                let new_address = Pubkey::create_program_address(
+                    &seeds_with_bump.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>(),
+                    program_id
+                );
                 if let Ok(new_address) =
                     // Pubkey::create_program_address(&seeds_with_bump, program_id)
                     new_address
@@ -770,16 +777,18 @@ declare_builtin_function!(
                         bump_seed_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let address = translate_slice_mut::<u8>(
+                    let mut address = translate_slice_mut::<u8>(
                         memory_mapping,
                         address_addr,
                         core::mem::size_of::<Pubkey>() as u64,
                         invoke_context.get_check_aligned(),
                     )?;
+                    // TODO recheck this check
                     if !is_nonoverlapping(
                         bump_seed_ref as *const _ as usize,
                         core::mem::size_of_val(bump_seed_ref),
-                        address.as_ptr() as usize,
+                        // TODO recheck
+                        address.first_item_fat_ptr_addr() as usize,
                         core::mem::size_of::<Pubkey>(),
                     ) {
                         return Err(SyscallError::CopyOverlapping.into());
@@ -808,6 +817,7 @@ declare_builtin_function!(
         signers_seeds_len: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
+        debug_log!("in SyscallInvokeSignedRust");
         cpi_common::<SDK, Self>(
             invoke_context,
             instruction_addr,
