@@ -88,3 +88,6 @@ debug = false
 debug-assertions = false
 rpath = false
 codegen-units = 1
+
+[profile.dev.build-override]
+debug = false # disable debug symbols for build.rs to avoid 200+MB build-script binaries
