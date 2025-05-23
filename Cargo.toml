@@ -105,8 +105,8 @@ fluentbase-sdk-testing = { path = "./crates/sdk-testing" }
 fluentbase-types = { path = "./crates/types", default-features = false }
 
 # rwasm
-#rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.1.0-dev", default-features = false }
-rwasm = { path = "../rwasm", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.1.0-dev", default-features = false }
+#rwasm = { path = "../rwasm", default-features = false }
 
 # revm
 revm-interpreter = { path = "revm/crates/interpreter", default-features = false }
