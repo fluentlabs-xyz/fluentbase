@@ -49,6 +49,7 @@ revm-precompile = { path = "revm/crates/precompile", default-features = false }
 revm = { path = "revm/crates/revm", default-features = false, features = [
     "std",
     "hashbrown",
+    "wasmtime"
 ] }
 
 # misc
@@ -72,6 +73,7 @@ syn = "2.0"
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
+wasmtime = { version = "31.0.0" }
 
 [profile.bench]
 lto = "fat"
@@ -86,3 +88,6 @@ debug = false
 debug-assertions = false
 rpath = false
 codegen-units = 1
+
+[profile.dev.build-override]
+debug = false # disable debug symbols for build.rs to avoid 200+MB build-script binaries

@@ -41,3 +41,11 @@ pub const PRECOMPILE_BLS12_381_MAP_G2: Address = evm_address(0x11);
 // "R native" + keccak256("multicall(bytes[])")[..4]
 pub const PRECOMPILE_NATIVE_MULTICALL: Address =
     address!("52206e61746976650000000000000000ac9650d8");
+
+pub struct GenesisContractBuildOutput {
+    pub name: &'static str,
+    pub wasm_bytecode: &'static [u8],
+    pub rwasm_bytecode: &'static [u8],
+    pub rwasm_bytecode_hash: [u8; 32],
+    pub wasmtime_module_bytes: &'static [u8],
+}

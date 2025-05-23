@@ -11,6 +11,9 @@ categories.workspace = true
 
 [dependencies]
 cargo_metadata = "0.19.1"
+fluentbase-types = { workspace = true }
+rwasm = { workspace = true }
+wasmtime = { workspace = true }
 
 [features]
 default = []

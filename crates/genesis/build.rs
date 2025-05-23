@@ -1,36 +1,34 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_types::{
     address,
-    compile_wasm_to_rwasm_with_config,
-    default_compilation_config,
     Address,
     Bytes,
+    GenesisContractBuildOutput,
     B256,
     DEVELOPER_PREVIEW_CHAIN_ID,
     U256,
-    WASM_SIG,
 };
 use std::{collections::BTreeMap, env, fs::File, io::Write, path::PathBuf};
 
 #[rustfmt::skip]
-pub const GENESIS_CONTRACTS: &[(&str, Address, &[u8])] = &[
-    ("fluentbase-contracts-modexp", fluentbase_types::PRECOMPILE_BIG_MODEXP, fluentbase_contracts_modexp::WASM_BYTECODE),
-    ("fluentbase-contracts-blake2f", fluentbase_types::PRECOMPILE_BLAKE2F, fluentbase_contracts_blake2f::WASM_BYTECODE),
-    ("fluentbase-contracts-bn256", fluentbase_types::PRECOMPILE_BN256_ADD, fluentbase_contracts_bn256::WASM_BYTECODE),
-    ("fluentbase-contracts-bn256", fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts_bn256::WASM_BYTECODE),
-    ("fluentbase-contracts-bn256", fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::WASM_BYTECODE),
-    ("fluentbase-contracts-erc20", fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::WASM_BYTECODE),
-    ("fluentbase-contracts-evm", fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::WASM_BYTECODE),
-    ("fluentbase-contracts-fairblock", fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::WASM_BYTECODE),
-    ("fluentbase-contracts-identity", fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts_identity::WASM_BYTECODE),
-    ("fluentbase-contracts-kzg", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_kzg::WASM_BYTECODE),
-    ("fluentbase-contracts-multicall", fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::WASM_BYTECODE),
-    ("fluentbase-contracts-nitro", fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts_nitro::WASM_BYTECODE),
-    ("fluentbase-contracts-oauth2", fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts_oauth2::WASM_BYTECODE),
-    ("fluentbase-contracts-ripemd160", fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts_ripemd160::WASM_BYTECODE),
-    ("fluentbase-contracts-ecrecover", fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_ecrecover::WASM_BYTECODE),
-    ("fluentbase-contracts-sha256", fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts_sha256::WASM_BYTECODE),
-    ("fluentbase-contracts-webauthn", fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts_webauthn::WASM_BYTECODE),
+const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
+    (fluentbase_types::PRECOMPILE_BIG_MODEXP, fluentbase_contracts_modexp::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLAKE2F, fluentbase_contracts_blake2f::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BN256_ADD, fluentbase_contracts_bn256::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts_bn256::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts_identity::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_kzg::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts_nitro::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts_oauth2::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts_ripemd160::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_ecrecover::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts_sha256::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts_webauthn::BUILD_OUTPUT),
 ];
 
 fn devnet_chain_config() -> ChainConfig {
@@ -71,32 +69,16 @@ fn init_contract(
     alloc: &mut BTreeMap<Address, GenesisAccount>,
     name: &str,
     address: Address,
-    binary_data: Vec<u8>,
+    rwasm_bytecode: Bytes,
 ) {
-    let bytecode: Bytes = if binary_data.starts_with(&WASM_SIG) {
-        let mut config = default_compilation_config();
-        // genesis contracts self-manage gas via `charge_fuel_manually` syscall, and additional
-        // charging for each builtin is not expected.
-        config.builtins_consume_fuel(false);
-        let result = compile_wasm_to_rwasm_with_config(&binary_data, config).unwrap();
-        if !result.constructor_params.is_empty() {
-            panic!(
-                "rwasm contract ({}) should not have constructor params",
-                name
-            );
-        }
-        result.rwasm_bytecode
-    } else {
-        Bytes::from(binary_data)
-    };
     print!("creating genesis account {} (0x{})... ", name, address);
     std::io::stdout().flush().unwrap();
-    println!("{} bytes", bytecode.len());
+    println!("{} bytes", rwasm_bytecode.len());
     let mut account = alloc
         .get(&address)
         .cloned()
         .unwrap_or_else(GenesisAccount::default);
-    account.code = Some(bytecode);
+    account.code = Some(rwasm_bytecode);
     alloc.insert(address, account);
 }
 
@@ -136,8 +118,13 @@ fn devnet_genesis() -> Genesis {
         initial_devnet_balance!("33a831e42B24D19bf57dF73682B9a3780A0435BA"),
     ]);
 
-    for (name, address, bytecode) in GENESIS_CONTRACTS {
-        init_contract(&mut alloc, *name, address.clone(), bytecode.to_vec());
+    for (address, contract) in GENESIS_CONTRACTS {
+        init_contract(
+            &mut alloc,
+            contract.name,
+            address.clone(),
+            contract.rwasm_bytecode.into(),
+        );
     }
 
     Genesis {
