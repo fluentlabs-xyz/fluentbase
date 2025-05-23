@@ -18,7 +18,7 @@ use crate::{
     },
     loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
     mem_ops::{memcmp_non_contiguous, memset_non_contiguous},
-    word_size_mismatch::slice_64::{SliceFatPtr64, SLICE_FAT_PTR64_BYTE_SIZE},
+    word_size_mismatch::fat_ptr_reprs::{SliceFatPtr64, SLICE_FAT_PTR64_BYTE_SIZE},
 };
 use alloc::boxed::Box;
 use core::str::from_utf8;

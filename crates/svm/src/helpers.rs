@@ -109,7 +109,7 @@ use crate::{
     error::{Error, SvmError},
     solana_program::{feature_set::feature_set_default, sysvar::Sysvar},
     storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
-    word_size_mismatch::slice_64::{ElemTypeConstraints, SliceFatPtr64},
+    word_size_mismatch::fat_ptr_reprs::{ElemTypeConstraints, SliceFatPtr64},
 };
 use fluentbase_sdk::{debug_log, SharedAPI, StorageAPI};
 use solana_rbpf::ebpf::MM_HEAP_START;
@@ -284,7 +284,7 @@ fn translate_type_inner<'a, T>(
     access_type: AccessType,
     vm_addr: u64,
     check_aligned: bool,
-) -> Result<SliceFatPtr64<T>, SvmError> {
+) -> Result<&'a mut T, SvmError> {
     let host_addr = translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u64)?;
     if !check_aligned {
         #[cfg(target_pointer_width = "64")]
@@ -328,7 +328,7 @@ fn translate_slice_inner<'a, T: ElemTypeConstraints>(
     if len == 0 {
         return Ok(Default::default());
     }
-    let type_name = type_name::<T>();
+    // let type_name = type_name::<T>();
     let size_of_t = size_of::<T>();
     // debug_log!(
     //     "translate_slice_inner 1: len {} item type '{}' size_of_t {}",

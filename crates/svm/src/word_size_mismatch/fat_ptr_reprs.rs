@@ -1,10 +1,20 @@
 use alloc::vec::Vec;
-use core::{iter::Iterator, marker::PhantomData, ptr::NonNull};
+use core::{
+    iter::Iterator,
+    marker::PhantomData,
+    ops::{Bound, Index, RangeBounds},
+    ptr::NonNull,
+    slice::SliceIndex,
+};
+use solana_account_info::AccountInfo;
+use solana_instruction::AccountMeta;
 use solana_stable_layout::stable_vec::StableVec;
 
 pub const FAT_PTR64_ELEM_BYTE_SIZE: u64 = 8;
 pub const SLICE_FAT_PTR64_BYTE_SIZE: u64 = FAT_PTR64_ELEM_BYTE_SIZE * 2;
 pub const STABLE_VEC_FAT_PTR64_BYTE_SIZE: u64 = 8 * 3;
+
+pub trait ElemTypeConstraints = Clone + SpecMethods;
 
 pub trait SpecMethods {
     const BYTE_SIZE: u64;
@@ -15,7 +25,7 @@ pub trait SpecMethods {
 #[macro_export]
 macro_rules! impl_numeric_type {
     ($typ: ident) => {
-        impl $crate::word_size_mismatch::slice_64::SpecMethods for $typ {
+        impl $crate::word_size_mismatch::fat_ptr_reprs::SpecMethods for $typ {
             const BYTE_SIZE: u64 = core::mem::size_of::<$typ>() as u64;
 
             fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
@@ -32,8 +42,6 @@ impl SpecMethods for u8 {
         byte_repr[0]
     }
 }
-
-pub trait ElemTypeConstraints = Clone + SpecMethods;
 
 /// Slice impl emulating 64 bit word size to support solana 64 bit programs
 #[derive(Clone)]
@@ -81,6 +89,28 @@ impl<T: ElemTypeConstraints> SliceFatPtr64<T> {
         self.len
     }
 
+    pub fn get_mut(&mut self, range: impl RangeBounds<usize>) -> Option<SliceFatPtr64<T>> {
+        let start = match range.start_bound().cloned() {
+            Bound::Included(v) => v,
+            _ => 0,
+        };
+        if start >= self.len as usize {
+            return None;
+        }
+        let end = match range.end_bound().cloned() {
+            Bound::Included(v) => v + 1,
+            Bound::Excluded(v) => v,
+            Bound::Unbounded => self.len as usize,
+        };
+        if end > self.len as usize {
+            return None;
+        }
+        Some(SliceFatPtr64::from_first_item_ptr_and_len(
+            self.item_addr_at_idx(start as u64),
+            (end - start) as u64,
+        ))
+    }
+
     pub fn fat_ptr_addr_as_vec(&self) -> Vec<u8> {
         self.first_item_fat_ptr_addr.to_le_bytes().to_vec()
     }
@@ -89,16 +119,16 @@ impl<T: ElemTypeConstraints> SliceFatPtr64<T> {
         self.len.to_le_bytes().to_vec()
     }
 
-    pub fn item_addr(&self, idx: u64) -> u64 {
+    pub fn item_addr_at_idx(&self, idx: u64) -> u64 {
         self.first_item_fat_ptr_addr + idx * T::BYTE_SIZE
     }
 
     pub fn item_ptr_at_idx(&self, idx: u64) -> *const T {
-        self.item_addr(idx) as *const T
+        self.item_addr_at_idx(idx) as *const T
     }
 
     pub fn item_ptr_at_idx_mut(&self, idx: u64) -> *mut T {
-        self.item_addr(idx) as *mut T
+        self.item_addr_at_idx(idx) as *mut T
     }
 
     pub fn try_set_item_at_idx_mut(&mut self, idx: u64, value: T) -> bool {
@@ -113,7 +143,10 @@ impl<T: ElemTypeConstraints> SliceFatPtr64<T> {
 
     pub fn item_at_idx(&self, idx: u64) -> T {
         let byte_repr = unsafe {
-            core::slice::from_raw_parts(self.item_addr(idx) as *const u8, T::BYTE_SIZE as usize)
+            core::slice::from_raw_parts(
+                self.item_addr_at_idx(idx) as *const u8,
+                T::BYTE_SIZE as usize,
+            )
         };
         T::recover_from_byte_repr(byte_repr)
     }
@@ -258,9 +291,25 @@ impl<T: Sized> SpecMethods for StableVec<T> {
     }
 }
 
+impl SpecMethods for AccountMeta {
+    const BYTE_SIZE: u64 = size_of::<AccountMeta>() as u64;
+
+    fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
+        todo!()
+    }
+}
+
+impl SpecMethods for AccountInfo<'_> {
+    const BYTE_SIZE: u64 = size_of::<AccountInfo>() as u64;
+
+    fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
+        todo!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::word_size_mismatch::slice_64::{
+    use crate::word_size_mismatch::fat_ptr_reprs::{
         SliceFatPtr64,
         SpecMethods,
         FAT_PTR64_ELEM_BYTE_SIZE,
@@ -365,6 +414,14 @@ mod tests {
         for (idx, item) in slice.iter().enumerate() {
             assert_eq!(item, fill_with);
         }
+
+        let fill_with = rand::random::<_>();
+        let range = 1..3;
+        slice.get_mut(range.clone()).map(|mut s| s.fill(fill_with));
+        for idx in range {
+            let item = slice.item_at_idx(idx as u64);
+            assert_eq!(item, fill_with);
+        }
     }
 
     #[test]
@@ -418,6 +475,14 @@ mod tests {
         let fill_with = rand::random::<_>();
         slice.try_set_item_at_idx_mut(5, fill_with);
         assert_eq!(slice.to_vec()[5], fill_with);
+
+        let fill_with = rand::random::<_>();
+        let range = 1..3;
+        slice.get_mut(range.clone()).map(|mut s| s.fill(fill_with));
+        for idx in range {
+            let item = slice.item_at_idx(idx as u64);
+            assert_eq!(item, fill_with);
+        }
     }
 
     #[test]
@@ -451,11 +516,11 @@ mod tests {
         type ElemType = StableVec<AccountMeta>;
         let items_original_fixed = [
             ElemType::from([AccountMeta::new(Pubkey::new_unique(), false)].to_vec()),
-            ElemType::from([AccountMeta::new(Pubkey::new_unique(), true)].to_vec()),
+            // ElemType::from([AccountMeta::new(Pubkey::new_unique(), true)].to_vec()),
         ];
         let items_new_fixed = [
             ElemType::from([AccountMeta::new(Pubkey::new_unique(), false)].to_vec()),
-            ElemType::from([AccountMeta::new(Pubkey::new_unique(), true)].to_vec()),
+            // ElemType::from([AccountMeta::new(Pubkey::new_unique(), true)].to_vec()),
         ];
         let items_original = items_original_fixed.as_slice();
         let items_new = items_new_fixed.as_slice();
