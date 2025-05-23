@@ -40,66 +40,66 @@ fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
 
-#solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-instruction = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-account-info = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-clock = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-epoch-schedule = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-rent = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-sanitize = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-short-vec = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-hash = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-slot-hashes = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-fee-calculator = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-transaction-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-sysvar-id = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-sdk-macro = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-serialize-utils = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-last-restart-slot = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-slot-history = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-sha256-hasher = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-decode-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-program-entrypoint = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-feature-set = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-program-memory = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-stable-layout = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-precompile-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-native-token = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-pubkey = { path = "../agave/sdk/pubkey", default-features = false }
-solana-instruction = { path = "../agave/sdk/instruction", default-features = false }
-solana-account-info = { path = "../agave/sdk/account-info", default-features = false }
-solana-clock = { path = "../agave/sdk/clock", default-features = false }
-solana-epoch-schedule = { path = "../agave/sdk/epoch-schedule", default-features = false }
-solana-rent = { path = "../agave/sdk/rent", default-features = false }
-solana-sanitize = { path = "../agave/sdk/sanitize", default-features = false }
-solana-short-vec = { path = "../agave/short-vec", default-features = false }
-solana-hash = { path = "../agave/sdk/hash", default-features = false }
-solana-slot-hashes = { path = "../agave/sdk/slot-hashes", default-features = false }
-solana-fee-calculator = { path = "../agave/sdk/fee-calculator", default-features = false }
-solana-program-error = { path = "../agave/sdk/program-error", default-features = false }
-solana-transaction-error = { path = "../agave/sdk/transaction-error", default-features = false }
-solana-sysvar-id = { path = "../agave/sdk/sysvar-id", default-features = false }
-solana-sdk-macro = { path = "../agave/sdk/macro", default-features = false }
-solana-serialize-utils = { path = "../agave/sdk/serialize-utils", default-features = false }
-solana-last-restart-slot = { path = "../agave/sdk/last-restart-slot", default-features = false }
-solana-slot-history = { path = "../agave/sdk/slot-history", default-features = false }
-solana-sha256-hasher = { path = "../agave/sdk/sha256-hasher", default-features = false }
-solana-decode-error = { path = "../agave/sdk/decode-error", default-features = false }
-solana-program-entrypoint = { path = "../agave/sdk/program-entrypoint", default-features = false }
-solana-feature-set = { path = "../agave/sdk/feature-set", default-features = false }
-solana-program-memory = { path = "../agave/sdk/program-memory", default-features = false }
-solana-stable-layout = { path = "../agave/sdk/stable-layout", default-features = false }
-solana-bincode = { path = "../agave/sdk/bincode", default-features = false }
-solana-precompile-error = { path = "../agave/sdk/precompile-error", default-features = false }
-solana-native-token = { path = "../agave/sdk/native-token", default-features = false }
-solana-atomic-u64 = { path = "../agave/sdk/atomic-u64", default-features = false }
+solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-instruction = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-account-info = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-clock = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-epoch-schedule = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-rent = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-sanitize = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-short-vec = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-hash = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-slot-hashes = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-fee-calculator = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-transaction-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-sysvar-id = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-sdk-macro = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-serialize-utils = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-last-restart-slot = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-slot-history = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-sha256-hasher = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-decode-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-program-entrypoint = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-feature-set = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-program-memory = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-stable-layout = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-precompile-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-native-token = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+#solana-pubkey = { path = "../agave/sdk/pubkey", default-features = false }
+#solana-instruction = { path = "../agave/sdk/instruction", default-features = false }
+#solana-account-info = { path = "../agave/sdk/account-info", default-features = false }
+#solana-clock = { path = "../agave/sdk/clock", default-features = false }
+#solana-epoch-schedule = { path = "../agave/sdk/epoch-schedule", default-features = false }
+#solana-rent = { path = "../agave/sdk/rent", default-features = false }
+#solana-sanitize = { path = "../agave/sdk/sanitize", default-features = false }
+#solana-short-vec = { path = "../agave/short-vec", default-features = false }
+#solana-hash = { path = "../agave/sdk/hash", default-features = false }
+#solana-slot-hashes = { path = "../agave/sdk/slot-hashes", default-features = false }
+#solana-fee-calculator = { path = "../agave/sdk/fee-calculator", default-features = false }
+#solana-program-error = { path = "../agave/sdk/program-error", default-features = false }
+#solana-transaction-error = { path = "../agave/sdk/transaction-error", default-features = false }
+#solana-sysvar-id = { path = "../agave/sdk/sysvar-id", default-features = false }
+#solana-sdk-macro = { path = "../agave/sdk/macro", default-features = false }
+#solana-serialize-utils = { path = "../agave/sdk/serialize-utils", default-features = false }
+#solana-last-restart-slot = { path = "../agave/sdk/last-restart-slot", default-features = false }
+#solana-slot-history = { path = "../agave/sdk/slot-history", default-features = false }
+#solana-sha256-hasher = { path = "../agave/sdk/sha256-hasher", default-features = false }
+#solana-decode-error = { path = "../agave/sdk/decode-error", default-features = false }
+#solana-program-entrypoint = { path = "../agave/sdk/program-entrypoint", default-features = false }
+#solana-feature-set = { path = "../agave/sdk/feature-set", default-features = false }
+#solana-program-memory = { path = "../agave/sdk/program-memory", default-features = false }
+#solana-stable-layout = { path = "../agave/sdk/stable-layout", default-features = false }
+#solana-bincode = { path = "../agave/sdk/bincode", default-features = false }
+#solana-precompile-error = { path = "../agave/sdk/precompile-error", default-features = false }
+#solana-native-token = { path = "../agave/sdk/native-token", default-features = false }
+#solana-atomic-u64 = { path = "../agave/sdk/atomic-u64", default-features = false }
 
 #solana-poseidon = { path = "../agave/poseidon", default-features = false }
-#solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
-solana_rbpf = { path = "../rbpf", default-features = false }
+solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
+#solana_rbpf = { path = "../rbpf", default-features = false }
 
 fluentbase-sdk-testing = { path = "./crates/sdk-testing" }
 fluentbase-types = { path = "./crates/types", default-features = false }
