@@ -22,7 +22,7 @@ pub struct AttestationDoc {
     /// Map of all locked PCRs at the moment the attestation document was generated
     pub pcrs: Vec<(u64, Vec<u8>)>,
 
-    /// The infrastucture certificate used to sign the document, DER encoded
+    /// The infrastructure certificate used to sign the document, DER encoded
     pub certificate: Vec<u8>,
     /// Issuing CA bundle for infrastructure certificate
     pub cabundle: Vec<Vec<u8>>,
