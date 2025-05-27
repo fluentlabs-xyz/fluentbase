@@ -350,7 +350,11 @@ fn translate_slice_inner<'a, T: ElemTypeConstraints>(
     // );
 
     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
-    // debug_log!("translate_slice_inner 3: host_addr {}", host_addr);
+    debug_log!(
+        "translate_slice_inner 3: host_addr {} ({} in GB)",
+        host_addr,
+        host_addr / (1024 * 1024 * 1024)
+    );
 
     if check_aligned && !address_is_aligned::<T>(host_addr) {
         return Err(SyscallError::UnalignedPointer.into());
