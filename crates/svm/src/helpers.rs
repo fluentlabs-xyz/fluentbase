@@ -109,7 +109,7 @@ use crate::{
     error::{Error, SvmError},
     solana_program::{feature_set::feature_set_default, sysvar::Sysvar},
     storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
-    word_size_mismatch::fat_ptr_reprs::{ElemTypeConstraints, SliceFatPtr64},
+    word_size_mismatch::fat_ptr_repr::{ElemTypeConstraints, SliceFatPtr64},
 };
 use fluentbase_sdk::{debug_log, SharedAPI, StorageAPI};
 use solana_rbpf::ebpf::MM_HEAP_START;
@@ -356,7 +356,7 @@ fn translate_slice_inner<'a, T: ElemTypeConstraints>(
         return Err(SyscallError::UnalignedPointer.into());
     }
     // debug_log!("translate_slice_inner 4");
-    let result = SliceFatPtr64::new(host_addr, len);
+    let result = SliceFatPtr64::new(host_addr as usize, len as usize);
     // let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
     Ok(result)
 }
@@ -491,13 +491,13 @@ pub fn translate_and_check_program_address_inputs<'a>(
     for (idx, us) in untranslated_seeds.iter().enumerate() {
         debug_log!("untranslated_seed {}: len {}", idx, us.len());
     }
-    if untranslated_seeds.len() > MAX_SEEDS as u64 {
+    if untranslated_seeds.len() > MAX_SEEDS {
         return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
     }
     let seeds = untranslated_seeds
         .iter()
         .map(|untranslated_seed| {
-            if untranslated_seed.len() > MAX_SEED_LEN as u64 {
+            if untranslated_seed.len() > MAX_SEED_LEN {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
             // debug_log!(
@@ -507,7 +507,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
             // );
             translate_slice::<u8>(
                 memory_mapping,
-                untranslated_seed.first_item_fat_ptr_addr(),
+                untranslated_seed.first_item_fat_ptr_addr() as u64,
                 untranslated_seed.len() as u64,
                 check_aligned,
             )

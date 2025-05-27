@@ -1,1 +1,1 @@
-pub mod fat_ptr_reprs;
+pub mod fat_ptr_repr;

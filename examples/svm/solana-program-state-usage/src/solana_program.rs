@@ -45,7 +45,7 @@ pub fn process_instruction(
     instruction_data: &[u8],
 ) -> ProgramResult {
     msg!(
-        "This is message from 'example solana program. program_id {:x?} accounts.len {} instruction_data {:x?}",
+        "process_instruction: program_id {:x?} accounts.len {} instruction_data {:x?}",
         program_id.to_bytes(),
         accounts.len(),
         instruction_data,
@@ -62,65 +62,79 @@ pub fn process_instruction(
 
     let instruction_data: Vec<u8> = bincode::deserialize(instruction_data).map_err(|e| {
         msg!(
-            "failed to deserialize 'instruction_data' (len: {})",
+            "process_instruction: failed to deserialize 'instruction_data' (len: {})",
             instruction_data.len()
         );
         ProgramError::InvalidInstructionData
     })?;
-    msg!("instruction data: {:x?}", &instruction_data);
+    msg!(
+        "process_instruction: instruction data: {:x?}",
+        &instruction_data
+    );
     let mut cursor = Cursor::new(instruction_data);
     let command_id = read_u8(&mut cursor).map_err(|e| {
-        msg!("failed to read 'command_id' param");
+        msg!("process_instruction: failed to read 'command_id' param");
         ProgramError::InvalidInstructionData
     })?;
-    msg!("command_id: {}", command_id);
+    msg!("process_instruction: command_id: {}", command_id);
     match command_id {
         1 => {
-            msg!("Apply modifications to account 1");
+            msg!("process_instruction: Apply modifications to account 1");
 
             let account = &accounts[1];
             account.realloc(account.data_len() + MAX_PERMITTED_DATA_INCREASE, false)?;
             account.data.borrow_mut()[0] = 123;
 
-            msg!("Command finished");
+            msg!("process_instruction: Command finished");
         }
         2 => {
-            msg!("Create account");
+            msg!("process_instruction: create account");
             let lamports = read_u64(&mut cursor).map_err(|e| {
-                msg!("failed to read 'lamports' param");
+                msg!("process_instruction: failed to read 'lamports' param");
                 ProgramError::InvalidInstructionData
             })?;
-            msg!("Create account: lamports {}", lamports);
+            msg!("process_instruction: lamports {}", lamports);
             let space = read_u32(&mut cursor).map_err(|e| {
-                msg!("failed to read 'space' param");
+                msg!("process_instruction: failed to read 'space' param");
                 ProgramError::InvalidInstructionData
             })?;
-            msg!("Create account: space {}", space,);
+            msg!("process_instruction: space {}", space,);
             let seed_len1 = read_u8(&mut cursor).map_err(|e| {
-                msg!("failed to read 'seed_len' param");
+                msg!("process_instruction: failed to read 'seed_len' param");
                 ProgramError::InvalidInstructionData
             })?;
-            msg!("Create account: seed_len1: {}", seed_len1);
+            msg!("process_instruction: seed_len1: {}", seed_len1);
             // let mut seed1 = b"my_seed";
             let mut seed1 = vec![0u8; seed_len1 as usize];
             cursor.read_exact(&mut seed1).map_err(|e| {
-                msg!("failed to read 'seed1' param");
+                msg!("process_instruction: failed to read 'seed1' param");
                 ProgramError::InvalidInstructionData
             })?;
             msg!(
-                "Create account: seed1: '{}'",
+                "process_instruction: Create account: seed1: '{}'",
                 from_utf8(&seed1).map_err(|e| ProgramError::InvalidInstructionData)?
             );
             let byte_n_to_set = read_u32(&mut cursor).map_err(|e| {
-                msg!("failed to read 'byte_n_to_set' param");
+                msg!("process_instruction: failed to read 'byte_n_to_set' param");
                 ProgramError::InvalidInstructionData
             })?;
-            msg!("Create account: byte_n_to_set: '{}'", byte_n_to_set);
+            msg!("process_instruction: byte_n_to_set: '{}'", byte_n_to_set);
             let byte_n_value = read_u8(&mut cursor).map_err(|e| {
-                msg!("failed to read 'byte_n_value' param");
+                msg!("process_instruction: failed to read 'byte_n_value' param");
                 ProgramError::InvalidInstructionData
             })?;
-            msg!("Create account: byte_n_value: '{}'", byte_n_value);
+            msg!("process_instruction: byte_n_value: '{}'", byte_n_value);
+
+            let accounts_addr = accounts.as_ptr() as u64;
+            msg!("process_instruction: accounts_addr: '{}'", accounts_addr);
+            let account_info_struct_size = core::mem::size_of::<AccountInfo>();
+            let account_infos_slice = unsafe {
+                core::slice::from_raw_parts(accounts_addr as *const u8, account_info_struct_size)
+            };
+            msg!(
+                "in process_instruction: accounts_addr {:x?}",
+                account_infos_slice,
+            );
 
             let account_info_iter = &mut accounts.iter();
 
@@ -132,17 +146,20 @@ pub fn process_instruction(
             let seeds = &[&seed1, seed2];
             let seeds_addr = seeds.as_ptr() as u64;
             msg!(
-                "deriving pda: seeds {:x?} (addr:{}) program_id {:x?}",
+                "process_instruction: deriving pda: seeds {:x?} (addr:{}) program_id {:x?}",
                 seeds,
                 seeds_addr,
                 program_id.as_ref()
             );
             let (pda, bump) = Pubkey::find_program_address(seeds, program_id);
-            msg!("result pda: {:x?} bump: {}", &pda.to_bytes(), bump);
+            msg!(
+                "process_instruction: result pda: {:x?} bump: {}",
+                &pda.to_bytes(),
+                bump
+            );
 
             let signer_seeds = &[&seed1, payer.key.as_ref(), &[bump]];
 
-            msg!("pda: {:x?}", pda.to_bytes());
             msg!(
                 "payer.key: {:x?} new_account.key: {:x?} lamports {} space {} program_id {:x?} signer_seeds {:x?}",
                 payer.key.to_bytes(),
@@ -152,7 +169,7 @@ pub fn process_instruction(
                 program_id.to_bytes(),
                 signer_seeds
             );
-            msg!("calling invoke");
+            msg!("process_instruction: calling invoke");
             // invoke(
             invoke_signed(
                 &system_instruction::create_account(

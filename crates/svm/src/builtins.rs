@@ -18,11 +18,12 @@ use crate::{
     },
     loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
     mem_ops::{memcmp_non_contiguous, memset_non_contiguous},
-    word_size_mismatch::fat_ptr_reprs::{SliceFatPtr64, SLICE_FAT_PTR64_BYTE_SIZE},
+    word_size_mismatch::fat_ptr_repr::{SliceFatPtr64, SLICE_FAT_PTR64_BYTE_SIZE},
 };
 use alloc::boxed::Box;
 use core::str::from_utf8;
 use fluentbase_sdk::{debug_log, SharedAPI};
+use solana_account_info::AccountInfo;
 use solana_feature_set;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
@@ -409,7 +410,7 @@ declare_builtin_function!(
                 // TODO
                 let bytes = translate_slice::<u8>(
                     memory_mapping,
-                    val.first_item_fat_ptr_addr(),
+                    val.first_item_fat_ptr_addr() as u64,
                     val.len() as u64,
                     invoke_context.get_check_aligned(),
                 )?;
@@ -726,7 +727,7 @@ declare_builtin_function!(
 
         // let host_addr = memory_mapping.map(AccessType::Load, seeds_addr, 8).unwrap();
         // let word_size = size_of::<usize>();
-        let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, SLICE_FAT_PTR64_BYTE_SIZE)
+        let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, SLICE_FAT_PTR64_BYTE_SIZE as u64)
             .expect("translate seeds failed");
         let untranslated_seeds = translate_slice::<SliceFatPtr64<u8>>(memory_mapping, seeds_addr, seeds_len, true)?;
         // let seeds_slice_fat_ptr_data =
