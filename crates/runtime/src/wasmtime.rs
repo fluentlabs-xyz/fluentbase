@@ -160,7 +160,7 @@ impl AsyncExecutor {
                     } else if let Some(trap) = e.downcast_ref::<wasmtime::Trap>() {
                         TerminationReason::Trap(trap.clone())
                     } else {
-                        panic!("unexpected error occured during wasm guest execution");
+                        panic!("unexpected error occurred during wasm guest execution");
                     }
                 }
             };
