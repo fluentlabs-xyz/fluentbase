@@ -1739,7 +1739,7 @@ contract CertManager is ICertManager {
 
     // OID 1.2.840.10045.4.3.3 represents {iso(1) member-body(2) us(840) ansi-x962(10045) signatures(4) ecdsa-with-SHA2(3) ecdsa-with-SHA384(3)}
     // which essentially means the signature algorithm is Elliptic curve Digital Signature Algorithm (DSA) coupled with the Secure Hash Algorithm 384 (SHA384) algorithm
-    // @dev Sig algo is hardcoded here because the root cerificate's sig algorithm is known beforehand
+    // @dev Sig algo is hardcoded here because the root certificate's sig algorithm is known beforehand
     // @dev reference article for encoding https://learn.microsoft.com/en-in/windows/win32/seccertenroll/about-object-identifier
     bytes32 public constant CERT_ALGO_OID = 0x53ce037f0dfaa43ef13b095f04e68a6b5e3f1519a01a3203a1e6440ba915b87e; // keccak256(hex"06082a8648ce3d040303")
     // https://oid-rep.orange-labs.fr/get/1.2.840.10045.2.1
