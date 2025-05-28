@@ -351,7 +351,8 @@ fn translate_slice_inner<'a, T: ElemTypeConstraints>(
 
     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
     debug_log!(
-        "translate_slice_inner 3: host_addr {} ({} in GB)",
+        "translate_slice_inner 3: vm_addr {} host_addr {} ({} in GB)",
+        vm_addr,
         host_addr,
         host_addr / (1024 * 1024 * 1024)
     );
