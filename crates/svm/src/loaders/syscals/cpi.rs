@@ -6,14 +6,13 @@ use crate::{
     builtins::SyscallInvokeSignedRust,
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     error::{Error, SvmError},
-    helpers::{
+    helpers::{SerializedAccountMetadata, SyscallError},
+    mem_ops::{
         translate,
         translate_slice,
         translate_slice_mut,
         translate_type,
         translate_type_mut,
-        SerializedAccountMetadata,
-        SyscallError,
     },
     native_loader,
     precompiles::is_precompile,

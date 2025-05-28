@@ -4,20 +4,21 @@ use crate::{
     context::InvokeContext,
     declare_builtin_function,
     error::Error,
-    helpers::{
+    helpers::SyscallError,
+    loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
+    mem_ops::{
         is_nonoverlapping,
         memcmp,
+        memcmp_non_contiguous,
         memmove,
+        memset_non_contiguous,
         translate,
         translate_and_check_program_address_inputs,
         translate_slice,
         translate_slice_mut,
         translate_string_and_do,
         translate_type_mut,
-        SyscallError,
     },
-    loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
-    mem_ops::{memcmp_non_contiguous, memset_non_contiguous},
     word_size_mismatch::fat_ptr_repr::{SliceFatPtr64, SLICE_FAT_PTR64_BYTE_SIZE},
 };
 use alloc::boxed::Box;
