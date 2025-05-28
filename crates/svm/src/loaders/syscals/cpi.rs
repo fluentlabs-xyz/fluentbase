@@ -5,8 +5,16 @@ use crate::{
     bpf_loader_deprecated,
     builtins::SyscallInvokeSignedRust,
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
-    error::Error,
-    helpers::{SerializedAccountMetadata, SyscallError},
+    error::{Error, SvmError},
+    helpers::{
+        translate,
+        translate_slice,
+        translate_slice_mut,
+        translate_type,
+        translate_type_mut,
+        SerializedAccountMetadata,
+        SyscallError,
+    },
     native_loader,
     precompiles::is_precompile,
     serialization::account_data_region_memory_state,
@@ -32,7 +40,7 @@ fn check_account_info_pointer<SDK: SharedAPI>(
     vm_addr: u64,
     expected_vm_addr: u64,
     _field: &str,
-) -> Result<(), Error> {
+) -> Result<(), SvmError> {
     if vm_addr != expected_vm_addr {
         // ic_msg!(
         //     invoke_context,
@@ -58,7 +66,7 @@ enum VmValue<'a, 'b, T> {
 }
 
 impl<'a, 'b, T> VmValue<'a, 'b, T> {
-    fn get(&self) -> Result<&T, Error> {
+    fn get(&self) -> Result<&T, SvmError> {
         match self {
             VmValue::VmAddress {
                 vm_addr,
@@ -69,7 +77,7 @@ impl<'a, 'b, T> VmValue<'a, 'b, T> {
         }
     }
 
-    fn get_mut(&mut self) -> Result<&mut T, Error> {
+    fn get_mut(&mut self) -> Result<&mut T, SvmError> {
         match self {
             VmValue::VmAddress {
                 vm_addr,
@@ -115,7 +123,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
         _vm_addr: u64,
         account_info: &AccountInfo,
         account_metadata: &SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a, 'b, SDK>, Error> {
+    ) -> Result<CallerAccount<'a, 'b, SDK>, SvmError> {
         let direct_mapping = invoke_context
             .get_feature_set()
             .is_active(&feature_set::bpf_account_data_direct_mapping::id());
@@ -348,7 +356,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 memory_mapping,
                 AccessType::Store,
                 data_len_vm_addr,
-                size_of::<u64>() as u32,
+                size_of::<u64>() as u64,
             )?;
             VmValue::Translated(unsafe { &mut *(data_len_addr as *mut u64) })
         };
@@ -557,7 +565,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
                             invoke_context.get_check_aligned(),
                         )
                     })
-                    .collect::<Result<Vec<_>, Error>>()?;
+                    .collect::<Result<Vec<_>, SvmError>>()?;
                 let signer = Pubkey::create_program_address(&seeds, program_id);
                 let signer = signer.map_err(SyscallError::BadSeeds)?;
                 signers.push(signer);
@@ -871,7 +879,7 @@ where
         u64,
         &T,
         &SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a, 'b, SDK>, Error>,
+    ) -> Result<CallerAccount<'a, 'b, SDK>, SvmError>,
 {
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
