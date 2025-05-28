@@ -300,7 +300,7 @@ impl<'a, T: ElemTypeConstraints> IntoIterator for &'a SliceFatPtr64<T> {
 //     }
 // }
 
-pub fn typecase_slice<T: Clone>(data: impl AsRef<[u8]>) -> T {
+pub fn typecase_slice<T: Clone>(data: &[u8]) -> T {
     let data = data.as_ref();
     let type_name = core::any::type_name::<T>();
     if data.len() < size_of::<T>() {

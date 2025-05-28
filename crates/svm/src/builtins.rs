@@ -6,7 +6,7 @@ use crate::{
     error::Error,
     helpers::SyscallError,
     loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
-    mem_ops::{
+    mem_ops_original::{
         is_nonoverlapping,
         memcmp,
         memcmp_non_contiguous,
@@ -19,7 +19,7 @@ use crate::{
         translate_string_and_do,
         translate_type_mut,
     },
-    word_size_mismatch::fat_ptr_repr::{SliceFatPtr64, SLICE_FAT_PTR64_BYTE_SIZE},
+    // word_size_mismatch::fat_ptr_repr::{SliceFatPtr64, SLICE_FAT_PTR64_BYTE_SIZE},
 };
 use alloc::boxed::Box;
 use core::str::from_utf8;
@@ -401,7 +401,7 @@ declare_builtin_function!(
         )?;
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
-            let vals = translate_slice::<SliceFatPtr64<u8>>(
+            let vals = translate_slice::<&[u8]>(
                 memory_mapping,
                 vals_addr,
                 vals_len,
@@ -411,7 +411,7 @@ declare_builtin_function!(
                 // TODO
                 let bytes = translate_slice::<u8>(
                     memory_mapping,
-                    val.first_item_fat_ptr_addr() as u64,
+                    val.as_ptr() as u64,
                     val.len() as u64,
                     invoke_context.get_check_aligned(),
                 )?;
@@ -689,7 +689,7 @@ declare_builtin_function!(
         // let Ok(new_address) = Pubkey::create_program_address(&seeds, program_id) else {
         //     return Ok(1);
         // };
-        let new_address = Pubkey::create_program_address(&seeds.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>(), program_id)?;
+        let new_address = Pubkey::create_program_address(&seeds, program_id)?;
         let mut address = translate_slice_mut::<u8>(
             memory_mapping,
             address_addr,
@@ -727,10 +727,10 @@ declare_builtin_function!(
         );
 
         // let host_addr = memory_mapping.map(AccessType::Load, seeds_addr, 8).unwrap();
-        // let word_size = size_of::<usize>();
-        let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, SLICE_FAT_PTR64_BYTE_SIZE as u64)
+        let word_size = size_of::<usize>();
+        let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, word_size as u64 * seeds_len)
             .expect("translate seeds failed");
-        let untranslated_seeds = translate_slice::<SliceFatPtr64<u8>>(memory_mapping, seeds_addr, seeds_len, true)?;
+        let untranslated_seeds = translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
         // let seeds_slice_fat_ptr_data =
         //         unsafe { core::slice::from_raw_parts(host_addr as *const u8, SLICE_FAT_PTR64_BYTE_SIZE as usize) };
         debug_log!(
@@ -764,10 +764,10 @@ declare_builtin_function!(
             {
                 debug_log!("in SyscallTryFindProgramAddress: i={}", i);
                 let mut seeds_with_bump = seeds.clone();
-                seeds_with_bump.push(bump_seed.to_vec());
+                seeds_with_bump.push(&bump_seed);
 
                 let new_address = Pubkey::create_program_address(
-                    &seeds_with_bump.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>(),
+                    &seeds_with_bump,
                     program_id
                 );
                 if let Ok(new_address) =
@@ -790,7 +790,7 @@ declare_builtin_function!(
                         bump_seed_ref as *const _ as usize,
                         core::mem::size_of_val(bump_seed_ref),
                         // TODO recheck
-                        address.first_item_fat_ptr_addr() as usize,
+                        address.as_ptr() as usize,
                         core::mem::size_of::<Pubkey>(),
                     ) {
                         return Err(SyscallError::CopyOverlapping.into());
