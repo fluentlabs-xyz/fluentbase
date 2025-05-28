@@ -704,11 +704,12 @@ mod tests {
             items_only_bytes_size, items_as_raw_bytes
         );
         for idx in 0..slice.len() {
-            let item_fact = &slice.item_at_idx(idx);
+            let item_recovered = &slice.item_at_idx(idx);
             let item_original = &items_original_fixed[idx];
+            let item_original_cloned = (*item_original).clone();
             macro_rules! assert_fields {
                 ($field:ident) => {
-                    assert_eq!(item_fact.$field, item_original.$field);
+                    assert_eq!(item_original.$field, item_recovered.$field);
                 };
             }
             assert_fields!(data);

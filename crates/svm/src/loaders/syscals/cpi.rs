@@ -867,6 +867,7 @@ where
         invoke_context.get_check_aligned(),
     )?;
     let account_info = &account_infos[0];
+    let account_info_cloned = (*account_info).clone();
     let account_infos2 = crate::mem_ops::translate_slice::<T>(
         memory_mapping,
         account_infos_addr,
