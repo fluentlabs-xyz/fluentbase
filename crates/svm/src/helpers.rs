@@ -317,17 +317,6 @@ pub fn translate_type<'a, T>(
         .map(|value| &*value)
 }
 
-pub struct CustomSlice64 {
-    host_addr: u64,
-    len: u64,
-}
-
-impl CustomSlice64 {
-    pub fn new(host_addr: u64, len: u64) -> Self {
-        Self { host_addr, len }
-    }
-}
-
 fn translate_slice_inner<'a, T>(
     memory_mapping: &MemoryMapping,
     access_type: AccessType,
