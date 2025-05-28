@@ -91,7 +91,7 @@ fn test_simple_nested_call() {
         Call(SysFuncIdx::EXEC)
         Drop
         I32Const(200) // target offset
-        I32Const(0) // source offest
+        I32Const(0) // source offset
         I32Const(1) // buffer length
         Call(SysFuncIdx::READ_OUTPUT)
         // sys exec hash
@@ -104,7 +104,7 @@ fn test_simple_nested_call() {
         Call(SysFuncIdx::EXEC)
         Drop
         I32Const(201) // target offset
-        I32Const(0) // source offest
+        I32Const(0) // source offset
         I32Const(1) // buffer length
         Call(SysFuncIdx::READ_OUTPUT)
         // write the sum of two result codes into 1 byte result
