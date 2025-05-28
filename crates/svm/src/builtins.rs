@@ -4,7 +4,8 @@ use crate::{
     context::InvokeContext,
     declare_builtin_function,
     error::Error,
-    helpers::{
+    helpers::SyscallError,
+    helpers_translators::{
         is_nonoverlapping,
         memcmp,
         memmove,
@@ -14,7 +15,6 @@ use crate::{
         translate_slice_mut,
         translate_string_and_do,
         translate_type_mut,
-        SyscallError,
     },
     loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
     mem_ops::{memcmp_non_contiguous, memset_non_contiguous},

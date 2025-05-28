@@ -44,6 +44,7 @@ pub mod epoch_schedule;
 mod bincode_helpers;
 pub mod fluentbase;
 pub mod hash;
+pub mod helpers_translators;
 pub mod loaders;
 pub mod serialization;
 pub mod solana_program;
