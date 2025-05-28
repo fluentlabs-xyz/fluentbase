@@ -7,7 +7,7 @@ use crate::{
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     error::{Error, SvmError},
     helpers::{SerializedAccountMetadata, SyscallError},
-    helpers_translators::{
+    mem_ops::{
         translate,
         translate_slice,
         translate_slice_mut,

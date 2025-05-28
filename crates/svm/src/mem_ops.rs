@@ -208,7 +208,7 @@ fn memmove_non_contiguous(
 }
 
 // Marked unsafe since it assumes that the slices are at least `n` bytes long.
-unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
+pub unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
     for i in 0..n {
         let a = *s1.get_unchecked(i);
         let b = *s2.get_unchecked(i);
@@ -537,12 +537,7 @@ fn translate_type_inner<'a, T>(
     vm_addr: u64,
     check_aligned: bool,
 ) -> Result<&'a mut T, SvmError> {
-    let host_addr = crate::helpers_translators::translate(
-        memory_mapping,
-        access_type,
-        vm_addr,
-        size_of::<T>() as u64,
-    )?;
+    let host_addr = translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u64)?;
     if !check_aligned {
         #[cfg(target_pointer_width = "64")]
         {
@@ -606,8 +601,7 @@ fn translate_slice_inner<'a, T>(
         total_size
     );
 
-    let host_addr =
-        crate::helpers_translators::translate(memory_mapping, access_type, vm_addr, total_size)?;
+    let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
     debug_log!(
         "translate_slice_inner 3: vm_addr {} host_addr {} ({} in GB)",
         vm_addr,
@@ -663,12 +657,7 @@ pub fn translate_string_and_do(
     check_aligned: bool,
     work: &mut dyn FnMut(&str) -> Result<u64, Error>,
 ) -> Result<u64, Error> {
-    let buf = crate::helpers_translators::translate_slice::<u8>(
-        memory_mapping,
-        addr,
-        len,
-        check_aligned,
-    )?;
+    let buf = translate_slice::<u8>(memory_mapping, addr, len, check_aligned)?;
     match from_utf8(buf) {
         Ok(message) => work(message),
         Err(err) => Err(SyscallError::InvalidString(err, buf.to_vec()).into()),
@@ -705,7 +694,7 @@ pub fn memmove<SDK: SharedAPI>(
     // {
     //     memmove_non_contiguous(dst_addr, src_addr, n, memory_mapping)
     // } else {
-    let dst_ptr = crate::helpers_translators::translate_slice_mut::<u8>(
+    let dst_ptr = translate_slice_mut::<u8>(
         memory_mapping,
         dst_addr,
         n,
@@ -713,7 +702,7 @@ pub fn memmove<SDK: SharedAPI>(
         true,
     )?
     .as_mut_ptr();
-    let src_ptr = crate::helpers_translators::translate_slice::<u8>(
+    let src_ptr = translate_slice::<u8>(
         memory_mapping,
         src_addr,
         n,
@@ -734,12 +723,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
 ) -> Result<(Vec<&'a [u8]>, &'a Pubkey), SvmError> {
-    let untranslated_seeds = crate::helpers_translators::translate_slice::<&[u8]>(
-        memory_mapping,
-        seeds_addr,
-        seeds_len,
-        check_aligned,
-    )?;
+    let untranslated_seeds =
+        translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
     debug_log!(
         "translate_and_check_program_address_inputs 1: seeds_addr {} seeds_len {} untranslated_seeds.len {}",
         seeds_addr,
@@ -763,7 +748,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
             //     untranslated_seed,
             //     untranslated_seed.as_ptr() as u64
             // );
-            crate::helpers_translators::translate_slice::<u8>(
+            translate_slice::<u8>(
                 memory_mapping,
                 untranslated_seed.as_ptr() as *const _ as u64,
                 untranslated_seed.len() as u64,
@@ -772,11 +757,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
         })
         .collect::<Result<Vec<_>, SvmError>>()?;
     debug_log!("translate_and_check_program_address_inputs 2");
-    let program_id = crate::helpers_translators::translate_type::<Pubkey>(
-        memory_mapping,
-        program_id_addr,
-        check_aligned,
-    )?;
+    let program_id = translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned)?;
     debug_log!("translate_and_check_program_address_inputs 3");
     Ok((seeds, program_id))
 }

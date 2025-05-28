@@ -5,10 +5,13 @@ use crate::{
     declare_builtin_function,
     error::Error,
     helpers::SyscallError,
-    helpers_translators::{
+    loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
+    mem_ops::{
         is_nonoverlapping,
         memcmp,
+        memcmp_non_contiguous,
         memmove,
+        memset_non_contiguous,
         translate,
         translate_and_check_program_address_inputs,
         translate_slice,
@@ -16,8 +19,6 @@ use crate::{
         translate_string_and_do,
         translate_type_mut,
     },
-    loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
-    mem_ops::{memcmp_non_contiguous, memset_non_contiguous},
 };
 use alloc::boxed::Box;
 use core::str::from_utf8;
