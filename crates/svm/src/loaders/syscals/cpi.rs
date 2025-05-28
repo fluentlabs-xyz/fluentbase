@@ -839,7 +839,10 @@ where
     let direct_mapping = invoke_context
         .get_feature_set()
         .is_active(&feature_set::bpf_account_data_direct_mapping::id());
-    debug_log!("translate_account_infos1");
+    debug_log!(
+        "translate_account_infos1: account_infos_addr {}",
+        account_infos_addr
+    );
 
     // In the same vein as the other check_account_info_pointer() checks, we don't lock
     // this pointer to a specific address but we don't want it to be inside accounts, or
@@ -858,11 +861,13 @@ where
 
     let account_infos = translate_slice::<T>(
         memory_mapping,
-        account_infos_addr,
+        account_infos_addr, // vm address changed from 8589935584 to 8589954640
+        // 8589935584,
         account_infos_len,
         invoke_context.get_check_aligned(),
     )?;
     let account_info = account_infos.item_at_idx(0);
+    debug_log!("translate_account_infos3");
     check_account_infos(account_infos.len(), invoke_context)?;
     debug_log!("translate_account_infos4");
     let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
@@ -1158,7 +1163,7 @@ pub(crate) fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
         invoke_context.prepare_instruction(&instruction, &signers)?;
     check_authorized_program(&instruction.program_id, &instruction.data, invoke_context)?;
 
-    debug_log!("cpi_common7");
+    debug_log!("cpi_common7: account_infos_addr {}", account_infos_addr);
     let mut accounts = S::translate_accounts(
         &instruction_accounts,
         &program_indices,

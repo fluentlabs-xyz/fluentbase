@@ -446,16 +446,16 @@ pub fn memmove<SDK: SharedAPI>(
         memory_mapping,
         dst_addr,
         n,
-        // invoke_context.get_check_aligned(),
-        true,
+        invoke_context.get_check_aligned(),
+        // true,
     )?;
     // .as_mut_ptr();
     let src_ptr = translate_slice::<u8>(
         memory_mapping,
         src_addr,
         n,
-        // invoke_context.get_check_aligned(),
-        true,
+        invoke_context.get_check_aligned(),
+        // true,
     )?;
     // .as_ptr();
 

@@ -123,18 +123,7 @@ pub fn process_instruction(
                 msg!("process_instruction: failed to read 'byte_n_value' param");
                 ProgramError::InvalidInstructionData
             })?;
-            msg!("process_instruction: byte_n_value: '{}'", byte_n_value);
-
-            let accounts_addr = accounts.as_ptr() as u64;
-            msg!("process_instruction: accounts_addr: '{}'", accounts_addr);
-            let account_info_struct_size = core::mem::size_of::<AccountInfo>();
-            let account_infos_slice = unsafe {
-                core::slice::from_raw_parts(accounts_addr as *const u8, account_info_struct_size)
-            };
-            msg!(
-                "in process_instruction: accounts_addr {:x?}",
-                account_infos_slice,
-            );
+            msg!("process_instruction: byte_n_value: {}", byte_n_value);
 
             let account_info_iter = &mut accounts.iter();
 
@@ -170,6 +159,24 @@ pub fn process_instruction(
                 signer_seeds
             );
             msg!("process_instruction: calling invoke");
+
+            let account_infos = &[
+                payer.clone(),
+                new_account.clone(),
+                system_program_account.clone(),
+            ];
+
+            let accounts_addr = accounts.as_ptr() as usize;
+            msg!("process_instruction: accounts_addr: {}", accounts_addr);
+            let account_info_struct_size = core::mem::size_of::<AccountInfo>();
+            let account_infos_slice = unsafe {
+                core::slice::from_raw_parts(accounts_addr as *const u8, account_info_struct_size)
+            };
+            msg!(
+                "in process_instruction: account_infos_slice {:x?}",
+                account_infos_slice,
+            );
+
             // invoke(
             invoke_signed(
                 &system_instruction::create_account(
@@ -179,11 +186,7 @@ pub fn process_instruction(
                     space as u64,
                     program_id, // Owner of your program
                 ),
-                &[
-                    payer.clone(),
-                    new_account.clone(),
-                    system_program_account.clone(),
-                ],
+                account_infos,
                 &[signer_seeds], // optional, only if using PDA
             )?;
 

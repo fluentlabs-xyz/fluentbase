@@ -22,7 +22,7 @@ pub enum ArrayFatPtr<'a> {
 pub trait ElemTypeConstraints = Clone + SpecMethods;
 
 pub trait SpecMethods {
-    const BYTE_SIZE: usize;
+    const SIZE_IN_BYTES: usize;
 
     fn recover_from_byte_repr(byte_repr: &[u8]) -> Self;
 }
@@ -31,17 +31,17 @@ pub trait SpecMethods {
 macro_rules! impl_numeric_type {
     ($typ: ident) => {
         impl $crate::word_size_mismatch::fat_ptr_repr::SpecMethods for $typ {
-            const BYTE_SIZE: usize = core::mem::size_of::<$typ>();
+            const SIZE_IN_BYTES: usize = core::mem::size_of::<$typ>();
 
             fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
-                $typ::from_le_bytes(byte_repr[..Self::BYTE_SIZE].try_into().unwrap())
+                $typ::from_le_bytes(byte_repr[..Self::SIZE_IN_BYTES].try_into().unwrap())
             }
         }
     };
 }
 
 impl SpecMethods for u8 {
-    const BYTE_SIZE: usize = size_of::<Self>();
+    const SIZE_IN_BYTES: usize = size_of::<Self>();
 
     fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
         byte_repr[0]
@@ -61,7 +61,7 @@ pub struct SliceFatPtr64<T: ElemTypeConstraints> {
 }
 
 impl<T: ElemTypeConstraints> SpecMethods for SliceFatPtr64<T> {
-    const BYTE_SIZE: usize = SLICE_FAT_PTR64_BYTE_SIZE;
+    const SIZE_IN_BYTES: usize = SLICE_FAT_PTR64_BYTE_SIZE;
 
     fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
         Self::from_fat_ptr_slice(byte_repr)
@@ -129,7 +129,7 @@ impl<T: ElemTypeConstraints> SliceFatPtr64<T> {
     }
 
     pub fn item_addr_at_idx(&self, idx: usize) -> usize {
-        self.first_item_fat_ptr_addr + idx * T::BYTE_SIZE
+        self.first_item_fat_ptr_addr + idx * T::SIZE_IN_BYTES
     }
 
     pub fn item_ptr_at_idx(&self, idx: usize) -> *const T {
@@ -154,10 +154,14 @@ impl<T: ElemTypeConstraints> SliceFatPtr64<T> {
         let byte_repr = unsafe {
             core::slice::from_raw_parts(
                 self.item_addr_at_idx(idx) as *const u8,
-                T::BYTE_SIZE as usize,
+                T::SIZE_IN_BYTES as usize,
             )
         };
         T::recover_from_byte_repr(byte_repr)
+    }
+
+    pub fn size_in_bytes(&self) -> usize {
+        T::SIZE_IN_BYTES
     }
 
     pub fn to_vec(&self) -> Vec<T> {
@@ -269,32 +273,32 @@ impl<'a, T: ElemTypeConstraints> IntoIterator for &'a SliceFatPtr64<T> {
     }
 }
 
-impl<'a, T: Sized> SpecMethods for StableVec<T> {
-    const BYTE_SIZE: usize = STABLE_VEC_FAT_PTR64_BYTE_SIZE;
-
-    fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
-        let ptr_addr = u64::from_le_bytes(
-            byte_repr[..FAT_PTR64_ELEM_BYTE_SIZE as usize]
-                .try_into()
-                .unwrap(),
-        );
-        let ptr = unsafe { NonNull::new_unchecked(ptr_addr as *mut T) };
-        StableVec {
-            ptr,
-            cap: usize::from_le_bytes(
-                byte_repr[FAT_PTR64_ELEM_BYTE_SIZE..FAT_PTR64_ELEM_BYTE_SIZE * 2]
-                    .try_into()
-                    .unwrap(),
-            ),
-            len: usize::from_le_bytes(
-                byte_repr[(FAT_PTR64_ELEM_BYTE_SIZE * 2)..(FAT_PTR64_ELEM_BYTE_SIZE as usize) * 3]
-                    .try_into()
-                    .unwrap(),
-            ),
-            _marker: Default::default(),
-        }
-    }
-}
+// impl<'a, T: Sized> SpecMethods for StableVec<T> {
+//     const SIZE_IN_BYTES: usize = STABLE_VEC_FAT_PTR64_BYTE_SIZE;
+//
+//     fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
+//         let ptr_addr = u64::from_le_bytes(
+//             byte_repr[..FAT_PTR64_ELEM_BYTE_SIZE as usize]
+//                 .try_into()
+//                 .unwrap(),
+//         );
+//         let ptr = unsafe { NonNull::new_unchecked(ptr_addr as *mut T) };
+//         StableVec {
+//             ptr,
+//             cap: usize::from_le_bytes(
+//                 byte_repr[FAT_PTR64_ELEM_BYTE_SIZE..FAT_PTR64_ELEM_BYTE_SIZE * 2]
+//                     .try_into()
+//                     .unwrap(),
+//             ),
+//             len: usize::from_le_bytes(
+//                 byte_repr[(FAT_PTR64_ELEM_BYTE_SIZE * 2)..(FAT_PTR64_ELEM_BYTE_SIZE as usize) * 3]
+//                     .try_into()
+//                     .unwrap(),
+//             ),
+//             _marker: Default::default(),
+//         }
+//     }
+// }
 
 pub fn typecase_slice<T: Clone>(data: impl AsRef<[u8]>) -> T {
     let data = data.as_ref();
@@ -314,7 +318,7 @@ pub fn typecase_slice<T: Clone>(data: impl AsRef<[u8]>) -> T {
 }
 
 impl<'a> SpecMethods for AccountMeta {
-    const BYTE_SIZE: usize = size_of::<Self>();
+    const SIZE_IN_BYTES: usize = size_of::<Self>();
 
     fn recover_from_byte_repr(data: &[u8]) -> Self {
         typecase_slice::<Self>(data)
@@ -322,7 +326,7 @@ impl<'a> SpecMethods for AccountMeta {
 }
 
 impl SpecMethods for AccountInfo<'_> {
-    const BYTE_SIZE: usize = size_of::<AccountInfo>();
+    const SIZE_IN_BYTES: usize = size_of::<AccountInfo>();
 
     fn recover_from_byte_repr(data: &[u8]) -> Self {
         typecase_slice::<Self>(data)
