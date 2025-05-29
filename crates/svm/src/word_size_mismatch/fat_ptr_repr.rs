@@ -27,7 +27,6 @@ pub trait SpecMethods {
     fn recover_from_byte_repr(byte_repr: &[u8]) -> Self;
 }
 
-#[macro_export]
 macro_rules! impl_numeric_type {
     ($typ: ident) => {
         impl $crate::word_size_mismatch::fat_ptr_repr::SpecMethods for $typ {
@@ -338,7 +337,6 @@ impl SpecMethods for AccountInfo<'_> {
 mod tests {
     use crate::word_size_mismatch::fat_ptr_repr::{
         SliceFatPtr64,
-        SpecMethods,
         FAT_PTR64_ELEM_BYTE_SIZE,
         SLICE_FAT_PTR64_BYTE_SIZE,
     };
@@ -347,6 +345,47 @@ mod tests {
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
     use solana_stable_layout::stable_vec::StableVec;
+
+    pub fn typecase_bytes<T: Clone>(data: &[u8]) -> &T {
+        let data = data.as_ref();
+        let type_name = core::any::type_name::<T>();
+        if data.len() < size_of::<T>() {
+            panic!("failed to typecase to {}: invalid size", type_name);
+        }
+
+        let ptr = data.as_ptr() as *const T;
+
+        // Check alignment
+        if (ptr as usize) % align_of::<T>() != 0 {
+            panic!("failed to typecase to {}: misaligned", type_name);
+        }
+
+        unsafe { &*ptr }
+    }
+
+    #[test]
+    fn recover_ref() {
+        struct SomeStruct<'a> {
+            value: &'a u8,
+        }
+        impl<'a> SomeStruct<'a> {
+            pub fn new(value: &'a u8) -> Self {
+                Self { value }
+            }
+
+            pub fn from_slice(v: &'a [u8]) -> Self {
+                Self::new(typecase_bytes(v))
+            }
+        }
+
+        let value = 14;
+        let mut buf: Vec<u8> = Vec::new();
+        buf.push(value);
+
+        let value_restored = SomeStruct::from_slice(&buf);
+
+        assert_eq!(*value_restored.value, value);
+    }
 
     #[test]
     fn slice_of_slices_ro_test() {
