@@ -752,7 +752,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
         untranslated_seeds.len(),
     );
     for (idx, us) in untranslated_seeds.iter().enumerate() {
-        debug_log!("untranslated_seed {}: len {}", idx, us.len());
+        debug_log!("untranslated_seed {}: len {}", idx, us.as_ref().len());
     }
     if untranslated_seeds.len() > MAX_SEEDS {
         return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
@@ -760,7 +760,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
     let seeds = untranslated_seeds
         .iter()
         .map(|untranslated_seed| {
-            if untranslated_seed.len() > MAX_SEED_LEN {
+            if untranslated_seed.as_ref().len() > MAX_SEED_LEN {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
             // debug_log!(
@@ -770,8 +770,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
             // );
             translate_slice::<u8>(
                 memory_mapping,
-                untranslated_seed.first_item_fat_ptr_addr() as u64,
-                untranslated_seed.len() as u64,
+                untranslated_seed.as_ref().first_item_fat_ptr_addr(),
+                untranslated_seed.as_ref().len() as u64,
                 check_aligned,
             )
             .map(|v| v.to_vec_cloned())

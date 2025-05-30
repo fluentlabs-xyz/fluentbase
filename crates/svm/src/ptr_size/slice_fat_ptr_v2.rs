@@ -43,10 +43,26 @@ lazy_static! {
         Arc::new(|v| addr_translator_default(v));
 }
 
+pub enum RetVal<'a, T: Sized> {
+    Instance(T),
+    Reference(&'a T),
+}
+
+impl<'a, T: Sized> RetVal<'a, T> {
+    pub fn as_ref(&self) -> &T {
+        match self {
+            RetVal::Instance(v) => v,
+            RetVal::Reference(v) => *v,
+        }
+    }
+}
+
 pub trait SpecMethods {
     const ITEM_SIZE_BYTES: usize;
 
-    fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], addr_translator: F) -> &Self;
+    fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], addr_translator: F) -> RetVal<Self>
+    where
+        Self: Sized;
 }
 
 #[derive(Clone)]
@@ -115,7 +131,10 @@ pub struct SliceFatPtr64<'a, T: SpecMethods> {
 impl SpecMethods for u8 {
     const ITEM_SIZE_BYTES: usize = size_of::<Self>();
 
-    fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], _addr_translator: F) -> &Self {
+    fn recover_from_bytes<F: Fn(u64) -> u64>(
+        byte_repr: &[u8],
+        _addr_translator: F,
+    ) -> RetVal<Self> {
         let len = byte_repr.len() / Self::ITEM_SIZE_BYTES;
         let recovered_bytes_len = len * Self::ITEM_SIZE_BYTES;
         assert_eq!(
@@ -125,7 +144,7 @@ impl SpecMethods for u8 {
             recovered_bytes_len,
             byte_repr.len()
         );
-        typecast_bytes(byte_repr)
+        RetVal::Reference(typecast_bytes(byte_repr))
     }
 }
 
@@ -137,8 +156,8 @@ macro_rules! impl_numeric_type {
             fn recover_from_bytes<F: Fn(u64) -> u64>(
                 byte_repr: &[u8],
                 addr_translator: F,
-            ) -> &Self {
-                typecast_bytes(&byte_repr[..Self::ITEM_SIZE_BYTES])
+            ) -> RetVal<Self> {
+                RetVal::Reference(typecast_bytes(&byte_repr[..Self::ITEM_SIZE_BYTES]))
             }
         }
     };
@@ -153,7 +172,7 @@ impl SpecMethods for &[u8] {
         byte_repr: &[u8],
         addr_translator: F,
         // memory_mapping: &MemoryMapping,
-    ) -> &Self {
+    ) -> RetVal<Self> {
         let len = byte_repr.len() / Self::ITEM_SIZE_BYTES;
         let recovered_bytes_len = len * Self::ITEM_SIZE_BYTES;
         // TODO extract vm_addr and real len
@@ -178,22 +197,25 @@ impl SpecMethods for &[u8] {
             recovered_bytes_len,
             byte_repr.len()
         );
-        // let result =
-        //     unsafe { core::slice::from_raw_parts(host_addr as *const u8, recovered_bytes_len) };
+        let result =
+            unsafe { core::slice::from_raw_parts(host_addr as *const u8, slice.len as usize) };
         // let result_ptr = unsafe { core::mem::transmute::<&[u8], &Self>(result) };
         // debug_log!(
         //     "result.ptr {} result_ptr {}",
         //     result.as_ptr() as u64,
         //     result_ptr.as_ptr() as u64
         // );
-        typecast_bytes(byte_repr)
+        RetVal::Instance(result)
     }
 }
 
 impl<'a, T: ElementConstraints> SpecMethods for SliceFatPtr64<'a, T> {
     const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
 
-    fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], _addr_translator: F) -> &Self {
+    fn recover_from_bytes<F: Fn(u64) -> u64>(
+        byte_repr: &[u8],
+        _addr_translator: F,
+    ) -> RetVal<Self> {
         let ptr = SliceFatPtr64Repr::<SLICE_FAT_PTR64_SIZE_BYTES>::from_fat_ptr_slice(byte_repr);
         let data = unsafe {
             core::slice::from_raw_parts(
@@ -206,7 +228,7 @@ impl<'a, T: ElementConstraints> SpecMethods for SliceFatPtr64<'a, T> {
             type_name::<Self>(),
             data
         );
-        typecast_bytes(data)
+        RetVal::Reference(typecast_bytes(data))
     }
 }
 
@@ -235,7 +257,7 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
         }
     }
 
-    pub fn try_get<F: Fn(u64) -> u64>(&self, idx: usize, t: F) -> Option<&'a T> {
+    pub fn try_get<F: Fn(u64) -> u64>(&self, idx: usize, t: F) -> Option<RetVal<T>> {
         if idx < self.len() {
             return Some(self.item_at_idx(idx, t));
         }
@@ -321,7 +343,7 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
         false
     }
 
-    pub fn item_at_idx<F: Fn(u64) -> u64>(&self, idx: usize, addr_translator: F) -> &'a T {
+    pub fn item_at_idx<F: Fn(u64) -> u64>(&self, idx: usize, addr_translator: F) -> RetVal<T> {
         let byte_repr = unsafe {
             core::slice::from_raw_parts(
                 self.item_addr_at_idx(idx) as *const u8,
@@ -336,7 +358,7 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
         })
     }
 
-    pub fn to_vec(&'a self) -> Vec<&'a T> {
+    pub fn to_vec(&'a self) -> Vec<RetVal<T>> {
         let mut r = Vec::with_capacity(self.len());
         for v in self.iter() {
             r.push(v);
@@ -347,7 +369,7 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
     pub fn to_vec_cloned(&self) -> Vec<T> {
         let mut r = Vec::with_capacity(self.len());
         for v in self.iter() {
-            r.push((*v).clone());
+            r.push((*v.as_ref()).clone());
         }
         r
     }
@@ -372,7 +394,7 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
             return true;
         }
         for (idx, val) in src.iter().enumerate() {
-            self.try_set_item_at_idx_mut(idx, val);
+            self.try_set_item_at_idx_mut(idx, val.as_ref());
         }
         true
     }
@@ -436,7 +458,7 @@ impl<'a, T: ElementConstraints> From<&'a SliceFatPtr64<'a, T>> for SliceFatPtr64
 }
 
 impl<'a, T: ElementConstraints> Iterator for SliceFatPtr64Iterator<'a, T> {
-    type Item = &'a T;
+    type Item = RetVal<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.idx < self.instance.len as usize {
@@ -449,7 +471,7 @@ impl<'a, T: ElementConstraints> Iterator for SliceFatPtr64Iterator<'a, T> {
 }
 
 impl<'a, T: ElementConstraints> IntoIterator for &'a SliceFatPtr64<'a, T> {
-    type Item = &'a T;
+    type Item = RetVal<'a, T>;
     type IntoIter = SliceFatPtr64Iterator<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -487,28 +509,28 @@ impl<'a, T: ElementConstraints> IntoIterator for &'a SliceFatPtr64<'a, T> {
 impl SpecMethods for AccountMeta {
     const ITEM_SIZE_BYTES: usize = size_of::<Self>();
 
-    fn recover_from_bytes<F: Fn(u64) -> u64>(data: &[u8], addr_translator: F) -> &Self {
-        typecast_bytes(data)
+    fn recover_from_bytes<F: Fn(u64) -> u64>(data: &[u8], addr_translator: F) -> RetVal<Self> {
+        RetVal::Reference(typecast_bytes(data))
     }
 }
 
 impl<'a> SpecMethods for AccountInfo<'a> {
     const ITEM_SIZE_BYTES: usize = size_of::<AccountInfo>();
 
-    fn recover_from_bytes<F: Fn(u64) -> u64>(data: &[u8], _addr_translator: F) -> &Self {
-        typecast_bytes(data)
+    fn recover_from_bytes<F: Fn(u64) -> u64>(data: &[u8], _addr_translator: F) -> RetVal<Self> {
+        RetVal::Reference(typecast_bytes(data))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::ptr_size::slice_fat_ptr_v2::{addr_translator_default, SliceFatPtr64};
+    use fluentbase_sdk::debug_log;
     use solana_account_info::AccountInfo;
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
     use solana_rbpf::memory_region::{AlignedMemoryMapping, MemoryMapping};
     use solana_stable_layout::stable_vec::StableVec;
-
     // #[test]
     // fn slice_of_slices_ro_test() {
     //     let payer = Pubkey::new_unique();
@@ -559,7 +581,7 @@ mod tests {
             SliceFatPtr64::<ElemType>::new(items_first_item_ptr as u64, items_len as u64, None);
 
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &items[idx]);
+            assert_eq!(item.as_ref(), &items[idx]);
         }
     }
 
@@ -568,7 +590,7 @@ mod tests {
         type ElemType = u8;
         let a1: &[u8] = &[12 as ElemType, 2, 123, 3, 74, 1, 2];
         let a2: &[u8] = &[14 as ElemType, 41, 3, 3];
-        let a3: &[u8] = &[12 as ElemType, 83, 3, 23, 12, 1, 32, 65];
+        let a3: &[u8] = &[12 as ElemType, 83, 3, 23, 12, 1, 32, 65, 54, 12, 65];
         let items: &[&[u8]] = &[a1, a2, a3];
         let items_first_item_ptr = items.as_ptr() as usize;
         let items_len = items.len();
@@ -577,7 +599,7 @@ mod tests {
             SliceFatPtr64::<&[u8]>::new(items_first_item_ptr as u64, items_len as u64, None);
 
         for (idx_external, slice_internal) in slice_external.iter().enumerate() {
-            for (idx_internal, item_internal) in slice_internal.iter().enumerate() {
+            for (idx_internal, item_internal) in slice_internal.as_ref().iter().enumerate() {
                 assert_eq!(item_internal, &items[idx_external][idx_internal]);
             }
         }
@@ -596,24 +618,24 @@ mod tests {
         let mut slice =
             SliceFatPtr64::<ElemType>::new(items_first_item_ptr as u64, items_len as u64, None);
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &items_original[idx]);
+            assert_eq!(item.as_ref(), &items_original[idx]);
         }
 
         slice.copy_from_slice(items_new);
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &items_new[idx]);
+            assert_eq!(item.as_ref(), &items_new[idx]);
         }
 
         let fill_with = 0;
         slice.fill(&fill_with);
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &fill_with);
+            assert_eq!(item.as_ref(), &fill_with);
         }
 
         let fill_with = rand::random::<_>();
         slice.fill(&fill_with);
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &fill_with);
+            assert_eq!(item.as_ref(), &fill_with);
         }
 
         let fill_with = rand::random::<_>();
@@ -621,7 +643,7 @@ mod tests {
         slice.get_mut(range.clone()).map(|mut s| s.fill(&fill_with));
         for idx in range {
             let item = slice.item_at_idx(idx, addr_translator_default);
-            assert_eq!(item, &fill_with);
+            assert_eq!(item.as_ref(), &fill_with);
         }
     }
 
@@ -635,7 +657,7 @@ mod tests {
         let slice = SliceFatPtr64::<ElemType>::new(items_first_item_ptr, array_len, None);
 
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &items[idx]);
+            assert_eq!(item.as_ref(), &items[idx]);
         }
     }
 
@@ -651,36 +673,36 @@ mod tests {
 
         let mut slice = SliceFatPtr64::<ElemType>::new(items_first_item_ptr, items_len, None);
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &items_original[idx]);
+            assert_eq!(item.as_ref(), &items_original[idx]);
         }
 
         slice.copy_from_slice(items_new);
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &items_new[idx]);
+            assert_eq!(item.as_ref(), &items_new[idx]);
         }
 
         let fill_with = 0;
         slice.fill(&fill_with);
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &fill_with);
+            assert_eq!(item.as_ref(), &fill_with);
         }
 
         let fill_with = rand::random::<_>();
         slice.fill(&fill_with);
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &fill_with);
+            assert_eq!(item.as_ref(), &fill_with);
         }
 
         let fill_with = rand::random::<_>();
         slice.try_set_item_at_idx_mut(5, &fill_with);
-        assert_eq!(slice.to_vec()[5], &fill_with);
+        assert_eq!(slice.to_vec()[5].as_ref(), &fill_with);
 
         let fill_with = rand::random::<_>();
         let range = 1..3;
         slice.get_mut(range.clone()).map(|mut s| s.fill(&fill_with));
         for idx in range {
             let item = slice.item_at_idx(idx, addr_translator_default);
-            assert_eq!(item, &fill_with);
+            assert_eq!(item.as_ref(), &fill_with);
         }
     }
 
@@ -772,17 +794,17 @@ mod tests {
         );
         for idx in 0..slice.len() as usize {
             assert_eq!(
-                slice.item_at_idx(idx, addr_translator_default),
+                slice.item_at_idx(idx, addr_translator_default).as_ref(),
                 &items_original_fixed[idx]
             );
         }
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &items_original_fixed[idx]);
+            assert_eq!(item.as_ref(), &items_original_fixed[idx]);
         }
 
         slice.copy_from_slice(items_new_fixed.as_ref());
         for (idx, item) in slice.iter().enumerate() {
-            assert_eq!(item, &items_new_fixed[idx]);
+            assert_eq!(item.as_ref(), &items_new_fixed[idx]);
         }
     }
 
@@ -912,13 +934,14 @@ mod tests {
             items_only_bytes_size, items_as_raw_bytes
         );
         macro_rules! assert_fields {
-            ($original:ident, $recovered:ident, $field:ident) => {
+            ($original:expr, $recovered:expr, $field:ident) => {
                 assert_eq!($original.$field, $recovered.$field);
             };
         }
         for idx in 0..slice.len() {
             let item_original = &items_original_fixed[idx];
-            let item_recovered = &slice.item_at_idx(idx, addr_translator_default);
+            let item_restored = slice.item_at_idx(idx, addr_translator_default);
+            let item_recovered = item_restored.as_ref();
             let item_original_cloned = (*item_original).clone();
             assert_fields!(item_original, item_recovered, data);
             assert_fields!(item_original, item_recovered, executable);
@@ -932,7 +955,8 @@ mod tests {
         slice.copy_from_slice(items_new_fixed.as_ref());
         for idx in 0..slice.len() {
             let item_original = &items_new_fixed[idx];
-            let item_recovered = &slice.item_at_idx(idx, addr_translator_default);
+            let item_restored = slice.item_at_idx(idx, addr_translator_default);
+            let item_recovered = item_restored.as_ref();
             let item_original_cloned = (*item_original).clone();
             assert_fields!(item_original, item_recovered, data);
             assert_fields!(item_original, item_recovered, executable);

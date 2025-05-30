@@ -752,7 +752,7 @@ declare_builtin_function!(
             debug_log!(
                 "untranslated_seed{} ({}): ",
                 idx,
-                untranslated_seed.len(),
+                untranslated_seed.as_ref().len(),
                 // untranslated_seed.to_vec()
             );
         }
