@@ -7,8 +7,10 @@ use core::{
     slice::SliceIndex,
 };
 use fluentbase_sdk::debug_log;
+use lazy_static::lazy_static;
 use solana_account_info::AccountInfo;
 use solana_instruction::AccountMeta;
+use solana_rbpf::memory_region::{AccessType, MemoryMapping};
 
 pub const FAT_PTR64_ELEM_BYTE_SIZE: usize = 8;
 pub const SLICE_FAT_PTR64_SIZE_BYTES: usize = FAT_PTR64_ELEM_BYTE_SIZE * 2;
@@ -34,8 +36,11 @@ pub fn typecast_bytes<T: Clone>(data: &[u8]) -> &T {
 
 pub trait ElementConstraints = Clone + SpecMethods;
 pub fn addr_translator_default(addr: u64) -> u64 {
-    debug_log!("addr_translator_default: addr: {}", addr);
     addr
+}
+lazy_static! {
+    static ref ADDR_TRANSLATOR_DEFAULT: Arc<dyn Fn(u64) -> u64 + Send + Sync> =
+        Arc::new(|v| addr_translator_default(v));
 }
 
 pub trait SpecMethods {
@@ -44,11 +49,66 @@ pub trait SpecMethods {
     fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], addr_translator: F) -> &Self;
 }
 
-/// Slice impl emulating 64 bit word size to support solana 64 bit programs
 #[derive(Clone)]
-pub struct SliceFatPtr64<T: SpecMethods> {
+pub struct SliceFatPtr64Repr<const ITEM_SIZE_BYTES: usize> {
     first_item_fat_ptr_addr: u64,
     len: u64,
+}
+
+impl<const ITEM_SIZE_BYTES: usize> SliceFatPtr64Repr<ITEM_SIZE_BYTES> {
+    pub fn new(first_item_fat_ptr_addr: u64, len: u64) -> Self {
+        Self {
+            first_item_fat_ptr_addr,
+            len,
+        }
+    }
+    pub fn from_fat_ptr_fixed_slice(fat_ptr_slice: &[u8; SLICE_FAT_PTR64_SIZE_BYTES]) -> Self {
+        let first_item_fat_ptr_addr = u64::from_le_bytes(
+            fat_ptr_slice[..FAT_PTR64_ELEM_BYTE_SIZE]
+                .try_into()
+                .unwrap(),
+        );
+        let len = u64::from_le_bytes(
+            fat_ptr_slice[FAT_PTR64_ELEM_BYTE_SIZE..SLICE_FAT_PTR64_SIZE_BYTES]
+                .try_into()
+                .unwrap(),
+        );
+        Self::new(first_item_fat_ptr_addr, len)
+    }
+
+    pub fn from_fat_ptr_slice(ptr: &[u8]) -> Self {
+        assert_eq!(
+            ptr.len(),
+            SLICE_FAT_PTR64_SIZE_BYTES,
+            "fat ptr must have {} byte len",
+            SLICE_FAT_PTR64_SIZE_BYTES
+        );
+        Self::from_fat_ptr_fixed_slice(ptr.try_into().unwrap())
+    }
+
+    pub fn from_ptr_to_fat_ptr(ptr: usize) -> Self {
+        let fat_ptr_slice =
+            unsafe { core::slice::from_raw_parts(ptr as *const u8, SLICE_FAT_PTR64_SIZE_BYTES) };
+        Self::from_fat_ptr_slice(fat_ptr_slice)
+    }
+
+    #[inline(always)]
+    pub fn item_size_bytes(&self) -> u64 {
+        ITEM_SIZE_BYTES as u64
+    }
+
+    #[inline(always)]
+    pub fn total_size_bytes(&self) -> usize {
+        (self.len * self.item_size_bytes()) as usize
+    }
+}
+
+/// Slice impl emulating 64 bit word size to support solana 64 bit programs
+#[derive(Clone)]
+pub struct SliceFatPtr64<'a, T: SpecMethods> {
+    first_item_fat_ptr_addr: u64,
+    len: u64,
+    memory_mapping: Option<&'a MemoryMapping<'a>>,
     _phantom: PhantomData<T>,
 }
 
@@ -89,13 +149,18 @@ impl_numeric_type!(u16);
 impl SpecMethods for &[u8] {
     // const ITEM_SIZE_BYTES: usize = size_of::<Self>();
     const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
-    fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], addr_translator: F) -> &Self {
+    fn recover_from_bytes<F: Fn(u64) -> u64>(
+        byte_repr: &[u8],
+        addr_translator: F,
+        // memory_mapping: &MemoryMapping,
+    ) -> &Self {
         let len = byte_repr.len() / Self::ITEM_SIZE_BYTES;
         let recovered_bytes_len = len * Self::ITEM_SIZE_BYTES;
         // TODO extract vm_addr and real len
         // TODO convert vm_addr into host_addr
         // TODO translate into slice using host addr
-        let slice = SliceFatPtr64::<u8>::from_fat_ptr_slice(byte_repr);
+        let slice =
+            SliceFatPtr64Repr::<{ SLICE_FAT_PTR64_SIZE_BYTES }>::from_fat_ptr_slice(byte_repr);
         let vm_addr = slice.first_item_fat_ptr_addr;
         let host_addr = addr_translator(vm_addr);
         debug_log!(
@@ -113,15 +178,23 @@ impl SpecMethods for &[u8] {
             recovered_bytes_len,
             byte_repr.len()
         );
+        // let result =
+        //     unsafe { core::slice::from_raw_parts(host_addr as *const u8, recovered_bytes_len) };
+        // let result_ptr = unsafe { core::mem::transmute::<&[u8], &Self>(result) };
+        // debug_log!(
+        //     "result.ptr {} result_ptr {}",
+        //     result.as_ptr() as u64,
+        //     result_ptr.as_ptr() as u64
+        // );
         typecast_bytes(byte_repr)
     }
 }
 
-impl<'a, T: ElementConstraints> SpecMethods for SliceFatPtr64<T> {
+impl<'a, T: ElementConstraints> SpecMethods for SliceFatPtr64<'a, T> {
     const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
 
     fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], _addr_translator: F) -> &Self {
-        let ptr = Self::from_fat_ptr_slice(byte_repr);
+        let ptr = SliceFatPtr64Repr::<SLICE_FAT_PTR64_SIZE_BYTES>::from_fat_ptr_slice(byte_repr);
         let data = unsafe {
             core::slice::from_raw_parts(
                 ptr.first_item_fat_ptr_addr as *const u8,
@@ -137,17 +210,27 @@ impl<'a, T: ElementConstraints> SpecMethods for SliceFatPtr64<T> {
     }
 }
 
-impl<'a, T: ElementConstraints> Default for SliceFatPtr64<T> {
-    fn default() -> Self {
-        Self::new(0, 0)
-    }
-}
-
-impl<'a, T: ElementConstraints> SliceFatPtr64<T> {
-    pub fn new(first_item_fat_ptr_addr: u64, len: u64) -> Self {
+impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
+    pub fn new(
+        first_item_fat_ptr_addr: u64,
+        len: u64,
+        memory_mapping: Option<&'a MemoryMapping<'a>>,
+        // addr_translator: Arc<dyn Fn(u64) -> u64>,
+    ) -> Self {
         Self {
             first_item_fat_ptr_addr,
             len,
+            memory_mapping,
+            // addr_translator,
+            _phantom: Default::default(),
+        }
+    }
+    pub fn default(memory_mapping: Option<&'a MemoryMapping<'a>>) -> Self {
+        Self {
+            first_item_fat_ptr_addr: 0,
+            len: 0,
+            memory_mapping,
+            // addr_translator,
             _phantom: Default::default(),
         }
     }
@@ -203,6 +286,8 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<T> {
         Some(SliceFatPtr64::new(
             self.item_addr_at_idx(start) as u64,
             (end - start) as u64,
+            self.memory_mapping,
+            // ADDR_TRANSLATOR_DEFAULT.clone(),
         ))
     }
 
@@ -243,7 +328,12 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<T> {
                 T::ITEM_SIZE_BYTES as usize,
             )
         };
-        T::recover_from_bytes(byte_repr, addr_translator)
+        T::recover_from_bytes(byte_repr, |addr| {
+            let result = self
+                .memory_mapping
+                .map_or(addr, |mm| mm.map(AccessType::Load, addr, self.len).unwrap());
+            result
+        })
     }
 
     pub fn to_vec(&'a self) -> Vec<&'a T> {
@@ -293,7 +383,10 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<T> {
         }
     }
 
-    pub fn from_fat_ptr_fixed_slice(fat_ptr_slice: &'a [u8; SLICE_FAT_PTR64_SIZE_BYTES]) -> Self {
+    pub fn from_fat_ptr_fixed_slice(
+        fat_ptr_slice: &[u8; SLICE_FAT_PTR64_SIZE_BYTES],
+        memory_mapping: &'a MemoryMapping<'a>,
+    ) -> Self {
         let first_item_fat_ptr_addr = u64::from_le_bytes(
             fat_ptr_slice[..FAT_PTR64_ELEM_BYTE_SIZE]
                 .try_into()
@@ -304,23 +397,27 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<T> {
                 .try_into()
                 .unwrap(),
         );
-        Self::new(first_item_fat_ptr_addr, len)
+        Self::new(
+            first_item_fat_ptr_addr,
+            len,
+            Some(memory_mapping), // ADDR_TRANSLATOR_DEFAULT.clone(),
+        )
     }
 
-    pub fn from_fat_ptr_slice(ptr: &'a [u8]) -> Self {
+    pub fn from_fat_ptr_slice(ptr: &[u8], memory_mapping: &'a MemoryMapping<'a>) -> Self {
         assert_eq!(
             ptr.len(),
             SLICE_FAT_PTR64_SIZE_BYTES,
             "fat ptr must have {} byte len",
             SLICE_FAT_PTR64_SIZE_BYTES
         );
-        Self::from_fat_ptr_fixed_slice(ptr.try_into().unwrap())
+        Self::from_fat_ptr_fixed_slice(ptr.try_into().unwrap(), memory_mapping)
     }
 
-    pub fn from_ptr_to_fat_ptr(ptr: usize) -> Self {
+    pub fn from_ptr_to_fat_ptr(ptr: usize, memory_mapping: &'a MemoryMapping<'a>) -> Self {
         let fat_ptr_slice =
             unsafe { core::slice::from_raw_parts(ptr as *const u8, SLICE_FAT_PTR64_SIZE_BYTES) };
-        Self::from_fat_ptr_slice(fat_ptr_slice)
+        Self::from_fat_ptr_slice(fat_ptr_slice, memory_mapping)
     }
 
     pub fn iter(&'a self) -> SliceFatPtr64Iterator<'a, T> {
@@ -329,10 +426,10 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<T> {
 }
 
 pub struct SliceFatPtr64Iterator<'a, T: ElementConstraints> {
-    instance: &'a SliceFatPtr64<T>,
+    instance: &'a SliceFatPtr64<'a, T>,
     idx: usize,
 }
-impl<'a, T: ElementConstraints> From<&'a SliceFatPtr64<T>> for SliceFatPtr64Iterator<'a, T> {
+impl<'a, T: ElementConstraints> From<&'a SliceFatPtr64<'a, T>> for SliceFatPtr64Iterator<'a, T> {
     fn from(instance: &'a SliceFatPtr64<T>) -> Self {
         Self { instance, idx: 0 }
     }
@@ -351,7 +448,7 @@ impl<'a, T: ElementConstraints> Iterator for SliceFatPtr64Iterator<'a, T> {
     }
 }
 
-impl<'a, T: ElementConstraints> IntoIterator for &'a SliceFatPtr64<T> {
+impl<'a, T: ElementConstraints> IntoIterator for &'a SliceFatPtr64<'a, T> {
     type Item = &'a T;
     type IntoIter = SliceFatPtr64Iterator<'a, T>;
 
@@ -409,6 +506,7 @@ mod tests {
     use solana_account_info::AccountInfo;
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
+    use solana_rbpf::memory_region::{AlignedMemoryMapping, MemoryMapping};
     use solana_stable_layout::stable_vec::StableVec;
 
     // #[test]
@@ -457,7 +555,8 @@ mod tests {
         let items_first_item_ptr = items.as_ptr() as usize;
         let items_len = items.len();
 
-        let slice = SliceFatPtr64::<ElemType>::new(items_first_item_ptr as u64, items_len as u64);
+        let slice =
+            SliceFatPtr64::<ElemType>::new(items_first_item_ptr as u64, items_len as u64, None);
 
         for (idx, item) in slice.iter().enumerate() {
             assert_eq!(item, &items[idx]);
@@ -475,7 +574,7 @@ mod tests {
         let items_len = items.len();
 
         let slice_external =
-            SliceFatPtr64::<&[u8]>::new(items_first_item_ptr as u64, items_len as u64);
+            SliceFatPtr64::<&[u8]>::new(items_first_item_ptr as u64, items_len as u64, None);
 
         for (idx_external, slice_internal) in slice_external.iter().enumerate() {
             for (idx_internal, item_internal) in slice_internal.iter().enumerate() {
@@ -495,7 +594,7 @@ mod tests {
         let items_len = items_original.len();
 
         let mut slice =
-            SliceFatPtr64::<ElemType>::new(items_first_item_ptr as u64, items_len as u64);
+            SliceFatPtr64::<ElemType>::new(items_first_item_ptr as u64, items_len as u64, None);
         for (idx, item) in slice.iter().enumerate() {
             assert_eq!(item, &items_original[idx]);
         }
@@ -533,7 +632,7 @@ mod tests {
         let items_first_item_ptr = items.as_ptr() as u64;
         let array_len = items.len() as u64;
 
-        let slice = SliceFatPtr64::<ElemType>::new(items_first_item_ptr, array_len);
+        let slice = SliceFatPtr64::<ElemType>::new(items_first_item_ptr, array_len, None);
 
         for (idx, item) in slice.iter().enumerate() {
             assert_eq!(item, &items[idx]);
@@ -550,7 +649,7 @@ mod tests {
         let items_first_item_ptr = items_original.as_ptr() as u64;
         let items_len = items_original.len() as u64;
 
-        let mut slice = SliceFatPtr64::<ElemType>::new(items_first_item_ptr, items_len);
+        let mut slice = SliceFatPtr64::<ElemType>::new(items_first_item_ptr, items_len, None);
         for (idx, item) in slice.iter().enumerate() {
             assert_eq!(item, &items_original[idx]);
         }
@@ -642,6 +741,7 @@ mod tests {
         let mut slice = SliceFatPtr64::<ItemType>::new(
             items_original_fixed.as_ref().as_ptr() as u64,
             items_len as u64,
+            None,
         );
         println!("vec_of_items_bytes_size {}", vec_of_items_bytes_size);
         let vec_of_items_start_ptr = unsafe { (&items_original_fixed) as *const _ } as u64;
@@ -782,6 +882,7 @@ mod tests {
         let mut slice = SliceFatPtr64::<ItemType>::new(
             items_original_fixed.as_ref().as_ptr() as u64,
             items_len as u64,
+            None,
         );
         println!("vec_of_items_bytes_size {}", vec_of_items_bytes_size);
         let vec_of_items_start_ptr = (&items_original_fixed) as *const _ as u64;

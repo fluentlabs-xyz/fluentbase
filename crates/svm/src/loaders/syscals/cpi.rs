@@ -874,7 +874,7 @@ where
         account_infos_len,
         invoke_context.get_check_aligned(),
     )?;
-    let account_info2 = &account_infos2.item_at_idx(0, addr_translator_default);
+    let account_info2 = account_infos2.item_at_idx(0, addr_translator_default);
     debug_log!("translate_account_infos3");
     check_account_infos(account_infos.len(), invoke_context)?;
     debug_log!("translate_account_infos4");

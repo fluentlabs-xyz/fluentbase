@@ -2,10 +2,10 @@ use super::*;
 use crate::{
     context::InvokeContext,
     error::{Error, SvmError},
-    helpers::SyscallError,
-    ptr_size::slice_fat_ptr_v2::{ElementConstraints, SliceFatPtr64},
+    helpers::{StdResult, SyscallError},
+    ptr_size::slice_fat_ptr_v2::{ElementConstraints, SliceFatPtr64, SliceFatPtr64Repr},
 };
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::{slice, str::from_utf8};
 use fluentbase_sdk::debug_log;
 use fluentbase_types::SharedAPI;
@@ -571,14 +571,14 @@ pub fn translate_type<'a, T>(
 }
 
 fn translate_slice_inner<'a, T: ElementConstraints>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping<'a>,
     access_type: AccessType,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<SliceFatPtr64<T>, SvmError> {
+) -> Result<SliceFatPtr64<'a, T>, SvmError> {
     if len == 0 {
-        return Ok(Default::default());
+        return Ok(SliceFatPtr64::default(Some(memory_mapping)));
     }
     // let type_name = type_name::<T>();
     let size_of_t = size_of::<T>();
@@ -601,6 +601,17 @@ fn translate_slice_inner<'a, T: ElementConstraints>(
     //     total_size
     // );
 
+    pub fn translate_if<'a>(
+        mm: Option<&'a MemoryMapping<'a>>,
+        access_type: AccessType,
+        vm_addr: u64,
+        total_size: u64,
+    ) -> StdResult<u64, SvmError> {
+        mm.map_or(Ok(vm_addr), |v| {
+            translate(v, access_type, vm_addr, total_size)
+        })
+    }
+
     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
     debug_log!(
         "translate_slice_inner 3: vm_addr {} host_addr {} ({} in GB)",
@@ -613,17 +624,25 @@ fn translate_slice_inner<'a, T: ElementConstraints>(
         return Err(SyscallError::UnalignedPointer.into());
     }
     // debug_log!("translate_slice_inner 4");
-    let result = SliceFatPtr64::new(host_addr, len);
+    let result = SliceFatPtr64::new(
+        host_addr,
+        len,
+        Some(memory_mapping),
+        // Arc::new(|v| {
+        //     // TODO recheck parameters
+        //     translate(memory_mapping, access_type, v, total_size).unwrap()
+        // }),
+    );
     // let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
     Ok(result)
 }
 
 pub fn translate_slice<'a, T: ElementConstraints>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<SliceFatPtr64<T>, SvmError> {
+) -> Result<SliceFatPtr64<'a, T>, SvmError> {
     translate_slice_inner::<T>(
         memory_mapping,
         AccessType::Load,
@@ -635,11 +654,11 @@ pub fn translate_slice<'a, T: ElementConstraints>(
 }
 
 pub fn translate_slice_mut<'a, T: ElementConstraints>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<SliceFatPtr64<T>, SvmError> {
+) -> Result<SliceFatPtr64<'a, T>, SvmError> {
     translate_slice_inner::<T>(
         memory_mapping,
         AccessType::Store,
