@@ -672,7 +672,7 @@ declare_builtin_function!(
         //     .get_compute_budget()
         //     .create_program_address_units;
         // consume_compute_meter(invoke_context, cost)?;
-        debug_log!("in SyscallTryFindProgramAddress");
+        debug_log!("in SyscallCreateProgramAddress");
 
         let (seeds, program_id) = translate_and_check_program_address_inputs(
             seeds_addr,
@@ -728,20 +728,30 @@ declare_builtin_function!(
 
         // let host_addr = memory_mapping.map(AccessType::Load, seeds_addr, 8).unwrap();
         let word_size = size_of::<usize>();
-        let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, word_size as u64 * seeds_len)
-            .expect("translate seeds failed");
-        let untranslated_seeds = translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
-        // let seeds_slice_fat_ptr_data =
-        //         unsafe { core::slice::from_raw_parts(host_addr as *const u8, SLICE_FAT_PTR64_BYTE_SIZE as usize) };
+        let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, word_size as u64 * seeds_len)?;
+        let untranslated_seeds = crate::mem_ops::translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
+        // let untranslated_seeds = translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
+        let seeds_slice_fat_ptr_data =
+                unsafe { core::slice::from_raw_parts(host_addr as *const u8, crate::ptr_size::slice_fat_ptr_v2::SLICE_FAT_PTR64_SIZE_BYTES) };
+        let addr_from_fat_ptr_data = u64::from_le_bytes(seeds_slice_fat_ptr_data[..crate::ptr_size::slice_fat_ptr_v2::FAT_PTR64_ELEM_BYTE_SIZE].try_into().unwrap());
+        let addr_from_fat_ptr_data_on_host = translate(memory_mapping, AccessType::Load, addr_from_fat_ptr_data, word_size as u64 * seeds_len)?;
+        let len_from_fat_ptr_data = u64::from_le_bytes(seeds_slice_fat_ptr_data[crate::ptr_size::slice_fat_ptr_v2::FAT_PTR64_ELEM_BYTE_SIZE..crate::ptr_size::slice_fat_ptr_v2::FAT_PTR64_ELEM_BYTE_SIZE*2].try_into().unwrap());
+        let reconstructed_slice = unsafe { core::slice::from_raw_parts(addr_from_fat_ptr_data_on_host as *const u8, len_from_fat_ptr_data as usize) };
         debug_log!(
-            "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): untranslated_seeds ({})",
+            "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): untranslated_seeds ({}) seeds_slice_fat_ptr_data (addr:{} addr_on_host:{} len:{}) {:x?} reconstructed_slice {:x?}",
             seeds_addr,
             host_addr,
             untranslated_seeds.len(),
+            addr_from_fat_ptr_data,
+            addr_from_fat_ptr_data_on_host,
+            len_from_fat_ptr_data,
+            seeds_slice_fat_ptr_data,
+            reconstructed_slice,
         );
-        for untranslated_seed in untranslated_seeds.iter() {
+        for (idx, untranslated_seed) in untranslated_seeds.iter().enumerate() {
             debug_log!(
-                "untranslated_seed ({}): ",
+                "untranslated_seed{} ({}): ",
+                idx,
                 untranslated_seed.len(),
                 // untranslated_seed.to_vec()
             );

@@ -1,26 +1,23 @@
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use core::{
+    any::type_name,
     iter::Iterator,
     marker::PhantomData,
     ops::{Bound, Index, RangeBounds},
     slice::SliceIndex,
 };
+use fluentbase_sdk::debug_log;
 use solana_account_info::AccountInfo;
 use solana_instruction::AccountMeta;
 
 pub const FAT_PTR64_ELEM_BYTE_SIZE: usize = 8;
-pub const SLICE_FAT_PTR64_BYTE_SIZE: usize = FAT_PTR64_ELEM_BYTE_SIZE * 2;
+pub const SLICE_FAT_PTR64_SIZE_BYTES: usize = FAT_PTR64_ELEM_BYTE_SIZE * 2;
 pub const STABLE_VEC_FAT_PTR64_BYTE_SIZE: usize = 8 * 3;
-
-// pub enum ArrayFatPtr<'a> {
-//     Slice(&'a [u8; SLICE_FAT_PTR64_BYTE_SIZE]),
-//     StableVec(&'a [u8; STABLE_VEC_FAT_PTR64_BYTE_SIZE]),
-// }
 
 #[inline(always)]
 pub fn typecast_bytes<T: Clone>(data: &[u8]) -> &T {
     let data = data.as_ref();
-    let type_name = core::any::type_name::<T>();
+    let type_name = type_name::<T>();
     if data.len() < size_of::<T>() {
         panic!("failed to typecase to {}: invalid size", type_name);
     }
@@ -35,15 +32,20 @@ pub fn typecast_bytes<T: Clone>(data: &[u8]) -> &T {
     unsafe { &*ptr }
 }
 
+pub trait ElementConstraints = Clone + SpecMethods;
+pub fn addr_translator_default(addr: u64) -> u64 {
+    debug_log!("addr_translator_default: addr: {}", addr);
+    addr
+}
+
 pub trait SpecMethods {
     const ITEM_SIZE_BYTES: usize;
 
-    fn recover_from_bytes(byte_repr: &[u8]) -> &Self;
+    fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], addr_translator: F) -> &Self;
 }
 
-pub trait ElementsType = Clone + SpecMethods;
-
 /// Slice impl emulating 64 bit word size to support solana 64 bit programs
+#[derive(Clone)]
 pub struct SliceFatPtr64<T: SpecMethods> {
     first_item_fat_ptr_addr: u64,
     len: u64,
@@ -53,10 +55,9 @@ pub struct SliceFatPtr64<T: SpecMethods> {
 impl SpecMethods for u8 {
     const ITEM_SIZE_BYTES: usize = size_of::<Self>();
 
-    fn recover_from_bytes(byte_repr: &[u8]) -> &Self {
-        let item_size = size_of::<Self>();
-        let len = byte_repr.len() / item_size;
-        let recovered_bytes_len = len * item_size;
+    fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], _addr_translator: F) -> &Self {
+        let len = byte_repr.len() / Self::ITEM_SIZE_BYTES;
+        let recovered_bytes_len = len * Self::ITEM_SIZE_BYTES;
         assert_eq!(
             recovered_bytes_len,
             byte_repr.len(),
@@ -70,10 +71,13 @@ impl SpecMethods for u8 {
 
 macro_rules! impl_numeric_type {
     ($typ: ident) => {
-        impl $crate::word_size_mismatch::slice_fat_ptr_v2::SpecMethods for $typ {
+        impl $crate::ptr_size::slice_fat_ptr_v2::SpecMethods for $typ {
             const ITEM_SIZE_BYTES: usize = core::mem::size_of::<$typ>();
 
-            fn recover_from_bytes(byte_repr: &[u8]) -> &Self {
+            fn recover_from_bytes<F: Fn(u64) -> u64>(
+                byte_repr: &[u8],
+                addr_translator: F,
+            ) -> &Self {
                 typecast_bytes(&byte_repr[..Self::ITEM_SIZE_BYTES])
             }
         }
@@ -81,24 +85,65 @@ macro_rules! impl_numeric_type {
 }
 
 impl_numeric_type!(u16);
-// impl_numeric_type!(u32);
-// impl_numeric_type!(u64);
 
-// impl<'a, T: Clone> SpecMethods for SliceFatPtr64<T> {
-//     const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_BYTE_SIZE;
-//
-//     fn recover_from_bytes(byte_repr: &'a [u8]) -> SliceFatPtr64<Self> {
-//         Self::from_fat_ptr_slice(byte_repr)
-//     }
-// }
+impl SpecMethods for &[u8] {
+    // const ITEM_SIZE_BYTES: usize = size_of::<Self>();
+    const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
+    fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], addr_translator: F) -> &Self {
+        let len = byte_repr.len() / Self::ITEM_SIZE_BYTES;
+        let recovered_bytes_len = len * Self::ITEM_SIZE_BYTES;
+        // TODO extract vm_addr and real len
+        // TODO convert vm_addr into host_addr
+        // TODO translate into slice using host addr
+        let slice = SliceFatPtr64::<u8>::from_fat_ptr_slice(byte_repr);
+        let vm_addr = slice.first_item_fat_ptr_addr;
+        let host_addr = addr_translator(vm_addr);
+        debug_log!(
+            "reconstructing '{}' (vm_addr:{} host_addr:{} ITEM_SIZE_BYTES:{}) from byte_repr: {:x?}",
+            type_name::<Self>(),
+            vm_addr,
+            host_addr,
+            Self::ITEM_SIZE_BYTES,
+            byte_repr,
+        );
+        assert_eq!(
+            recovered_bytes_len,
+            byte_repr.len(),
+            "invalid byte repr: {} != {}",
+            recovered_bytes_len,
+            byte_repr.len()
+        );
+        typecast_bytes(byte_repr)
+    }
+}
 
-impl<'a, T: ElementsType> Default for SliceFatPtr64<T> {
+impl<'a, T: ElementConstraints> SpecMethods for SliceFatPtr64<T> {
+    const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
+
+    fn recover_from_bytes<F: Fn(u64) -> u64>(byte_repr: &[u8], _addr_translator: F) -> &Self {
+        let ptr = Self::from_fat_ptr_slice(byte_repr);
+        let data = unsafe {
+            core::slice::from_raw_parts(
+                ptr.first_item_fat_ptr_addr as *const u8,
+                ptr.total_size_bytes(),
+            )
+        };
+        debug_log!(
+            "recover_from_bytes: data for {}: {:x?}",
+            type_name::<Self>(),
+            data
+        );
+        typecast_bytes(data)
+    }
+}
+
+impl<'a, T: ElementConstraints> Default for SliceFatPtr64<T> {
     fn default() -> Self {
         Self::new(0, 0)
     }
 }
 
-impl<'a, T: ElementsType> SliceFatPtr64<T> {
+impl<'a, T: ElementConstraints> SliceFatPtr64<T> {
     pub fn new(first_item_fat_ptr_addr: u64, len: u64) -> Self {
         Self {
             first_item_fat_ptr_addr,
@@ -107,9 +152,9 @@ impl<'a, T: ElementsType> SliceFatPtr64<T> {
         }
     }
 
-    pub fn try_get(&self, idx: usize) -> Option<&'a T> {
-        if idx < self.len_usize() {
-            return Some(self.item_at_idx(idx));
+    pub fn try_get<F: Fn(u64) -> u64>(&self, idx: usize, t: F) -> Option<&'a T> {
+        if idx < self.len() {
+            return Some(self.item_at_idx(idx, t));
         }
         None
     }
@@ -125,13 +170,18 @@ impl<'a, T: ElementsType> SliceFatPtr64<T> {
     }
 
     #[inline(always)]
-    pub fn len(&self) -> u64 {
-        self.len
+    pub fn len(&self) -> usize {
+        self.len as usize
     }
 
     #[inline(always)]
-    pub fn len_usize(&self) -> usize {
-        self.len() as usize
+    pub fn item_size_bytes(&self) -> u64 {
+        Self::ITEM_SIZE_BYTES as u64
+    }
+
+    #[inline(always)]
+    pub fn total_size_bytes(&self) -> usize {
+        (self.len * self.item_size_bytes()) as usize
     }
 
     pub fn get_mut(&mut self, range: impl RangeBounds<usize>) -> Option<SliceFatPtr64<T>> {
@@ -139,15 +189,15 @@ impl<'a, T: ElementsType> SliceFatPtr64<T> {
             Bound::Included(v) => v,
             _ => 0,
         };
-        if start >= self.len_usize() {
+        if start >= self.len() {
             return None;
         }
         let end = match range.end_bound().cloned() {
             Bound::Included(v) => v + 1,
             Bound::Excluded(v) => v,
-            Bound::Unbounded => self.len_usize(),
+            Bound::Unbounded => self.len(),
         };
-        if end > self.len_usize() {
+        if end > self.len() {
             return None;
         }
         Some(SliceFatPtr64::new(
@@ -177,7 +227,7 @@ impl<'a, T: ElementsType> SliceFatPtr64<T> {
     }
 
     pub fn try_set_item_at_idx_mut(&mut self, idx: usize, value: &T) -> bool {
-        if idx < self.len_usize() {
+        if idx < self.len() {
             unsafe {
                 *self.item_ptr_at_idx_mut(idx) = value.clone();
             }
@@ -186,31 +236,35 @@ impl<'a, T: ElementsType> SliceFatPtr64<T> {
         false
     }
 
-    pub fn item_at_idx(&self, idx: usize) -> &'a T {
+    pub fn item_at_idx<F: Fn(u64) -> u64>(&self, idx: usize, addr_translator: F) -> &'a T {
         let byte_repr = unsafe {
             core::slice::from_raw_parts(
                 self.item_addr_at_idx(idx) as *const u8,
                 T::ITEM_SIZE_BYTES as usize,
             )
         };
-        T::recover_from_bytes(byte_repr)
-    }
-
-    pub fn ITEM_SIZE_BYTES(&self) -> usize {
-        T::ITEM_SIZE_BYTES
+        T::recover_from_bytes(byte_repr, addr_translator)
     }
 
     pub fn to_vec(&'a self) -> Vec<&'a T> {
-        let mut r = Vec::with_capacity(self.len_usize());
+        let mut r = Vec::with_capacity(self.len());
         for v in self.iter() {
             r.push(v);
         }
         r
     }
 
+    pub fn to_vec_cloned(&self) -> Vec<T> {
+        let mut r = Vec::with_capacity(self.len());
+        for v in self.iter() {
+            r.push((*v).clone());
+        }
+        r
+    }
+
     pub fn copy_from_slice(&mut self, slice: &[T]) {
         assert_eq!(
-            self.len_usize(),
+            self.len(),
             slice.len(),
             "lengths must be equal when copying slices"
         );
@@ -220,18 +274,18 @@ impl<'a, T: ElementsType> SliceFatPtr64<T> {
         }
     }
 
-    // pub fn copy_from(&mut self, src: &'a SliceFatPtr64<T>) -> bool {
-    //     if self.len != src.len {
-    //         return false;
-    //     }
-    //     if *self.len == 0 {
-    //         return true;
-    //     }
-    //     for (idx, val) in src.iter().enumerate() {
-    //         self.try_set_item_at_idx_mut(idx, val.clone());
-    //     }
-    //     true
-    // }
+    pub fn copy_from(&mut self, src: &'a SliceFatPtr64<T>) -> bool {
+        if self.len != src.len {
+            return false;
+        }
+        if self.len == 0 {
+            return true;
+        }
+        for (idx, val) in src.iter().enumerate() {
+            self.try_set_item_at_idx_mut(idx, val);
+        }
+        true
+    }
 
     pub fn fill(&mut self, val: &T) {
         for idx in 0..self.len {
@@ -239,52 +293,57 @@ impl<'a, T: ElementsType> SliceFatPtr64<T> {
         }
     }
 
-    // pub fn from_fat_ptr_fixed_slice(fat_ptr_slice: &'a [u8; SLICE_FAT_PTR64_BYTE_SIZE]) -> Self {
-    //     let first_item_fat_ptr_addr =
-    //         typecase_bytes::<u64>(&fat_ptr_slice[..FAT_PTR64_ELEM_BYTE_SIZE]);
-    //     let len = typecase_bytes::<u64>(
-    //         &fat_ptr_slice[FAT_PTR64_ELEM_BYTE_SIZE..SLICE_FAT_PTR64_BYTE_SIZE],
-    //     );
-    //     Self::new(first_item_fat_ptr_addr, len)
-    // }
-    //
-    // pub fn from_fat_ptr_slice(ptr: &'a [u8]) -> Self {
-    //     assert_eq!(
-    //         ptr.len(),
-    //         SLICE_FAT_PTR64_BYTE_SIZE,
-    //         "fat ptr must have {} byte len",
-    //         SLICE_FAT_PTR64_BYTE_SIZE
-    //     );
-    //     Self::from_fat_ptr_fixed_slice(ptr.try_into().unwrap())
-    // }
-    //
-    // pub fn from_ptr_to_fat_ptr(ptr: usize) -> Self {
-    //     let fat_ptr_slice =
-    //         unsafe { core::slice::from_raw_parts(ptr as *const u8, SLICE_FAT_PTR64_BYTE_SIZE) };
-    //     Self::from_fat_ptr_slice(fat_ptr_slice)
-    // }
+    pub fn from_fat_ptr_fixed_slice(fat_ptr_slice: &'a [u8; SLICE_FAT_PTR64_SIZE_BYTES]) -> Self {
+        let first_item_fat_ptr_addr = u64::from_le_bytes(
+            fat_ptr_slice[..FAT_PTR64_ELEM_BYTE_SIZE]
+                .try_into()
+                .unwrap(),
+        );
+        let len = u64::from_le_bytes(
+            fat_ptr_slice[FAT_PTR64_ELEM_BYTE_SIZE..SLICE_FAT_PTR64_SIZE_BYTES]
+                .try_into()
+                .unwrap(),
+        );
+        Self::new(first_item_fat_ptr_addr, len)
+    }
+
+    pub fn from_fat_ptr_slice(ptr: &'a [u8]) -> Self {
+        assert_eq!(
+            ptr.len(),
+            SLICE_FAT_PTR64_SIZE_BYTES,
+            "fat ptr must have {} byte len",
+            SLICE_FAT_PTR64_SIZE_BYTES
+        );
+        Self::from_fat_ptr_fixed_slice(ptr.try_into().unwrap())
+    }
+
+    pub fn from_ptr_to_fat_ptr(ptr: usize) -> Self {
+        let fat_ptr_slice =
+            unsafe { core::slice::from_raw_parts(ptr as *const u8, SLICE_FAT_PTR64_SIZE_BYTES) };
+        Self::from_fat_ptr_slice(fat_ptr_slice)
+    }
 
     pub fn iter(&'a self) -> SliceFatPtr64Iterator<'a, T> {
         self.into()
     }
 }
 
-pub struct SliceFatPtr64Iterator<'a, T: ElementsType> {
+pub struct SliceFatPtr64Iterator<'a, T: ElementConstraints> {
     instance: &'a SliceFatPtr64<T>,
     idx: usize,
 }
-impl<'a, T: ElementsType> From<&'a SliceFatPtr64<T>> for SliceFatPtr64Iterator<'a, T> {
+impl<'a, T: ElementConstraints> From<&'a SliceFatPtr64<T>> for SliceFatPtr64Iterator<'a, T> {
     fn from(instance: &'a SliceFatPtr64<T>) -> Self {
         Self { instance, idx: 0 }
     }
 }
 
-impl<'a, T: ElementsType> Iterator for SliceFatPtr64Iterator<'a, T> {
+impl<'a, T: ElementConstraints> Iterator for SliceFatPtr64Iterator<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.idx < self.instance.len as usize {
-            let r = self.instance.item_at_idx(self.idx);
+            let r = self.instance.item_at_idx(self.idx, addr_translator_default);
             self.idx += 1;
             return Some(r);
         }
@@ -292,7 +351,7 @@ impl<'a, T: ElementsType> Iterator for SliceFatPtr64Iterator<'a, T> {
     }
 }
 
-impl<'a, T: ElementsType> IntoIterator for &'a SliceFatPtr64<T> {
+impl<'a, T: ElementConstraints> IntoIterator for &'a SliceFatPtr64<T> {
     type Item = &'a T;
     type IntoIter = SliceFatPtr64Iterator<'a, T>;
 
@@ -331,7 +390,7 @@ impl<'a, T: ElementsType> IntoIterator for &'a SliceFatPtr64<T> {
 impl SpecMethods for AccountMeta {
     const ITEM_SIZE_BYTES: usize = size_of::<Self>();
 
-    fn recover_from_bytes(data: &[u8]) -> &Self {
+    fn recover_from_bytes<F: Fn(u64) -> u64>(data: &[u8], addr_translator: F) -> &Self {
         typecast_bytes(data)
     }
 }
@@ -339,19 +398,14 @@ impl SpecMethods for AccountMeta {
 impl<'a> SpecMethods for AccountInfo<'a> {
     const ITEM_SIZE_BYTES: usize = size_of::<AccountInfo>();
 
-    fn recover_from_bytes(data: &[u8]) -> &Self {
+    fn recover_from_bytes<F: Fn(u64) -> u64>(data: &[u8], _addr_translator: F) -> &Self {
         typecast_bytes(data)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::word_size_mismatch::slice_fat_ptr_v2::{
-        typecast_bytes,
-        SliceFatPtr64,
-        FAT_PTR64_ELEM_BYTE_SIZE,
-        SLICE_FAT_PTR64_BYTE_SIZE,
-    };
+    use crate::ptr_size::slice_fat_ptr_v2::{addr_translator_default, SliceFatPtr64};
     use solana_account_info::AccountInfo;
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
@@ -390,7 +444,7 @@ mod tests {
     //         seeds_len,
     //     );
     //
-    //     assert_eq!(items_recovered.len_usize(), items.len());
+    //     assert_eq!(items_recovered.len(), items.len());
     //     for (idx, item_recovered) in items_recovered.iter().enumerate() {
     //         assert_eq!(&item_recovered.to_vec(), items[idx]);
     //     }
@@ -407,6 +461,26 @@ mod tests {
 
         for (idx, item) in slice.iter().enumerate() {
             assert_eq!(item, &items[idx]);
+        }
+    }
+
+    #[test]
+    fn u8_items_of_items_test() {
+        type ElemType = u8;
+        let a1: &[u8] = &[12 as ElemType, 2, 123, 3, 74, 1, 2];
+        let a2: &[u8] = &[14 as ElemType, 41, 3, 3];
+        let a3: &[u8] = &[12 as ElemType, 83, 3, 23, 12, 1, 32, 65];
+        let items: &[&[u8]] = &[a1, a2, a3];
+        let items_first_item_ptr = items.as_ptr() as usize;
+        let items_len = items.len();
+
+        let slice_external =
+            SliceFatPtr64::<&[u8]>::new(items_first_item_ptr as u64, items_len as u64);
+
+        for (idx_external, slice_internal) in slice_external.iter().enumerate() {
+            for (idx_internal, item_internal) in slice_internal.iter().enumerate() {
+                assert_eq!(item_internal, &items[idx_external][idx_internal]);
+            }
         }
     }
 
@@ -447,7 +521,7 @@ mod tests {
         let range = 1..3;
         slice.get_mut(range.clone()).map(|mut s| s.fill(&fill_with));
         for idx in range {
-            let item = slice.item_at_idx(idx);
+            let item = slice.item_at_idx(idx, addr_translator_default);
             assert_eq!(item, &fill_with);
         }
     }
@@ -506,7 +580,7 @@ mod tests {
         let range = 1..3;
         slice.get_mut(range.clone()).map(|mut s| s.fill(&fill_with));
         for idx in range {
-            let item = slice.item_at_idx(idx);
+            let item = slice.item_at_idx(idx, addr_translator_default);
             assert_eq!(item, &fill_with);
         }
     }
@@ -597,7 +671,10 @@ mod tests {
             items_only_bytes_size, items_as_raw_bytes
         );
         for idx in 0..slice.len() as usize {
-            assert_eq!(slice.item_at_idx(idx), &items_original_fixed[idx]);
+            assert_eq!(
+                slice.item_at_idx(idx, addr_translator_default),
+                &items_original_fixed[idx]
+            );
         }
         for (idx, item) in slice.iter().enumerate() {
             assert_eq!(item, &items_original_fixed[idx]);
@@ -738,9 +815,9 @@ mod tests {
                 assert_eq!($original.$field, $recovered.$field);
             };
         }
-        for idx in 0..slice.len() as usize {
+        for idx in 0..slice.len() {
             let item_original = &items_original_fixed[idx];
-            let item_recovered = &slice.item_at_idx(idx);
+            let item_recovered = &slice.item_at_idx(idx, addr_translator_default);
             let item_original_cloned = (*item_original).clone();
             assert_fields!(item_original, item_recovered, data);
             assert_fields!(item_original, item_recovered, executable);
@@ -752,9 +829,9 @@ mod tests {
             assert_fields!(item_original, item_recovered, rent_epoch);
         }
         slice.copy_from_slice(items_new_fixed.as_ref());
-        for idx in 0..slice.len() as usize {
+        for idx in 0..slice.len() {
             let item_original = &items_new_fixed[idx];
-            let item_recovered = &slice.item_at_idx(idx);
+            let item_recovered = &slice.item_at_idx(idx, addr_translator_default);
             let item_original_cloned = (*item_original).clone();
             assert_fields!(item_original, item_recovered, data);
             assert_fields!(item_original, item_recovered, executable);

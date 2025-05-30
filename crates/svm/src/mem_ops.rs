@@ -1,10 +1,9 @@
 use super::*;
-use crate::word_size_mismatch::slice_fat_ptr::SliceFatPtr64;
 use crate::{
     context::InvokeContext,
     error::{Error, SvmError},
     helpers::SyscallError,
-    // word_size_mismatch::fat_ptr_repr::SliceFatPtr64,
+    ptr_size::slice_fat_ptr_v2::{ElementConstraints, SliceFatPtr64},
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::{slice, str::from_utf8};
@@ -571,7 +570,7 @@ pub fn translate_type<'a, T>(
         .map(|value| &*value)
 }
 
-fn translate_slice_inner<'a, T: word_size_mismatch::slice_fat_ptr::ElemTypeConstraints>(
+fn translate_slice_inner<'a, T: ElementConstraints>(
     memory_mapping: &MemoryMapping,
     access_type: AccessType,
     vm_addr: u64,
@@ -614,12 +613,12 @@ fn translate_slice_inner<'a, T: word_size_mismatch::slice_fat_ptr::ElemTypeConst
         return Err(SyscallError::UnalignedPointer.into());
     }
     // debug_log!("translate_slice_inner 4");
-    let result = SliceFatPtr64::new(host_addr as usize, len as usize);
+    let result = SliceFatPtr64::new(host_addr, len);
     // let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
     Ok(result)
 }
 
-pub fn translate_slice<'a, T: word_size_mismatch::slice_fat_ptr::ElemTypeConstraints>(
+pub fn translate_slice<'a, T: ElementConstraints>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
@@ -635,7 +634,7 @@ pub fn translate_slice<'a, T: word_size_mismatch::slice_fat_ptr::ElemTypeConstra
     // .map(|value| &*value)
 }
 
-pub fn translate_slice_mut<'a, T: word_size_mismatch::slice_fat_ptr::ElemTypeConstraints>(
+pub fn translate_slice_mut<'a, T: ElementConstraints>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
@@ -659,7 +658,7 @@ pub fn translate_string_and_do(
     check_aligned: bool,
     work: &mut dyn FnMut(&str) -> Result<u64, Error>,
 ) -> Result<u64, Error> {
-    let buf = translate_slice::<u8>(memory_mapping, addr, len, check_aligned)?.to_vec();
+    let buf = translate_slice::<u8>(memory_mapping, addr, len, check_aligned)?.to_vec_cloned();
     match from_utf8(buf.as_slice()) {
         Ok(message) => work(message),
         Err(err) => Err(SyscallError::InvalidString(err, buf).into()),
@@ -756,7 +755,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
                 untranslated_seed.len() as u64,
                 check_aligned,
             )
-            .map(|v| v.to_vec())
+            .map(|v| v.to_vec_cloned())
         })
         .collect::<Result<Vec<_>, SvmError>>()?;
     debug_log!("translate_and_check_program_address_inputs 2");

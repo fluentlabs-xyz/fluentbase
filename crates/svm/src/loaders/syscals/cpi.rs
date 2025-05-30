@@ -1,5 +1,5 @@
 use super::*;
-use crate::word_size_mismatch::slice_fat_ptr::ElemTypeConstraints;
+use crate::ptr_size::slice_fat_ptr_v2::{addr_translator_default, ElementConstraints};
 use crate::{
     account::BorrowedAccount,
     bpf_loader,
@@ -827,7 +827,7 @@ struct SolAccountInfo {
 //     }
 // }
 
-fn translate_account_infos<'a, T: ElemTypeConstraints, F, SDK: SharedAPI>(
+fn translate_account_infos<'a, T: ElementConstraints, F, SDK: SharedAPI>(
     account_infos_addr: u64,
     account_infos_len: u64,
     key_addr: F,
@@ -867,14 +867,14 @@ where
         invoke_context.get_check_aligned(),
     )?;
     let account_info = &account_infos[0];
-    let account_info_cloned = (*account_info).clone();
+    // let account_info_cloned = (*account_info).clone();
     let account_infos2 = crate::mem_ops::translate_slice::<T>(
         memory_mapping,
         account_infos_addr,
         account_infos_len,
         invoke_context.get_check_aligned(),
     )?;
-    let account_info2 = &account_infos2.item_at_idx(0);
+    let account_info2 = &account_infos2.item_at_idx(0, addr_translator_default);
     debug_log!("translate_account_infos3");
     check_account_infos(account_infos.len(), invoke_context)?;
     debug_log!("translate_account_infos4");

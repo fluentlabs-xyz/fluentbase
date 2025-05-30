@@ -19,7 +19,7 @@ pub enum ArrayFatPtr<'a> {
     StableVec(&'a [u8; STABLE_VEC_FAT_PTR64_BYTE_SIZE]),
 }
 
-pub trait ElemTypeConstraints = Clone + SpecMethods;
+pub trait ElementConstraints = Clone + SpecMethods;
 
 pub trait SpecMethods {
     const SIZE_IN_BYTES: usize;
@@ -29,7 +29,7 @@ pub trait SpecMethods {
 
 macro_rules! impl_numeric_type {
     ($typ: ident) => {
-        impl $crate::word_size_mismatch::slice_fat_ptr::SpecMethods for $typ {
+        impl $crate::ptr_size::slice_fat_ptr::SpecMethods for $typ {
             const SIZE_IN_BYTES: usize = core::mem::size_of::<$typ>();
 
             fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
@@ -53,13 +53,13 @@ impl_numeric_type!(u64);
 
 /// Slice impl emulating 64 bit word size to support solana 64 bit programs
 #[derive(Clone)]
-pub struct SliceFatPtr64<T: ElemTypeConstraints> {
+pub struct SliceFatPtr64<T: ElementConstraints> {
     first_item_fat_ptr_addr: usize,
     len: usize,
     _phantom: PhantomData<T>,
 }
 
-impl<T: ElemTypeConstraints> SpecMethods for SliceFatPtr64<T> {
+impl<T: ElementConstraints> SpecMethods for SliceFatPtr64<T> {
     const SIZE_IN_BYTES: usize = SLICE_FAT_PTR64_BYTE_SIZE;
 
     fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
@@ -67,13 +67,13 @@ impl<T: ElemTypeConstraints> SpecMethods for SliceFatPtr64<T> {
     }
 }
 
-impl<'a, T: ElemTypeConstraints> Default for SliceFatPtr64<T> {
+impl<'a, T: ElementConstraints> Default for SliceFatPtr64<T> {
     fn default() -> Self {
         Self::new(0, 0)
     }
 }
 
-impl<T: ElemTypeConstraints> SliceFatPtr64<T> {
+impl<T: ElementConstraints> SliceFatPtr64<T> {
     pub fn new(first_item_fat_ptr_addr: usize, len: usize) -> Self {
         Self {
             first_item_fat_ptr_addr,
@@ -240,17 +240,17 @@ impl<T: ElemTypeConstraints> SliceFatPtr64<T> {
     }
 }
 
-pub struct SliceFatPtr64Iterator<'a, T: ElemTypeConstraints> {
+pub struct SliceFatPtr64Iterator<'a, T: ElementConstraints> {
     instance: &'a SliceFatPtr64<T>,
     idx: usize,
 }
-impl<'a, T: ElemTypeConstraints> From<&'a SliceFatPtr64<T>> for SliceFatPtr64Iterator<'a, T> {
+impl<'a, T: ElementConstraints> From<&'a SliceFatPtr64<T>> for SliceFatPtr64Iterator<'a, T> {
     fn from(instance: &'a SliceFatPtr64<T>) -> Self {
         Self { instance, idx: 0 }
     }
 }
 
-impl<'a, T: ElemTypeConstraints> Iterator for SliceFatPtr64Iterator<'a, T> {
+impl<'a, T: ElementConstraints> Iterator for SliceFatPtr64Iterator<'a, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -263,7 +263,7 @@ impl<'a, T: ElemTypeConstraints> Iterator for SliceFatPtr64Iterator<'a, T> {
     }
 }
 
-impl<'a, T: ElemTypeConstraints> IntoIterator for &'a SliceFatPtr64<T> {
+impl<'a, T: ElementConstraints> IntoIterator for &'a SliceFatPtr64<T> {
     type Item = T;
     type IntoIter = SliceFatPtr64Iterator<'a, T>;
 
@@ -335,7 +335,7 @@ impl SpecMethods for AccountInfo<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::word_size_mismatch::slice_fat_ptr::{
+    use crate::ptr_size::slice_fat_ptr::{
         SliceFatPtr64,
         FAT_PTR64_ELEM_BYTE_SIZE,
         SLICE_FAT_PTR64_BYTE_SIZE,

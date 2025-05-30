@@ -47,6 +47,7 @@ pub mod fluentbase;
 pub mod hash;
 pub mod loaders;
 pub mod mem_ops_original;
+pub mod ptr_size;
 pub mod serialization;
 pub mod solana_program;
 pub mod storage_helpers;
@@ -61,7 +62,6 @@ pub mod sysvar_cache;
 #[cfg(test)]
 pub mod test_helpers;
 pub mod types;
-pub mod word_size_mismatch;
 // mod test_macroses;
 
 pub use bincode;
