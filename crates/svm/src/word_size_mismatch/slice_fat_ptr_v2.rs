@@ -38,10 +38,10 @@ pub fn typecast_bytes<T: Clone>(data: &[u8]) -> &T {
 pub trait SpecMethods {
     const ITEM_SIZE_BYTES: usize;
 
-    fn recover_from_bytes<T: Clone>(byte_repr: &[u8]) -> &T;
+    fn recover_from_bytes(byte_repr: &[u8]) -> &Self;
 }
 
-pub trait ElemType = Clone + SpecMethods;
+pub trait ElementsType = Clone + SpecMethods;
 
 /// Slice impl emulating 64 bit word size to support solana 64 bit programs
 pub struct SliceFatPtr64<T: SpecMethods> {
@@ -53,7 +53,7 @@ pub struct SliceFatPtr64<T: SpecMethods> {
 impl SpecMethods for u8 {
     const ITEM_SIZE_BYTES: usize = size_of::<Self>();
 
-    fn recover_from_bytes<T: Clone>(byte_repr: &[u8]) -> &T {
+    fn recover_from_bytes(byte_repr: &[u8]) -> &Self {
         let item_size = size_of::<Self>();
         let len = byte_repr.len() / item_size;
         let recovered_bytes_len = len * item_size;
@@ -73,7 +73,7 @@ macro_rules! impl_numeric_type {
         impl $crate::word_size_mismatch::slice_fat_ptr_v2::SpecMethods for $typ {
             const ITEM_SIZE_BYTES: usize = core::mem::size_of::<$typ>();
 
-            fn recover_from_bytes<T: Clone>(byte_repr: &[u8]) -> &T {
+            fn recover_from_bytes(byte_repr: &[u8]) -> &Self {
                 typecast_bytes(&byte_repr[..Self::ITEM_SIZE_BYTES])
             }
         }
@@ -92,13 +92,13 @@ impl_numeric_type!(u16);
 //     }
 // }
 
-impl<'a, T: ElemType> Default for SliceFatPtr64<T> {
+impl<'a, T: ElementsType> Default for SliceFatPtr64<T> {
     fn default() -> Self {
         Self::new(0, 0)
     }
 }
 
-impl<'a, T: ElemType> SliceFatPtr64<T> {
+impl<'a, T: ElementsType> SliceFatPtr64<T> {
     pub fn new(first_item_fat_ptr_addr: u64, len: u64) -> Self {
         Self {
             first_item_fat_ptr_addr,
@@ -269,17 +269,17 @@ impl<'a, T: ElemType> SliceFatPtr64<T> {
     }
 }
 
-pub struct SliceFatPtr64Iterator<'a, T: ElemType> {
+pub struct SliceFatPtr64Iterator<'a, T: ElementsType> {
     instance: &'a SliceFatPtr64<T>,
     idx: usize,
 }
-impl<'a, T: ElemType> From<&'a SliceFatPtr64<T>> for SliceFatPtr64Iterator<'a, T> {
+impl<'a, T: ElementsType> From<&'a SliceFatPtr64<T>> for SliceFatPtr64Iterator<'a, T> {
     fn from(instance: &'a SliceFatPtr64<T>) -> Self {
         Self { instance, idx: 0 }
     }
 }
 
-impl<'a, T: ElemType> Iterator for SliceFatPtr64Iterator<'a, T> {
+impl<'a, T: ElementsType> Iterator for SliceFatPtr64Iterator<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -292,7 +292,7 @@ impl<'a, T: ElemType> Iterator for SliceFatPtr64Iterator<'a, T> {
     }
 }
 
-impl<'a, T: ElemType> IntoIterator for &'a SliceFatPtr64<T> {
+impl<'a, T: ElementsType> IntoIterator for &'a SliceFatPtr64<T> {
     type Item = &'a T;
     type IntoIter = SliceFatPtr64Iterator<'a, T>;
 
@@ -331,7 +331,7 @@ impl<'a, T: ElemType> IntoIterator for &'a SliceFatPtr64<T> {
 impl SpecMethods for AccountMeta {
     const ITEM_SIZE_BYTES: usize = size_of::<Self>();
 
-    fn recover_from_bytes<T: Clone>(data: &[u8]) -> &T {
+    fn recover_from_bytes(data: &[u8]) -> &Self {
         typecast_bytes(data)
     }
 }
@@ -339,7 +339,7 @@ impl SpecMethods for AccountMeta {
 impl<'a> SpecMethods for AccountInfo<'a> {
     const ITEM_SIZE_BYTES: usize = size_of::<AccountInfo>();
 
-    fn recover_from_bytes<T: Clone>(data: &[u8]) -> &T {
+    fn recover_from_bytes(data: &[u8]) -> &Self {
         typecast_bytes(data)
     }
 }
