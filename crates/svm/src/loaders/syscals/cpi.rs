@@ -1,5 +1,5 @@
 use super::*;
-use crate::word_size_mismatch::fat_ptr_repr::ElemTypeConstraints;
+use crate::word_size_mismatch::slice_fat_ptr::ElemTypeConstraints;
 use crate::{
     account::BorrowedAccount,
     bpf_loader,

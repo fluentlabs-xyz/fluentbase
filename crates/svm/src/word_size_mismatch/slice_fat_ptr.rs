@@ -29,7 +29,7 @@ pub trait SpecMethods {
 
 macro_rules! impl_numeric_type {
     ($typ: ident) => {
-        impl $crate::word_size_mismatch::fat_ptr_repr::SpecMethods for $typ {
+        impl $crate::word_size_mismatch::slice_fat_ptr::SpecMethods for $typ {
             const SIZE_IN_BYTES: usize = core::mem::size_of::<$typ>();
 
             fn recover_from_byte_repr(byte_repr: &[u8]) -> Self {
@@ -335,7 +335,7 @@ impl SpecMethods for AccountInfo<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::word_size_mismatch::fat_ptr_repr::{
+    use crate::word_size_mismatch::slice_fat_ptr::{
         SliceFatPtr64,
         FAT_PTR64_ELEM_BYTE_SIZE,
         SLICE_FAT_PTR64_BYTE_SIZE,

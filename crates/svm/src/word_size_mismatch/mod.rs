@@ -1,2 +1,2 @@
-pub mod fat_ptr_repr;
-pub mod fat_ptr_repr_v2;
+pub mod slice_fat_ptr;
+pub mod slice_fat_ptr_v2;

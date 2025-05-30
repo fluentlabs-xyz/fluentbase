@@ -1,5 +1,5 @@
 use super::*;
-use crate::word_size_mismatch::fat_ptr_repr::SliceFatPtr64;
+use crate::word_size_mismatch::slice_fat_ptr::SliceFatPtr64;
 use crate::{
     context::InvokeContext,
     error::{Error, SvmError},
@@ -571,7 +571,7 @@ pub fn translate_type<'a, T>(
         .map(|value| &*value)
 }
 
-fn translate_slice_inner<'a, T: word_size_mismatch::fat_ptr_repr::ElemTypeConstraints>(
+fn translate_slice_inner<'a, T: word_size_mismatch::slice_fat_ptr::ElemTypeConstraints>(
     memory_mapping: &MemoryMapping,
     access_type: AccessType,
     vm_addr: u64,
@@ -619,7 +619,7 @@ fn translate_slice_inner<'a, T: word_size_mismatch::fat_ptr_repr::ElemTypeConstr
     Ok(result)
 }
 
-pub fn translate_slice<'a, T: word_size_mismatch::fat_ptr_repr::ElemTypeConstraints>(
+pub fn translate_slice<'a, T: word_size_mismatch::slice_fat_ptr::ElemTypeConstraints>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
@@ -635,7 +635,7 @@ pub fn translate_slice<'a, T: word_size_mismatch::fat_ptr_repr::ElemTypeConstrai
     // .map(|value| &*value)
 }
 
-pub fn translate_slice_mut<'a, T: word_size_mismatch::fat_ptr_repr::ElemTypeConstraints>(
+pub fn translate_slice_mut<'a, T: word_size_mismatch::slice_fat_ptr::ElemTypeConstraints>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
