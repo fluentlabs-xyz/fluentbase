@@ -732,7 +732,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
         untranslated_seeds.len(),
     );
     for (idx, us) in untranslated_seeds.iter().enumerate() {
-        debug_log!("untranslated_seed {}: len {}", idx, us.len());
+        debug_log!("untranslated_seed{}: len {}", idx, us.as_ref().len());
     }
     if untranslated_seeds.len() > MAX_SEEDS {
         return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());

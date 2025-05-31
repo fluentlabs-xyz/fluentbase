@@ -1,15 +1,14 @@
 use crate::{
-    alloc::{string::ToString, vec::Vec},
+    alloc::string::ToString,
     common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
     error::Error,
     helpers::SyscallError,
     loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
+    mem_ops,
     mem_ops_original::{
         is_nonoverlapping,
-        memcmp,
-        memcmp_non_contiguous,
         memmove,
         memset_non_contiguous,
         translate,
@@ -19,12 +18,10 @@ use crate::{
         translate_string_and_do,
         translate_type_mut,
     },
-    // word_size_mismatch::fat_ptr_repr::{SliceFatPtr64, SLICE_FAT_PTR64_BYTE_SIZE},
 };
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::{debug_log, SharedAPI};
-use solana_account_info::AccountInfo;
 use solana_feature_set;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
@@ -718,18 +715,17 @@ declare_builtin_function!(
         //     .create_program_address_units;
         // consume_compute_meter(invoke_context, cost)?;
         debug_log!(
-            "in SyscallTryFindProgramAddress: seeds_addr {} seeds_len {} program_id_addr {} invoke_context.get_check_aligned() {} memory_mapping {:?}",
+            "in SyscallTryFindProgramAddress: seeds_addr {} seeds_len {} program_id_addr {} invoke_context.get_check_aligned() {}",
             seeds_addr,
             seeds_len,
             program_id_addr,
             invoke_context.get_check_aligned(),
-            memory_mapping,
         );
 
         // let host_addr = memory_mapping.map(AccessType::Load, seeds_addr, 8).unwrap();
         let word_size = size_of::<usize>();
         let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, word_size as u64 * seeds_len)?;
-        let untranslated_seeds = crate::mem_ops::translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
+        let untranslated_seeds = mem_ops::translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
         // let untranslated_seeds = translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
         let seeds_slice_fat_ptr_data =
                 unsafe { core::slice::from_raw_parts(host_addr as *const u8, crate::ptr_size::slice_fat_ptr_v2::SLICE_FAT_PTR64_SIZE_BYTES) };
@@ -750,13 +746,13 @@ declare_builtin_function!(
         );
         for (idx, untranslated_seed) in untranslated_seeds.iter().enumerate() {
             debug_log!(
-                "untranslated_seed{} ({}): ",
+                "untranslated_seed{} ({}): {:x?}",
                 idx,
                 untranslated_seed.as_ref().len(),
-                // untranslated_seed.to_vec()
+                untranslated_seed.as_ref().to_vec()
             );
         }
-        let result = translate_and_check_program_address_inputs(
+        let result = mem_ops::translate_and_check_program_address_inputs(
             seeds_addr,
             seeds_len,
             program_id_addr,
@@ -774,10 +770,11 @@ declare_builtin_function!(
             {
                 debug_log!("in SyscallTryFindProgramAddress: i={}", i);
                 let mut seeds_with_bump = seeds.clone();
-                seeds_with_bump.push(&bump_seed);
+                seeds_with_bump.push(bump_seed.to_vec());
+                let seeds_with_bump_slice = seeds_with_bump.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>();
 
                 let new_address = Pubkey::create_program_address(
-                    &seeds_with_bump,
+                    &seeds_with_bump_slice,
                     program_id
                 );
                 if let Ok(new_address) =
