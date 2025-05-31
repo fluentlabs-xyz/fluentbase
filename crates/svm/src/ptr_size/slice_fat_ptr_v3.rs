@@ -281,7 +281,7 @@ impl<'a> SpecMethods<'a> for &[&[u8]] {
 
 #[inline(always)]
 pub fn reconstruct_slice<'a, T>(ptr: usize, len: usize) -> &'a [T] {
-    unsafe { core::slice::from_raw_parts(ptr as *const T, len) }
+    unsafe { core::slice::from_raw_parts::<'a>(ptr as *const T, len) }
 }
 
 impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
@@ -438,12 +438,8 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
     }
 
     pub fn item_at_idx(&self, idx: usize) -> RetVal<'a, T> {
-        let byte_repr = unsafe {
-            core::slice::from_raw_parts(
-                self.item_addr_at_idx(idx) as *const u8,
-                T::ITEM_SIZE_BYTES as usize,
-            )
-        };
+        let byte_repr =
+            reconstruct_slice::<'a, u8>(self.item_addr_at_idx(idx), T::ITEM_SIZE_BYTES as usize);
         T::recover_from_bytes(byte_repr, self.memory_mapping)
     }
 
