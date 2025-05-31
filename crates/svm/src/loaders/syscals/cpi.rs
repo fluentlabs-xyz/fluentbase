@@ -1,5 +1,4 @@
 use super::*;
-use crate::ptr_size::slice_fat_ptr_v2::{addr_translator_default, ElementConstraints};
 use crate::{
     account::BorrowedAccount,
     bpf_loader,
@@ -8,18 +7,19 @@ use crate::{
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     error::{Error, SvmError},
     helpers::{SerializedAccountMetadata, SyscallError},
-    mem_ops_original::{
+    mem_ops::{
         translate,
         translate_slice,
         translate_slice_mut,
         translate_type,
         translate_type_mut,
     },
+    mem_ops_original,
     native_loader,
     precompiles::is_precompile,
+    ptr_size::slice_fat_ptr_v2::{ElementConstraints, SliceFatPtr64},
     serialization::account_data_region_memory_state,
     solana_program::bpf_loader_upgradeable,
-    // word_size_mismatch::fat_ptr_repr::{ElemTypeConstraints, SliceFatPtr64},
 };
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{marker::PhantomData, ptr};
@@ -108,7 +108,7 @@ struct CallerAccount<'a, 'b, SDK: SharedAPI> {
     //
     // This is only set when direct mapping is off (see the relevant comment in
     // CallerAccount::from_account_info).
-    serialized_data: &'a mut [u8],
+    serialized_data: SliceFatPtr64<'a, u8>,
     // Given the corresponding input AccountInfo::data, vm_data_addr points to
     // the pointer field and ref_to_len_in_vm points to the length field.
     vm_data_addr: u64,
@@ -463,8 +463,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
             ix.data.as_ptr() as u64,
             ix.data.len() as u64,
             invoke_context.get_check_aligned(),
-        )?
-        .to_vec();
+        )?;
 
         check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
 
@@ -484,7 +483,8 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
         #[allow(clippy::needless_range_loop)]
         for account_index in 0..account_metas.len() {
             #[allow(clippy::indexing_slicing)]
-            let account_meta = &account_metas[account_index];
+            let account_meta_ret_val = account_metas.item_at_idx(account_index);
+            let account_meta = account_meta_ret_val.as_ref();
             if unsafe {
                 ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
                     || ptr::read_volatile(&account_meta.is_writable as *const _ as *const u8) > 1
@@ -496,7 +496,11 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
 
         Ok(StableInstruction {
             accounts: accounts.into(),
-            data: data.into(),
+            data: data
+                .iter()
+                .map(|v| v.as_ref().clone())
+                .collect::<Vec<_>>()
+                .into(),
             program_id: ix.program_id,
         })
     }
@@ -514,14 +518,13 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
             "translate_accounts1: account_infos_addr {}",
             account_infos_addr
         );
-        let (account_infos, account_info_keys): (&[AccountInfo], Vec<&Pubkey>) =
-            translate_account_infos(
-                account_infos_addr,
-                account_infos_len,
-                |account_info: &AccountInfo| account_info.key as *const _ as u64,
-                memory_mapping,
-                invoke_context,
-            )?;
+        let (account_infos, account_info_keys) = translate_account_infos(
+            account_infos_addr,
+            account_infos_len,
+            |account_info: &AccountInfo| account_info.key as *const _ as u64,
+            memory_mapping,
+            invoke_context,
+        )?;
         debug_log!("translate_accounts2");
 
         translate_and_update_accounts(
@@ -546,7 +549,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
     ) -> Result<Vec<Pubkey>, SvmError> {
         let mut signers = Vec::new();
         if signers_seeds_len > 0 {
-            let signers_seeds = translate_slice::<&[&[u8]]>(
+            let signers_seeds = mem_ops_original::translate_slice::<&[&[u8]]>(
                 memory_mapping,
                 signers_seeds_addr,
                 signers_seeds_len,
@@ -556,7 +559,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
                 return Err(SyscallError::TooManySigners.into());
             }
             for signer_seeds in signers_seeds.iter() {
-                let untranslated_seeds = translate_slice::<&[u8]>(
+                let untranslated_seeds = mem_ops_original::translate_slice::<&[u8]>(
                     memory_mapping,
                     signer_seeds.as_ptr() as u64,
                     signer_seeds.len() as u64,
@@ -568,7 +571,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
                 let seeds = untranslated_seeds
                     .iter()
                     .map(|untranslated_seed| {
-                        translate_slice::<u8>(
+                        mem_ops_original::translate_slice::<u8>(
                             memory_mapping,
                             untranslated_seed.as_ptr() as u64,
                             untranslated_seed.len() as u64,
@@ -831,9 +834,9 @@ fn translate_account_infos<'a, T: ElementConstraints, F, SDK: SharedAPI>(
     account_infos_addr: u64,
     account_infos_len: u64,
     key_addr: F,
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     invoke_context: &mut InvokeContext<SDK>,
-) -> Result<(&'a [T], Vec<&'a Pubkey>), SvmError>
+) -> Result<(SliceFatPtr64<'a, T>, Vec<&'a Pubkey>), SvmError>
 where
     F: Fn(&T) -> u64,
 {
@@ -866,7 +869,7 @@ where
         account_infos_len,
         invoke_context.get_check_aligned(),
     )?;
-    let account_info = &account_infos[0];
+    // let account_info = &account_infos[0];
     // let account_info_cloned = (*account_info).clone();
     let account_infos2 = crate::mem_ops::translate_slice::<T>(
         memory_mapping,
@@ -874,7 +877,7 @@ where
         account_infos_len,
         invoke_context.get_check_aligned(),
     )?;
-    let account_info2 = account_infos2.item_at_idx(0, addr_translator_default);
+    let account_info2 = account_infos2.item_at_idx(0);
     debug_log!("translate_account_infos3");
     check_account_infos(account_infos.len(), invoke_context)?;
     debug_log!("translate_account_infos4");
@@ -883,10 +886,10 @@ where
     for account_index in 0..account_infos_len as usize {
         debug_log!("translate_account_infos5.{}", account_index);
         #[allow(clippy::indexing_slicing)]
-        let account_info = &account_infos[account_index];
+        let account_info = account_infos.item_at_idx(account_index);
         account_info_keys.push(translate_type::<Pubkey>(
             memory_mapping,
-            key_addr(account_info),
+            key_addr(account_info.as_ref()),
             invoke_context.get_check_aligned(),
         )?);
     }
@@ -895,11 +898,11 @@ where
 
 // Finish translating accounts, build CallerAccount values and update callee
 // accounts in preparation of executing the callee.
-fn translate_and_update_accounts<'a, 'b, T, F, SDK: SharedAPI>(
+fn translate_and_update_accounts<'a, 'b, T: ElementConstraints, F, SDK: SharedAPI>(
     instruction_accounts: &[InstructionAccount],
     program_indices: &[IndexOfAccount],
     account_info_keys: &[&Pubkey],
-    account_infos: &'a [T],
+    account_infos: SliceFatPtr64<'a, T>,
     account_infos_addr: u64,
     is_loader_deprecated: bool,
     invoke_context: &mut InvokeContext<SDK>,
@@ -983,7 +986,7 @@ where
                 memory_mapping,
                 account_infos_addr
                     .saturating_add(caller_account_index.saturating_mul(size_of::<T>()) as u64),
-                &account_infos[caller_account_index],
+                account_infos.item_at_idx(caller_account_index).as_ref(),
                 serialized_metadata,
             )?;
 
@@ -1301,7 +1304,12 @@ fn update_callee_account<SDK: SharedAPI>(
                         .get_data_mut()?
                         .get_mut(caller_account.original_data_len..post_len)
                         .ok_or(SyscallError::InvalidLength)?
-                        .copy_from_slice(&serialized_data.to_vec());
+                        .copy_from_slice(
+                            &serialized_data
+                                .iter()
+                                .map(|v| v.as_ref().clone())
+                                .collect::<Vec<_>>(),
+                        );
                 }
             }
             Err(err) if prev_len != post_len => {
@@ -1311,14 +1319,19 @@ fn update_callee_account<SDK: SharedAPI>(
         }
     } else {
         // The redundant check helps to avoid the expensive data comparison if we can
+        let caller_ser_data = caller_account
+            .serialized_data
+            .iter()
+            .map(|v| v.as_ref().clone())
+            .collect::<Vec<_>>();
         match callee_account
             .can_data_be_resized(caller_account.serialized_data.len())
             .and_then(|_| callee_account.can_data_be_changed())
         {
             Ok(()) => {
-                callee_account.set_data_from_slice(&caller_account.serialized_data.to_vec())?
+                callee_account.set_data_from_slice(&caller_ser_data)?;
             }
-            Err(err) if callee_account.get_data() != &caller_account.serialized_data.to_vec() => {
+            Err(err) if callee_account.get_data() != &caller_ser_data => {
                 return Err(err.into());
             }
             _ => {}
@@ -1378,11 +1391,11 @@ fn update_caller_account_perms<SDK: SharedAPI>(
 //
 // This method updates caller_account so the CPI caller can see the callee's
 // changes.
-fn update_caller_account<SDK: SharedAPI>(
+fn update_caller_account<'a, 'b, SDK: SharedAPI>(
     invoke_context: &InvokeContext<SDK>,
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     is_loader_deprecated: bool,
-    caller_account: &mut CallerAccount<SDK>,
+    caller_account: &mut CallerAccount<'a, 'b, SDK>,
     callee_account: &mut BorrowedAccount<'_>,
     direct_mapping: bool,
 ) -> Result<(), Error> {
@@ -1501,14 +1514,14 @@ fn update_caller_account<SDK: SharedAPI>(
                         dirty_realloc_len as u64,
                         invoke_context.get_check_aligned(),
                     )?;
-                    serialized_data.fill(0);
+                    serialized_data.fill(&0);
                 }
             } else {
                 caller_account
                     .serialized_data
                     .get_mut(post_len..)
                     .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall))?
-                    .fill(0);
+                    .fill(&0);
             }
         }
 

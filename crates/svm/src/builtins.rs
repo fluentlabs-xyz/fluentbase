@@ -7,7 +7,7 @@ use crate::{
     helpers::SyscallError,
     loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
     mem_ops,
-    mem_ops_original::{
+    mem_ops::{
         is_nonoverlapping,
         memmove,
         memset_non_contiguous,
@@ -241,7 +241,7 @@ declare_builtin_function!(
                 n,
                 invoke_context.get_check_aligned(),
             )?;
-            s.fill(c as u8);
+            s.fill(&(c as u8));
             Ok(0)
         }
     }
@@ -408,11 +408,11 @@ declare_builtin_function!(
                 // TODO
                 let bytes = translate_slice::<u8>(
                     memory_mapping,
-                    val.as_ptr() as u64,
-                    val.len() as u64,
+                    val.as_ref().as_ptr() as u64,
+                    val.as_ref().len() as u64,
                     invoke_context.get_check_aligned(),
                 )?;
-                hasher.hash(&bytes.to_vec());
+                hasher.hash(&bytes.to_vec().iter().map(|v| v.as_ref().clone()).collect::<Vec<_>>());
             }
         }
         hash_result.copy_from_slice(hasher.result().as_ref());
@@ -686,7 +686,8 @@ declare_builtin_function!(
         // let Ok(new_address) = Pubkey::create_program_address(&seeds, program_id) else {
         //     return Ok(1);
         // };
-        let new_address = Pubkey::create_program_address(&seeds, program_id)?;
+        let seeds_as_slice = seeds.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
+        let new_address = Pubkey::create_program_address(&seeds_as_slice, program_id)?;
         let mut address = translate_slice_mut::<u8>(
             memory_mapping,
             address_addr,
@@ -797,7 +798,7 @@ declare_builtin_function!(
                         bump_seed_ref as *const _ as usize,
                         core::mem::size_of_val(bump_seed_ref),
                         // TODO recheck
-                        address.as_ptr() as usize,
+                        address.first_item_fat_ptr_addr_usize(),
                         core::mem::size_of::<Pubkey>(),
                     ) {
                         return Err(SyscallError::CopyOverlapping.into());

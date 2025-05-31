@@ -682,7 +682,7 @@ where
 }
 
 pub fn memmove<SDK: SharedAPI>(
-    invoke_context: &mut InvokeContext<SDK>,
+    _invoke_context: &mut InvokeContext<SDK>,
     dst_addr: u64,
     src_addr: u64,
     n: u64,

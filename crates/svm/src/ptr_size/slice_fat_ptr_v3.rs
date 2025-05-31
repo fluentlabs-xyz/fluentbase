@@ -1,12 +1,13 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::{
     any::type_name,
+    fmt::{Debug, Formatter},
     iter::Iterator,
     marker::PhantomData,
     ops::{Bound, Index, RangeBounds},
     slice::SliceIndex,
 };
-use fluentbase_sdk::{debug_log, ruint::algorithms::div::reciprocal};
+use fluentbase_sdk::debug_log;
 use lazy_static::lazy_static;
 use solana_account_info::AccountInfo;
 use solana_instruction::AccountMeta;
@@ -37,7 +38,7 @@ pub fn typecast_bytes<T: Clone>(data: &[u8]) -> &T {
     unsafe { &*ptr }
 }
 
-pub trait ElementConstraints = Clone + SpecMethods;
+pub trait ElementConstraints<'a> = Clone + SpecMethods<'a> + Debug;
 
 pub fn translate_addr(
     memory_mapping: Option<&MemoryMapping>,
@@ -71,18 +72,18 @@ impl<'a, T: Sized> RetVal<'a, T> {
     }
 }
 
-pub trait SpecMethods {
+pub trait SpecMethods<'a> {
     const ITEM_SIZE_BYTES: usize;
 
-    fn recover_from_bytes<'a>(
+    fn recover_from_bytes(
         byte_repr: &'a [u8],
-        memory_mapping: Option<&MemoryMapping>,
+        memory_mapping: Option<&'a MemoryMapping<'a>>,
     ) -> RetVal<'a, Self>
     where
         Self: Sized;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SliceFatPtr64Repr<const ITEM_SIZE_BYTES: usize> {
     first_item_fat_ptr_addr: u64,
     len: u64,
@@ -138,19 +139,28 @@ impl<const ITEM_SIZE_BYTES: usize> SliceFatPtr64Repr<ITEM_SIZE_BYTES> {
 
 /// Slice impl emulating 64 bit word size to support solana 64 bit programs
 #[derive(Clone, Default)]
-pub struct SliceFatPtr64<'a, T: SpecMethods> {
+pub struct SliceFatPtr64<'a, T: SpecMethods<'a>> {
     first_item_fat_ptr_addr: u64,
     len: u64,
     memory_mapping: Option<&'a MemoryMapping<'a>>,
     _phantom: PhantomData<T>,
 }
 
-impl SpecMethods for u8 {
+impl<'a, T: SpecMethods<'a>> Debug for SliceFatPtr64<'a, T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SliceFatPtr64")
+            .field("first_item_fat_ptr_addr", &self.first_item_fat_ptr_addr)
+            .field("len", &self.len)
+            .finish()
+    }
+}
+
+impl<'a> SpecMethods<'a> for u8 {
     const ITEM_SIZE_BYTES: usize = size_of::<Self>();
 
-    fn recover_from_bytes<'a>(
+    fn recover_from_bytes(
         byte_repr: &'a [u8],
-        memory_mapping: Option<&MemoryMapping>,
+        _memory_mapping: Option<&MemoryMapping>,
     ) -> RetVal<'a, Self> {
         let len = byte_repr.len() / Self::ITEM_SIZE_BYTES;
         let recovered_bytes_len = len * Self::ITEM_SIZE_BYTES;
@@ -167,10 +177,10 @@ impl SpecMethods for u8 {
 
 macro_rules! impl_numeric_type {
     ($typ: ident) => {
-        impl $crate::ptr_size::slice_fat_ptr_v2::SpecMethods for $typ {
+        impl<'a> $crate::ptr_size::slice_fat_ptr_v3::SpecMethods<'a> for $typ {
             const ITEM_SIZE_BYTES: usize = core::mem::size_of::<$typ>();
 
-            fn recover_from_bytes<'a>(
+            fn recover_from_bytes(
                 byte_repr: &'a [u8],
                 memory_mapping: Option<&MemoryMapping>,
             ) -> RetVal<'a, Self> {
@@ -182,10 +192,10 @@ macro_rules! impl_numeric_type {
 
 impl_numeric_type!(u16);
 
-impl SpecMethods for &[u8] {
+impl<'a> SpecMethods<'a> for &[u8] {
     // const ITEM_SIZE_BYTES: usize = size_of::<Self>();
     const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
-    fn recover_from_bytes<'a>(
+    fn recover_from_bytes(
         byte_repr: &'a [u8],
         memory_mapping: Option<&MemoryMapping>,
     ) -> RetVal<'a, Self> {
@@ -226,9 +236,9 @@ impl SpecMethods for &[u8] {
     }
 }
 
-impl SpecMethods for &[&[u8]] {
+impl<'a> SpecMethods<'a> for &[&[u8]] {
     const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
-    fn recover_from_bytes<'a>(
+    fn recover_from_bytes(
         byte_repr: &'a [u8],
         memory_mapping: Option<&MemoryMapping>,
     ) -> RetVal<'a, Self> {
@@ -269,35 +279,47 @@ impl SpecMethods for &[&[u8]] {
     }
 }
 
-impl<'a, T: ElementConstraints> SpecMethods for SliceFatPtr64<'a, T> {
+#[inline(always)]
+pub fn reconstruct_slice<'a, T>(ptr: usize, len: usize) -> &'a [T] {
+    unsafe { core::slice::from_raw_parts(ptr as *const T, len) }
+}
+
+impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
     const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
 
-    fn recover_from_bytes<'b>(
-        byte_repr: &'b [u8],
-        memory_mapping: Option<&MemoryMapping>,
-    ) -> RetVal<'b, Self> {
-        let ptr = SliceFatPtr64Repr::<SLICE_FAT_PTR64_SIZE_BYTES>::from_fat_ptr_slice(byte_repr);
-        let data = unsafe {
-            core::slice::from_raw_parts(
-                ptr.first_item_fat_ptr_addr as *const u8,
-                ptr.total_size_bytes(),
+    fn recover_from_bytes(
+        byte_repr: &'a [u8],
+        memory_mapping: Option<&'a MemoryMapping<'a>>,
+    ) -> RetVal<'a, Self> {
+        let mut ptr =
+            SliceFatPtr64Repr::<SLICE_FAT_PTR64_SIZE_BYTES>::from_fat_ptr_slice(byte_repr);
+        memory_mapping.map(|v| {
+            ptr.first_item_fat_ptr_addr = translate_addr(
+                memory_mapping,
+                ptr.first_item_fat_ptr_addr,
+                ptr.total_size_bytes() as u64,
+                None,
             )
-        };
+            .unwrap()
+        });
+        // let result = Self::from_repr(&ptr, memory_mapping);
+        let result = Self::new(ptr.first_item_fat_ptr_addr, ptr.len, memory_mapping);
+        // let data = reconstruct_slice::<T>(ptr.first_item_fat_ptr_addr as usize, ptr.len as usize);
         debug_log!(
-            "recover_from_bytes: data for {}: {:x?}",
+            "recover_from_bytes: ptr {:?} data for '{}': {:x?}",
+            &ptr,
             type_name::<Self>(),
-            data
+            &result
         );
-        RetVal::Reference(typecast_bytes(data))
+        RetVal::Instance(result)
     }
 }
 
-impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
+impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
     pub fn new(
         first_item_fat_ptr_addr: u64,
         len: u64,
         memory_mapping: Option<&'a MemoryMapping<'a>>,
-        // addr_translator: Arc<dyn Fn(u64) -> u64>,
     ) -> Self {
         Self {
             first_item_fat_ptr_addr,
@@ -307,17 +329,29 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
             _phantom: Default::default(),
         }
     }
+
     pub fn default(memory_mapping: Option<&'a MemoryMapping<'a>>) -> Self {
         Self {
             first_item_fat_ptr_addr: 0,
             len: 0,
             memory_mapping,
-            // addr_translator,
             _phantom: Default::default(),
         }
     }
 
-    pub fn try_get(&self, idx: usize) -> Option<RetVal<T>> {
+    pub fn from_repr<const ITEM_SIZE_BYTES: usize>(
+        ptr: &'a SliceFatPtr64Repr<ITEM_SIZE_BYTES>,
+        memory_mapping: Option<&'a MemoryMapping<'a>>,
+    ) -> Self {
+        Self {
+            first_item_fat_ptr_addr: ptr.first_item_fat_ptr_addr,
+            len: ptr.len,
+            memory_mapping,
+            _phantom: Default::default(),
+        }
+    }
+
+    pub fn try_get(&self, idx: usize) -> Option<RetVal<'a, T>> {
         if idx < self.len() {
             return Some(self.item_at_idx(idx));
         }
@@ -349,7 +383,7 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
         (self.len * self.item_size_bytes()) as usize
     }
 
-    pub fn get_mut(&mut self, range: impl RangeBounds<usize>) -> Option<SliceFatPtr64<T>> {
+    pub fn get_mut(&mut self, range: impl RangeBounds<usize>) -> Option<SliceFatPtr64<'a, T>> {
         let start = match range.start_bound().cloned() {
             Bound::Included(v) => v,
             _ => 0,
@@ -403,7 +437,7 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
         false
     }
 
-    pub fn item_at_idx(&self, idx: usize) -> RetVal<T> {
+    pub fn item_at_idx(&self, idx: usize) -> RetVal<'a, T> {
         let byte_repr = unsafe {
             core::slice::from_raw_parts(
                 self.item_addr_at_idx(idx) as *const u8,
@@ -413,7 +447,7 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
         T::recover_from_bytes(byte_repr, self.memory_mapping)
     }
 
-    pub fn as_single_item(&self) -> Option<RetVal<T>> {
+    pub fn as_single_item(&self) -> Option<RetVal<'a, T>> {
         if self.len != 0 {
             return None;
         }
@@ -428,7 +462,7 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
         r
     }
 
-    pub fn to_vec_cloned(&self) -> Vec<T> {
+    pub fn to_vec_cloned(&'a self) -> Vec<T> {
         let mut r = Vec::with_capacity(self.len());
         for v in self.iter() {
             r.push((*v.as_ref()).clone());
@@ -448,7 +482,7 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
         }
     }
 
-    pub fn copy_from(&mut self, src: &'a SliceFatPtr64<T>) -> bool {
+    pub fn copy_from(&mut self, src: &'a SliceFatPtr64<'a, T>) -> bool {
         if self.len != src.len {
             return false;
         }
@@ -509,17 +543,19 @@ impl<'a, T: ElementConstraints> SliceFatPtr64<'a, T> {
     }
 }
 
-pub struct SliceFatPtr64Iterator<'a, T: ElementConstraints> {
+pub struct SliceFatPtr64Iterator<'a, T: ElementConstraints<'a>> {
     instance: &'a SliceFatPtr64<'a, T>,
     idx: usize,
 }
-impl<'a, T: ElementConstraints> From<&'a SliceFatPtr64<'a, T>> for SliceFatPtr64Iterator<'a, T> {
-    fn from(instance: &'a SliceFatPtr64<T>) -> Self {
+impl<'a, T: ElementConstraints<'a>> From<&'a SliceFatPtr64<'a, T>>
+    for SliceFatPtr64Iterator<'a, T>
+{
+    fn from(instance: &'a SliceFatPtr64<'a, T>) -> Self {
         Self { instance, idx: 0 }
     }
 }
 
-impl<'a, T: ElementConstraints> Iterator for SliceFatPtr64Iterator<'a, T> {
+impl<'a, T: ElementConstraints<'a>> Iterator for SliceFatPtr64Iterator<'a, T> {
     type Item = RetVal<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -532,7 +568,7 @@ impl<'a, T: ElementConstraints> Iterator for SliceFatPtr64Iterator<'a, T> {
     }
 }
 
-impl<'a, T: ElementConstraints> IntoIterator for &'a SliceFatPtr64<'a, T> {
+impl<'a, T: ElementConstraints<'a>> IntoIterator for &'a SliceFatPtr64<'a, T> {
     type Item = RetVal<'a, T>;
     type IntoIter = SliceFatPtr64Iterator<'a, T>;
 
@@ -568,10 +604,10 @@ impl<'a, T: ElementConstraints> IntoIterator for &'a SliceFatPtr64<'a, T> {
 //     }
 // }
 
-impl SpecMethods for AccountMeta {
+impl<'a> SpecMethods<'a> for AccountMeta {
     const ITEM_SIZE_BYTES: usize = size_of::<Self>();
 
-    fn recover_from_bytes<'a>(
+    fn recover_from_bytes(
         data: &'a [u8],
         memory_mapping: Option<&MemoryMapping>,
     ) -> RetVal<'a, Self> {
@@ -579,20 +615,20 @@ impl SpecMethods for AccountMeta {
     }
 }
 
-impl<'a> SpecMethods for AccountInfo<'a> {
+impl<'a> SpecMethods<'a> for AccountInfo<'a> {
     const ITEM_SIZE_BYTES: usize = size_of::<AccountInfo>();
 
-    fn recover_from_bytes<'b>(
-        data: &'b [u8],
+    fn recover_from_bytes(
+        data: &'a [u8],
         memory_mapping: Option<&MemoryMapping>,
-    ) -> RetVal<'b, Self> {
+    ) -> RetVal<'a, Self> {
         RetVal::Reference(typecast_bytes(data))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{mem_ops, ptr_size::slice_fat_ptr_v2::SliceFatPtr64};
+    use crate::{mem_ops, ptr_size::slice_fat_ptr_v3::SliceFatPtr64};
     use solana_account_info::AccountInfo;
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
@@ -653,21 +689,65 @@ mod tests {
     }
 
     #[test]
-    fn u8_items_of_items_test() {
-        type ElemType = u8;
-        let a1: &[u8] = &[12 as ElemType, 2, 123, 3, 74, 1, 2];
-        let a2: &[u8] = &[14 as ElemType, 41, 3, 3];
-        let a3: &[u8] = &[12 as ElemType, 83, 3, 23, 12, 1, 32, 65, 54, 12, 65];
-        let items: &[&[u8]] = &[a1, a2, a3];
-        let items_first_item_ptr = items.as_ptr() as usize;
-        let items_len = items.len();
+    fn u8_slice_of_slices_test() {
+        type ItemType = u8;
+        let a1: &[u8] = &[0x12 as ItemType, 0x2, 0x23, 0x3, 0x74, 0x1, 0x2];
+        let a2: &[u8] = &[0x14 as ItemType, 0x41, 0x3, 0x3];
+        let a3: &[u8] = &[
+            0x12 as ItemType,
+            0x83,
+            0x3,
+            0x23,
+            0x12,
+            0x1,
+            0x32,
+            0x65,
+            0x54,
+            0x12,
+            0x65,
+        ];
+        let b1: &[&[u8]] = &[a1, a2, a3];
+        let b1_first_item_ptr = b1.as_ptr() as usize;
+        let b1_len = b1.len();
 
         let slice_external =
-            SliceFatPtr64::<&[u8]>::new(items_first_item_ptr as u64, items_len as u64, None);
+            SliceFatPtr64::<SliceFatPtr64<u8>>::new(b1_first_item_ptr as u64, b1_len as u64, None);
 
         for (idx_external, slice_internal) in slice_external.iter().enumerate() {
             for (idx_internal, item_internal) in slice_internal.as_ref().iter().enumerate() {
-                assert_eq!(item_internal, &items[idx_external][idx_internal]);
+                assert_eq!(item_internal.as_ref(), &b1[idx_external][idx_internal]);
+            }
+        }
+    }
+
+    #[test]
+    fn u8_slice_of_slices_of_slices_test() {
+        type ItemType = u8;
+        let a1: &[u8] = &[12 as ItemType, 2, 123, 3, 74, 1, 2];
+        let a2: &[u8] = &[14 as ItemType, 41, 3, 3];
+        let a3: &[u8] = &[12 as ItemType, 83, 3, 23, 12, 1, 32, 65, 54, 12, 65];
+        let a4: &[u8] = &[4 as ItemType, 42, 33, 12, 17, 41];
+        let a5: &[u8] = &[75 as ItemType, 32, 65, 54, 12, 65];
+        let b1: &[&[u8]] = &[a1, a2, a3];
+        let b2: &[&[u8]] = &[a4, a5];
+        let c1: &[&[&[u8]]] = &[b1, b2];
+        let c1_first_item_ptr = c1.as_ptr() as usize;
+        let c1_len = c1.len();
+
+        let type_name = core::any::type_name::<SliceFatPtr64<'_, u8>>();
+        println!("type_name: {}", type_name);
+
+        let slice = SliceFatPtr64::<SliceFatPtr64<SliceFatPtr64<u8>>>::new(
+            c1_first_item_ptr as u64,
+            c1_len as u64,
+            None,
+        );
+
+        for (idx_1, slice_1) in slice.iter().enumerate() {
+            for (idx_2, slice_2) in slice_1.as_ref().iter().enumerate() {
+                for (idx_3, item_3) in slice_2.as_ref().iter().enumerate() {
+                    assert_eq!(item_3.as_ref(), &c1[idx_1][idx_2][idx_3]);
+                }
             }
         }
     }
