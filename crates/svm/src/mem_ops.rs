@@ -3,7 +3,7 @@ use crate::{
     context::InvokeContext,
     error::{Error, SvmError},
     helpers::{StdResult, SyscallError},
-    ptr_size::slice_fat_ptr_v2::{ElementConstraints, SliceFatPtr64, SliceFatPtr64Repr},
+    ptr_size::slice_fat_ptr::{ElementConstraints, SliceFatPtr64, SliceFatPtr64Repr},
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::{slice, str::from_utf8};
@@ -570,7 +570,7 @@ pub fn translate_type<'a, T>(
         .map(|value| &*value)
 }
 
-fn translate_slice_inner<'a, T: ElementConstraints>(
+fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     memory_mapping: &'a MemoryMapping<'a>,
     access_type: AccessType,
     vm_addr: u64,
@@ -637,7 +637,7 @@ fn translate_slice_inner<'a, T: ElementConstraints>(
     Ok(result)
 }
 
-pub fn translate_slice<'a, T: ElementConstraints>(
+pub fn translate_slice<'a, T: ElementConstraints<'a>>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,
@@ -653,7 +653,7 @@ pub fn translate_slice<'a, T: ElementConstraints>(
     // .map(|value| &*value)
 }
 
-pub fn translate_slice_mut<'a, T: ElementConstraints>(
+pub fn translate_slice_mut<'a, T: ElementConstraints<'a>>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,

@@ -17,7 +17,7 @@ use crate::{
     mem_ops_original,
     native_loader,
     precompiles::is_precompile,
-    ptr_size::slice_fat_ptr_v2::{ElementConstraints, SliceFatPtr64},
+    ptr_size::slice_fat_ptr::{ElementConstraints, SliceFatPtr64},
     serialization::account_data_region_memory_state,
     solana_program::bpf_loader_upgradeable,
 };
@@ -830,7 +830,7 @@ struct SolAccountInfo {
 //     }
 // }
 
-fn translate_account_infos<'a, T: ElementConstraints, F, SDK: SharedAPI>(
+fn translate_account_infos<'a, T: ElementConstraints<'a> + 'a, F, SDK: SharedAPI>(
     account_infos_addr: u64,
     account_infos_len: u64,
     key_addr: F,
@@ -871,13 +871,13 @@ where
     )?;
     // let account_info = &account_infos[0];
     // let account_info_cloned = (*account_info).clone();
-    let account_infos2 = crate::mem_ops::translate_slice::<T>(
+    let account_infos2 = crate::mem_ops::translate_slice::<'a, T>(
         memory_mapping,
         account_infos_addr,
         account_infos_len,
         invoke_context.get_check_aligned(),
     )?;
-    let account_info2 = account_infos2.item_at_idx(0);
+    // let account_info2 = account_infos2.item_at_idx(0);
     debug_log!("translate_account_infos3");
     check_account_infos(account_infos.len(), invoke_context)?;
     debug_log!("translate_account_infos4");
@@ -898,7 +898,7 @@ where
 
 // Finish translating accounts, build CallerAccount values and update callee
 // accounts in preparation of executing the callee.
-fn translate_and_update_accounts<'a, 'b, T: ElementConstraints, F, SDK: SharedAPI>(
+fn translate_and_update_accounts<'a, 'b, T: ElementConstraints<'a> + 'a, F, SDK: SharedAPI>(
     instruction_accounts: &[InstructionAccount],
     program_indices: &[IndexOfAccount],
     account_info_keys: &[&Pubkey],

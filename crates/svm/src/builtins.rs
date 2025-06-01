@@ -729,10 +729,10 @@ declare_builtin_function!(
         let untranslated_seeds = mem_ops::translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
         // let untranslated_seeds = translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
         let seeds_slice_fat_ptr_data =
-                unsafe { core::slice::from_raw_parts(host_addr as *const u8, crate::ptr_size::slice_fat_ptr_v2::SLICE_FAT_PTR64_SIZE_BYTES) };
-        let addr_from_fat_ptr_data = u64::from_le_bytes(seeds_slice_fat_ptr_data[..crate::ptr_size::slice_fat_ptr_v2::FAT_PTR64_ELEM_BYTE_SIZE].try_into().unwrap());
+                unsafe { core::slice::from_raw_parts(host_addr as *const u8, crate::ptr_size::slice_fat_ptr::SLICE_FAT_PTR64_SIZE_BYTES) };
+        let addr_from_fat_ptr_data = u64::from_le_bytes(seeds_slice_fat_ptr_data[..crate::ptr_size::slice_fat_ptr::FAT_PTR64_ELEM_BYTE_SIZE].try_into().unwrap());
         let addr_from_fat_ptr_data_on_host = translate(memory_mapping, AccessType::Load, addr_from_fat_ptr_data, word_size as u64 * seeds_len)?;
-        let len_from_fat_ptr_data = u64::from_le_bytes(seeds_slice_fat_ptr_data[crate::ptr_size::slice_fat_ptr_v2::FAT_PTR64_ELEM_BYTE_SIZE..crate::ptr_size::slice_fat_ptr_v2::FAT_PTR64_ELEM_BYTE_SIZE*2].try_into().unwrap());
+        let len_from_fat_ptr_data = u64::from_le_bytes(seeds_slice_fat_ptr_data[crate::ptr_size::slice_fat_ptr::FAT_PTR64_ELEM_BYTE_SIZE..crate::ptr_size::slice_fat_ptr::FAT_PTR64_ELEM_BYTE_SIZE*2].try_into().unwrap());
         let reconstructed_slice = unsafe { core::slice::from_raw_parts(addr_from_fat_ptr_data_on_host as *const u8, len_from_fat_ptr_data as usize) };
         debug_log!(
             "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): untranslated_seeds ({}) seeds_slice_fat_ptr_data (addr:{} addr_on_host:{} len:{}) {:x?} reconstructed_slice {:x?}",
