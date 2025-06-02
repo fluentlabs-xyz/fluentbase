@@ -1,1 +1,1 @@
-pub mod slice_fat_ptr;
+pub mod slice_fat_ptr64;

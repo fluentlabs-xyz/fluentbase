@@ -17,7 +17,13 @@ use crate::{
     mem_ops_original,
     native_loader,
     precompiles::is_precompile,
-    ptr_size::slice_fat_ptr::{ElementConstraints, SliceFatPtr64},
+    ptr_size::slice_fat_ptr64::{
+        reconstruct_slice,
+        ElementConstraints,
+        SliceFatPtr64,
+        SliceFatPtr64Repr,
+        STABLE_VEC_FAT_PTR64_BYTE_SIZE,
+    },
     serialization::account_data_region_memory_state,
     solana_program::bpf_loader_upgradeable,
 };
@@ -29,12 +35,12 @@ use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix};
 use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS};
-use solana_pubkey::{Pubkey, MAX_SEEDS};
+use solana_pubkey::{Pubkey, MAX_SEEDS, PUBKEY_BYTES};
 use solana_rbpf::{
     ebpf,
     memory_region::{MemoryMapping, MemoryRegion, MemoryState},
 };
-use solana_stable_layout::stable_instruction::StableInstruction;
+use solana_stable_layout::{stable_instruction::StableInstruction, stable_vec::StableVec};
 
 fn check_account_info_pointer<SDK: SharedAPI>(
     _invoke_context: &InvokeContext<SDK>,
@@ -444,24 +450,45 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
         memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext<SDK>,
     ) -> Result<StableInstruction, SvmError> {
-        debug_log!("SyscallInvokeSigned::translate_instruction1");
-        let ix = translate_type::<StableInstruction>(
-            memory_mapping,
+        debug_log!(
+            "SyscallInvokeSigned::translate_instruction1: addr {} size_of::<StableInstruction>() {} size_of::<StableVec<AccountMeta>>() {} size_of::<StableVec<u8>>() {} size_of::<Pubkey>() {}",
             addr,
-            invoke_context.get_check_aligned(),
+            size_of::<StableInstruction>(),
+            size_of::<StableVec<AccountMeta>>(),
+            size_of::<StableVec<u8>>(),
+            size_of::<Pubkey>(),
+        );
+        const STABLE_INSTRUCTION_BYTES_SIZE: u64 = 24 * 2 + 32; // StableVec * 2 + Pubkey
+        let host_addr = translate(
+            memory_mapping,
+            AccessType::Load,
+            addr,
+            STABLE_INSTRUCTION_BYTES_SIZE,
         )?;
-        debug_log!("SyscallInvokeSigned::translate_instruction2");
+        let accounts_ptr =
+            SliceFatPtr64Repr::<{ size_of::<AccountMeta>() }>::from_ptr_to_fixed_slice_fat_ptr(
+                host_addr as usize,
+            );
+        let data_ptr = SliceFatPtr64Repr::<{ size_of::<u8>() }>::from_ptr_to_fixed_slice_fat_ptr(
+            host_addr as usize + STABLE_VEC_FAT_PTR64_BYTE_SIZE,
+        );
+        let program_id_addr = host_addr as usize + STABLE_VEC_FAT_PTR64_BYTE_SIZE * 2;
+        let program_id_data = reconstruct_slice::<u8>(program_id_addr, PUBKEY_BYTES);
+        let program_id = Pubkey::new_from_array(program_id_data.try_into().unwrap());
         let account_metas = translate_slice::<AccountMeta>(
             memory_mapping,
-            ix.accounts.as_ptr() as u64,
-            ix.accounts.len() as u64,
+            accounts_ptr.first_item_fat_ptr_addr(),
+            accounts_ptr.len(),
             invoke_context.get_check_aligned(),
         )?;
-        debug_log!("SyscallInvokeSigned::translate_instruction3");
+        debug_log!(
+            "SyscallInvokeSigned::translate_instruction3: data_ptr.first_item_fat_ptr_addr {}",
+            data_ptr.first_item_fat_ptr_addr()
+        );
         let data = translate_slice::<u8>(
             memory_mapping,
-            ix.data.as_ptr() as u64,
-            ix.data.len() as u64,
+            data_ptr.first_item_fat_ptr_addr(),
+            data_ptr.len(),
             invoke_context.get_check_aligned(),
         )?;
 
@@ -501,7 +528,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
                 .map(|v| v.as_ref().clone())
                 .collect::<Vec<_>>()
                 .into(),
-            program_id: ix.program_id,
+            program_id,
         })
     }
 
@@ -871,13 +898,13 @@ where
     )?;
     // let account_info = &account_infos[0];
     // let account_info_cloned = (*account_info).clone();
-    let account_infos2 = crate::mem_ops::translate_slice::<'a, T>(
+    let account_infos2 = crate::mem_ops::translate_slice::<T>(
         memory_mapping,
         account_infos_addr,
         account_infos_len,
         invoke_context.get_check_aligned(),
     )?;
-    // let account_info2 = account_infos2.item_at_idx(0);
+    let account_info2 = account_infos2.item_at_idx(0);
     debug_log!("translate_account_infos3");
     check_account_infos(account_infos.len(), invoke_context)?;
     debug_log!("translate_account_infos4");

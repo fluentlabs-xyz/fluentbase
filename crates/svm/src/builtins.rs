@@ -6,7 +6,6 @@ use crate::{
     error::Error,
     helpers::SyscallError,
     loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
-    mem_ops,
     mem_ops::{
         is_nonoverlapping,
         memmove,
@@ -17,6 +16,12 @@ use crate::{
         translate_slice_mut,
         translate_string_and_do,
         translate_type_mut,
+    },
+    ptr_size::slice_fat_ptr64::{
+        collect_into_vec_cloned,
+        ElementConstraints,
+        RetVal,
+        SliceFatPtr64,
     },
 };
 use alloc::{boxed::Box, vec::Vec};
@@ -398,7 +403,7 @@ declare_builtin_function!(
         )?;
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
-            let vals = translate_slice::<&[u8]>(
+            let vals = translate_slice::<SliceFatPtr64<u8>>(
                 memory_mapping,
                 vals_addr,
                 vals_len,
@@ -406,13 +411,14 @@ declare_builtin_function!(
             )?;
             for val in vals.iter() {
                 // TODO
-                let bytes = translate_slice::<u8>(
-                    memory_mapping,
-                    val.as_ref().as_ptr() as u64,
-                    val.as_ref().len() as u64,
-                    invoke_context.get_check_aligned(),
-                )?;
-                hasher.hash(&bytes.to_vec().iter().map(|v| v.as_ref().clone()).collect::<Vec<_>>());
+                // let bytes = translate_slice::<u8>(
+                //     memory_mapping,
+                //     val.as_ref().as_ptr() as u64,
+                //     val.as_ref().len() as u64,
+                //     invoke_context.get_check_aligned(),
+                // )?;
+                let bytes = collect_into_vec_cloned(&val);
+                hasher.hash(&bytes);
             }
         }
         hash_result.copy_from_slice(hasher.result().as_ref());
@@ -726,34 +732,23 @@ declare_builtin_function!(
         // let host_addr = memory_mapping.map(AccessType::Load, seeds_addr, 8).unwrap();
         let word_size = size_of::<usize>();
         let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, word_size as u64 * seeds_len)?;
-        let untranslated_seeds = mem_ops::translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
-        // let untranslated_seeds = translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, true)?;
-        let seeds_slice_fat_ptr_data =
-                unsafe { core::slice::from_raw_parts(host_addr as *const u8, crate::ptr_size::slice_fat_ptr::SLICE_FAT_PTR64_SIZE_BYTES) };
-        let addr_from_fat_ptr_data = u64::from_le_bytes(seeds_slice_fat_ptr_data[..crate::ptr_size::slice_fat_ptr::FAT_PTR64_ELEM_BYTE_SIZE].try_into().unwrap());
-        let addr_from_fat_ptr_data_on_host = translate(memory_mapping, AccessType::Load, addr_from_fat_ptr_data, word_size as u64 * seeds_len)?;
-        let len_from_fat_ptr_data = u64::from_le_bytes(seeds_slice_fat_ptr_data[crate::ptr_size::slice_fat_ptr::FAT_PTR64_ELEM_BYTE_SIZE..crate::ptr_size::slice_fat_ptr::FAT_PTR64_ELEM_BYTE_SIZE*2].try_into().unwrap());
-        let reconstructed_slice = unsafe { core::slice::from_raw_parts(addr_from_fat_ptr_data_on_host as *const u8, len_from_fat_ptr_data as usize) };
+        let untranslated_seeds = translate_slice::<SliceFatPtr64<u8>>(memory_mapping, seeds_addr, seeds_len, true)?;
         debug_log!(
-            "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): untranslated_seeds ({}) seeds_slice_fat_ptr_data (addr:{} addr_on_host:{} len:{}) {:x?} reconstructed_slice {:x?}",
+            "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): untranslated_seeds ({})",
             seeds_addr,
             host_addr,
             untranslated_seeds.len(),
-            addr_from_fat_ptr_data,
-            addr_from_fat_ptr_data_on_host,
-            len_from_fat_ptr_data,
-            seeds_slice_fat_ptr_data,
-            reconstructed_slice,
         );
         for (idx, untranslated_seed) in untranslated_seeds.iter().enumerate() {
+            let untranslated_seed_vec = collect_into_vec_cloned(&untranslated_seed);
             debug_log!(
                 "untranslated_seed{} ({}): {:x?}",
                 idx,
                 untranslated_seed.as_ref().len(),
-                untranslated_seed.as_ref().to_vec()
+                untranslated_seed_vec
             );
         }
-        let result = mem_ops::translate_and_check_program_address_inputs(
+        let result = translate_and_check_program_address_inputs(
             seeds_addr,
             seeds_len,
             program_id_addr,

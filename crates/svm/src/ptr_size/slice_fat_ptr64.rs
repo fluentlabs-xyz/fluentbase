@@ -1,4 +1,4 @@
-use alloc::{sync::Arc, vec::Vec};
+use alloc::vec::Vec;
 use core::{
     any::type_name,
     fmt::{Debug, Formatter},
@@ -8,7 +8,6 @@ use core::{
     slice::SliceIndex,
 };
 use fluentbase_sdk::debug_log;
-use lazy_static::lazy_static;
 use solana_account_info::AccountInfo;
 use solana_instruction::AccountMeta;
 use solana_rbpf::{
@@ -18,7 +17,7 @@ use solana_rbpf::{
 
 pub const FAT_PTR64_ELEM_BYTE_SIZE: usize = 8;
 pub const SLICE_FAT_PTR64_SIZE_BYTES: usize = FAT_PTR64_ELEM_BYTE_SIZE * 2;
-pub const STABLE_VEC_FAT_PTR64_BYTE_SIZE: usize = 8 * 3;
+pub const STABLE_VEC_FAT_PTR64_BYTE_SIZE: usize = FAT_PTR64_ELEM_BYTE_SIZE * 3;
 
 #[inline(always)]
 pub fn typecast_bytes<T: Clone>(data: &[u8]) -> &T {
@@ -40,7 +39,7 @@ pub fn typecast_bytes<T: Clone>(data: &[u8]) -> &T {
 
 pub trait ElementConstraints<'a> = Clone + SpecMethods<'a> + Debug;
 
-pub fn translate_addr(
+pub fn map_vm_addr_to_host(
     memory_mapping: Option<&MemoryMapping>,
     vm_addr: u64,
     len: u64,
@@ -49,13 +48,6 @@ pub fn translate_addr(
     memory_mapping
         .map(|v| v.map(access_type.unwrap_or(AccessType::Load), vm_addr, len))
         .unwrap_or(ProgramResult::Ok(vm_addr))
-}
-pub fn addr_translator_default(addr: u64) -> u64 {
-    addr
-}
-lazy_static! {
-    static ref ADDR_TRANSLATOR_DEFAULT: Arc<dyn Fn(u64) -> u64 + Send + Sync> =
-        Arc::new(|v| addr_translator_default(v));
 }
 
 pub enum RetVal<'a, T: Sized> {
@@ -96,7 +88,18 @@ impl<const ITEM_SIZE_BYTES: usize> SliceFatPtr64Repr<ITEM_SIZE_BYTES> {
             len,
         }
     }
-    pub fn from_fat_ptr_fixed_slice(fat_ptr_slice: &[u8; SLICE_FAT_PTR64_SIZE_BYTES]) -> Self {
+
+    pub fn first_item_fat_ptr_addr(&self) -> u64 {
+        self.first_item_fat_ptr_addr
+    }
+
+    pub fn len(&self) -> u64 {
+        self.len
+    }
+
+    pub fn from_fixed_slice_fat_ptr_for_slice(
+        fat_ptr_slice: &[u8; SLICE_FAT_PTR64_SIZE_BYTES],
+    ) -> Self {
         let first_item_fat_ptr_addr = u64::from_le_bytes(
             fat_ptr_slice[..FAT_PTR64_ELEM_BYTE_SIZE]
                 .try_into()
@@ -110,20 +113,20 @@ impl<const ITEM_SIZE_BYTES: usize> SliceFatPtr64Repr<ITEM_SIZE_BYTES> {
         Self::new(first_item_fat_ptr_addr, len)
     }
 
-    pub fn from_fat_ptr_slice(ptr: &[u8]) -> Self {
+    pub fn from_slice_fat_ptr_for_slice(ptr: &[u8]) -> Self {
         assert_eq!(
             ptr.len(),
             SLICE_FAT_PTR64_SIZE_BYTES,
             "fat ptr must have {} byte len",
             SLICE_FAT_PTR64_SIZE_BYTES
         );
-        Self::from_fat_ptr_fixed_slice(ptr.try_into().unwrap())
+        Self::from_fixed_slice_fat_ptr_for_slice(ptr.try_into().unwrap())
     }
 
-    pub fn from_ptr_to_fat_ptr(ptr: usize) -> Self {
+    pub fn from_ptr_to_fixed_slice_fat_ptr(ptr: usize) -> Self {
         let fat_ptr_slice =
             unsafe { core::slice::from_raw_parts(ptr as *const u8, SLICE_FAT_PTR64_SIZE_BYTES) };
-        Self::from_fat_ptr_slice(fat_ptr_slice)
+        Self::from_slice_fat_ptr_for_slice(fat_ptr_slice)
     }
 
     #[inline(always)]
@@ -177,7 +180,7 @@ impl<'a> SpecMethods<'a> for u8 {
 
 macro_rules! impl_numeric_type {
     ($typ: ident) => {
-        impl<'a> $crate::ptr_size::slice_fat_ptr::SpecMethods<'a> for $typ {
+        impl<'a> $crate::ptr_size::slice_fat_ptr64::SpecMethods<'a> for $typ {
             const ITEM_SIZE_BYTES: usize = core::mem::size_of::<$typ>();
 
             fn recover_from_bytes(
@@ -192,93 +195,6 @@ macro_rules! impl_numeric_type {
 
 impl_numeric_type!(u16);
 
-impl<'a> SpecMethods<'a> for &[u8] {
-    // const ITEM_SIZE_BYTES: usize = size_of::<Self>();
-    const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
-    fn recover_from_bytes(
-        byte_repr: &'a [u8],
-        memory_mapping: Option<&MemoryMapping>,
-    ) -> RetVal<'a, Self> {
-        let len = byte_repr.len() / Self::ITEM_SIZE_BYTES;
-        let recovered_bytes_len = len * Self::ITEM_SIZE_BYTES;
-        // TODO extract vm_addr and real len
-        // TODO convert vm_addr into host_addr
-        // TODO translate into slice using host addr
-        let slice =
-            SliceFatPtr64Repr::<{ SLICE_FAT_PTR64_SIZE_BYTES }>::from_fat_ptr_slice(byte_repr);
-        let vm_addr = slice.first_item_fat_ptr_addr;
-        let host_addr =
-            translate_addr(memory_mapping, vm_addr, recovered_bytes_len as u64, None).unwrap();
-        debug_log!(
-            "reconstructing '{}' (vm_addr:{} host_addr:{} ITEM_SIZE_BYTES:{}) from byte_repr: {:x?}",
-            type_name::<Self>(),
-            vm_addr,
-            host_addr,
-            Self::ITEM_SIZE_BYTES,
-            byte_repr,
-        );
-        assert_eq!(
-            recovered_bytes_len,
-            byte_repr.len(),
-            "invalid byte repr: {} != {}",
-            recovered_bytes_len,
-            byte_repr.len()
-        );
-        let result =
-            unsafe { core::slice::from_raw_parts(host_addr as *const u8, slice.len as usize) };
-        // let result_ptr = unsafe { core::mem::transmute::<&[u8], &Self>(result) };
-        // debug_log!(
-        //     "result.ptr {} result_ptr {}",
-        //     result.as_ptr() as u64,
-        //     result_ptr.as_ptr() as u64
-        // );
-        RetVal::Instance(result)
-    }
-}
-
-impl<'a> SpecMethods<'a> for &[&[u8]] {
-    const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
-    fn recover_from_bytes(
-        byte_repr: &'a [u8],
-        memory_mapping: Option<&MemoryMapping>,
-    ) -> RetVal<'a, Self> {
-        let len = byte_repr.len() / Self::ITEM_SIZE_BYTES;
-        let recovered_bytes_len = len * Self::ITEM_SIZE_BYTES;
-        // TODO extract vm_addr and real len
-        // TODO convert vm_addr into host_addr
-        // TODO translate into slice using host addr
-        let slice =
-            SliceFatPtr64Repr::<{ SLICE_FAT_PTR64_SIZE_BYTES }>::from_fat_ptr_slice(byte_repr);
-        let vm_addr = slice.first_item_fat_ptr_addr;
-        let host_addr =
-            translate_addr(memory_mapping, vm_addr, recovered_bytes_len as u64, None).unwrap();
-        debug_log!(
-            "reconstructing '{}' (vm_addr:{} host_addr:{} ITEM_SIZE_BYTES:{}) from byte_repr: {:x?}",
-            type_name::<Self>(),
-            vm_addr,
-            host_addr,
-            Self::ITEM_SIZE_BYTES,
-            byte_repr,
-        );
-        assert_eq!(
-            recovered_bytes_len,
-            byte_repr.len(),
-            "invalid byte repr: {} != {}",
-            recovered_bytes_len,
-            byte_repr.len()
-        );
-        let result =
-            unsafe { core::slice::from_raw_parts(host_addr as *const &[u8], slice.len as usize) };
-        // let result_ptr = unsafe { core::mem::transmute::<&[u8], &Self>(result) };
-        // debug_log!(
-        //     "result.ptr {} result_ptr {}",
-        //     result.as_ptr() as u64,
-        //     result_ptr.as_ptr() as u64
-        // );
-        RetVal::Instance(result)
-    }
-}
-
 #[inline(always)]
 pub fn reconstruct_slice<'a, T>(ptr: usize, len: usize) -> &'a [T] {
     unsafe { core::slice::from_raw_parts::<'a>(ptr as *const T, len) }
@@ -291,10 +207,11 @@ impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
         byte_repr: &'a [u8],
         memory_mapping: Option<&'a MemoryMapping<'a>>,
     ) -> RetVal<'a, Self> {
-        let mut ptr =
-            SliceFatPtr64Repr::<SLICE_FAT_PTR64_SIZE_BYTES>::from_fat_ptr_slice(byte_repr);
+        let mut ptr = SliceFatPtr64Repr::<SLICE_FAT_PTR64_SIZE_BYTES>::from_slice_fat_ptr_for_slice(
+            byte_repr,
+        );
         memory_mapping.map(|v| {
-            ptr.first_item_fat_ptr_addr = translate_addr(
+            ptr.first_item_fat_ptr_addr = map_vm_addr_to_host(
                 memory_mapping,
                 ptr.first_item_fat_ptr_addr,
                 ptr.total_size_bytes() as u64,
@@ -302,9 +219,7 @@ impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
             )
             .unwrap()
         });
-        // let result = Self::from_repr(&ptr, memory_mapping);
         let result = Self::new(ptr.first_item_fat_ptr_addr, ptr.len, memory_mapping);
-        // let data = reconstruct_slice::<T>(ptr.first_item_fat_ptr_addr as usize, ptr.len as usize);
         debug_log!(
             "recover_from_bytes: ptr {:?} data for '{}': {:x?}",
             &ptr,
@@ -325,7 +240,6 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
             first_item_fat_ptr_addr,
             len,
             memory_mapping,
-            // addr_translator,
             _phantom: Default::default(),
         }
     }
@@ -450,7 +364,7 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
         Some(self.item_at_idx(0))
     }
 
-    pub fn to_vec(&'a self) -> Vec<RetVal<T>> {
+    pub fn to_vec(&'a self) -> Vec<RetVal<'a, T>> {
         let mut r = Vec::with_capacity(self.len());
         for v in self.iter() {
             r.push(v);
@@ -497,7 +411,7 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
         }
     }
 
-    pub fn from_fat_ptr_fixed_slice(
+    pub fn from_fat_ptr_to_fixed_slice(
         fat_ptr_slice: &[u8; SLICE_FAT_PTR64_SIZE_BYTES],
         memory_mapping: &'a MemoryMapping<'a>,
     ) -> Self {
@@ -525,7 +439,7 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
             "fat ptr must have {} byte len",
             SLICE_FAT_PTR64_SIZE_BYTES
         );
-        Self::from_fat_ptr_fixed_slice(ptr.try_into().unwrap(), memory_mapping)
+        Self::from_fat_ptr_to_fixed_slice(ptr.try_into().unwrap(), memory_mapping)
     }
 
     pub fn from_ptr_to_fat_ptr(ptr: usize, memory_mapping: &'a MemoryMapping<'a>) -> Self {
@@ -622,9 +536,18 @@ impl<'a> SpecMethods<'a> for AccountInfo<'a> {
     }
 }
 
+pub fn collect_into_vec_cloned<'a, T: ElementConstraints<'a>>(
+    val: &'a RetVal<SliceFatPtr64<'a, T>>,
+) -> Vec<T> {
+    val.as_ref()
+        .iter()
+        .map(|v| v.as_ref().clone())
+        .collect::<Vec<_>>()
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::ptr_size::slice_fat_ptr::SliceFatPtr64;
+    use crate::ptr_size::slice_fat_ptr64::SliceFatPtr64;
     use solana_account_info::AccountInfo;
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
@@ -639,6 +562,7 @@ mod tests {
 
         let slice =
             SliceFatPtr64::<ElemType>::new(items_first_item_ptr as u64, items_len as u64, None);
+        println!("slice.item_size_bytes() {}", slice.item_size_bytes());
 
         for (idx, item) in slice.iter().enumerate() {
             assert_eq!(item.as_ref(), &items[idx]);

@@ -3,7 +3,12 @@ use crate::{
     context::InvokeContext,
     error::{Error, SvmError},
     helpers::{StdResult, SyscallError},
-    ptr_size::slice_fat_ptr::{ElementConstraints, SliceFatPtr64, SliceFatPtr64Repr},
+    ptr_size::slice_fat_ptr64::{
+        collect_into_vec_cloned,
+        ElementConstraints,
+        SliceFatPtr64,
+        SliceFatPtr64Repr,
+    },
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::{slice, str::from_utf8};
@@ -601,17 +606,6 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     //     total_size
     // );
 
-    pub fn translate_if<'a>(
-        mm: Option<&'a MemoryMapping<'a>>,
-        access_type: AccessType,
-        vm_addr: u64,
-        total_size: u64,
-    ) -> StdResult<u64, SvmError> {
-        mm.map_or(Ok(vm_addr), |v| {
-            translate(v, access_type, vm_addr, total_size)
-        })
-    }
-
     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
     debug_log!(
         "translate_slice_inner 3: vm_addr {} host_addr {} ({} in GB)",
@@ -752,7 +746,12 @@ pub fn translate_and_check_program_address_inputs<'a>(
         untranslated_seeds.len(),
     );
     for (idx, us) in untranslated_seeds.iter().enumerate() {
-        debug_log!("untranslated_seed {}: len {}", idx, us.as_ref().len());
+        debug_log!(
+            "untranslated_seed {}: len {} data {:x?}",
+            idx,
+            us.as_ref().len(),
+            collect_into_vec_cloned(&us),
+        );
     }
     if untranslated_seeds.len() > MAX_SEEDS {
         return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
@@ -763,18 +762,21 @@ pub fn translate_and_check_program_address_inputs<'a>(
             if untranslated_seed.as_ref().len() > MAX_SEED_LEN {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
-            // debug_log!(
-            //     "untranslated_seed: {:x?} ptr {}",
-            //     untranslated_seed,
-            //     untranslated_seed.as_ptr() as u64
-            // );
-            translate_slice::<u8>(
-                memory_mapping,
+            debug_log!(
+                "untranslated_seed: len {} first_item_fat_ptr_addr {} data {:x?}",
+                untranslated_seed.as_ref().len(),
                 untranslated_seed.as_ref().first_item_fat_ptr_addr(),
-                untranslated_seed.as_ref().len() as u64,
-                check_aligned,
-            )
-            .map(|v| v.to_vec_cloned())
+                collect_into_vec_cloned(&untranslated_seed),
+            );
+            // let result = translate_slice::<u8>(
+            //     memory_mapping,
+            //     untranslated_seed.as_ref().first_item_fat_ptr_addr(),
+            //     untranslated_seed.as_ref().len() as u64,
+            //     check_aligned,
+            // )
+            // .map(|v| v.to_vec_cloned());
+            // result
+            Ok(collect_into_vec_cloned(&untranslated_seed))
         })
         .collect::<Result<Vec<_>, SvmError>>()?;
     debug_log!("translate_and_check_program_address_inputs 2");
