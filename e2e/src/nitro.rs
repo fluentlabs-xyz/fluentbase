@@ -51,7 +51,7 @@ fn test_nitro_verifier_solidity_version() {
     // https://github.com/base-org/nitro-validator/blob/main/src/NitroValidator.sol
     let cert_manager_bytecode = hex::decode(include_bytes!("../assets/CertManager.bin")).unwrap();
     let (cert_manager_address, gas_used) =
-        ctx.deploy_evm_tx_with_nonce(caller, cert_manager_bytecode.into(), 0);
+        ctx.deploy_evm_tx_with_gas(caller, cert_manager_bytecode.into());
     total_gas += gas_used;
     let mut nitro_validator_bytecode =
         hex::decode(include_bytes!("../assets/NitroValidator.bin")).unwrap();
@@ -62,7 +62,7 @@ fn test_nitro_verifier_solidity_version() {
     .unwrap();
     nitro_validator_bytecode.extend(constructor_args);
     let (nitro_validator_address, gas_used) =
-        ctx.deploy_evm_tx_with_nonce(caller, nitro_validator_bytecode.into(), 1);
+        ctx.deploy_evm_tx_with_gas(caller, nitro_validator_bytecode.into());
     total_gas += gas_used;
 
     // Step 2: Decode the attestation blob into "to-be-signed" and "signature" via

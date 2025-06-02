@@ -1,7 +1,11 @@
-use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use core::str::from_utf8;
 use fluentbase_sdk::{address, bytes, calc_create_address, Address, U256};
-use fluentbase_sdk_testing::HostTestingContextNativeAPI;
+use fluentbase_sdk_testing::{
+    try_print_utf8_error,
+    EvmTestingContext,
+    HostTestingContextNativeAPI,
+    TxBuilder,
+};
 use hex_literal::hex;
 use revm::bytecode::opcode;
 
@@ -280,18 +284,17 @@ fn test_evm_balance() {
     bytecode.push(opcode::PUSH0);
     bytecode.push(opcode::RETURN);
     let mut ctx = EvmTestingContext::default();
-    let contract_address = ctx.deploy_evm_tx(Address::with_last_byte(255), wrap_to_init_code(&bytecode).into());
-    let result = ctx.call_evm_tx(
-        OWNER_ADDRESS,
-        contract_address,
-        hex!("").into(),
-        None,
-        None,
+    ctx.cfg.disable_rwasm_proxy = true;
+    let contract_address = ctx.deploy_evm_tx(
+        Address::with_last_byte(255),
+        wrap_to_init_code(&bytecode).into(),
     );
+    let result = ctx.call_evm_tx(OWNER_ADDRESS, contract_address, hex!("").into(), None, None);
     println!("{:?}", result);
     assert!(result.is_success());
     let output = result.into_output().unwrap_or_default();
     assert_eq!(output.len(), 32);
+    // assert_eq!(result.gas_used(), 21116);
     let balance = U256::from_be_slice(output.as_ref());
     assert_eq!(
         balance,
@@ -328,13 +331,18 @@ fn wrap_to_init_code(runtime: &[u8]) -> Vec<u8> {
     let mut init = Vec::new();
 
     // Placeholder: assume PUSH1 for all pushes
-    init.push(PUSH1); init.push(runtime_len as u8);      // PUSH1 <runtime_len>
-    init.push(PUSH1); init.push(0x00);                   // PUSH1 <offset> (patched later)
-    init.push(PUSH1); init.push(0x00);                   // PUSH1 0x00
+    init.push(PUSH1);
+    init.push(runtime_len as u8); // PUSH1 <runtime_len>
+    init.push(PUSH1);
+    init.push(0x00); // PUSH1 <offset> (patched later)
+    init.push(PUSH1);
+    init.push(0x00); // PUSH1 0x00
     init.push(CODECOPY);
 
-    init.push(PUSH1); init.push(runtime_len as u8);      // PUSH1 <runtime_len>
-    init.push(PUSH1); init.push(0x00);                   // PUSH1 0x00
+    init.push(PUSH1);
+    init.push(runtime_len as u8); // PUSH1 <runtime_len>
+    init.push(PUSH1);
+    init.push(0x00); // PUSH1 0x00
     init.push(RETURN);
 
     let code_offset = init.len(); // runtime starts here
@@ -346,4 +354,40 @@ fn wrap_to_init_code(runtime: &[u8]) -> Vec<u8> {
     init.extend_from_slice(runtime);
 
     init
+}
+
+#[test]
+fn test_evm_blake2f() {
+    let mut ctx = EvmTestingContext::default();
+    // ctx.cfg.disable_rwasm_proxy = true;
+    const OWNER_ADDRESS: Address = Address::ZERO;
+
+    // Deploy contract from bytecode (should match Blake2FCaller)
+    let contract_address = ctx.deploy_evm_tx(
+        OWNER_ADDRESS,
+        hex::decode(include_bytes!("../assets/Blake2FCaller.bin"))
+            .unwrap()
+            .into(),
+    );
+
+    // Method selector for `callBlake2F()`
+    // keccak256("callBlake2F()")[0..4]
+    let call_selector = hex!("41f32a3a");
+
+    // Call `callBlake2F()` on deployed contract
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        contract_address,
+        call_selector.into(),
+        None,
+        None,
+    );
+
+    println!("{:?}", result);
+    assert!(result.is_success());
+    let output = result.output().unwrap_or_default();
+    assert!(!output.is_empty());
+    let blake2f_output = &output[64..]; // skip 2 32-byte words (offset and length)
+    assert_eq!(blake2f_output.len(), 64);
+    assert_eq!(result.gas_used(), 22579);
 }

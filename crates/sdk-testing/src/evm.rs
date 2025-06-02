@@ -13,15 +13,19 @@ use fluentbase_sdk::{
     U256,
 };
 use fluentbase_types::{bytes::BytesMut, compile_wasm_to_rwasm};
-use revm::{state::AccountInfo, primitives::{keccak256}, DatabaseCommit, context::Evm, Context, MainBuilder, ExecuteCommitEvm, context, Journal};
+use revm::{
+    context,
+    context::{result::ExecutionResult, BlockEnv, CfgEnv, Evm, TransactTo, TxEnv},
+    database::{EmptyDB, InMemoryDB},
+    primitives::{hardfork::SpecId, keccak256, map::DefaultHashBuilder, HashMap},
+    state::{Account, AccountInfo, Bytecode},
+    Context,
+    DatabaseCommit,
+    ExecuteCommitEvm,
+    Journal,
+    MainBuilder,
+};
 use rwasm::legacy::rwasm::{BinaryFormat, RwasmModule};
-use revm::context::result::ExecutionResult;
-use revm::context::{BlockEnv, CfgEnv, TransactTo, TxEnv};
-use revm::database::{EmptyDB, InMemoryDB};
-use revm::primitives::hardfork::SpecId;
-use revm::primitives::HashMap;
-use revm::primitives::map::DefaultHashBuilder;
-use revm::state::{Account, Bytecode};
 
 #[allow(dead_code)]
 pub struct EvmTestingContext {
@@ -59,7 +63,6 @@ impl EvmTestingContext {
             db.insert_account_info(*k, info);
         }
         let mut cfg = CfgEnv::default();
-        cfg.disable_nonce_check = true;
         Self {
             sdk: HostTestingContext::default(),
             genesis,
@@ -119,7 +122,8 @@ impl EvmTestingContext {
         account.info.balance += value;
         let mut revm_account = Account::from(account.info.clone());
         revm_account.mark_touch();
-        let changes: HashMap<Address, Account, DefaultHashBuilder> = HashMap::from([(address, revm_account)]);
+        let changes: HashMap<Address, Account, DefaultHashBuilder> =
+            HashMap::from([(address, revm_account)]);
         self.db.commit(changes);
     }
 
@@ -133,10 +137,7 @@ impl EvmTestingContext {
         deployer: Address,
         init_bytecode: Bytes,
     ) -> (Address, u64) {
-        let cfg = self.cfg.clone();
-        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into())
-            .with_cfg(cfg)
-            .exec();
+        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
         if !result.is_success() {
             println!("{:?}", result);
             println!(
@@ -154,31 +155,6 @@ impl EvmTestingContext {
         (contract_address, result.gas_used())
     }
 
-    pub fn deploy_evm_tx_with_nonce(
-        &mut self,
-        deployer: Address,
-        init_bytecode: Bytes,
-        nonce: u64,
-    ) -> (Address, u64) {
-        let mut cfg = self.cfg.clone();
-        cfg.disable_nonce_check = false;
-        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into())
-            .with_cfg(cfg)
-            .exec();
-        if !result.is_success() {
-            println!("{:?}", result);
-            println!(
-                "{}",
-                from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
-            );
-        }
-        assert!(result.is_success());
-        let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, nonce);
-        assert_eq!(contract_address, deployer.create(nonce));
-
-        (contract_address, result.gas_used())
-    }
-
     pub fn call_evm_tx_simple(
         &mut self,
         caller: Address,
@@ -187,10 +163,7 @@ impl EvmTestingContext {
         gas_limit: Option<u64>,
         value: Option<U256>,
     ) -> ExecutionResult {
-        let cfg = self.cfg.clone();
-        let mut tx_builder = TxBuilder::call(self, caller, callee, value)
-            .with_cfg(cfg)
-            .input(input);
+        let mut tx_builder = TxBuilder::call(self, caller, callee, value).input(input);
         if let Some(gas_limit) = gas_limit {
             tx_builder = tx_builder.gas_limit(gas_limit);
         }
@@ -207,6 +180,15 @@ impl EvmTestingContext {
     ) -> ExecutionResult {
         self.add_balance(caller, U256::from(1e18));
         self.call_evm_tx_simple(caller, callee, input, gas_limit, value)
+    }
+
+    pub fn nonce(&mut self, caller: Address) -> u64 {
+        let account = self.db.load_account(caller).unwrap();
+        println!(
+            "current nonce for {}: {} {:?}",
+            caller, account.info.nonce, account.account_state
+        );
+        account.info.nonce
     }
 }
 
@@ -261,6 +243,11 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
+    pub fn nonce(mut self, nonce: u64) -> Self {
+        self.tx.nonce = nonce;
+        self
+    }
+
     pub fn gas_price(mut self, gas_price: u128) -> Self {
         self.tx.gas_price = gas_price;
         self
@@ -281,14 +268,11 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
-    pub fn with_cfg(mut self, cfg: CfgEnv) -> Self {
-        self.ctx.cfg = cfg;
-        self
-    }
-
     pub fn exec(&mut self) -> ExecutionResult {
+        self.tx.nonce = self.ctx.nonce(self.tx.caller);
         let db = take(&mut self.ctx.db);
-        let mut context: Context<BlockEnv, TxEnv, CfgEnv, InMemoryDB, Journal<InMemoryDB>, ()> = Context::new(db, SpecId::default());
+        let mut context: Context<BlockEnv, TxEnv, CfgEnv, InMemoryDB, Journal<InMemoryDB>, ()> =
+            Context::new(db, SpecId::default());
         context.cfg = self.ctx.cfg.clone();
         let mut evm = context.build_mainnet();
         let result = evm.transact_commit(self.tx.clone()).unwrap();

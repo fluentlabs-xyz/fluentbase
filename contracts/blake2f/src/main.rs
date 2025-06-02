@@ -2,7 +2,15 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContractContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{
+    alloc_slice,
+    debug_log,
+    entrypoint,
+    Bytes,
+    ContractContextReader,
+    ExitCode,
+    SharedAPI,
+};
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     // read full input data
