@@ -28,6 +28,8 @@ mod router;
 mod stateless;
 #[cfg(test)]
 mod wasm;
+#[cfg(test)]
+mod revm_simple_tests;
 
 pub const EXAMPLE_ABI_SOLIDITY: &[u8] = fluentbase_examples_abi_solidity::WASM_BYTECODE;
 pub const EXAMPLE_CHECKMATE: &[u8] = fluentbase_examples_checkmate::WASM_BYTECODE;

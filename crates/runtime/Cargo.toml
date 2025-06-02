@@ -49,5 +49,4 @@ rwasm = []
 debug-print = [
     "dep:hex"
 ]
-optimism = ["fluentbase-types/optimism"]
 wasmtime = ["dep:wasmtime", "dep:ctor", "dep:anyhow", "dep:fluentbase-genesis"]

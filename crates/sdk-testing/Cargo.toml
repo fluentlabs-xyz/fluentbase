@@ -20,6 +20,7 @@ hashbrown = { workspace = true }
 revm = { workspace = true }
 rwasm = { workspace = true }
 hex = { workspace = true }
+alloy-consensus = {workspace = true}
 
 [features]
 default = ["std", "fluentbase-runtime/debug-print"]

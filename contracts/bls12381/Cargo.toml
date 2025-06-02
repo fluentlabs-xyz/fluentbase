@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-revm-precompile = { workspace = true, features = ["blst"] }
+precompile = { workspace = true, features = ["blst"] }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
@@ -13,8 +13,8 @@ fluentbase-sdk-testing = { workspace = true }
 [build-dependencies]
 fluentbase-build = { workspace = true }
 fluentbase-sdk = { workspace = true }
-revm-precompile = { workspace = true, features = ["blst"] }
+precompile = { workspace = true, features = ["blst"] }
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "revm-precompile/std"]
+std = ["fluentbase-sdk/std", "precompile/std"]

@@ -39,18 +39,18 @@ impl TxContextReader for TxContextV1 {
     }
 }
 
-impl From<&revm_primitives::Env> for TxContextV1 {
-    fn from(value: &revm_primitives::Env) -> Self {
-        Self {
-            gas_limit: value.tx.gas_limit,
-            nonce: value.tx.nonce.unwrap_or_default(),
-            gas_price: value.tx.gas_price,
-            gas_priority_fee: value.tx.gas_priority_fee,
-            origin: value.tx.caller,
-            // data: value.tx.data.clone(),
-            // blob_hashes: value.tx.blob_hashes.clone(),
-            // max_fee_per_blob_gas: value.tx.max_fee_per_blob_gas,
-            value: value.tx.value,
-        }
-    }
-}
+// impl From<&primitives::Env> for TxContextV1 {
+//     fn from(value: &primitives::Env) -> Self {
+//         Self {
+//             gas_limit: value.tx.gas_limit,
+//             nonce: value.tx.nonce.unwrap_or_default(),
+//             gas_price: value.tx.gas_price,
+//             gas_priority_fee: value.tx.gas_priority_fee,
+//             origin: value.tx.caller,
+//             // data: value.tx.data.clone(),
+//             // blob_hashes: value.tx.blob_hashes.clone(),
+//             // max_fee_per_blob_gas: value.tx.max_fee_per_blob_gas,
+//             value: value.tx.value,
+//         }
+//     }
+// }

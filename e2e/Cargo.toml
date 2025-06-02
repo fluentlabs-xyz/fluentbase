@@ -49,7 +49,7 @@ fluentbase-build = { workspace = true }
 cargo_metadata = "0.19.1"
 
 [features]
-default = ["std", "fluentbase-runtime/debug-print"]
+default = ["std", "fluentbase-runtime/debug-print", "revm/debug-print"]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",

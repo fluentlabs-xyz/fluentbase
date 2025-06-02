@@ -47,17 +47,17 @@ impl BlockContextReader for BlockContextV1 {
     }
 }
 
-impl From<&revm_primitives::Env> for BlockContextV1 {
-    fn from(value: &revm_primitives::Env) -> Self {
-        Self {
-            chain_id: value.cfg.chain_id,
-            coinbase: value.block.coinbase,
-            timestamp: value.block.timestamp.as_limbs()[0],
-            number: value.block.number.as_limbs()[0],
-            difficulty: value.block.difficulty,
-            prev_randao: value.block.prevrandao.unwrap_or_default(),
-            gas_limit: value.block.gas_limit.as_limbs()[0],
-            base_fee: value.block.basefee,
-        }
-    }
-}
+// impl From<&primitives::Env> for BlockContextV1 {
+//     fn from(value: &primitives::Env) -> Self {
+//         Self {
+//             chain_id: value.cfg.chain_id,
+//             coinbase: value.block.coinbase,
+//             timestamp: value.block.timestamp.as_limbs()[0],
+//             number: value.block.number.as_limbs()[0],
+//             difficulty: value.block.difficulty,
+//             prev_randao: value.block.prevrandao.unwrap_or_default(),
+//             gas_limit: value.block.gas_limit.as_limbs()[0],
+//             base_fee: value.block.basefee,
+//         }
+//     }
+// }

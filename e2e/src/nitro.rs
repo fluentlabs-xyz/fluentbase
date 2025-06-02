@@ -103,7 +103,7 @@ fn test_nitro_verifier_solidity_version() {
         function validateAttestation(bytes memory attestationTbs, bytes memory signature) public returns (Ptrs memory);
     }
     let parsed_attestation =
-        decodeAttestationTbsCall::abi_decode_returns(result.output().unwrap(), true).unwrap();
+        decodeAttestationTbsCall::abi_decode_returns_validate(result.output().unwrap()).unwrap();
     let input = validateAttestationCall {
         attestationTbs: parsed_attestation.attestationTbs.into(),
         signature: parsed_attestation.signature.into(),

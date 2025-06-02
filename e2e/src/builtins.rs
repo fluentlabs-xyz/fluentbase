@@ -11,7 +11,7 @@ use fluentbase_types::{
     MINIMAL_BASE_FUEL_COST,
     SECP256K1_RECOVER_BASE_FUEL_COST,
 };
-use revm::primitives::ExecutionResult;
+use revm::context::result::ExecutionResult;
 
 const WAT_TEMPLATE: &str = r#"
     (module
@@ -52,7 +52,7 @@ fn run_main(
     let mut ctx = EvmTestingContext::default();
     let deployer: Address = Address::ZERO;
     let mut builder = TxBuilder::create(&mut ctx, deployer, wasm.into());
-    if !builtins_consume_fuel {
+    if builtins_consume_fuel {
         builder = builder.disable_builtins_consume_fuel();
     }
     let result = builder.exec();

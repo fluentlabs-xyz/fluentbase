@@ -5,7 +5,7 @@ use crate::{
     result::{InstructionResult, InterpreterResult},
     stack::Stack,
 };
-use fluentbase_sdk::{Bytes, ContractContextReader, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::{debug_log, Bytes, ContractContextReader, SharedAPI, FUEL_DENOM_RATE};
 
 mod arithmetic;
 mod bitwise;
@@ -85,6 +85,7 @@ impl<'a, SDK: SharedAPI> EVM<'a, SDK> {
             let opcode = unsafe { *self.ip };
             self.ip = unsafe { self.ip.offset(1) };
             instruction_table[opcode as usize](self);
+            debug_log!("OPCODE={:02x}", opcode); // prints "ff"
         }
         if let Some(output) = self.output.take() {
             return output;

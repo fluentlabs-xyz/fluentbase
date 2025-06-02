@@ -3,7 +3,7 @@ use core::str::from_utf8;
 use fluentbase_sdk::{address, bytes, calc_create_address, Address, U256};
 use fluentbase_sdk_testing::HostTestingContextNativeAPI;
 use hex_literal::hex;
-use revm::interpreter::opcode;
+use revm::bytecode::opcode;
 
 #[test]
 fn test_evm_greeting() {
@@ -21,6 +21,7 @@ fn test_evm_greeting() {
     println!("{:?}", result);
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
+    assert!(!bytes.is_empty());
     let bytes = &bytes[64..75];
     assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
     assert_eq!(result.gas_used(), 21_792);
@@ -99,15 +100,14 @@ fn test_evm_simple_send() {
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     const RECIPIENT_ADDRESS: Address = address!("1092381297182319023812093812312309123132");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
-    let gas_price = U256::from(1e9);
+    let gas_price = 1e9 as u128;
     let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, RECIPIENT_ADDRESS, None)
-        .enable_rwasm_proxy()
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 21_000);
-    let tx_cost = gas_price * U256::from(result.gas_used());
+    let tx_cost = U256::from(gas_price) * U256::from(result.gas_used());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18) - tx_cost);
     assert_eq!(ctx.get_balance(RECIPIENT_ADDRESS), U256::from(1e18));
 }
@@ -118,15 +118,14 @@ fn test_evm_create_and_send() {
     let mut ctx = EvmTestingContext::default();
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
-    let gas_price = U256::from(2e9);
+    let gas_price = 2e9 as u128;
     let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, crate::EXAMPLE_GREETING.into())
-        .enable_rwasm_proxy()
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
     let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
-    let tx_cost = gas_price * U256::from(result.gas_used());
+    let tx_cost = U256::from(gas_price) * U256::from(result.gas_used());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18) - tx_cost);
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
 }
@@ -137,9 +136,8 @@ fn test_evm_revert() {
     let mut ctx = EvmTestingContext::default();
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
-    let gas_price = U256::from(0);
+    let gas_price = 0;
     let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, hex!("5f5ffd").into())
-        .enable_rwasm_proxy()
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
@@ -150,7 +148,6 @@ fn test_evm_revert() {
     assert_eq!(ctx.get_balance(contract_address), U256::from(0e18));
     // now send success tx
     let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, crate::EXAMPLE_GREETING.into())
-        .enable_rwasm_proxy()
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
@@ -166,21 +163,20 @@ fn test_evm_revert() {
 
 #[test]
 fn test_evm_self_destruct() {
-    // deploy greeting EVM contract
     let mut ctx = EvmTestingContext::default();
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
-    let gas_price = U256::from(0);
+    let gas_price = 0;
     let result = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
         hex!("6003600c60003960036000F36003ff").into(),
     )
-    .enable_rwasm_proxy()
     .gas_price(gas_price)
     .value(U256::from(1e18))
     .exec();
     let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 0);
+    println!("deployed contract address: {}", contract_address); // 0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 53842);
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
@@ -207,9 +203,9 @@ fn test_evm_self_destruct() {
     let result = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
+        // Calling 0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5
         hex!("6000600060006000600073f91c20c0cafbfdc150adff51bbfc5808edde7cb561FFFFF1").into(),
     )
-    .enable_rwasm_proxy()
     .exec();
     if !result.is_success() {
         println!("status: {:?}", result);
@@ -283,12 +279,11 @@ fn test_evm_balance() {
     bytecode.extend_from_slice(&[32]);
     bytecode.push(opcode::PUSH0);
     bytecode.push(opcode::RETURN);
-    // deploy greeting EVM contract
     let mut ctx = EvmTestingContext::default();
-    ctx.add_bytecode(Address::with_last_byte(255), bytecode.into());
+    let contract_address = ctx.deploy_evm_tx(Address::with_last_byte(255), wrap_to_init_code(&bytecode).into());
     let result = ctx.call_evm_tx(
         OWNER_ADDRESS,
-        Address::with_last_byte(255),
+        contract_address,
         hex!("").into(),
         None,
         None,
@@ -321,4 +316,34 @@ fn test_wasm_erc20() {
         println!("{:?}", result);
     };
     transfer_coin(&mut ctx);
+}
+
+fn wrap_to_init_code(runtime: &[u8]) -> Vec<u8> {
+    use opcode::*;
+
+    let runtime_len = runtime.len();
+    assert!(runtime_len <= 255, "runtime too long for PUSH1");
+
+    // This will be calculated after the init prefix is formed
+    let mut init = Vec::new();
+
+    // Placeholder: assume PUSH1 for all pushes
+    init.push(PUSH1); init.push(runtime_len as u8);      // PUSH1 <runtime_len>
+    init.push(PUSH1); init.push(0x00);                   // PUSH1 <offset> (patched later)
+    init.push(PUSH1); init.push(0x00);                   // PUSH1 0x00
+    init.push(CODECOPY);
+
+    init.push(PUSH1); init.push(runtime_len as u8);      // PUSH1 <runtime_len>
+    init.push(PUSH1); init.push(0x00);                   // PUSH1 0x00
+    init.push(RETURN);
+
+    let code_offset = init.len(); // runtime starts here
+
+    // Patch the offset in the second PUSH1 (which is at index 3)
+    init[3] = code_offset as u8;
+
+    // Append actual runtime code
+    init.extend_from_slice(runtime);
+
+    init
 }
