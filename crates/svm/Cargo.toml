@@ -67,7 +67,7 @@ bytemuck = { workspace = true, default-features = false, features = [] }
 bytemuck_derive = { workspace = true, default-features = false, features = [] }
 spin = { workspace = true, default-features = false, features = ["spin_mutex", "rwlock"] }
 
-num-derive = { workspace = true, default-features = false }
+num-derive = { workspace = true }
 serde = { workspace = true, default-features = false }
 bincode = { workspace = true }
 lazy_static = { workspace = true, default-features = false }

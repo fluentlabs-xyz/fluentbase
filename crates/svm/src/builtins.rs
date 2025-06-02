@@ -781,6 +781,7 @@ declare_builtin_function!(
                         memory_mapping,
                         bump_seed_addr,
                         invoke_context.get_check_aligned(),
+                        false,
                     )?;
                     let mut address = translate_slice_mut::<u8>(
                         memory_mapping,

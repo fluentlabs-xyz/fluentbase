@@ -541,8 +541,13 @@ fn translate_type_inner<'a, T>(
     access_type: AccessType,
     vm_addr: u64,
     check_aligned: bool,
+    skip_addr_translation: bool,
 ) -> Result<&'a mut T, SvmError> {
-    let host_addr = translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u64)?;
+    let host_addr = if skip_addr_translation {
+        vm_addr
+    } else {
+        translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u64)?
+    };
     if !check_aligned {
         #[cfg(target_pointer_width = "64")]
         {
@@ -553,7 +558,6 @@ fn translate_type_inner<'a, T>(
             Ok(unsafe { core::mem::transmute::<u32, &mut T>(host_addr as u32) })
         }
     } else if !helpers::address_is_aligned::<T>(host_addr) {
-        // Err(EbpfError::SyscallError::UnalignedPointer.into())
         Err(SyscallError::UnalignedPointer.into())
     } else {
         Ok(unsafe { &mut *(host_addr as *mut T) })
@@ -563,16 +567,30 @@ pub fn translate_type_mut<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
+    skip_addr_translation: bool,
 ) -> Result<&'a mut T, SvmError> {
-    translate_type_inner::<T>(memory_mapping, AccessType::Store, vm_addr, check_aligned)
+    translate_type_inner::<T>(
+        memory_mapping,
+        AccessType::Store,
+        vm_addr,
+        check_aligned,
+        skip_addr_translation,
+    )
 }
 pub fn translate_type<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
+    skip_addr_translation: bool,
 ) -> Result<&'a T, SvmError> {
-    translate_type_inner::<T>(memory_mapping, AccessType::Load, vm_addr, check_aligned)
-        .map(|value| &*value)
+    translate_type_inner::<T>(
+        memory_mapping,
+        AccessType::Load,
+        vm_addr,
+        check_aligned,
+        skip_addr_translation,
+    )
+    .map(|value| &*value)
 }
 
 fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
@@ -618,15 +636,7 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
         return Err(SyscallError::UnalignedPointer.into());
     }
     // debug_log!("translate_slice_inner 4");
-    let result = SliceFatPtr64::new(
-        host_addr,
-        len,
-        Some(memory_mapping),
-        // Arc::new(|v| {
-        //     // TODO recheck parameters
-        //     translate(memory_mapping, access_type, v, total_size).unwrap()
-        // }),
-    );
+    let result = SliceFatPtr64::new::<false>(Some(memory_mapping), host_addr, len);
     // let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
     Ok(result)
 }
@@ -780,7 +790,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
         })
         .collect::<Result<Vec<_>, SvmError>>()?;
     debug_log!("translate_and_check_program_address_inputs 2");
-    let program_id = translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned)?;
+    let program_id =
+        translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned, false)?;
     debug_log!("translate_and_check_program_address_inputs 3");
     Ok((seeds, program_id))
 }
