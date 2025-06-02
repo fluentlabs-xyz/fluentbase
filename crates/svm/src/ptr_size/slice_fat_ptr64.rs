@@ -306,7 +306,7 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
 
     #[inline(always)]
     pub fn item_size_bytes(&self) -> u64 {
-        Self::ITEM_SIZE_BYTES as u64
+        T::ITEM_SIZE_BYTES as u64
     }
 
     #[inline(always)]
@@ -527,23 +527,24 @@ impl<'a, T: ElementConstraints<'a>> IntoIterator for &'a SliceFatPtr64<'a, T> {
 // }
 
 impl<'a> SpecMethods<'a> for AccountMeta {
-    const ITEM_SIZE_BYTES: usize = size_of::<Self>();
+    const ITEM_SIZE_BYTES: usize = 34; // this value is the save as size_of::<>() in 64-bit system
 
     fn recover_from_bytes(
         data: &'a [u8],
-        memory_mapping: Option<&MemoryMapping>,
+        _memory_mapping: Option<&MemoryMapping>,
     ) -> RetVal<'a, Self> {
         RetVal::Reference(typecast_bytes(data))
     }
 }
 
 impl<'a> SpecMethods<'a> for AccountInfo<'a> {
-    const ITEM_SIZE_BYTES: usize = size_of::<AccountInfo>();
+    const ITEM_SIZE_BYTES: usize = 48; // this value is the save as size_of::<AccountInfo>() in 64-bit system
 
     fn recover_from_bytes(
         data: &'a [u8],
-        memory_mapping: Option<&MemoryMapping>,
+        _memory_mapping: Option<&MemoryMapping>,
     ) -> RetVal<'a, Self> {
+        // TODO this is incorrect, cannot do like this because AccountInfo has pointer
         RetVal::Reference(typecast_bytes(data))
     }
 }
@@ -564,6 +565,12 @@ mod tests {
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
     use solana_stable_layout::stable_vec::StableVec;
+
+    #[test]
+    fn structs_sizes_test() {
+        println!("size_of::<AccountMeta>(): {}", size_of::<AccountMeta>());
+        println!("size_of::<AccountInfo>(): {}", size_of::<AccountInfo>());
+    }
 
     #[test]
     fn u8_items_test() {

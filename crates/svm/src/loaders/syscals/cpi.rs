@@ -23,6 +23,7 @@ use crate::{
         RetVal,
         SliceFatPtr64,
         SliceFatPtr64Repr,
+        SpecMethods,
         STABLE_VEC_FAT_PTR64_BYTE_SIZE,
     },
     serialization::account_data_region_memory_state,
@@ -925,7 +926,8 @@ where
     check_account_infos(account_infos.len(), invoke_context)?;
     debug_log!(
         "translate_account_infos5: item_size_bytes {}",
-        account_infos.item_size_bytes()
+        account_infos.item_size_bytes(),
+        // <AccountInfo as SpecMethods>::ITEM_SIZE_BYTES
     );
     let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
     for account_index in 0..account_infos_len as usize {
