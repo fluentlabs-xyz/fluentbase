@@ -69,29 +69,29 @@ macro_rules! fetch_value_ptr_common {
                     .unwrap(),
             ),
             PtrType::RefCellStartPtr(ptr_to_refcell) => {
-                let ptr_to_value_ptr = ptr_to_refcell + FIXED_PTR_BYTE_SIZE * 1;
+                let ptr_to_ptr_to_value_ptr = ptr_to_refcell + FIXED_PTR_BYTE_SIZE * 1;
                 let ptr_value = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
-                    reconstruct_slice(ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
+                    reconstruct_slice(ptr_to_ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
                 );
-                let ptr_value = $mm.map_vm_addr_to_host(ptr_value, 8).unwrap();
+                let ptr_to_value_ptr = $mm.map_vm_addr_to_host(ptr_value, 8).unwrap();
                 u64::from_le_bytes(
-                    reconstruct_slice(ptr_value as usize, FIXED_PTR_BYTE_SIZE)
+                    reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
                 )
             }
             PtrType::RcBoxStartPtr(rc_box_ptr) => {
-                let ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE * 3;
+                let ptr_to_ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE * 3;
                 let ptr_value = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
-                    reconstruct_slice(ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
+                    reconstruct_slice(ptr_to_ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
                 );
-                let ptr_value = $mm.map_vm_addr_to_host(ptr_value, 8).unwrap();
+                let ptr_to_value_ptr = $mm.map_vm_addr_to_host(ptr_value, 8).unwrap();
                 u64::from_le_bytes(
-                    reconstruct_slice(ptr_value as usize, FIXED_PTR_BYTE_SIZE)
+                    reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
                 )
@@ -108,56 +108,7 @@ macro_rules! fetch_value_common {
                 .try_into()
                 .unwrap(),
         )
-    }}; // match $ptr {
-        //     PtrType::PtrToValuePtr(ptr_to_value_ptr) => {
-        //         let value_ptr = u64::from_le_bytes(
-        //             reconstruct_slice(ptr_to_value_ptr.clone(), FIXED_PTR_BYTE_SIZE)
-        //                 .try_into()
-        //                 .unwrap(),
-        //         );
-        //         $typecase_fn(
-        //             reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
-        //                 .try_into()
-        //                 .unwrap(),
-        //         )
-        //     }
-        //     PtrType::RefCellStartPtr(ptr_to_refcell) => {
-        //         let lamports_value_ptr = ptr_to_refcell + FIXED_PTR_BYTE_SIZE * 1;
-        //         let lamports_ptr_value = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
-        //             reconstruct_slice(lamports_value_ptr, FIXED_PTR_BYTE_SIZE)
-        //                 .try_into()
-        //                 .unwrap(),
-        //         );
-        //         let value_ptr = u64::from_le_bytes(
-        //             reconstruct_slice(lamports_ptr_value as usize, FIXED_PTR_BYTE_SIZE)
-        //                 .try_into()
-        //                 .unwrap(),
-        //         );
-        //         $typecase_fn(
-        //             reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
-        //                 .try_into()
-        //                 .unwrap(),
-        //         )
-        //     }
-        //     PtrType::RcBoxStartPtr(rc_box_ptr) => {
-        //         let ptr_to_ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE * 3;
-        //         let ptr_to_value_ptr = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
-        //             reconstruct_slice(ptr_to_ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
-        //                 .try_into()
-        //                 .unwrap(),
-        //         );
-        //         let value_ptr = u64::from_le_bytes(
-        //             reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
-        //                 .try_into()
-        //                 .unwrap(),
-        //         );
-        //         $typecase_fn(
-        //             reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
-        //                 .try_into()
-        //                 .unwrap(),
-        //         )
-        //     }
-        // }};
+    }};
 }
 
 impl<'a> SpecMethods<'a> for &mut u64 {
