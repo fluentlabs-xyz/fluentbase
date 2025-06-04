@@ -75,12 +75,16 @@ macro_rules! fetch_value_ptr_common {
                         .try_into()
                         .unwrap(),
                 );
-                let ptr_to_value_ptr = $mm.map_vm_addr_to_host(ptr_value, 8).unwrap();
-                u64::from_le_bytes(
+                let ptr_to_value_ptr = $mm
+                    .map_vm_addr_to_host(ptr_value, FIXED_PTR_BYTE_SIZE as u64)
+                    .unwrap();
+                let value_ptr = u64::from_le_bytes(
                     reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
-                )
+                );
+                $mm.map_vm_addr_to_host(value_ptr, FIXED_PTR_BYTE_SIZE as u64)
+                    .unwrap()
             }
             PtrType::RcBoxStartPtr(rc_box_ptr) => {
                 let ptr_to_ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE * 3;
@@ -89,14 +93,18 @@ macro_rules! fetch_value_ptr_common {
                         .try_into()
                         .unwrap(),
                 );
-                let ptr_to_value_ptr = $mm.map_vm_addr_to_host(ptr_value, 8).unwrap();
-                u64::from_le_bytes(
+                let ptr_to_value_ptr = $mm
+                    .map_vm_addr_to_host(ptr_value, FIXED_PTR_BYTE_SIZE as u64)
+                    .unwrap();
+                let value_ptr = u64::from_le_bytes(
                     reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
-                )
+                );
+                $mm.map_vm_addr_to_host(value_ptr, FIXED_PTR_BYTE_SIZE as u64)
+                    .unwrap()
             }
-        }
+        };
     };
 }
 
