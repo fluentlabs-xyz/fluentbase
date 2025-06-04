@@ -1,4 +1,9 @@
-use crate::{error::SvmError, helpers, helpers::SyscallError};
+use crate::{
+    error::SvmError,
+    helpers,
+    helpers::SyscallError,
+    ptr_size::common::{typecast_bytes, FAT_PTR64_ELEM_BYTE_SIZE, SLICE_FAT_PTR64_SIZE_BYTES},
+};
 use alloc::vec::Vec;
 use core::{
     any::type_name,
@@ -15,28 +20,6 @@ use solana_rbpf::{
     error::ProgramResult,
     memory_region::{AccessType, MemoryMapping},
 };
-
-pub const FAT_PTR64_ELEM_BYTE_SIZE: usize = 8;
-pub const SLICE_FAT_PTR64_SIZE_BYTES: usize = FAT_PTR64_ELEM_BYTE_SIZE * 2;
-pub const STABLE_VEC_FAT_PTR64_BYTE_SIZE: usize = FAT_PTR64_ELEM_BYTE_SIZE * 3;
-
-#[inline(always)]
-pub fn typecast_bytes<T: Clone>(data: &[u8]) -> &T {
-    let data = data.as_ref();
-    let type_name = type_name::<T>();
-    if data.len() < size_of::<T>() {
-        panic!("failed to typecase to {}: invalid size", type_name);
-    }
-
-    let ptr = data.as_ptr() as *const T;
-
-    // Check alignment
-    if (ptr as usize) % align_of::<T>() != 0 {
-        panic!("failed to typecase to {}: misaligned", type_name);
-    }
-
-    unsafe { &*ptr }
-}
 
 pub trait ElementConstraints<'a> = Clone + SpecMethods<'a> + Debug;
 
@@ -280,6 +263,23 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
             memory_mapping,
             _phantom: Default::default(),
         }
+    }
+
+    #[inline(always)]
+    pub fn idx_valid(&self, idx: u64) -> bool {
+        idx < self.len
+    }
+
+    pub fn clone_from_index(&self, idx: u64) -> Option<SliceFatPtr64<'a, T>> {
+        if self.idx_valid(idx) {
+            return Some(Self {
+                first_item_fat_ptr_addr: self.item_addr_at_idx(idx as usize) as u64,
+                len: self.len - idx,
+                memory_mapping: self.memory_mapping,
+                _phantom: Default::default(),
+            });
+        }
+        None
     }
 
     pub fn try_get(&self, idx: usize) -> Option<RetVal<'a, T>> {
@@ -526,8 +526,10 @@ impl<'a, T: ElementConstraints<'a>> IntoIterator for &'a SliceFatPtr64<'a, T> {
 //     }
 // }
 
+pub const ACCOUNT_META_ITEM_SIZE_64BIT_WORD: usize = 34;
+
 impl<'a> SpecMethods<'a> for AccountMeta {
-    const ITEM_SIZE_BYTES: usize = 34; // this value is the save as size_of::<>() in 64-bit system
+    const ITEM_SIZE_BYTES: usize = ACCOUNT_META_ITEM_SIZE_64BIT_WORD; // this value is the save as size_of::<>() in 64-bit system
 
     fn recover_from_bytes(
         data: &'a [u8],
@@ -537,14 +539,16 @@ impl<'a> SpecMethods<'a> for AccountMeta {
     }
 }
 
+pub const ACCOUNT_INFO_ITEM_SIZE_64BIT_WORD: usize = 48;
+
 impl<'a> SpecMethods<'a> for AccountInfo<'a> {
-    const ITEM_SIZE_BYTES: usize = 48; // this value is the save as size_of::<AccountInfo>() in 64-bit system
+    const ITEM_SIZE_BYTES: usize = ACCOUNT_INFO_ITEM_SIZE_64BIT_WORD; // this value is the save as size_of::<AccountInfo>() in 64-bit system
 
     fn recover_from_bytes(
         data: &'a [u8],
         _memory_mapping: Option<&MemoryMapping>,
     ) -> RetVal<'a, Self> {
-        // TODO this is incorrect, cannot do like this because AccountInfo has pointer
+        // TODO this is incorrect, cannot do like this because AccountInfo has pointers inside
         RetVal::Reference(typecast_bytes(data))
     }
 }
@@ -561,10 +565,12 @@ pub fn collect_into_vec_cloned<'a, T: ElementConstraints<'a>>(
 #[cfg(test)]
 mod tests {
     use crate::ptr_size::slice_fat_ptr64::SliceFatPtr64;
+    use alloc::rc::Rc;
     use solana_account_info::AccountInfo;
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
     use solana_stable_layout::stable_vec::StableVec;
+    use std::cell::RefCell;
 
     #[test]
     fn structs_sizes_test() {
