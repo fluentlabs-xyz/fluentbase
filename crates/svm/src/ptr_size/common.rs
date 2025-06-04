@@ -50,10 +50,18 @@ macro_rules! println_type_size {
     };
 }
 
+#[derive(Clone)]
 pub struct MemoryMappingHelper<'a> {
     memory_mapping: Option<&'a MemoryMapping<'a>>,
     access_type: Option<AccessType>,
 }
+
+impl Default for MemoryMappingHelper<'_> {
+    fn default() -> Self {
+        MemoryMappingHelper::new(None, None)
+    }
+}
+
 impl<'a> MemoryMappingHelper<'a> {
     pub fn new(
         memory_mapping: Option<&'a MemoryMapping<'a>>,

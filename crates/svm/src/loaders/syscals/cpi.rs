@@ -192,16 +192,19 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 check_account_info_pointer(
                     invoke_context,
                     // *ptr,
-                    ptr.value() as *const u64 as u64,
+                    ptr.value_vm_addr(),
                     account_metadata.vm_lamports_addr,
                     "lamports",
                 )?;
             }
-            debug_log!("from_account_info8: ptr.value()={}", ptr.value());
+            debug_log!(
+                "from_account_info8: ptr.value_vm_addr()={}",
+                ptr.value_vm_addr()
+            );
             translate_type_mut::<u64>(
                 memory_mapping,
                 // *ptr,
-                ptr.value() as *const u64 as u64,
+                ptr.value_vm_addr(),
                 invoke_context.get_check_aligned(),
                 false,
             )?
