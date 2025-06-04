@@ -1,13 +1,22 @@
+use alloy_sol_types::{sol, SolCall};
 use core::str::from_utf8;
-use fluentbase_sdk::{address, bytes, calc_create_address, Address, U256};
+use fluentbase_sdk::{address, bytes, calc_create_address, keccak256, Address, U256};
 use fluentbase_sdk_testing::{
     try_print_utf8_error,
     EvmTestingContext,
     HostTestingContextNativeAPI,
     TxBuilder,
 };
+use fluentbase_types::{SysFuncIdx::SECP256K1_RECOVER, PRECOMPILE_SECP256K1_RECOVER};
 use hex_literal::hex;
-use revm::bytecode::opcode;
+use revm::{
+    bytecode::{bitvec::view::BitViewSized, opcode},
+    context::result::{
+        ExecutionResult::{Halt, Revert},
+        HaltReason,
+    },
+    precompile::secp256k1::ECRECOVER,
+};
 
 #[test]
 fn test_evm_greeting() {
@@ -390,4 +399,161 @@ fn test_evm_blake2f() {
     let blake2f_output = &output[64..]; // skip 2 32-byte words (offset and length)
     assert_eq!(blake2f_output.len(), 64);
     assert_eq!(result.gas_used(), 22579);
+}
+
+/// This test deploys the `HelloWorld` contract and directly calls its `sayHelloWorld()`
+/// function to verify it returns the expected string. Do it using `SolCall` macro for better
+/// readability.
+#[test]
+fn test_evm_greeting_using_sol_macro() {
+    let mut ctx = EvmTestingContext::default();
+    const OWNER_ADDRESS: Address = Address::ZERO;
+    ctx.add_balance(OWNER_ADDRESS, U256::from(1e18));
+
+    // Deploy HelloWorld contract
+    let hello_world_bytecode = hex::decode(include_bytes!("../assets/HelloWorld.bin")).unwrap();
+    let hello_world_address = ctx.deploy_evm_tx(OWNER_ADDRESS, hello_world_bytecode.into());
+
+    // Encode sayHelloWorld() call
+    sol! {
+        function sayHelloWorld() public pure returns (string);
+    }
+    let input_data = sayHelloWorldCall {}.abi_encode();
+
+    // Call contract directly
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        hello_world_address,
+        input_data.into(),
+        None,
+        None,
+    );
+    assert!(result.is_success(), "call to sayHelloWorld() failed");
+
+    // Decode result
+    let output = result.output().unwrap_or_default();
+    let decoded = sayHelloWorldCall::abi_decode_returns_validate(&output).unwrap();
+    assert_eq!(decoded, "Hello, World");
+}
+
+/// This test deploys two contracts: `HelloWorld` and `Caller`.
+/// It uses the `Caller` contract to perform a low-level `call` to the `sayHelloWorld()`
+/// function of the `HelloWorld` contract via the `callExternal(address, bytes)` method.
+#[test]
+fn test_evm_caller() {
+    let mut ctx = EvmTestingContext::default();
+    // ctx.cfg.disable_rwasm_proxy = true;
+    const OWNER_ADDRESS: Address = Address::ZERO;
+    ctx.add_balance(OWNER_ADDRESS, U256::from(1e18));
+
+    // Step 1: Deploy HelloWorld contract
+    let hello_world_bytecode = hex::decode(include_bytes!("../assets/HelloWorld.bin")).unwrap();
+    let hello_world_address = ctx.deploy_evm_tx(OWNER_ADDRESS, hello_world_bytecode.into());
+    // Step 2: Deploy Caller contract
+    let caller_bytecode = hex::decode(include_bytes!("../assets/Caller.bin")).unwrap();
+    let caller_contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, caller_bytecode.into());
+    // Step 3: Encode sayHelloWorld() call (target function)
+    sol! {
+        function sayHelloWorld() public pure returns (string memory);
+    }
+    let say_hello_data = sayHelloWorldCall {}.abi_encode();
+
+    // Step 4: Encode callExternal(address, bytes)
+    sol! {
+        function callExternal(address target, bytes calldata data) external returns (bool success, bytes memory result) ;
+    }
+    let call_input = callExternalCall {
+        target: hello_world_address,
+        data: say_hello_data.into(),
+    }
+    .abi_encode();
+
+    // Step 5: Execute Caller.callExternal(hello_world_address, encoded(sayHelloWorld()))
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        caller_contract_address,
+        call_input.into(),
+        None,
+        None,
+    );
+    println!("{:?}", result);
+    assert!(result.is_success(), "call failed: {:?}", result);
+
+    // Step 6: Decode return value
+    let output = result.output().unwrap_or_default();
+    try_print_utf8_error(&output);
+
+    let return_data = callExternalCall::abi_decode_returns_validate(&output).unwrap();
+    assert!(return_data.success);
+    let return_data = return_data.result.to_vec();
+    let returned_string = String::from_utf8(return_data.clone()).unwrap();
+
+    // ABI return is padded: decode inner string manually
+    let hello_string = sayHelloWorldCall::abi_decode_returns_validate(&return_data).unwrap();
+    assert_eq!(hello_string, "Hello, World");
+
+    assert_eq!(result.gas_used(), 26788);
+}
+
+#[test]
+fn test_evm_ecrecover_out_of_gas() {
+    let mut ctx = EvmTestingContext::default();
+    // ctx.cfg.disable_rwasm_proxy = true;
+    const OWNER_ADDRESS: Address = address!("1234121212121212121212121212121212121234");
+
+    // Some random input data for ecrecover precompile
+    let input = hex!("11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff000000000000000000000000000000000000000000000000000000000000001b3c8f1a1c9d6cc4b11bd8b32c98f627f7796fbc1db6d3fa4a51d87061b512b5b55b81a37853a38a91dc4fc8a3a64b105f334cf5dfd0f28ad89a78533d817c6a19");
+
+    // Call `callBlake2F()` on deployed contract
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        PRECOMPILE_SECP256K1_RECOVER, // calling ecrecover precompile
+        input.into(),
+        Some(25650),         // gas limit
+        Some(U256::from(1)), // value
+    );
+
+    println!("{:?}", result);
+    assert_eq!(result.gas_used(), 25650);
+    assert!(result.is_halt());
+}
+
+#[test]
+fn test_evm_ecrecover_out_of_gas_indirect_call() {
+    // [make_call_frame] with inputs CallInputs { input: SharedBuffer(160..257),
+    // return_memory_offset: 289..321, gas_limit: 2300, bytecode_address:
+    // 0x0000000000000000000000000000000000000001, target_address:
+    // 0x0000000000000000000000000000000000000001, caller:
+    // 0xbd770416a3345f91e4b34576cb804a576fa48eb1, value: Transfer(0), scheme: Call, is_static:
+    // false, is_eof: false }
+    let mut ctx = EvmTestingContext::default();
+    ctx.cfg.disable_rwasm_proxy = true;
+    const OWNER_ADDRESS: Address = Address::ZERO;
+
+    // Deploy contract from bytecode (compiled from EcrecoverWithLowGas.sol)
+    let contract_address = ctx.deploy_evm_tx(
+        OWNER_ADDRESS,
+        hex::decode(include_bytes!("../assets/EcrecoverWithLowGas.bin"))
+            .unwrap()
+            .into(),
+    );
+
+    let selector = keccak256("callEcrecover()".as_bytes()).to_vec()[..4].to_vec();
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        contract_address,
+        selector.into(),
+        None,
+        Some(U256::from(0)),
+    );
+    println!("{:?}", result);
+    assert!(matches!(result, Revert { .. }));
+    let message = "ecrecover failed".as_bytes().to_vec();
+    let present = result
+        .output()
+        .unwrap()
+        .windows(message.len())
+        .any(|window| window == message);
+    assert!(present, "Expected revert message not found in output");
+    assert_eq!(result.gas_used(), 29319);
 }

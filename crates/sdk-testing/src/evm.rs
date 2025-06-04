@@ -3,6 +3,7 @@ use core::{mem::take, str::from_utf8};
 use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
+    address,
     calc_create_address,
     Address,
     Bytes,
@@ -15,8 +16,16 @@ use fluentbase_sdk::{
 use fluentbase_types::{bytes::BytesMut, compile_wasm_to_rwasm};
 use revm::{
     context,
-    context::{result::ExecutionResult, BlockEnv, CfgEnv, Evm, TransactTo, TxEnv},
+    context::{
+        result::{ExecutionResult, ExecutionResult::Success, Output},
+        BlockEnv,
+        CfgEnv,
+        Evm,
+        TransactTo,
+        TxEnv,
+    },
     database::{EmptyDB, InMemoryDB},
+    handler::MainnetContext,
     primitives::{hardfork::SpecId, keccak256, map::DefaultHashBuilder, HashMap},
     state::{Account, AccountInfo, Bytecode},
     Context,
@@ -137,6 +146,7 @@ impl EvmTestingContext {
         deployer: Address,
         init_bytecode: Bytes,
     ) -> (Address, u64) {
+        let nonce = self.nonce(deployer);
         let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
         if !result.is_success() {
             println!("{:?}", result);
@@ -150,8 +160,14 @@ impl EvmTestingContext {
         }
         println!("deployment gas used: {}", result.gas_used());
         assert!(result.is_success());
-        let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, 0);
-        assert_eq!(contract_address, deployer.create(0));
+        let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, nonce);
+        assert_eq!(contract_address, deployer.create(nonce));
+
+        assert!(
+            matches!(result, Success { output: Output::Create(_, Some(addr)), .. } if addr == contract_address),
+            "deploy transaction didn't return expected address: {:?}",
+            result
+        );
         (contract_address, result.gas_used())
     }
 
@@ -271,9 +287,10 @@ impl<'a> TxBuilder<'a> {
     pub fn exec(&mut self) -> ExecutionResult {
         self.tx.nonce = self.ctx.nonce(self.tx.caller);
         let db = take(&mut self.ctx.db);
-        let mut context: Context<BlockEnv, TxEnv, CfgEnv, InMemoryDB, Journal<InMemoryDB>, ()> =
-            Context::new(db, SpecId::default());
+        let mut context: MainnetContext<InMemoryDB> = Context::new(db, SpecId::default());
         context.cfg = self.ctx.cfg.clone();
+        context.block = self.block.clone();
+        context.tx = self.tx.clone();
         let mut evm = context.build_mainnet();
         let result = evm.transact_commit(self.tx.clone()).unwrap();
         let new_db = &mut evm.journaled_state.database;

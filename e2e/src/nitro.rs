@@ -1,8 +1,8 @@
 extern crate test;
 
 use alloy_sol_types::{sol, SolCall};
-use fluentbase_sdk::address;
-use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};
+use fluentbase_sdk::{address, Address, U256};
+use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use std::time::Instant;
 
 #[ignore] // TODO(khasan) nitro has floats for some reason, investigate why and how to remove them
@@ -42,7 +42,10 @@ fn test_nitro_verifier_wasm_version() {
 #[test]
 fn test_nitro_verifier_solidity_version() {
     let mut ctx = EvmTestingContext::default();
-    let caller = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    ctx.cfg.disable_rwasm_proxy = true;
+
+    const OWNER_ADDRESS: Address = Address::ZERO;
+    ctx.add_balance(OWNER_ADDRESS, U256::from(1e18));
 
     let start = Instant::now();
     let mut total_gas = 0;
@@ -51,7 +54,7 @@ fn test_nitro_verifier_solidity_version() {
     // https://github.com/base-org/nitro-validator/blob/main/src/NitroValidator.sol
     let cert_manager_bytecode = hex::decode(include_bytes!("../assets/CertManager.bin")).unwrap();
     let (cert_manager_address, gas_used) =
-        ctx.deploy_evm_tx_with_gas(caller, cert_manager_bytecode.into());
+        ctx.deploy_evm_tx_with_gas(OWNER_ADDRESS, cert_manager_bytecode.into());
     total_gas += gas_used;
     let mut nitro_validator_bytecode =
         hex::decode(include_bytes!("../assets/NitroValidator.bin")).unwrap();
@@ -62,8 +65,11 @@ fn test_nitro_verifier_solidity_version() {
     .unwrap();
     nitro_validator_bytecode.extend(constructor_args);
     let (nitro_validator_address, gas_used) =
-        ctx.deploy_evm_tx_with_gas(caller, nitro_validator_bytecode.into());
+        ctx.deploy_evm_tx_with_gas(OWNER_ADDRESS, nitro_validator_bytecode.into());
     total_gas += gas_used;
+
+    println!("cert_manager_address={}", cert_manager_address);
+    println!("nitro_validator_address={}", nitro_validator_address);
 
     // Step 2: Decode the attestation blob into "to-be-signed" and "signature" via
     // decodeAttestationTbs().
@@ -78,7 +84,7 @@ fn test_nitro_verifier_solidity_version() {
         attestation: attestation_bytes.into(),
     }
     .abi_encode();
-    let result = TxBuilder::call(&mut ctx, caller, nitro_validator_address, None)
+    let result = TxBuilder::call(&mut ctx, OWNER_ADDRESS, nitro_validator_address, None)
         .input(input.into())
         .exec();
     if !result.is_success() {
@@ -109,12 +115,13 @@ fn test_nitro_verifier_solidity_version() {
         signature: parsed_attestation.signature.into(),
     }
     .abi_encode();
-    let result = TxBuilder::call(&mut ctx, caller, nitro_validator_address, None)
+    let result = TxBuilder::call(&mut ctx, OWNER_ADDRESS, nitro_validator_address, None)
         .gas_limit(70_000_000)
         .input(input.into())
         .timestamp(1695050165) // ensure correct block timestamp to match certificate time window.
         .exec();
     if !result.is_success() {
+        try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref());
         panic!("validate attestation call failed, result: {:?}", result);
     }
     total_gas += result.gas_used();
