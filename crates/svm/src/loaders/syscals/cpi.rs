@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    account::{AccountSharedData, BorrowedAccount},
+    account::BorrowedAccount,
     bpf_loader,
     bpf_loader_deprecated,
     builtins::SyscallInvokeSignedRust,
@@ -14,16 +14,14 @@ use crate::{
         translate_type,
         translate_type_mut,
     },
-    mem_ops_original,
     native_loader,
     precompiles::is_precompile,
     ptr_size::{
-        common::STABLE_VEC_FAT_PTR64_BYTE_SIZE,
+        common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
         primitives::{PtrType, RcRefCellMemLayout},
         slice_fat_ptr64::{
             reconstruct_slice,
             ElementConstraints,
-            RetVal,
             SliceFatPtr64,
             SliceFatPtr64Repr,
             SpecMethods,
@@ -32,8 +30,8 @@ use crate::{
     serialization::account_data_region_memory_state,
     solana_program::bpf_loader_upgradeable,
 };
-use alloc::{boxed::Box, rc::Rc, vec, vec::Vec};
-use core::{cell::RefCell, marker::PhantomData, ptr};
+use alloc::{boxed::Box, vec, vec::Vec};
+use core::{marker::PhantomData, ptr};
 use fluentbase_sdk::{debug_log, SharedAPI};
 use scopeguard::defer;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
@@ -172,14 +170,17 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
         let lamports = {
             debug_log!("from_account_info5");
             // Double translate lamports out of RefCell
-            // let lamports_rc_refcell = RcRefCell::<&mut u64>::new(PtrType::RcBoxStartPtr(lamports_ptr as usize));
-            let ptr = translate_type::<u64>(
-                memory_mapping,
-                // account_info.lamports.as_ptr() as u64,
-                lamports_ptr,
-                invoke_context.get_check_aligned(),
-                false,
-            )?;
+            let ptr = RcRefCellMemLayout::<&mut u64>::new(
+                MemoryMappingHelper::new(None, None),
+                PtrType::RcBoxStartPtr(lamports_ptr as usize),
+            );
+            // let ptr = translate_type::<u64>(
+            //     memory_mapping,
+            //     // account_info.lamports.as_ptr() as u64,
+            //     lamports_ptr,
+            //     invoke_context.get_check_aligned(),
+            //     false,
+            // )?;
             debug_log!("from_account_info6");
             if direct_mapping {
                 // if account_info.lamports.as_ptr() as u64 >= ebpf::MM_INPUT_START {
@@ -190,15 +191,17 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 debug_log!("from_account_info7");
                 check_account_info_pointer(
                     invoke_context,
-                    *ptr,
+                    // *ptr,
+                    ptr.value() as *const u64 as u64,
                     account_metadata.vm_lamports_addr,
                     "lamports",
                 )?;
             }
-            debug_log!("from_account_info8");
+            debug_log!("from_account_info8: ptr.value()={}", ptr.value());
             translate_type_mut::<u64>(
                 memory_mapping,
-                *ptr,
+                // *ptr,
+                ptr.value() as *const u64 as u64,
                 invoke_context.get_check_aligned(),
                 false,
             )?

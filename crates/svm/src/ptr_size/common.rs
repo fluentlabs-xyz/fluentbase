@@ -1,3 +1,8 @@
+use solana_rbpf::{
+    error::ProgramResult,
+    memory_region::{AccessType, MemoryMapping},
+};
+
 pub const FIXED_MACHINE_WORD_BYTE_SIZE: usize = 8;
 pub const FIXED_PTR_BYTE_SIZE: usize = FIXED_MACHINE_WORD_BYTE_SIZE;
 pub const FAT_PTR64_ELEM_BYTE_SIZE: usize = FIXED_MACHINE_WORD_BYTE_SIZE;
@@ -43,4 +48,30 @@ macro_rules! println_type_size {
             core::mem::size_of::<$struct>()
         )
     };
+}
+
+pub struct MemoryMappingHelper<'a> {
+    memory_mapping: Option<&'a MemoryMapping<'a>>,
+    access_type: Option<AccessType>,
+}
+impl<'a> MemoryMappingHelper<'a> {
+    pub fn new(
+        memory_mapping: Option<&'a MemoryMapping<'a>>,
+        access_type: Option<AccessType>,
+    ) -> Self {
+        Self {
+            memory_mapping,
+            access_type,
+        }
+    }
+    pub fn with_access_type(mut self, access_type: Option<AccessType>) -> Self {
+        self.access_type = access_type;
+        self
+    }
+    pub fn map_vm_addr_to_host(&'a self, vm_addr: u64, len: u64) -> ProgramResult {
+        if let Some(mm) = self.memory_mapping {
+            return mm.map(self.access_type.unwrap_or(AccessType::Load), vm_addr, len);
+        }
+        ProgramResult::Ok(vm_addr)
+    }
 }

@@ -1,5 +1,5 @@
 use crate::ptr_size::{
-    common::{typecast_bytes, typecast_bytes_mut, FIXED_PTR_BYTE_SIZE},
+    common::{typecast_bytes, typecast_bytes_mut, MemoryMappingHelper, FIXED_PTR_BYTE_SIZE},
     slice_fat_ptr64::{reconstruct_slice, SliceFatPtr64Repr},
 };
 use core::{
@@ -18,79 +18,80 @@ pub enum PtrType {
 
 pub trait SpecMethods<'a> {
     type Elem;
-    fn fetch_value(ptr: &PtrType) -> &'a Self::Elem;
-    fn fetch_value_mut(ptr: &PtrType) -> &'a mut Self::Elem;
+    fn fetch_value_ptr(memory_mapping_helper: &'a MemoryMappingHelper<'a>, ptr: &PtrType) -> u64;
+    fn fetch_value(
+        memory_mapping_helper: &'a MemoryMappingHelper<'a>,
+        ptr: &PtrType,
+    ) -> &'a Self::Elem;
+    fn fetch_value_mut(
+        memory_mapping_helper: &'a MemoryMappingHelper<'a>,
+        ptr: &PtrType,
+    ) -> &'a mut Self::Elem;
 }
 
-pub struct RcRefCellMemLayout<T> {
-    pub ptr: PtrType,
+pub struct RcRefCellMemLayout<'a, T> {
+    memory_mapping_helper: MemoryMappingHelper<'a>,
+    ptr: PtrType,
     _phantom: PhantomData<T>,
 }
 
-impl<'a, T: SpecMethods<'a>> RcRefCellMemLayout<T> {
-    pub fn new(ptr: PtrType) -> RcRefCellMemLayout<T> {
+impl<'a, T: SpecMethods<'a>> RcRefCellMemLayout<'a, T> {
+    pub fn new(
+        memory_mapping_helper: MemoryMappingHelper<'a>,
+        ptr: PtrType,
+    ) -> RcRefCellMemLayout<T> {
         Self {
+            memory_mapping_helper,
             ptr,
             _phantom: Default::default(),
         }
     }
 
+    pub fn value_ptr(&'a self) -> u64 {
+        T::fetch_value_ptr(&self.memory_mapping_helper, &self.ptr)
+    }
+
     pub fn value(&'a self) -> &'a T::Elem {
-        T::fetch_value(&self.ptr)
+        T::fetch_value(&self.memory_mapping_helper, &self.ptr)
     }
 
     pub fn value_mut(&'a self) -> &'a mut T::Elem {
-        T::fetch_value_mut(&self.ptr)
+        T::fetch_value_mut(&self.memory_mapping_helper, &self.ptr)
     }
 }
 
-macro_rules! fetch_value_common {
-    ($ptr:ident, $typecase_fn:ident) => {
+macro_rules! fetch_value_ptr_common {
+    ($mm:ident, $ptr:ident) => {
         match $ptr {
-            PtrType::PtrToValuePtr(ptr_to_value_ptr) => {
-                let value_ptr = u64::from_le_bytes(
-                    reconstruct_slice(ptr_to_value_ptr.clone(), FIXED_PTR_BYTE_SIZE)
-                        .try_into()
-                        .unwrap(),
-                );
-                $typecase_fn(
-                    reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
-                        .try_into()
-                        .unwrap(),
-                )
-            }
+            PtrType::PtrToValuePtr(ptr_to_value_ptr) => u64::from_le_bytes(
+                reconstruct_slice(ptr_to_value_ptr.clone(), FIXED_PTR_BYTE_SIZE)
+                    .try_into()
+                    .unwrap(),
+            ),
             PtrType::RefCellStartPtr(ptr_to_refcell) => {
-                let lamports_value_ptr = ptr_to_refcell + FIXED_PTR_BYTE_SIZE * 1;
-                let lamports_ptr_value = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
-                    reconstruct_slice(lamports_value_ptr, FIXED_PTR_BYTE_SIZE)
+                let ptr_to_value_ptr = ptr_to_refcell + FIXED_PTR_BYTE_SIZE * 1;
+                let ptr_value = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
+                    reconstruct_slice(ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
                 );
-                let value_ptr = u64::from_le_bytes(
-                    reconstruct_slice(lamports_ptr_value as usize, FIXED_PTR_BYTE_SIZE)
-                        .try_into()
-                        .unwrap(),
-                );
-                $typecase_fn(
-                    reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
+                let ptr_value = $mm.map_vm_addr_to_host(ptr_value, 8).unwrap();
+                u64::from_le_bytes(
+                    reconstruct_slice(ptr_value as usize, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
                 )
             }
             PtrType::RcBoxStartPtr(rc_box_ptr) => {
-                let ptr_to_ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE * 3;
-                let ptr_to_value_ptr = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
-                    reconstruct_slice(ptr_to_ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
+                let ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE * 3;
+                let ptr_value = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
+                    reconstruct_slice(ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
                 );
-                let value_ptr = u64::from_le_bytes(
-                    reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
-                        .try_into()
-                        .unwrap(),
-                );
-                $typecase_fn(
-                    reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
+                let ptr_value = $mm.map_vm_addr_to_host(ptr_value, 8).unwrap();
+                u64::from_le_bytes(
+                    reconstruct_slice(ptr_value as usize, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
                 )
@@ -99,15 +100,85 @@ macro_rules! fetch_value_common {
     };
 }
 
+macro_rules! fetch_value_common {
+    ($mm:ident, $ptr:ident, $typecase_fn:ident) => {{
+        let value_ptr = fetch_value_ptr_common!($mm, $ptr);
+        $typecase_fn(
+            reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
+                .try_into()
+                .unwrap(),
+        )
+    }}; // match $ptr {
+        //     PtrType::PtrToValuePtr(ptr_to_value_ptr) => {
+        //         let value_ptr = u64::from_le_bytes(
+        //             reconstruct_slice(ptr_to_value_ptr.clone(), FIXED_PTR_BYTE_SIZE)
+        //                 .try_into()
+        //                 .unwrap(),
+        //         );
+        //         $typecase_fn(
+        //             reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
+        //                 .try_into()
+        //                 .unwrap(),
+        //         )
+        //     }
+        //     PtrType::RefCellStartPtr(ptr_to_refcell) => {
+        //         let lamports_value_ptr = ptr_to_refcell + FIXED_PTR_BYTE_SIZE * 1;
+        //         let lamports_ptr_value = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
+        //             reconstruct_slice(lamports_value_ptr, FIXED_PTR_BYTE_SIZE)
+        //                 .try_into()
+        //                 .unwrap(),
+        //         );
+        //         let value_ptr = u64::from_le_bytes(
+        //             reconstruct_slice(lamports_ptr_value as usize, FIXED_PTR_BYTE_SIZE)
+        //                 .try_into()
+        //                 .unwrap(),
+        //         );
+        //         $typecase_fn(
+        //             reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
+        //                 .try_into()
+        //                 .unwrap(),
+        //         )
+        //     }
+        //     PtrType::RcBoxStartPtr(rc_box_ptr) => {
+        //         let ptr_to_ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE * 3;
+        //         let ptr_to_value_ptr = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
+        //             reconstruct_slice(ptr_to_ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
+        //                 .try_into()
+        //                 .unwrap(),
+        //         );
+        //         let value_ptr = u64::from_le_bytes(
+        //             reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
+        //                 .try_into()
+        //                 .unwrap(),
+        //         );
+        //         $typecase_fn(
+        //             reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
+        //                 .try_into()
+        //                 .unwrap(),
+        //         )
+        //     }
+        // }};
+}
+
 impl<'a> SpecMethods<'a> for &mut u64 {
     type Elem = u64;
 
-    fn fetch_value(ptr: &PtrType) -> &'a Self::Elem {
-        fetch_value_common!(ptr, typecast_bytes)
+    fn fetch_value_ptr(memory_mapping_helper: &'a MemoryMappingHelper<'a>, ptr: &PtrType) -> u64 {
+        fetch_value_ptr_common!(memory_mapping_helper, ptr)
     }
 
-    fn fetch_value_mut(ptr: &PtrType) -> &'a mut Self::Elem {
-        fetch_value_common!(ptr, typecast_bytes_mut)
+    fn fetch_value(
+        memory_mapping_helper: &'a MemoryMappingHelper<'a>,
+        ptr: &PtrType,
+    ) -> &'a Self::Elem {
+        fetch_value_common!(memory_mapping_helper, ptr, typecast_bytes)
+    }
+
+    fn fetch_value_mut(
+        memory_mapping_helper: &'a MemoryMappingHelper<'a>,
+        ptr: &PtrType,
+    ) -> &'a mut Self::Elem {
+        fetch_value_common!(memory_mapping_helper, ptr, typecast_bytes_mut)
     }
 }
 
@@ -116,7 +187,7 @@ mod tests {
     use crate::{
         println_type_size,
         ptr_size::{
-            common::FIXED_PTR_BYTE_SIZE,
+            common::{MemoryMappingHelper, FIXED_PTR_BYTE_SIZE},
             primitives::{PtrType, RcRefCellMemLayout},
             slice_fat_ptr64::{reconstruct_slice, SliceFatPtr64Repr},
         },
@@ -167,23 +238,35 @@ mod tests {
         );
         assert_eq!(value, lamports);
 
-        let container =
-            RcRefCellMemLayout::<&mut u64>::new(PtrType::RcBoxStartPtr(lamports_rc_box_ptr));
+        let container = RcRefCellMemLayout::<&mut u64>::new(
+            MemoryMappingHelper::new(None, None),
+            PtrType::RcBoxStartPtr(lamports_rc_box_ptr),
+        );
+        let value = container.value();
+        assert_eq!(value, &lamports);
+        let value_ptr = container.value_ptr();
+        assert_eq!(
+            u64::from_le_bytes(
+                reconstruct_slice::<u8>(value_ptr as usize, 8)
+                    .try_into()
+                    .unwrap()
+            ),
+            lamports
+        );
+
+        let container = RcRefCellMemLayout::<&mut u64>::new(
+            MemoryMappingHelper::new(None, None),
+            PtrType::RefCellStartPtr(lamports_rc_ptr),
+        );
         let value = container.value();
         assert_eq!(value, &lamports);
 
-        let container =
-            RcRefCellMemLayout::<&mut u64>::new(PtrType::RefCellStartPtr(lamports_rc_ptr));
-        let value = container.value();
-        assert_eq!(value, &lamports);
-
-        let wrapper =
-            RcRefCellMemLayout::<&mut u64>::new(PtrType::PtrToValuePtr(ptr_to_value_ptr as usize));
+        let wrapper = RcRefCellMemLayout::<&mut u64>::new(
+            MemoryMappingHelper::new(None, None),
+            PtrType::PtrToValuePtr(ptr_to_value_ptr as usize),
+        );
         let value = wrapper.value();
         assert_eq!(value, &lamports);
-
-        let wrapper =
-            RcRefCellMemLayout::<&mut u64>::new(PtrType::PtrToValuePtr(ptr_to_value_ptr as usize));
         let lamports_new_val: u64 = 43;
         *wrapper.value_mut() = lamports_new_val;
         let value = wrapper.value();
