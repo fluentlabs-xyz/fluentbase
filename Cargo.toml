@@ -73,7 +73,7 @@ bitvec = { version = "1", default-features = false, features = ["alloc"] }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
 wasmtime = { version = "31.0.0" }
 # revm
-revm = { path = "revm/crates/revm", version = "23.1.0", default-features = false }
+revm = { path = "revm/crates/revm", version = "23.1.0", default-features = false, features = ["wasmtime"] }
 primitives = { path = "revm/crates/primitives", package = "revm-primitives", version = "19.0.0", default-features = false }
 bytecode = { path = "revm/crates/bytecode", package = "revm-bytecode", version = "4.0.0", default-features = false }
 database = { path = "revm/crates/database", package = "revm-database", version = "4.0.0", default-features = false }

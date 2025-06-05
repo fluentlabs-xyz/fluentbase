@@ -527,7 +527,7 @@ fn test_evm_ecrecover_out_of_gas_indirect_call() {
     // 0xbd770416a3345f91e4b34576cb804a576fa48eb1, value: Transfer(0), scheme: Call, is_static:
     // false, is_eof: false }
     let mut ctx = EvmTestingContext::default();
-    ctx.cfg.disable_rwasm_proxy = true;
+    // ctx.cfg.disable_rwasm_proxy = true;
     const OWNER_ADDRESS: Address = Address::ZERO;
 
     // Deploy contract from bytecode (compiled from EcrecoverWithLowGas.sol)
@@ -556,4 +556,11 @@ fn test_evm_ecrecover_out_of_gas_indirect_call() {
         .any(|window| window == message);
     assert!(present, "Expected revert message not found in output");
     assert_eq!(result.gas_used(), 29319);
+}
+
+#[test]
+fn test_evm_coinbase() {
+    let mut ctx = EvmTestingContext::default();
+    ctx.cfg.disable_rwasm_proxy = true;
+    const OWNER_ADDRESS: Address = Address::ZERO;
 }
