@@ -205,9 +205,9 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             translate_type_mut::<u64>(
                 memory_mapping,
                 // *ptr,
-                lamports_mem_layout_ptr.value_addr::<false, false>(),
+                lamports_mem_layout_ptr.value_addr::<false, true>(),
                 invoke_context.get_check_aligned(),
-                false,
+                true,
             )?
         };
 
@@ -229,8 +229,13 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
 
             debug_log!("from_account_info11");
             // Double translate data out of RefCell
-            let data =
-                SliceFatPtr64::<u8>::from_ptr_to_fat_ptr(data_ptr as usize, Some(memory_mapping));
+            let mmh = MemoryMappingHelper::new(Some(memory_mapping), None);
+            let data_mem_layout =
+                RcRefCellMemLayout::<&mut [u8]>::new(mmh, PtrType::RcStartPtr(data_ptr as usize));
+            let data = SliceFatPtr64::<u8>::from_ptr_to_fat_ptr(
+                data_mem_layout.addr_to_value_addr::<false, false>() as usize,
+                Some(memory_mapping),
+            );
             // let data = *translate_type::<&[u8]>(
             //     memory_mapping,
             //     // account_info.data.as_ptr() as *const _ as u64,
@@ -1511,11 +1516,14 @@ fn update_callee_account<SDK: SharedAPI>(
             _ => {}
         }
     }
+    println!("update_callee_account13");
 
     // Change the owner at the end so that we are allowed to change the lamports and data before
-    if callee_account.get_owner() != caller_account.owner {
+    let callee_account_owner = callee_account.get_owner();
+    if callee_account_owner != caller_account.owner {
         callee_account.set_owner(caller_account.owner.as_ref())?;
     }
+    println!("update_callee_account14");
 
     Ok(must_update_caller)
 }
