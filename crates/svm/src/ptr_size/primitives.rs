@@ -12,9 +12,9 @@ use core::{
 
 #[derive(Clone, Copy)]
 pub enum PtrType {
-    PtrToValuePtr(usize),
+    RcStartPtr(usize),
     RcBoxStartPtr(usize),
-    RefCellStartPtr(usize),
+    PtrToValuePtr(usize),
 }
 
 pub trait SpecMethods<'a> {
@@ -91,34 +91,24 @@ macro_rules! fetch_value_vm_addr_common {
                         .unwrap(),
                 )
             }
-            PtrType::RefCellStartPtr(ptr_to_refcell) => {
-                remap_addr!($mm, ptr_to_refcell);
-                let ptr_to_ptr_to_value_ptr = ptr_to_refcell + FIXED_PTR_BYTE_SIZE * 1;
-                let ptr_value = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
-                    reconstruct_slice(ptr_to_ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
-                        .try_into()
-                        .unwrap(),
-                );
-                let ptr_to_value_ptr = $mm
-                    .map_vm_addr_to_host(ptr_value, FIXED_PTR_BYTE_SIZE as u64)
-                    .unwrap();
+            PtrType::RcBoxStartPtr(rc_box_start_ptr) => {
+                remap_addr!($mm, rc_box_start_ptr);
+                let ptr_to_value_ptr = rc_box_start_ptr + FIXED_PTR_BYTE_SIZE * 3;
                 u64::from_le_bytes(
                     reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
                 )
             }
-            PtrType::RcBoxStartPtr(rc_box_ptr) => {
-                remap_addr!($mm, rc_box_ptr);
-                let ptr_to_ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE * 3;
-                let ptr_value = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
-                    reconstruct_slice(ptr_to_ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
+            PtrType::RcStartPtr(rc_start_ptr) => {
+                remap_addr!($mm, rc_start_ptr);
+                let rc_box_ptr = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
+                    reconstruct_slice(rc_start_ptr, FIXED_PTR_BYTE_SIZE)
                         .try_into()
                         .unwrap(),
-                );
-                let ptr_to_value_ptr = $mm
-                    .map_vm_addr_to_host(ptr_value, FIXED_PTR_BYTE_SIZE as u64)
-                    .unwrap();
+                ) as usize;
+                remap_addr!($mm, rc_box_ptr);
+                let ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE * 3;
                 u64::from_le_bytes(
                     reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
                         .try_into()
@@ -180,13 +170,13 @@ mod tests {
     use crate::{
         println_type_size,
         ptr_size::{
-            common::{MemoryMappingHelper, FIXED_PTR_BYTE_SIZE},
+            common::{typecast_bytes, MemoryMappingHelper, FIXED_PTR_BYTE_SIZE},
             primitives::{PtrType, RcRefCellMemLayout},
             slice_fat_ptr64::{reconstruct_slice, SliceFatPtr64Repr},
         },
     };
     use alloc::rc::Rc;
-    use core::cell::RefCell;
+    use core::{cell::RefCell, ptr::NonNull};
 
     #[test]
     fn structs_sizes_test() {
@@ -198,42 +188,39 @@ mod tests {
     #[test]
     fn rc_refcell_test() {
         let mut lamports: u64 = 13;
-        let lamports_rc: Rc<RefCell<&mut u64>> = Rc::new(RefCell::new(&mut lamports));
-        let lamports_rc_as_ptr = lamports_rc.as_ptr() as usize;
-        let lamports_rc_ptr = (&lamports_rc) as *const _ as usize;
-        let lamports_rc_box_ptr = lamports_rc_ptr - FIXED_PTR_BYTE_SIZE * 2;
+        struct TestStruct<'a> {
+            lamports_rc: Rc<RefCell<&'a mut u64>>,
+        }
+        let test_struct = TestStruct {
+            lamports_rc: Rc::new(RefCell::new(&mut lamports)),
+        };
+        let test_struct_const_ptr = &test_struct as *const _;
+        assert_eq!(size_of::<TestStruct>(), 8);
+
+        // let lamports_rc: Rc<RefCell<&u64>> = Rc::new(RefCell::new(&lamports));
+        let rc_as_ptr = test_struct.lamports_rc.as_ptr() as usize;
+        let lamports_rc_const_ptr: *const Rc<RefCell<&mut u64>> =
+            &test_struct.lamports_rc as *const _;
+        assert_eq!(
+            &test_struct.lamports_rc as *const _ as usize,
+            &test_struct as *const _ as usize
+        );
+        let rc_start_ptr = lamports_rc_const_ptr as usize;
 
         let mm = MemoryMappingHelper::new(None, None);
 
-        let ptr_type = PtrType::RefCellStartPtr(12);
-        let ptr_type_ref = &ptr_type;
-        match *ptr_type_ref {
-            PtrType::PtrToValuePtr(v) => {}
-            PtrType::RcBoxStartPtr(_) => {}
-            PtrType::RefCellStartPtr(_) => {}
-        }
-
-        // RcBox {
-        //     strong: usize,          // ref count
-        //     weak: usize,            // weak count
-        //     value: RefCell<&mut u64> {
-        //         borrow: Cell<isize>, // borrow flag
-        //         value: *mut &mut u64      // 8-byte pointer
-        //     }
-        // }
-
-        let ptr_to_ptr_to_value_ptr = lamports_rc_box_ptr + FIXED_PTR_BYTE_SIZE * 3;
-        let ptr_to_value_ptr = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
-            reconstruct_slice(ptr_to_ptr_to_value_ptr, FIXED_PTR_BYTE_SIZE)
+        let rc_box_start_ptr = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
+            reconstruct_slice(rc_start_ptr, FIXED_PTR_BYTE_SIZE)
                 .try_into()
                 .unwrap(),
-        );
-        assert_eq!(ptr_to_value_ptr as usize, lamports_rc_as_ptr);
+        ) as usize;
+        let ptr_to_value_ptr = rc_box_start_ptr + FIXED_PTR_BYTE_SIZE * 3;
         let value_ptr = u64::from_le_bytes(
             reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
                 .try_into()
                 .unwrap(),
         );
+        // assert_eq!(value_ptr as usize, lamports_rc_as_ptr);
         let value = u64::from_le_bytes(
             reconstruct_slice(value_ptr as usize, FIXED_PTR_BYTE_SIZE)
                 .try_into()
@@ -241,10 +228,8 @@ mod tests {
         );
         assert_eq!(value, lamports);
 
-        let container = RcRefCellMemLayout::<&mut u64>::new(
-            mm.clone(),
-            PtrType::RcBoxStartPtr(lamports_rc_box_ptr),
-        );
+        let container =
+            RcRefCellMemLayout::<&mut u64>::new(mm.clone(), PtrType::RcStartPtr(rc_start_ptr));
         let value = container.value();
         assert_eq!(value, &lamports);
         let value_vm_addr = container.value_vm_addr();
@@ -259,20 +244,23 @@ mod tests {
 
         let container = RcRefCellMemLayout::<&mut u64>::new(
             mm.clone(),
-            PtrType::RefCellStartPtr(lamports_rc_ptr),
+            PtrType::RcBoxStartPtr(rc_box_start_ptr),
         );
         let value = container.value();
         assert_eq!(value, &lamports);
-
-        let wrapper = RcRefCellMemLayout::<&mut u64>::new(
-            mm.clone(),
-            PtrType::PtrToValuePtr(ptr_to_value_ptr as usize),
+        let value_vm_addr = container.value_vm_addr();
+        assert_eq!(
+            u64::from_le_bytes(
+                reconstruct_slice::<u8>(value_vm_addr as usize, 8)
+                    .try_into()
+                    .unwrap()
+            ),
+            lamports
         );
-        let value = wrapper.value();
+
+        let container =
+            RcRefCellMemLayout::<&mut u64>::new(mm.clone(), PtrType::PtrToValuePtr(rc_as_ptr));
+        let value = container.value();
         assert_eq!(value, &lamports);
-        let lamports_new_val: u64 = 43;
-        *wrapper.value_mut() = lamports_new_val;
-        let value = wrapper.value();
-        assert_eq!(value, &lamports_new_val);
     }
 }

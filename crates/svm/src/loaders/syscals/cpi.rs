@@ -171,7 +171,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             debug_log!("from_account_info5");
             // Double translate lamports out of RefCell
             let ptr = RcRefCellMemLayout::<&mut u64>::new(
-                MemoryMappingHelper::new(None, None),
+                MemoryMappingHelper::new(Some(memory_mapping), None),
                 PtrType::RcBoxStartPtr(lamports_ptr as usize),
             );
             // let ptr = translate_type::<u64>(
