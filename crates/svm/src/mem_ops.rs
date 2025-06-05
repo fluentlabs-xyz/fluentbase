@@ -599,6 +599,7 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
+    skip_addr_translation: bool,
 ) -> Result<SliceFatPtr64<'a, T>, SvmError> {
     if len == 0 {
         return Ok(SliceFatPtr64::default(Some(memory_mapping)));
@@ -624,7 +625,11 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     //     total_size
     // );
 
-    let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
+    let host_addr = if skip_addr_translation {
+        vm_addr
+    } else {
+        translate(memory_mapping, access_type, vm_addr, total_size)?
+    };
     debug_log!(
         "translate_slice_inner 3: vm_addr {} host_addr {} ({} in GB)",
         vm_addr,
@@ -646,6 +651,7 @@ pub fn translate_slice<'a, T: ElementConstraints<'a>>(
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
+    skip_addr_translation: bool,
 ) -> Result<SliceFatPtr64<'a, T>, SvmError> {
     translate_slice_inner::<T>(
         memory_mapping,
@@ -653,6 +659,7 @@ pub fn translate_slice<'a, T: ElementConstraints<'a>>(
         vm_addr,
         len,
         check_aligned,
+        skip_addr_translation,
     )
     // .map(|value| &*value)
 }
@@ -662,6 +669,7 @@ pub fn translate_slice_mut<'a, T: ElementConstraints<'a>>(
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
+    skip_addr_translation: bool,
 ) -> Result<SliceFatPtr64<'a, T>, SvmError> {
     translate_slice_inner::<T>(
         memory_mapping,
@@ -669,6 +677,7 @@ pub fn translate_slice_mut<'a, T: ElementConstraints<'a>>(
         vm_addr,
         len,
         check_aligned,
+        skip_addr_translation,
     )
 }
 
@@ -680,8 +689,16 @@ pub fn translate_string_and_do(
     len: u64,
     check_aligned: bool,
     work: &mut dyn FnMut(&str) -> Result<u64, Error>,
+    skip_addr_translation: bool,
 ) -> Result<u64, Error> {
-    let buf = translate_slice::<u8>(memory_mapping, addr, len, check_aligned)?.to_vec_cloned();
+    let buf = translate_slice::<u8>(
+        memory_mapping,
+        addr,
+        len,
+        check_aligned,
+        skip_addr_translation,
+    )?
+    .to_vec_cloned();
     match from_utf8(buf.as_slice()) {
         Ok(message) => work(message),
         Err(err) => Err(SyscallError::InvalidString(err, buf).into()),
@@ -723,7 +740,7 @@ pub fn memmove<SDK: SharedAPI>(
         dst_addr,
         n,
         invoke_context.get_check_aligned(),
-        // true,
+        false,
     )?;
     // .as_mut_ptr();
     let src_ptr = translate_slice::<u8>(
@@ -731,7 +748,7 @@ pub fn memmove<SDK: SharedAPI>(
         src_addr,
         n,
         invoke_context.get_check_aligned(),
-        // true,
+        false,
     )?;
     // .as_ptr();
 
@@ -746,9 +763,15 @@ pub fn translate_and_check_program_address_inputs<'a>(
     program_id_addr: u64,
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
+    skip_addr_translation: bool,
 ) -> Result<(Vec<Vec<u8>>, &'a Pubkey), SvmError> {
-    let untranslated_seeds =
-        translate_slice::<SliceFatPtr64<u8>>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
+    let untranslated_seeds = translate_slice::<SliceFatPtr64<u8>>(
+        memory_mapping,
+        seeds_addr,
+        seeds_len,
+        check_aligned,
+        skip_addr_translation,
+    )?;
     debug_log!(
         "translate_and_check_program_address_inputs 1: seeds_addr {} seeds_len {} untranslated_seeds.len {}",
         seeds_addr,

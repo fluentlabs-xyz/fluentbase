@@ -322,7 +322,7 @@ mod tests {
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
         // let pk_payer = Pubkey::new_unique();
         let pk_payer = pubkey_from_address(&DEPLOYER_ADDRESS);
-        let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
+        let pk_payer_account = AccountSharedData::new(101, 0, &system_program_id);
 
         // let pk_exec = Pubkey::from([8; 32]);
         const CONTRACT_ADDRESS: Address = address!("0xf91c20c0cafbfdc150adff51bbfc5808edde7cb5");
@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(from_utf8(&output).unwrap(), "");
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
-        assert_eq!(account_data.lamports(), 100);
+        assert_eq!(account_data.lamports(), 101);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
@@ -458,7 +458,7 @@ mod tests {
         }
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
-        assert_eq!(account_data.lamports(), 100);
+        assert_eq!(account_data.lamports(), 101);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
@@ -486,7 +486,7 @@ mod tests {
         main_single_message(sdk.clone(), Some(&mut sapi));
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
-        assert_eq!(account_data.lamports(), 100);
+        assert_eq!(account_data.lamports(), 101);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 

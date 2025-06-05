@@ -184,6 +184,11 @@ pub fn reconstruct_slice<'a, T>(ptr: usize, len: usize) -> &'a [T] {
     unsafe { core::slice::from_raw_parts::<'a>(ptr as *const T, len) }
 }
 
+#[inline(always)]
+pub fn reconstruct_slice_mut<'a, T>(ptr: usize, len: usize) -> &'a mut [T] {
+    unsafe { core::slice::from_raw_parts_mut::<'a>(ptr as *mut T, len) }
+}
+
 impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
     const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
 
@@ -429,7 +434,7 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
 
     pub fn from_fat_ptr_to_fixed_slice(
         fat_ptr_slice: &[u8; SLICE_FAT_PTR64_SIZE_BYTES],
-        memory_mapping: &'a MemoryMapping<'a>,
+        memory_mapping: Option<&'a MemoryMapping<'a>>,
     ) -> Self {
         let first_item_fat_ptr_addr = u64::from_le_bytes(
             fat_ptr_slice[..FAT_PTR64_ELEM_BYTE_SIZE]
@@ -441,10 +446,10 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
                 .try_into()
                 .unwrap(),
         );
-        Self::new::<false>(Some(memory_mapping), first_item_fat_ptr_addr, len)
+        Self::new::<false>(memory_mapping, first_item_fat_ptr_addr, len)
     }
 
-    pub fn from_fat_ptr_slice(ptr: &[u8], memory_mapping: &'a MemoryMapping<'a>) -> Self {
+    pub fn from_fat_ptr_slice(ptr: &[u8], memory_mapping: Option<&'a MemoryMapping<'a>>) -> Self {
         assert_eq!(
             ptr.len(),
             SLICE_FAT_PTR64_SIZE_BYTES,
@@ -454,7 +459,7 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
         Self::from_fat_ptr_to_fixed_slice(ptr.try_into().unwrap(), memory_mapping)
     }
 
-    pub fn from_ptr_to_fat_ptr(ptr: usize, memory_mapping: &'a MemoryMapping<'a>) -> Self {
+    pub fn from_ptr_to_fat_ptr(ptr: usize, memory_mapping: Option<&'a MemoryMapping<'a>>) -> Self {
         let fat_ptr_slice =
             unsafe { core::slice::from_raw_parts(ptr as *const u8, SLICE_FAT_PTR64_SIZE_BYTES) };
         Self::from_fat_ptr_slice(fat_ptr_slice, memory_mapping)

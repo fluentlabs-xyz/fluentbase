@@ -245,6 +245,7 @@ declare_builtin_function!(
                 dst_addr,
                 n,
                 invoke_context.get_check_aligned(),
+                false,
             )?;
             s.fill(&(c as u8));
             Ok(0)
@@ -316,6 +317,7 @@ declare_builtin_function!(
                 debug_log!("Log: {}", string);
                 Ok(0)
             },
+            false,
         )?;
         Ok(0)
     }
@@ -361,6 +363,7 @@ declare_builtin_function!(
             len,
             invoke_context.get_check_aligned(),
             &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line, column).into()),
+            false,
         )
     }
 );
@@ -400,6 +403,7 @@ declare_builtin_function!(
             result_addr,
             size_of::<H::Output>() as u64,
             invoke_context.get_check_aligned(),
+            false,
         )?;
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
@@ -408,6 +412,7 @@ declare_builtin_function!(
                 vals_addr,
                 vals_len,
                 invoke_context.get_check_aligned(),
+                false,
             )?;
             for val in vals.iter() {
                 // TODO
@@ -683,6 +688,7 @@ declare_builtin_function!(
             program_id_addr,
             memory_mapping,
             invoke_context.get_check_aligned(),
+            false,
         )?;
 
         // replace smv pubkey with evm create2
@@ -699,6 +705,7 @@ declare_builtin_function!(
             address_addr,
             32,
             invoke_context.get_check_aligned(),
+            false,
         )?;
         address.copy_from_slice(new_address.as_ref());
         Ok(0)
@@ -732,7 +739,7 @@ declare_builtin_function!(
         // let host_addr = memory_mapping.map(AccessType::Load, seeds_addr, 8).unwrap();
         let word_size = size_of::<usize>();
         let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, word_size as u64 * seeds_len)?;
-        let untranslated_seeds = translate_slice::<SliceFatPtr64<u8>>(memory_mapping, seeds_addr, seeds_len, true)?;
+        let untranslated_seeds = translate_slice::<SliceFatPtr64<u8>>(memory_mapping, seeds_addr, seeds_len, true, false)?;
         debug_log!(
             "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): untranslated_seeds ({})",
             seeds_addr,
@@ -754,6 +761,7 @@ declare_builtin_function!(
             program_id_addr,
             memory_mapping,
             invoke_context.get_check_aligned(),
+            false,
         );
         if let Err(e) = &result {
             debug_log!("in SyscallTryFindProgramAddress: translate_and_check_program_address_inputs: {:?}", e);
@@ -788,6 +796,7 @@ declare_builtin_function!(
                         address_addr,
                         core::mem::size_of::<Pubkey>() as u64,
                         invoke_context.get_check_aligned(),
+                    false,
                     )?;
                     // TODO recheck this check
                     if !is_nonoverlapping(

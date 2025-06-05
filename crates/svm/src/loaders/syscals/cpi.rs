@@ -170,9 +170,9 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
         let lamports = {
             debug_log!("from_account_info5");
             // Double translate lamports out of RefCell
-            let ptr = RcRefCellMemLayout::<&mut u64>::new(
+            let lamports_mem_layout_ptr = RcRefCellMemLayout::<&mut u64>::new(
                 MemoryMappingHelper::new(Some(memory_mapping), None),
-                PtrType::RcBoxStartPtr(lamports_ptr as usize),
+                PtrType::RcStartPtr(lamports_ptr as usize),
             );
             // let ptr = translate_type::<u64>(
             //     memory_mapping,
@@ -192,19 +192,20 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 check_account_info_pointer(
                     invoke_context,
                     // *ptr,
-                    ptr.value_vm_addr(),
+                    lamports_mem_layout_ptr.value_addr::<false, false>(),
                     account_metadata.vm_lamports_addr,
                     "lamports",
                 )?;
             }
             debug_log!(
-                "from_account_info8: ptr.value_vm_addr()={}",
-                ptr.value_vm_addr()
+                "from_account_info8: ptr.value_vm_addr()={} lamports={}",
+                lamports_mem_layout_ptr.value_addr::<false, false>(),
+                lamports_mem_layout_ptr.value::<false, true>()
             );
             translate_type_mut::<u64>(
                 memory_mapping,
                 // *ptr,
-                ptr.value_vm_addr(),
+                lamports_mem_layout_ptr.value_addr::<false, false>(),
                 invoke_context.get_check_aligned(),
                 false,
             )?
@@ -216,7 +217,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             // account_info.owner as *const _ as u64,
             owner_ptr,
             invoke_context.get_check_aligned(),
-            false,
+            true,
         )?;
 
         debug_log!("from_account_info10");
@@ -228,18 +229,21 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
 
             debug_log!("from_account_info11");
             // Double translate data out of RefCell
-            let data = *translate_type::<&[u8]>(
-                memory_mapping,
-                // account_info.data.as_ptr() as *const _ as u64,
-                data_ptr,
-                invoke_context.get_check_aligned(),
-                false,
-            )?;
+            let data =
+                SliceFatPtr64::<u8>::from_ptr_to_fat_ptr(data_ptr as usize, Some(memory_mapping));
+            // let data = *translate_type::<&[u8]>(
+            //     memory_mapping,
+            //     // account_info.data.as_ptr() as *const _ as u64,
+            //     data_ptr,
+            //     invoke_context.get_check_aligned(),
+            //     true,
+            // )?;
             debug_log!("from_account_info12");
             if direct_mapping {
                 check_account_info_pointer(
                     invoke_context,
-                    data.as_ptr() as u64,
+                    // data.as_ptr() as u64,
+                    data.first_item_fat_ptr_addr(),
                     account_metadata.vm_data_addr,
                     "data",
                 )?;
@@ -271,18 +275,20 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 }
             } else {
                 debug_log!("from_account_info15");
-                let translated = translate(
-                    memory_mapping,
-                    AccessType::Store,
-                    // (account_info.data.as_ptr() as *const u64 as u64)
-                    //     .saturating_add(size_of::<u64>() as u64),
-                    data_ptr.saturating_add(size_of::<u64>() as u64),
-                    8,
-                )? as *mut u64;
+                // let translated = translate(
+                //     memory_mapping,
+                //     AccessType::Store,
+                //     // (account_info.data.as_ptr() as *const u64 as u64)
+                //     //     .saturating_add(size_of::<u64>() as u64),
+                //     data_ptr.saturating_add(size_of::<u64>() as u64),
+                //     8,
+                // )? as *mut u64;
+                let translated = data_ptr as *mut u64;
                 debug_log!("from_account_info16");
                 VmValue::Translated(unsafe { &mut *translated })
             };
-            let vm_data_addr = data.as_ptr() as u64;
+            // let vm_data_addr = data.as_ptr() as u64;
+            let vm_data_addr = data.first_item_fat_ptr_addr();
 
             let serialized_data = if direct_mapping {
                 // when direct mapping is enabled, the permissions on the
@@ -305,6 +311,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                     vm_data_addr,
                     data.len() as u64,
                     invoke_context.get_check_aligned(),
+                    true,
                 )?
             };
             debug_log!("from_account_info18");
@@ -397,6 +404,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 account_info.data_addr,
                 account_info.data_len,
                 invoke_context.get_check_aligned(),
+                false,
             )?
         };
 
@@ -536,6 +544,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
             accounts_ptr.first_item_fat_ptr_addr(),
             accounts_ptr.len(),
             invoke_context.get_check_aligned(),
+            false,
         )?;
         debug_log!(
             "SyscallInvokeSigned::translate_instruction3: data_ptr.first_item_fat_ptr_addr {}",
@@ -546,6 +555,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
             data_ptr.first_item_fat_ptr_addr(),
             data_ptr.len(),
             invoke_context.get_check_aligned(),
+            false,
         )?;
 
         check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
@@ -651,6 +661,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
                 signers_seeds_addr,
                 signers_seeds_len,
                 invoke_context.get_check_aligned(),
+                false,
             )?;
             if signers_seeds.len() > MAX_SIGNERS {
                 return Err(SyscallError::TooManySigners.into());
@@ -1126,6 +1137,10 @@ where
                 "translate_and_update_accounts12.{}",
                 instruction_account_index
             );
+            debug_log!(
+                "caller_account.serialized_data: {:x?}",
+                caller_account.serialized_data.to_vec_cloned()
+            );
             // before initiating CPI, the caller may have modified the
             // account (caller_account). We need to update the corresponding
             // BorrowedAccount (callee_account) so the callee can see the
@@ -1415,11 +1430,14 @@ fn update_callee_account<SDK: SharedAPI>(
 ) -> Result<bool, SvmError> {
     let mut must_update_caller = false;
 
+    println!("update_callee_account1");
     if callee_account.get_lamports() != *caller_account.lamports {
         callee_account.set_lamports(*caller_account.lamports)?;
     }
 
+    println!("update_callee_account2");
     if direct_mapping {
+        println!("update_callee_account3");
         let prev_len = callee_account.get_data().len();
         let post_len = *caller_account.ref_to_len_in_vm.get()? as usize;
         match callee_account
@@ -1427,17 +1445,20 @@ fn update_callee_account<SDK: SharedAPI>(
             .and_then(|_| callee_account.can_data_be_changed())
         {
             Ok(()) => {
+                println!("update_callee_account4");
                 let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
                 // bpf_loader_deprecated programs don't have a realloc region
                 if is_loader_deprecated && realloc_bytes_used > 0 {
                     return Err(InstructionError::InvalidRealloc.into());
                 }
+                println!("update_callee_account5");
                 if prev_len != post_len {
                     callee_account.set_data_length(post_len)?;
                     // pointer to data may have changed, so caller must be updated
                     must_update_caller = true;
                 }
                 if realloc_bytes_used > 0 {
+                    println!("update_callee_account6");
                     let serialized_data = translate_slice::<u8>(
                         memory_mapping,
                         caller_account
@@ -1445,7 +1466,9 @@ fn update_callee_account<SDK: SharedAPI>(
                             .saturating_add(caller_account.original_data_len as u64),
                         realloc_bytes_used as u64,
                         invoke_context.get_check_aligned(),
+                        false,
                     )?;
+                    println!("update_callee_account7");
                     callee_account
                         .get_data_mut()?
                         .get_mut(caller_account.original_data_len..post_len)
@@ -1459,25 +1482,30 @@ fn update_callee_account<SDK: SharedAPI>(
                 }
             }
             Err(err) if prev_len != post_len => {
+                println!("update_callee_account8");
                 return Err(err.into());
             }
             _ => {}
         }
     } else {
+        println!("update_callee_account9");
         // The redundant check helps to avoid the expensive data comparison if we can
         let caller_ser_data = caller_account
             .serialized_data
             .iter()
             .map(|v| v.as_ref().clone())
             .collect::<Vec<_>>();
+        println!("update_callee_account10");
         match callee_account
             .can_data_be_resized(caller_account.serialized_data.len())
             .and_then(|_| callee_account.can_data_be_changed())
         {
             Ok(()) => {
+                println!("update_callee_account11");
                 callee_account.set_data_from_slice(&caller_ser_data)?;
             }
             Err(err) if callee_account.get_data() != &caller_ser_data => {
+                println!("update_callee_account12");
                 return Err(err.into());
             }
             _ => {}
@@ -1659,6 +1687,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                             .saturating_add(dirty_realloc_start as u64),
                         dirty_realloc_len as u64,
                         invoke_context.get_check_aligned(),
+                        false,
                     )?;
                     serialized_data.fill(&0);
                 }
@@ -1679,6 +1708,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                 caller_account.vm_data_addr,
                 post_len as u64,
                 false, // Don't care since it is byte aligned
+                false,
             )?;
         }
         // this is the len field in the AccountInfo::data slice
@@ -1764,6 +1794,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                         .saturating_add(caller_account.original_data_len as u64),
                     realloc_bytes_used as u64,
                     invoke_context.get_check_aligned(),
+                    false,
                 )?
             };
             let from_slice = callee_account
