@@ -23,7 +23,7 @@ fn deploy_via_deployer(ctx: &mut EvmTestingContext, bytecode: Bytes) -> Address 
         result.is_success(),
         "call to \"deploy\" method of ContractDeployer.sol failed"
     );
-    let address = <Address>::abi_decode(result.output().unwrap(), true).unwrap();
+    let address = <Address>::abi_decode_validate(result.output().unwrap()).unwrap();
     address
 }
 
@@ -39,7 +39,7 @@ fn test_evm_create_evm_contract() {
     let encoded_call = sayHelloWorldCall {}.abi_encode();
     let result = ctx.call_evm_tx(owner, contract_address, encoded_call.into(), None, None);
     assert!(result.is_success());
-    let string = <String>::abi_decode(result.output().unwrap(), true).unwrap();
+    let string = <String>::abi_decode_validate(result.output().unwrap()).unwrap();
     assert_eq!(string, "Hello, World");
 }
 

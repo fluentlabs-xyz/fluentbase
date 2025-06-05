@@ -17,6 +17,7 @@ use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
 use rwasm::legacy::rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
+use revm::bytecode::Bytecode;
 
 #[test]
 fn test_wasm_greeting() {
@@ -143,11 +144,9 @@ fn test_wasm_panic() {
 
 #[test]
 fn test_wasm_erc20() {
-    // deploy greeting WASM contract
     let mut ctx = EvmTestingContext::default();
     const OWNER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
-    // call greeting WASM contract
     let result = ctx.call_evm_tx(
         OWNER_ADDRESS,
         contract_address,
@@ -247,4 +246,25 @@ fn test_wasm_keccak256_gas_price() {
         "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
         hex::encode(&bytes[0..32]),
     );
+}
+
+#[test]
+fn deploy_and_load_wasm_contract() {
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let deployer_account = ctx.db.load_account(DEPLOYER_ADDRESS).unwrap();
+    assert_eq!(deployer_account.info.nonce, 0);
+    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_GREETING.into());
+    let deployer_account = ctx.db.load_account(DEPLOYER_ADDRESS).unwrap();
+    assert_eq!(deployer_account.info.nonce, 1, "Nonce was not incremented after deployment, maybe database was not committed?");
+    let contract_account = ctx.db.load_account(contract_address).unwrap();;
+    assert!(contract_account.info.code.is_some());
+    match contract_account.info.code.clone().unwrap() {
+        Bytecode::Rwasm(bytes) => {
+            assert!(!bytes.is_empty());
+        },
+        other => {
+            panic!("Expected Rwasm bytecode, found bytecode with len {}: {:?}", other.original_byte_slice().len(), other)
+        },
+    }
 }

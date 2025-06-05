@@ -12,8 +12,10 @@ impl SyscallChargeFuelManually {
         let fuel_refunded: i64 = caller.stack_pop_as();
         let fuel_consumed: u64 = caller.stack_pop_as();
         println!(
-            "ChargeFuelManually: fuel_consumed={}, fuel_refunded={}",
-            fuel_consumed, fuel_refunded
+            "ChargeFuelManually: fuel_consumed={}, fuel_refunded={}, contract_hash={}",
+            fuel_consumed,
+            fuel_refunded,
+            caller.context().bytecode.resolve_hash()
         );
         caller.vm_mut().try_consume_fuel(fuel_consumed)?;
         caller.vm_mut().refund_fuel(fuel_refunded);
