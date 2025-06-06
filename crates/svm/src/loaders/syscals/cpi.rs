@@ -230,16 +230,23 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 return Err(SyscallError::InvalidPointer.into());
             }
 
-            debug_log!("from_account_info11");
+            debug_log!(
+                "from_account_info11 addr_to_data_addr {} ({:x?})",
+                addr_to_data_addr,
+                addr_to_data_addr,
+            );
             // Double translate data out of RefCell
             let data_mem_layout = RcRefCellMemLayout::<&mut [u8]>::new(
                 mmh.clone(),
                 PtrType::RcStartPtr(addr_to_data_addr),
             );
-            let data = SliceFatPtr64::<u8>::from_ptr_to_fat_ptr(
-                data_mem_layout.addr_to_value_addr::<false, false>() as usize,
-                mmh.clone(),
+            let data_addr = data_mem_layout.addr_to_value_addr::<false, false>();
+            debug_log!(
+                "from_account_info11 data_addr {} ({:x?})",
+                data_addr,
+                data_addr,
             );
+            let data = SliceFatPtr64::<u8>::from_ptr_to_fat_ptr(data_addr as usize, mmh.clone());
             // let data = *translate_type::<&[u8]>(
             //     memory_mapping,
             //     // account_info.data.as_ptr() as *const _ as u64,
@@ -1599,6 +1606,8 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
     *caller_account.lamports = callee_account.get_lamports();
     *caller_account.owner = *callee_account.get_owner();
 
+    debug_log!("update_caller_account1");
+
     let mut zero_all_mapped_spare_capacity = false;
     if direct_mapping {
         if let Some(region) = account_data_region(
@@ -1606,6 +1615,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
             caller_account.vm_data_addr,
             caller_account.original_data_len,
         )? {
+            debug_log!("update_caller_account2");
             // Since each instruction account is directly mapped in a memory region with a *fixed*
             // length, upon returning from CPI we must ensure that the current capacity is at least
             // the original length (what is mapped in memory), so that the account's memory region
@@ -1621,6 +1631,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                     .reserve(min_capacity.saturating_sub(callee_account.get_data().len()))?;
                 zero_all_mapped_spare_capacity = true;
             }
+            debug_log!("update_caller_account3");
 
             // If an account's data pointer has changed we must update the corresponding
             // MemoryRegion in the caller's address space. Address spaces are fixed so we don't need
@@ -1630,6 +1641,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
             // because of BorrowedAccount::make_data_mut or by a program that uses the
             // AccountSharedData API directly (deprecated).
             let callee_ptr = callee_account.get_data().as_ptr() as u64;
+            debug_log!("update_caller_account4");
             if region.host_addr.get() != callee_ptr {
                 region.host_addr.set(callee_ptr);
                 zero_all_mapped_spare_capacity = true;
@@ -1637,8 +1649,10 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
         }
     }
 
+    debug_log!("update_caller_account5");
     let prev_len = *caller_account.ref_to_len_in_vm.get()? as usize;
     let post_len = callee_account.get_data().len();
+    debug_log!("update_caller_account6");
     if prev_len != post_len {
         let max_increase = if direct_mapping && !invoke_context.get_check_aligned() {
             0
@@ -1649,6 +1663,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
             > caller_account
                 .original_data_len
                 .saturating_add(max_increase);
+        debug_log!("update_caller_account7");
         if data_overflow {
             // ic_msg!(
             //     invoke_context,
@@ -1660,7 +1675,9 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
         // If the account has been shrunk, we're going to zero the unused memory
         // *that was previously used*.
         if post_len < prev_len {
+            debug_log!("update_caller_account8");
             if direct_mapping {
+                debug_log!("update_caller_account9");
                 // We have two separate regions to zero out: the account data
                 // and the realloc region. Here we zero the realloc region, the
                 // data region is zeroed further down below.
@@ -1683,6 +1700,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                 // or it must zero the account data, therefore making the
                 // zeroing we do here redundant.
                 if prev_len > caller_account.original_data_len {
+                    debug_log!("update_caller_account10");
                     // If we get here and prev_len > original_data_len, then
                     // we've already returned InvalidRealloc for the
                     // bpf_loader_deprecated case.
@@ -1693,16 +1711,20 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                     let realloc_region = caller_account
                         .realloc_region(memory_mapping, is_loader_deprecated)?
                         .unwrap(); // unwrapping here is fine, we already asserted !is_loader_deprecated
+                    debug_log!("update_caller_account11");
                     let original_state = realloc_region.state.replace(MemoryState::Writable);
                     defer! {
                         realloc_region.state.set(original_state);
                     }
+                    debug_log!("update_caller_account12");
 
                     // We need to zero the unused space in the realloc region, starting after the
                     // last byte of the new data which might be > original_data_len.
                     let dirty_realloc_start = caller_account.original_data_len.max(post_len);
+                    debug_log!("update_caller_account13");
                     // and we want to zero up to the old length
                     let dirty_realloc_len = prev_len.saturating_sub(dirty_realloc_start);
+                    debug_log!("update_caller_account14");
                     let mut serialized_data = translate_slice_mut::<u8>(
                         memory_mapping,
                         caller_account
@@ -1712,20 +1734,25 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                         invoke_context.get_check_aligned(),
                         false,
                     )?;
+                    debug_log!("update_caller_account15");
                     serialized_data.fill(&0);
                 }
             } else {
+                debug_log!("update_caller_account16");
                 caller_account
                     .serialized_data
                     .get_mut(post_len..)
                     .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall))?
                     .fill(&0);
+                debug_log!("update_caller_account16.1");
             }
         }
 
+        debug_log!("update_caller_account17");
         // when direct mapping is enabled we don't cache the serialized data in
         // caller_account.serialized_data. See CallerAccount::from_account_info.
         if !direct_mapping {
+            debug_log!("update_caller_account18");
             caller_account.serialized_data = translate_slice_mut::<u8>(
                 memory_mapping,
                 caller_account.vm_data_addr,
@@ -1734,6 +1761,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                 false,
             )?;
         }
+        debug_log!("update_caller_account19");
         // this is the len field in the AccountInfo::data slice
         *caller_account.ref_to_len_in_vm.get_mut()? = post_len as u64;
 
