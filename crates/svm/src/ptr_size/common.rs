@@ -1,9 +1,7 @@
-use solana_account_info::AccountInfo;
 use solana_rbpf::{
     error::ProgramResult,
     memory_region::{AccessType, MemoryMapping},
 };
-use std::any::type_name;
 
 pub const FIXED_MACHINE_WORD_BYTE_SIZE: usize = 8;
 pub const FIXED_PTR_BYTE_SIZE: usize = FIXED_MACHINE_WORD_BYTE_SIZE;
@@ -40,6 +38,48 @@ macro_rules! println_typ_size {
             $crate::typ_name!($typ),
             $crate::typ_size!($typ)
         )
+    };
+}
+
+#[macro_export]
+macro_rules! map_addr_if {
+    ($is:ident, $mm:expr, $ptr:ident) => {
+        if $is {
+            $mm.map_vm_addr_to_host(
+                $ptr as u64,
+                crate::ptr_size::common::FIXED_PTR_BYTE_SIZE as u64,
+            )
+            .unwrap()
+        } else {
+            $ptr
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! map_addr {
+    ($mm:expr, $ptr:ident) => {
+        $mm.map_vm_addr_to_host(
+            $ptr as u64,
+            crate::ptr_size::common::FIXED_PTR_BYTE_SIZE as u64,
+        )
+        .unwrap()
+    };
+}
+#[macro_export]
+macro_rules! remap_addr_if {
+    ($is:ident, $mm:expr, $ptr:ident) => {
+        let $ptr = if $is {
+            $crate::map_addr!($mm, $ptr)
+        } else {
+            $ptr
+        };
+    };
+}
+#[macro_export]
+macro_rules! remap_addr {
+    ($mm:expr, $ptr:ident) => {
+        let $ptr = $crate::map_addr!($mm, $ptr);
     };
 }
 
@@ -81,18 +121,15 @@ pub struct MemoryMappingHelper<'a> {
 
 impl Default for MemoryMappingHelper<'_> {
     fn default() -> Self {
-        MemoryMappingHelper::new(None, None)
+        MemoryMappingHelper::new(None)
     }
 }
 
 impl<'a> MemoryMappingHelper<'a> {
-    pub fn new(
-        memory_mapping: Option<&'a MemoryMapping<'a>>,
-        access_type: Option<AccessType>,
-    ) -> Self {
+    pub fn new(memory_mapping: Option<&'a MemoryMapping<'a>>) -> Self {
         Self {
             memory_mapping,
-            access_type,
+            access_type: None,
         }
     }
     pub fn memory_mapping(&'a self) -> Option<&'a MemoryMapping<'a>> {

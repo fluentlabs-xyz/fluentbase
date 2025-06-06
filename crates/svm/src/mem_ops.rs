@@ -3,11 +3,14 @@ use crate::{
     context::InvokeContext,
     error::{Error, SvmError},
     helpers::{StdResult, SyscallError},
-    ptr_size::slice_fat_ptr64::{
-        collect_into_vec_cloned,
-        ElementConstraints,
-        SliceFatPtr64,
-        SliceFatPtr64Repr,
+    ptr_size::{
+        common::MemoryMappingHelper,
+        slice_fat_ptr64::{
+            collect_into_vec_cloned,
+            ElementConstraints,
+            SliceFatPtr64,
+            SliceFatPtr64Repr,
+        },
     },
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
@@ -602,7 +605,9 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     skip_addr_translation: bool,
 ) -> Result<SliceFatPtr64<'a, T>, SvmError> {
     if len == 0 {
-        return Ok(SliceFatPtr64::default(Some(memory_mapping)));
+        return Ok(SliceFatPtr64::default(MemoryMappingHelper::new(Some(
+            memory_mapping,
+        ))));
     }
     // let type_name = type_name::<T>();
     let size_of_t = size_of::<T>();
@@ -641,7 +646,11 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
         return Err(SyscallError::UnalignedPointer.into());
     }
     // debug_log!("translate_slice_inner 4");
-    let result = SliceFatPtr64::new::<false>(Some(memory_mapping), host_addr, len);
+    let result = SliceFatPtr64::new::<false>(
+        MemoryMappingHelper::new(Some(memory_mapping)),
+        host_addr,
+        len,
+    );
     // let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
     Ok(result)
 }
