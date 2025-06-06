@@ -240,13 +240,15 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 mmh.clone(),
                 PtrType::RcStartPtr(addr_to_data_addr),
             );
-            let data_addr = data_mem_layout.addr_to_value_addr::<false, false>();
+            let data_fat_ptr_vm_addr = data_mem_layout.addr_to_value_addr::<false, false>();
+            let data_fat_ptr_addr = data_mem_layout.addr_to_value_addr::<false, true>();
             debug_log!(
                 "from_account_info11 data_addr {} ({:x?})",
-                data_addr,
-                data_addr,
+                data_fat_ptr_addr,
+                data_fat_ptr_addr,
             );
-            let data = SliceFatPtr64::<u8>::from_ptr_to_fat_ptr(data_addr as usize, mmh.clone());
+            let data =
+                SliceFatPtr64::<u8>::from_ptr_to_fat_ptr(data_fat_ptr_addr as usize, mmh.clone());
             // let data = *translate_type::<&[u8]>(
             //     memory_mapping,
             //     // account_info.data.as_ptr() as *const _ as u64,
@@ -276,7 +278,9 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             let ref_to_len_in_vm = if direct_mapping {
                 // let vm_addr = (account_info.data.as_ptr() as *const u64 as u64)
                 //     .saturating_add(size_of::<u64>() as u64);
-                let vm_addr = addr_to_data_addr.saturating_add(size_of::<u64>() as u64);
+                let data_len_fat_ptr_vm_addr =
+                    data_fat_ptr_vm_addr.saturating_add(size_of::<u64>() as u64);
+                let vm_addr = data_len_fat_ptr_vm_addr;
                 // In the same vein as the other check_account_info_pointer() checks, we don't lock
                 // this pointer to a specific address but we don't want it to be inside accounts, or
                 // callees might be able to write to the pointed memory.
@@ -291,6 +295,8 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 }
             } else {
                 debug_log!("from_account_info15");
+                let data_len_fat_ptr_addr =
+                    data_fat_ptr_addr.saturating_add(size_of::<u64>() as u64);
                 // let translated = translate(
                 //     memory_mapping,
                 //     AccessType::Store,
@@ -299,11 +305,13 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 //     data_ptr.saturating_add(size_of::<u64>() as u64),
                 //     8,
                 // )? as *mut u64;
-                let translated = addr_to_data_addr as *mut u64;
+                let translated = data_len_fat_ptr_addr as *mut u64;
                 debug_log!("from_account_info16");
-                VmValue::Translated(unsafe { &mut *translated })
+                let val = unsafe { &mut *translated };
+                VmValue::Translated(val)
             };
             // let vm_data_addr = data.as_ptr() as u64;
+            let vm_data_addr = data.first_item_fat_ptr_addr();
             let host_data_addr = data.first_item_fat_ptr_addr();
 
             let serialized_data = if direct_mapping {
@@ -331,7 +339,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 )?
             };
             debug_log!("from_account_info18");
-            (serialized_data, host_data_addr, ref_to_len_in_vm)
+            (serialized_data, vm_data_addr, ref_to_len_in_vm)
         };
 
         debug_log!("from_account_info19");

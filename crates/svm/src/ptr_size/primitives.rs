@@ -118,7 +118,7 @@ macro_rules! fetch_addr_to_value_addr_common {
                         .try_into()
                         .unwrap(),
                 );
-                $crate::remap_addr!($mm, rc_box_ptr);
+                // $crate::remap_addr!($mm, rc_box_ptr);
                 let ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE as u64 * 3;
                 ptr_to_value_ptr
             }
@@ -200,7 +200,7 @@ impl<'a> SpecMethods<'a> for &mut [u8] {
         memory_mapping_helper: &'a MemoryMappingHelper<'a>,
         ptr: &PtrType,
     ) -> u64 {
-        fetch_addr_to_value_addr_common!(memory_mapping_helper, *ptr) as u64
+        fetch_addr_to_value_addr_common!(memory_mapping_helper, *ptr)
     }
 
     fn fetch_value_addr(memory_mapping_helper: &'a MemoryMappingHelper<'a>, ptr: &PtrType) -> u64 {
