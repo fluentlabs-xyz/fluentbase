@@ -47,7 +47,7 @@ use core::{
     pin::Pin,
     sync::atomic::Ordering,
 };
-use fluentbase_sdk::{HashSet, SharedAPI};
+use fluentbase_sdk::{debug_log, HashSet, SharedAPI};
 use solana_feature_set::{move_precompile_verification_to_svm, FeatureSet};
 use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
@@ -475,14 +475,19 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
         // *compute_units_consumed = 0;
+        debug_log!("invoke_context.process_instruction1");
         self.transaction_context
             .get_next_instruction_context()?
             .configure(program_indices, instruction_accounts, instruction_data);
+        debug_log!("invoke_context.process_instruction2");
         self.push()?;
-        self.process_executable_chain(/*compute_units_consumed , timings*/)
+        debug_log!("invoke_context.process_instruction3");
+        let result = self.process_executable_chain(/*compute_units_consumed , timings*/)
             // MUST pop if and only if `push` succeeded, independent of `result`.
             // Thus, the `.and()` instead of an `.and_then()`.
-            .and(self.pop())
+            .and(self.pop());
+        debug_log!("invoke_context.process_instruction4: {:?}", result);
+        result
     }
 
     /// Processes a precompile instruction
@@ -519,6 +524,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // compute_units_consumed: &mut u64,
         // timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
+        debug_log!("invoke_context.process_executable_chain1");
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
         // let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
@@ -528,6 +534,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             let borrowed_root_account = instruction_context
                 .try_borrow_program_account(&self.transaction_context, 0)
                 .map_err(|_| InstructionError::UnsupportedProgramId)?;
+            debug_log!("invoke_context.process_executable_chain2");
             let owner_id = borrowed_root_account.get_owner();
             if native_loader::check_id(owner_id) {
                 *borrowed_root_account.get_key()
@@ -542,6 +549,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             .program_cache_for_tx_batch
             .find(&builtin_id)
             .ok_or(InstructionError::UnsupportedProgramId)?;
+        debug_log!("invoke_context.process_executable_chain3");
         let function = match &entry.program {
             ProgramCacheEntryType::Builtin(program) => program
                 .get_function_registry()
@@ -550,11 +558,14 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             _ => None,
         }
         .ok_or(InstructionError::UnsupportedProgramId)?;
+        debug_log!("invoke_context.process_executable_chain4");
         entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
 
         let program_id = *instruction_context.get_last_program_key(&self.transaction_context)?;
+        debug_log!("invoke_context.process_executable_chain5");
         self.transaction_context
             .set_return_data(program_id, Vec::new())?;
+        debug_log!("invoke_context.process_executable_chain6");
         // let logger = self.get_log_collector();
         // stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
         // let pre_remaining_units = self.get_remaining();
@@ -564,6 +575,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         let mock_config = Config::default();
         let empty_memory_mapping =
             MemoryMapping::new(Vec::new(), &mock_config, &SBPFVersion::V1).unwrap();
+        debug_log!("invoke_context.process_executable_chain7");
         let mut vm = EbpfVm::new(
             self.program_cache_for_tx_batch
                 .environments
@@ -577,7 +589,9 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             empty_memory_mapping,
             0,
         );
+        debug_log!("invoke_context.process_executable_chain8");
         vm.invoke_function(function);
+        debug_log!("invoke_context.process_executable_chain9");
         let result = match vm.program_result {
             ProgramResult::Ok(_) => {
                 // stable_log::program_success(&logger, &program_id);
@@ -599,6 +613,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 }
             }
         };
+        debug_log!("invoke_context.process_executable_chain10");
         // let post_remaining_units = self.get_remaining();
         // *compute_units_consumed = pre_remaining_units.saturating_sub(post_remaining_units);
 
