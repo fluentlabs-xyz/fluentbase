@@ -3,7 +3,6 @@ use core::{mem::take, str::from_utf8};
 use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
-    address,
     calc_create_address,
     Address,
     Bytes,
@@ -15,23 +14,20 @@ use fluentbase_sdk::{
 };
 use fluentbase_types::{bytes::BytesMut, compile_wasm_to_rwasm};
 use revm::{
-    context,
     context::{
         result::{ExecutionResult, ExecutionResult::Success, Output},
         BlockEnv,
         CfgEnv,
-        Evm,
         TransactTo,
         TxEnv,
     },
-    database::{EmptyDB, InMemoryDB},
+    database::InMemoryDB,
     handler::MainnetContext,
     primitives::{hardfork::SpecId, keccak256, map::DefaultHashBuilder, HashMap},
     state::{Account, AccountInfo, Bytecode},
     Context,
     DatabaseCommit,
     ExecuteCommitEvm,
-    Journal,
     MainBuilder,
 };
 use rwasm::legacy::rwasm::{BinaryFormat, RwasmModule};
@@ -71,7 +67,7 @@ impl EvmTestingContext {
             info.code = v.code.clone().map(Bytecode::new_raw);
             db.insert_account_info(*k, info);
         }
-        let mut cfg = CfgEnv::default();
+        let cfg = CfgEnv::default();
         Self {
             sdk: HostTestingContext::default(),
             genesis,
@@ -274,12 +270,12 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
-    pub fn disable_rwasm_proxy(mut self) -> Self {
+    pub fn disable_rwasm_proxy(self) -> Self {
         self.ctx.cfg.disable_rwasm_proxy = true;
         self
     }
 
-    pub fn disable_builtins_consume_fuel(mut self) -> Self {
+    pub fn disable_builtins_consume_fuel(self) -> Self {
         self.ctx.cfg.disable_builtins_consume_fuel = true;
         self
     }

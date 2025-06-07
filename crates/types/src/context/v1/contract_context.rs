@@ -1,6 +1,5 @@
-use crate::context::{BlockContextReader, ContractContextReader, TxContextReader};
-use alloc::vec;
-use alloy_primitives::{Address, Bytes, U256};
+use crate::context::ContractContextReader;
+use alloy_primitives::{Address, U256};
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ContractContextV1 {
@@ -74,8 +73,8 @@ impl ContractContextReader for ContractContextV1 {
 //             // doesn't affect gas price or something else, can skip
 //             access_list: Default::default(),
 //             gas_priority_fee: cr.tx_gas_priority_fee(),
-//             // TODO(dmitry123): "we don't support blobs yet, so 2 tests from e2e testing suite fail"
-//             blob_hashes: vec![],        // tx_context.blob_hashes.clone(),
+//             // TODO(dmitry123): "we don't support blobs yet, so 2 tests from e2e testing suite
+// fail"             blob_hashes: vec![],        // tx_context.blob_hashes.clone(),
 //             max_fee_per_blob_gas: None, // tx_context.max_fee_per_blob_gas,
 //             authorization_list: None,
 //             #[cfg(feature = "optimism")]

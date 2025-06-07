@@ -2,6 +2,7 @@
 members = [
     "contracts/*",
     "crates/*",
+    "revm/bins/revme",
     "revm/crates/*",
     "examples/*",
     "e2e",

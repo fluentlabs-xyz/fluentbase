@@ -1,5 +1,5 @@
 use crate::memory::num_words;
-use fluentbase_sdk::{FUEL_DENOM_RATE, U256};
+use fluentbase_sdk::U256;
 
 pub const BASE: u64 = 2;
 pub const VERY_LOW: u64 = 3;
