@@ -1358,7 +1358,7 @@ pub(crate) fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
         memory_mapping,
         invoke_context,
     )?;
-    debug_log!("cpi_common6");
+    debug_log!("cpi_common6: signers {:x?}", signers);
     let is_loader_deprecated = *instruction_context
         .try_borrow_last_program_account(transaction_context)?
         .get_owner()
@@ -1377,7 +1377,11 @@ pub(crate) fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
         memory_mapping,
         invoke_context,
     )?;
-    debug_log!("cpi_common8");
+    debug_log!(
+        "cpi_common8: instruction_accounts.len()={} instruction.data {:x?}",
+        instruction_accounts.len(),
+        instruction.data.as_ref()
+    );
 
     // Process the callee instruction
     // let mut compute_units_consumed = 0;
