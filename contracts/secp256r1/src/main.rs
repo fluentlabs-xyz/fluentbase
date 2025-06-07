@@ -3,14 +3,7 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{
-    alloc_slice,
-    entrypoint,
-    Bytes,
-    ContractContextReader,
-    ExitCode,
-    SharedAPI,
-};
+use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
 
 /// Main entry point for the secp256r1 wrapper contract.
 /// This contract wraps the secp256r1 precompile (EIP-7212) which verifies ECDSA signatures

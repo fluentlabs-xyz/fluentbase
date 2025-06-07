@@ -10,7 +10,7 @@ exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
     # temporarly exclude bls12384 before prague
-    "contracts/bls12381"
+    "contracts/bls12381",
 ]
 resolver = "2"
 

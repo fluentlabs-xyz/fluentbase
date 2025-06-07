@@ -241,7 +241,7 @@ impl<T: MethodLike> Client<T> {
                 gas_limit: u64,
                 #(#params,)*
             ) -> #return_type {
-                use fluentbase_sdk::TxContextReader;
+                use fluentbase_sdk::ContextReader;
 
                 let input = fluentbase_sdk::Bytes::from(#fn_args::new((#(#param_names,)*)).encode());
 

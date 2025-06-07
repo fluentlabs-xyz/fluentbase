@@ -7,7 +7,7 @@ use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, result::InterpreterResult,
 use fluentbase_sdk::{
     entrypoint,
     Bytes,
-    ContractContextReader,
+    ContextReader,
     ExitCode,
     SharedAPI,
     SyscallResult,

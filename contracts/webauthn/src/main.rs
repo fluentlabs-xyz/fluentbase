@@ -7,7 +7,7 @@ use fluentbase_sdk::{
     codec::SolidityABI,
     entrypoint,
     Bytes,
-    ContractContextReader,
+    ContextReader,
     ExitCode,
     SharedAPI,
     B256,

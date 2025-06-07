@@ -1,19 +1,117 @@
-pub use self::{
-    block_context::BlockContextV1,
-    contract_context::ContractContextV1,
-    tx_context::TxContextV1,
-};
-use crate::{
-    context::{BlockContextReader, ContractContextReader, SharedContextReader, TxContextReader},
-    Address,
-    B256,
-    U256,
-};
+use crate::{context::ContextReader, Address, B256, U256};
+use alloc::vec;
 use alloy_primitives::Bytes;
 
-mod block_context;
-mod contract_context;
-mod tx_context;
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct BlockContextV1 {
+    pub chain_id: u64,
+    pub coinbase: Address,
+    pub timestamp: u64,
+    pub number: u64,
+    pub difficulty: U256,
+    pub prev_randao: B256,
+    pub gas_limit: u64,
+    pub base_fee: U256,
+}
+
+impl From<&revm_primitives::Env> for BlockContextV1 {
+    fn from(value: &revm_primitives::Env) -> Self {
+        Self {
+            chain_id: value.cfg.chain_id,
+            coinbase: value.block.coinbase,
+            timestamp: value.block.timestamp.as_limbs()[0],
+            number: value.block.number.as_limbs()[0],
+            difficulty: value.block.difficulty,
+            prev_randao: value.block.prevrandao.unwrap_or_default(),
+            gas_limit: value.block.gas_limit.as_limbs()[0],
+            base_fee: value.block.basefee,
+        }
+    }
+}
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct ContractContextV1 {
+    pub address: Address,
+    pub bytecode_address: Address,
+    pub caller: Address,
+    pub is_static: bool,
+    pub value: U256,
+    pub gas_limit: u64,
+}
+
+pub fn env_from_context<CR: ContextReader>(cr: CR) -> revm_primitives::Env {
+    use revm_primitives::{AnalysisKind, BlockEnv, CfgEnv, Env, TransactTo, TxEnv};
+    Env {
+        cfg: {
+            let mut cfg_env = CfgEnv::default();
+            cfg_env.chain_id = cr.block_chain_id();
+            cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
+            cfg_env
+        },
+        block: BlockEnv {
+            number: U256::from(cr.block_number()),
+            coinbase: cr.block_coinbase(),
+            timestamp: U256::from(cr.block_timestamp()),
+            gas_limit: U256::from(cr.block_gas_limit()),
+            basefee: cr.block_base_fee(),
+            difficulty: cr.block_difficulty(),
+            prevrandao: Some(cr.block_prev_randao()),
+            blob_excess_gas_and_price: None,
+        },
+        tx: TxEnv {
+            caller: cr.tx_origin(),
+            gas_limit: cr.tx_gas_limit(),
+            gas_price: cr.tx_gas_price(),
+            // we don't check this field, and we don't know what type of "transact"
+            // we execute right now, so can safely skip the field
+            transact_to: TransactTo::Call(Address::ZERO),
+            value: cr.tx_value(),
+            // we don't use this field, so there is no need to do redundant copy operation
+            data: Bytes::default(),
+            // we do nonce and chain id checks before executing transaction
+            nonce: None,
+            chain_id: None,
+            // we check access lists in advance before executing a smart contract, it
+            // doesn't affect gas price or something else, can skip
+            access_list: Default::default(),
+            gas_priority_fee: cr.tx_gas_priority_fee(),
+            // TODO(dmitry123): "we don't support blobs yet, so 2 tests from e2e testing suite fail"
+            blob_hashes: vec![],        // tx_context.blob_hashes.clone(),
+            max_fee_per_blob_gas: None, // tx_context.max_fee_per_blob_gas,
+            authorization_list: None,
+            #[cfg(feature = "optimism")]
+            optimism: Default::default(),
+        },
+    }
+}
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct TxContextV1 {
+    pub gas_limit: u64,
+    pub nonce: u64,
+    pub gas_price: U256,
+    pub gas_priority_fee: Option<U256>,
+    pub origin: Address,
+    // pub blob_hashes: Vec<B256>,
+    // pub max_fee_per_blob_gas: Option<U256>,
+    pub value: U256,
+}
+
+impl From<&revm_primitives::Env> for TxContextV1 {
+    fn from(value: &revm_primitives::Env) -> Self {
+        Self {
+            gas_limit: value.tx.gas_limit,
+            nonce: value.tx.nonce.unwrap_or_default(),
+            gas_price: value.tx.gas_price,
+            gas_priority_fee: value.tx.gas_priority_fee,
+            origin: value.tx.caller,
+            // data: value.tx.data.clone(),
+            // blob_hashes: value.tx.blob_hashes.clone(),
+            // max_fee_per_blob_gas: value.tx.max_fee_per_blob_gas,
+            value: value.tx.value,
+        }
+    }
+}
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct SharedContextInputV1 {
@@ -22,7 +120,7 @@ pub struct SharedContextInputV1 {
     pub contract: ContractContextV1,
 }
 
-impl BlockContextReader for SharedContextInputV1 {
+impl ContextReader for SharedContextInputV1 {
     fn block_chain_id(&self) -> u64 {
         self.block.chain_id
     }
@@ -54,9 +152,7 @@ impl BlockContextReader for SharedContextInputV1 {
     fn block_base_fee(&self) -> U256 {
         self.block.base_fee
     }
-}
 
-impl TxContextReader for SharedContextInputV1 {
     fn tx_gas_limit(&self) -> u64 {
         self.tx.gas_limit
     }
@@ -80,9 +176,7 @@ impl TxContextReader for SharedContextInputV1 {
     fn tx_value(&self) -> U256 {
         self.tx.value
     }
-}
 
-impl ContractContextReader for SharedContextInputV1 {
     fn contract_address(&self) -> Address {
         self.contract.address
     }
@@ -107,8 +201,6 @@ impl ContractContextReader for SharedContextInputV1 {
         self.contract.gas_limit
     }
 }
-
-impl SharedContextReader for SharedContextInputV1 {}
 
 impl bincode::Encode for SharedContextInputV1 {
     fn encode<E: bincode::enc::Encoder>(

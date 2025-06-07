@@ -19,3 +19,4 @@ std = [
     "fluentbase-codec/std",
 ]
 debug-print = []
+fast-panic = []

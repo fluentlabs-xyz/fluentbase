@@ -7,7 +7,7 @@ use fluentbase_sdk::{
     alloc_slice,
     entrypoint,
     Bytes,
-    ContractContextReader,
+    ContextReader,
     ExitCode,
     SharedAPI,
     PRECOMPILE_BLS12_381_G1_ADD,
@@ -50,13 +50,7 @@ entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{
-        hex,
-        Address,
-        Bytes,
-        ContractContextV1,
-        FUEL_DENOM_RATE,
-    };
+    use fluentbase_sdk::{hex, Address, Bytes, ContractContextV1, FUEL_DENOM_RATE};
     use fluentbase_sdk_testing::HostTestingContext;
 
     fn exec_evm_precompile(address: Address, inputs: &[u8], expected: &[u8], expected_gas: u64) {
