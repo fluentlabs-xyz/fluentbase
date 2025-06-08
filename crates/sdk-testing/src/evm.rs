@@ -27,6 +27,7 @@ use revm::{
     state::{Account, AccountInfo, Bytecode},
     DatabaseCommit,
     ExecuteCommitEvm,
+    MainBuilder,
 };
 use rwasm::legacy::rwasm::{BinaryFormat, RwasmModule};
 use rwasm_revm::{RwasmBuilder, RwasmContext, RwasmSpecId};
@@ -284,13 +285,13 @@ impl<'a> TxBuilder<'a> {
             context.cfg = self.ctx.cfg.clone();
             context.block = self.block.clone();
             context.tx = self.tx.clone();
-            let mut evm = context.build_rwasm();
+            let mut evm = context.build_mainnet();
             let result = evm.transact_commit(self.tx.clone()).unwrap();
             let new_db = &mut evm.journaled_state.database;
             self.ctx.db = take(new_db);
             result
         } else {
-            let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+            let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, PRAGUE);
             context.cfg = self.ctx.cfg.clone();
             context.block = self.block.clone();
             context.tx = self.tx.clone();
