@@ -37,19 +37,14 @@ fluentbase-examples-tiny-keccak = { path = "../examples/tiny-keccak" }
 
 rwasm = { workspace = true }
 revm = { workspace = true }
+rwasm-revm = { workspace = true }
 hex-literal = { workspace = true }
 hex = { workspace = true }
 alloy-sol-types = { workspace = true }
 wat = { version = "1.223.0" }
 
-tikv-jemallocator = "0.6.0"
-
-[build-dependencies]
-fluentbase-build = { workspace = true }
-cargo_metadata = "0.19.1"
-
 [features]
-default = ["std", "fluentbase-runtime/debug-print", "revm/debug-print"]
+default = ["std", "debug-print"]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
@@ -57,4 +52,9 @@ std = [
     "fluentbase-sdk/std",
     "rwasm/std",
     "revm/std",
+]
+debug-print = [
+    "fluentbase-runtime/debug-print",
+    "revm/debug-print",
+    "rwasm-revm/debug-print",
 ]

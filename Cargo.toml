@@ -73,7 +73,7 @@ bincode = { version = "2.0.1", default-features = false, features = ["alloc", "d
 wasmtime = { version = "31.0.0" }
 
 # revm
-revm = { path = "revm/crates/revm", default-features = false, features = ["wasmtime"] }
+revm = { path = "revm/crates/revm", default-features = false }
 primitives = { path = "revm/crates/primitives", package = "revm-primitives", default-features = false }
 bytecode = { path = "revm/crates/bytecode", package = "revm-bytecode", default-features = false }
 database = { path = "revm/crates/database", package = "revm-database", default-features = false }
@@ -86,7 +86,7 @@ statetest-types = { path = "revm/crates/statetest-types", package = "revm-statet
 context = { path = "revm/crates/context", package = "revm-context", default-features = false }
 context-interface = { path = "revm/crates/context/interface", package = "revm-context-interface", default-features = false }
 handler = { path = "revm/crates/handler", package = "revm-handler", default-features = false }
-rwasm-revm = { path = "revm/crates/rwasm-revm", default-features = false, features = ["wasmtime"] }
+rwasm-revm = { path = "revm/crates/rwasm-revm", default-features = false }
 
 # alloy
 alloy-eip2930 = { version = "0.2.0", default-features = false }

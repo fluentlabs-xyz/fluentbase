@@ -195,7 +195,7 @@ impl EvmTestingContext {
     pub fn nonce(&mut self, caller: Address) -> u64 {
         let account = self.db.load_account(caller).unwrap();
         println!(
-            "current nonce for {}: {} {:?}",
+            "current nonce for {}: {} ({:?})",
             caller, account.info.nonce, account.account_state
         );
         account.info.nonce
@@ -276,7 +276,7 @@ impl<'a> TxBuilder<'a> {
     pub fn exec(&mut self) -> ExecutionResult {
         self.tx.nonce = self.ctx.nonce(self.tx.caller);
         let db = take(&mut self.ctx.db);
-        let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::SUPERPOSE);
+        let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
         context.cfg = self.ctx.cfg.clone();
         context.block = self.block.clone();
         context.tx = self.tx.clone();

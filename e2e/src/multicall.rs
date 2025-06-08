@@ -1,8 +1,8 @@
-use fluentbase_sdk_testing::EvmTestingContext;
 use alloc::vec::Vec;
 use core::str::from_utf8;
 use fluentbase_codec::SolidityABI;
 use fluentbase_sdk::{address, compile_wasm_to_rwasm, Address, Bytes};
+use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
 
 #[test]
@@ -20,6 +20,7 @@ fn test_multicall_greeting() {
         Some(300_000_000),
         None,
     );
+    assert!(result.is_success(), "failed to call evm ({:?})", result);
     let output = result.output().unwrap_or_default();
     println!("Decoded output: {:?}", from_utf8(&output[68..]));
     assert!(result.is_success());
