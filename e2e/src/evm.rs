@@ -7,7 +7,7 @@ use fluentbase_sdk_testing::{
     HostTestingContextNativeAPI,
     TxBuilder,
 };
-use fluentbase_types::PRECOMPILE_SECP256K1_RECOVER;
+use fluentbase_types::{PRECOMPILE_BLAKE2F, PRECOMPILE_SECP256K1_RECOVER};
 use hex_literal::hex;
 use revm::{
     bytecode::opcode,
@@ -514,36 +514,60 @@ fn test_evm_ecrecover_out_of_gas() {
     assert!(result.is_halt());
 }
 
+// This test calls a contract function that attempts to transfer 1 wei to `TARGET_ADDRESS`.
+// The transfer is expected to fail and revert because the contract itself holds no balance
+// and cannot cover the 1 wei being sent.
 #[test]
-fn test_evm_ecrecover_out_of_gas_2() {
+fn test_evm_send_one_wei() {
     let mut ctx = EvmTestingContext::default();
-    ctx.disabled_rwasm = true;
+    // ctx.disabled_rwasm = true;
     const OWNER_ADDRESS: Address = Address::ZERO;
+    const TARGET_ADDRESS: Address = PRECOMPILE_BLAKE2F; // any precompile
 
-    // Deploy contract from bytecode (compiled from EcrecoverWithLowGas.sol)
+    // Fund the sender
+    ctx.add_balance(OWNER_ADDRESS, U256::from(1e18));
+
+    // Deploy the SendOneWei contract
     let contract_address = ctx.deploy_evm_tx(
         OWNER_ADDRESS,
-        hex::decode(include_bytes!("../assets/EcrecoverWithLowGas.bin"))
+        hex::decode(include_bytes!("../assets/SendOneWei.bin"))
             .unwrap()
             .into(),
     );
 
-    let selector = keccak256("callEcrecover()".as_bytes()).to_vec()[..4].to_vec();
+    // Declare function interface using sol!
+    sol! {
+        function sendOneWei(address payable target) external;
+    }
+
+    // Encode calldata
+    let call_data = sendOneWeiCall {
+        target: TARGET_ADDRESS,
+    }
+    .abi_encode();
+
+    // Execute the call
     let result = ctx.call_evm_tx(
         OWNER_ADDRESS,
         contract_address,
-        selector.into(),
+        call_data.into(),
         None,
-        Some(U256::from(0)),
+        Some(U256::ZERO),
     );
+
     println!("{:?}", result);
+
+    // Should revert since 0x01 cannot receive ETH
     assert!(matches!(result, Revert { .. }));
-    let message = "ecrecover failed".as_bytes().to_vec();
-    let present = result
+
+    // Check revert message
+    let message = "Transfer failed".as_bytes();
+    let found = result
         .output()
         .unwrap()
         .windows(message.len())
-        .any(|window| window == message);
-    assert!(present, "Expected revert message not found in output");
-    assert_eq!(result.gas_used(), 29319);
+        .any(|w| w == message);
+    assert!(found, "Expected revert message not found");
+
+    assert_eq!(result.gas_used(), 29015);
 }
