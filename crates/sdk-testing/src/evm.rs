@@ -30,7 +30,7 @@ use revm::{
     MainBuilder,
 };
 use rwasm::legacy::rwasm::{BinaryFormat, RwasmModule};
-use rwasm_revm::{RwasmBuilder, RwasmContext, RwasmSpecId};
+use rwasm_revm::{RwasmBuilder, RwasmContext};
 
 #[allow(dead_code)]
 pub struct EvmTestingContext {
