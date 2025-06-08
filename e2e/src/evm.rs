@@ -515,15 +515,9 @@ fn test_evm_ecrecover_out_of_gas() {
 }
 
 #[test]
-fn test_evm_ecrecover_out_of_gas_indirect_call() {
-    // [make_call_frame] with inputs CallInputs { input: SharedBuffer(160..257),
-    // return_memory_offset: 289..321, gas_limit: 2300, bytecode_address:
-    // 0x0000000000000000000000000000000000000001, target_address:
-    // 0x0000000000000000000000000000000000000001, caller:
-    // 0xbd770416a3345f91e4b34576cb804a576fa48eb1, value: Transfer(0), scheme: Call, is_static:
-    // false, is_eof: false }
+fn test_evm_ecrecover_out_of_gas_2() {
     let mut ctx = EvmTestingContext::default();
-    // ctx.cfg.disable_rwasm_proxy = true;
+    ctx.disabled_rwasm = true;
     const OWNER_ADDRESS: Address = Address::ZERO;
 
     // Deploy contract from bytecode (compiled from EcrecoverWithLowGas.sol)
