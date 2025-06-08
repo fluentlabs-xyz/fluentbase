@@ -22,7 +22,8 @@ use revm::{
         TxEnv,
     },
     database::InMemoryDB,
-    primitives::{keccak256, map::DefaultHashBuilder, HashMap},
+    handler::MainnetContext,
+    primitives::{hardfork::PRAGUE, keccak256, map::DefaultHashBuilder, HashMap},
     state::{Account, AccountInfo, Bytecode},
     DatabaseCommit,
     ExecuteCommitEvm,
@@ -36,6 +37,7 @@ pub struct EvmTestingContext {
     pub genesis: Genesis,
     pub db: InMemoryDB,
     pub cfg: CfgEnv,
+    pub disabled_rwasm: bool,
 }
 
 impl Default for EvmTestingContext {
@@ -71,6 +73,7 @@ impl EvmTestingContext {
             genesis,
             db,
             cfg,
+            disabled_rwasm: false,
         }
     }
 
@@ -276,15 +279,27 @@ impl<'a> TxBuilder<'a> {
     pub fn exec(&mut self) -> ExecutionResult {
         self.tx.nonce = self.ctx.nonce(self.tx.caller);
         let db = take(&mut self.ctx.db);
-        let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
-        context.cfg = self.ctx.cfg.clone();
-        context.block = self.block.clone();
-        context.tx = self.tx.clone();
-        let mut evm = context.build_rwasm();
-        let result = evm.transact_commit(self.tx.clone()).unwrap();
-        let new_db = &mut evm.journaled_state.database;
-        self.ctx.db = take(new_db);
-        result
+        if self.ctx.disabled_rwasm {
+            let mut context: MainnetContext<InMemoryDB> = MainnetContext::new(db, PRAGUE);
+            context.cfg = self.ctx.cfg.clone();
+            context.block = self.block.clone();
+            context.tx = self.tx.clone();
+            let mut evm = context.build_rwasm();
+            let result = evm.transact_commit(self.tx.clone()).unwrap();
+            let new_db = &mut evm.journaled_state.database;
+            self.ctx.db = take(new_db);
+            result
+        } else {
+            let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+            context.cfg = self.ctx.cfg.clone();
+            context.block = self.block.clone();
+            context.tx = self.tx.clone();
+            let mut evm = context.build_rwasm();
+            let result = evm.transact_commit(self.tx.clone()).unwrap();
+            let new_db = &mut evm.journaled_state.database;
+            self.ctx.db = take(new_db);
+            result
+        }
     }
 }
 
