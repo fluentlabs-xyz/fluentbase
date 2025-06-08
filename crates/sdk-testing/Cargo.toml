@@ -18,9 +18,9 @@ fluentbase-types = { workspace = true }
 
 hashbrown = { workspace = true }
 revm = { workspace = true }
+rwasm-revm = { workspace = true }
 rwasm = { workspace = true }
 hex = { workspace = true }
-alloy-consensus = {workspace = true}
 
 [features]
 default = ["std", "fluentbase-runtime/debug-print"]
@@ -31,4 +31,5 @@ std = [
     "fluentbase-sdk/std",
     "rwasm/std",
     "revm/std",
+    "rwasm-revm/std",
 ]

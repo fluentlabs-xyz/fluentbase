@@ -3,6 +3,7 @@ extern crate test;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{address, Address, U256};
 use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
+use revm::primitives::hardfork::SpecId;
 use std::time::Instant;
 
 #[ignore] // TODO(khasan) nitro has floats for some reason, investigate why and how to remove them
@@ -42,7 +43,7 @@ fn test_nitro_verifier_wasm_version() {
 #[test]
 fn test_nitro_verifier_solidity_version() {
     let mut ctx = EvmTestingContext::default();
-    ctx.cfg.disable_rwasm_proxy = true;
+    ctx.cfg.spec = SpecId::PRAGUE;
 
     const OWNER_ADDRESS: Address = Address::ZERO;
     ctx.add_balance(OWNER_ADDRESS, U256::from(1e18));

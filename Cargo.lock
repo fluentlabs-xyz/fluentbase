@@ -2386,6 +2386,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-bls12381"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "fluentbase-sdk-testing",
+ "revm-precompile",
+]
+
+[[package]]
 name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
@@ -2750,6 +2760,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-genesis",
  "fluentbase-contracts-blake2f",
+ "fluentbase-contracts-bls12381",
  "fluentbase-contracts-bn256",
  "fluentbase-contracts-ecrecover",
  "fluentbase-contracts-erc20",
@@ -2849,7 +2860,6 @@ dependencies = [
 name = "fluentbase-sdk-testing"
 version = "0.1.0"
 dependencies = [
- "alloy-consensus",
  "fluentbase-codec",
  "fluentbase-genesis",
  "fluentbase-runtime",
@@ -2859,6 +2869,7 @@ dependencies = [
  "hex",
  "revm",
  "rwasm",
+ "rwasm-revm",
 ]
 
 [[package]]
@@ -5133,9 +5144,6 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "auto_impl",
- "fluentbase-genesis",
- "fluentbase-runtime",
- "fluentbase-sdk",
  "revm-bytecode",
  "revm-context",
  "revm-context-interface",
@@ -5478,6 +5486,21 @@ dependencies = [
  "strum 0.27.1",
  "strum_macros 0.27.1",
  "wasmparser-nostd",
+]
+
+[[package]]
+name = "rwasm-revm"
+version = "4.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "fluentbase-genesis",
+ "fluentbase-runtime",
+ "fluentbase-sdk",
+ "revm",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

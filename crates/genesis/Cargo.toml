@@ -17,7 +17,7 @@ alloy-genesis = { workspace = true, default-features = false }
 lazy_static = { workspace = true }
 
 fluentbase-contracts-blake2f = { path = "../../contracts/blake2f" }
-#fluentbase-contracts-bls12381 = { path = "../../contracts/bls12381" }
+fluentbase-contracts-bls12381 = { path = "../../contracts/bls12381" }
 fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
 fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
 fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }
@@ -41,7 +41,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 fluentbase-contracts-blake2f = { path = "../../contracts/blake2f" }
-#fluentbase-contracts-bls12381 = { path = "../../contracts/bls12381" }
+fluentbase-contracts-bls12381 = { path = "../../contracts/bls12381" }
 fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
 fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
 fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }

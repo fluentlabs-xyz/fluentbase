@@ -10,8 +10,6 @@ members = [
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
-    # temporarly exclude bls12384 before prague
-    "contracts/bls12381"
 ]
 resolver = "2"
 
@@ -73,20 +71,22 @@ tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
 wasmtime = { version = "31.0.0" }
+
 # revm
-revm = { path = "revm/crates/revm", version = "23.1.0", default-features = false, features = ["wasmtime"] }
-primitives = { path = "revm/crates/primitives", package = "revm-primitives", version = "19.0.0", default-features = false }
-bytecode = { path = "revm/crates/bytecode", package = "revm-bytecode", version = "4.0.0", default-features = false }
-database = { path = "revm/crates/database", package = "revm-database", version = "4.0.0", default-features = false }
-database-interface = { path = "revm/crates/database/interface", package = "revm-database-interface", version = "4.0.0", default-features = false }
-state = { path = "revm/crates/state", package = "revm-state", version = "4.0.0", default-features = false }
-interpreter = { path = "revm/crates/interpreter", package = "revm-interpreter", version = "19.1.0", default-features = false }
-inspector = { path = "revm/crates/inspector", package = "revm-inspector", version = "4.1.0", default-features = false }
-precompile = { path = "revm/crates/precompile", package = "revm-precompile", version = "20.1.0", default-features = false }
-statetest-types = { path = "revm/crates/statetest-types", package = "revm-statetest-types", version = "4.1.0", default-features = false }
-context = { path = "revm/crates/context", package = "revm-context", version = "4.1.0", default-features = false }
-context-interface = { path = "revm/crates/context/interface", package = "revm-context-interface", version = "4.1.0", default-features = false }
-handler = { path = "revm/crates/handler", package = "revm-handler", version = "4.1.0", default-features = false }
+revm = { path = "revm/crates/revm", default-features = false, features = ["wasmtime"] }
+primitives = { path = "revm/crates/primitives", package = "revm-primitives", default-features = false }
+bytecode = { path = "revm/crates/bytecode", package = "revm-bytecode", default-features = false }
+database = { path = "revm/crates/database", package = "revm-database", default-features = false }
+database-interface = { path = "revm/crates/database/interface", package = "revm-database-interface", default-features = false }
+state = { path = "revm/crates/state", package = "revm-state", default-features = false }
+interpreter = { path = "revm/crates/interpreter", package = "revm-interpreter", default-features = false }
+inspector = { path = "revm/crates/inspector", package = "revm-inspector", default-features = false }
+precompile = { path = "revm/crates/precompile", package = "revm-precompile", default-features = false }
+statetest-types = { path = "revm/crates/statetest-types", package = "revm-statetest-types", default-features = false }
+context = { path = "revm/crates/context", package = "revm-context", default-features = false }
+context-interface = { path = "revm/crates/context/interface", package = "revm-context-interface", default-features = false }
+handler = { path = "revm/crates/handler", package = "revm-handler", default-features = false }
+rwasm-revm = { path = "revm/crates/rwasm-revm", default-features = false, features = ["wasmtime"] }
 
 # alloy
 alloy-eip2930 = { version = "0.2.0", default-features = false }

@@ -22,15 +22,13 @@ use revm::{
         TxEnv,
     },
     database::InMemoryDB,
-    handler::MainnetContext,
-    primitives::{hardfork::SpecId, keccak256, map::DefaultHashBuilder, HashMap},
+    primitives::{keccak256, map::DefaultHashBuilder, HashMap},
     state::{Account, AccountInfo, Bytecode},
-    Context,
     DatabaseCommit,
     ExecuteCommitEvm,
-    MainBuilder,
 };
 use rwasm::legacy::rwasm::{BinaryFormat, RwasmModule};
+use rwasm_revm::{RwasmBuilder, RwasmContext, RwasmSpecId};
 
 #[allow(dead_code)]
 pub struct EvmTestingContext {
@@ -270,11 +268,6 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
-    pub fn disable_rwasm_proxy(self) -> Self {
-        self.ctx.cfg.disable_rwasm_proxy = true;
-        self
-    }
-
     pub fn disable_builtins_consume_fuel(self) -> Self {
         self.ctx.cfg.disable_builtins_consume_fuel = true;
         self
@@ -283,11 +276,11 @@ impl<'a> TxBuilder<'a> {
     pub fn exec(&mut self) -> ExecutionResult {
         self.tx.nonce = self.ctx.nonce(self.tx.caller);
         let db = take(&mut self.ctx.db);
-        let mut context: MainnetContext<InMemoryDB> = Context::new(db, SpecId::default());
+        let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, RwasmSpecId::SUPERPOSE);
         context.cfg = self.ctx.cfg.clone();
         context.block = self.block.clone();
         context.tx = self.tx.clone();
-        let mut evm = context.build_mainnet();
+        let mut evm = context.build_rwasm();
         let result = evm.transact_commit(self.tx.clone()).unwrap();
         let new_db = &mut evm.journaled_state.database;
         self.ctx.db = take(new_db);

@@ -7,15 +7,12 @@ use fluentbase_sdk_testing::{
     HostTestingContextNativeAPI,
     TxBuilder,
 };
-use fluentbase_types::{SysFuncIdx::SECP256K1_RECOVER, PRECOMPILE_SECP256K1_RECOVER};
+use fluentbase_types::PRECOMPILE_SECP256K1_RECOVER;
 use hex_literal::hex;
 use revm::{
-    bytecode::{bitvec::view::BitViewSized, opcode},
-    context::result::{
-        ExecutionResult::{Halt, Revert},
-        HaltReason,
-    },
-    precompile::secp256k1::ECRECOVER,
+    bytecode::opcode,
+    context::result::ExecutionResult::Revert,
+    primitives::hardfork::SpecId,
 };
 
 #[test]
@@ -293,7 +290,7 @@ fn test_evm_balance() {
     bytecode.push(opcode::PUSH0);
     bytecode.push(opcode::RETURN);
     let mut ctx = EvmTestingContext::default();
-    ctx.cfg.disable_rwasm_proxy = true;
+    ctx.cfg.spec = SpecId::PRAGUE;
     let contract_address = ctx.deploy_evm_tx(
         Address::with_last_byte(255),
         wrap_to_init_code(&bytecode).into(),
@@ -486,7 +483,6 @@ fn test_evm_caller() {
     let return_data = callExternalCall::abi_decode_returns_validate(&output).unwrap();
     assert!(return_data.success);
     let return_data = return_data.result.to_vec();
-    let returned_string = String::from_utf8(return_data.clone()).unwrap();
 
     // ABI return is padded: decode inner string manually
     let hello_string = sayHelloWorldCall::abi_decode_returns_validate(&return_data).unwrap();
@@ -556,11 +552,4 @@ fn test_evm_ecrecover_out_of_gas_indirect_call() {
         .any(|window| window == message);
     assert!(present, "Expected revert message not found in output");
     assert_eq!(result.gas_used(), 29319);
-}
-
-#[test]
-fn test_evm_coinbase() {
-    let mut ctx = EvmTestingContext::default();
-    ctx.cfg.disable_rwasm_proxy = true;
-    const OWNER_ADDRESS: Address = Address::ZERO;
 }

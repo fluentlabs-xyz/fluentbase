@@ -15,9 +15,9 @@ use fluentbase_codec::{bytes::BytesMut, SolidityABI};
 use fluentbase_sdk::{bytes, Address, Bytes, U256};
 use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
+use revm::bytecode::Bytecode;
 use rwasm::legacy::rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
-use revm::bytecode::Bytecode;
 
 #[test]
 fn test_wasm_greeting() {
@@ -256,15 +256,22 @@ fn deploy_and_load_wasm_contract() {
     assert_eq!(deployer_account.info.nonce, 0);
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_GREETING.into());
     let deployer_account = ctx.db.load_account(DEPLOYER_ADDRESS).unwrap();
-    assert_eq!(deployer_account.info.nonce, 1, "Nonce was not incremented after deployment, maybe database was not committed?");
-    let contract_account = ctx.db.load_account(contract_address).unwrap();;
+    assert_eq!(
+        deployer_account.info.nonce, 1,
+        "Nonce was not incremented after deployment, maybe database was not committed?"
+    );
+    let contract_account = ctx.db.load_account(contract_address).unwrap();
     assert!(contract_account.info.code.is_some());
     match contract_account.info.code.clone().unwrap() {
         Bytecode::Rwasm(bytes) => {
             assert!(!bytes.is_empty());
-        },
+        }
         other => {
-            panic!("Expected Rwasm bytecode, found bytecode with len {}: {:?}", other.original_byte_slice().len(), other)
-        },
+            panic!(
+                "Expected Rwasm bytecode, found bytecode with len {}: {:?}",
+                other.original_byte_slice().len(),
+                other
+            )
+        }
     }
 }
