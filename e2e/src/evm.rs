@@ -518,35 +518,26 @@ fn test_evm_ecrecover_out_of_gas() {
 // The transfer is expected to fail and revert because the contract itself holds no balance
 // and cannot cover the 1 wei being sent.
 #[test]
-fn test_evm_send_one_wei() {
+fn test_evm_send_one_wei_to_precompile() {
     let mut ctx = EvmTestingContext::default();
     // ctx.disabled_rwasm = true;
     const OWNER_ADDRESS: Address = Address::ZERO;
     const TARGET_ADDRESS: Address = PRECOMPILE_BLAKE2F; // any precompile
-
-    // Fund the sender
     ctx.add_balance(OWNER_ADDRESS, U256::from(1e18));
 
-    // Deploy the SendOneWei contract
     let contract_address = ctx.deploy_evm_tx(
         OWNER_ADDRESS,
         hex::decode(include_bytes!("../assets/SendOneWei.bin"))
             .unwrap()
             .into(),
     );
-
-    // Declare function interface using sol!
     sol! {
         function sendOneWei(address payable target) external;
     }
-
-    // Encode calldata
     let call_data = sendOneWeiCall {
         target: TARGET_ADDRESS,
     }
     .abi_encode();
-
-    // Execute the call
     let result = ctx.call_evm_tx(
         OWNER_ADDRESS,
         contract_address,
@@ -554,13 +545,8 @@ fn test_evm_send_one_wei() {
         None,
         Some(U256::ZERO),
     );
-
     println!("{:?}", result);
-
-    // Should revert since 0x01 cannot receive ETH
     assert!(matches!(result, Revert { .. }));
-
-    // Check revert message
     let message = "Transfer failed".as_bytes();
     let found = result
         .output()
@@ -568,6 +554,5 @@ fn test_evm_send_one_wei() {
         .windows(message.len())
         .any(|w| w == message);
     assert!(found, "Expected revert message not found");
-
     assert_eq!(result.gas_used(), 29015);
 }
