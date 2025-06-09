@@ -93,7 +93,8 @@ macro_rules! initial_devnet_balance {
     ($address:literal) => {
         (
             address!($address),
-            GenesisAccount::default().with_balance(U256::from(1_000_000_000000000000000000u128)),
+            GenesisAccount::default()
+                .with_balance(U256::from(1_000_000_000_000_000000000000000000u128)),
         )
     };
 }
@@ -101,28 +102,10 @@ macro_rules! initial_devnet_balance {
 fn devnet_genesis() -> Genesis {
     let mut alloc = BTreeMap::from([
         // default testing accounts
-        initial_devnet_balance!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-        initial_devnet_balance!("70997970C51812dc3A010C7d01b50e0d17dc79C8"),
-        initial_devnet_balance!("3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
-        initial_devnet_balance!("90F79bf6EB2c4f870365E785982E1f101E93b906"),
-        initial_devnet_balance!("15d34AAf54267DB7D7c367839AAf71A00a2C6A65"),
-        initial_devnet_balance!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc"),
-        initial_devnet_balance!("976EA74026E726554dB657fA54763abd0C3a0aa9"),
-        initial_devnet_balance!("14dC79964da2C08b23698B3D3cc7Ca32193d9955"),
-        initial_devnet_balance!("23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f"),
-        initial_devnet_balance!("a0Ee7A142d267C1f36714E4a8F75612F20a79720"),
-        initial_devnet_balance!("Bcd4042DE499D14e55001CcbB24a551F3b954096"),
-        initial_devnet_balance!("71bE63f3384f5fb98995898A86B02Fb2426c5788"),
-        initial_devnet_balance!("FABB0ac9d68B0B445fB7357272Ff202C5651694a"),
-        initial_devnet_balance!("1CBd3b2770909D4e10f157cABC84C7264073C9Ec"),
-        initial_devnet_balance!("dF3e18d64BC6A983f673Ab319CCaE4f1a57C7097"),
-        initial_devnet_balance!("cd3B766CCDd6AE721141F452C550Ca635964ce71"),
-        initial_devnet_balance!("2546BcD3c84621e976D8185a91A922aE77ECEc30"),
-        initial_devnet_balance!("bDA5747bFD65F08deb54cb465eB87D40e51B197E"),
-        initial_devnet_balance!("dD2FD4581271e230360230F9337D5c0430Bf44C0"),
-        initial_devnet_balance!("8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199"),
-        initial_devnet_balance!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3"),
-        initial_devnet_balance!("33a831e42B24D19bf57dF73682B9a3780A0435BA"),
+        initial_devnet_balance!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3"), // dmitry
+        initial_devnet_balance!("33a831e42B24D19bf57dF73682B9a3780A0435BA"), // daniel
+        initial_devnet_balance!("B72988b6DdC94E577E98C5565E0e11E688537e73"), // faucet
+        initial_devnet_balance!("c1202e7d42655F23097476f6D48006fE56d38d4f"), // marcus
     ]);
 
     for (address, contract) in GENESIS_CONTRACTS {
