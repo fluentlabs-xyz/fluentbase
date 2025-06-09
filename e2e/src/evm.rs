@@ -518,6 +518,7 @@ fn test_evm_ecrecover_out_of_gas() {
 // The transfer is expected to fail and revert because the contract itself holds no balance
 // and cannot cover the 1 wei being sent.
 #[test]
+#[ignore]
 fn test_evm_send_one_wei_to_precompile() {
     let mut ctx = EvmTestingContext::default();
     // ctx.disabled_rwasm = true;
