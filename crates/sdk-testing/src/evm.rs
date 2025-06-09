@@ -297,7 +297,7 @@ impl<'a> TxBuilder<'a> {
             context.tx = self.tx.clone();
             let mut evm = context.build_rwasm();
             let result = evm.transact_commit(self.tx.clone()).unwrap();
-            let new_db = &mut evm.journaled_state.database;
+            let new_db = &mut evm.0.journaled_state.database;
             self.ctx.db = take(new_db);
             result
         }
