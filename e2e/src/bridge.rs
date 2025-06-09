@@ -73,6 +73,8 @@ fn test_bridge_contract_with_call() {
     let erc20gateway_contract_address = address!("9fe46736679d2d9a65f0992f2272de9f3c7fa6e0");
     let l1token_contract_address = address!("Dc64a140Aa3E981100a9becA4E685f962f0cF6C9");
 
+    ctx.add_balance(signer_l1_wallet_owner, U256::from(1_000000000000000000u128));
+
     println!("\n\npegged_token_contract:");
     let mut pegged_token_factory_tx_builder = TxBuilder::create(
         &mut ctx,

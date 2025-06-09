@@ -1,6 +1,6 @@
 use alloy_sol_types::{sol, SolCall};
 use core::str::from_utf8;
-use fluentbase_sdk::{address, bytes, calc_create_address, keccak256, Address, U256};
+use fluentbase_sdk::{address, bytes, calc_create_address, Address, U256};
 use fluentbase_sdk_testing::{
     try_print_utf8_error,
     EvmTestingContext,
@@ -377,7 +377,6 @@ fn test_evm_blake2f() {
     );
 
     // Method selector for `callBlake2F()`
-    // keccak256("callBlake2F()")[0..4]
     let call_selector = hex!("41f32a3a");
 
     // Call `callBlake2F()` on deployed contract

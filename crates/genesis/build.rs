@@ -138,7 +138,7 @@ fn main() {
     let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let genesis = devnet_genesis();
     let genesis_json = serde_json::to_string_pretty(&genesis).unwrap();
-    let file_name = "assets/genesis-devnet.json";
+    let file_name = "genesis-devnet.json";
     let out_dir = cargo_manifest_dir.join(file_name);
     let mut file = File::create(out_dir).unwrap();
     file.write(genesis_json.as_bytes()).unwrap();

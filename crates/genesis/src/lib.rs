@@ -3,12 +3,7 @@ use fluentbase_types::{Address, Bytes, GenesisContractBuildOutput, HashMap, B256
 use lazy_static::lazy_static;
 
 pub fn devnet_genesis_from_file() -> Genesis {
-    let json_file = include_str!("../assets/genesis-devnet.json");
-    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
-}
-
-pub fn devnet_genesis_v0_1_0_dev10_from_file() -> Genesis {
-    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.10.json");
+    let json_file = include_str!("../genesis-devnet.json");
     serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
 }
 
