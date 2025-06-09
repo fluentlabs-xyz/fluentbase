@@ -106,6 +106,7 @@ fn devnet_genesis() -> Genesis {
         initial_devnet_balance!("33a831e42B24D19bf57dF73682B9a3780A0435BA"), // daniel
         initial_devnet_balance!("B72988b6DdC94E577E98C5565E0e11E688537e73"), // faucet
         initial_devnet_balance!("c1202e7d42655F23097476f6D48006fE56d38d4f"), // marcus
+        initial_devnet_balance!("e92c16763ba7f73a2218a5416aaa493a1f038bef"), // khasan
     ]);
 
     for (address, contract) in GENESIS_CONTRACTS {
