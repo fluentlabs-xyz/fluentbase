@@ -38,6 +38,7 @@ fluentbase-examples-tiny-keccak = { path = "../examples/tiny-keccak" }
 rwasm = { workspace = true }
 revm = { workspace = true }
 rwasm-revm = { workspace = true }
+op-revm = { workspace = true }
 hex-literal = { workspace = true }
 hex = { workspace = true }
 alloy-sol-types = { workspace = true }

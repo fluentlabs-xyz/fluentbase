@@ -86,8 +86,8 @@ statetest-types = { path = "revm/crates/statetest-types", package = "revm-statet
 context = { path = "revm/crates/context", package = "revm-context", default-features = false }
 context-interface = { path = "revm/crates/context/interface", package = "revm-context-interface", default-features = false }
 handler = { path = "revm/crates/handler", package = "revm-handler", default-features = false }
-op-revm = { path = "revm/crates/op-revm", package = "op-revm", default-features = false }
-rwasm-revm = { path = "revm/crates/rwasm-revm", package = "rwasm-revm", default-features = false }
+op-revm = { path = "revm/crates/op-revm", default-features = false }
+rwasm-revm = { path = "revm/crates/rwasm-revm", default-features = false }
 
 # alloy
 alloy-eip2930 = { version = "0.2.0", default-features = false }

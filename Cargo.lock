@@ -2583,6 +2583,7 @@ dependencies = [
  "fluentbase-types",
  "hex",
  "hex-literal 1.0.0",
+ "op-revm",
  "revm",
  "rwasm",
  "rwasm-revm",
