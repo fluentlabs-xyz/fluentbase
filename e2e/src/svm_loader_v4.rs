@@ -25,7 +25,6 @@ mod tests {
         system_program,
     };
     use hex_literal::hex;
-    use revm::primitives::ExecutionResult;
     use std::{fs::File, io::Read};
 
     pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
@@ -89,7 +88,7 @@ mod tests {
         // setup initial accounts
 
         let pk_payer = pubkey_from_address(&DEPLOYER_ADDRESS);
-        ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
+        ctx.add_balance(DEPLOYER_ADDRESS, U256::from(101e9));
 
         // deploy and get exec contract
 
@@ -99,7 +98,6 @@ mod tests {
         println!("contract_address {:x?}", contract_address);
 
         let pk_exec = pubkey_from_address(&contract_address);
-        // println!("pk_exec {:x?}", &pk_exec.as_ref());
 
         let seed1 = b"my_seed";
         let seed2 = pk_payer.as_ref();
@@ -147,16 +145,12 @@ mod tests {
         );
         ctx.sdk = ctx.sdk.with_block_number(1);
         assert_eq!(ctx.sdk.context().block_number(), 1);
-        let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
+        let result =
+            ctx.call_evm_tx_simple(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
         let output = result.output().unwrap();
         if output.len() > 0 {
             let out_text = from_utf8(output).unwrap();
             println!("output.len {} output '{}'", output.len(), out_text);
-        }
-        match &result {
-            ExecutionResult::Success { .. } => {}
-            ExecutionResult::Revert { .. } => {}
-            ExecutionResult::Halt { .. } => {}
         }
         let output = result.output().unwrap_or_default();
         assert!(result.is_success());

@@ -17,7 +17,7 @@ num-traits = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
 hashbrown = { workspace = true, default-features = false }
 
-solana_rbpf = { workspace = true, default-features = false, features = [] }
+solana_rbpf = { workspace = true, default-features = false }
 
 solana-pubkey = { workspace = true, default-features = false, features = ["serde", "bytemuck"] }
 solana-instruction = { workspace = true, default-features = false, features = ["serde", "bincode"] }
@@ -88,6 +88,7 @@ default = [
 ]
 std = [
     "fluentbase-sdk/std",
-    "itertools/use_std"
+    "itertools/use_std",
+    "solana_rbpf/std",
 ]
 debug-print = []

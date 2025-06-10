@@ -6669,6 +6669,7 @@ version = "0.8.5"
 dependencies = [
  "byteorder",
  "combine",
+ "fluentbase-sdk",
  "goblin",
  "hash32 0.2.1",
  "hashbrown 0.15.2",

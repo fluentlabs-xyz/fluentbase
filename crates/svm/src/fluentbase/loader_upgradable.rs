@@ -30,8 +30,8 @@ use fluentbase_sdk::{
 };
 
 pub fn deploy(mut sdk: impl SharedAPI) {
-    debug_log!("loader_upgradable: deploy started");
-    debug_log!("deploy: block_number: {:?}", sdk.context().block_number());
+    debug_log!("");
+    debug_log!("block_number: {:?}", sdk.context().block_number());
     let mut mem_storage = MemStorage::new();
     // input must be solana elf bytes
     let elf_program_bytes: Bytes = sdk.input().into();
@@ -52,27 +52,18 @@ pub fn deploy(mut sdk: impl SharedAPI) {
         0,
         &system_program::id(),
     );
+    debug_log!("contract_caller_balance {:?}", contract_caller_balance);
     debug_log!(
-        "deploy: contract_caller_balance {:?}",
-        contract_caller_balance
-    );
-    debug_log!(
-        "deploy: payer_account_data.lamports {:?}",
+        "payer_account_data.lamports {:?}",
         payer_account_data.lamports()
     );
 
+    debug_log!("contract_caller {}", sdk.context().contract_caller());
+    debug_log!("block_coinbase {}", sdk.context().block_coinbase());
+    debug_log!("contract_address {}", sdk.context().contract_address());
+    debug_log!("tx_origin {}", sdk.context().tx_origin());
     debug_log!(
-        "deploy: contract_caller {}",
-        sdk.context().contract_caller()
-    );
-    debug_log!("deploy: block_coinbase {}", sdk.context().block_coinbase());
-    debug_log!(
-        "deploy: contract_address {}",
-        sdk.context().contract_address()
-    );
-    debug_log!("deploy: tx_origin {}", sdk.context().tx_origin());
-    debug_log!(
-        "deploy: contract_bytecode_address {}",
+        "contract_bytecode_address {}",
         sdk.context().contract_bytecode_address()
     );
 
@@ -90,7 +81,7 @@ pub fn deploy(mut sdk: impl SharedAPI) {
     )
     .unwrap();
     storage_write_account_data(&mut mem_storage, &pk_payer, &payer_account_data).unwrap();
-    debug_log!("deploy: mem_storage fill: done");
+    debug_log!("");
 
     let mut batch_message = BatchMessage::new(None);
 

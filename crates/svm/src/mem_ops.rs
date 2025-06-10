@@ -546,12 +546,14 @@ fn translate_type_inner<'a, T>(
     check_aligned: bool,
     skip_addr_translation: bool,
 ) -> Result<&'a mut T, SvmError> {
+    debug_log!("");
     let host_addr = if skip_addr_translation {
         vm_addr
     } else {
         translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u64)?
     };
     if !check_aligned {
+        debug_log!("");
         #[cfg(target_pointer_width = "64")]
         {
             Ok(unsafe { core::mem::transmute::<u64, &mut T>(host_addr) })
@@ -604,10 +606,9 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     check_aligned: bool,
     skip_addr_translation: bool,
 ) -> Result<SliceFatPtr64<'a, T>, SvmError> {
+    let mmh = MemoryMappingHelper::new(Some(memory_mapping));
     if len == 0 {
-        return Ok(SliceFatPtr64::default(MemoryMappingHelper::new(Some(
-            memory_mapping,
-        ))));
+        return Ok(SliceFatPtr64::default(mmh.clone()));
     }
     // let type_name = type_name::<T>();
     let size_of_t = size_of::<T>();
@@ -635,22 +636,13 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     } else {
         translate(memory_mapping, access_type, vm_addr, total_size)?
     };
-    debug_log!(
-        "translate_slice_inner 3: vm_addr {} host_addr {} ({} in GB)",
-        vm_addr,
-        host_addr,
-        host_addr / (1024 * 1024 * 1024)
-    );
+    debug_log!("");
 
     if check_aligned && !helpers::address_is_aligned::<T>(host_addr) {
         return Err(SyscallError::UnalignedPointer.into());
     }
     // debug_log!("translate_slice_inner 4");
-    let result = SliceFatPtr64::new::<false>(
-        MemoryMappingHelper::new(Some(memory_mapping)),
-        host_addr,
-        len,
-    );
+    let result = SliceFatPtr64::new::<false>(mmh, host_addr, len);
     // let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
     Ok(result)
 }
@@ -782,7 +774,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
         skip_addr_translation,
     )?;
     debug_log!(
-        "translate_and_check_program_address_inputs 1: seeds_addr {} seeds_len {} untranslated_seeds.len {}",
+        "seeds_addr {} seeds_len {} untranslated_seeds.len {}",
         seeds_addr,
         seeds_len,
         untranslated_seeds.len(),
@@ -805,7 +797,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
             debug_log!(
-                "untranslated_seed: len {} first_item_fat_ptr_addr {} data {:x?}",
+                "len {} first_item_fat_ptr_addr {} data {:x?}",
                 untranslated_seed.as_ref().len(),
                 untranslated_seed.as_ref().first_item_fat_ptr_addr(),
                 collect_into_vec_cloned(&untranslated_seed),
@@ -821,10 +813,10 @@ pub fn translate_and_check_program_address_inputs<'a>(
             Ok(collect_into_vec_cloned(&untranslated_seed))
         })
         .collect::<Result<Vec<_>, SvmError>>()?;
-    debug_log!("translate_and_check_program_address_inputs 2");
+    debug_log!("");
     let program_id =
         translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned, false)?;
-    debug_log!("translate_and_check_program_address_inputs 3");
+    debug_log!("program_id {}", program_id);
     Ok((seeds, program_id))
 }
 

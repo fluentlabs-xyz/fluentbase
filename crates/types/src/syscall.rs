@@ -1,4 +1,5 @@
 use crate::{Bytes, ExitCode, B256};
+use alloc::string::String;
 use fluentbase_codec::Codec;
 
 #[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -92,6 +93,12 @@ impl<T> SyscallResult<T> {
             fuel_refunded,
             status: Into::<ExitCode>::into(status),
         }
+    }
+    pub fn expect<I: Into<String>>(self, msg: I) -> Self {
+        if !SyscallResult::is_ok(self.status) {
+            panic!("syscall result has status {}: {}", self.status, msg.into());
+        }
+        self
     }
 }
 

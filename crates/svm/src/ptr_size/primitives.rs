@@ -30,9 +30,8 @@ impl PtrType {
             PtrType::PtrToValuePtr(v) => v.clone(),
         }
     }
-    pub fn map<F: Fn(&mut u64)>(mut self, f: F) -> Self {
+    pub fn modify_inner<F: Fn(&mut u64)>(&mut self, f: F) {
         f(self.as_mut());
-        self
     }
 }
 
@@ -66,41 +65,38 @@ impl<'a, T: SpecMethods<'a>> RcRefCellMemLayout<'a, T> {
     }
 
     pub fn addr_to_value_addr<const PRE_REMAP: bool, const POST_REMAP: bool>(&'a self) -> u64 {
-        let ptr = if PRE_REMAP {
-            self.ptr.map(|v| {
+        let mut ptr = self.ptr;
+        if PRE_REMAP {
+            ptr.modify_inner(|v| {
                 *v = self
                     .memory_mapping_helper
-                    .map_vm_addr_to_host((*v), FIXED_PTR_BYTE_SIZE as u64)
+                    .map_vm_addr_to_host(*v, FIXED_PTR_BYTE_SIZE as u64)
                     .unwrap();
-            })
-        } else {
-            self.ptr
+            });
         };
         let addr = T::fetch_addr_to_value_addr(&self.memory_mapping_helper, &ptr);
         crate::map_addr_if!(POST_REMAP, self.memory_mapping_helper, addr)
     }
 
     pub fn value_addr<const PRE_REMAP: bool, const POST_REMAP: bool>(&'a self) -> u64 {
-        let ptr = if PRE_REMAP {
-            self.ptr.map(|v| {
-                *v = self
-                    .memory_mapping_helper
-                    .map_vm_addr_to_host((*v), FIXED_PTR_BYTE_SIZE as u64)
+        let mut ptr = self.ptr;
+        if PRE_REMAP {
+            ptr.modify_inner(|v| {
+                self.memory_mapping_helper
+                    .map_vm_addr_to_host(*v, FIXED_PTR_BYTE_SIZE as u64)
                     .unwrap();
-            })
-        } else {
-            self.ptr
+            });
         };
         let addr = T::fetch_value_addr(&self.memory_mapping_helper, &ptr);
         crate::map_addr_if!(POST_REMAP, self.memory_mapping_helper, addr)
     }
 
-    pub fn value<const PRE_REMAP: bool, const POST_REMAP: bool>(&'a self) -> &'a T::Elem {
-        T::fetch_value(self.value_addr::<PRE_REMAP, POST_REMAP>() as usize)
+    pub fn value<const PRE_REMAP: bool>(&'a self) -> &'a T::Elem {
+        T::fetch_value(self.value_addr::<PRE_REMAP, true>() as usize)
     }
 
-    pub fn value_mut<const PRE_REMAP: bool, const POST_REMAP: bool>(&'a self) -> &'a mut T::Elem {
-        T::fetch_value_mut(self.value_addr::<PRE_REMAP, POST_REMAP>() as usize)
+    pub fn value_mut<const PRE_REMAP: bool>(&'a self) -> &'a mut T::Elem {
+        T::fetch_value_mut(self.value_addr::<PRE_REMAP, true>() as usize)
     }
 }
 
@@ -148,13 +144,9 @@ macro_rules! fetch_value_addr_common {
                         .try_into()
                         .unwrap(),
                 );
-                $crate::remap_addr!($mm, rc_box_ptr);
+                // $crate::remap_addr!($mm, rc_box_ptr);
                 let ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE as u64 * 3;
-                u64::from_le_bytes(
-                    reconstruct_slice(ptr_to_value_ptr as usize, FIXED_PTR_BYTE_SIZE)
-                        .try_into()
-                        .unwrap(),
-                )
+                ptr_to_value_ptr
             }
         };
     };
@@ -181,7 +173,14 @@ impl<'a> SpecMethods<'a> for &mut u64 {
     }
 
     fn fetch_value_addr(memory_mapping_helper: &'a MemoryMappingHelper<'a>, ptr: &PtrType) -> u64 {
-        fetch_value_addr_common!(memory_mapping_helper, *ptr)
+        let addr = Self::fetch_addr_to_value_addr(memory_mapping_helper, ptr);
+        crate::remap_addr!(memory_mapping_helper, addr);
+        u64::from_le_bytes(
+            reconstruct_slice(addr as usize, FIXED_PTR_BYTE_SIZE)
+                .try_into()
+                .unwrap(),
+        )
+        // fetch_value_addr_common!(memory_mapping_helper, *ptr)
     }
 
     fn fetch_value(addr: usize) -> &'a Self::Elem {
@@ -204,7 +203,10 @@ impl<'a> SpecMethods<'a> for &mut [u8] {
     }
 
     fn fetch_value_addr(memory_mapping_helper: &'a MemoryMappingHelper<'a>, ptr: &PtrType) -> u64 {
-        fetch_value_addr_common!(memory_mapping_helper, *ptr)
+        let addr = Self::fetch_addr_to_value_addr(memory_mapping_helper, ptr);
+        crate::remap_addr!(memory_mapping_helper, addr);
+        let ptr = PtrType::PtrToValuePtr(addr);
+        fetch_value_addr_common!(memory_mapping_helper, ptr)
     }
 
     fn fetch_value(addr: usize) -> &'a Self::Elem {
@@ -228,6 +230,10 @@ mod tests {
     };
     use alloc::rc::Rc;
     use core::cell::RefCell;
+    use solana_account_info::AccountInfo;
+    use solana_pubkey::Pubkey;
+    use solana_stable_layout::stable_vec::StableVec;
+    use std::ops::Deref;
 
     #[test]
     fn structs_sizes_test() {
@@ -237,6 +243,15 @@ mod tests {
         println_typ_size!(Rc<RefCell<&mut u64>>);
         println_typ_size!(Rc<RefCell<&mut [u8]>>);
         println_typ_size!(&mut [u8]);
+    }
+
+    #[test]
+    fn ptr_type_modify_inner_test() {
+        let val1 = 12;
+        let val2 = 13;
+        let mut ptr = PtrType::PtrToValuePtr(val1);
+        ptr.modify_inner(|v| *v = val2);
+        assert_eq!(ptr.inner_value(), val2);
     }
 
     #[test]
@@ -282,7 +297,7 @@ mod tests {
 
         let container =
             RcRefCellMemLayout::<&mut u64>::new(mm.clone(), PtrType::RcStartPtr(rc_start_ptr));
-        let value = container.value::<true, true>();
+        let value = container.value::<true>();
         assert_eq!(value, &lamports);
         let value_vm_addr = container.value_addr::<true, true>();
         assert_eq!(
@@ -298,7 +313,7 @@ mod tests {
             mm.clone(),
             PtrType::RcBoxStartPtr(rc_box_start_ptr),
         );
-        let value = container.value::<true, true>();
+        let value = container.value::<true>();
         assert_eq!(value, &lamports);
         let value_vm_addr = container.value_addr::<true, true>();
         assert_eq!(
@@ -312,7 +327,7 @@ mod tests {
 
         let container =
             RcRefCellMemLayout::<&mut u64>::new(mm.clone(), PtrType::PtrToValuePtr(rc_as_ptr));
-        let value = container.value::<true, true>();
+        let value = container.value::<true>();
         assert_eq!(value, &lamports);
     }
 
@@ -372,5 +387,147 @@ mod tests {
         //     RcRefCellMemLayout::<&mut [u8]>::new(mm.clone(), PtrType::PtrToValuePtr(rc_as_ptr));
         // let value = container.value::<true, true>();
         // assert_eq!(value, &data);
+    }
+
+    #[test]
+    fn stable_vec_of_account_infos_mutations_test() {
+        // type ItemType = u64;
+        type ItemType<'a> = AccountInfo<'a>;
+        type VecOfItemsType<'a> = StableVec<ItemType<'a>>;
+        const ITEM_SIZE: usize = size_of::<ItemType>();
+        const VEC_OF_ITEMS_TYPE_SIZE: usize = size_of::<VecOfItemsType>();
+        println!("ITEM_SIZE: {}", ITEM_SIZE);
+        println!("VEC_OF_ITEMS_TYPE_SIZE: {}", VEC_OF_ITEMS_TYPE_SIZE);
+
+        let mmh = MemoryMappingHelper::default();
+
+        let num: u64 = 1;
+        let key_1 = Pubkey::new_from_array([num as u8; 32]);
+        let owner_1 = Pubkey::new_from_array([num as u8 + 10; 32]);
+        let mut lamports_1 = num + 20;
+        let rent_epoch_1 = num + 30;
+        let mut data_1 = [1, 2, 3].to_vec();
+
+        let num: u64 = 2;
+        let key_2 = Pubkey::new_from_array([num as u8; 32]);
+        let owner_2 = Pubkey::new_from_array([num as u8 + 10; 32]);
+        let mut lamports_2 = num + 20;
+        let rent_epoch_2 = num + 30;
+        let mut data_2 = [1, 2, 3, 4].to_vec();
+
+        let num: u64 = 4;
+        let key_3 = Pubkey::new_from_array([num as u8; 32]);
+        let owner_3 = Pubkey::new_from_array([num as u8 + 10; 32]);
+        let mut lamports_3 = num + 20;
+        let rent_epoch_3 = num + 30;
+        let mut data_3 = [1, 2, 3, 4].to_vec();
+
+        let num: u64 = 3;
+        let key_4 = Pubkey::new_from_array([num as u8; 32]);
+        let owner_4 = Pubkey::new_from_array([num as u8 + 10; 32]);
+        let mut lamports_4 = num + 20;
+        let rent_epoch_4 = num + 30;
+        let mut data_4 = [1, 2, 3, 4].to_vec();
+
+        let items_original_fixed: StableVec<ItemType> = VecOfItemsType::from(
+            [
+                ItemType::new(
+                    &key_1,
+                    true,
+                    true,
+                    &mut lamports_1,
+                    &mut data_1,
+                    &owner_1,
+                    true,
+                    rent_epoch_1,
+                ),
+                ItemType::new(
+                    &key_2,
+                    true,
+                    true,
+                    &mut lamports_2,
+                    &mut data_2,
+                    &owner_2,
+                    true,
+                    rent_epoch_2,
+                ),
+            ]
+            .to_vec(),
+        );
+        let items_new_fixed: StableVec<ItemType> = VecOfItemsType::from(
+            [
+                ItemType::new(
+                    &key_3,
+                    true,
+                    true,
+                    &mut lamports_3,
+                    &mut data_3,
+                    &owner_3,
+                    true,
+                    rent_epoch_3,
+                ),
+                ItemType::new(
+                    &key_4,
+                    true,
+                    true,
+                    &mut lamports_4,
+                    &mut data_4,
+                    &owner_4,
+                    true,
+                    rent_epoch_4,
+                ),
+            ]
+            .to_vec(),
+        );
+        assert_eq!(items_original_fixed.len(), items_new_fixed.len());
+        let items_len = items_original_fixed.len();
+        let vec_of_items_bytes_size = VEC_OF_ITEMS_TYPE_SIZE;
+        let items_only_bytes_size = ITEM_SIZE * items_original_fixed.len();
+
+        let mut slice = SliceFatPtr64::<ItemType>::new::<false>(
+            MemoryMappingHelper::default(),
+            items_original_fixed.as_ref().as_ptr() as u64,
+            items_len as u64,
+        );
+        println!("vec_of_items_bytes_size {}", vec_of_items_bytes_size);
+        let vec_of_items_start_ptr = (&items_original_fixed) as *const _ as u64;
+        let first_item_start_ptr = items_original_fixed.as_ptr() as u64;
+        println!(
+            "vec_of_items_start_ptr {} ({:x?}) first_item_start_ptr {} ({:x?})",
+            vec_of_items_start_ptr,
+            &vec_of_items_start_ptr.to_le_bytes(),
+            first_item_start_ptr,
+            &first_item_start_ptr.to_le_bytes()
+        );
+        let vec_of_items_as_raw_bytes = unsafe {
+            alloc::slice::from_raw_parts(
+                vec_of_items_start_ptr as *const u8,
+                vec_of_items_bytes_size,
+            )
+        };
+        println!(
+            "vec_of_items_as_raw_bytes ({}): {:x?}",
+            vec_of_items_bytes_size, vec_of_items_as_raw_bytes
+        );
+        let items_as_raw_bytes = unsafe {
+            alloc::slice::from_raw_parts(first_item_start_ptr as *const u8, items_only_bytes_size)
+        };
+        println!(
+            "items_as_raw_bytes ({}): {:x?}",
+            items_only_bytes_size, items_as_raw_bytes
+        );
+        for idx in 0..slice.len() {
+            let item_original = &items_original_fixed[idx];
+            let item_original_ptr = item_original as *const _ as u64;
+            let item_original_lamports_rc_ptr =
+                item_original_ptr + crate::typ_size!(&Pubkey) as u64;
+            let mem_layout = RcRefCellMemLayout::<&mut u64>::new(
+                mmh.clone(),
+                PtrType::RcStartPtr(item_original_lamports_rc_ptr),
+            );
+            let lamports_original_ref = item_original.lamports.borrow();
+            let lamports_original = lamports_original_ref.deref();
+            assert_eq!(*lamports_original, mem_layout.value::<false>())
+        }
     }
 }

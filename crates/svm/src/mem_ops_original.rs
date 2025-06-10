@@ -545,6 +545,7 @@ fn translate_type_inner<'a, T>(
         }
         #[cfg(target_pointer_width = "32")]
         {
+            debug_log!("translate_type_inner 32bit");
             Ok(unsafe { core::mem::transmute::<u32, &mut T>(host_addr as u32) })
         }
     } else if !crate::helpers::address_is_aligned::<T>(host_addr) {
@@ -583,7 +584,7 @@ fn translate_slice_inner<'a, T>(
     let type_name = type_name::<T>();
     let size_of_t = size_of::<T>();
     debug_log!(
-        "translate_slice_inner 1: len {} item type '{}' size_of_t {}",
+        "len {} item type '{}' size_of_t {}",
         len,
         type_name,
         size_of_t,
@@ -595,7 +596,7 @@ fn translate_slice_inner<'a, T>(
     }
 
     debug_log!(
-        "translate_slice_inner 2: access_type {:?} vm_addr {} total_size {}",
+        "access_type {:?} vm_addr {} total_size {}",
         access_type,
         vm_addr,
         total_size
@@ -603,7 +604,7 @@ fn translate_slice_inner<'a, T>(
 
     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
     debug_log!(
-        "translate_slice_inner 3: vm_addr {} host_addr {} ({} in GB)",
+        "vm_addr {} host_addr {} ({} in GB)",
         vm_addr,
         host_addr,
         host_addr / (1024 * 1024 * 1024)
@@ -612,7 +613,7 @@ fn translate_slice_inner<'a, T>(
     if check_aligned && !crate::helpers::address_is_aligned::<T>(host_addr) {
         return Err(SyscallError::UnalignedPointer.into());
     }
-    debug_log!("translate_slice_inner 4");
+    debug_log!("");
     let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
     Ok(result)
 }
@@ -726,7 +727,7 @@ pub fn translate_and_check_program_address_inputs<'a>(
     let untranslated_seeds =
         translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
     debug_log!(
-        "translate_and_check_program_address_inputs 1: seeds_addr {} seeds_len {} untranslated_seeds.len {}",
+        "seeds_addr {} seeds_len {} untranslated_seeds.len {}",
         seeds_addr,
         seeds_len,
         untranslated_seeds.len(),
@@ -743,11 +744,6 @@ pub fn translate_and_check_program_address_inputs<'a>(
             if untranslated_seed.len() > MAX_SEED_LEN {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
-            // debug_log!(
-            //     "untranslated_seed: {:x?} ptr {}",
-            //     untranslated_seed,
-            //     untranslated_seed.as_ptr() as u64
-            // );
             translate_slice::<u8>(
                 memory_mapping,
                 untranslated_seed.as_ptr() as *const _ as u64,
@@ -756,9 +752,9 @@ pub fn translate_and_check_program_address_inputs<'a>(
             )
         })
         .collect::<Result<Vec<_>, SvmError>>()?;
-    debug_log!("translate_and_check_program_address_inputs 2");
+    debug_log!("");
     let program_id = translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned)?;
-    debug_log!("translate_and_check_program_address_inputs 3");
+    debug_log!("");
     Ok((seeds, program_id))
 }
 

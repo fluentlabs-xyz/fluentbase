@@ -11,11 +11,10 @@ use crate::{
     sysvar_cache::get_sysvar_with_account_check,
 };
 use alloc::boxed::Box;
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{debug_log, SharedAPI};
 use hashbrown::HashSet;
+use itertools::Itertools;
 use solana_instruction::error::InstructionError;
-use solana_program_entrypoint::__msg;
-use solana_rbpf::declare_builtin_function;
 
 // represents an address that may or may not have been generated
 //  from a seed
@@ -155,21 +154,26 @@ fn create_account<SDK: SharedAPI>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
+    debug_log!("");
     // if it looks like the `to` account is already in use, bail
     {
         let mut to = instruction_context
             .try_borrow_instruction_account(transaction_context, to_account_index)?;
+        debug_log!("");
         if to.get_lamports() > 0 {
             // ic_msg!(
             //     invoke_context,
             //     "Create Account: account {:?} already in use",
             //     to_address
             // );
+            debug_log!("");
             return Err(SystemError::AccountAlreadyInUse.into());
         }
 
+        debug_log!("");
         allocate_and_assign(&mut to, to_address, space, owner, signers, invoke_context)?;
     }
+    debug_log!("");
     transfer(
         from_account_index,
         to_account_index,
@@ -188,27 +192,41 @@ fn transfer_verified<SDK: SharedAPI>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
+    debug_log!("");
     let mut from = instruction_context
         .try_borrow_instruction_account(transaction_context, from_account_index)?;
+    let index_in_transaction =
+        instruction_context.get_index_of_instruction_account_in_transaction(from_account_index)?;
+    let from_pk = transaction_context.get_key_of_account_at_index(index_in_transaction)?;
+    debug_log!("from_pk {}", from_pk);
     if !from.get_data().is_empty() {
         // ic_msg!(invoke_context, "Transfer: `from` must not carry data");
+        debug_log!("");
         return Err(InstructionError::InvalidArgument);
     }
-    if lamports > from.get_lamports() {
+    let from_lamports = from.get_lamports();
+    debug_log!("lamports {} from_lamports {}", lamports, from_lamports);
+    if lamports > from_lamports {
         // ic_msg!(
         //     invoke_context,
         //     "Transfer: insufficient lamports {}, need {}",
         //     from.get_lamports(),
         //     lamports
         // );
+        debug_log!("");
         return Err(SystemError::ResultWithNegativeLamports.into());
     }
 
+    debug_log!("");
     from.checked_sub_lamports(lamports)?;
+    debug_log!("");
     drop(from);
+    debug_log!("");
     let mut to = instruction_context
         .try_borrow_instruction_account(transaction_context, to_account_index)?;
+    debug_log!("");
     to.checked_add_lamports(lamports)?;
+    debug_log!("");
     Ok(())
 }
 
@@ -220,6 +238,7 @@ fn transfer<SDK: SharedAPI>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
+    debug_log!("");
     if !instruction_context.is_instruction_account_signer(from_account_index)? {
         // ic_msg!(
         //     invoke_context,
@@ -229,9 +248,11 @@ fn transfer<SDK: SharedAPI>(
         //             .get_index_of_instruction_account_in_transaction(from_account_index)?,
         //     )?,
         // );
+        debug_log!("");
         return Err(InstructionError::MissingRequiredSignature);
     }
 
+    debug_log!("");
     transfer_verified(
         from_account_index,
         to_account_index,
@@ -299,23 +320,26 @@ fn transfer_with_seed<SDK: SharedAPI>(
 pub const DEFAULT_COMPUTE_UNITS: u64 = 150;
 
 declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, |invoke_context| {
-    __msg!("system_processor::Entrypoint");
+    debug_log!("");
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
     let instruction = limited_deserialize_packet_size(instruction_data);
     let instruction = instruction?;
 
-    // trace!("process_instruction: {:?}", instruction);
+    debug_log!("instruction: {:?}", instruction);
 
     let signers = instruction_context.get_signers(transaction_context)?;
+    debug_log!("signers: {:?}", signers.iter().collect_vec());
     match instruction {
         SystemInstruction::CreateAccount {
             lamports,
             space,
             owner,
         } => {
+            debug_log!("");
             instruction_context.check_number_of_instruction_accounts(2)?;
+            debug_log!("");
             let to_address = Address::create(
                 transaction_context.get_key_of_account_at_index(
                     instruction_context.get_index_of_instruction_account_in_transaction(1)?,
@@ -323,6 +347,7 @@ declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, 
                 None,
                 invoke_context,
             )?;
+            debug_log!("to_address {:?}", to_address);
             let result = create_account(
                 0,
                 1,
@@ -335,6 +360,7 @@ declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, 
                 transaction_context,
                 instruction_context,
             );
+            debug_log!("result {:?}", result);
             result
         }
         SystemInstruction::CreateAccountWithSeed {

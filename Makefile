@@ -23,3 +23,16 @@ clean:
 .PHONY: test
 test:
 	cargo test --no-fail-fast -q
+
+.PHONY: test_success
+test_success:
+	cargo test --package fluentbase-svm --lib fluentbase::helpers_v2_tests::tests::test_create_fill_deploy_exec_with_state -- --exact --nocapture > tmp/test_success.txt
+
+.PHONY: test_error
+test_error:
+	cargo test --package fluentbase-e2e --lib svm_loader_v4::tests::test_svm_deploy_exec -- --exact --nocapture > tmp/test_error.txt
+
+.PHONY: test_both
+test_both:
+	$(MAKE) test_success
+	$(MAKE) test_error

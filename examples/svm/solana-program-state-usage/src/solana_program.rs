@@ -3,7 +3,7 @@ use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
 use solana_program::{
-    program::invoke_signed,
+    program::{invoke, invoke_signed},
     serialize_utils::cursor::read_u64,
     system_instruction,
 };
@@ -166,16 +166,16 @@ pub fn process_instruction(
                 system_program_account.clone(),
             ];
 
-            let accounts_addr = accounts.as_ptr() as usize;
-            msg!("process_instruction: accounts_addr: {}", accounts_addr);
-            let account_info_struct_size = core::mem::size_of::<AccountInfo>();
-            let account_infos_slice = unsafe {
-                core::slice::from_raw_parts(accounts_addr as *const u8, account_info_struct_size)
-            };
-            msg!(
-                "in process_instruction: account_infos_slice {:x?}",
-                account_infos_slice,
-            );
+            // let accounts_addr = accounts.as_ptr() as usize;
+            // msg!("process_instruction: accounts_addr: {}", accounts_addr);
+            // let account_info_struct_size = core::mem::size_of::<AccountInfo>();
+            // let account_infos_slice = unsafe {
+            //     core::slice::from_raw_parts(accounts_addr as *const u8, account_info_struct_size)
+            // };
+            // msg!(
+            //     "in process_instruction: account_infos_slice {:x?}",
+            //     account_infos_slice,
+            // );
 
             // invoke(
             invoke_signed(

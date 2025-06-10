@@ -3,17 +3,17 @@ use crate::{
     common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_address},
     error::SvmError,
     fluentbase::{
-        common::{process_svm_result, BatchMessage, MemStorage},
+        common::{extract_account_data_or_default, process_svm_result, BatchMessage, MemStorage},
         helpers_v2::{exec_encoded_svm_batch_message, exec_svm_batch_message},
         loader_common::{read_protected_preimage, write_protected_preimage},
     },
     helpers::{storage_read_account_data, storage_write_account_data, SyscallError},
     native_loader,
-    native_loader::create_loadable_account_for_test,
+    native_loader::{create_loadable_account_for_test, create_loadable_account_with_fields},
     solana_program::{loader_v4, message::Message},
     system_program,
 };
-use alloc::{vec, vec::Vec};
+use alloc::{format, vec, vec::Vec};
 use bincode::error::DecodeError;
 use core::any::type_name;
 use fluentbase_sdk::{
@@ -23,8 +23,11 @@ use fluentbase_sdk::{
     ContractContextReader,
     ExitCode,
     SharedAPI,
+    U256,
 };
+use fluentbase_types::SyscallResult;
 use solana_bincode::{deserialize, serialize};
+use solana_clock::INITIAL_RENT_EPOCH;
 use solana_pubkey::Pubkey;
 use solana_rbpf::memory_region::{AccessType, MemoryMapping};
 
@@ -205,15 +208,35 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input = sdk.input();
     let preimage = read_protected_preimage(&sdk);
+
+    let contract_caller = sdk.context().contract_caller();
     let contract_address = sdk.context().contract_address();
 
     let mut mem_storage = MemStorage::new();
     let loader_id = loader_v4::id();
 
-    let pk_exec = pubkey_from_address(&contract_address);
-    let mut exec_account_data: Result<AccountSharedData, DecodeError> =
+    let pk_caller = pubkey_from_address(&contract_caller);
+    debug_log!("pk_caller: {}", pk_caller);
+    let pk_contract = pubkey_from_address(&contract_address);
+    debug_log!("pk_contract: {}", pk_contract);
+
+    let caller_lamports = lamports_from_evm_balance(
+        sdk.balance(&contract_caller)
+            .expect("balance for caller must exist")
+            .data,
+    );
+    debug_log!("caller_lamports (from evm balance) {}", caller_lamports);
+    let mut caller_account_data =
+        extract_account_data_or_default(&sdk, &pk_caller).expect("caller must exist");
+    debug_log!(
+        "caller_lamports (from storage) {}",
+        caller_account_data.lamports()
+    );
+    caller_account_data.set_lamports(caller_lamports);
+
+    let mut contract_account_data: Result<AccountSharedData, DecodeError> =
         deserialize(preimage.as_ref());
-    let mut exec_account_data = match exec_account_data {
+    let mut contract_account_data = match contract_account_data {
         Ok(v) => v,
         Err(e) => {
             panic!(
@@ -223,25 +246,32 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             );
         }
     };
-    exec_account_data.set_lamports(lamports_from_evm_balance(
-        sdk.balance(&contract_address).data,
-    ));
-    let exec_account_balance_before = exec_account_data.lamports();
+    let contract_lamports = lamports_from_evm_balance(
+        sdk.balance(&contract_address)
+            .expect("contract balance must exist")
+            .data,
+    );
+    debug_log!("contract_lamports {}", contract_lamports);
+    contract_account_data.set_lamports(contract_lamports);
+    let exec_account_balance_before = contract_account_data.lamports();
     // debug_log!("before main: exec_account_data {:x?}", exec_account_data);
 
-    storage_write_account_data(&mut mem_storage, &pk_exec, &exec_account_data)
-        .expect("failed to write exec account");
+    storage_write_account_data(&mut mem_storage, &pk_contract, &contract_account_data)
+        .expect("failed to write contract account");
+
+    storage_write_account_data(&mut mem_storage, &pk_caller, &caller_account_data)
+        .expect("failed to write caller account");
 
     storage_write_account_data(
         &mut mem_storage,
         &system_program::id(),
-        &create_loadable_account_for_test("system_program_id", &native_loader::id()),
+        &create_loadable_account_for_test("system_program_id", &native_loader::id()), // TODO replace with create_loadable_account_with_fields
     )
     .unwrap();
     storage_write_account_data(
         &mut mem_storage,
         &loader_id,
-        &create_loadable_account_for_test("loader_v4_id", &native_loader::id()),
+        &create_loadable_account_for_test("loader_v4_id", &native_loader::id()), // TODO replace with create_loadable_account_with_fields
     )
     .unwrap();
 
@@ -266,7 +296,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         );
     }
     let mut exec_account_data =
-        storage_read_account_data(&mem_storage, &pk_exec).expect("no exec account");
+        storage_read_account_data(&mem_storage, &pk_contract).expect("no exec account");
     let exec_account_balance_after = exec_account_data.lamports();
     assert_eq!(
         exec_account_balance_before, exec_account_balance_after,

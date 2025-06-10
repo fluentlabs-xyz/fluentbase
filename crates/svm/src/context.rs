@@ -57,7 +57,7 @@ use solana_rbpf::{
     memory_region::MemoryMapping,
     program::{BuiltinFunction, SBPFVersion},
     static_analysis::TraceLogEntry,
-    vm::{Config, ContextObject, EbpfVm},
+    vm::{get_runtime_environment_key, Config, ContextObject, EbpfVm},
 };
 use solana_stable_layout::stable_instruction::StableInstruction;
 
@@ -475,18 +475,18 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
         // *compute_units_consumed = 0;
-        debug_log!("invoke_context.process_instruction1");
+        debug_log!("");
         self.transaction_context
             .get_next_instruction_context()?
             .configure(program_indices, instruction_accounts, instruction_data);
-        debug_log!("invoke_context.process_instruction2");
+        debug_log!("");
         self.push()?;
-        debug_log!("invoke_context.process_instruction3");
+        debug_log!("");
         let result = self.process_executable_chain(/*compute_units_consumed , timings*/)
             // MUST pop if and only if `push` succeeded, independent of `result`.
             // Thus, the `.and()` instead of an `.and_then()`.
             .and(self.pop());
-        debug_log!("invoke_context.process_instruction4: {:?}", result);
+        debug_log!("result: {:?}", result);
         result
     }
 
@@ -524,7 +524,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // compute_units_consumed: &mut u64,
         // timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
-        debug_log!("invoke_context.process_executable_chain1");
+        debug_log!("");
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
         // let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
@@ -534,7 +534,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             let borrowed_root_account = instruction_context
                 .try_borrow_program_account(&self.transaction_context, 0)
                 .map_err(|_| InstructionError::UnsupportedProgramId)?;
-            debug_log!("invoke_context.process_executable_chain2");
             let owner_id = borrowed_root_account.get_owner();
             if native_loader::check_id(owner_id) {
                 *borrowed_root_account.get_key()
@@ -542,6 +541,11 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 *owner_id
             }
         };
+        debug_log!(
+            "invoke_context.process_executable_chain2 builtin_id {} ({:x?})",
+            &builtin_id,
+            builtin_id.to_bytes()
+        );
 
         // The Murmur3 hash value (used by RBPF) of the string "entrypoint"
         const ENTRYPOINT_KEY: u32 = 0x71E3CF81;
@@ -549,7 +553,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             .program_cache_for_tx_batch
             .find(&builtin_id)
             .ok_or(InstructionError::UnsupportedProgramId)?;
-        debug_log!("invoke_context.process_executable_chain3");
+        debug_log!("");
         let function = match &entry.program {
             ProgramCacheEntryType::Builtin(program) => program
                 .get_function_registry()
@@ -558,14 +562,14 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             _ => None,
         }
         .ok_or(InstructionError::UnsupportedProgramId)?;
-        debug_log!("invoke_context.process_executable_chain4");
+        debug_log!("");
         entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
 
         let program_id = *instruction_context.get_last_program_key(&self.transaction_context)?;
-        debug_log!("invoke_context.process_executable_chain5");
+        debug_log!("");
         self.transaction_context
             .set_return_data(program_id, Vec::new())?;
-        debug_log!("invoke_context.process_executable_chain6");
+        debug_log!("");
         // let logger = self.get_log_collector();
         // stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
         // let pre_remaining_units = self.get_remaining();
@@ -575,7 +579,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         let mock_config = Config::default();
         let empty_memory_mapping =
             MemoryMapping::new(Vec::new(), &mock_config, &SBPFVersion::V1).unwrap();
-        debug_log!("invoke_context.process_executable_chain7");
+        debug_log!("");
         let mut vm = EbpfVm::new(
             self.program_cache_for_tx_batch
                 .environments
@@ -589,9 +593,9 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             empty_memory_mapping,
             0,
         );
-        debug_log!("invoke_context.process_executable_chain8");
+        debug_log!("");
         vm.invoke_function(function);
-        debug_log!("invoke_context.process_executable_chain9");
+        debug_log!("");
         let result = match vm.program_result {
             ProgramResult::Ok(_) => {
                 // stable_log::program_success(&logger, &program_id);
@@ -601,19 +605,22 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 if let EbpfError::SyscallError(syscall_error) = err {
                     if let Some(instruction_err) = syscall_error.downcast_ref::<InstructionError>()
                     {
+                        debug_log!("instruction_err {:?}", instruction_err);
                         // stable_log::program_failure(&logger, &program_id, instruction_err);
                         Err(instruction_err.clone())
                     } else {
+                        debug_log!("");
                         // stable_log::program_failure(&logger, &program_id, syscall_error);
                         Err(InstructionError::ProgramFailedToComplete)
                     }
                 } else {
+                    debug_log!("");
                     // stable_log::program_failure(&logger, &program_id, err);
                     Err(InstructionError::ProgramFailedToComplete)
                 }
             }
         };
-        debug_log!("invoke_context.process_executable_chain10");
+        debug_log!("");
         // let post_remaining_units = self.get_remaining();
         // *compute_units_consumed = pre_remaining_units.saturating_sub(post_remaining_units);
 

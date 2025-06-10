@@ -46,7 +46,7 @@ mod bincode_helpers;
 pub mod fluentbase;
 pub mod hash;
 pub mod loaders;
-pub mod mem_ops_original;
+// pub mod mem_ops_original;
 pub mod ptr_size;
 pub mod serialization;
 pub mod solana_program;

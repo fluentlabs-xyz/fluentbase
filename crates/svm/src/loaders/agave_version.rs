@@ -7,7 +7,7 @@ use crate::{
     serialization,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{debug_log, SharedAPI};
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 use solana_feature_set::bpf_account_data_direct_mapping;
 use solana_instruction::error::InstructionError;
@@ -30,8 +30,10 @@ pub fn execute<'a, SDK: SharedAPI>(
     //     )
     // };
     // let log_collector = invoke_context.get_log_collector();
+    debug_log!("agave_version.execute1");
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
+    debug_log!("agave_version.execute2");
     let (_program_id, is_loader_deprecated) = {
         let program_account =
             instruction_context.try_borrow_last_program_account(transaction_context)?;
@@ -47,6 +49,7 @@ pub fn execute<'a, SDK: SharedAPI>(
     let direct_mapping = invoke_context
         .get_feature_set()
         .is_active(&bpf_account_data_direct_mapping::id());
+    debug_log!("agave_version.execute3: direct_mapping {}", direct_mapping);
 
     // let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
@@ -54,6 +57,12 @@ pub fn execute<'a, SDK: SharedAPI>(
         instruction_context,
         !direct_mapping,
     )?;
+    debug_log!(
+        "agave_version.execute4: parameter_bytes.len {} regions {:?} accounts_metadata {:?}",
+        parameter_bytes.len(),
+        regions,
+        accounts_metadata
+    );
     // serialize_time.stop();
 
     // save the account addresses so in case we hit an AccessViolation error we
@@ -72,6 +81,10 @@ pub fn execute<'a, SDK: SharedAPI>(
             m.vm_data_addr..vm_end
         })
         .collect::<Vec<_>>();
+    debug_log!(
+        "agave_version.execute5: account_region_addrs {:?}",
+        account_region_addrs,
+    );
 
     // let mut create_vm_time = Measure::start("create_vm");
     let execution_result = {
@@ -86,7 +99,7 @@ pub fn execute<'a, SDK: SharedAPI>(
         let (mut vm, stack, heap) = match vm {
             // let mut vm = match vm {
             Ok(info) => info,
-            Err(e) => {
+            Err(_e) => {
                 // #[cfg(feature = "std")]
                 // println!("Failed to create SBF VM: {}", e);
                 return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
@@ -95,7 +108,12 @@ pub fn execute<'a, SDK: SharedAPI>(
         // create_vm_time.stop();
 
         // vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
+        debug_log!(
+            "agave_version.execute6: ptr_eq {}",
+            Arc::ptr_eq(&vm.loader, executable.get_loader()),
+        );
         let (_compute_units_consumed, result) = vm.execute_program(executable.as_ref(), !use_jit);
+        debug_log!("agave_version.execute7: result {:x?}", result,);
         {
             let mut memory_pool = MEMORY_POOL.write();
             memory_pool.put_stack(stack);
@@ -133,6 +151,7 @@ pub fn execute<'a, SDK: SharedAPI>(
                 Err(Box::new(error) as Box<dyn core::error::Error>)
             }
             ProgramResult::Err(mut error) => {
+                debug_log!("agave_version.execute8");
                 // if invoke_context
                 //     .get_feature_set()
                 //     .is_active(&solana_feature_set::deplete_cu_meter_on_vm_failure::id())
@@ -187,8 +206,10 @@ pub fn execute<'a, SDK: SharedAPI>(
                     }
                 }
                 Err(if let EbpfError::SyscallError(err) = error {
+                    debug_log!("agave_version.execute9");
                     err
                 } else {
+                    debug_log!("agave_version.execute10");
                     error.into()
                 })
             }

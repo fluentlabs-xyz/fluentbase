@@ -1,6 +1,6 @@
 use crate::{
     alloc::string::ToString,
-    common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
+    common::{is_svm_pubkey, HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
     error::Error,
@@ -15,18 +15,25 @@ use crate::{
         translate_slice,
         translate_slice_mut,
         translate_string_and_do,
+        translate_type,
         translate_type_mut,
     },
-    ptr_size::slice_fat_ptr64::{
-        collect_into_vec_cloned,
-        ElementConstraints,
-        RetVal,
-        SliceFatPtr64,
+    ptr_size::{
+        common::MemoryMappingHelper,
+        primitives::{PtrType, RcRefCellMemLayout},
+        slice_fat_ptr64::{
+            collect_into_vec_cloned,
+            ElementConstraints,
+            RetVal,
+            SliceFatPtr64,
+            SliceFatPtr64Repr,
+        },
     },
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::{debug_log, SharedAPI};
+use solana_account_info::AccountInfo;
 use solana_feature_set;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
@@ -729,7 +736,7 @@ declare_builtin_function!(
         //     .create_program_address_units;
         // consume_compute_meter(invoke_context, cost)?;
         debug_log!(
-            "in SyscallTryFindProgramAddress: seeds_addr {} seeds_len {} program_id_addr {} invoke_context.get_check_aligned() {}",
+            "seeds_addr {} seeds_len {} program_id_addr {} invoke_context.get_check_aligned() {}",
             seeds_addr,
             seeds_len,
             program_id_addr,
@@ -764,15 +771,15 @@ declare_builtin_function!(
             false,
         );
         if let Err(e) = &result {
-            debug_log!("in SyscallTryFindProgramAddress: translate_and_check_program_address_inputs: {:?}", e);
+            debug_log!("error: {:?}", e);
         }
         let (seeds, program_id) = result?;
-        debug_log!("in SyscallTryFindProgramAddress: translate_and_check_program_address_inputs: seeds {:x?}", &seeds);
+        debug_log!("seeds {:x?}", &seeds);
 
         let mut bump_seed = [u8::MAX];
         for i in 0..u8::MAX {
             {
-                debug_log!("in SyscallTryFindProgramAddress: i={}", i);
+                debug_log!("i={}", i);
                 let mut seeds_with_bump = seeds.clone();
                 seeds_with_bump.push(bump_seed.to_vec());
                 let seeds_with_bump_slice = seeds_with_bump.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>();
@@ -832,7 +839,31 @@ declare_builtin_function!(
         signers_seeds_len: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        debug_log!("in SyscallInvokeSignedRust");
+        debug_log!("");
+        let mmh = MemoryMappingHelper::new(Some(memory_mapping));
+        let account_infos = SliceFatPtr64::<AccountInfo>::new::<true>(mmh.clone(), account_infos_addr, account_infos_len);
+        for account_idx in 0..account_infos_len {
+            let lamports_mem_layout_ptr = RcRefCellMemLayout::<&mut u64>::new(
+                mmh.clone(),
+                PtrType::RcStartPtr((account_infos.item_addr_at_idx(account_idx as usize) + 8) as u64),
+            );
+            debug_log!("");
+            let addr_to_key_addr = account_infos.item_addr_at_idx(account_idx as usize) as u64;
+            let key_vm_addr = SliceFatPtr64Repr::<1>::ptr_elem_from_addr(addr_to_key_addr as usize);
+            let key = translate_type::<Pubkey>(
+                memory_mapping,
+                // account_info.owner as *const _ as u64,
+                key_vm_addr,
+                invoke_context.get_check_aligned(),
+                false,
+            )?;
+            let lamports = lamports_mem_layout_ptr.value::<false>();
+            debug_log!("for key (is_svm_pubkey:{}) {} ({:x?}) account_idx {} lamports={}", is_svm_pubkey(key), key, key.to_bytes(), account_idx, lamports);
+            // if account_idx == 0 {
+            //     assert_eq!(*lamports, 101);
+            // }
+        }
+        debug_log!("");
         cpi_common::<SDK, Self>(
             invoke_context,
             instruction_addr,

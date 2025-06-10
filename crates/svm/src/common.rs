@@ -770,25 +770,34 @@ pub fn evm_balance_from_lamports(value: u64) -> U256 {
     U256::from_be_bytes(bytes) * U256::from(ONE_GWEI)
 }
 
-#[test]
-fn test_evm_balance_to_lamports_and_vice_versa() {
-    let evm_balance = U256::from(ONE_GWEI);
-    let lamports_balance = lamports_from_evm_balance(evm_balance);
-    assert_eq!(lamports_balance, 1);
-    let evm_balance = U256::from(9 * ONE_GWEI);
-    let lamports_balance = lamports_from_evm_balance(evm_balance);
-    assert_eq!(lamports_balance, 9);
-    let evm_balance = U256::from(1_000_000_000 * ONE_GWEI);
-    let lamports_balance = lamports_from_evm_balance(evm_balance);
-    assert_eq!(lamports_balance, ONE_GWEI);
+#[cfg(test)]
+mod tests {
+    use crate::common::{evm_balance_from_lamports, lamports_from_evm_balance, ONE_GWEI};
+    use fluentbase_sdk::U256;
 
-    let lamports_balance = 1;
-    let evm_balance = evm_balance_from_lamports(lamports_balance);
-    assert_eq!(evm_balance, U256::from(ONE_GWEI));
-    let lamports_balance = 3;
-    let evm_balance = evm_balance_from_lamports(lamports_balance);
-    assert_eq!(evm_balance, U256::from(3 * ONE_GWEI));
-    let lamports_balance = 1_000_000_000;
-    let evm_balance = evm_balance_from_lamports(lamports_balance);
-    assert_eq!(evm_balance, U256::from(1_000_000_000 * ONE_GWEI));
+    #[test]
+    fn test_evm_balance_to_lamports_and_vice_versa() {
+        let evm_balance = U256::from(ONE_GWEI);
+        let lamports_balance = lamports_from_evm_balance(evm_balance);
+        assert_eq!(lamports_balance, 1);
+        let evm_balance = U256::from(9 * ONE_GWEI);
+        let lamports_balance = lamports_from_evm_balance(evm_balance);
+        assert_eq!(lamports_balance, 9);
+        let evm_balance = U256::from(1_000_000_000 * ONE_GWEI);
+        let lamports_balance = lamports_from_evm_balance(evm_balance);
+        assert_eq!(lamports_balance, ONE_GWEI);
+        let evm_balance = U256::from(101e9);
+        let lamports_balance = lamports_from_evm_balance(evm_balance);
+        assert_eq!(lamports_balance, 101);
+
+        let lamports_balance = 1;
+        let evm_balance = evm_balance_from_lamports(lamports_balance);
+        assert_eq!(evm_balance, U256::from(ONE_GWEI));
+        let lamports_balance = 3;
+        let evm_balance = evm_balance_from_lamports(lamports_balance);
+        assert_eq!(evm_balance, U256::from(3 * ONE_GWEI));
+        let lamports_balance = 1_000_000_000;
+        let evm_balance = evm_balance_from_lamports(lamports_balance);
+        assert_eq!(evm_balance, U256::from(1_000_000_000 * ONE_GWEI));
+    }
 }

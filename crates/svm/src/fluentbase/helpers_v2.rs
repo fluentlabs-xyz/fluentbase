@@ -82,7 +82,7 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sapi: &mut Option<&mut SAPI>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let batch_message = deserialize(batch_message)?;
-    debug_log!("batch_message deserialized: {:?}", &batch_message);
+    debug_log!("batch_message: {:?}", &batch_message);
     exec_svm_batch_message(sdk, batch_message, flush_result_accounts, sapi)
 }
 pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
