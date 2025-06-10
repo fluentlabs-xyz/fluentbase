@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use core::cell::Cell;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 
 pub struct SyscallDebugLog;
 
@@ -9,7 +9,7 @@ thread_local! {
 }
 
 impl SyscallDebugLog {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
         let [message_ptr, message_len] = caller.stack_pop_n();
         let mut buffer = vec![0u8; message_len.as_usize()];
         caller.memory_read(message_ptr.as_usize(), &mut buffer)?;

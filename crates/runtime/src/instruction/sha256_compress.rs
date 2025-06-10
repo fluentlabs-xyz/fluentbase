@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 
 pub const SHA_COMPRESS_K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -17,12 +17,12 @@ pub(crate) struct SyscallSha256Compress;
 
 impl SyscallSha256Compress {
     #[allow(clippy::many_single_char_names)]
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
         let (w_ptr, h_ptr) = caller.stack_pop2_as::<u32>();
         if w_ptr == h_ptr {
-            return Err(RwasmError::ExecutionHalted(
-                ExitCode::MalformedBuiltinParams.into_i32(),
-            ));
+            caller.context_mut().execution_result.exit_code =
+                ExitCode::MalformedBuiltinParams.into_i32();
+            return Err(TrapCode::ExecutionHalted);
         }
 
         // Execute the "initialize" phase where we read in the h values.
@@ -88,7 +88,7 @@ impl SyscallSha256Compress {
         Ok(())
     }
 
-    pub fn fn_impl(_w: &[u8], _h: &[u8]) -> Result<(), RwasmError> {
+    pub fn fn_impl(_w: &[u8], _h: &[u8]) -> Result<(), TrapCode> {
         todo!("not implemented yet")
         // if w.as_ptr() == h.as_ptr() {
         //     return Err(ExitCode::BadBuiltinParams.into_trap());

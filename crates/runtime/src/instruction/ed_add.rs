@@ -1,6 +1,6 @@
 use crate::{instruction::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 use sp1_curves::{edwards::EdwardsParameters, params::NumWords, AffinePoint, EllipticCurve};
 use std::marker::PhantomData;
 
@@ -18,7 +18,7 @@ impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
 }
 
 impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
         let (p_ptr, q_ptr) = caller.stack_pop2_as::<u32>();
 
         let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;

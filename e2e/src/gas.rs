@@ -1,4 +1,3 @@
-use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};
 use core::str::from_utf8;
 use fluentbase_codec::byteorder::LittleEndian;
 use fluentbase_sdk::{
@@ -11,9 +10,10 @@ use fluentbase_sdk::{
     SYSCALL_ID_CALL,
     U256,
 };
+use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
-use rwasm::legacy::{engine::DropKeep, instruction_set, rwasm::RwasmModule};
 use revm::context::result::{ExecutionResult, Output};
+use rwasm::{instruction_set, RwasmModule};
 
 #[test]
 fn test_simple_nested_call() {
@@ -23,54 +23,54 @@ fn test_simple_nested_call() {
     const ACCOUNT3_ADDRESS: Address = address!("1111111111111111111111111111111111111113");
     let _account1 = ctx.add_wasm_contract(
         ACCOUNT1_ADDRESS,
-        instruction_set! {
-            ConsumeFuel(1000)
+        RwasmModule::with_one_function(instruction_set! {
+            .op_consume_fuel(1000u32)
             // add one memory page
-            I32Const(1)
-            MemoryGrow // it costs 1024 fuel
-            Drop
+            .op_i32_const(1)
+            .op_memory_grow() // it costs 1024 fuel
+            .op_drop()
             // write exit code into 0 memory offset
-            I32Const(0)
-            I32Const(100)
-            I32Store(0)
+            .op_i32_const(0)
+            .op_i32_const(100)
+            .op_i32_store(0)
             // call write output (offset=0, length=1)
-            I32Const(0)
-            I32Const(1)
-            Call(SysFuncIdx::WRITE_OUTPUT)
+            .op_i32_const(0)
+            .op_i32_const(1)
+            .op_call(SysFuncIdx::WRITE_OUTPUT)
             // exit 0
-            I32Const(0)
-            Call(SysFuncIdx::EXIT)
-        },
+            .op_i32_const(0)
+            .op_call(SysFuncIdx::EXIT)
+        }),
     );
     let _account2 = ctx.add_wasm_contract(
         ACCOUNT2_ADDRESS,
-        instruction_set! {
-            ConsumeFuel(2000)
+        RwasmModule::with_one_function(instruction_set! {
+            .op_consume_fuel(2000u32)
             // add one memory page
-            I32Const(1)
-            MemoryGrow // it costs 1024 fuel
-            Drop
+            .op_i32_const(1)
+            .op_memory_grow() // it costs 1024 fuel
+            .op_drop()
             // write exit code into 0 memory offset
-            I32Const(0)
-            I32Const(20)
-            I32Store(0)
+            .op_i32_const(0)
+            .op_i32_const(20)
+            .op_i32_store(0)
             // call write output (offset=0, length=1)
-            I32Const(0)
-            I32Const(1)
-            Call(SysFuncIdx::WRITE_OUTPUT)
+            .op_i32_const(0)
+            .op_i32_const(1)
+            .op_call(SysFuncIdx::WRITE_OUTPUT)
             // exit 0
-            I32Const(0)
-            Call(SysFuncIdx::EXIT)
-        },
+            .op_i32_const(0)
+            .op_call(SysFuncIdx::EXIT)
+        }),
     );
-    let mut memory_section = vec![];
-    memory_section.extend_from_slice(&SYSCALL_ID_CALL.0); // 0..32
-    memory_section.extend_from_slice(ACCOUNT1_ADDRESS.as_slice()); // 32..
-    memory_section.extend_from_slice(U256::ZERO.as_le_slice());
-    memory_section.extend_from_slice(ACCOUNT2_ADDRESS.as_slice()); // 84..
-    memory_section.extend_from_slice(U256::ZERO.as_le_slice());
-    memory_section.extend_from_slice(&[0, 0, 0, 0]); // 136..
-    assert_eq!(memory_section.len(), 140);
+    let mut data_section = vec![];
+    data_section.extend_from_slice(&SYSCALL_ID_CALL.0); // 0..32
+    data_section.extend_from_slice(ACCOUNT1_ADDRESS.as_slice()); // 32..
+    data_section.extend_from_slice(U256::ZERO.as_le_slice());
+    data_section.extend_from_slice(ACCOUNT2_ADDRESS.as_slice()); // 84..
+    data_section.extend_from_slice(U256::ZERO.as_le_slice());
+    data_section.extend_from_slice(&[0, 0, 0, 0]); // 136..
+    assert_eq!(data_section.len(), 140);
     let code_section = instruction_set! {
         // alloc and init memory
         I32Const(1)
@@ -78,11 +78,11 @@ fn test_simple_nested_call() {
         Drop
         I32Const(0)
         I32Const(0)
-        I32Const(memory_section.len() as u32)
+        I32Const(data_section.len() as u32)
         MemoryInit(0)
         DataDrop(0)
         // sys exec hash
-        ConsumeFuel(1000)
+        ConsumeFuel(1000u32)
         I32Const(0) // hash32_ptr
         I32Const(32) // input_ptr
         I32Const(52) // input_len
@@ -95,7 +95,7 @@ fn test_simple_nested_call() {
         I32Const(1) // buffer length
         Call(SysFuncIdx::READ_OUTPUT)
         // sys exec hash
-        ConsumeFuel(2000)
+        ConsumeFuel(2000u32)
         I32Const(0) // hash32_ptr
         I32Const(84) // input_ptr
         I32Const(52) // input_len
@@ -108,7 +108,7 @@ fn test_simple_nested_call() {
         I32Const(1) // buffer length
         Call(SysFuncIdx::READ_OUTPUT)
         // write the sum of two result codes into 1 byte result
-        ConsumeFuel(3000)
+        ConsumeFuel(3000u32)
         I32Const(200)
         I32Load8U(0)
         I32Const(201)
@@ -123,17 +123,15 @@ fn test_simple_nested_call() {
         I32Const(4) // length
         Call(SysFuncIdx::WRITE_OUTPUT)
         // exit with 0 exit code
-        ConsumeFuel(4000)
+        ConsumeFuel(4000u32)
         I32Const(0)
         Call(SysFuncIdx::EXIT)
     };
-    let code_section_len = code_section.len() as u32;
     ctx.add_wasm_contract(
         ACCOUNT3_ADDRESS,
         RwasmModule {
             code_section,
-            memory_section,
-            func_section: vec![code_section_len],
+            data_section,
             ..Default::default()
         },
     );
@@ -166,8 +164,8 @@ fn test_deploy_gas_spend() {
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
 
-    let result = TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, crate::EXAMPLE_GREETING.into())
-        .exec();
+    let result =
+        TxBuilder::create(&mut ctx, DEPLOYER_ADDRESS, crate::EXAMPLE_GREETING.into()).exec();
     if !result.is_success() {
         println!("{:?}", result);
         println!(
@@ -191,19 +189,19 @@ fn test_blended_gas_spend_wasm_from_evm() {
 
     let _account1 = ctx.add_wasm_contract(
         ACCOUNT1_ADDRESS,
-        instruction_set! {
-            ConsumeFuel(1000)
+        RwasmModule::with_one_function(instruction_set! {
+            ConsumeFuel(1000u32)
             I32Const(-1)
             Call(SysFuncIdx::EXIT)
-        },
+        }),
     );
     let _account2 = ctx.add_wasm_contract(
         ACCOUNT2_ADDRESS,
-        instruction_set! {
-            ConsumeFuel(2000)
+        RwasmModule::with_one_function(instruction_set! {
+            ConsumeFuel(2000u32)
             I32Const(-20)
             Call(SysFuncIdx::EXIT)
-        },
+        }),
     );
 
     let result = TxBuilder::create(
@@ -270,11 +268,11 @@ fn test_blended_gas_spend_evm_from_wasm() {
     };
     println!("Contract address: {:?}", address);
 
-    let mut memory_section = vec![];
-    memory_section.extend_from_slice(&SYSCALL_ID_CALL.0); // 0..32
-    memory_section.extend_from_slice(address.as_slice()); // 32..
-    memory_section.extend_from_slice(U256::ZERO.as_le_slice());
-    memory_section.extend_from_slice(bytes!("45773e4e").to_vec().as_slice());
+    let mut data_section = vec![];
+    data_section.extend_from_slice(&SYSCALL_ID_CALL.0); // 0..32
+    data_section.extend_from_slice(address.as_slice()); // 32..
+    data_section.extend_from_slice(U256::ZERO.as_le_slice());
+    data_section.extend_from_slice(bytes!("45773e4e").to_vec().as_slice());
 
     let code_section = instruction_set! {
         // alloc and init memory
@@ -283,11 +281,11 @@ fn test_blended_gas_spend_evm_from_wasm() {
         Drop
         I32Const(0)
         I32Const(0)
-        I32Const(memory_section.len() as u32)
+        I32Const(data_section.len() as u32)
         MemoryInit(0)
         DataDrop(0)
         // sys exec hash
-        ConsumeFuel(10)
+        ConsumeFuel(10u32)
         I32Const(0) // hash32_ptr
         I32Const(32) // input_ptr
         I32Const(56) // input_len
@@ -301,15 +299,13 @@ fn test_blended_gas_spend_evm_from_wasm() {
         I32Const(STATE_MAIN) // state
         Call(SysFuncIdx::EXEC)
         // what's on the stack?
-        Return(DropKeep::none())
+        Return
     };
-    let code_section_len = code_section.len() as u32;
     ctx.add_wasm_contract(
         ACCOUNT3_ADDRESS,
         RwasmModule {
             code_section,
-            memory_section,
-            func_section: vec![code_section_len],
+            data_section,
             ..Default::default()
         },
     );

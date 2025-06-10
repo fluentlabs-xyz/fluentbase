@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 
 pub struct SyscallChargeFuel;
 
 impl SyscallChargeFuel {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
         let fuel_consumed: u64 = caller.stack_pop_as();
-        caller.vm_mut().try_consume_fuel(fuel_consumed)?;
+        caller.store_mut().try_consume_fuel(fuel_consumed)?;
         Ok(())
     }
 

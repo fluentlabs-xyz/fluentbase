@@ -5,12 +5,12 @@ use fluentbase_types::{
 };
 #[cfg(feature = "wasmtime")]
 use num::ToPrimitive;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 
 pub struct SyscallResume;
 
 impl SyscallResume {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
         let [call_id, return_data_ptr, return_data_len, exit_code, fuel16_ptr] =
             caller.stack_pop_n();
         let return_data = caller
@@ -79,7 +79,7 @@ impl SyscallResume {
         // when fuel is disabled we only pass consumed fuel amount into the contract back,
         // and it can decide on charging
         if !ctx.disable_fuel && fuel_consumed > 0 {
-            let store = &mut recoverable_runtime.executor;
+            let store = &mut recoverable_runtime.store;
             // charge fuel that was spent during the interruption
             // to make sure our fuel calculations are aligned
             if let Err(_) = store.try_consume_fuel(fuel_consumed) {
@@ -88,7 +88,7 @@ impl SyscallResume {
         }
 
         // copy return data into return data
-        let return_data_mut = recoverable_runtime.executor.context_mut().return_data_mut();
+        let return_data_mut = recoverable_runtime.store.context_mut().return_data_mut();
         return_data_mut.clear();
         return_data_mut.extend(&return_data);
 

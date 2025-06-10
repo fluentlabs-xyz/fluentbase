@@ -8,7 +8,7 @@ use fluentbase_types::{
     B256,
     CALL_STACK_LIMIT,
 };
-use rwasm::{Caller, HostError, RwasmError};
+use rwasm::{Caller, HostError, TrapCode};
 use std::{
     cmp::min,
     fmt::{Debug, Display, Formatter},
@@ -39,8 +39,8 @@ impl Display for SysExecResumable {
 impl HostError for SysExecResumable {}
 
 impl SyscallExec {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let remaining_fuel = caller.vm().remaining_fuel().unwrap_or(u64::MAX);
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+        let remaining_fuel = caller.store().remaining_fuel().unwrap_or(u64::MAX);
         let disable_fuel = caller.context().disable_fuel;
         let [hash32_ptr, input_ptr, input_len, fuel16_ptr, state] = caller.stack_pop_n();
         // make sure we have enough fuel for this call
@@ -52,7 +52,7 @@ impl SyscallExec {
             let _fuel_refund = LittleEndian::read_i64(&fuel_buffer[8..]);
             if fuel_limit > 0 {
                 if fuel_limit != u64::MAX && fuel_limit > remaining_fuel && !disable_fuel {
-                    return Err(RwasmError::OutOfFuel);
+                    return Err(TrapCode::OutOfFuel);
                 }
                 min(fuel_limit, remaining_fuel)
             } else {
@@ -62,7 +62,7 @@ impl SyscallExec {
             remaining_fuel
         };
         // return resumable error
-        Err(RwasmError::HostInterruption(Box::new(SysExecResumable {
+        caller.context_mut().resumable_context = Some(SysExecResumable {
             params: SyscallInvocationParams {
                 code_hash: B256::from(caller.memory_read_fixed::<32>(hash32_ptr.as_usize())?),
                 input: Bytes::from(
@@ -72,8 +72,9 @@ impl SyscallExec {
                 state: state.as_u32(),
                 fuel16_ptr: fuel16_ptr as u32,
             },
-            is_root: caller.vm().context().call_depth == 0,
-        })))
+            is_root: caller.store().context().call_depth == 0,
+        });
+        Err(TrapCode::ExecutionHalted)
     }
 
     pub fn fn_continue(

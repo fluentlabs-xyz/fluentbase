@@ -29,7 +29,7 @@ use revm::{
     ExecuteCommitEvm,
     MainBuilder,
 };
-use rwasm::legacy::rwasm::{BinaryFormat, RwasmModule};
+use rwasm::RwasmModule;
 use rwasm_revm::{RwasmBuilder, RwasmContext};
 
 #[allow(dead_code)]
@@ -50,7 +50,7 @@ impl Default for EvmTestingContext {
 #[allow(dead_code)]
 impl EvmTestingContext {
     fn load_from_genesis(genesis: Genesis) -> Self {
-        // create jzkt and put it into testing context
+        // create jzkt and put it into a testing context
         let mut db = InMemoryDB::default();
         // convert all accounts from genesis into jzkt
         for (k, v) in genesis.alloc.iter() {
@@ -85,9 +85,7 @@ impl EvmTestingContext {
     ) -> AccountInfo {
         let rwasm_binary = {
             let rwasm_module: RwasmModule = rwasm_module.into();
-            let mut result = Vec::new();
-            rwasm_module.write_binary_to_vec(&mut result).unwrap();
-            result
+            rwasm_module.serialize()
         };
         let mut info: AccountInfo = AccountInfo {
             balance: U256::ZERO,
@@ -323,10 +321,10 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
     } else {
         compile_wasm_to_rwasm(&wasm_binary)
             .unwrap()
-            .rwasm_bytecode
+            .rwasm_module
+            .serialize()
             .into()
     };
-
     let context_input = {
         let shared_ctx = SharedContextInputV1 {
             block: Default::default(),
@@ -353,26 +351,26 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
     );
     try_print_utf8_error(&result.output[..]);
     println!("fuel consumed: {}", result.fuel_consumed);
-    if result.exit_code != 0 {
-        let logs = &runtime
-            .executor
-            .tracer()
-            .map(|v| v.logs.clone())
-            .unwrap_or_default();
-        println!("execution trace ({} steps):", logs.len());
-        for log in logs.iter().rev().take(100).rev() {
-            println!(" - pc={} opcode={}", log.program_counter, log.opcode);
-        }
-    } else {
-        println!(
-            "trace steps: {}",
-            runtime
-                .executor
-                .tracer()
-                .map(|v| v.logs.len())
-                .unwrap_or_default()
-        );
-    }
+    // if result.exit_code != 0 {
+    //     let logs = &runtime
+    //         .executor
+    //         .tracer()
+    //         .map(|v| v.logs.clone())
+    //         .unwrap_or_default();
+    //     println!("execution trace ({} steps):", logs.len());
+    //     for log in logs.iter().rev().take(100).rev() {
+    //         println!(" - pc={} opcode={}", log.program_counter, log.opcode);
+    //     }
+    // } else {
+    //     println!(
+    //         "trace steps: {}",
+    //         runtime
+    //             .executor
+    //             .tracer()
+    //             .map(|v| v.logs.len())
+    //             .unwrap_or_default()
+    //     );
+    // }
     (result.output.into(), result.exit_code)
 }
 
