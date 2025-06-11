@@ -10,7 +10,7 @@ use fluentbase_sdk::{
     derive::{router, solidity_storage},
     Address,
     Bytes,
-    ContractContextReader,
+    ContextReader,
     SharedAPI,
     B256,
     U256,
@@ -35,13 +35,13 @@ sol! {
 }
 
 fn emit_event<SDK: SharedAPI, T: SolEvent>(sdk: &mut SDK, event: T) {
-    let data: Bytes = event.encode_data().into();
+    let data = event.encode_data();
     let topics: Vec<B256> = event
         .encode_topics()
         .iter()
         .map(|v| B256::from(v.0))
         .collect();
-    sdk.emit_log(data, &topics);
+    sdk.emit_log(&topics, &data);
 }
 
 solidity_storage! {

@@ -45,7 +45,7 @@ pub struct HeapBaseAllocator {}
 
 #[cfg(target_arch = "wasm32")]
 unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
-    #[inline(always)]
+    #[inline(never)]
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         let bytes: usize = layout.size();
         let align: usize = layout.align();
@@ -67,8 +67,10 @@ unsafe impl core::alloc::GlobalAlloc for HeapBaseAllocator {
         if pages_needed > 0 {
             let new_pages = core::arch::wasm32::memory_grow::<0>(pages_needed);
             if new_pages == usize::MAX {
-                // TODO(dmitry123): "don't panic here, return OutOfMemory error with punishment"
-                unreachable!("out of memory");
+                // TODO(dmitry123): "how to use trap code here?"
+                unsafe {
+                    core::hint::unreachable_unchecked();
+                }
             }
         }
         // return allocated pointer

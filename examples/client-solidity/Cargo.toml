@@ -11,6 +11,7 @@ hex = "0.4.3"
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
 
 [features]
 default = ["std"]

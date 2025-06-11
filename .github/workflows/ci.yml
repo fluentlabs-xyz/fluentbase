@@ -41,6 +41,7 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -93,7 +94,6 @@ jobs:
   evm-e2e-tests:
     name: EVM Testing Suite
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -112,6 +112,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "revm/e2e -> target"
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
       - name: Sync ethereum tests
         working-directory: revm/e2e
         run: make sync_tests

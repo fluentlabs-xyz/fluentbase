@@ -2,6 +2,7 @@
 members = [
     "contracts/*",
     "crates/*",
+    "revm/bins/revme",
     "revm/crates/*",
     "examples/*",
     "e2e",
@@ -40,21 +41,20 @@ fluentbase-types = { path = "./crates/types", default-features = false }
 # rwasm
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.1.0-dev", default-features = false }
 
-# revm
-revm-interpreter = { path = "revm/crates/interpreter", default-features = false }
-revm-primitives = { path = "revm/crates/primitives", default-features = false }
-revm-precompile = { path = "revm/crates/precompile", default-features = false }
-revm = { path = "revm/crates/revm", default-features = false, features = [
-    "std",
-    "hashbrown",
-] }
-
 # misc
 byteorder = { version = "1.5.0", default-features = false }
-alloy-primitives = { version = "=0.8.21", default-features = false, features = ["rlp", "map"] }
-alloy-rlp = { version = "0.3.10", default-features = false, features = ["derive"] }
-alloy-genesis = { version = "=0.11.1", default-features = false }
-alloy-sol-types = { version = "=0.8.20", default-features = false }
+
+alloy-primitives = { version = "1.1.0", default-features = false, features = ["sha3-keccak"] }
+alloy-rlp = { version = "0.3.10", default-features = false }
+alloy-sol-types = { version = "1.1.0", default-features = false }
+alloy-consensus = { version = "1.0.5", default-features = false }
+alloy-eips = { version = "1.0.5", default-features = false }
+alloy-genesis = { version = "1.0.5", default-features = false }
+alloy-provider = { version = "1.0.5", features = ["reqwest"], default-features = false }
+alloy-signer = { version = "1.0.5", default-features = false }
+alloy-signer-local = { version = "1.0.5", default-features = false }
+alloy-transport = { version = "1.0.5" }
+
 hashbrown = { version = "0.15.0", default-features = false, features = ["default-hasher", "inline-more"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false }
@@ -70,6 +70,85 @@ syn = "2.0"
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
+wasmtime = { version = "31.0.0" }
+
+# revm
+revm = { path = "revm/crates/revm", default-features = false, features = ["secp256r1"] }
+primitives = { path = "revm/crates/primitives", package = "revm-primitives", default-features = false }
+bytecode = { path = "revm/crates/bytecode", package = "revm-bytecode", default-features = false }
+database = { path = "revm/crates/database", package = "revm-database", default-features = false }
+database-interface = { path = "revm/crates/database/interface", package = "revm-database-interface", default-features = false }
+state = { path = "revm/crates/state", package = "revm-state", default-features = false }
+interpreter = { path = "revm/crates/interpreter", package = "revm-interpreter", default-features = false }
+inspector = { path = "revm/crates/inspector", package = "revm-inspector", default-features = false }
+precompile = { path = "revm/crates/precompile", package = "revm-precompile", default-features = false }
+statetest-types = { path = "revm/crates/statetest-types", package = "revm-statetest-types", default-features = false }
+context = { path = "revm/crates/context", package = "revm-context", default-features = false }
+context-interface = { path = "revm/crates/context/interface", package = "revm-context-interface", default-features = false }
+handler = { path = "revm/crates/handler", package = "revm-handler", default-features = false }
+op-revm = { path = "revm/crates/op-revm", default-features = false }
+rwasm-revm = { path = "revm/crates/rwasm-revm", default-features = false }
+
+# alloy
+alloy-eip2930 = { version = "0.2.0", default-features = false }
+alloy-eip7702 = { version = "0.6.0", default-features = false }
+
+# precompiles
+ark-bls12-381 = { version = "0.5", default-features = false }
+ark-bn254 = { version = "0.5", default-features = false }
+ark-ec = { version = "0.5", default-features = false }
+ark-ff = { version = "0.5", default-features = false }
+ark-serialize = { version = "0.5", default-features = false }
+aurora-engine-modexp = { version = "1.1", default-features = false }
+blst = "0.3.13"
+bn = { package = "substrate-bn", version = "0.6", default-features = false }
+c-kzg = { version = "2.1.1", default-features = false }
+k256 = { version = "0.13.3", default-features = false }
+libsecp256k1 = { version = "0.7", default-features = false }
+kzg-rs = { version = "0.2.4", default-features = false }
+secp256k1 = { version = "0.30", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+ripemd = { version = "0.1", default-features = false }
+p256 = { version = "0.13.2", default-features = false }
+
+# bytecode
+phf = { version = "0.11", default-features = false }
+
+# revme
+clap = { version = "4", features = ["derive"] }
+criterion = { package = "codspeed-criterion-compat", version = "2.7" }
+
+# misc
+bitflags = { version = "2.6.0", default-features = false }
+cfg-if = { version = "1.0", default-features = false }
+derive-where = { version = "1.2.7", default-features = false }
+once_cell = { version = "1.19", default-features = false }
+rand = "0.8"
+tokio = "1.44"
+either = { version = "1.15.0", default-features = false }
+
+# dev-dependencies
+eyre = "0.6.12"
+hash-db = "0.15"
+indicatif = "0.17"
+plain_hasher = "0.2"
+rstest = "0.24.0"
+serde_derive = "1.0"
+thiserror = "2.0"
+triehash = "0.8"
+walkdir = "2.5"
+
+[workspace.lints]
+rust.missing_debug_implementations = "warn"
+rust.missing_docs = "warn"
+rust.rust_2018_idioms = { level = "deny", priority = -1 }
+rust.unreachable_pub = "warn"
+rust.unused_must_use = "deny"
+rustdoc.all = "warn"
+
+[workspace.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [profile.bench]
 lto = "fat"
@@ -84,3 +163,17 @@ debug = false
 debug-assertions = false
 rpath = false
 codegen-units = 1
+
+[profile.dev.build-override]
+debug = false # disable debug symbols for build.rs to avoid 200+MB build-script binaries
+
+# Use the `--profile profiling` flag to show symbols in release mode.
+# e.g. `cargo build --profile profiling`
+[profile.profiling]
+debug = 2
+inherits = "release"
+strip = false
+
+[profile.ethtests]
+inherits = "test"
+opt-level = 3

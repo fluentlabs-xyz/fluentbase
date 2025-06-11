@@ -1,4 +1,4 @@
-use revm_primitives::{PrecompileError, PrecompileErrors};
+use precompile::PrecompileError;
 use rwasm::RwasmError;
 use strum_macros::{Display, FromRepr};
 
@@ -180,19 +180,6 @@ impl From<&PrecompileError> for ExitCode {
         match err {
             PrecompileError::OutOfGas => ExitCode::OutOfFuel,
             _ => ExitCode::PrecompileError,
-        }
-    }
-}
-impl From<PrecompileErrors> for ExitCode {
-    fn from(err: PrecompileErrors) -> Self {
-        Self::from(&err)
-    }
-}
-impl From<&PrecompileErrors> for ExitCode {
-    fn from(err: &PrecompileErrors) -> Self {
-        match err {
-            PrecompileErrors::Error(err) => ExitCode::from(err),
-            PrecompileErrors::Fatal { .. } => ExitCode::PrecompileError,
         }
     }
 }

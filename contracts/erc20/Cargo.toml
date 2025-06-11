@@ -4,13 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true }
+fluentbase-sdk = { workspace = true, features = ["fast-panic"] }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
 
 [features]
 default = ["std"]

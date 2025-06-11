@@ -3,14 +3,7 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{
-    alloc_slice,
-    entrypoint,
-    Bytes,
-    ContractContextReader,
-    ExitCode,
-    SharedAPI,
-};
+use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     // read full input data
@@ -20,7 +13,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
     // call identity function
-    let result = revm_precompile::secp256k1::ec_recover_run(&input, gas_limit)
+    let result = precompile::secp256k1::ec_recover_run(&input, gas_limit)
         .unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
     sdk.sync_evm_gas(result.gas_used, 0);
     // write output

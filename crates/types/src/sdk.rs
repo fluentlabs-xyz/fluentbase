@@ -1,5 +1,5 @@
 use crate::{
-    context::SharedContextReader,
+    context::ContextReader,
     evm::{write_evm_exit_message, write_evm_panic_message},
     Address,
     Bytes,
@@ -14,7 +14,7 @@ pub type IsColdAccess = bool;
 pub type IsAccountEmpty = bool;
 
 pub trait SharedAPI {
-    fn context(&self) -> impl SharedContextReader;
+    fn context(&self) -> impl ContextReader;
 
     fn keccak256(&self, data: &[u8]) -> B256;
 
@@ -34,6 +34,8 @@ pub trait SharedAPI {
         self.read(&mut buffer, 0);
         buffer
     }
+
+    fn read_context(&self, target: &mut [u8], offset: u32);
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64);
 
@@ -95,7 +97,7 @@ pub trait SharedAPI {
         result.data
     }
 
-    fn emit_log(&mut self, data: Bytes, topics: &[B256]) -> SyscallResult<()>;
+    fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()>;
 
     fn self_balance(&self) -> SyscallResult<U256>;
     fn balance(&self, address: &Address) -> SyscallResult<U256>;

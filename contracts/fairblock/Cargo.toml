@@ -3,6 +3,9 @@ name = "fluentbase-contracts-fairblock"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+path = "lib.rs"
+
 [dependencies]
 fluentbase-sdk = { workspace = true }
 
@@ -11,6 +14,8 @@ fluentbase-sdk-testing = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
 
-[lib]
-path = "lib.rs"
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std"]

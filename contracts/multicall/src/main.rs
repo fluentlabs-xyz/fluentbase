@@ -9,7 +9,7 @@ use fluentbase_sdk::{
     codec::{bytes::BytesMut, encoder::SolidityABI},
     entrypoint,
     Bytes,
-    ContractContextReader,
+    ContextReader,
     SharedAPI,
     SyscallResult,
 };

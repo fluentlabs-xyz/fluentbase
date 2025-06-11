@@ -16,7 +16,8 @@ rwasm = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-rlp = { workspace = true }
 strum_macros = { workspace = true }
-revm-primitives = { workspace = true, default-features = false }
+precompile.workspace = true
+primitives.workspace = true
 hashbrown = { workspace = true }
 fluentbase-codec = { workspace = true }
 auto_impl = { workspace = true }
@@ -27,11 +28,10 @@ hex-literal = { workspace = true }
 
 [features]
 default = ["std"]
-serde = ["dep:serde", "alloy-primitives/serde", "revm-primitives/serde"]
+serde = ["dep:serde", "alloy-primitives/serde", "primitives/serde"]
 std = [
     "rwasm/std",
     "alloy-primitives/std",
     "byteorder/std",
     "fluentbase-codec/std",
 ]
-optimism = ["revm-primitives/optimism"]
