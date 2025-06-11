@@ -1,6 +1,6 @@
 use crate::{
     alloc::string::ToString,
-    common::{is_svm_pubkey, HasherImpl, Keccak256Hasher, Sha256Hasher},
+    common::{is_evm_pubkey, HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
     error::Error,
@@ -858,7 +858,7 @@ declare_builtin_function!(
                 false,
             )?;
             let lamports = lamports_mem_layout_ptr.value::<false>();
-            debug_log!("for key (is_svm_pubkey:{}) {} ({:x?}) account_idx {} lamports={}", is_svm_pubkey(key), key, key.to_bytes(), account_idx, lamports);
+            debug_log!("for key (is_svm_pubkey:{}) {} ({:x?}) account_idx {} lamports={}", is_evm_pubkey(key), key, key.to_bytes(), account_idx, lamports);
             // if account_idx == 0 {
             //     assert_eq!(*lamports, 101);
             // }

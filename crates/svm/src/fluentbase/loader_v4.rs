@@ -3,7 +3,13 @@ use crate::{
     common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_address},
     error::SvmError,
     fluentbase::{
-        common::{extract_account_data_or_default, process_svm_result, BatchMessage, MemStorage},
+        common::{
+            extract_account_data_or_default,
+            flush_accounts,
+            process_svm_result,
+            BatchMessage,
+            MemStorage,
+        },
         helpers_v2::{exec_encoded_svm_batch_message, exec_svm_batch_message},
         loader_common::{read_protected_preimage, write_protected_preimage},
     },
@@ -25,7 +31,8 @@ use fluentbase_sdk::{
     SharedAPI,
     U256,
 };
-use fluentbase_types::SyscallResult;
+use fluentbase_types::{StorageAPI, SyscallResult};
+use hashbrown::HashMap;
 use solana_bincode::{deserialize, serialize};
 use solana_clock::INITIAL_RENT_EPOCH;
 use solana_pubkey::Pubkey;
@@ -285,7 +292,13 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         Err(e) => {
             debug_log!("main: result error: {:?}", e)
         }
-        _ => {}
+        Ok(accounts) => {
+            if accounts.len() > 0 {
+                debug_log!("flushing {} accounts into sdk", accounts.len());
+                let mut sapi: Option<&mut SDK> = None;
+                flush_accounts(&mut sdk, &mut sapi, accounts).expect("failed to flush accounts");
+            }
+        }
     }
     let (result_accounts, exit_code) = process_svm_result(result);
     if exit_code != ExitCode::Ok.into_i32() {

@@ -538,7 +538,10 @@ impl<'a> SpecMethods<'a> for AccountInfo<'a> {
         data: &'a [u8],
         _memory_mapping_helper: MemoryMappingHelper<'a>,
     ) -> RetVal<'a, Self> {
-        panic!("cannot recover from a AccountInfo");
+        panic!(
+            "cannot recover instance from {} as it contains word size deps",
+            crate::typ_name!(Self)
+        );
         // RetVal::Reference(typecast_bytes(data))
     }
 }
@@ -555,12 +558,10 @@ pub fn collect_into_vec_cloned<'a, T: ElementConstraints<'a>>(
 #[cfg(test)]
 mod tests {
     use crate::ptr_size::{common::MemoryMappingHelper, slice_fat_ptr64::SliceFatPtr64};
-    use alloc::rc::Rc;
     use solana_account_info::AccountInfo;
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
     use solana_stable_layout::stable_vec::StableVec;
-    use std::cell::RefCell;
 
     #[test]
     fn structs_sizes_test() {

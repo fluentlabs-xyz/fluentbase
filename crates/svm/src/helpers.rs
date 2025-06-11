@@ -93,7 +93,7 @@ use crate::{
     solana_program::sysvar::Sysvar,
     storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
-use fluentbase_sdk::{SharedAPI, StorageAPI};
+use fluentbase_sdk::{debug_log, SharedAPI, StorageAPI};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
@@ -796,6 +796,7 @@ pub fn storage_read_account_data<SAPI: StorageAPI>(
         _phantom: Default::default(),
     };
     storage_writer.read_data(sapi, &mut buffer)?;
+    debug_log!("for pk {} buffer.len: {}", &pubkey, buffer.len());
     let deserialize_result = deserialize(&buffer);
     // {
     //     // debug
@@ -819,8 +820,9 @@ pub fn storage_write_account_data<SAPI: StorageAPI>(
         slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
         _phantom: Default::default(),
     };
-    let data = serialize(account_data)?;
-    storage_writer.write_data(sapi, &data);
+    let buffer = serialize(account_data)?;
+    debug_log!("for pk {} buffer.len: {}", &pubkey, buffer.len());
+    storage_writer.write_data(sapi, &buffer);
     Ok(())
 }
 

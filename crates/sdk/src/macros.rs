@@ -18,8 +18,12 @@ macro_rules! current_line_info {
 
 #[macro_export]
 macro_rules! debug_log {
+    () => {{
+        debug_log!("");
+    }};
     ($msg:tt) => {{
-        let msg = alloc::format!("{}: {}", $crate::current_line_info!(), $msg);
+        use alloc::format;
+        let msg = format!("{}: {}", $crate::current_line_info!(), $msg);
         #[cfg(target_arch = "wasm32")]
         unsafe { $crate::rwasm::_debug_log(msg.as_ptr(), msg.len() as u32) }
         #[cfg(feature = "std")]

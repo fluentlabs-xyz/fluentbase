@@ -10,20 +10,13 @@ use crate::{
         PROGRAM_OWNERS,
     },
     builtins::register_builtins,
-    common::compile_accounts_for_tx_ctx,
     compute_budget::compute_budget::ComputeBudget,
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
     error::SvmError,
-    fluentbase::common::{
-        extract_account_data_or_default,
-        flush_accounts,
-        load_program_account,
-        BatchMessage,
-        SYSTEM_PROGRAMS_KEYS,
-    },
+    fluentbase::common::{extract_account_data_or_default, flush_accounts, BatchMessage},
     helpers::storage_read_account_data,
     loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-    loaders::{bpf_loader_v4, bpf_loader_v4::get_state},
+    loaders::bpf_loader_v4,
     message_processor::MessageProcessor,
     native_loader,
     saturating_add_assign,
@@ -32,7 +25,6 @@ use crate::{
     solana_program::{
         feature_set::feature_set_default,
         loader_v4,
-        loader_v4::{LoaderV4State, LoaderV4Status},
         message::{legacy, LegacyMessage, SanitizedMessage},
         svm_message::SVMMessage,
         sysvar::instructions::{
@@ -45,19 +37,16 @@ use crate::{
     system_program,
     sysvar_cache::SysvarCache,
 };
-use alloc::{sync::Arc, vec, vec::Vec};
-use core::cell::Cell;
+use alloc::{sync::Arc, vec::Vec};
 use fluentbase_sdk::{debug_log, BlockContextReader, SharedAPI, StorageAPI};
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
 use solana_feature_set::{disable_account_loader_special_case, FeatureSet};
-use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
-    memory_region::{AccessType, MemoryMapping, MemoryRegion, MemoryState},
-    program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
+    program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
 };
 use solana_rent::{sysvar, Rent};

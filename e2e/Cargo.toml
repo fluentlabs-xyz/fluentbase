@@ -45,6 +45,7 @@ hex = { workspace = true }
 hex-literal = { workspace = true }
 alloy-sol-types = { workspace = true }
 wat = { version = "1.223.0" }
+rand = { version = "0.9.1" }
 
 #tikv-jemallocator = "0.6.0"
 

@@ -738,18 +738,18 @@ pub fn pubkey_from_pubkey(value: &Pubkey) -> Pubkey {
     ))
 }
 
-pub fn is_svm_pubkey(pk: &Pubkey) -> bool {
+pub fn is_evm_pubkey(pk: &Pubkey) -> bool {
     pk.as_ref().starts_with(&SVM_ADDRESS_PREFIX)
 }
 
 pub fn evm_address_from_pubkey<const VALIDATE_PREFIX: bool>(
-    value: Pubkey,
+    pk: &Pubkey,
 ) -> Result<Address, SvmError> {
-    if VALIDATE_PREFIX && &value.as_ref()[12..] != &SVM_ADDRESS_PREFIX {
+    if VALIDATE_PREFIX && !pk.as_ref().starts_with(&SVM_ADDRESS_PREFIX) {
         return Err(SvmError::ExitCode(ExitCode::Err));
     }
     Ok(Address::from_slice(
-        &value.as_ref()[SVM_ADDRESS_PREFIX.len()..],
+        &pk.as_ref()[SVM_ADDRESS_PREFIX.len()..],
     ))
 }
 

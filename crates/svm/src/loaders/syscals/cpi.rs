@@ -1443,14 +1443,14 @@ fn update_callee_account<SDK: SharedAPI>(
 ) -> Result<bool, SvmError> {
     let mut must_update_caller = false;
 
-    debug_log!("update_callee_account1");
+    debug_log!("");
     if callee_account.get_lamports() != *caller_account.lamports {
         callee_account.set_lamports(*caller_account.lamports)?;
     }
 
-    debug_log!("update_callee_account2");
+    debug_log!("");
     if direct_mapping {
-        debug_log!("update_callee_account3");
+        debug_log!("");
         let prev_len = callee_account.get_data().len();
         let post_len = *caller_account.ref_to_len_in_vm.get()? as usize;
         match callee_account
@@ -1458,20 +1458,20 @@ fn update_callee_account<SDK: SharedAPI>(
             .and_then(|_| callee_account.can_data_be_changed())
         {
             Ok(()) => {
-                debug_log!("update_callee_account4");
+                debug_log!("");
                 let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
                 // bpf_loader_deprecated programs don't have a realloc region
                 if is_loader_deprecated && realloc_bytes_used > 0 {
                     return Err(InstructionError::InvalidRealloc.into());
                 }
-                debug_log!("update_callee_account5");
+                debug_log!("");
                 if prev_len != post_len {
                     callee_account.set_data_length(post_len)?;
                     // pointer to data may have changed, so caller must be updated
                     must_update_caller = true;
                 }
                 if realloc_bytes_used > 0 {
-                    debug_log!("update_callee_account6");
+                    debug_log!("");
                     let serialized_data = translate_slice::<u8>(
                         memory_mapping,
                         caller_account
@@ -1481,7 +1481,7 @@ fn update_callee_account<SDK: SharedAPI>(
                         invoke_context.get_check_aligned(),
                         false,
                     )?;
-                    debug_log!("update_callee_account7");
+                    debug_log!("");
                     callee_account
                         .get_data_mut()?
                         .get_mut(caller_account.original_data_len..post_len)
@@ -1495,43 +1495,43 @@ fn update_callee_account<SDK: SharedAPI>(
                 }
             }
             Err(err) if prev_len != post_len => {
-                debug_log!("update_callee_account8");
+                debug_log!("");
                 return Err(err.into());
             }
             _ => {}
         }
     } else {
-        debug_log!("update_callee_account9");
+        debug_log!("");
         // The redundant check helps to avoid the expensive data comparison if we can
         let caller_ser_data = caller_account
             .serialized_data
             .iter()
             .map(|v| v.as_ref().clone())
             .collect::<Vec<_>>();
-        debug_log!("update_callee_account10");
+        debug_log!("");
         match callee_account
             .can_data_be_resized(caller_account.serialized_data.len())
             .and_then(|_| callee_account.can_data_be_changed())
         {
             Ok(()) => {
-                debug_log!("update_callee_account11");
+                debug_log!("");
                 callee_account.set_data_from_slice(&caller_ser_data)?;
             }
             Err(err) if callee_account.get_data() != &caller_ser_data => {
-                debug_log!("update_callee_account12");
+                debug_log!("");
                 return Err(err.into());
             }
             _ => {}
         }
     }
-    debug_log!("update_callee_account13");
+    debug_log!("");
 
     // Change the owner at the end so that we are allowed to change the lamports and data before
     let callee_account_owner = callee_account.get_owner();
     if callee_account_owner != caller_account.owner {
         callee_account.set_owner(caller_account.owner.as_ref())?;
     }
-    debug_log!("update_callee_account14");
+    debug_log!("");
 
     Ok(must_update_caller)
 }
