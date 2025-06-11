@@ -8,7 +8,7 @@ use fluentbase_types::{
     B256,
     CALL_STACK_LIMIT,
 };
-use rwasm::{Caller, HostError, TrapCode};
+use rwasm::{Caller, TrapCode};
 use std::{
     cmp::min,
     fmt::{Debug, Display, Formatter},
@@ -16,12 +16,14 @@ use std::{
 
 pub struct SyscallExec;
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct SysExecResumable {
     /// List of delayed invocation params, like exec params (address, code hash, etc.)
     pub params: SyscallInvocationParams,
     /// A depth level of the current call, for root it's always zero
     pub is_root: bool,
+    /// An instruction pointer
+    pub pc: usize,
 }
 
 impl Debug for SysExecResumable {
@@ -35,8 +37,6 @@ impl Display for SysExecResumable {
         write!(f, "runtime resume error")
     }
 }
-
-impl HostError for SysExecResumable {}
 
 impl SyscallExec {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
@@ -73,6 +73,7 @@ impl SyscallExec {
                 fuel16_ptr: fuel16_ptr as u32,
             },
             is_root: caller.store().context().call_depth == 0,
+            pc: caller.program_counter() as usize,
         });
         Err(TrapCode::ExecutionHalted)
     }

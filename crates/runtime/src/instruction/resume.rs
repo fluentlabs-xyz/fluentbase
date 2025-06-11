@@ -72,11 +72,12 @@ impl SyscallResume {
 
         let mut recoverable_runtime = Runtime::recover_runtime(call_id);
 
-        // during the résumé we must-clear output, otherwise collision might happen
+        // during the résumé we must clear output, otherwise collision might happen
         recoverable_runtime.context_mut().clear_output();
 
         // we can charge fuel only if fuel is not disabled,
-        // when fuel is disabled we only pass consumed fuel amount into the contract back,
+        // when fuel is disabled,
+        // we only pass consumed fuel amount into the contract back,
         // and it can decide on charging
         if !ctx.disable_fuel && fuel_consumed > 0 {
             let store = &mut recoverable_runtime.store;

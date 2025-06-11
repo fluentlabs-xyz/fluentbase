@@ -1,9 +1,4 @@
-use crate::{
-    rwasm::import_linker::create_import_linker,
-    sys_func_idx::SysFuncIdx,
-    STATE_DEPLOY,
-    STATE_MAIN,
-};
+use crate::{sys_func_idx::SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
 use alloc::{boxed::Box, vec::Vec};
 use rwasm::{CompilationConfig, CompilationError, Opcode, RwasmModule, StateRouterConfig};
 

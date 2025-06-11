@@ -93,6 +93,7 @@ pub struct Runtime {
     pub engine: ExecutionEngine,
     pub store: Store<RuntimeContext>,
     pub module: Arc<RwasmModule>,
+    pub pc: Option<usize>,
 }
 
 pub(crate) static CALL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -153,6 +154,7 @@ impl Runtime {
                 module,
                 engine,
                 store,
+                pc: None,
             }
         })
     }
@@ -190,6 +192,8 @@ impl Runtime {
         let fuel_refunded_before_the_call = self.store.fuel_refunded();
 
         let mut executor = self.engine.create_executor(&mut self.store, &self.module);
+        executor.advance_ip(self.pc.unwrap());
+
         let mut caller = executor.caller();
         if fuel16_ptr > 0 {
             let mut buffer = [0u8; 16];
@@ -264,6 +268,9 @@ impl Runtime {
                             // next_result = Ok(exit_code);
                             // continue;
                         }
+
+                        // store an IP value during execution
+                        self.pc = Some(resumable_context.pc);
 
                         self.handle_resumable_state(&mut execution_result, &resumable_context);
                     }
