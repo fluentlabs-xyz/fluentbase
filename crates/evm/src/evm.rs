@@ -5,7 +5,7 @@ use crate::{
     result::{InstructionResult, InterpreterResult},
     stack::Stack,
 };
-use fluentbase_sdk::{Bytes, ContractContextReader, SharedAPI, FUEL_DENOM_RATE};
+use fluentbase_sdk::{Bytes, ContextReader, SharedAPI, FUEL_DENOM_RATE};
 
 mod arithmetic;
 mod bitwise;

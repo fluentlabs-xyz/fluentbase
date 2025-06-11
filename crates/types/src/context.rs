@@ -3,8 +3,10 @@ use auto_impl::auto_impl;
 
 mod v1;
 
+pub use self::v1::{BlockContextV1, ContractContextV1, SharedContextInputV1, TxContextV1};
+
 #[auto_impl(&)]
-pub trait BlockContextReader {
+pub trait ContextReader {
     fn block_chain_id(&self) -> u64;
     fn block_coinbase(&self) -> Address;
     fn block_timestamp(&self) -> u64;
@@ -13,34 +15,18 @@ pub trait BlockContextReader {
     fn block_prev_randao(&self) -> B256;
     fn block_gas_limit(&self) -> u64;
     fn block_base_fee(&self) -> U256;
-}
-
-#[auto_impl(&)]
-pub trait TxContextReader {
     fn tx_gas_limit(&self) -> u64;
     fn tx_nonce(&self) -> u64;
     fn tx_gas_price(&self) -> U256;
     fn tx_gas_priority_fee(&self) -> Option<U256>;
     fn tx_origin(&self) -> Address;
     fn tx_value(&self) -> U256;
-}
-
-#[auto_impl(&)]
-pub trait ContractContextReader {
     fn contract_address(&self) -> Address;
     fn contract_bytecode_address(&self) -> Address;
     fn contract_caller(&self) -> Address;
     fn contract_is_static(&self) -> bool;
     fn contract_value(&self) -> U256;
     fn contract_gas_limit(&self) -> u64;
-}
-
-pub use self::v1::{BlockContextV1, ContractContextV1, SharedContextInputV1, TxContextV1};
-
-#[auto_impl(&)]
-pub trait SharedContextReader:
-    BlockContextReader + TxContextReader + ContractContextReader
-{
 }
 
 #[derive(Clone, Debug, PartialEq)]
