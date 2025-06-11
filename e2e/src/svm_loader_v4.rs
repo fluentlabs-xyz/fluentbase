@@ -178,6 +178,10 @@ mod tests {
                 exec_account.data().len(),
                 LoaderV4State::program_data_offset() + account_with_program.data().len()
             );
+            assert_eq!(
+                &exec_account.data()[LoaderV4State::program_data_offset()..],
+                account_with_program.data()
+            );
 
             let payer_account = storage_read_account_data(&ctx.sdk, &pk_payer).expect(
                 format!(
