@@ -3,12 +3,7 @@ use fluentbase_types::{Address, Bytes, GenesisContractBuildOutput, HashMap, B256
 use lazy_static::lazy_static;
 
 pub fn devnet_genesis_from_file() -> Genesis {
-    let json_file = include_str!("../assets/genesis-devnet.json");
-    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
-}
-
-pub fn devnet_genesis_v0_1_0_dev10_from_file() -> Genesis {
-    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.10.json");
+    let json_file = include_str!("../genesis-devnet.json");
     serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
 }
 
@@ -24,6 +19,14 @@ const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
     (fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts_identity::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_kzg::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G2_ADD, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G2_MSM, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+
     (fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts_nitro::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts_oauth2::BUILD_OUTPUT),
@@ -60,6 +63,10 @@ lazy_static! {
         let mut map = HashMap::new();
         for (addr, contract_build_output) in GENESIS_CONTRACTS {
             let contract = GenesisContract::from_build_output(addr, contract_build_output);
+            println!(
+                "genesis contract address={} hash={} name={}",
+                contract.address, contract.hash, contract.name
+            );
             map.insert(addr.clone(), contract);
         }
         map

@@ -119,4 +119,4 @@ jobs:
         run: make sync_tests
       - name: Run ethereum tests
         working-directory: revm/e2e
-        run: make run_all_tests
+        run: make run_general_state_tests

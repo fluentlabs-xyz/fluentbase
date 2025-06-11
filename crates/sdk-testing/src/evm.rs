@@ -7,7 +7,6 @@ use fluentbase_sdk::{
     Address,
     Bytes,
     ExitCode,
-    HashMap,
     SharedContextInputV1,
     KECCAK_EMPTY,
     STATE_MAIN,
@@ -15,18 +14,31 @@ use fluentbase_sdk::{
 };
 use fluentbase_types::{bytes::BytesMut, compile_wasm_to_rwasm};
 use revm::{
-    primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, TransactTo},
+    context::{
+        result::{ExecutionResult, ExecutionResult::Success, Output},
+        BlockEnv,
+        CfgEnv,
+        TransactTo,
+        TxEnv,
+    },
+    database::InMemoryDB,
+    handler::MainnetContext,
+    primitives::{hardfork::PRAGUE, keccak256, map::DefaultHashBuilder, HashMap},
+    state::{Account, AccountInfo, Bytecode},
     DatabaseCommit,
-    Evm,
-    InMemoryDB,
+    ExecuteCommitEvm,
+    MainBuilder,
 };
 use rwasm::legacy::rwasm::{BinaryFormat, RwasmModule};
+use rwasm_revm::{RwasmBuilder, RwasmContext};
 
 #[allow(dead_code)]
 pub struct EvmTestingContext {
     pub sdk: HostTestingContext,
     pub genesis: Genesis,
     pub db: InMemoryDB,
+    pub cfg: CfgEnv,
+    pub disabled_rwasm: bool,
 }
 
 impl Default for EvmTestingContext {
@@ -56,10 +68,13 @@ impl EvmTestingContext {
             info.code = v.code.clone().map(Bytecode::new_raw);
             db.insert_account_info(*k, info);
         }
+        let cfg = CfgEnv::default();
         Self {
             sdk: HostTestingContext::default(),
             genesis,
             db,
+            cfg,
+            disabled_rwasm: false,
         }
     }
 
@@ -112,9 +127,11 @@ impl EvmTestingContext {
     pub fn add_balance(&mut self, address: Address, value: U256) {
         let account = self.db.load_account(address).unwrap();
         account.info.balance += value;
-        let mut revm_account = revm::primitives::Account::from(account.info.clone());
+        let mut revm_account = Account::from(account.info.clone());
         revm_account.mark_touch();
-        self.db.commit(HashMap::from([(address, revm_account)]));
+        let changes: HashMap<Address, Account, DefaultHashBuilder> =
+            HashMap::from([(address, revm_account)]);
+        self.db.commit(changes);
     }
 
     pub fn deploy_evm_tx(&mut self, deployer: Address, init_bytecode: Bytes) -> Address {
@@ -127,9 +144,8 @@ impl EvmTestingContext {
         deployer: Address,
         init_bytecode: Bytes,
     ) -> (Address, u64) {
-        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into())
-            .enable_rwasm_proxy()
-            .exec();
+        let nonce = self.nonce(deployer);
+        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into()).exec();
         if !result.is_success() {
             println!("{:?}", result);
             println!(
@@ -142,31 +158,14 @@ impl EvmTestingContext {
         }
         println!("deployment gas used: {}", result.gas_used());
         assert!(result.is_success());
-        let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, 0);
-        assert_eq!(contract_address, deployer.create(0));
-        (contract_address, result.gas_used())
-    }
-
-    pub fn deploy_evm_tx_with_nonce(
-        &mut self,
-        deployer: Address,
-        init_bytecode: Bytes,
-        nonce: u64,
-    ) -> (Address, u64) {
-        let result = TxBuilder::create(self, deployer, init_bytecode.clone().into())
-            .enable_rwasm_proxy()
-            .exec();
-        if !result.is_success() {
-            println!("{:?}", result);
-            println!(
-                "{}",
-                from_utf8(result.output().cloned().unwrap_or_default().as_ref()).unwrap_or("")
-            );
-        }
-        assert!(result.is_success());
         let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, nonce);
         assert_eq!(contract_address, deployer.create(nonce));
 
+        assert!(
+            matches!(result, Success { output: Output::Create(_, Some(addr)), .. } if addr == contract_address),
+            "deploy transaction didn't return expected address: {:?}",
+            result
+        );
         (contract_address, result.gas_used())
     }
 
@@ -178,7 +177,6 @@ impl EvmTestingContext {
         gas_limit: Option<u64>,
         value: Option<U256>,
     ) -> ExecutionResult {
-        // call greeting EVM contract
         let mut tx_builder = TxBuilder::call(self, caller, callee, value).input(input);
         if let Some(gas_limit) = gas_limit {
             tx_builder = tx_builder.gas_limit(gas_limit);
@@ -197,22 +195,33 @@ impl EvmTestingContext {
         self.add_balance(caller, U256::from(1e18));
         self.call_evm_tx_simple(caller, callee, input, gas_limit, value)
     }
+
+    pub fn nonce(&mut self, caller: Address) -> u64 {
+        let account = self.db.load_account(caller).unwrap();
+        println!(
+            "current nonce for {}: {} ({:?})",
+            caller, account.info.nonce, account.account_state
+        );
+        account.info.nonce
+    }
 }
 
 pub struct TxBuilder<'a> {
     pub ctx: &'a mut EvmTestingContext,
-    pub env: Env,
+    pub tx: TxEnv,
+    pub block: BlockEnv,
 }
 
 #[allow(dead_code)]
 impl<'a> TxBuilder<'a> {
     pub fn create(ctx: &'a mut EvmTestingContext, deployer: Address, init_code: Bytes) -> Self {
-        let mut env = Env::default();
-        env.tx.caller = deployer;
-        env.tx.transact_to = TransactTo::Create;
-        env.tx.data = init_code;
-        env.tx.gas_limit = 30_000_000;
-        Self { ctx, env }
+        let mut tx = TxEnv::default();
+        tx.caller = deployer;
+        tx.kind = TransactTo::Create;
+        tx.data = init_code;
+        tx.gas_limit = 30_000_000;
+        let block = BlockEnv::default();
+        Self { ctx, tx, block }
     }
 
     pub fn call(
@@ -221,61 +230,77 @@ impl<'a> TxBuilder<'a> {
         callee: Address,
         value: Option<U256>,
     ) -> Self {
-        let mut env = Env::default();
+        let mut tx = TxEnv::default();
         if let Some(value) = value {
-            env.tx.value = value;
+            tx.value = value;
         }
-        env.tx.gas_price = U256::from(1);
-        env.tx.caller = caller;
-        env.tx.transact_to = TransactTo::Call(callee);
-        env.tx.gas_limit = 3_000_000;
-        Self { ctx, env }
+        tx.gas_price = 1;
+        tx.caller = caller;
+        tx.kind = TransactTo::Call(callee);
+        tx.gas_limit = 3_000_000;
+        let block = BlockEnv::default();
+        Self { ctx, tx, block }
     }
 
     pub fn input(mut self, input: Bytes) -> Self {
-        self.env.tx.data = input;
+        self.tx.data = input;
         self
     }
 
     pub fn value(mut self, value: U256) -> Self {
-        self.env.tx.value = value;
+        self.tx.value = value;
         self
     }
 
     pub fn gas_limit(mut self, gas_limit: u64) -> Self {
-        self.env.tx.gas_limit = gas_limit;
+        self.tx.gas_limit = gas_limit;
         self
     }
 
-    pub fn gas_price(mut self, gas_price: U256) -> Self {
-        self.env.tx.gas_price = gas_price;
+    pub fn nonce(mut self, nonce: u64) -> Self {
+        self.tx.nonce = nonce;
+        self
+    }
+
+    pub fn gas_price(mut self, gas_price: u128) -> Self {
+        self.tx.gas_price = gas_price;
         self
     }
 
     pub fn timestamp(mut self, timestamp: u64) -> Self {
-        self.env.block.timestamp = U256::from(timestamp);
+        self.block.timestamp = timestamp;
         self
     }
 
-    pub fn enable_rwasm_proxy(mut self) -> Self {
-        self.env.cfg.enable_rwasm_proxy = true;
-        self
-    }
-
-    pub fn disable_builtins_consume_fuel(mut self) -> Self {
-        self.env.cfg.disable_builtins_consume_fuel = true;
+    pub fn disable_builtins_consume_fuel(self) -> Self {
+        self.ctx.cfg.disable_builtins_consume_fuel = true;
         self
     }
 
     pub fn exec(&mut self) -> ExecutionResult {
+        self.tx.nonce = self.ctx.nonce(self.tx.caller);
         let db = take(&mut self.ctx.db);
-        let mut evm = Evm::builder()
-            .with_env(Box::new(take(&mut self.env)))
-            .with_db(db)
-            .build();
-        let result = evm.transact_commit().unwrap();
-        (self.ctx.db, _) = evm.into_db_and_env_with_handler_cfg();
-        result
+        if self.ctx.disabled_rwasm {
+            let mut context: MainnetContext<InMemoryDB> = MainnetContext::new(db, PRAGUE);
+            context.cfg = self.ctx.cfg.clone();
+            context.block = self.block.clone();
+            context.tx = self.tx.clone();
+            let mut evm = context.build_mainnet();
+            let result = evm.transact_commit(self.tx.clone()).unwrap();
+            let new_db = &mut evm.journaled_state.database;
+            self.ctx.db = take(new_db);
+            result
+        } else {
+            let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, PRAGUE);
+            context.cfg = self.ctx.cfg.clone();
+            context.block = self.block.clone();
+            context.tx = self.tx.clone();
+            let mut evm = context.build_rwasm();
+            let result = evm.transact_commit(self.tx.clone()).unwrap();
+            let new_db = &mut evm.0.journaled_state.database;
+            self.ctx.db = take(new_db);
+            result
+        }
     }
 }
 

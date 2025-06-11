@@ -4,7 +4,7 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{alloc_slice, entrypoint, ContextReader, ExitCode, SharedAPI};
-use revm_precompile::{
+use precompile::{
     calc_linear_cost_u32,
     identity::{IDENTITY_BASE, IDENTITY_PER_WORD},
 };

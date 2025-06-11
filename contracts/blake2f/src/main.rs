@@ -12,7 +12,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
     // call blake2 function
-    let result = revm_precompile::blake2::run(&input, gas_limit)
+    let result = precompile::blake2::run(&input, gas_limit)
         .unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
     sdk.sync_evm_gas(result.gas_used, 0);
     // write output

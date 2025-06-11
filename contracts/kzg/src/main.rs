@@ -3,7 +3,6 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
-use revm_precompile::primitives::Env;
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     // read full input data
@@ -13,7 +12,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
     // call blake2 function
-    let result = revm_precompile::kzg_point_evaluation::run(&input, gas_limit, &Env::default())
+    let result = precompile::kzg_point_evaluation::run(&input, gas_limit)
         .unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
     sdk.sync_evm_gas(result.gas_used, 0);
     // write output
@@ -27,7 +26,7 @@ mod tests {
     use super::*;
     use fluentbase_sdk::{hex, ContractContextV1, FUEL_DENOM_RATE};
     use fluentbase_sdk_testing::HostTestingContext;
-    use revm_precompile::kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG;
+    use precompile::kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 10_000_000;
