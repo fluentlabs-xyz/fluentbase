@@ -843,7 +843,7 @@ declare_builtin_function!(
             );
             debug_log!();
             let addr_to_key_addr = account_infos.item_addr_at_idx(account_idx as usize);
-            let key_vm_addr = SliceFatPtr64Repr::<1>::ptr_elem_from_addr(addr_to_key_addr);
+            let key_vm_addr = SliceFatPtr64Repr::ptr_elem_from_addr(addr_to_key_addr);
             let key = translate_type::<Pubkey>(
                 memory_mapping,
                 // account_info.owner as *const _ as u64,

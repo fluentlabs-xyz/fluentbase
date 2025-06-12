@@ -209,7 +209,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             );
             debug_log!(
                 "lamports_custom={}",
-                SliceFatPtr64Repr::<1>::ptr_elem_from_addr(
+                SliceFatPtr64Repr::ptr_elem_from_addr(
                     lamports_mem_layout_ptr.value_addr::<false, true>()
                 )
             );
@@ -224,7 +224,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
 
         debug_log!("lamports {}", lamports);
 
-        let owner_addr = SliceFatPtr64Repr::<1>::ptr_elem_from_addr(addr_to_owner_addr);
+        let owner_addr = SliceFatPtr64Repr::ptr_elem_from_addr(addr_to_owner_addr);
         let owner = translate_type_mut::<Pubkey>(
             memory_mapping,
             // account_info.owner as *const _ as u64,
@@ -234,7 +234,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
         )?;
         debug_log!("owner: {}", owner);
 
-        let key_addr = SliceFatPtr64Repr::<1>::ptr_elem_from_addr(addr_to_key_addr);
+        let key_addr = SliceFatPtr64Repr::ptr_elem_from_addr(addr_to_key_addr);
         let key = translate_type_mut::<Pubkey>(
             memory_mapping,
             // account_info.owner as *const _ as u64,
@@ -572,11 +572,8 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
             addr,
             STABLE_INSTRUCTION_BYTES_SIZE,
         )?;
-        let accounts_ptr =
-            SliceFatPtr64Repr::<{ size_of::<AccountMeta>() }>::from_ptr_to_fixed_slice_fat_ptr(
-                host_addr as usize,
-            );
-        let data_ptr = SliceFatPtr64Repr::<{ size_of::<u8>() }>::from_ptr_to_fixed_slice_fat_ptr(
+        let accounts_ptr = SliceFatPtr64Repr::from_ptr_to_fixed_slice_fat_ptr(host_addr as usize);
+        let data_ptr = SliceFatPtr64Repr::from_ptr_to_fixed_slice_fat_ptr(
             host_addr as usize + STABLE_VEC_FAT_PTR64_BYTE_SIZE,
         );
         let program_id_addr = host_addr as usize + STABLE_VEC_FAT_PTR64_BYTE_SIZE * 2;
@@ -657,14 +654,9 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
             // |account_info: &AccountInfo| account_info.key as *const _ as u64,
             |account_infos: SliceFatPtr64<AccountInfo>, idx: usize, total_len: usize| {
                 let key_addr = account_infos.item_addr_at_idx(idx);
-                let addr = SliceFatPtr64Repr::<1>::ptr_elem_from_addr(key_addr);
-                SliceFatPtr64Repr::<1>::map_vm_addr_to_host(
-                    memory_mapping,
-                    addr,
-                    total_len as u64,
-                    None,
-                )
-                .unwrap()
+                let addr = SliceFatPtr64Repr::ptr_elem_from_addr(key_addr);
+                SliceFatPtr64Repr::map_vm_addr_to_host(memory_mapping, addr, total_len as u64, None)
+                    .unwrap()
             },
             memory_mapping,
             invoke_context,

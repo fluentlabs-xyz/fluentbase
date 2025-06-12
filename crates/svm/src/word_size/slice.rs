@@ -47,13 +47,13 @@ pub trait SpecMethods<'a> {
         Self: Sized;
 }
 
-#[derive(Clone, Debug)]
-pub struct SliceFatPtr64Repr<const ITEM_SIZE_BYTES: usize> {
+#[derive(Clone, Debug, Default)]
+pub struct SliceFatPtr64Repr {
     first_item_addr: u64,
     len: usize,
 }
 
-impl<const ITEM_SIZE_BYTES: usize> SliceFatPtr64Repr<ITEM_SIZE_BYTES> {
+impl SliceFatPtr64Repr {
     pub fn new(first_item_fat_ptr_addr: u64, len: usize) -> Self {
         Self {
             first_item_addr: first_item_fat_ptr_addr,
@@ -67,6 +67,11 @@ impl<const ITEM_SIZE_BYTES: usize> SliceFatPtr64Repr<ITEM_SIZE_BYTES> {
 
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    #[inline(always)]
+    pub fn idx_valid(&self, idx: usize) -> bool {
+        idx < self.len
     }
 
     pub fn ptr_elem_from_slice(data: &[u8]) -> u64 {
@@ -106,13 +111,8 @@ impl<const ITEM_SIZE_BYTES: usize> SliceFatPtr64Repr<ITEM_SIZE_BYTES> {
     }
 
     #[inline(always)]
-    pub fn item_size_bytes(&self) -> usize {
-        ITEM_SIZE_BYTES
-    }
-
-    #[inline(always)]
-    pub fn total_size_bytes(&self) -> usize {
-        (self.len * self.item_size_bytes())
+    pub fn total_size_bytes(&self, item_size_bytes: usize) -> usize {
+        self.len * item_size_bytes
     }
 
     pub fn map_vm_addr_to_host(
@@ -128,8 +128,7 @@ impl<const ITEM_SIZE_BYTES: usize> SliceFatPtr64Repr<ITEM_SIZE_BYTES> {
 /// Slice impl emulating 64 bit word size to support solana 64 bit programs
 #[derive(Clone, Default)]
 pub struct SliceFatPtr64<'a, T: SpecMethods<'a>> {
-    first_item_addr: u64,
-    len: usize,
+    slice_repr: SliceFatPtr64Repr,
     memory_mapping_helper: MemoryMappingHelper<'a>,
     _phantom: PhantomData<T>,
 }
@@ -137,8 +136,7 @@ pub struct SliceFatPtr64<'a, T: SpecMethods<'a>> {
 impl<'a, T: SpecMethods<'a>> Debug for SliceFatPtr64<'a, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SliceFatPtr64")
-            .field("first_item_addr", &self.first_item_addr)
-            .field("len", &self.len)
+            .field("slice_repr", &self.slice_repr)
             .finish()
     }
 }
@@ -197,10 +195,12 @@ impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
         byte_repr: &'a [u8],
         memory_mapping_helper: MemoryMappingHelper<'a>,
     ) -> RetVal<'a, Self> {
-        let mut ptr =
-            SliceFatPtr64Repr::<SLICE_FAT_PTR64_SIZE_BYTES>::from_fat_ptr_slice(byte_repr);
+        let mut ptr = SliceFatPtr64Repr::from_fat_ptr_slice(byte_repr);
         ptr.first_item_addr = memory_mapping_helper
-            .map_vm_addr_to_host(ptr.first_item_addr, ptr.total_size_bytes() as u64)
+            .map_vm_addr_to_host(
+                ptr.first_item_addr,
+                ptr.total_size_bytes(Self::ITEM_SIZE_BYTES) as u64,
+            )
             .unwrap();
         let result = Self::new::<false>(memory_mapping_helper, ptr.first_item_addr, ptr.len);
         RetVal::Instance(result)
@@ -208,15 +208,14 @@ impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
 }
 
 impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
-    pub fn new<const MAP_ADDR_TO_HOST: bool>(
+    pub fn new<const PRE_REMAP: bool>(
         memory_mapping_helper: MemoryMappingHelper<'a>,
         first_item_addr: u64,
         len: usize,
     ) -> Self {
-        crate::remap_addr!(MAP_ADDR_TO_HOST, memory_mapping_helper, first_item_addr);
+        crate::remap_addr!(PRE_REMAP, memory_mapping_helper, first_item_addr);
         Self {
-            first_item_addr: first_item_addr,
-            len,
+            slice_repr: SliceFatPtr64Repr::new(first_item_addr, len),
             memory_mapping_helper,
             _phantom: Default::default(),
         }
@@ -224,35 +223,30 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
 
     pub fn default(memory_mapping_helper: MemoryMappingHelper<'a>) -> Self {
         Self {
-            first_item_addr: 0,
-            len: 0,
+            slice_repr: Default::default(),
             memory_mapping_helper,
             _phantom: Default::default(),
         }
     }
 
-    pub fn from_repr<const ITEM_SIZE_BYTES: usize>(
-        ptr: &'a SliceFatPtr64Repr<ITEM_SIZE_BYTES>,
+    pub fn from_repr(
+        ptr: SliceFatPtr64Repr,
         memory_mapping_helper: MemoryMappingHelper<'a>,
     ) -> Self {
         Self {
-            first_item_addr: ptr.first_item_addr,
-            len: ptr.len,
+            slice_repr: ptr,
             memory_mapping_helper,
             _phantom: Default::default(),
         }
     }
 
-    #[inline(always)]
-    pub fn idx_valid(&self, idx: usize) -> bool {
-        idx < self.len
-    }
-
     pub fn clone_from_index(&self, idx: usize) -> Option<SliceFatPtr64<'a, T>> {
-        if self.idx_valid(idx) {
+        if self.slice_repr.idx_valid(idx) {
             return Some(Self {
-                first_item_addr: self.item_addr_at_idx(idx),
-                len: self.len - idx,
+                slice_repr: SliceFatPtr64Repr::new(
+                    self.item_addr_at_idx(idx),
+                    self.slice_repr.len - idx,
+                ),
                 memory_mapping_helper: self.memory_mapping_helper.clone(),
                 _phantom: Default::default(),
             });
@@ -261,7 +255,7 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
     }
 
     pub fn try_get(&self, idx: usize) -> Option<RetVal<'a, T>> {
-        if self.idx_valid(idx) {
+        if self.slice_repr.idx_valid(idx) {
             return Some(self.item_at_idx(idx));
         }
         None
@@ -269,12 +263,12 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
 
     #[inline(always)]
     pub fn first_item_addr(&self) -> u64 {
-        self.first_item_addr
+        self.slice_repr.first_item_addr
     }
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.len as usize
+        self.slice_repr.len
     }
 
     #[inline(always)]
@@ -284,7 +278,7 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
 
     #[inline(always)]
     pub fn total_size_bytes(&self) -> usize {
-        self.len * self.item_size_bytes()
+        self.slice_repr.len * self.item_size_bytes()
     }
 
     pub fn get_mut(&mut self, range: impl RangeBounds<usize>) -> Option<SliceFatPtr64<'a, T>> {
@@ -311,11 +305,11 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
     }
 
     pub fn fat_ptr_addr_as_vec(&self) -> Vec<u8> {
-        self.first_item_addr.to_le_bytes().to_vec()
+        self.slice_repr.first_item_addr.to_le_bytes().to_vec()
     }
 
     pub fn len_as_vec(&self) -> Vec<u8> {
-        self.len.to_le_bytes().to_vec()
+        self.slice_repr.len.to_le_bytes().to_vec()
     }
 
     pub fn item_addr_at_idx(&self, idx: usize) -> u64 {
@@ -348,8 +342,8 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
         T::recover_from_bytes(byte_repr, self.memory_mapping_helper.clone())
     }
 
-    pub fn as_single_item(&self) -> Option<RetVal<'a, T>> {
-        if self.len != 1 {
+    pub fn try_as_single_item(&self) -> Option<RetVal<'a, T>> {
+        if self.slice_repr.len != 1 {
             return None;
         }
         Some(self.item_at_idx(0))
@@ -380,10 +374,10 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
     }
 
     pub fn copy_from(&mut self, src: &'a SliceFatPtr64<'a, T>) -> bool {
-        if self.len != src.len {
+        if self.slice_repr.len != src.slice_repr.len {
             return false;
         }
-        if self.len == 0 {
+        if self.slice_repr.len == 0 {
             return true;
         }
         for (idx, val) in src.iter().enumerate() {
@@ -393,7 +387,7 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
     }
 
     pub fn fill(&mut self, val: &T) {
-        for idx in 0..self.len {
+        for idx in 0..self.slice_repr.len {
             self.try_set_item_at_idx_mut(idx, val);
         }
     }
@@ -402,9 +396,9 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
         fat_ptr_slice: &[u8; SLICE_FAT_PTR64_SIZE_BYTES],
         memory_mapping_helper: MemoryMappingHelper<'a>,
     ) -> Self {
-        let first_item_addr = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(&fat_ptr_slice[..]);
+        let first_item_addr = SliceFatPtr64Repr::ptr_elem_from_slice(&fat_ptr_slice[..]);
         let len =
-            SliceFatPtr64Repr::<1>::ptr_elem_from_slice(&fat_ptr_slice[FAT_PTR64_ELEM_BYTE_SIZE..]);
+            SliceFatPtr64Repr::ptr_elem_from_slice(&fat_ptr_slice[FAT_PTR64_ELEM_BYTE_SIZE..]);
         Self::new::<false>(memory_mapping_helper, first_item_addr, len as usize)
     }
 
@@ -448,7 +442,7 @@ impl<'a, T: ElementConstraints<'a>> Iterator for SliceFatPtr64Iterator<'a, T> {
     type Item = RetVal<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.idx < self.instance.len {
+        if self.idx < self.instance.slice_repr.len {
             let r = self.instance.item_at_idx(self.idx);
             self.idx += 1;
             return Some(r);
@@ -806,7 +800,7 @@ mod tests {
             "items_as_raw_bytes ({}): {:x?}",
             items_only_bytes_size, items_as_raw_bytes
         );
-        for idx in 0..slice.len() as usize {
+        for idx in 0..slice.len() {
             assert_eq!(slice.item_at_idx(idx).as_ref(), &items_original_fixed[idx]);
         }
         for (idx, item) in slice.iter().enumerate() {

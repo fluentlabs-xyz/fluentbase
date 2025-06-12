@@ -110,7 +110,7 @@ fn fetch_addr_to_value_addr_common(ptr_type: PtrType) -> u64 {
             ptr_to_value_ptr
         }
         PtrType::RcStartPtr(rc_start_ptr) => {
-            let rc_box_ptr = SliceFatPtr64Repr::<1>::ptr_elem_from_addr(rc_start_ptr);
+            let rc_box_ptr = SliceFatPtr64Repr::ptr_elem_from_addr(rc_start_ptr);
             let ptr = PtrType::RcBoxStartPtr(rc_box_ptr);
             fetch_addr_to_value_addr_common(ptr)
         }
@@ -120,7 +120,7 @@ fn fetch_addr_to_value_addr_common(ptr_type: PtrType) -> u64 {
 pub fn fetch_value_addr_common(ptr_type: PtrType) -> u64 {
     match ptr_type {
         PtrType::PtrToValuePtr(ptr_to_value_ptr) => {
-            SliceFatPtr64Repr::<1>::ptr_elem_from_addr(ptr_to_value_ptr)
+            SliceFatPtr64Repr::ptr_elem_from_addr(ptr_to_value_ptr)
         }
         PtrType::RcBoxStartPtr(rc_box_start_ptr) => {
             let ptr_to_value_ptr = rc_box_start_ptr + FIXED_PTR_BYTE_SIZE as u64 * 3;
@@ -131,7 +131,7 @@ pub fn fetch_value_addr_common(ptr_type: PtrType) -> u64 {
             )
         }
         PtrType::RcStartPtr(rc_start_ptr) => {
-            let rc_box_ptr = SliceFatPtr64Repr::<1>::ptr_elem_from_addr(rc_start_ptr);
+            let rc_box_ptr = SliceFatPtr64Repr::ptr_elem_from_addr(rc_start_ptr);
             let ptr_to_value_ptr = rc_box_ptr + FIXED_PTR_BYTE_SIZE as u64 * 3;
             ptr_to_value_ptr
         }
@@ -260,7 +260,7 @@ mod tests {
 
         let mmh = MemoryMappingHelper::default();
 
-        let rc_box_start_ptr = SliceFatPtr64Repr::<1>::ptr_elem_from_slice(
+        let rc_box_start_ptr = SliceFatPtr64Repr::ptr_elem_from_slice(
             reconstruct_slice(rc_start_ptr as usize, FIXED_PTR_BYTE_SIZE)
                 .try_into()
                 .unwrap(),
