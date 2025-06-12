@@ -29,7 +29,7 @@ use crate::{
     common::UPGRADEABLE_LOADER_COMPUTE_UNITS,
     context::{InstructionContext, TransactionContext},
     loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
-    loaders::agave_version::execute,
+    loaders::execute::execute,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use fluentbase_sdk::SharedAPI;

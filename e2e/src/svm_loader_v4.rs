@@ -26,7 +26,6 @@ mod tests {
         },
         system_program,
     };
-    use fluentbase_types::StorageAPI;
     use hex_literal::hex;
     use rand::random_range;
     use std::{fs::File, io::Read};

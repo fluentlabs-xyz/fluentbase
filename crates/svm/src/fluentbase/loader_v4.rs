@@ -106,7 +106,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     //
     // return;
 
-    debug_log!("loader_v4: deploy started");
+    debug_log!();
     let mut mem_storage = MemStorage::new();
 
     let elf_program_bytes: Bytes = sdk.input().into();
@@ -232,7 +232,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             .expect("balance for caller must exist")
             .data,
     );
-    debug_log!("caller_lamports (from evm balance) {}", caller_lamports);
+    debug_log!("caller_lamports {}", caller_lamports);
     let mut caller_account_data =
         extract_account_data_or_default(&sdk, &pk_caller).expect("caller must exist");
     debug_log!(

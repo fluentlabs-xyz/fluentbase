@@ -18,16 +18,10 @@ use crate::{
         translate_type,
         translate_type_mut,
     },
-    ptr_size::{
+    word_size::{
         common::MemoryMappingHelper,
         primitives::{PtrType, RcRefCellMemLayout},
-        slice_fat_ptr64::{
-            collect_into_vec_cloned,
-            ElementConstraints,
-            RetVal,
-            SliceFatPtr64,
-            SliceFatPtr64Repr,
-        },
+        slice::{SliceFatPtr64, SliceFatPtr64Repr},
     },
 };
 use alloc::{boxed::Box, vec::Vec};
@@ -429,7 +423,7 @@ declare_builtin_function!(
                 //     val.as_ref().len() as u64,
                 //     invoke_context.get_check_aligned(),
                 // )?;
-                let bytes = collect_into_vec_cloned(&val);
+                let bytes = val.as_ref().to_vec_cloned();
                 hasher.hash(&bytes);
             }
         }
@@ -754,7 +748,7 @@ declare_builtin_function!(
             untranslated_seeds.len(),
         );
         for (idx, untranslated_seed) in untranslated_seeds.iter().enumerate() {
-            let untranslated_seed_vec = collect_into_vec_cloned(&untranslated_seed);
+            let untranslated_seed_vec = untranslated_seed.as_ref().to_vec_cloned();
             debug_log!(
                 "untranslated_seed{} ({}): {:x?}",
                 idx,
@@ -805,12 +799,12 @@ declare_builtin_function!(
                         invoke_context.get_check_aligned(),
                     false,
                     )?;
-                    // TODO recheck this check
+                    // TODO recheck
                     if !is_nonoverlapping(
                         bump_seed_ref as *const _ as usize,
                         core::mem::size_of_val(bump_seed_ref),
                         // TODO recheck
-                        address.first_item_fat_ptr_addr_usize(),
+                        address.first_item_addr() as usize,
                         core::mem::size_of::<Pubkey>(),
                     ) {
                         return Err(SyscallError::CopyOverlapping.into());
@@ -839,17 +833,17 @@ declare_builtin_function!(
         signers_seeds_len: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        debug_log!("");
+        debug_log!();
         let mmh = MemoryMappingHelper::new(Some(memory_mapping));
-        let account_infos = SliceFatPtr64::<AccountInfo>::new::<true>(mmh.clone(), account_infos_addr, account_infos_len);
+        let account_infos = SliceFatPtr64::<AccountInfo>::new::<true>(mmh.clone(), account_infos_addr, account_infos_len as usize);
         for account_idx in 0..account_infos_len {
             let lamports_mem_layout_ptr = RcRefCellMemLayout::<&mut u64>::new(
                 mmh.clone(),
-                PtrType::RcStartPtr((account_infos.item_addr_at_idx(account_idx as usize) + 8) as u64),
+                PtrType::RcStartPtr(account_infos.item_addr_at_idx(account_idx as usize) + 8),
             );
-            debug_log!("");
-            let addr_to_key_addr = account_infos.item_addr_at_idx(account_idx as usize) as u64;
-            let key_vm_addr = SliceFatPtr64Repr::<1>::ptr_elem_from_addr(addr_to_key_addr as usize);
+            debug_log!();
+            let addr_to_key_addr = account_infos.item_addr_at_idx(account_idx as usize);
+            let key_vm_addr = SliceFatPtr64Repr::<1>::ptr_elem_from_addr(addr_to_key_addr);
             let key = translate_type::<Pubkey>(
                 memory_mapping,
                 // account_info.owner as *const _ as u64,
@@ -863,7 +857,7 @@ declare_builtin_function!(
             //     assert_eq!(*lamports, 101);
             // }
         }
-        debug_log!("");
+        debug_log!();
         cpi_common::<SDK, Self>(
             invoke_context,
             instruction_addr,

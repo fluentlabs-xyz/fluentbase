@@ -475,13 +475,13 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
         // *compute_units_consumed = 0;
-        debug_log!("");
+        debug_log!();
         self.transaction_context
             .get_next_instruction_context()?
             .configure(program_indices, instruction_accounts, instruction_data);
-        debug_log!("");
+        debug_log!();
         self.push()?;
-        debug_log!("");
+        debug_log!();
         let result = self.process_executable_chain(/*compute_units_consumed , timings*/)
             // MUST pop if and only if `push` succeeded, independent of `result`.
             // Thus, the `.and()` instead of an `.and_then()`.
@@ -524,7 +524,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // compute_units_consumed: &mut u64,
         // timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
-        debug_log!("");
+        debug_log!();
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
         // let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
@@ -553,7 +553,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             .program_cache_for_tx_batch
             .find(&builtin_id)
             .ok_or(InstructionError::UnsupportedProgramId)?;
-        debug_log!("");
+        debug_log!();
         let function = match &entry.program {
             ProgramCacheEntryType::Builtin(program) => program
                 .get_function_registry()
@@ -562,14 +562,14 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             _ => None,
         }
         .ok_or(InstructionError::UnsupportedProgramId)?;
-        debug_log!("");
+        debug_log!();
         entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
 
         let program_id = *instruction_context.get_last_program_key(&self.transaction_context)?;
-        debug_log!("");
+        debug_log!();
         self.transaction_context
             .set_return_data(program_id, Vec::new())?;
-        debug_log!("");
+        debug_log!();
         // let logger = self.get_log_collector();
         // stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
         // let pre_remaining_units = self.get_remaining();
@@ -579,7 +579,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         let mock_config = Config::default();
         let empty_memory_mapping =
             MemoryMapping::new(Vec::new(), &mock_config, &SBPFVersion::V1).unwrap();
-        debug_log!("");
+        debug_log!();
         let mut vm = EbpfVm::new(
             self.program_cache_for_tx_batch
                 .environments
@@ -593,9 +593,9 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             empty_memory_mapping,
             0,
         );
-        debug_log!("");
+        debug_log!();
         vm.invoke_function(function);
-        debug_log!("");
+        debug_log!();
         let result = match vm.program_result {
             ProgramResult::Ok(_) => {
                 // stable_log::program_success(&logger, &program_id);
@@ -609,18 +609,18 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                         // stable_log::program_failure(&logger, &program_id, instruction_err);
                         Err(instruction_err.clone())
                     } else {
-                        debug_log!("");
+                        debug_log!();
                         // stable_log::program_failure(&logger, &program_id, syscall_error);
                         Err(InstructionError::ProgramFailedToComplete)
                     }
                 } else {
-                    debug_log!("");
+                    debug_log!();
                     // stable_log::program_failure(&logger, &program_id, err);
                     Err(InstructionError::ProgramFailedToComplete)
                 }
             }
         };
-        debug_log!("");
+        debug_log!();
         // let post_remaining_units = self.get_remaining();
         // *compute_units_consumed = pre_remaining_units.saturating_sub(post_remaining_units);
 

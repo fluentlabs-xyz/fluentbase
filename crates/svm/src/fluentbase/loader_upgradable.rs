@@ -30,7 +30,7 @@ use fluentbase_sdk::{
 };
 
 pub fn deploy(mut sdk: impl SharedAPI) {
-    debug_log!("");
+    debug_log!();
     debug_log!("block_number: {:?}", sdk.context().block_number());
     let mut mem_storage = MemStorage::new();
     // input must be solana elf bytes
@@ -81,7 +81,7 @@ pub fn deploy(mut sdk: impl SharedAPI) {
     )
     .unwrap();
     storage_write_account_data(&mut mem_storage, &pk_payer, &payer_account_data).unwrap();
-    debug_log!("");
+    debug_log!();
 
     let mut batch_message = BatchMessage::new(None);
 
@@ -164,7 +164,7 @@ pub fn deploy(mut sdk: impl SharedAPI) {
 }
 
 pub fn main(mut sdk: impl SharedAPI) {
-    debug_log!("loader_upgradable: main started");
+    debug_log!();
     debug_log!("main: block_number: {:?}", sdk.context().block_number());
     let input = sdk.input();
     let preimage = read_protected_preimage(&sdk);

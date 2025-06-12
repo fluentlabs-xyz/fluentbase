@@ -24,15 +24,7 @@ clean:
 test:
 	cargo test --no-fail-fast -q
 
-.PHONY: test_success
-test_success:
-	cargo test --package fluentbase-svm --lib fluentbase::helpers_v2_tests::tests::test_create_fill_deploy_exec_with_state -- --exact --nocapture > tmp/test_success.txt
-
-.PHONY: test_error
-test_error:
-	cargo test --package fluentbase-e2e --lib svm_loader_v4::tests::test_svm_deploy_exec -- --exact --nocapture > tmp/test_error.txt
-
-.PHONY: test_both
-test_both:
-	$(MAKE) test_success
-	$(MAKE) test_error
+.PHONY: custom_tests_2_check
+custom_tests_2_check:
+	cargo test --profile test --manifest-path /home/bfday/github/fluentlabs-xyz/fluentbase/crates/svm/Cargo.toml
+	cargo test svm_loader_v4 --profile test --manifest-path /home/bfday/github/fluentlabs-xyz/fluentbase/e2e/Cargo.toml

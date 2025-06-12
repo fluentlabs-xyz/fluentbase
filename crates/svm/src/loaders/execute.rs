@@ -30,10 +30,10 @@ pub fn execute<'a, SDK: SharedAPI>(
     //     )
     // };
     // let log_collector = invoke_context.get_log_collector();
-    debug_log!("agave_version.execute1");
+    debug_log!();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    debug_log!("agave_version.execute2");
+    debug_log!();
     let (_program_id, is_loader_deprecated) = {
         let program_account =
             instruction_context.try_borrow_last_program_account(transaction_context)?;
@@ -49,7 +49,7 @@ pub fn execute<'a, SDK: SharedAPI>(
     let direct_mapping = invoke_context
         .get_feature_set()
         .is_active(&bpf_account_data_direct_mapping::id());
-    debug_log!("agave_version.execute3: direct_mapping {}", direct_mapping);
+    debug_log!("direct_mapping {}", direct_mapping);
 
     // let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(

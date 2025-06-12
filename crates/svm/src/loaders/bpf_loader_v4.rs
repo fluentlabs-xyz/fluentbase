@@ -5,7 +5,7 @@ use crate::{
     context::{InstructionContext, InvokeContext},
     error::Error,
     loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET},
-    loaders::agave_version::execute,
+    loaders::execute::execute,
     solana_program::{
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status, DEPLOYMENT_COOLDOWN_IN_SLOTS},
@@ -676,7 +676,7 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
             debug_log!("Program is not deployed");
             return Err(Box::new(InstructionError::InvalidArgument));
         }
-        debug_log!("");
+        debug_log!();
         // let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
         let loaded_program = invoke_context
             .program_cache_for_tx_batch
@@ -685,7 +685,7 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
                 debug_log!("Program is not cached");
                 InstructionError::InvalidAccountData
             })?;
-        debug_log!("");
+        debug_log!();
         // get_or_create_executor_time.stop();
         // saturating_add_assign!(
         //     invoke_context.timings.get_or_create_executor_us,
@@ -705,7 +705,7 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
                 Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn core::error::Error>)
             }
             ProgramCacheEntryType::Loaded(executable) => {
-                debug_log!("");
+                debug_log!();
                 execute(executable.clone(), invoke_context)
             }
             _ => {
