@@ -8,7 +8,7 @@ use core::{
     slice::SliceIndex,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum PtrType {
     RcStartPtr(u64),
     RcBoxStartPtr(u64),
@@ -30,11 +30,14 @@ impl PtrType {
             PtrType::PtrToValuePtr(v) => v,
         }
     }
-    pub fn visit<F: Fn(&u64)>(&mut self, f: F) {
+    pub fn visit_inner<F: Fn(&u64)>(&mut self, f: F) {
         f(self.as_ref());
     }
-    pub fn visit_mut<F: Fn(&mut u64)>(&mut self, f: F) {
+    pub fn visit_inner_mut<F: Fn(&mut u64)>(&mut self, f: F) {
         f(self.as_ref_mut());
+    }
+    pub fn visit_mut<F: Fn(&mut Self)>(&mut self, f: F) {
+        f(self);
     }
 }
 
@@ -65,10 +68,10 @@ impl<'a, T: SpecMethods<'a>> RcRefCellMemLayout<'a, T> {
         }
     }
 
-    pub fn addr_to_value_addr<const PRE_REMAP: bool, const POST_REMAP: bool>(&'a self) -> u64 {
+    pub fn addr_to_value_addr<const PRE_MAP: bool, const POST_MAP: bool>(&'a self) -> u64 {
         let mut ptr = self.ptr;
-        if PRE_REMAP {
-            ptr.visit_mut(|v| {
+        if PRE_MAP {
+            ptr.visit_inner_mut(|v| {
                 *v = self
                     .memory_mapping_helper
                     .map_vm_addr_to_host(*v, FIXED_PTR_BYTE_SIZE as u64)
@@ -76,13 +79,13 @@ impl<'a, T: SpecMethods<'a>> RcRefCellMemLayout<'a, T> {
             });
         };
         let addr = T::addr_to_value_addr(&self.memory_mapping_helper, &ptr);
-        crate::map_addr!(POST_REMAP, self.memory_mapping_helper, addr)
+        crate::map_addr!(POST_MAP, self.memory_mapping_helper, addr)
     }
 
-    pub fn value_addr<const PRE_REMAP: bool, const POST_REMAP: bool>(&'a self) -> u64 {
+    pub fn value_addr<const PRE_MAP: bool, const POST_MAP: bool>(&'a self) -> u64 {
         let mut ptr = self.ptr;
-        if PRE_REMAP {
-            ptr.visit_mut(|v| {
+        if PRE_MAP {
+            ptr.visit_inner_mut(|v| {
                 *v = self
                     .memory_mapping_helper
                     .map_vm_addr_to_host(*v, FIXED_PTR_BYTE_SIZE as u64)
@@ -90,15 +93,15 @@ impl<'a, T: SpecMethods<'a>> RcRefCellMemLayout<'a, T> {
             });
         };
         let addr = T::value_addr(&self.memory_mapping_helper, &ptr);
-        crate::map_addr!(POST_REMAP, self.memory_mapping_helper, addr)
+        crate::map_addr!(POST_MAP, self.memory_mapping_helper, addr)
     }
 
-    pub fn value<const PRE_REMAP: bool>(&'a self) -> &'a T::Elem {
-        T::value(self.value_addr::<PRE_REMAP, true>() as usize)
+    pub fn value<const PRE_MAP: bool>(&'a self) -> &'a T::Elem {
+        T::value(self.value_addr::<PRE_MAP, true>() as usize)
     }
 
-    pub fn value_mut<const PRE_REMAP: bool>(&'a self) -> &'a mut T::Elem {
-        T::value_mut(self.value_addr::<PRE_REMAP, true>() as usize)
+    pub fn value_mut<const PRE_MAP: bool>(&'a self) -> &'a mut T::Elem {
+        T::value_mut(self.value_addr::<PRE_MAP, true>() as usize)
     }
 }
 
@@ -216,7 +219,7 @@ mod tests {
     use solana_account_info::AccountInfo;
     use solana_pubkey::Pubkey;
     use solana_stable_layout::stable_vec::StableVec;
-    use std::ops::Deref;
+    use std::{assert_matches::assert_matches, ops::Deref};
 
     #[test]
     fn structs_sizes_test() {
@@ -230,11 +233,16 @@ mod tests {
 
     #[test]
     fn ptr_type_modify_inner_test() {
-        let val1 = 12;
-        let val2 = 13;
-        let mut ptr = PtrType::PtrToValuePtr(val1);
-        ptr.visit_mut(|v| *v = val2);
-        assert_eq!(ptr.as_ref(), &val2);
+        let inner_val1 = 12;
+        let inner_val2 = 13;
+        let mut ptr1 = PtrType::PtrToValuePtr(inner_val1);
+        ptr1.visit_inner_mut(|v| *v = inner_val2);
+        assert_eq!(ptr1.as_ref(), &inner_val2);
+        assert!(matches!(ptr1, PtrType::PtrToValuePtr(_)));
+
+        let ptr2 = PtrType::RcBoxStartPtr(inner_val1);
+        ptr1.visit_mut(|v| *v = ptr2);
+        assert!(matches!(ptr1, PtrType::RcBoxStartPtr(_)));
     }
 
     #[test]
@@ -505,7 +513,7 @@ mod tests {
             let item_original = &items_original_fixed[idx];
             let item_original_ptr = item_original as *const _ as u64;
             let item_original_lamports_rc_ptr =
-                item_original_ptr + crate::typ_size_of!(&Pubkey) as u64;
+                item_original_ptr + crate::typ_size!(&Pubkey) as u64;
             let mem_layout = RcRefCellMemLayout::<&mut u64>::new(
                 mmh.clone(),
                 PtrType::RcStartPtr(item_original_lamports_rc_ptr),

@@ -19,7 +19,7 @@ use crate::{
         translate_type_mut,
     },
     word_size::{
-        common::MemoryMappingHelper,
+        common::{MemoryMappingHelper, FAT_PTR64_ELEM_BYTE_SIZE, SLICE_FAT_PTR64_SIZE_BYTES},
         primitives::{PtrType, RcRefCellMemLayout},
         slice::{SliceFatPtr64, SliceFatPtr64Repr},
     },
@@ -29,7 +29,7 @@ use core::str::from_utf8;
 use fluentbase_sdk::{debug_log, SharedAPI};
 use solana_account_info::AccountInfo;
 use solana_feature_set;
-use solana_pubkey::Pubkey;
+use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
     error::EbpfError,
     memory_region::{AccessType, MemoryMapping},
@@ -246,7 +246,7 @@ declare_builtin_function!(
                 dst_addr,
                 n,
                 invoke_context.get_check_aligned(),
-                false,
+
             )?;
             s.fill(&(c as u8));
             Ok(0)
@@ -318,7 +318,7 @@ declare_builtin_function!(
                 debug_log!("Log: {}", string);
                 Ok(0)
             },
-            false,
+
         )?;
         Ok(0)
     }
@@ -364,7 +364,7 @@ declare_builtin_function!(
             len,
             invoke_context.get_check_aligned(),
             &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line, column).into()),
-            false,
+
         )
     }
 );
@@ -404,7 +404,7 @@ declare_builtin_function!(
             result_addr,
             size_of::<H::Output>() as u64,
             invoke_context.get_check_aligned(),
-            false,
+
         )?;
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
@@ -413,7 +413,7 @@ declare_builtin_function!(
                 vals_addr,
                 vals_len,
                 invoke_context.get_check_aligned(),
-                false,
+
             )?;
             for val in vals.iter() {
                 // TODO
@@ -689,7 +689,7 @@ declare_builtin_function!(
             program_id_addr,
             memory_mapping,
             invoke_context.get_check_aligned(),
-            false,
+
         )?;
 
         // replace smv pubkey with evm create2
@@ -704,9 +704,9 @@ declare_builtin_function!(
         let mut address = translate_slice_mut::<u8>(
             memory_mapping,
             address_addr,
-            32,
+            PUBKEY_BYTES as u64,
             invoke_context.get_check_aligned(),
-            false,
+
         )?;
         address.copy_from_slice(new_address.as_ref());
         Ok(0)
@@ -740,7 +740,13 @@ declare_builtin_function!(
         // let host_addr = memory_mapping.map(AccessType::Load, seeds_addr, 8).unwrap();
         let word_size = size_of::<usize>();
         let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, word_size as u64 * seeds_len)?;
-        let untranslated_seeds = translate_slice::<SliceFatPtr64<u8>>(memory_mapping, seeds_addr, seeds_len, true, false)?;
+        let untranslated_seeds = translate_slice::<SliceFatPtr64<u8>>(
+            memory_mapping,
+            seeds_addr,
+            seeds_len,
+            true,
+
+        )?;
         debug_log!(
             "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): untranslated_seeds ({})",
             seeds_addr,
@@ -762,7 +768,7 @@ declare_builtin_function!(
             program_id_addr,
             memory_mapping,
             invoke_context.get_check_aligned(),
-            false,
+
         );
         if let Err(e) = &result {
             debug_log!("error: {:?}", e);
@@ -795,17 +801,17 @@ declare_builtin_function!(
                     let mut address = translate_slice_mut::<u8>(
                         memory_mapping,
                         address_addr,
-                        core::mem::size_of::<Pubkey>() as u64,
+                        size_of::<Pubkey>() as u64,
                         invoke_context.get_check_aligned(),
-                    false,
+
                     )?;
                     // TODO recheck
                     if !is_nonoverlapping(
                         bump_seed_ref as *const _ as usize,
-                        core::mem::size_of_val(bump_seed_ref),
+                        size_of_val(bump_seed_ref),
                         // TODO recheck
                         address.first_item_addr() as usize,
-                        core::mem::size_of::<Pubkey>(),
+                        size_of::<Pubkey>(),
                     ) {
                         return Err(SyscallError::CopyOverlapping.into());
                     }
@@ -839,7 +845,7 @@ declare_builtin_function!(
         for account_idx in 0..account_infos_len {
             let lamports_mem_layout_ptr = RcRefCellMemLayout::<&mut u64>::new(
                 mmh.clone(),
-                PtrType::RcStartPtr(account_infos.item_addr_at_idx(account_idx as usize) + 8),
+                PtrType::RcStartPtr(account_infos.item_addr_at_idx(account_idx as usize) + FAT_PTR64_ELEM_BYTE_SIZE as u64),
             );
             debug_log!();
             let addr_to_key_addr = account_infos.item_addr_at_idx(account_idx as usize);
@@ -853,9 +859,6 @@ declare_builtin_function!(
             )?;
             let lamports = lamports_mem_layout_ptr.value::<false>();
             debug_log!("for key (is_svm_pubkey:{}) {} ({:x?}) account_idx {} lamports={}", is_evm_pubkey(key), key, key.to_bytes(), account_idx, lamports);
-            // if account_idx == 0 {
-            //     assert_eq!(*lamports, 101);
-            // }
         }
         debug_log!();
         cpi_common::<SDK, Self>(

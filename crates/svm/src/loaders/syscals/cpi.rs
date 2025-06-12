@@ -250,11 +250,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 return Err(SyscallError::InvalidPointer.into());
             }
 
-            debug_log!(
-                "addr_to_data_addr {} ({:x?})",
-                addr_to_data_addr,
-                addr_to_data_addr,
-            );
             // Double translate data out of RefCell
             let data_mem_layout = RcRefCellMemLayout::<&mut [u8]>::new(
                 mmh.clone(),
@@ -262,16 +257,8 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             );
             let data_fat_ptr_vm_addr = data_mem_layout.addr_to_value_addr::<false, false>();
             let data_fat_ptr_addr = data_mem_layout.addr_to_value_addr::<false, true>();
-            debug_log!("data_addr {} ({:x?})", data_fat_ptr_addr, data_fat_ptr_addr,);
             let data =
                 SliceFatPtr64::<u8>::from_ptr_to_fat_ptr(data_fat_ptr_addr as usize, mmh.clone());
-            // let data = *translate_type::<&[u8]>(
-            //     memory_mapping,
-            //     // account_info.data.as_ptr() as *const _ as u64,
-            //     data_ptr,
-            //     invoke_context.get_check_aligned(),
-            //     true,
-            // )?;
             debug_log!();
             if direct_mapping {
                 check_account_info_pointer(
@@ -294,8 +281,9 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             let ref_to_len_in_vm = if direct_mapping {
                 // let vm_addr = (account_info.data.as_ptr() as *const u64 as u64)
                 //     .saturating_add(size_of::<u64>() as u64);
-                let data_len_fat_ptr_vm_addr =
-                    data_fat_ptr_vm_addr.saturating_add(size_of::<u64>() as u64);
+                let data_len_fat_ptr_vm_addr = data
+                    .first_item_addr()
+                    .saturating_add(size_of::<u64>() as u64);
                 let vm_addr = data_len_fat_ptr_vm_addr;
                 // In the same vein as the other check_account_info_pointer() checks, we don't lock
                 // this pointer to a specific address but we don't want it to be inside accounts, or
@@ -326,9 +314,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 let val = unsafe { &mut *translated };
                 VmValue::Translated(val)
             };
-            // let vm_data_addr = data.as_ptr() as u64;
             let vm_data_addr = data.first_item_addr();
-            let host_data_addr = data.first_item_addr();
 
             let serialized_data = if direct_mapping {
                 // when direct mapping is enabled, the permissions on the
@@ -348,10 +334,9 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 debug_log!();
                 translate_slice_mut::<u8>(
                     memory_mapping,
-                    host_data_addr,
+                    data_fat_ptr_vm_addr,
                     data.len() as u64,
                     invoke_context.get_check_aligned(),
-                    true,
                 )?
             };
             debug_log!();
@@ -447,7 +432,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 account_info.data_addr,
                 account_info.data_len,
                 invoke_context.get_check_aligned(),
-                false,
             )?
         };
 
@@ -584,7 +568,6 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
             accounts_ptr.first_item_addr(),
             accounts_ptr.len() as u64,
             invoke_context.get_check_aligned(),
-            false,
         )?;
         debug_log!(
             "data_ptr.first_item_fat_ptr_addr {}",
@@ -595,7 +578,6 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
             data_ptr.first_item_addr(),
             data_ptr.len() as u64,
             invoke_context.get_check_aligned(),
-            false,
         )?;
 
         check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
@@ -690,7 +672,6 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
                 signers_seeds_addr,
                 signers_seeds_len,
                 invoke_context.get_check_aligned(),
-                false,
             )?;
             if signers_seeds.len() > MAX_SIGNERS {
                 return Err(SyscallError::TooManySigners.into());
@@ -1472,7 +1453,6 @@ fn update_callee_account<SDK: SharedAPI>(
                             .saturating_add(caller_account.original_data_len as u64),
                         realloc_bytes_used as u64,
                         invoke_context.get_check_aligned(),
-                        false,
                     )?;
                     debug_log!();
                     callee_account
@@ -1711,7 +1691,6 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                             .saturating_add(dirty_realloc_start as u64),
                         dirty_realloc_len as u64,
                         invoke_context.get_check_aligned(),
-                        false,
                     )?;
                     debug_log!("update_caller_account15");
                     serialized_data.fill(&0);
@@ -1737,7 +1716,6 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                 caller_account.vm_data_addr,
                 post_len as u64,
                 false, // Don't care since it is byte aligned
-                false,
             )?;
         }
         debug_log!("update_caller_account19");
@@ -1824,7 +1802,6 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                         .saturating_add(caller_account.original_data_len as u64),
                     realloc_bytes_used as u64,
                     invoke_context.get_check_aligned(),
-                    false,
                 )?
             };
             let from_slice = callee_account

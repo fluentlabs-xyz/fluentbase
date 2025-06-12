@@ -47,6 +47,43 @@ pub trait SpecMethods<'a> {
         Self: Sized;
 }
 
+impl<'a> SpecMethods<'a> for u8 {
+    const ITEM_SIZE_BYTES: usize = size_of::<Self>();
+
+    fn recover_from_bytes(
+        byte_repr: &'a [u8],
+        _memory_mapping_helper: MemoryMappingHelper<'a>,
+    ) -> RetVal<'a, Self> {
+        let len = byte_repr.len() / Self::ITEM_SIZE_BYTES;
+        let recovered_bytes_len = len * Self::ITEM_SIZE_BYTES;
+        assert_eq!(
+            recovered_bytes_len,
+            byte_repr.len(),
+            "invalid byte repr: {} != {}",
+            recovered_bytes_len,
+            byte_repr.len()
+        );
+        RetVal::Reference(typecast_bytes(byte_repr))
+    }
+}
+
+macro_rules! impl_numeric_type {
+    ($typ: ident) => {
+        impl<'a> $crate::word_size::slice::SpecMethods<'a> for $typ {
+            const ITEM_SIZE_BYTES: usize = core::mem::size_of::<$typ>();
+
+            fn recover_from_bytes(
+                byte_repr: &'a [u8],
+                _memory_mapping_helper: MemoryMappingHelper<'a>,
+            ) -> RetVal<'a, Self> {
+                RetVal::Reference(typecast_bytes(&byte_repr[..Self::ITEM_SIZE_BYTES]))
+            }
+        }
+    };
+}
+
+impl_numeric_type!(u16);
+
 #[derive(Clone, Debug, Default)]
 pub struct SliceFatPtr64Repr {
     first_item_addr: u64,
@@ -54,9 +91,9 @@ pub struct SliceFatPtr64Repr {
 }
 
 impl SliceFatPtr64Repr {
-    pub fn new(first_item_fat_ptr_addr: u64, len: usize) -> Self {
+    pub fn new(first_item_addr: u64, len: usize) -> Self {
         Self {
-            first_item_addr: first_item_fat_ptr_addr,
+            first_item_addr,
             len,
         }
     }
@@ -141,43 +178,6 @@ impl<'a, T: SpecMethods<'a>> Debug for SliceFatPtr64<'a, T> {
     }
 }
 
-impl<'a> SpecMethods<'a> for u8 {
-    const ITEM_SIZE_BYTES: usize = size_of::<Self>();
-
-    fn recover_from_bytes(
-        byte_repr: &'a [u8],
-        _memory_mapping_helper: MemoryMappingHelper<'a>,
-    ) -> RetVal<'a, Self> {
-        let len = byte_repr.len() / Self::ITEM_SIZE_BYTES;
-        let recovered_bytes_len = len * Self::ITEM_SIZE_BYTES;
-        assert_eq!(
-            recovered_bytes_len,
-            byte_repr.len(),
-            "invalid byte repr: {} != {}",
-            recovered_bytes_len,
-            byte_repr.len()
-        );
-        RetVal::Reference(typecast_bytes(byte_repr))
-    }
-}
-
-macro_rules! impl_numeric_type {
-    ($typ: ident) => {
-        impl<'a> $crate::word_size::slice::SpecMethods<'a> for $typ {
-            const ITEM_SIZE_BYTES: usize = core::mem::size_of::<$typ>();
-
-            fn recover_from_bytes(
-                byte_repr: &'a [u8],
-                _memory_mapping_helper: MemoryMappingHelper<'a>,
-            ) -> RetVal<'a, Self> {
-                RetVal::Reference(typecast_bytes(&byte_repr[..Self::ITEM_SIZE_BYTES]))
-            }
-        }
-    };
-}
-
-impl_numeric_type!(u16);
-
 #[inline(always)]
 pub fn reconstruct_slice<'a, T>(ptr: usize, len: usize) -> &'a [T] {
     unsafe { core::slice::from_raw_parts::<'a>(ptr as *const T, len) }
@@ -208,12 +208,12 @@ impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
 }
 
 impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
-    pub fn new<const PRE_REMAP: bool>(
+    pub fn new<const PRE_MAP: bool>(
         memory_mapping_helper: MemoryMappingHelper<'a>,
         first_item_addr: u64,
         len: usize,
     ) -> Self {
-        crate::remap_addr!(PRE_REMAP, memory_mapping_helper, first_item_addr);
+        crate::remap_addr!(PRE_MAP, memory_mapping_helper, first_item_addr);
         Self {
             slice_repr: SliceFatPtr64Repr::new(first_item_addr, len),
             memory_mapping_helper,
@@ -415,9 +415,12 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
         Self::from_fixed_slice_fat_ptr(fat_ptr.try_into().unwrap(), memory_mapping_helper)
     }
 
-    pub fn from_ptr_to_fat_ptr(ptr: usize, memory_mapping_helper: MemoryMappingHelper<'a>) -> Self {
+    pub fn from_ptr_to_fat_ptr(
+        addr: usize,
+        memory_mapping_helper: MemoryMappingHelper<'a>,
+    ) -> Self {
         let fat_ptr_slice =
-            unsafe { core::slice::from_raw_parts(ptr as *const u8, SLICE_FAT_PTR64_SIZE_BYTES) };
+            unsafe { core::slice::from_raw_parts(addr as *const u8, SLICE_FAT_PTR64_SIZE_BYTES) };
         Self::from_fat_ptr_slice(fat_ptr_slice, memory_mapping_helper)
     }
 
@@ -507,11 +510,11 @@ mod tests {
     #[test]
     fn structs_sizes_test() {
         assert_eq!(
-            crate::typ_size_of!(AccountMeta),
+            crate::typ_size!(AccountMeta),
             ACCOUNT_META_ITEM_SIZE_64BIT_WORD
         );
         assert_eq!(
-            crate::typ_size_of!(AccountInfo),
+            crate::typ_size!(AccountInfo),
             ACCOUNT_INFO_ITEM_SIZE_64BIT_WORD
         );
     }

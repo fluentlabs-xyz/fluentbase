@@ -1,10 +1,11 @@
+use crate::error::RuntimeError;
 use solana_rbpf::{
     error::ProgramResult,
     memory_region::{AccessType, MemoryMapping},
 };
 
 #[macro_export]
-macro_rules! typ_align_of {
+macro_rules! typ_align {
     ($typ:ty) => {
         core::mem::align_of::<$typ>()
     };
@@ -18,17 +19,94 @@ macro_rules! typ_name {
 }
 
 #[macro_export]
-macro_rules! typ_size_of {
+macro_rules! typ_size {
     ($typ:ty) => {
         core::mem::size_of::<$typ>()
     };
 }
 
-pub const FIXED_MACHINE_WORD_BYTE_SIZE: usize = crate::typ_size_of!(u64);
+pub const FIXED_MACHINE_WORD_BYTE_SIZE: usize = crate::typ_size!(u64);
 pub const FIXED_PTR_BYTE_SIZE: usize = FIXED_MACHINE_WORD_BYTE_SIZE;
 pub const FAT_PTR64_ELEM_BYTE_SIZE: usize = FIXED_MACHINE_WORD_BYTE_SIZE;
 pub const SLICE_FAT_PTR64_SIZE_BYTES: usize = FAT_PTR64_ELEM_BYTE_SIZE * 2;
 pub const STABLE_VEC_FAT_PTR64_BYTE_SIZE: usize = FAT_PTR64_ELEM_BYTE_SIZE * 3;
+
+#[derive(Debug, Copy, Clone)]
+pub enum AddrType {
+    Vm(u64),
+    Host(u64),
+}
+
+impl AsRef<u64> for AddrType {
+    fn as_ref(&self) -> &u64 {
+        match self {
+            AddrType::Vm(v) => v,
+            AddrType::Host(v) => v,
+        }
+    }
+}
+
+impl AsMut<u64> for AddrType {
+    fn as_mut(&mut self) -> &mut u64 {
+        match self {
+            AddrType::Vm(v) => v,
+            AddrType::Host(v) => v,
+        }
+    }
+}
+
+impl AddrType {
+    pub fn new_vm(v: u64) -> Self {
+        Self::Vm(v)
+    }
+    pub fn new_host(v: u64) -> Self {
+        Self::Host(v)
+    }
+
+    pub fn inner(&self) -> u64 {
+        match self {
+            AddrType::Vm(v) => *v,
+            AddrType::Host(v) => *v,
+        }
+    }
+
+    pub fn is_vm(&self) -> bool {
+        matches!(self, AddrType::Vm(_))
+    }
+    pub fn is_host(&self) -> bool {
+        matches!(self, AddrType::Host(_))
+    }
+
+    pub fn visit_mut<F: FnMut(&mut Self)>(&mut self, mut f: F) {
+        f(self)
+    }
+
+    pub fn try_transform_to_host<F: FnMut(&u64) -> u64>(
+        &mut self,
+        mut f: F,
+    ) -> Result<(), RuntimeError> {
+        if !self.is_vm() {
+            return Err(RuntimeError::InvalidTransformation);
+        }
+        *self = AddrType::Host(f(self.as_ref()));
+        Ok(())
+    }
+
+    pub fn try_transform_to_vm<F: FnMut(&u64) -> u64>(
+        &mut self,
+        mut f: F,
+    ) -> Result<(), RuntimeError> {
+        if !self.is_host() {
+            return Err(RuntimeError::InvalidTransformation);
+        }
+        *self = AddrType::Vm(f(self.as_ref()));
+        Ok(())
+    }
+
+    pub fn visit_inner_mut<F: FnMut(&mut u64)>(&mut self, mut f: F) {
+        f(self.as_mut())
+    }
+}
 
 #[macro_export]
 macro_rules! println_typ_size {
@@ -36,7 +114,7 @@ macro_rules! println_typ_size {
         println!(
             "size_of::<{}>() = {}",
             $crate::typ_name!($typ),
-            $crate::typ_size_of!($typ)
+            $crate::typ_size!($typ)
         )
     };
 }
@@ -79,14 +157,14 @@ macro_rules! remap_addr {
 fn validate_typecast<T: Clone>(data: &[u8]) {
     let data = data.as_ref();
     let type_name = crate::typ_name!(T);
-    if data.len() < crate::typ_size_of!(T) {
+    if data.len() < crate::typ_size!(T) {
         panic!("failed to typecase to {}: invalid size", type_name);
     }
 
     let ptr = data.as_ptr() as *const T;
 
     // Check alignment
-    if (ptr as usize) % crate::typ_align_of!(T) != 0 {
+    if (ptr as usize) % crate::typ_align!(T) != 0 {
         panic!("failed to typecase to {}: misaligned", type_name);
     }
 }

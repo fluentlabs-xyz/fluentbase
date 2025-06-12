@@ -128,6 +128,7 @@ pub fn process_svm_error(svm_error: SvmError) -> (HashMap<Pubkey, AccountSharedD
         SvmError::ElfError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
         SvmError::EbpfError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
         SvmError::SyscallError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
+        SvmError::RuntimeError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
     }
 }
 
