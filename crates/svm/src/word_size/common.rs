@@ -31,83 +31,6 @@ pub const FAT_PTR64_ELEM_BYTE_SIZE: usize = FIXED_MACHINE_WORD_BYTE_SIZE;
 pub const SLICE_FAT_PTR64_SIZE_BYTES: usize = FAT_PTR64_ELEM_BYTE_SIZE * 2;
 pub const STABLE_VEC_FAT_PTR64_BYTE_SIZE: usize = FAT_PTR64_ELEM_BYTE_SIZE * 3;
 
-#[derive(Debug, Copy, Clone)]
-pub enum AddrType {
-    Vm(u64),
-    Host(u64),
-}
-
-impl AsRef<u64> for AddrType {
-    fn as_ref(&self) -> &u64 {
-        match self {
-            AddrType::Vm(v) => v,
-            AddrType::Host(v) => v,
-        }
-    }
-}
-
-impl AsMut<u64> for AddrType {
-    fn as_mut(&mut self) -> &mut u64 {
-        match self {
-            AddrType::Vm(v) => v,
-            AddrType::Host(v) => v,
-        }
-    }
-}
-
-impl AddrType {
-    pub fn new_vm(v: u64) -> Self {
-        Self::Vm(v)
-    }
-    pub fn new_host(v: u64) -> Self {
-        Self::Host(v)
-    }
-
-    pub fn inner(&self) -> u64 {
-        match self {
-            AddrType::Vm(v) => *v,
-            AddrType::Host(v) => *v,
-        }
-    }
-
-    pub fn is_vm(&self) -> bool {
-        matches!(self, AddrType::Vm(_))
-    }
-    pub fn is_host(&self) -> bool {
-        matches!(self, AddrType::Host(_))
-    }
-
-    pub fn visit_mut<F: FnMut(&mut Self)>(&mut self, mut f: F) {
-        f(self)
-    }
-
-    pub fn try_transform_to_host<F: FnMut(&u64) -> u64>(
-        &mut self,
-        mut f: F,
-    ) -> Result<(), RuntimeError> {
-        if !self.is_vm() {
-            return Err(RuntimeError::InvalidTransformation);
-        }
-        *self = AddrType::Host(f(self.as_ref()));
-        Ok(())
-    }
-
-    pub fn try_transform_to_vm<F: FnMut(&u64) -> u64>(
-        &mut self,
-        mut f: F,
-    ) -> Result<(), RuntimeError> {
-        if !self.is_host() {
-            return Err(RuntimeError::InvalidTransformation);
-        }
-        *self = AddrType::Vm(f(self.as_ref()));
-        Ok(())
-    }
-
-    pub fn visit_inner_mut<F: FnMut(&mut u64)>(&mut self, mut f: F) {
-        f(self.as_mut())
-    }
-}
-
 #[macro_export]
 macro_rules! println_typ_size {
     ($typ:ty) => {
@@ -121,34 +44,34 @@ macro_rules! println_typ_size {
 
 #[macro_export]
 macro_rules! map_addr {
-    ($is:expr, $mm:expr, $ptr:ident) => {
+    ($is:ident, $mmh:expr, $addr:ident) => {
         if $is {
-            $mm.map_vm_addr_to_host(
-                $ptr as u64,
-                crate::word_size::common::FIXED_PTR_BYTE_SIZE as u64,
+            $mmh.map_vm_addr_to_host(
+                $addr as u64,
+                $crate::word_size::common::FIXED_PTR_BYTE_SIZE as u64,
             )
             .unwrap()
         } else {
-            $ptr
+            $addr
         }
     };
-    ($mm:expr, $ptr:ident, $len:expr) => {
-        $mm.map_vm_addr_to_host($ptr as u64, $len as u64).unwrap()
+    ($mmh:expr, $addr:ident) => {
+        $crate::map_addr!($mmh, $addr, $crate::word_size::common::FIXED_PTR_BYTE_SIZE)
     };
-    ($mm:expr, $ptr:ident) => {
-        $crate::map_addr!($mm, $ptr, crate::word_size::common::FIXED_PTR_BYTE_SIZE)
+    ($mmh:expr, $addr:ident, $len:expr) => {
+        $mmh.map_vm_addr_to_host($addr as u64, $len as u64).unwrap()
     };
 }
 #[macro_export]
 macro_rules! remap_addr {
-    ($mm:expr, $ptr:ident) => {
-        let $ptr = $crate::map_addr!($mm, $ptr);
+    ($mmh:expr, $addr:ident) => {
+        let $addr = $crate::map_addr!($mmh, $addr);
     };
-    ($is:expr, $mm:expr, $ptr:ident) => {
-        let $ptr = if $is {
-            $crate::map_addr!($mm, $ptr)
+    ($is:ident, $mmh:expr, $addr:ident) => {
+        let $addr = if $is {
+            $crate::map_addr!($mmh, $addr)
         } else {
-            $ptr
+            $addr
         };
     };
 }

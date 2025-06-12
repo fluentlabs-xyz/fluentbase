@@ -1,3 +1,5 @@
+pub mod addr_type;
 pub mod common;
 pub mod primitives;
+pub mod ptr_type;
 pub mod slice;

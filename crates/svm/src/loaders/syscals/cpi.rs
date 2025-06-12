@@ -19,8 +19,10 @@ use crate::{
     serialization::account_data_region_memory_state,
     solana_program::bpf_loader_upgradeable,
     word_size::{
+        addr_type::AddrType,
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
-        primitives::{PtrType, RcRefCellMemLayout},
+        primitives::RcRefCellMemLayout,
+        ptr_type::PtrType,
         slice::{
             reconstruct_slice,
             ElementConstraints,
@@ -140,10 +142,11 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             .get_feature_set()
             .is_active(&feature_set::bpf_account_data_direct_mapping::id());
 
-        let addr_to_key_addr = account_info.first_item_addr();
-        let addr_to_lamports_rc_addr = account_info.first_item_addr().saturating_add(8);
-        let addr_to_data_addr = account_info.first_item_addr().saturating_add(8 * 2);
-        let addr_to_owner_addr = account_info.first_item_addr().saturating_add(8 * 3);
+        let account_info_first_item_addr = account_info.first_item_addr().inner();
+        let addr_to_key_addr = account_info_first_item_addr;
+        let addr_to_lamports_rc_addr = account_info_first_item_addr.saturating_add(8);
+        let addr_to_data_addr = account_info_first_item_addr.saturating_add(8 * 2);
+        let addr_to_owner_addr = account_info_first_item_addr.saturating_add(8 * 3);
 
         let mmh: MemoryMappingHelper = memory_mapping.into();
 
@@ -264,7 +267,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 check_account_info_pointer(
                     invoke_context,
                     // data.as_ptr() as u64,
-                    data.first_item_addr(),
+                    data.first_item_addr().inner(),
                     account_metadata.vm_data_addr,
                     "data",
                 )?;
@@ -283,6 +286,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 //     .saturating_add(size_of::<u64>() as u64);
                 let data_len_fat_ptr_vm_addr = data
                     .first_item_addr()
+                    .inner()
                     .saturating_add(size_of::<u64>() as u64);
                 let vm_addr = data_len_fat_ptr_vm_addr;
                 // In the same vein as the other check_account_info_pointer() checks, we don't lock
@@ -340,7 +344,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 )?
             };
             debug_log!();
-            (serialized_data, vm_data_addr, ref_to_len_in_vm)
+            (serialized_data, vm_data_addr.inner(), ref_to_len_in_vm)
         };
 
         debug_log!(
@@ -565,7 +569,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
         let program_id = Pubkey::new_from_array(program_id_data.try_into().unwrap());
         let account_metas = translate_slice::<AccountMeta>(
             memory_mapping,
-            accounts_ptr.first_item_addr(),
+            accounts_ptr.first_item_addr().inner(),
             accounts_ptr.len() as u64,
             invoke_context.get_check_aligned(),
         )?;
@@ -575,7 +579,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
         );
         let data = translate_slice::<u8>(
             memory_mapping,
-            data_ptr.first_item_addr(),
+            data_ptr.first_item_addr().inner(),
             data_ptr.len() as u64,
             invoke_context.get_check_aligned(),
         )?;
@@ -636,7 +640,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
             // |account_info: &AccountInfo| account_info.key as *const _ as u64,
             |account_infos: SliceFatPtr64<AccountInfo>, idx: usize, total_len: usize| {
                 let key_addr = account_infos.item_addr_at_idx(idx);
-                let addr = SliceFatPtr64Repr::ptr_elem_from_addr(key_addr);
+                let addr = SliceFatPtr64Repr::ptr_elem_from_addr(key_addr.inner());
                 SliceFatPtr64Repr::map_vm_addr_to_host(memory_mapping, addr, total_len as u64, None)
                     .unwrap()
             },
@@ -981,8 +985,11 @@ where
     debug_log!("account_infos_addr {}", account_infos_addr,);
 
     let mmh: MemoryMappingHelper = memory_mapping.into();
-    let account_infos =
-        SliceFatPtr64::new::<true>(mmh, account_infos_addr, account_infos_len as usize);
+    let account_infos = SliceFatPtr64::new::<true>(
+        mmh,
+        AddrType::Vm(account_infos_addr),
+        account_infos_len as usize,
+    );
     check_account_infos(account_infos.len(), invoke_context)?;
     let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
     for account_index in 0..account_infos_len as usize {
@@ -1113,7 +1120,7 @@ where
             let caller_account = do_translate(
                 invoke_context,
                 memory_mapping,
-                account_infos.item_addr_at_idx(caller_account_index),
+                account_infos.item_addr_at_idx(caller_account_index).inner(),
                 account_info,
                 serialized_metadata,
             )?;

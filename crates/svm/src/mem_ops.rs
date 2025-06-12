@@ -4,6 +4,7 @@ use crate::{
     error::{Error, SvmError},
     helpers::SyscallError,
     word_size::{
+        addr_type::AddrType,
         common::MemoryMappingHelper,
         slice::{ElementConstraints, SliceFatPtr64},
     },
@@ -625,18 +626,14 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     //     total_size
     // );
 
-    let host_addr = /*if skip_addr_translation {
-        vm_addr
-    } else {*/
-        translate(memory_mapping, access_type, vm_addr, total_size)?;
-    // };
+    let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
     debug_log!();
 
     if check_aligned && !helpers::address_is_aligned::<T>(host_addr) {
         return Err(SyscallError::UnalignedPointer.into());
     }
     // debug_log!("translate_slice_inner 4");
-    let result = SliceFatPtr64::new::<false>(mmh, host_addr, len as usize);
+    let result = SliceFatPtr64::new::<false>(mmh, AddrType::Host(host_addr), len as usize);
     // let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
     Ok(result)
 }

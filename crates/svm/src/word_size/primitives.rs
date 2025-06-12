@@ -1,45 +1,15 @@
 use crate::word_size::{
     common::{typecast_bytes, typecast_bytes_mut, MemoryMappingHelper, FIXED_PTR_BYTE_SIZE},
+    ptr_type::PtrType,
     slice::{reconstruct_slice, SliceFatPtr64Repr},
 };
 use core::{
+    fmt::Display,
     marker::PhantomData,
-    ops::{Index, RangeBounds},
+    ops::{Add, Index, RangeBounds},
     slice::SliceIndex,
 };
-
-#[derive(Clone, Copy, Debug)]
-pub enum PtrType {
-    RcStartPtr(u64),
-    RcBoxStartPtr(u64),
-    PtrToValuePtr(u64),
-}
-
-impl PtrType {
-    pub fn as_ref(&self) -> &u64 {
-        match self {
-            PtrType::RcStartPtr(v) => v,
-            PtrType::RcBoxStartPtr(v) => v,
-            PtrType::PtrToValuePtr(v) => v,
-        }
-    }
-    pub fn as_ref_mut(&mut self) -> &mut u64 {
-        match self {
-            PtrType::RcStartPtr(v) => v,
-            PtrType::RcBoxStartPtr(v) => v,
-            PtrType::PtrToValuePtr(v) => v,
-        }
-    }
-    pub fn visit_inner<F: Fn(&u64)>(&mut self, f: F) {
-        f(self.as_ref());
-    }
-    pub fn visit_inner_mut<F: Fn(&mut u64)>(&mut self, f: F) {
-        f(self.as_ref_mut());
-    }
-    pub fn visit_mut<F: Fn(&mut Self)>(&mut self, f: F) {
-        f(self);
-    }
-}
+use num_traits::ToPrimitive;
 
 pub trait SpecMethods<'a> {
     type Elem;
@@ -208,8 +178,10 @@ mod tests {
     use crate::{
         println_typ_size,
         word_size::{
+            addr_type::AddrType,
             common::{MemoryMappingHelper, FIXED_PTR_BYTE_SIZE},
-            primitives::{PtrType, RcRefCellMemLayout},
+            primitives::RcRefCellMemLayout,
+            ptr_type::PtrType,
             slice::{reconstruct_slice, SliceFatPtr64, SliceFatPtr64Repr},
         },
     };
@@ -219,7 +191,7 @@ mod tests {
     use solana_account_info::AccountInfo;
     use solana_pubkey::Pubkey;
     use solana_stable_layout::stable_vec::StableVec;
-    use std::{assert_matches::assert_matches, ops::Deref};
+    use std::ops::Deref;
 
     #[test]
     fn structs_sizes_test() {
@@ -229,20 +201,6 @@ mod tests {
         println_typ_size!(Rc<RefCell<&mut u64>>);
         println_typ_size!(Rc<RefCell<&mut [u8]>>);
         println_typ_size!(&mut [u8]);
-    }
-
-    #[test]
-    fn ptr_type_modify_inner_test() {
-        let inner_val1 = 12;
-        let inner_val2 = 13;
-        let mut ptr1 = PtrType::PtrToValuePtr(inner_val1);
-        ptr1.visit_inner_mut(|v| *v = inner_val2);
-        assert_eq!(ptr1.as_ref(), &inner_val2);
-        assert!(matches!(ptr1, PtrType::PtrToValuePtr(_)));
-
-        let ptr2 = PtrType::RcBoxStartPtr(inner_val1);
-        ptr1.visit_mut(|v| *v = ptr2);
-        assert!(matches!(ptr1, PtrType::RcBoxStartPtr(_)));
     }
 
     #[test]
@@ -477,7 +435,7 @@ mod tests {
 
         let mut slice = SliceFatPtr64::<ItemType>::new::<false>(
             mmh.clone(),
-            items_original_fixed.as_ref().as_ptr() as u64,
+            AddrType::Vm(items_original_fixed.as_ref().as_ptr() as u64),
             items_len,
         );
         debug_log!("vec_of_items_bytes_size {}", vec_of_items_bytes_size);

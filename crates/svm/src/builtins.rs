@@ -19,8 +19,9 @@ use crate::{
         translate_type_mut,
     },
     word_size::{
-        common::{MemoryMappingHelper, FAT_PTR64_ELEM_BYTE_SIZE, SLICE_FAT_PTR64_SIZE_BYTES},
-        primitives::{PtrType, RcRefCellMemLayout},
+        common::{MemoryMappingHelper, FAT_PTR64_ELEM_BYTE_SIZE},
+        primitives::RcRefCellMemLayout,
+        ptr_type::PtrType,
         slice::{SliceFatPtr64, SliceFatPtr64Repr},
     },
 };
@@ -810,7 +811,7 @@ declare_builtin_function!(
                         bump_seed_ref as *const _ as usize,
                         size_of_val(bump_seed_ref),
                         // TODO recheck
-                        address.first_item_addr() as usize,
+                        address.first_item_addr().inner() as usize,
                         size_of::<Pubkey>(),
                     ) {
                         return Err(SyscallError::CopyOverlapping.into());
@@ -841,15 +842,15 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         debug_log!();
         let mmh = MemoryMappingHelper::new(Some(memory_mapping));
-        let account_infos = SliceFatPtr64::<AccountInfo>::new::<true>(mmh.clone(), account_infos_addr, account_infos_len as usize);
+        let account_infos = SliceFatPtr64::<AccountInfo>::new::<true>(mmh.clone(), account_infos_addr.into(), account_infos_len as usize);
         for account_idx in 0..account_infos_len {
             let lamports_mem_layout_ptr = RcRefCellMemLayout::<&mut u64>::new(
                 mmh.clone(),
-                PtrType::RcStartPtr(account_infos.item_addr_at_idx(account_idx as usize) + FAT_PTR64_ELEM_BYTE_SIZE as u64),
+                PtrType::RcStartPtr((account_infos.item_addr_at_idx(account_idx as usize) + FAT_PTR64_ELEM_BYTE_SIZE as u64).inner()),
             );
             debug_log!();
             let addr_to_key_addr = account_infos.item_addr_at_idx(account_idx as usize);
-            let key_vm_addr = SliceFatPtr64Repr::ptr_elem_from_addr(addr_to_key_addr);
+            let key_vm_addr = SliceFatPtr64Repr::ptr_elem_from_addr(addr_to_key_addr.inner());
             let key = translate_type::<Pubkey>(
                 memory_mapping,
                 // account_info.owner as *const _ as u64,
