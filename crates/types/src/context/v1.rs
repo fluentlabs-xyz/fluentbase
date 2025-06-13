@@ -1,19 +1,39 @@
-pub use self::{
-    block_context::BlockContextV1,
-    contract_context::ContractContextV1,
-    tx_context::TxContextV1,
-};
-use crate::{
-    context::{BlockContextReader, ContractContextReader, SharedContextReader, TxContextReader},
-    Address,
-    B256,
-    U256,
-};
+use crate::{context::ContextReader, Address, B256, U256};
 use alloy_primitives::Bytes;
 
-mod block_context;
-mod contract_context;
-mod tx_context;
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct BlockContextV1 {
+    pub chain_id: u64,
+    pub coinbase: Address,
+    pub timestamp: u64,
+    pub number: u64,
+    pub difficulty: U256,
+    pub prev_randao: B256,
+    pub gas_limit: u64,
+    pub base_fee: U256,
+}
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct ContractContextV1 {
+    pub address: Address,
+    pub bytecode_address: Address,
+    pub caller: Address,
+    pub is_static: bool,
+    pub value: U256,
+    pub gas_limit: u64,
+}
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct TxContextV1 {
+    pub gas_limit: u64,
+    pub nonce: u64,
+    pub gas_price: U256,
+    pub gas_priority_fee: Option<U256>,
+    pub origin: Address,
+    // pub blob_hashes: Vec<B256>,
+    // pub max_fee_per_blob_gas: Option<U256>,
+    pub value: U256,
+}
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct SharedContextInputV1 {
@@ -22,7 +42,7 @@ pub struct SharedContextInputV1 {
     pub contract: ContractContextV1,
 }
 
-impl BlockContextReader for SharedContextInputV1 {
+impl ContextReader for SharedContextInputV1 {
     fn block_chain_id(&self) -> u64 {
         self.block.chain_id
     }
@@ -54,9 +74,7 @@ impl BlockContextReader for SharedContextInputV1 {
     fn block_base_fee(&self) -> U256 {
         self.block.base_fee
     }
-}
 
-impl TxContextReader for SharedContextInputV1 {
     fn tx_gas_limit(&self) -> u64 {
         self.tx.gas_limit
     }
@@ -80,9 +98,7 @@ impl TxContextReader for SharedContextInputV1 {
     fn tx_value(&self) -> U256 {
         self.tx.value
     }
-}
 
-impl ContractContextReader for SharedContextInputV1 {
     fn contract_address(&self) -> Address {
         self.contract.address
     }
@@ -107,8 +123,6 @@ impl ContractContextReader for SharedContextInputV1 {
         self.contract.gas_limit
     }
 }
-
-impl SharedContextReader for SharedContextInputV1 {}
 
 impl bincode::Encode for SharedContextInputV1 {
     fn encode<E: bincode::enc::Encoder>(

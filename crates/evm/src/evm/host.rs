@@ -23,8 +23,7 @@ use core::cmp::min;
 use fluentbase_sdk::{
     calc_preimage_address,
     debug_log,
-    BlockContextReader,
-    Bytes,
+    ContextReader,
     SharedAPI,
     B256,
     KECCAK_EMPTY,
@@ -208,9 +207,9 @@ pub fn log<const N: usize, SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     let data = if len != 0 {
         let offset = as_usize_or_fail!(evm, offset);
         resize_memory!(evm, offset, len);
-        Bytes::copy_from_slice(evm.memory.slice(offset, len))
+        evm.memory.slice(offset, len)
     } else {
-        Bytes::new()
+        &[]
     };
     if evm.stack.len() < N {
         evm.state = InstructionResult::StackUnderflow;
@@ -221,7 +220,7 @@ pub fn log<const N: usize, SDK: SharedAPI>(evm: &mut EVM<SDK>) {
         // SAFETY: stack bounds already checked few lines above
         topics.push(B256::from(unsafe { evm.stack.pop_unsafe() }));
     }
-    unwrap_syscall!(evm, evm.sdk.emit_log(data.clone(), &topics));
+    unwrap_syscall!(evm, evm.sdk.emit_log(&topics, data));
 }
 
 pub fn selfdestruct<SDK: SharedAPI>(evm: &mut EVM<SDK>) {

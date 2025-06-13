@@ -241,7 +241,7 @@ impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
         gas_limit: u64,
         value: u32,
     ) -> u32 {
-        use fluentbase_sdk::TxContextReader;
+        use fluentbase_sdk::ContextReader;
         let input = fluentbase_sdk::Bytes::from(FirstMethodCall::new((value,)).encode());
         {
             let context = self.sdk.context();
@@ -266,7 +266,7 @@ impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
         a: String,
         b: bool,
     ) -> (String, bool) {
-        use fluentbase_sdk::TxContextReader;
+        use fluentbase_sdk::ContextReader;
         let input = fluentbase_sdk::Bytes::from(SecondMethodCall::new((a, b)).encode());
         {
             let context = self.sdk.context();
