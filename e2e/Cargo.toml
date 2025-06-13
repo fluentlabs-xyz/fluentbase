@@ -43,9 +43,10 @@ hex-literal = { workspace = true }
 hex = { workspace = true }
 alloy-sol-types = { workspace = true }
 wat = { version = "1.223.0" }
+paste = { workspace = true }
 
 [features]
-default = ["std", "debug-print"]
+default = ["std"]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
@@ -58,4 +59,5 @@ debug-print = [
     "fluentbase-runtime/debug-print",
     "revm/debug-print",
     "rwasm-revm/debug-print",
+    "rwasm/debug-print",
 ]

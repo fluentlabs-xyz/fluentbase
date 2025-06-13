@@ -1,6 +1,6 @@
-use crate::ExecutionResult;
+use crate::{instruction::exec::SysExecResumable, ExecutionResult};
 use fluentbase_types::{BytecodeOrHash, Bytes, B256};
-use rwasm::RwasmError;
+use rwasm::TrapCode;
 
 pub struct RuntimeContext {
     // context inputs
@@ -8,13 +8,13 @@ pub struct RuntimeContext {
     pub(crate) fuel_limit: u64,
     pub(crate) state: u32,
     pub(crate) call_depth: u32,
-    pub(crate) trace: bool,
     pub(crate) input: Bytes,
     pub(crate) disable_fuel: bool,
     // TODO(dmitry123): "check function `remember_runtime`, it's not correct"
     pub(crate) call_counter: u32,
     // context outputs
     pub(crate) execution_result: ExecutionResult,
+    pub(crate) resumable_context: Option<SysExecResumable>,
 }
 
 impl Default for RuntimeContext {
@@ -25,10 +25,10 @@ impl Default for RuntimeContext {
             state: 0,
             input: Bytes::default(),
             call_depth: 0,
-            trace: false,
             execution_result: ExecutionResult::default(),
             disable_fuel: false,
             call_counter: 0,
+            resumable_context: None,
         }
     }
 }
@@ -80,11 +80,6 @@ impl RuntimeContext {
 
     pub fn with_call_depth(mut self, depth: u32) -> Self {
         self.call_depth = depth;
-        self
-    }
-
-    pub fn with_tracer(mut self) -> Self {
-        self.trace = true;
         self
     }
 
@@ -146,7 +141,7 @@ impl RuntimeContext {
         self.execution_result.output.clear();
     }
 
-    pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), RwasmError> {
+    pub fn try_consume_fuel(&mut self, fuel: u64) -> Result<(), TrapCode> {
         let consumed_fuel = self
             .execution_result
             .fuel_consumed
@@ -154,7 +149,7 @@ impl RuntimeContext {
             .unwrap_or(u64::MAX);
         if !self.disable_fuel {
             if consumed_fuel > self.fuel_limit {
-                return Err(RwasmError::OutOfFuel);
+                return Err(TrapCode::OutOfFuel);
             }
         }
         self.execution_result.fuel_consumed = consumed_fuel;

@@ -1,10 +1,10 @@
 use crate::RuntimeContext;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 
 pub struct SyscallOutputSize;
 
 impl SyscallOutputSize {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
         let output_size = Self::fn_impl(caller.context());
         caller.stack_push(output_size);
         Ok(())

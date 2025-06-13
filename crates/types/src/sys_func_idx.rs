@@ -94,9 +94,3 @@ impl Into<u32> for SysFuncIdx {
         self as u32
     }
 }
-
-impl Into<rwasm::legacy::engine::bytecode::FuncIdx> for SysFuncIdx {
-    fn into(self) -> rwasm::legacy::engine::bytecode::FuncIdx {
-        (self as u32).into()
-    }
-}

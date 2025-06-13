@@ -1,17 +1,11 @@
 use crate::{runtime::Runtime, RuntimeContext};
-use fluentbase_types::{
-    compile_wasm_to_rwasm
-    ,
-    Bytes,
-    STATE_DEPLOY,
-    STATE_MAIN,
-};
+use fluentbase_types::{compile_wasm_to_rwasm, Bytes, STATE_DEPLOY, STATE_MAIN};
 use hex_literal::hex;
 
 pub(crate) fn wat2rwasm(wat: &str) -> Bytes {
     let wasm_binary = wat::parse_str(wat).unwrap();
     let result = compile_wasm_to_rwasm(&wasm_binary).unwrap();
-    result.rwasm_bytecode
+    result.rwasm_module.serialize().into()
 }
 
 #[test]

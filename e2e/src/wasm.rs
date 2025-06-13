@@ -16,7 +16,7 @@ use fluentbase_sdk::{bytes, Address, Bytes, U256};
 use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
 use revm::bytecode::Bytecode;
-use rwasm::legacy::rwasm::RwasmModule;
+use rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
 
 #[test]
@@ -222,9 +222,9 @@ fn test_wasm_rwasm() {
     assert!(result.is_success());
 
     let output = result.output().unwrap_or_default();
-    let module = RwasmModule::new(&output).unwrap();
+    let module = RwasmModule::new(&output);
     assert!(module.code_section.len() > 0);
-    assert!(unsafe { from_utf8_unchecked(&module.memory_section).contains("Hello, World") })
+    assert!(unsafe { from_utf8_unchecked(&module.data_section).contains("Hello, World") })
 }
 
 #[test]

@@ -39,7 +39,7 @@ fluentbase-sdk-testing = { path = "./crates/sdk-testing" }
 fluentbase-types = { path = "./crates/types", default-features = false }
 
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.1.0-dev", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 
 # misc
 byteorder = { version = "1.5.0", default-features = false }

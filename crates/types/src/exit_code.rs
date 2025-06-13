@@ -1,5 +1,5 @@
 use precompile::PrecompileError;
-use rwasm::RwasmError;
+use rwasm::TrapCode;
 use strum_macros::{Display, FromRepr};
 
 /// Exit codes representing various execution outcomes and error conditions.
@@ -96,8 +96,7 @@ pub enum ExitCode {
     StackOverflow = -2008,
     BadSignature = -2009,
     OutOfFuel = -2010,
-    GrowthOperationLimited = -2011,
-    UnresolvedFunction = -2013,
+    UnknownExternalFunction = -2011,
 }
 
 pub trait UnwrapExitCode<T> {
@@ -144,27 +143,26 @@ impl ExitCode {
     }
 }
 
-impl From<RwasmError> for ExitCode {
-    fn from(value: RwasmError) -> Self {
+impl From<TrapCode> for ExitCode {
+    fn from(value: TrapCode) -> Self {
         Self::from(&value)
     }
 }
 
-impl From<&RwasmError> for ExitCode {
-    fn from(value: &RwasmError) -> Self {
+impl From<&TrapCode> for ExitCode {
+    fn from(value: &TrapCode) -> Self {
         match value {
-            RwasmError::UnreachableCodeReached => ExitCode::UnreachableCodeReached,
-            RwasmError::MemoryOutOfBounds => ExitCode::MemoryOutOfBounds,
-            RwasmError::TableOutOfBounds => ExitCode::TableOutOfBounds,
-            RwasmError::IndirectCallToNull => ExitCode::IndirectCallToNull,
-            RwasmError::IntegerDivisionByZero => ExitCode::IntegerDivisionByZero,
-            RwasmError::IntegerOverflow => ExitCode::IntegerOverflow,
-            RwasmError::BadConversionToInteger => ExitCode::BadConversionToInteger,
-            RwasmError::StackOverflow => ExitCode::StackOverflow,
-            RwasmError::BadSignature => ExitCode::BadSignature,
-            RwasmError::OutOfFuel => ExitCode::OutOfFuel,
-            RwasmError::GrowthOperationLimited => ExitCode::GrowthOperationLimited,
-            RwasmError::UnresolvedFunction => ExitCode::UnresolvedFunction,
+            TrapCode::UnreachableCodeReached => ExitCode::UnreachableCodeReached,
+            TrapCode::MemoryOutOfBounds => ExitCode::MemoryOutOfBounds,
+            TrapCode::TableOutOfBounds => ExitCode::TableOutOfBounds,
+            TrapCode::IndirectCallToNull => ExitCode::IndirectCallToNull,
+            TrapCode::IntegerDivisionByZero => ExitCode::IntegerDivisionByZero,
+            TrapCode::IntegerOverflow => ExitCode::IntegerOverflow,
+            TrapCode::BadConversionToInteger => ExitCode::BadConversionToInteger,
+            TrapCode::StackOverflow => ExitCode::StackOverflow,
+            TrapCode::BadSignature => ExitCode::BadSignature,
+            TrapCode::OutOfFuel => ExitCode::OutOfFuel,
+            TrapCode::UnknownExternalFunction => ExitCode::UnknownExternalFunction,
             _ => ExitCode::UnknownError,
         }
     }

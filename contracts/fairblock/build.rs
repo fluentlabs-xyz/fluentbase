@@ -28,8 +28,7 @@ fn main() {
     };
 
     copy_wasm_and_wat(&wasm_path);
-    let mut rwasm_config = default_compilation_config();
-    rwasm_config.builtins_consume_fuel(false);
+    let rwasm_config = default_compilation_config().with_builtins_consume_fuel(false);
     let rwasm_path = wasm_to_rwasm(&wasm_path, rwasm_config);
     let wasmtime_path = wasm_to_wasmtime(&wasm_path);
 

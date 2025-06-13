@@ -1,14 +1,18 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 
 pub struct SyscallForwardOutput;
 
 impl SyscallForwardOutput {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
         let (offset, length) = caller.stack_pop2();
-        Self::fn_impl(&mut caller.context_mut(), offset.as_u32(), length.as_u32())
-            .map_err(|err| RwasmError::ExecutionHalted(err.into_i32()))?;
+        Self::fn_impl(&mut caller.context_mut(), offset.as_u32(), length.as_u32()).map_err(
+            |err| {
+                caller.context_mut().execution_result.exit_code = err.into_i32();
+                TrapCode::ExecutionHalted
+            },
+        )?;
         Ok(())
     }
 

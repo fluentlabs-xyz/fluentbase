@@ -66,7 +66,7 @@ use crate::{
 };
 use fluentbase_types::SysFuncIdx;
 use num::BigUint;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{
@@ -79,7 +79,7 @@ use sp1_curves::{
 pub fn invoke_runtime_handler(
     caller: Caller<'_, RuntimeContext>,
     sys_func_idx: SysFuncIdx,
-) -> Result<(), RwasmError> {
+) -> Result<(), TrapCode> {
     match sys_func_idx {
         SysFuncIdx::EXIT => SyscallExit::fn_handler(caller),
         SysFuncIdx::STATE => SyscallState::fn_handler(caller),
