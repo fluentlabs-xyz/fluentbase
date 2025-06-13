@@ -14,7 +14,6 @@ fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
 fluentbase-runtime = { workspace = true, features = ["std"] }
 fluentbase-sdk = { workspace = true }
-fluentbase-types = { workspace = true }
 
 hashbrown = { workspace = true }
 revm = { workspace = true }
@@ -23,7 +22,7 @@ rwasm = { workspace = true }
 hex = { workspace = true }
 
 [features]
-default = ["std", "fluentbase-runtime/debug-print"]
+default = ["std"]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
@@ -34,5 +33,6 @@ std = [
     "rwasm-revm/std",
 ]
 debug-print = [
-    "fluentbase-sdk/debug-print"
+    "fluentbase-sdk/debug-print",
+    "fluentbase-runtime/debug-print",
 ]
