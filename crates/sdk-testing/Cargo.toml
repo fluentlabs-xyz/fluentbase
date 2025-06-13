@@ -33,3 +33,6 @@ std = [
     "revm/std",
     "rwasm-revm/std",
 ]
+debug-print = [
+    "fluentbase-sdk/debug-print"
+]
