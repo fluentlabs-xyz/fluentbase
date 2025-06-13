@@ -3,7 +3,7 @@ use crate::{
     account_utils::StateMut,
     bpf_loader,
     bpf_loader_deprecated,
-    common::{check_loader_id, load_program_from_bytes},
+    common::load_program_from_bytes,
     helpers::SyscallContext,
     loaded_programs::{
         // LoadedProgram,
@@ -14,7 +14,6 @@ use crate::{
     loaders::bpf_loader_v4,
     native_loader,
     solana_program::{
-        bpf_loader_upgradeable,
         bpf_loader_upgradeable::UpgradeableLoaderState,
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status},
@@ -30,8 +29,7 @@ use crate::{
 };
 use crate::{
     compute_budget::compute_budget::ComputeBudget,
-    error::SvmError,
-    helpers::{storage_read_account_data, AllocErr, LogCollector},
+    helpers::AllocErr,
     loaded_programs::{
         ProgramCacheEntry,
         ProgramCacheEntryOwner,
@@ -56,8 +54,7 @@ use solana_rbpf::{
     error::{EbpfError, ProgramResult},
     memory_region::MemoryMapping,
     program::{BuiltinFunction, SBPFVersion},
-    static_analysis::TraceLogEntry,
-    vm::{get_runtime_environment_key, Config, ContextObject, EbpfVm},
+    vm::{Config, ContextObject, EbpfVm},
 };
 use solana_stable_layout::stable_instruction::StableInstruction;
 
@@ -422,7 +419,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
 
             // To be signed in the callee,
             // it must be either signed in the caller or by the program
-            let borrowed_account_key = borrowed_account.get_key();
             if instruction_account.is_signer
                 && !(borrowed_account.is_signer() || signers.contains(borrowed_account.get_key()))
             {
@@ -1440,8 +1436,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // TODO is it correct to mock slot here
         let slot = Slot::default();
         let envs_for_slot = self.get_environments_for_slot(slot).unwrap();
-        let pre_v1 = &envs_for_slot.program_runtime_v1;
-        let pre_v2 = &envs_for_slot.program_runtime_v2;
 
         self.load_program_with_pubkey(envs_for_slot, pubkey, slot, reload)
 

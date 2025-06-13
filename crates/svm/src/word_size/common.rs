@@ -1,29 +1,7 @@
-use crate::error::RuntimeError;
 use solana_rbpf::{
     error::ProgramResult,
     memory_region::{AccessType, MemoryMapping},
 };
-
-#[macro_export]
-macro_rules! typ_align {
-    ($typ:ty) => {
-        core::mem::align_of::<$typ>()
-    };
-}
-
-#[macro_export]
-macro_rules! typ_name {
-    ($typ:ty) => {
-        core::any::type_name::<$typ>()
-    };
-}
-
-#[macro_export]
-macro_rules! typ_size {
-    ($typ:ty) => {
-        core::mem::size_of::<$typ>()
-    };
-}
 
 pub const FIXED_MACHINE_WORD_BYTE_SIZE: usize = crate::typ_size!(u64);
 pub const FIXED_PTR_BYTE_SIZE: usize = FIXED_MACHINE_WORD_BYTE_SIZE;
@@ -31,54 +9,8 @@ pub const FAT_PTR64_ELEM_BYTE_SIZE: usize = FIXED_MACHINE_WORD_BYTE_SIZE;
 pub const SLICE_FAT_PTR64_SIZE_BYTES: usize = FAT_PTR64_ELEM_BYTE_SIZE * 2;
 pub const STABLE_VEC_FAT_PTR64_BYTE_SIZE: usize = FAT_PTR64_ELEM_BYTE_SIZE * 3;
 
-#[macro_export]
-macro_rules! println_typ_size {
-    ($typ:ty) => {
-        println!(
-            "size_of::<{}>() = {}",
-            $crate::typ_name!($typ),
-            $crate::typ_size!($typ)
-        )
-    };
-}
-
-#[macro_export]
-macro_rules! map_addr {
-    ($is:ident, $mmh:expr, $addr:ident) => {
-        if $is {
-            $mmh.map_vm_addr_to_host(
-                $addr as u64,
-                $crate::word_size::common::FIXED_PTR_BYTE_SIZE as u64,
-            )
-            .unwrap()
-        } else {
-            $addr
-        }
-    };
-    ($mmh:expr, $addr:ident) => {
-        $crate::map_addr!($mmh, $addr, $crate::word_size::common::FIXED_PTR_BYTE_SIZE)
-    };
-    ($mmh:expr, $addr:ident, $len:expr) => {
-        $mmh.map_vm_addr_to_host($addr as u64, $len as u64).unwrap()
-    };
-}
-#[macro_export]
-macro_rules! remap_addr {
-    ($mmh:expr, $addr:ident) => {
-        let $addr = $crate::map_addr!($mmh, $addr);
-    };
-    ($is:ident, $mmh:expr, $addr:ident) => {
-        let $addr = if $is {
-            $crate::map_addr!($mmh, $addr)
-        } else {
-            $addr
-        };
-    };
-}
-
 #[inline(always)]
 fn validate_typecast<T: Clone>(data: &[u8]) {
-    let data = data.as_ref();
     let type_name = crate::typ_name!(T);
     if data.len() < crate::typ_size!(T) {
         panic!("failed to typecase to {}: invalid size", type_name);
