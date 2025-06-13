@@ -14,6 +14,7 @@ fn test_nitro_verifier_wasm_version() {
         .wasm_bytecode
         .to_vec();
     let mut ctx = EvmTestingContext::default();
+    ctx.add_balance(caller, U256::from(500_000_000_000u128));
     let address = ctx.deploy_evm_tx(caller, bytecode.into());
 
     let start = Instant::now();
