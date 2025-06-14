@@ -14,6 +14,8 @@ pub type Error = Box<dyn core::error::Error>;
 pub enum RuntimeError {
     InvalidTransformation,
     InvalidLength,
+    InvalidIdx,
+    InvalidType,
 }
 
 impl core::error::Error for RuntimeError {}
@@ -23,6 +25,8 @@ impl Display for RuntimeError {
         match self {
             RuntimeError::InvalidTransformation => write!(f, "RuntimeError::InvalidTransformation"),
             RuntimeError::InvalidLength => write!(f, "RuntimeError::InvalidLength"),
+            RuntimeError::InvalidIdx => write!(f, "RuntimeError::InvalidIdx"),
+            RuntimeError::InvalidType => write!(f, "RuntimeError::InvalidType"),
         }
     }
 }

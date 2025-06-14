@@ -52,7 +52,7 @@ rand = { version = "0.9.1" }
 default = [
     "std",
     "fluentbase-runtime/debug-print",
-    #    "wasmtime"
+    "wasmtime"
 ]
 wasmtime = [
     "revm/wasmtime"

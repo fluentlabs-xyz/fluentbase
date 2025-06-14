@@ -602,7 +602,7 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
 ) -> Result<SliceFatPtr64<'a, T>, SvmError> {
     let mmh: MemoryMappingHelper = memory_mapping.into();
     if len == 0 {
-        return Ok(SliceFatPtr64::default(mmh.clone()));
+        return Ok(SliceFatPtr64::default1(mmh.clone()));
     }
     let size_of_t = size_of::<T>();
 
@@ -616,7 +616,7 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     if check_aligned && !helpers::address_is_aligned::<T>(host_addr) {
         return Err(SyscallError::UnalignedPointer.into());
     }
-    let result = SliceFatPtr64::new::<false>(mmh, AddrType::new_host(host_addr), len as usize);
+    let result = SliceFatPtr64::new(mmh, AddrType::new_host(host_addr), len as usize);
     Ok(result)
 }
 

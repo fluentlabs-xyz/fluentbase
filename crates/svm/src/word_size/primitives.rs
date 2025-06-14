@@ -285,7 +285,6 @@ mod tests {
         let test_struct = TestStruct {
             data: Rc::new(RefCell::new(data_as_mut_slice)),
         };
-        let test_struct_const_ptr = &test_struct as *const _;
         assert_eq!(size_of::<TestStruct>(), 8);
 
         let rc_const_ptr: *const Rc<RefCell<&mut [u8]>> = &test_struct.data as *const _;
@@ -421,25 +420,12 @@ mod tests {
         );
         assert_eq!(items_original_fixed.len(), items_new_fixed.len());
         let items_len = items_original_fixed.len();
-        let vec_of_items_bytes_size = VEC_OF_ITEMS_TYPE_SIZE;
-        let items_only_bytes_size = ITEM_SIZE * items_original_fixed.len();
 
-        let mut slice = SliceFatPtr64::<ItemType>::new::<false>(
+        let slice = SliceFatPtr64::<ItemType>::new(
             mmh.clone(),
             AddrType::Vm(items_original_fixed.as_ref().as_ptr() as u64),
             items_len,
         );
-        let vec_of_items_start_ptr = (&items_original_fixed) as *const _ as u64;
-        let first_item_start_ptr = items_original_fixed.as_ptr() as u64;
-        let vec_of_items_as_raw_bytes = unsafe {
-            alloc::slice::from_raw_parts(
-                vec_of_items_start_ptr as *const u8,
-                vec_of_items_bytes_size,
-            )
-        };
-        let items_as_raw_bytes = unsafe {
-            alloc::slice::from_raw_parts(first_item_start_ptr as *const u8, items_only_bytes_size)
-        };
         for idx in 0..slice.len() {
             let item_original = &items_original_fixed[idx];
             let item_original_ptr = item_original as *const _ as u64;

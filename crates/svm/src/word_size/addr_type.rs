@@ -81,12 +81,17 @@ impl AddrType {
             AddrType::Host(v) => *v,
         }
     }
-
-    pub fn is_vm(&self) -> bool {
-        matches!(self, AddrType::Vm(_))
+    pub fn is_vm(&self) -> Result<u64, RuntimeError> {
+        if !matches!(self, AddrType::Vm(_)) {
+            return Err(RuntimeError::InvalidType);
+        }
+        Ok(self.inner())
     }
-    pub fn is_host(&self) -> bool {
-        matches!(self, AddrType::Host(_))
+    pub fn is_host(&self) -> Result<u64, RuntimeError> {
+        if !matches!(self, AddrType::Host(_)) {
+            return Err(RuntimeError::InvalidType);
+        }
+        Ok(self.inner())
     }
 
     pub fn visit_mut<F: FnMut(&mut Self)>(&mut self, mut f: F) {
@@ -97,7 +102,7 @@ impl AddrType {
         &mut self,
         mut f: F,
     ) -> Result<(), RuntimeError> {
-        if !self.is_vm() {
+        if self.is_vm().is_err() {
             return Err(RuntimeError::InvalidTransformation);
         }
         *self = AddrType::Host(f(self.inner()));
@@ -108,7 +113,7 @@ impl AddrType {
         &mut self,
         mut f: F,
     ) -> Result<(), RuntimeError> {
-        if !self.is_host() {
+        if self.is_host().is_err() {
             return Err(RuntimeError::InvalidTransformation);
         }
         *self = AddrType::Vm(f(self.as_ref()));

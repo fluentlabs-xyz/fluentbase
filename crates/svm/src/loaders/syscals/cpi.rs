@@ -641,8 +641,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
                         //     untranslated_seed.len() as u64,
                         //     invoke_context.get_check_aligned(),
                         // )
-                        let result = untranslated_seed.as_ref().to_vec_cloned();
-                        result
+                        untranslated_seed.as_ref().to_vec_cloned()
                     })
                     .collect::<Vec<_>>();
                 // let seeds: Vec<Vec<u8>> = seeds.iter().map(|v| v.to_vec()).collect();
@@ -924,7 +923,8 @@ where
     }
 
     let mmh: MemoryMappingHelper = memory_mapping.into();
-    let account_infos = SliceFatPtr64::new::<true>(
+    crate::remap_addr!(mmh, account_infos_addr);
+    let account_infos = SliceFatPtr64::new(
         mmh,
         AddrType::new_vm(account_infos_addr),
         account_infos_len as usize,
@@ -1569,7 +1569,9 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                 caller_account
                     .serialized_data
                     .get_mut(post_len..)
-                    .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall))?
+                    // .map_err(|e| Box::new(e))
+                    .map_err(|_e| InstructionError::AccountDataTooSmall)?
+                    // .or_else(|| InstructionError::AccountDataTooSmall)?
                     .fill(&0);
             }
         }
