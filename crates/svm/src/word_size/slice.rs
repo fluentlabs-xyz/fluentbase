@@ -1,4 +1,5 @@
 use crate::{
+    error::RuntimeError,
     map_addr,
     word_size::{
         addr_type::AddrType,
@@ -127,7 +128,7 @@ impl SliceFatPtr64Repr {
     pub fn from_fixed_fat_ptr_slice(slice_fat_ptr: &[u8; SLICE_FAT_PTR64_SIZE_BYTES]) -> Self {
         let first_item_addr = Self::ptr_elem_from_slice(&slice_fat_ptr[..FAT_PTR64_ELEM_BYTE_SIZE]);
         let len = Self::ptr_elem_from_slice(&slice_fat_ptr[FAT_PTR64_ELEM_BYTE_SIZE..]);
-        Self::new(AddrType::Vm(first_item_addr), len as usize)
+        Self::new(AddrType::new_vm(first_item_addr), len as usize)
     }
 
     pub fn ptr_elem_from_addr(ptr: u64) -> u64 {
@@ -373,22 +374,22 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
     pub fn copy_from_slice(&mut self, slice: &[T]) {
         assert_eq!(self.len(), slice.len(), "lengths must be equal");
         for (idx, elem) in slice.iter().enumerate() {
-            // doesn't work for entities containing pointer fields
+            // will panic for entities containing pointer fields
             unsafe { *self.item_ptr_at_idx_mut(idx) = (*elem).clone() }
         }
     }
 
-    pub fn copy_from(&mut self, src: &'a SliceFatPtr64<'a, T>) -> bool {
+    pub fn copy_from(&mut self, src: &'a SliceFatPtr64<'a, T>) -> Result<(), RuntimeError> {
         if self.slice_repr.len != src.slice_repr.len {
-            return false;
+            return Err(RuntimeError::InvalidLength);
         }
         if self.slice_repr.len == 0 {
-            return true;
+            return Ok(());
         }
         for (idx, val) in src.iter().enumerate() {
             self.try_set_item_at_idx_mut(idx, val.as_ref());
         }
-        true
+        Ok(())
     }
 
     pub fn fill(&mut self, val: &T) {
@@ -406,7 +407,7 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
             SliceFatPtr64Repr::ptr_elem_from_slice(&fat_ptr_slice[FAT_PTR64_ELEM_BYTE_SIZE..]);
         Self::new::<false>(
             memory_mapping_helper,
-            AddrType::Vm(first_item_addr),
+            AddrType::new_vm(first_item_addr),
             len as usize,
         )
     }

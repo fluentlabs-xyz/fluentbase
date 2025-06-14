@@ -926,7 +926,7 @@ where
     let mmh: MemoryMappingHelper = memory_mapping.into();
     let account_infos = SliceFatPtr64::new::<true>(
         mmh,
-        AddrType::Vm(account_infos_addr),
+        AddrType::new_vm(account_infos_addr),
         account_infos_len as usize,
     );
     check_account_infos(account_infos.len(), invoke_context)?;

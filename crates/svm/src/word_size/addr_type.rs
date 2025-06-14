@@ -63,7 +63,7 @@ impl AsMut<u64> for AddrType {
 
 impl<T: ToPrimitive> From<T> for AddrType {
     fn from(value: T) -> Self {
-        Self::Vm(value.to_u64().unwrap())
+        Self::new_vm(value.to_u64().unwrap())
     }
 }
 

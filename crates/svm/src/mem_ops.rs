@@ -3,6 +3,7 @@ use crate::{
     context::InvokeContext,
     error::{Error, SvmError},
     helpers::SyscallError,
+    solana_program::feature_set,
     word_size::{
         addr_type::AddrType,
         common::MemoryMappingHelper,
@@ -12,6 +13,7 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::{slice, str::from_utf8};
 use fluentbase_types::SharedAPI;
+use solana_feature_set::bpf_account_data_direct_mapping;
 use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN};
 use solana_rbpf::{
     error::EbpfError,
@@ -188,27 +190,27 @@ use solana_rbpf::{
 //     }
 // }
 
-// fn memmove_non_contiguous(
-//     dst_addr: u64,
-//     src_addr: u64,
-//     n: u64,
-//     memory_mapping: &MemoryMapping,
-// ) -> Result<u64, Error> {
-//     let reverse = dst_addr.wrapping_sub(src_addr) < n;
-//     iter_memory_pair_chunks(
-//         AccessType::Load,
-//         src_addr,
-//         AccessType::Store,
-//         dst_addr,
-//         n,
-//         memory_mapping,
-//         reverse,
-//         |src_host_addr, dst_host_addr, chunk_len| {
-//             unsafe { core::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
-//             Ok(0)
-//         },
-//     )
-// }
+fn memmove_non_contiguous(
+    dst_addr: u64,
+    src_addr: u64,
+    n: u64,
+    memory_mapping: &MemoryMapping,
+) -> Result<u64, Error> {
+    let reverse = dst_addr.wrapping_sub(src_addr) < n;
+    iter_memory_pair_chunks(
+        AccessType::Load,
+        src_addr,
+        AccessType::Store,
+        dst_addr,
+        n,
+        memory_mapping,
+        reverse,
+        |src_host_addr, dst_host_addr, chunk_len| {
+            unsafe { core::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
+            Ok(0)
+        },
+    )
+}
 
 // Marked unsafe since it assumes that the slices are at least `n` bytes long.
 pub unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
@@ -614,7 +616,7 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     if check_aligned && !helpers::address_is_aligned::<T>(host_addr) {
         return Err(SyscallError::UnalignedPointer.into());
     }
-    let result = SliceFatPtr64::new::<false>(mmh, AddrType::Host(host_addr), len as usize);
+    let result = SliceFatPtr64::new::<false>(mmh, AddrType::new_host(host_addr), len as usize);
     Ok(result)
 }
 
@@ -689,31 +691,29 @@ pub fn memmove<SDK: SharedAPI>(
     n: u64,
     memory_mapping: &MemoryMapping,
 ) -> Result<u64, Error> {
-    // if invoke_context
-    //     .feature_set
-    //     .is_active(&feature_set::bpf_account_data_direct_mapping::id())
-    // {
-    //     memmove_non_contiguous(dst_addr, src_addr, n, memory_mapping)
-    // } else {
-    let mut dst_ptr = translate_slice_mut::<u8>(
-        memory_mapping,
-        dst_addr,
-        n,
-        invoke_context.get_check_aligned(),
-    )?;
-    // .as_mut_ptr();
-    let src_ptr = translate_slice::<u8>(
-        memory_mapping,
-        src_addr,
-        n,
-        invoke_context.get_check_aligned(),
-    )?;
-    // .as_ptr();
+    if invoke_context
+        .get_feature_set()
+        .is_active(&bpf_account_data_direct_mapping::id())
+    {
+        memmove_non_contiguous(dst_addr, src_addr, n, memory_mapping)
+    } else {
+        let mut dst_ptr = translate_slice_mut::<u8>(
+            memory_mapping,
+            dst_addr,
+            n,
+            invoke_context.get_check_aligned(),
+        )?;
+        let src_ptr = translate_slice::<u8>(
+            memory_mapping,
+            src_addr,
+            n,
+            invoke_context.get_check_aligned(),
+        )?;
 
-    // unsafe { core::ptr::copy(src_ptr, dst_ptr, n as usize) };
-    dst_ptr.copy_from(&src_ptr);
-    Ok(0)
-    // }
+        // unsafe { core::ptr::copy(src_ptr, dst_ptr, n as usize) };
+        dst_ptr.copy_from(&src_ptr)?;
+        Ok(0)
+    }
 }
 pub fn translate_and_check_program_address_inputs<'a>(
     seeds_addr: u64,

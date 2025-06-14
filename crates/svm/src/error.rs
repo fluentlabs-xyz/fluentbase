@@ -13,6 +13,7 @@ pub type Error = Box<dyn core::error::Error>;
 #[repr(u64)]
 pub enum RuntimeError {
     InvalidTransformation,
+    InvalidLength,
 }
 
 impl core::error::Error for RuntimeError {}
@@ -21,6 +22,7 @@ impl Display for RuntimeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             RuntimeError::InvalidTransformation => write!(f, "RuntimeError::InvalidTransformation"),
+            RuntimeError::InvalidLength => write!(f, "RuntimeError::InvalidLength"),
         }
     }
 }
