@@ -32,10 +32,6 @@ use solana_sysvar_id::declare_deprecated_sysvar_id;
 declare_deprecated_sysvar_id!("SysvarFees111111111111111111111111111111111", Fees);
 
 /// Transaction fees.
-#[deprecated(
-    since = "1.9.0",
-    note = "Please do not use, will no longer be available in the future"
-)]
 #[repr(C)]
 #[derive(
     Serialize,

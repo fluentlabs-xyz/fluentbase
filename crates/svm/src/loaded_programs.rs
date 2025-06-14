@@ -14,7 +14,6 @@ use alloc::{
 use core::sync::atomic::{AtomicU64, Ordering};
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashMap;
-use itertools::Itertools;
 use solana_clock::{Epoch, Slot};
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
@@ -526,19 +525,19 @@ impl<'a, SDK: SharedAPI> Default for ProgramRuntimeEnvironments<'a, SDK> {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub struct LoadingTaskCookie(u64);
-
-impl LoadingTaskCookie {
-    fn new() -> Self {
-        Self(0)
-    }
-
-    fn update(&mut self) {
-        let LoadingTaskCookie(cookie) = self;
-        *cookie = cookie.wrapping_add(1);
-    }
-}
+// #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+// pub struct LoadingTaskCookie(u64);
+//
+// impl LoadingTaskCookie {
+//     fn new() -> Self {
+//         Self(0)
+//     }
+//
+//     fn update(&mut self) {
+//         let LoadingTaskCookie(cookie) = self;
+//         *cookie = cookie.wrapping_add(1);
+//     }
+// }
 
 // /// Suspends the thread in case no cooprative loading task was assigned
 // #[derive(Debug, Default)]
@@ -869,7 +868,7 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
         }
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
-                let mut slot_versions = entries.entry(key).or_default();
+                let slot_versions = entries.entry(key).or_default();
                 // let mut slot_versions = &mut slot_versions_binding;
                 match slot_versions.binary_search_by(|at| {
                     let entry_effective_slot = entry.effective_slot;
@@ -1027,29 +1026,29 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
     //     self.latest_root_slot = new_root_slot;
     // }
 
-    fn matches_environment(
-        entry: &Arc<ProgramCacheEntry<'a, SDK>>,
-        environments: &ProgramRuntimeEnvironments<'a, SDK>,
-    ) -> bool {
-        let Some(environment) = entry.program.get_environment() else {
-            return true;
-        };
-        Arc::ptr_eq(&environment, &environments.program_runtime_v1)
-            || Arc::ptr_eq(&environment, &environments.program_runtime_v2)
-    }
+    // fn matches_environment(
+    //     entry: &Arc<ProgramCacheEntry<'a, SDK>>,
+    //     environments: &ProgramRuntimeEnvironments<'a, SDK>,
+    // ) -> bool {
+    //     let Some(environment) = entry.program.get_environment() else {
+    //         return true;
+    //     };
+    //     Arc::ptr_eq(&environment, &environments.program_runtime_v1)
+    //         || Arc::ptr_eq(&environment, &environments.program_runtime_v2)
+    // }
 
-    fn matches_criteria(
-        program: &Arc<ProgramCacheEntry<SDK>>,
-        criteria: &ProgramCacheMatchCriteria,
-    ) -> bool {
-        match criteria {
-            ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot) => {
-                program.deployment_slot >= *slot
-            }
-            ProgramCacheMatchCriteria::Tombstone => program.is_tombstone(),
-            ProgramCacheMatchCriteria::NoCriteria => true,
-        }
-    }
+    // fn matches_criteria(
+    //     program: &Arc<ProgramCacheEntry<SDK>>,
+    //     criteria: &ProgramCacheMatchCriteria,
+    // ) -> bool {
+    //     match criteria {
+    //         ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot) => {
+    //             program.deployment_slot >= *slot
+    //         }
+    //         ProgramCacheMatchCriteria::Tombstone => program.is_tombstone(),
+    //         ProgramCacheMatchCriteria::NoCriteria => true,
+    //     }
+    // }
 
     // /// Extracts a subset of the programs relevant to a transaction batch
     // /// and returns which program accounts the accounts DB needs to load.
@@ -1299,47 +1298,47 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
         }
     }
 
-    /// This function removes the given entry for the given program from the cache.
-    /// The function expects that the program and entry exists in the cache. Otherwise it'll panic.
-    fn unload_program_entry(
-        &mut self,
-        program: &Pubkey,
-        remove_entry: &Arc<ProgramCacheEntry<'a, SDK>>,
-    ) {
-        match &mut self.index {
-            IndexImplementation::V1 { entries, .. } => {
-                let second_level = entries.get_mut(program).expect("Cache lookup failed");
-                let candidate = second_level
-                    .iter_mut()
-                    .find(|entry| entry == &remove_entry)
-                    .expect("Program entry not found");
+    // /// This function removes the given entry for the given program from the cache.
+    // /// The function expects that the program and entry exists in the cache. Otherwise it'll panic.
+    // fn unload_program_entry(
+    //     &mut self,
+    //     program: &Pubkey,
+    //     remove_entry: &Arc<ProgramCacheEntry<'a, SDK>>,
+    // ) {
+    //     match &mut self.index {
+    //         IndexImplementation::V1 { entries, .. } => {
+    //             let second_level = entries.get_mut(program).expect("Cache lookup failed");
+    //             let candidate = second_level
+    //                 .iter_mut()
+    //                 .find(|entry| entry == &remove_entry)
+    //                 .expect("Program entry not found");
+    //
+    //             // Certain entry types cannot be unloaded, such as tombstones, or already unloaded entries.
+    //             // For such entries, `to_unloaded()` will return None.
+    //             // These entry types do not occupy much memory.
+    //             if let Some(unloaded) = candidate.to_unloaded() {
+    //                 // if candidate.tx_usage_counter.load(Ordering::Relaxed) == 1 {
+    //                 //     self.stats.one_hit_wonders.fetch_add(1, Ordering::Relaxed);
+    //                 // }
+    //                 // self.stats
+    //                 //     .evictions
+    //                 //     .entry(*program)
+    //                 //     .and_modify(|c| saturating_add_assign!(*c, 1))
+    //                 //     .or_insert(1);
+    //                 *candidate = Arc::new(unloaded);
+    //             }
+    //         }
+    //     }
+    // }
 
-                // Certain entry types cannot be unloaded, such as tombstones, or already unloaded entries.
-                // For such entries, `to_unloaded()` will return None.
-                // These entry types do not occupy much memory.
-                if let Some(unloaded) = candidate.to_unloaded() {
-                    // if candidate.tx_usage_counter.load(Ordering::Relaxed) == 1 {
-                    //     self.stats.one_hit_wonders.fetch_add(1, Ordering::Relaxed);
-                    // }
-                    // self.stats
-                    //     .evictions
-                    //     .entry(*program)
-                    //     .and_modify(|c| saturating_add_assign!(*c, 1))
-                    //     .or_insert(1);
-                    *candidate = Arc::new(unloaded);
-                }
-            }
-        }
-    }
-
-    fn unload_program_entries(
-        &mut self,
-        remove: impl Iterator<Item = &'a (Pubkey, Arc<ProgramCacheEntry<'a, SDK>>)>,
-    ) {
-        for (program, entry) in remove {
-            self.unload_program_entry(program, entry);
-        }
-    }
+    // fn unload_program_entries(
+    //     &mut self,
+    //     remove: impl Iterator<Item = &'a (Pubkey, Arc<ProgramCacheEntry<'a, SDK>>)>,
+    // ) {
+    //     for (program, entry) in remove {
+    //         self.unload_program_entry(program, entry);
+    //     }
+    // }
 
     fn remove_programs_with_no_entries(&mut self) {
         match &mut self.index {
@@ -1354,22 +1353,6 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
                 }
             }
         }
-    }
-}
-
-#[cfg(feature = "frozen-abi")]
-impl solana_frozen_abi::abi_example::AbiExample for ProgramCacheEntry {
-    fn example() -> Self {
-        // ProgramCacheEntry isn't serializable by definition.
-        Self::default()
-    }
-}
-
-#[cfg(feature = "frozen-abi")]
-impl<FG: ForkGraph> solana_frozen_abi::abi_example::AbiExample for ProgramCache<FG> {
-    fn example() -> Self {
-        // ProgramCache isn't serializable by definition.
-        Self::new(Slot::default(), Epoch::default())
     }
 }
 

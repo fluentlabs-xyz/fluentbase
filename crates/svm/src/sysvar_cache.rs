@@ -1,41 +1,31 @@
-use crate::solana_program::{
-    stake_history::StakeHistory,
-    sysvar::{
-        clock,
-        epoch_rewards,
-        epoch_schedule,
-        fees,
-        fees::Fees,
-        last_restart_slot,
-        recent_blockhashes,
-        recent_blockhashes::RecentBlockhashes,
-        rent,
-        slot_hashes,
-        stake_history,
-    },
-};
 use crate::{
     clock::Clock,
     epoch_rewards::EpochRewards,
     epoch_schedule::EpochSchedule,
-    // last_restart_slot::LastRestartSlot,
     pubkey::Pubkey,
     rent::Rent,
-    // slot_hashes::SlotHashes,
-    // sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes, SysvarId},
+    solana_program::{
+        stake_history::StakeHistory,
+        sysvar::{
+            clock,
+            epoch_rewards,
+            epoch_schedule,
+            fees,
+            fees::Fees,
+            last_restart_slot,
+            recent_blockhashes,
+            recent_blockhashes::RecentBlockhashes,
+            rent,
+            slot_hashes,
+            stake_history,
+        },
+    },
 };
 use alloc::sync::Arc;
 use solana_bincode::deserialize;
 use solana_instruction::error::InstructionError;
 use solana_last_restart_slot::LastRestartSlot;
 use solana_slot_hashes::SlotHashes;
-// #[cfg(RUSTC_WITH_SPECIALIZATION)]
-// impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
-//     fn example() -> Self {
-//         // SysvarCache is not Serialize so just rely on Default.
-//         SysvarCache::default()
-//     }
-// }
 
 #[derive(Default, Clone, Debug)]
 pub struct SysvarCache {

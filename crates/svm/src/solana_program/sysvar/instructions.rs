@@ -36,18 +36,20 @@ use crate::{
         program_error::ProgramError,
     },
 };
-use alloc::{boxed::Box, string::String, vec::Vec};
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
+use alloc::vec::Vec;
+use bitflags::bitflags;
 use solana_pubkey::Pubkey;
 use solana_sanitize::SanitizeError;
-use solana_serialize_utils::{read_pubkey, read_slice, read_u16, read_u8};
-use solana_sysvar_id::declare_sysvar_id;
-#[cfg(not(target_os = "solana"))]
-use {
-    bitflags::bitflags,
-    solana_serialize_utils::{append_slice, append_u16, append_u8},
+use solana_serialize_utils::{
+    append_slice,
+    append_u16,
+    append_u8,
+    read_pubkey,
+    read_slice,
+    read_u16,
+    read_u8,
 };
+use solana_sysvar_id::declare_sysvar_id;
 
 /// Instructions sysvar, dummy type.
 ///
@@ -66,7 +68,7 @@ declare_sysvar_id!("Sysvar1nstructions1111111111111111111111111", Instructions);
 /// Construct the account data for the instructions sysvar.
 ///
 /// This function is used by the runtime and not available to Solana programs.
-#[cfg(not(target_os = "solana"))]
+
 pub fn construct_instructions_data(instructions: &[BorrowedInstruction]) -> Vec<u8> {
     let mut data = serialize_instructions(instructions);
     // add room for current instruction index.
@@ -95,7 +97,6 @@ pub struct BorrowedInstruction<'a> {
     pub data: &'a [u8],
 }
 
-#[cfg(not(target_os = "solana"))]
 bitflags! {
     struct InstructionsSysvarAccountMeta: u8 {
         const IS_SIGNER = 0b00000001;
@@ -116,7 +117,7 @@ bitflags! {
 //   35..67 - program_id
 //   67..69 - data len - u16
 //   69..data_len - data
-#[cfg(not(target_os = "solana"))]
+
 fn serialize_instructions(instructions: &[BorrowedInstruction]) -> Vec<u8> {
     // 64 bytes is a reasonable guess, calculating exactly is slower in benchmarks
     let mut data = Vec::with_capacity(instructions.len() * (32 * 2));
@@ -238,7 +239,6 @@ fn deserialize_instruction(index: usize, data: &[u8]) -> Result<Instruction, San
 ///
 /// Unsafe because the sysvar accounts address is not checked; only used
 /// internally after such a check.
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn load_instruction_at(index: usize, data: &[u8]) -> Result<Instruction, SanitizeError> {
     deserialize_instruction(index, data)
 }

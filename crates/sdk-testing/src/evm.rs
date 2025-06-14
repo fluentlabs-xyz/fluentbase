@@ -4,6 +4,7 @@ use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
     calc_create_address,
+    debug_log,
     Address,
     BlockContextReader,
     Bytes,
@@ -72,6 +73,22 @@ impl EvmTestingContext {
                 .insert_account_storage(*address, *slot, *value)
                 .unwrap();
         })
+    }
+
+    // #[cfg(test)]
+    pub fn db_storage_to_sdk(&mut self) {
+        for (address, db_account) in &self.db.accounts {
+            self.sdk.visit_inner_storage_mut(|storage| {
+                debug_log!(
+                    "inserting storage for address {} total KVs {}",
+                    address,
+                    db_account.storage.len()
+                );
+                for (k, v) in &db_account.storage {
+                    storage.insert((*address, *k), *v);
+                }
+            })
+        }
     }
 
     pub fn add_wasm_contract<I: Into<RwasmModule>>(

@@ -17,7 +17,7 @@ num-traits = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
 hashbrown = { workspace = true, default-features = false }
 
-solana_rbpf = { workspace = true, default-features = false, features = [] }
+solana_rbpf = { workspace = true, default-features = false }
 
 solana-pubkey = { workspace = true, default-features = false, features = ["serde", "bytemuck"] }
 solana-instruction = { workspace = true, default-features = false, features = ["serde", "bincode"] }
@@ -55,6 +55,7 @@ solana-atomic-u64 = { workspace = true, default-features = false, features = [] 
 bs58 = { workspace = true, default-features = false, features = ["alloc"] }
 five8_const = { workspace = true, default-features = false, features = [] }
 tiny-keccak = { workspace = true }
+paste = { workspace = true }
 scopeguard = { workspace = true, default-features = false, features = [] }
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
 serde_json = { workspace = true, default-features = false, features = ["alloc"] }
@@ -66,7 +67,7 @@ bytemuck = { workspace = true, default-features = false, features = [] }
 bytemuck_derive = { workspace = true, default-features = false, features = [] }
 spin = { workspace = true, default-features = false, features = ["spin_mutex", "rwlock"] }
 
-num-derive = { workspace = true, default-features = false }
+num-derive = { workspace = true }
 serde = { workspace = true, default-features = false }
 bincode = { workspace = true }
 lazy_static = { workspace = true, default-features = false }
@@ -87,6 +88,7 @@ default = [
 ]
 std = [
     "fluentbase-sdk/std",
-    "itertools/use_std"
+    "itertools/use_std",
+    "solana_rbpf/std",
 ]
 debug-print = []

@@ -14,7 +14,6 @@ use alloc::boxed::Box;
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashSet;
 use solana_instruction::error::InstructionError;
-use solana_rbpf::declare_builtin_function;
 
 // represents an address that may or may not have been generated
 //  from a seed
@@ -158,17 +157,20 @@ fn create_account<SDK: SharedAPI>(
     {
         let mut to = instruction_context
             .try_borrow_instruction_account(transaction_context, to_account_index)?;
+
         if to.get_lamports() > 0 {
             // ic_msg!(
             //     invoke_context,
             //     "Create Account: account {:?} already in use",
             //     to_address
             // );
+
             return Err(SystemError::AccountAlreadyInUse.into());
         }
 
         allocate_and_assign(&mut to, to_address, space, owner, signers, invoke_context)?;
     }
+
     transfer(
         from_account_index,
         to_account_index,
@@ -191,23 +193,30 @@ fn transfer_verified<SDK: SharedAPI>(
         .try_borrow_instruction_account(transaction_context, from_account_index)?;
     if !from.get_data().is_empty() {
         // ic_msg!(invoke_context, "Transfer: `from` must not carry data");
+
         return Err(InstructionError::InvalidArgument);
     }
-    if lamports > from.get_lamports() {
+    let from_lamports = from.get_lamports();
+    if lamports > from_lamports {
         // ic_msg!(
         //     invoke_context,
         //     "Transfer: insufficient lamports {}, need {}",
         //     from.get_lamports(),
         //     lamports
         // );
+
         return Err(SystemError::ResultWithNegativeLamports.into());
     }
 
     from.checked_sub_lamports(lamports)?;
+
     drop(from);
+
     let mut to = instruction_context
         .try_borrow_instruction_account(transaction_context, to_account_index)?;
+
     to.checked_add_lamports(lamports)?;
+
     Ok(())
 }
 
@@ -228,6 +237,7 @@ fn transfer<SDK: SharedAPI>(
         //             .get_index_of_instruction_account_in_transaction(from_account_index)?,
         //     )?,
         // );
+
         return Err(InstructionError::MissingRequiredSignature);
     }
 
@@ -298,13 +308,12 @@ fn transfer_with_seed<SDK: SharedAPI>(
 pub const DEFAULT_COMPUTE_UNITS: u64 = 150;
 
 declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, |invoke_context| {
+
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
     let instruction = limited_deserialize_packet_size(instruction_data);
     let instruction = instruction?;
-
-    // trace!("process_instruction: {:?}", instruction);
 
     let signers = instruction_context.get_signers(transaction_context)?;
     match instruction {
@@ -313,7 +322,9 @@ declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, 
             space,
             owner,
         } => {
+
             instruction_context.check_number_of_instruction_accounts(2)?;
+
             let to_address = Address::create(
                 transaction_context.get_key_of_account_at_index(
                     instruction_context.get_index_of_instruction_account_in_transaction(1)?,

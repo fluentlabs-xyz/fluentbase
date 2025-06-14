@@ -2,7 +2,7 @@
 
 mod current;
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::boxed::Box;
 pub use current::{Data, DurableNonce, State};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};

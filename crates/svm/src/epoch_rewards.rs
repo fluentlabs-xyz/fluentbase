@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use solana_sdk_macro::CloneZeroed;
 
 #[repr(C, align(16))]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(
     Debug,
     Serialize,

@@ -10,7 +10,6 @@ use crate::{
 use alloc::vec::Vec;
 use fluentbase_sdk::{ExitCode, SharedAPI, StorageAPI, SyscallResult, U256};
 use hashbrown::{HashMap, HashSet};
-use itertools::Itertools;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
@@ -96,13 +95,10 @@ pub(crate) fn flush_accounts<SDK: SharedAPI, SAPI: StorageAPI>(
     sapi: &mut Option<&mut SAPI>,
     accounts: &HashMap<Pubkey, AccountSharedData>,
 ) -> Result<(), SvmError> {
-    for (key, data) in accounts {
-        select_sapi!(sapi, sdk, |s| { storage_write_account_data(s, key, data) })?;
-        // if let Some(sapi) = sapi {
-        //     storage_write_account_data(*sapi, key, data)?;
-        // } else {
-        //     storage_write_account_data(sdk, key, data)?;
-        // }
+    for (pk, data) in accounts {
+        select_sapi!(sapi, sdk, |storage| {
+            storage_write_account_data(storage, pk, data)
+        })?;
     }
     Ok(())
 }
@@ -122,6 +118,7 @@ pub fn process_svm_error(svm_error: SvmError) -> (HashMap<Pubkey, AccountSharedD
         SvmError::ElfError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
         SvmError::EbpfError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
         SvmError::SyscallError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
+        SvmError::RuntimeError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
     }
 }
 

@@ -32,9 +32,7 @@ use core::marker::PhantomData;
 use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
 use solana_bincode::limited_deserialize;
 use solana_feature_set::{
-    blake3_syscall_enabled,
     bpf_account_data_direct_mapping,
-    enable_poseidon_syscall,
     error_on_syscall_bpf_function_hash_collisions,
     reject_callx_r10,
     FeatureSet,
@@ -55,17 +53,17 @@ pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 ///   8 bytes is the size of the fragment header
 pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
 
-#[cfg(target_pointer_width = "64")]
-pub(crate) type PtrSizedType = u64;
-#[cfg(target_pointer_width = "32")]
-pub(crate) type PtrSizedType = u32;
+// #[cfg(target_pointer_width = "64")]
+// pub(crate) type PtrSizedType = u64;
+// #[cfg(target_pointer_width = "32")]
+// pub(crate) type PtrSizedType = u32;
 
 use crate::{
-    account::WritableAccount,
     compute_budget::compute_budget::ComputeBudget,
     error::{Error, SvmError},
     loaded_programs::ProgramCacheEntry,
     solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
+    storage_helpers::keccak256,
 };
 #[cfg(test)]
 use fluentbase_sdk_testing::HostTestingContext;
@@ -140,8 +138,7 @@ impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
         if self.initiated {
             panic!("accumulation not supported yet")
         } else {
-            // TODO
-            // self.value = SDK::keccak256(val).0;
+            self.value = keccak256(val).0;
             self.value = Default::default();
             self.initiated = true;
         }
@@ -224,15 +221,15 @@ impl<SDK: SharedAPI> HasherImpl for PoseidonHasher<SDK> {
 //     create_loadable_account_with_fields(name, owner, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
 // }
 
-macro_rules! register_feature_gated_function {
-    ($result:expr, $is_feature_active:expr, $name:expr, $call:expr $(,)?) => {
-        if $is_feature_active {
-            $result.register_function_hashed($name, $call)
-        } else {
-            Ok(0)
-        }
-    };
-}
+// macro_rules! register_feature_gated_function {
+//     ($result:expr, $is_feature_active:expr, $name:expr, $call:expr $(,)?) => {
+//         if $is_feature_active {
+//             $result.register_function_hashed($name, $call)
+//         } else {
+//             Ok(0)
+//         }
+//     };
+// }
 
 pub fn morph_into_deployment_environment_v1<'a, SDK: SharedAPI>(
     from: Arc<BuiltinProgram<InvokeContext<'a, SDK>>>,
@@ -262,7 +259,7 @@ pub fn create_program_runtime_environment_v1<'a, SDK: SharedAPI>(
     // let enable_alt_bn128_compression_syscall =
     //     feature_set.is_active(&enable_alt_bn128_compression_syscall::id());
     // let enable_big_mod_exp_syscall = feature_set.is_active(&enable_big_mod_exp_syscall::id());
-    let blake3_syscall_enabled = feature_set.is_active(&blake3_syscall_enabled::id());
+    // let blake3_syscall_enabled = feature_set.is_active(&blake3_syscall_enabled::id());
     // let curve25519_syscall_enabled = feature_set.is_active(&curve25519_syscall_enabled::id());
     // let disable_fees_sysvar = feature_set.is_active(&disable_fees_sysvar::id());
     // let epoch_rewards_syscall_enabled =
@@ -270,7 +267,7 @@ pub fn create_program_runtime_environment_v1<'a, SDK: SharedAPI>(
     // let disable_deploy_of_alloc_free_syscall = reject_deployment_of_broken_elfs
     //     && feature_set.is_active(&disable_deploy_of_alloc_free_syscall::id());
     // let last_restart_slot_syscall_enabled = feature_set.is_active(&last_restart_slot_sysvar::id());
-    let enable_poseidon_syscall = feature_set.is_active(&enable_poseidon_syscall::id());
+    // let enable_poseidon_syscall = feature_set.is_active(&enable_poseidon_syscall::id());
     // let remaining_compute_units_syscall_enabled =
     //     feature_set.is_active(&remaining_compute_units_syscall_enabled::id());
     // !!! ATTENTION !!!
@@ -535,14 +532,14 @@ macro_rules! deploy_program {
         let deployment_slot: Slot = $slot;
         let environments = $invoke_context.get_environments_for_slot(
             deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET)
-        ).map_err(|e| {
+        ).map_err(|_e| {
             // This will never fail since the epoch schedule is already configured.
             // ic_msg!($invoke_context, "Failed to get runtime environment: {}", e);
             InstructionError::ProgramEnvironmentSetupFailure
         })?;
         let deployment_program_runtime_environment = morph_into_deployment_environment_v1(
             environments.program_runtime_v1.clone(),
-        ).map_err(|e| {
+        ).map_err(|_e| {
             // ic_msg!($invoke_context, "Failed to register syscalls: {}", e);
             InstructionError::ProgramEnvironmentSetupFailure
         })?;
@@ -553,7 +550,7 @@ macro_rules! deploy_program {
         let executable = Executable::<InvokeContext<_>>::load(
             $new_programdata,
             Arc::new(deployment_program_runtime_environment),
-        ).map_err(|err| {
+        ).map_err(|_err| {
             // ic_logger_msg!($invoke_context.get_log_collector(), "{}", err);
             InstructionError::InvalidAccountData
         });
@@ -561,7 +558,7 @@ macro_rules! deploy_program {
         // load_elf_time.stop();
         // load_program_metrics.load_elf_us = load_elf_time.as_us();
         // let mut verify_code_time = Measure::start("verify_code_time");
-        executable.verify::<RequisiteVerifier>().map_err(|err| {
+        executable.verify::<RequisiteVerifier>().map_err(|_err| {
             // ic_logger_msg!($invoke_context.get_log_collector(), "{}", err);
             InstructionError::InvalidAccountData
         })?;
@@ -725,7 +722,7 @@ pub fn compile_accounts_for_tx_ctx(
     (accounts, working_accounts_len)
 }
 
-pub fn pubkey_from_address(value: Address) -> Pubkey {
+pub fn pubkey_from_address(value: &Address) -> Pubkey {
     let mut new_pk = [0u8; 32];
     new_pk[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
     new_pk[SVM_ADDRESS_PREFIX.len()..].copy_from_slice(value.as_slice());
@@ -733,23 +730,23 @@ pub fn pubkey_from_address(value: Address) -> Pubkey {
 }
 
 pub fn pubkey_from_pubkey(value: &Pubkey) -> Pubkey {
-    pubkey_from_address(Address::from_slice(
+    pubkey_from_address(&Address::from_slice(
         &value.as_ref()[SVM_ADDRESS_PREFIX.len()..],
     ))
 }
 
-pub fn is_svm_pubkey(pk: &Pubkey) -> bool {
+pub fn is_evm_pubkey(pk: &Pubkey) -> bool {
     pk.as_ref().starts_with(&SVM_ADDRESS_PREFIX)
 }
 
 pub fn evm_address_from_pubkey<const VALIDATE_PREFIX: bool>(
-    value: Pubkey,
+    pk: &Pubkey,
 ) -> Result<Address, SvmError> {
-    if VALIDATE_PREFIX && &value.as_ref()[12..] != &SVM_ADDRESS_PREFIX {
+    if VALIDATE_PREFIX && !pk.as_ref().starts_with(&SVM_ADDRESS_PREFIX) {
         return Err(SvmError::ExitCode(ExitCode::Err));
     }
     Ok(Address::from_slice(
-        &value.as_ref()[SVM_ADDRESS_PREFIX.len()..],
+        &pk.as_ref()[SVM_ADDRESS_PREFIX.len()..],
     ))
 }
 
@@ -770,25 +767,34 @@ pub fn evm_balance_from_lamports(value: u64) -> U256 {
     U256::from_be_bytes(bytes) * U256::from(ONE_GWEI)
 }
 
-#[test]
-fn test_evm_balance_to_lamports_and_vice_versa() {
-    let evm_balance = U256::from(ONE_GWEI);
-    let lamports_balance = lamports_from_evm_balance(evm_balance);
-    assert_eq!(lamports_balance, 1);
-    let evm_balance = U256::from(9 * ONE_GWEI);
-    let lamports_balance = lamports_from_evm_balance(evm_balance);
-    assert_eq!(lamports_balance, 9);
-    let evm_balance = U256::from(1_000_000_000 * ONE_GWEI);
-    let lamports_balance = lamports_from_evm_balance(evm_balance);
-    assert_eq!(lamports_balance, ONE_GWEI);
+#[cfg(test)]
+mod tests {
+    use crate::common::{evm_balance_from_lamports, lamports_from_evm_balance, ONE_GWEI};
+    use fluentbase_sdk::U256;
 
-    let lamports_balance = 1;
-    let evm_balance = evm_balance_from_lamports(lamports_balance);
-    assert_eq!(evm_balance, U256::from(ONE_GWEI));
-    let lamports_balance = 3;
-    let evm_balance = evm_balance_from_lamports(lamports_balance);
-    assert_eq!(evm_balance, U256::from(3 * ONE_GWEI));
-    let lamports_balance = 1_000_000_000;
-    let evm_balance = evm_balance_from_lamports(lamports_balance);
-    assert_eq!(evm_balance, U256::from(1_000_000_000 * ONE_GWEI));
+    #[test]
+    fn test_evm_balance_to_lamports_and_vice_versa() {
+        let evm_balance = U256::from(ONE_GWEI);
+        let lamports_balance = lamports_from_evm_balance(evm_balance);
+        assert_eq!(lamports_balance, 1);
+        let evm_balance = U256::from(9 * ONE_GWEI);
+        let lamports_balance = lamports_from_evm_balance(evm_balance);
+        assert_eq!(lamports_balance, 9);
+        let evm_balance = U256::from(1_000_000_000 * ONE_GWEI);
+        let lamports_balance = lamports_from_evm_balance(evm_balance);
+        assert_eq!(lamports_balance, ONE_GWEI);
+        let evm_balance = U256::from(101e9);
+        let lamports_balance = lamports_from_evm_balance(evm_balance);
+        assert_eq!(lamports_balance, 101);
+
+        let lamports_balance = 1;
+        let evm_balance = evm_balance_from_lamports(lamports_balance);
+        assert_eq!(evm_balance, U256::from(ONE_GWEI));
+        let lamports_balance = 3;
+        let evm_balance = evm_balance_from_lamports(lamports_balance);
+        assert_eq!(evm_balance, U256::from(3 * ONE_GWEI));
+        let lamports_balance = 1_000_000_000;
+        let evm_balance = evm_balance_from_lamports(lamports_balance);
+        assert_eq!(evm_balance, U256::from(1_000_000_000 * ONE_GWEI));
+    }
 }

@@ -225,7 +225,6 @@ pub fn serialize_parameters(
                 let account = instruction_context
                     .try_borrow_instruction_account(transaction_context, instruction_account_index)
                     .unwrap();
-                let account_key = account.get_key();
                 SerializeAccount::Account(instruction_account_index, account)
             }
         })

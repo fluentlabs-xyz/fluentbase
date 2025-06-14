@@ -17,7 +17,6 @@ pub(crate) struct CompiledKeys {
     key_meta_map: BTreeMap<Pubkey, CompiledKeyMeta>,
 }
 
-#[cfg_attr(target_os = "solana", allow(dead_code))]
 #[derive(PartialEq, Debug, Eq, Clone)]
 pub enum CompileError {
     // #[error("account index overflowed during compilation")]

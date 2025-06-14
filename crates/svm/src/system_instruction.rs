@@ -46,10 +46,9 @@ use {
     crate::solana_program::sysvar::recent_blockhashes,
     crate::solana_program::sysvar::rent,
     crate::system_program,
-    alloc::{boxed::Box, string::String, string::ToString, vec, vec::Vec},
+    alloc::{string::String, string::ToString, vec, vec::Vec},
     num_derive::{FromPrimitive, ToPrimitive},
     solana_decode_error::DecodeError,
-    // thiserror::Error,
     solana_instruction::AccountMeta,
     solana_instruction::Instruction,
 };
@@ -102,11 +101,6 @@ static_assertions::const_assert!(MAX_PERMITTED_DATA_LENGTH <= u32::MAX as u64);
 static_assertions::const_assert_eq!(MAX_PERMITTED_DATA_LENGTH, 10_485_760);
 
 /// An instruction to the system program.
-#[cfg_attr(
-    feature = "frozen-abi",
-    frozen_abi(digest = "2LnVTnJg7LxB1FawNZLoQEY8yiYx3MT3paTdx4s5kAXU"),
-    derive(AbiExample, AbiEnumVisitor)
-)]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, bincode::Encode, bincode::Decode)]
 pub enum SystemInstruction {
     /// Create a new account

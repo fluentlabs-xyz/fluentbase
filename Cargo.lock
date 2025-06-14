@@ -2554,8 +2554,6 @@ name = "fluentbase-e2e"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
- "cargo_metadata",
- "fluentbase-build",
  "fluentbase-codec",
  "fluentbase-contracts-nitro",
  "fluentbase-examples-abi-solidity",
@@ -2581,6 +2579,7 @@ dependencies = [
  "fluentbase-types",
  "hex",
  "hex-literal 1.0.0",
+ "rand 0.9.1",
  "revm",
  "rwasm",
  "wat",
@@ -2891,6 +2890,7 @@ dependencies = [
  "memoffset",
  "num-derive",
  "num-traits",
+ "paste",
  "rand 0.9.1",
  "scopeguard",
  "serde",
@@ -5872,6 +5872,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?tag=v0.1.0-dev#33cf108c282f7f8636635b37fc1663fd265f0083"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -5890,6 +5891,7 @@ dependencies = [
 [[package]]
 name = "rwasm-legacy"
 version = "0.30.0"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?tag=v0.1.0-dev#33cf108c282f7f8636635b37fc1663fd265f0083"
 dependencies = [
  "byteorder",
  "downcast-rs 1.2.1",
@@ -6695,7 +6697,7 @@ dependencies = [
 [[package]]
 name = "solana_rbpf"
 version = "0.8.5"
-source = "git+https://github.com/fluentlabs-xyz/rbpf?branch=feat%2Fsvm#1a02f27a4a67f6c3009dafd575fe8d0bf7f5a5c3"
+source = "git+https://github.com/fluentlabs-xyz/rbpf?branch=feat%2Fsvm#44d7b7acdf61ef8440cf819389b1099b348ae45e"
 dependencies = [
  "byteorder",
  "combine",

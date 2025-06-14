@@ -27,16 +27,14 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{BlockContextReader, BlockContextV1, SharedAPI, StorageAPI};
+use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
 use hashbrown::HashMap;
-use itertools::Itertools;
 use solana_bincode::deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
 use solana_hash::Hash;
 use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
-// use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
@@ -97,7 +95,6 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     let config = init_config();
 
     // TODO validate blockhash?
-    let blockhash = message.recent_blockhash();
     let block_number = sdk.context().block_number();
 
     let compute_budget = ComputeBudget::default();

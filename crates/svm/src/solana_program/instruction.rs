@@ -2,8 +2,6 @@ use crate::solana_program::program_stubs;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 use solana_bincode::serialize;
-#[cfg(feature = "frozen-abi")]
-use solana_frozen_abi_macro::AbiExample;
 pub use solana_instruction::{
     error::InstructionError,
     AccountMeta,
@@ -22,7 +20,6 @@ use solana_short_vec as short_vec;
 /// construction of `Message`. Most users will not interact with it directly.
 ///
 /// [`Message`]: crate::message::Message
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 #[serde(rename_all = "camelCase")]
 pub struct CompiledInstruction {
@@ -78,42 +75,6 @@ impl CompiledInstruction {
 /// Then B's processed sibling instruction list is: `[A]`
 /// Then F's processed sibling instruction list is: `[E, C]`
 pub fn get_processed_sibling_instruction(index: usize) -> Option<Instruction> {
-    #[cfg(target_os = "solana")]
-    {
-        let mut meta = ProcessedSiblingInstruction::default();
-        let mut program_id = solana_pubkey::Pubkey::default();
-
-        if 1 == unsafe {
-            solana_instruction::syscalls::sol_get_processed_sibling_instruction(
-                index as u64,
-                &mut meta,
-                &mut program_id,
-                &mut u8::default(),
-                &mut AccountMeta::default(),
-            )
-        } {
-            let mut data = Vec::new();
-            let mut accounts = Vec::new();
-            data.resize_with(meta.data_len as usize, u8::default);
-            accounts.resize_with(meta.accounts_len as usize, AccountMeta::default);
-
-            let _ = unsafe {
-                solana_instruction::syscalls::sol_get_processed_sibling_instruction(
-                    index as u64,
-                    &mut meta,
-                    &mut program_id,
-                    data.as_mut_ptr(),
-                    accounts.as_mut_ptr(),
-                )
-            };
-
-            Some(Instruction::new_with_bytes(program_id, &data, accounts))
-        } else {
-            None
-        }
-    }
-
-    #[cfg(not(target_os = "solana"))]
     program_stubs::sol_get_processed_sibling_instruction(index)
 }
 
@@ -121,12 +82,6 @@ pub fn get_processed_sibling_instruction(index: usize) -> Option<Instruction> {
 /// TRANSACTION_LEVEL_STACK_HEIGHT, fist invoked inner instruction is height
 /// TRANSACTION_LEVEL_STACK_HEIGHT + 1, etc...
 pub fn get_stack_height() -> usize {
-    #[cfg(target_os = "solana")]
-    unsafe {
-        solana_instruction::syscalls::sol_get_stack_height() as usize
-    }
-
-    #[cfg(not(target_os = "solana"))]
     {
         program_stubs::sol_get_stack_height() as usize
     }

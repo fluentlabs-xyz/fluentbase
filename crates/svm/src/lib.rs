@@ -1,7 +1,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![feature(new_range_api)]
 #![feature(assert_matches)]
-// #![feature(liballoc_internals)]
+// #![feature(lazy_type_alias)]
+#![feature(trait_alias)]
 
 extern crate alloc;
 extern crate core;
@@ -45,6 +46,7 @@ mod bincode_helpers;
 pub mod fluentbase;
 pub mod hash;
 pub mod loaders;
+// pub mod mem_ops_original;
 pub mod serialization;
 pub mod solana_program;
 pub mod storage_helpers;
@@ -59,6 +61,7 @@ pub mod sysvar_cache;
 #[cfg(test)]
 pub mod test_helpers;
 pub mod types;
+pub mod word_size;
 // mod test_macroses;
 
 pub use bincode;

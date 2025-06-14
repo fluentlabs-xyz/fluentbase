@@ -5,7 +5,7 @@ use crate::{
     context::{InstructionContext, InvokeContext},
     error::Error,
     loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET},
-    loaders::agave_version::execute,
+    loaders::execute::execute,
     solana_program::{
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status, DEPLOYMENT_COOLDOWN_IN_SLOTS},
@@ -25,7 +25,7 @@ use solana_rbpf::{
     error::ProgramResult,
     memory_region::{MemoryMapping, MemoryRegion},
     program::{BuiltinProgram, FunctionRegistry},
-    vm::{Config, ContextObject, EbpfVm},
+    vm::{Config, EbpfVm},
 };
 
 pub const DEFAULT_COMPUTE_UNITS: u64 = 2_000;
@@ -151,7 +151,7 @@ pub fn create_vm_exec_program<'a, SDK: SharedAPI>(
         MemoryRegion::new_writable(heap.as_slice_mut(), ebpf::MM_HEAP_START),
     ];
     // let log_collector = invoke_context.get_log_collector();
-    let memory_mapping = MemoryMapping::new(regions, config, sbpf_version).map_err(|err| {
+    let memory_mapping = MemoryMapping::new(regions, config, sbpf_version).map_err(|_err| {
         // ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", err);
         Box::new(InstructionError::ProgramEnvironmentSetupFailure)
     })?;
@@ -436,7 +436,7 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
 
     let environments = invoke_context
         .get_environments_for_slot(effective_slot)
-        .map_err(|err| {
+        .map_err(|_err| {
             // This will never fail since the epoch schedule is already configured.
             // ic_logger_msg!(log_collector, "Failed to get runtime environment {}", err);
             InstructionError::InvalidArgument
@@ -455,9 +455,8 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
         buffer.get_data().len(),
         // &mut load_program_metrics,
     )
-    .map_err(|err| {
+    .map_err(|_err| {
         // ic_logger_msg!(log_collector, "{}", err);
-        // debug_log!("error while LoadedProgram::new: {}", err);
         InstructionError::InvalidAccountData
     })?;
     // load_program_metrics.submit_datapoint(&mut invoke_context.timings);
@@ -652,27 +651,24 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
         .map_err(|err| Box::new(err) as Error)
     } else {
         let program = instruction_context.try_borrow_last_program_account(transaction_context)?;
-        if !loader_v4::check_id(program.get_owner()) {
-            // ic_logger_msg!(log_collector, "Program not owned by loader");
+        let program_owner = program.get_owner();
+        if !loader_v4::check_id(program_owner) {
             return Err(Box::new(InstructionError::InvalidAccountOwner));
         }
         if program.get_data().is_empty() {
-            // ic_logger_msg!(log_collector, "Program is uninitialized");
             return Err(Box::new(InstructionError::InvalidAccountData));
         }
         let state = get_state(program.get_data())?;
         if matches!(state.status, LoaderV4Status::Retracted) {
-            // ic_logger_msg!(log_collector, "Program is not deployed");
             return Err(Box::new(InstructionError::InvalidArgument));
         }
+
         // let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
         let loaded_program = invoke_context
             .program_cache_for_tx_batch
             .find(program.get_key())
-            .ok_or_else(|| {
-                // ic_logger_msg!(log_collector, "Program is not cached");
-                InstructionError::InvalidAccountData
-            })?;
+            .ok_or_else(|| InstructionError::InvalidAccountData)?;
+
         // get_or_create_executor_time.stop();
         // saturating_add_assign!(
         //     invoke_context.timings.get_or_create_executor_us,

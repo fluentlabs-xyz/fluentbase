@@ -6,8 +6,6 @@ use alloc::{borrow::Cow, vec, vec::Vec};
 use serde::{Deserialize, Serialize};
 use solana_bincode::{deserialize, serialize_into};
 use solana_clock::Slot;
-#[cfg(feature = "frozen-abi")]
-use solana_frozen_abi_macro::{AbiEnumVisitor, AbiExample};
 use solana_pubkey::Pubkey;
 use solana_slot_hashes::{get_entries, SlotHashes, MAX_ENTRIES};
 
@@ -39,7 +37,6 @@ pub enum LookupTableStatus {
 }
 
 /// Address lookup table metadata
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 pub struct LookupTableMeta {
     /// Lookup tables cannot be closed until the deactivation slot is
@@ -117,7 +114,6 @@ impl LookupTableMeta {
 }
 
 /// Program account states
-#[cfg_attr(feature = "frozen-abi", derive(AbiEnumVisitor, AbiExample))]
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 #[allow(clippy::large_enum_variant)]
 pub enum ProgramState {
@@ -127,7 +123,6 @@ pub enum ProgramState {
     LookupTable(LookupTableMeta),
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AddressLookupTable<'a> {
     pub meta: LookupTableMeta,

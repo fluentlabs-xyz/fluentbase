@@ -7,7 +7,7 @@ use crate::{
     serialization,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{debug_log, SharedAPI};
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 use solana_feature_set::bpf_account_data_direct_mapping;
 use solana_instruction::error::InstructionError;
@@ -30,8 +30,10 @@ pub fn execute<'a, SDK: SharedAPI>(
     //     )
     // };
     // let log_collector = invoke_context.get_log_collector();
+
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
+
     let (_program_id, is_loader_deprecated) = {
         let program_account =
             instruction_context.try_borrow_last_program_account(transaction_context)?;
@@ -54,6 +56,12 @@ pub fn execute<'a, SDK: SharedAPI>(
         instruction_context,
         !direct_mapping,
     )?;
+    debug_log!(
+        "agave_version.execute4: parameter_bytes.len {} regions {:?} accounts_metadata {:?}",
+        parameter_bytes.len(),
+        regions,
+        accounts_metadata
+    );
     // serialize_time.stop();
 
     // save the account addresses so in case we hit an AccessViolation error we
@@ -86,7 +94,7 @@ pub fn execute<'a, SDK: SharedAPI>(
         let (mut vm, stack, heap) = match vm {
             // let mut vm = match vm {
             Ok(info) => info,
-            Err(e) => {
+            Err(_e) => {
                 // #[cfg(feature = "std")]
                 // println!("Failed to create SBF VM: {}", e);
                 return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));

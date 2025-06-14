@@ -3,7 +3,7 @@ use crate::{
     account_utils::StateMut,
     bpf_loader,
     bpf_loader_deprecated,
-    common::{check_loader_id, load_program_from_bytes},
+    common::load_program_from_bytes,
     helpers::SyscallContext,
     loaded_programs::{
         // LoadedProgram,
@@ -14,7 +14,6 @@ use crate::{
     loaders::bpf_loader_v4,
     native_loader,
     solana_program::{
-        bpf_loader_upgradeable,
         bpf_loader_upgradeable::UpgradeableLoaderState,
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status},
@@ -30,8 +29,7 @@ use crate::{
 };
 use crate::{
     compute_budget::compute_budget::ComputeBudget,
-    error::SvmError,
-    helpers::{storage_read_account_data, AllocErr, LogCollector},
+    helpers::AllocErr,
     loaded_programs::{
         ProgramCacheEntry,
         ProgramCacheEntryOwner,
@@ -56,7 +54,6 @@ use solana_rbpf::{
     error::{EbpfError, ProgramResult},
     memory_region::MemoryMapping,
     program::{BuiltinFunction, SBPFVersion},
-    static_analysis::TraceLogEntry,
     vm::{Config, ContextObject, EbpfVm},
 };
 use solana_stable_layout::stable_instruction::StableInstruction;
@@ -99,6 +96,7 @@ pub enum ProgramAccountLoadResult {
     ProgramOfLoaderV4(AccountSharedData, Slot),
 }
 
+#[derive(Debug)]
 pub struct BpfAllocator {
     len: u64,
     pos: u64,
@@ -422,7 +420,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
 
             // To be signed in the callee,
             // it must be either signed in the caller or by the program
-            let borrowed_account_key = borrowed_account.get_key();
             if instruction_account.is_signer
                 && !(borrowed_account.is_signer() || signers.contains(borrowed_account.get_key()))
             {
@@ -475,14 +472,18 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
         // *compute_units_consumed = 0;
+
         self.transaction_context
             .get_next_instruction_context()?
             .configure(program_indices, instruction_accounts, instruction_data);
+
         self.push()?;
-        self.process_executable_chain(/*compute_units_consumed , timings*/)
+
+        let result = self.process_executable_chain(/*compute_units_consumed , timings*/)
             // MUST pop if and only if `push` succeeded, independent of `result`.
             // Thus, the `.and()` instead of an `.and_then()`.
-            .and(self.pop())
+            .and(self.pop());
+        result
     }
 
     /// Processes a precompile instruction
@@ -542,6 +543,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             .program_cache_for_tx_batch
             .find(&builtin_id)
             .ok_or(InstructionError::UnsupportedProgramId)?;
+
         let function = match &entry.program {
             ProgramCacheEntryType::Builtin(program) => program
                 .get_function_registry()
@@ -550,11 +552,14 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             _ => None,
         }
         .ok_or(InstructionError::UnsupportedProgramId)?;
+
         entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
 
         let program_id = *instruction_context.get_last_program_key(&self.transaction_context)?;
+
         self.transaction_context
             .set_return_data(program_id, Vec::new())?;
+
         // let logger = self.get_log_collector();
         // stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
         // let pre_remaining_units = self.get_remaining();
@@ -564,6 +569,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         let mock_config = Config::default();
         let empty_memory_mapping =
             MemoryMapping::new(Vec::new(), &mock_config, &SBPFVersion::V1).unwrap();
+
         let mut vm = EbpfVm::new(
             self.program_cache_for_tx_batch
                 .environments
@@ -577,7 +583,9 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             empty_memory_mapping,
             0,
         );
+
         vm.invoke_function(function);
+
         let result = match vm.program_result {
             ProgramResult::Ok(_) => {
                 // stable_log::program_success(&logger, &program_id);
@@ -599,6 +607,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 }
             }
         };
+
         // let post_remaining_units = self.get_remaining();
         // *compute_units_consumed = pre_remaining_units.saturating_sub(post_remaining_units);
 
@@ -1418,8 +1427,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // TODO is it correct to mock slot here
         let slot = Slot::default();
         let envs_for_slot = self.get_environments_for_slot(slot).unwrap();
-        let pre_v1 = &envs_for_slot.program_runtime_v1;
-        let pre_v2 = &envs_for_slot.program_runtime_v2;
 
         self.load_program_with_pubkey(envs_for_slot, pubkey, slot, reload)
 
@@ -1534,7 +1541,6 @@ pub struct TransactionAccounts {
 }
 
 impl TransactionAccounts {
-    #[cfg(not(target_os = "solana"))]
     fn new(accounts: Vec<RefCell<AccountSharedData>>) -> TransactionAccounts {
         TransactionAccounts {
             touched_flags: RefCell::new(vec![false; accounts.len()].into_boxed_slice()),
@@ -1550,7 +1556,6 @@ impl TransactionAccounts {
         self.accounts.get(index as usize)
     }
 
-    #[cfg(not(target_os = "solana"))]
     pub fn touch(&self, index: IndexOfAccount) -> Result<(), InstructionError> {
         *self
             .touched_flags
@@ -1560,7 +1565,6 @@ impl TransactionAccounts {
         Ok(())
     }
 
-    #[cfg(not(target_os = "solana"))]
     pub fn touched_count(&self) -> usize {
         self.touched_flags
             .borrow()
@@ -1613,7 +1617,7 @@ pub struct TransactionContext {
     instruction_trace: Vec<InstructionContext>,
     return_data: TransactionReturnData,
     pub(crate) accounts_resize_delta: RefCell<i64>,
-    #[cfg(not(target_os = "solana"))]
+
     pub(crate) rent: Rent,
     // /// Useful for debugging to filter by or to look it up on the explorer
     // #[cfg(all(not(target_os = "solana"), debug_assertions))]
@@ -1622,7 +1626,7 @@ pub struct TransactionContext {
 
 impl TransactionContext {
     /// Constructs a new TransactionContext
-    #[cfg(not(target_os = "solana"))]
+
     pub fn new(
         transaction_accounts: Vec<TransactionAccount>,
         rent: Rent,
@@ -1649,7 +1653,7 @@ impl TransactionContext {
     }
 
     /// Used in mock_process_instruction
-    #[cfg(not(target_os = "solana"))]
+
     pub fn deconstruct_without_keys(self) -> Result<Vec<AccountSharedData>, InstructionError> {
         if !self.instruction_stack.is_empty() {
             return Err(InstructionError::CallDepth);
@@ -1660,7 +1664,6 @@ impl TransactionContext {
             .into_accounts())
     }
 
-    #[cfg(not(target_os = "solana"))]
     pub fn accounts(&self) -> &Rc<TransactionAccounts> {
         &self.accounts
     }
@@ -1693,7 +1696,7 @@ impl TransactionContext {
     }
 
     /// Searches for an account by its key
-    #[cfg(not(target_os = "solana"))]
+
     pub fn get_account_at_index(
         &self,
         index_in_transaction: IndexOfAccount,
@@ -1788,7 +1791,7 @@ impl TransactionContext {
     }
 
     /// Pushes the next InstructionContext
-    #[cfg(not(target_os = "solana"))]
+
     pub fn push(&mut self) -> Result<(), InstructionError> {
         let nesting_level = self.get_instruction_context_stack_height();
         let caller_instruction_context = self
@@ -1828,7 +1831,7 @@ impl TransactionContext {
     }
 
     /// Pops the current InstructionContext
-    #[cfg(not(target_os = "solana"))]
+
     pub fn pop(&mut self) -> Result<(), InstructionError> {
         if self.instruction_stack.is_empty() {
             return Err(InstructionError::CallDepth);
@@ -1874,7 +1877,7 @@ impl TransactionContext {
     }
 
     /// Calculates the sum of all lamports within an instruction
-    #[cfg(not(target_os = "solana"))]
+
     fn instruction_accounts_lamport_sum(
         &self,
         instruction_context: &InstructionContext,
@@ -1931,7 +1934,7 @@ pub struct InstructionContext {
 
 impl InstructionContext {
     /// Used together with TransactionContext::get_next_instruction_context()
-    #[cfg(not(target_os = "solana"))]
+
     pub fn configure(
         &mut self,
         program_accounts: &[IndexOfAccount],

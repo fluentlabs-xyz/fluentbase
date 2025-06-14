@@ -3,20 +3,16 @@ use crate::{
     context::InvokeContext,
     error::{Error, SvmError},
     helpers::SyscallError,
-    word_size::{
-        addr_type::AddrType,
-        common::MemoryMappingHelper,
-        slice::{ElementConstraints, SliceFatPtr64},
-    },
 };
 use alloc::{boxed::Box, vec::Vec};
-use core::{slice, str::from_utf8};
+use core::{any::type_name, slice, str::from_utf8};
 use fluentbase_types::SharedAPI;
 use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN};
 use solana_rbpf::{
     error::EbpfError,
     memory_region::{AccessType, MemoryMapping, MemoryRegion},
 };
+
 // fn mem_op_consume<SDK: SharedAPI>(invoke_context: &mut InvokeContext<SDK>, n: u64) -> Result<(), Error> {
 //     let compute_budget = invoke_context.get_compute_budget();
 //     let cost = compute_budget.mem_op_base_cost.max(
@@ -188,27 +184,27 @@ use solana_rbpf::{
 //     }
 // }
 
-// fn memmove_non_contiguous(
-//     dst_addr: u64,
-//     src_addr: u64,
-//     n: u64,
-//     memory_mapping: &MemoryMapping,
-// ) -> Result<u64, Error> {
-//     let reverse = dst_addr.wrapping_sub(src_addr) < n;
-//     iter_memory_pair_chunks(
-//         AccessType::Load,
-//         src_addr,
-//         AccessType::Store,
-//         dst_addr,
-//         n,
-//         memory_mapping,
-//         reverse,
-//         |src_host_addr, dst_host_addr, chunk_len| {
-//             unsafe { core::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
-//             Ok(0)
-//         },
-//     )
-// }
+fn memmove_non_contiguous(
+    dst_addr: u64,
+    src_addr: u64,
+    n: u64,
+    memory_mapping: &MemoryMapping,
+) -> Result<u64, Error> {
+    let reverse = dst_addr.wrapping_sub(src_addr) < n;
+    iter_memory_pair_chunks(
+        AccessType::Load,
+        src_addr,
+        AccessType::Store,
+        dst_addr,
+        n,
+        memory_mapping,
+        reverse,
+        |src_host_addr, dst_host_addr, chunk_len| {
+            unsafe { core::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
+            Ok(0)
+        },
+    )
+}
 
 // Marked unsafe since it assumes that the slices are at least `n` bytes long.
 pub unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
@@ -526,7 +522,7 @@ pub fn translate(
     access_type: AccessType,
     vm_addr: u64,
     len: u64,
-) -> helpers::StdResult<u64, SvmError> {
+) -> crate::helpers::StdResult<u64, SvmError> {
     let result = memory_mapping
         .map(access_type, vm_addr, len)
         .map_err(|err| err.into())
@@ -539,13 +535,8 @@ fn translate_type_inner<'a, T>(
     access_type: AccessType,
     vm_addr: u64,
     check_aligned: bool,
-    skip_addr_translation: bool,
 ) -> Result<&'a mut T, SvmError> {
-    let host_addr = if skip_addr_translation {
-        vm_addr
-    } else {
-        translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u64)?
-    };
+    let host_addr = translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u64)?;
     if !check_aligned {
         #[cfg(target_pointer_width = "64")]
         {
@@ -555,7 +546,8 @@ fn translate_type_inner<'a, T>(
         {
             Ok(unsafe { core::mem::transmute::<u32, &mut T>(host_addr as u32) })
         }
-    } else if !helpers::address_is_aligned::<T>(host_addr) {
+    } else if !crate::helpers::address_is_aligned::<T>(host_addr) {
+        // Err(EbpfError::SyscallError::UnalignedPointer.into())
         Err(SyscallError::UnalignedPointer.into())
     } else {
         Ok(unsafe { &mut *(host_addr as *mut T) })
@@ -565,43 +557,29 @@ pub fn translate_type_mut<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
-    skip_addr_translation: bool,
 ) -> Result<&'a mut T, SvmError> {
-    translate_type_inner::<T>(
-        memory_mapping,
-        AccessType::Store,
-        vm_addr,
-        check_aligned,
-        skip_addr_translation,
-    )
+    translate_type_inner::<T>(memory_mapping, AccessType::Store, vm_addr, check_aligned)
 }
 pub fn translate_type<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
-    skip_addr_translation: bool,
 ) -> Result<&'a T, SvmError> {
-    translate_type_inner::<T>(
-        memory_mapping,
-        AccessType::Load,
-        vm_addr,
-        check_aligned,
-        skip_addr_translation,
-    )
-    .map(|value| &*value)
+    translate_type_inner::<T>(memory_mapping, AccessType::Load, vm_addr, check_aligned)
+        .map(|value| &*value)
 }
 
-fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
-    memory_mapping: &'a MemoryMapping<'a>,
+fn translate_slice_inner<'a, T>(
+    memory_mapping: &MemoryMapping,
     access_type: AccessType,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<SliceFatPtr64<'a, T>, SvmError> {
-    let mmh: MemoryMappingHelper = memory_mapping.into();
+) -> Result<&'a mut [T], SvmError> {
     if len == 0 {
-        return Ok(SliceFatPtr64::default(mmh.clone()));
+        return Ok(&mut []);
     }
+    let type_name = type_name::<T>();
     let size_of_t = size_of::<T>();
 
     let total_size = len.saturating_mul(size_of_t as u64);
@@ -611,19 +589,20 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
 
     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
 
-    if check_aligned && !helpers::address_is_aligned::<T>(host_addr) {
+    if check_aligned && !crate::helpers::address_is_aligned::<T>(host_addr) {
         return Err(SyscallError::UnalignedPointer.into());
     }
-    let result = SliceFatPtr64::new::<false>(mmh, AddrType::Host(host_addr), len as usize);
+
+    let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
     Ok(result)
 }
 
-pub fn translate_slice<'a, T: ElementConstraints<'a>>(
-    memory_mapping: &'a MemoryMapping,
+pub fn translate_slice<'a, T>(
+    memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<SliceFatPtr64<'a, T>, SvmError> {
+) -> Result<&'a [T], SvmError> {
     translate_slice_inner::<T>(
         memory_mapping,
         AccessType::Load,
@@ -631,15 +610,15 @@ pub fn translate_slice<'a, T: ElementConstraints<'a>>(
         len,
         check_aligned,
     )
-    // .map(|value| &*value)
+    .map(|value| &*value)
 }
 
-pub fn translate_slice_mut<'a, T: ElementConstraints<'a>>(
-    memory_mapping: &'a MemoryMapping,
+pub fn translate_slice_mut<'a, T>(
+    memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<SliceFatPtr64<'a, T>, SvmError> {
+) -> Result<&'a mut [T], SvmError> {
     translate_slice_inner::<T>(
         memory_mapping,
         AccessType::Store,
@@ -658,10 +637,10 @@ pub fn translate_string_and_do(
     check_aligned: bool,
     work: &mut dyn FnMut(&str) -> Result<u64, Error>,
 ) -> Result<u64, Error> {
-    let buf = translate_slice::<u8>(memory_mapping, addr, len, check_aligned)?.to_vec_cloned();
-    match from_utf8(buf.as_slice()) {
+    let buf = translate_slice::<u8>(memory_mapping, addr, len, check_aligned)?;
+    match from_utf8(buf) {
         Ok(message) => work(message),
-        Err(err) => Err(SyscallError::InvalidString(err, buf).into()),
+        Err(err) => Err(SyscallError::InvalidString(err, buf.to_vec()).into()),
     }
 }
 
@@ -695,58 +674,57 @@ pub fn memmove<SDK: SharedAPI>(
     // {
     //     memmove_non_contiguous(dst_addr, src_addr, n, memory_mapping)
     // } else {
-    let mut dst_ptr = translate_slice_mut::<u8>(
+    let dst_ptr = translate_slice_mut::<u8>(
         memory_mapping,
         dst_addr,
         n,
         invoke_context.get_check_aligned(),
-    )?;
-    // .as_mut_ptr();
+        // true,
+    )?
+    .as_mut_ptr();
     let src_ptr = translate_slice::<u8>(
         memory_mapping,
         src_addr,
         n,
         invoke_context.get_check_aligned(),
-    )?;
-    // .as_ptr();
+        // true,
+    )?
+    .as_ptr();
 
-    // unsafe { core::ptr::copy(src_ptr, dst_ptr, n as usize) };
-    dst_ptr.copy_from(&src_ptr);
+    unsafe { core::ptr::copy(src_ptr, dst_ptr, n as usize) };
     Ok(0)
     // }
 }
+
 pub fn translate_and_check_program_address_inputs<'a>(
     seeds_addr: u64,
     seeds_len: u64,
     program_id_addr: u64,
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
-) -> Result<(Vec<Vec<u8>>, &'a Pubkey), SvmError> {
+) -> Result<(Vec<&'a [u8]>, &'a Pubkey), SvmError> {
     let untranslated_seeds =
-        translate_slice::<SliceFatPtr64<u8>>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
+        translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
     if untranslated_seeds.len() > MAX_SEEDS {
         return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
     }
     let seeds = untranslated_seeds
         .iter()
         .map(|untranslated_seed| {
-            if untranslated_seed.as_ref().len() > MAX_SEED_LEN {
+            if untranslated_seed.len() > MAX_SEED_LEN {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
-            // let result = translate_slice::<u8>(
-            //     memory_mapping,
-            //     untranslated_seed.as_ref().first_item_fat_ptr_addr(),
-            //     untranslated_seed.as_ref().len() as u64,
-            //     check_aligned,
-            // )
-            // .map(|v| v.to_vec_cloned());
-            // result
-            Ok(untranslated_seed.as_ref().to_vec_cloned())
+            translate_slice::<u8>(
+                memory_mapping,
+                untranslated_seed.as_ptr() as *const _ as u64,
+                untranslated_seed.len() as u64,
+                check_aligned,
+            )
         })
         .collect::<Result<Vec<_>, SvmError>>()?;
 
-    let program_id =
-        translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned, false)?;
+    let program_id = translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned)?;
+
     Ok((seeds, program_id))
 }
 

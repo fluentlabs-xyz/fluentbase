@@ -1,6 +1,6 @@
 mod tests {
     use crate::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
+        account::{AccountSharedData, ReadableAccount},
         common::{calculate_max_chunk_size, pubkey_from_address},
         fluentbase::{
             common::{process_svm_result, BatchMessage, MemStorage},
@@ -325,12 +325,12 @@ mod tests {
         const CONTRACT_CALLER: Address = address!("1231238908230948230948209348203984029834");
         const CONTRACT_ADDRESS: Address = address!("0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5");
 
-        let pk_payer = pubkey_from_address(CONTRACT_CALLER);
+        let pk_payer = pubkey_from_address(&CONTRACT_CALLER);
         let account_payer = AccountSharedData::new(1000000000, 0, &system_program_id);
 
         let pk_buffer = Pubkey::new_unique();
 
-        let pk_exec = pubkey_from_address(CONTRACT_ADDRESS);
+        let pk_exec = pubkey_from_address(&CONTRACT_ADDRESS);
 
         // let pk_authority = pk_payer.clone();
         let pk_authority = Pubkey::from([9; 32]);

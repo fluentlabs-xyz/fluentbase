@@ -1,6 +1,6 @@
 //! Instructions for the v4 built-in loader program.
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 #[repr(u8)]

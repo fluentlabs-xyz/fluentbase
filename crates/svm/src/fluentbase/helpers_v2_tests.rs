@@ -1,7 +1,7 @@
 mod tests {
     use crate::{
         account::{AccountSharedData, ReadableAccount},
-        common::{calculate_max_chunk_size, pubkey_from_address, pubkey_from_pubkey},
+        common::{calculate_max_chunk_size, pubkey_from_address},
         fluentbase::{
             common::{BatchMessage, MemStorage},
             helpers_v2::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
@@ -20,7 +20,6 @@ mod tests {
         system_program,
         test_helpers::load_program_account_from_elf_file,
     };
-    use byteorder::WriteBytesExt;
     use core::str::from_utf8;
     use fluentbase_sdk::{
         address,
@@ -30,16 +29,12 @@ mod tests {
         SharedAPI,
         SharedContextInputV1,
         StorageAPI,
-        B256,
-        U256,
     };
     use fluentbase_sdk_testing::HostTestingContext;
-    use fluentbase_types::calc_create2_address_no_sdk;
     use hashbrown::HashMap;
-    use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
     use solana_bincode::serialize;
     use solana_instruction::AccountMeta;
-    use solana_pubkey::{Pubkey, SVM_ADDRESS_PREFIX};
+    use solana_pubkey::Pubkey;
 
     fn main_single_message<SAPI: StorageAPI>(
         mut sdk: impl SharedAPI,
@@ -319,11 +314,15 @@ mod tests {
         let sysvar_clock_id = sysvar::clock::id();
         let sysvar_rent_id = sysvar::rent::id();
 
-        let pk_payer = Pubkey::new_unique();
-        let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
+        const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+        // let pk_payer = Pubkey::new_unique();
+        let pk_payer = pubkey_from_address(&DEPLOYER_ADDRESS);
+        let pk_payer_account = AccountSharedData::new(101, 0, &system_program_id);
 
         // let pk_exec = Pubkey::from([8; 32]);
-        let pk_exec = pubkey_from_pubkey(&Pubkey::from([8; 32]));
+        const CONTRACT_ADDRESS: Address = address!("0xf91c20c0cafbfdc150adff51bbfc5808edde7cb5");
+        // let pk_exec = pubkey_from_pubkey(&Pubkey::from([8; 32]));
+        let pk_exec = pubkey_from_address(&CONTRACT_ADDRESS);
 
         // let pk_tmp = Pubkey::new_unique();
         // let pk_tmp_account = AccountSharedData::new(100, 0, &pk_exec);
@@ -408,7 +407,7 @@ mod tests {
         assert_eq!(from_utf8(&output).unwrap(), "");
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
-        assert_eq!(account_data.lamports(), 100);
+        assert_eq!(account_data.lamports(), 101);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
@@ -454,7 +453,7 @@ mod tests {
         }
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
-        assert_eq!(account_data.lamports(), 100);
+        assert_eq!(account_data.lamports(), 101);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
@@ -482,7 +481,7 @@ mod tests {
         main_single_message(sdk.clone(), Some(&mut sapi));
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
-        assert_eq!(account_data.lamports(), 100);
+        assert_eq!(account_data.lamports(), 101);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
@@ -624,13 +623,13 @@ mod tests {
         const CONTRACT_CALLER: Address = address!("1231238908230948230948209348203984029834");
         const CONTRACT_ADDRESS: Address = address!("0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5");
 
-        let pk_payer = pubkey_from_address(CONTRACT_CALLER);
+        let pk_payer = pubkey_from_address(&CONTRACT_CALLER);
         let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
 
         // let pk_tmp = Pubkey::new_unique();
         // let pk_tmp_account = AccountSharedData::new(100, 0, &system_program_id);
 
-        let pk_exec = pubkey_from_address(CONTRACT_ADDRESS);
+        let pk_exec = pubkey_from_address(&CONTRACT_ADDRESS);
 
         let seed1 = b"my_seed";
         let seed2 = pk_payer.as_ref();

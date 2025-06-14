@@ -1,5 +1,5 @@
 use crate::solana_program::message::{Message as LegacyMessage, MessageHeader};
-use alloc::{fmt, vec, vec::Vec};
+use alloc::{fmt, vec::Vec};
 use hashbrown::HashSet;
 use serde::{
     de::{self, Deserializer, SeqAccess, Unexpected, Visitor},
@@ -33,11 +33,6 @@ pub const MESSAGE_VERSION_PREFIX: u8 = 0x80;
 /// which message version is serialized starting from version `0`. If the first
 /// is bit is not set, all bytes are used to encode the legacy `Message`
 /// format.
-#[cfg_attr(
-    feature = "frozen-abi",
-    frozen_abi(digest = "EjjHMjAnRrd86DuTgysFXRicMiAQv3vTvzRzcMJCjYfC"),
-    derive(AbiEnumVisitor, AbiExample)
-)]
 #[derive(Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
 pub enum VersionedMessage {
     Legacy(LegacyMessage),

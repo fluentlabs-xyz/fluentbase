@@ -22,7 +22,7 @@ use crate::{
     system_instruction,
     system_program,
 };
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 #[allow(deprecated)]
 pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
 use core::{convert::TryFrom, str::FromStr};
@@ -130,11 +130,6 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
 // NOTE: Serialization-related changes must be paired with the custom serialization
 // for versioned messages in the `RemainingLegacyMessage` struct.
 #[cfg(not(target_arch = "wasm32"))]
-#[cfg_attr(
-    feature = "frozen-abi",
-    frozen_abi(digest = "4kL6EbLGU25m5eMk4H1cW9YGhA5LejHSgj2w2fhY1NGp"),
-    derive(AbiExample)
-)]
 #[derive(
     bincode::Encode, bincode::Decode, Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone,
 )]
@@ -161,11 +156,6 @@ pub struct Message {
 /// This duplication is required until https://github.com/rustwasm/wasm-bindgen/issues/3671
 /// is fixed. This must not diverge from the regular non-wasm Message struct.
 #[cfg(target_arch = "wasm32")]
-#[cfg_attr(
-    feature = "frozen-abi",
-    frozen_abi(digest = "4kL6EbLGU25m5eMk4H1cW9YGhA5LejHSgj2w2fhY1NGp"),
-    derive(AbiExample)
-)]
 #[derive(
     Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
 )]
@@ -276,14 +266,14 @@ impl Message {
     }
 
     /// Compute the blake3 hash of this transaction's message.
-    #[cfg(not(target_os = "solana"))]
+
     pub fn hash(&self) -> Hash {
         let message_bytes = self.serialize();
         Self::hash_raw_message(&message_bytes)
     }
 
     /// Compute the blake3 hash of a raw transaction message.
-    #[cfg(not(target_os = "solana"))]
+
     pub fn hash_raw_message(message_bytes: &[u8]) -> Hash {
         use {
             // blake3::traits::digest::Digest,

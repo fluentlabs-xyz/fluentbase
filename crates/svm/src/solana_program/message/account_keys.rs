@@ -2,7 +2,7 @@ use crate::solana_program::{
     instruction::CompiledInstruction,
     message::{versions::v0::LoadedAddresses, CompileError},
 };
-use alloc::{collections::BTreeMap, vec, vec::Vec};
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::{iter::zip, ops::Index};
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;

@@ -1,10 +1,7 @@
 //! Implementations of syscalls used when `solana-program` is built for non-SBF targets.
 
-#![cfg(not(target_os = "solana"))]
-
 use crate::{account_info::AccountInfo, program_error::UNSUPPORTED_SYSVAR};
-use alloc::{boxed::Box, format, sync::Arc, vec, vec::Vec};
-use base64::{prelude::BASE64_STANDARD, Engine};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use solana_instruction::Instruction;
 use solana_program_error::ProgramResult;
 use solana_program_memory::stubs;
@@ -22,7 +19,7 @@ pub fn set_syscall_stubs(syscall_stubs: Box<dyn SyscallStubs>) -> Box<dyn Syscal
 }
 
 pub trait SyscallStubs: Sync + Send {
-    fn sol_log(&self, message: &str) {
+    fn sol_log(&self, _message: &str) {
         // println!("{message}");
     }
     fn sol_log_compute_units(&self) {
@@ -91,7 +88,7 @@ pub trait SyscallStubs: Sync + Send {
         None
     }
     fn sol_set_return_data(&self, _data: &[u8]) {}
-    fn sol_log_data(&self, fields: &[&[u8]]) {
+    fn sol_log_data(&self, _fields: &[&[u8]]) {
         // println!(
         //     "data: {}",
         //     fields
@@ -116,29 +113,29 @@ pub(crate) fn sol_log(message: &str) {
     SYSCALL_STUBS.read().sol_log(message);
 }
 
-pub(crate) fn sol_log_64(arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) {
-    sol_log(&format!(
-        "{arg1:#x}, {arg2:#x}, {arg3:#x}, {arg4:#x}, {arg5:#x}"
-    ));
-}
+// pub(crate) fn sol_log_64(arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) {
+//     sol_log(&format!(
+//         "{arg1:#x}, {arg2:#x}, {arg3:#x}, {arg4:#x}, {arg5:#x}"
+//     ));
+// }
 
-pub(crate) fn sol_log_compute_units() {
-    SYSCALL_STUBS.read().sol_log_compute_units();
-}
+// pub(crate) fn sol_log_compute_units() {
+//     SYSCALL_STUBS.read().sol_log_compute_units();
+// }
 
-pub(crate) fn sol_remaining_compute_units() -> u64 {
-    SYSCALL_STUBS.read().sol_remaining_compute_units()
-}
+// pub(crate) fn sol_remaining_compute_units() -> u64 {
+//     SYSCALL_STUBS.read().sol_remaining_compute_units()
+// }
 
-pub(crate) fn sol_invoke_signed(
-    instruction: &Instruction,
-    account_infos: &[AccountInfo],
-    signers_seeds: &[&[&[u8]]],
-) -> ProgramResult {
-    SYSCALL_STUBS
-        .read()
-        .sol_invoke_signed(instruction, account_infos, signers_seeds)
-}
+// pub(crate) fn sol_invoke_signed(
+//     instruction: &Instruction,
+//     account_infos: &[AccountInfo],
+//     signers_seeds: &[&[&[u8]]],
+// ) -> ProgramResult {
+//     SYSCALL_STUBS
+//         .read()
+//         .sol_invoke_signed(instruction, account_infos, signers_seeds)
+// }
 
 #[allow(dead_code)]
 pub(crate) fn sol_get_sysvar(
@@ -172,21 +169,21 @@ pub(crate) fn sol_get_last_restart_slot(var_addr: *mut u8) -> u64 {
     SYSCALL_STUBS.read().sol_get_last_restart_slot(var_addr)
 }
 
-pub(crate) fn sol_get_epoch_stake(vote_address: *const u8) -> u64 {
-    SYSCALL_STUBS.read().sol_get_epoch_stake(vote_address)
-}
+// pub(crate) fn sol_get_epoch_stake(vote_address: *const u8) -> u64 {
+//     SYSCALL_STUBS.read().sol_get_epoch_stake(vote_address)
+// }
 
-pub(crate) fn sol_get_return_data() -> Option<(Pubkey, Vec<u8>)> {
-    SYSCALL_STUBS.read().sol_get_return_data()
-}
+// pub(crate) fn sol_get_return_data() -> Option<(Pubkey, Vec<u8>)> {
+//     SYSCALL_STUBS.read().sol_get_return_data()
+// }
 
-pub(crate) fn sol_set_return_data(data: &[u8]) {
-    SYSCALL_STUBS.read().sol_set_return_data(data)
-}
+// pub(crate) fn sol_set_return_data(data: &[u8]) {
+//     SYSCALL_STUBS.read().sol_set_return_data(data)
+// }
 
-pub(crate) fn sol_log_data(data: &[&[u8]]) {
-    SYSCALL_STUBS.read().sol_log_data(data)
-}
+// pub(crate) fn sol_log_data(data: &[&[u8]]) {
+//     SYSCALL_STUBS.read().sol_log_data(data)
+// }
 
 pub(crate) fn sol_get_processed_sibling_instruction(index: usize) -> Option<Instruction> {
     SYSCALL_STUBS

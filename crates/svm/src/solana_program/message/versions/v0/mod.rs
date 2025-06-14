@@ -23,7 +23,7 @@ use crate::solana_program::{
         MessageHeader,
     },
 };
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use hashbrown::HashSet;
 pub use loaded::*;
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,6 @@ use solana_short_vec as short_vec;
 
 /// Address table lookups describe an on-chain address lookup table to use
 /// for loading more readonly and writable accounts in a single tx.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(
     Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
 )]
@@ -60,7 +59,6 @@ pub struct MessageAddressTableLookup {
 /// See the [`message`] module documentation for further description.
 ///
 /// [`message`]: crate::message
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(
     Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
 )]

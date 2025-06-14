@@ -4,7 +4,7 @@ use crate::{
         instruction::CompiledInstruction,
         message::{
             legacy,
-            versions::{v0, v0::LoadedAddresses, SanitizedVersionedMessage},
+            versions::{v0, v0::LoadedAddresses},
             AccountKeys,
             MessageHeader,
         },
@@ -15,8 +15,7 @@ use crate::{
     system_instruction::SystemInstruction,
     system_program,
 };
-// use crate::solana_program::message::AddressLoader;
-use alloc::{borrow::Cow, vec, vec::Vec};
+use alloc::{borrow::Cow, vec::Vec};
 use core::convert::TryFrom;
 use hashbrown::HashSet;
 use solana_bincode::limited_deserialize;

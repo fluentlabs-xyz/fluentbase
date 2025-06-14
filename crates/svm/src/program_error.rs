@@ -1,50 +1,20 @@
-pub(crate) use crate::{
-    alloc::string::ToString,
-    solana_program::{
-        // decode_error::DecodeError,
-        program_error::{
-            ACCOUNT_ALREADY_INITIALIZED,
-            ACCOUNT_BORROW_FAILED,
-            ACCOUNT_DATA_TOO_SMALL,
-            ACCOUNT_NOT_RENT_EXEMPT,
-            ARITHMETIC_OVERFLOW,
-            BORSH_IO_ERROR,
-            BUILTIN_PROGRAMS_MUST_CONSUME_COMPUTE_UNITS,
-            CUSTOM_ZERO,
-            ILLEGAL_OWNER,
-            INCORRECT_PROGRAM_ID,
-            INSUFFICIENT_FUNDS,
-            INVALID_ACCOUNT_DATA,
-            INVALID_ACCOUNT_DATA_REALLOC,
-            INVALID_ACCOUNT_OWNER,
-            INVALID_ARGUMENT,
-            INVALID_INSTRUCTION_DATA,
-            INVALID_SEEDS,
-            MAX_ACCOUNTS_DATA_ALLOCATIONS_EXCEEDED,
-            MAX_INSTRUCTION_TRACE_LENGTH_EXCEEDED,
-            MAX_SEED_LENGTH_EXCEEDED,
-            MISSING_REQUIRED_SIGNATURES,
-            NOT_ENOUGH_ACCOUNT_KEYS,
-            UNINITIALIZED_ACCOUNT,
-            UNSUPPORTED_SYSVAR,
-        },
-    },
+pub(crate) use crate::solana_program::{
+    // decode_error::DecodeError,
+    program_error::UNSUPPORTED_SYSVAR,
 };
-use num_traits::{FromPrimitive, ToPrimitive};
-use solana_instruction::error::InstructionError;
 // pub trait PrintProgramError {
 //     fn print<E>(&self)
 //     where
 //         E: 'static + core::error::Error + DecodeError<E> + PrintProgramError + FromPrimitive;
 // }
 
-/// Builtin return values occupy the upper 32 bits
-const BUILTIN_BIT_SHIFT: usize = 32;
-macro_rules! to_builtin {
-    ($error:expr) => {
-        ($error as u64) << BUILTIN_BIT_SHIFT
-    };
-}
+// /// Builtin return values occupy the upper 32 bits
+// const BUILTIN_BIT_SHIFT: usize = 32;
+// macro_rules! to_builtin {
+//     ($error:expr) => {
+//         ($error as u64) << BUILTIN_BIT_SHIFT
+//     };
+// }
 
 // impl<T> From<T> for InstructionError
 // where

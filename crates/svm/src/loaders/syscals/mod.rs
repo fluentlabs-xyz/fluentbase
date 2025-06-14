@@ -1,14 +1,5 @@
-use crate::{common::PtrSizedType, error::Error, helpers::SyscallError};
 #[allow(deprecated)]
-use {
-    core::{
-        mem::{align_of, size_of},
-        slice::from_raw_parts_mut,
-    },
-    solana_feature_set as feature_set,
-
-    solana_rbpf::memory_region::{AccessType, MemoryMapping},
-};
+use {core::mem::size_of, solana_rbpf::memory_region::AccessType};
 
 pub mod cpi;
 
@@ -472,109 +463,109 @@ pub const MAX_CPI_ACCOUNT_INFOS: usize = 128;
 //     BuiltinProgram::new_loader(config, FunctionRegistry::default())
 // }
 
-fn address_is_aligned<T>(address: u64) -> bool {
-    (address as *mut T as usize)
-        .checked_rem(align_of::<T>())
-        .map(|rem| rem == 0)
-        .expect("T to be non-zero aligned")
-}
+// fn address_is_aligned<T>(address: u64) -> bool {
+//     (address as *mut T as usize)
+//         .checked_rem(align_of::<T>())
+//         .map(|rem| rem == 0)
+//         .expect("T to be non-zero aligned")
+// }
+//
+// fn translate(
+//     memory_mapping: &MemoryMapping,
+//     access_type: AccessType,
+//     vm_addr: u64,
+//     len: u32,
+// ) -> Result<u64, Error> {
+//     memory_mapping
+//         .map(access_type, vm_addr, len as u64)
+//         .map_err(|err| err.into())
+//         .into()
+// }
 
-fn translate(
-    memory_mapping: &MemoryMapping,
-    access_type: AccessType,
-    vm_addr: u64,
-    len: u32,
-) -> Result<u64, Error> {
-    memory_mapping
-        .map(access_type, vm_addr, len as u64)
-        .map_err(|err| err.into())
-        .into()
-}
+// fn translate_type_inner<'a, T>(
+//     memory_mapping: &MemoryMapping,
+//     access_type: AccessType,
+//     vm_addr: u64,
+//     check_aligned: bool,
+// ) -> Result<&'a mut T, Error> {
+//     let host_addr =
+//         translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u32)? as PtrSizedType;
+//     if !check_aligned {
+//         Ok(unsafe { core::mem::transmute::<PtrSizedType, &mut T>(host_addr) })
+//     } else if !address_is_aligned::<T>(host_addr as u64) {
+//         Err(SyscallError::UnalignedPointer.into())
+//     } else {
+//         Ok(unsafe { &mut *(host_addr as *mut T) })
+//     }
+// }
+// fn translate_type_mut<'a, T>(
+//     memory_mapping: &MemoryMapping,
+//     vm_addr: u64,
+//     check_aligned: bool,
+// ) -> Result<&'a mut T, Error> {
+//     translate_type_inner::<T>(memory_mapping, AccessType::Store, vm_addr, check_aligned)
+// }
+// fn translate_type<'a, T>(
+//     memory_mapping: &MemoryMapping,
+//     vm_addr: u64,
+//     check_aligned: bool,
+// ) -> Result<&'a T, Error> {
+//     translate_type_inner::<T>(memory_mapping, AccessType::Load, vm_addr, check_aligned)
+//         .map(|value| &*value)
+// }
 
-fn translate_type_inner<'a, T>(
-    memory_mapping: &MemoryMapping,
-    access_type: AccessType,
-    vm_addr: u64,
-    check_aligned: bool,
-) -> Result<&'a mut T, Error> {
-    let host_addr =
-        translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u32)? as PtrSizedType;
-    if !check_aligned {
-        Ok(unsafe { core::mem::transmute::<PtrSizedType, &mut T>(host_addr) })
-    } else if !address_is_aligned::<T>(host_addr as u64) {
-        Err(SyscallError::UnalignedPointer.into())
-    } else {
-        Ok(unsafe { &mut *(host_addr as *mut T) })
-    }
-}
-fn translate_type_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    check_aligned: bool,
-) -> Result<&'a mut T, Error> {
-    translate_type_inner::<T>(memory_mapping, AccessType::Store, vm_addr, check_aligned)
-}
-fn translate_type<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    check_aligned: bool,
-) -> Result<&'a T, Error> {
-    translate_type_inner::<T>(memory_mapping, AccessType::Load, vm_addr, check_aligned)
-        .map(|value| &*value)
-}
-
-fn translate_slice_inner<'a, T>(
-    memory_mapping: &MemoryMapping,
-    access_type: AccessType,
-    vm_addr: u64,
-    len: u64,
-    check_aligned: bool,
-) -> Result<&'a mut [T], Error> {
-    if len == 0 {
-        return Ok(&mut []);
-    }
-
-    let total_size = len.saturating_mul(size_of::<T>() as u64);
-    if isize::try_from(total_size).is_err() {
-        return Err(SyscallError::InvalidLength.into());
-    }
-
-    let host_addr = translate(memory_mapping, access_type, vm_addr, total_size as u32)?;
-
-    if check_aligned && !address_is_aligned::<T>(host_addr) {
-        return Err(SyscallError::UnalignedPointer.into());
-    }
-    Ok(unsafe { from_raw_parts_mut(host_addr as *mut T, len as usize) })
-}
-fn translate_slice_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    len: u64,
-    check_aligned: bool,
-) -> Result<&'a mut [T], Error> {
-    translate_slice_inner::<T>(
-        memory_mapping,
-        AccessType::Store,
-        vm_addr,
-        len,
-        check_aligned,
-    )
-}
-fn translate_slice<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    len: u64,
-    check_aligned: bool,
-) -> Result<&'a [T], Error> {
-    translate_slice_inner::<T>(
-        memory_mapping,
-        AccessType::Load,
-        vm_addr,
-        len,
-        check_aligned,
-    )
-    .map(|value| &*value)
-}
+// fn translate_slice_inner<'a, T>(
+//     memory_mapping: &MemoryMapping,
+//     access_type: AccessType,
+//     vm_addr: u64,
+//     len: u64,
+//     check_aligned: bool,
+// ) -> Result<&'a mut [T], Error> {
+//     if len == 0 {
+//         return Ok(&mut []);
+//     }
+//
+//     let total_size = len.saturating_mul(size_of::<T>() as u64);
+//     if isize::try_from(total_size).is_err() {
+//         return Err(SyscallError::InvalidLength.into());
+//     }
+//
+//     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size as u32)?;
+//
+//     if check_aligned && !address_is_aligned::<T>(host_addr) {
+//         return Err(SyscallError::UnalignedPointer.into());
+//     }
+//     Ok(unsafe { from_raw_parts_mut(host_addr as *mut T, len as usize) })
+// }
+// fn translate_slice_mut<'a, T>(
+//     memory_mapping: &MemoryMapping,
+//     vm_addr: u64,
+//     len: u64,
+//     check_aligned: bool,
+// ) -> Result<&'a mut [T], Error> {
+//     translate_slice_inner::<T>(
+//         memory_mapping,
+//         AccessType::Store,
+//         vm_addr,
+//         len,
+//         check_aligned,
+//     )
+// }
+// fn translate_slice<'a, T>(
+//     memory_mapping: &MemoryMapping,
+//     vm_addr: u64,
+//     len: u64,
+//     check_aligned: bool,
+// ) -> Result<&'a [T], Error> {
+//     translate_slice_inner::<T>(
+//         memory_mapping,
+//         AccessType::Load,
+//         vm_addr,
+//         len,
+//         check_aligned,
+//     )
+//     .map(|value| &*value)
+// }
 
 // /// Take a virtual pointer to a string (points to SBF VM memory space), translate it
 // /// pass it to a user-defined work function

@@ -127,7 +127,6 @@ impl FeeStructure {
     }
 
     /// Calculate fee for `SanitizedMessage`
-    #[cfg(not(target_os = "solana"))]
     #[deprecated(
         since = "2.1.0",
         note = "Please use `solana_fee::calculate_fee` instead."
@@ -152,7 +151,6 @@ impl FeeStructure {
     }
 
     /// Calculate fee details for `SanitizedMessage`
-    #[cfg(not(target_os = "solana"))]
     #[deprecated(
         since = "2.1.0",
         note = "Please use `solana_fee::calculate_fee_details` instead."
