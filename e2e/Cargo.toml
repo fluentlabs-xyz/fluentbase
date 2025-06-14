@@ -38,9 +38,7 @@ fluentbase-examples-storage = { path = "../examples/storage" }
 fluentbase-examples-tiny-keccak = { path = "../examples/tiny-keccak" }
 
 rwasm = { workspace = true, features = ["more-max-pages"] }
-revm = { workspace = true, features = [
-    #    "wasmtime"
-] }
+revm = { workspace = true }
 hex = { workspace = true }
 hex-literal = { workspace = true }
 alloy-sol-types = { workspace = true }
@@ -51,7 +49,14 @@ rand = { version = "0.9.1" }
 [build-dependencies]
 
 [features]
-default = ["std", "fluentbase-runtime/debug-print"]
+default = [
+    "std",
+    "fluentbase-runtime/debug-print",
+    #    "wasmtime"
+]
+wasmtime = [
+    "revm/wasmtime"
+]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
