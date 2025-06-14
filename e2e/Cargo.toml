@@ -39,7 +39,7 @@ fluentbase-examples-tiny-keccak = { path = "../examples/tiny-keccak" }
 
 rwasm = { workspace = true, features = ["more-max-pages"] }
 revm = { workspace = true, features = [
-    "wasmtime"
+    #    "wasmtime"
 ] }
 hex = { workspace = true }
 hex-literal = { workspace = true }
