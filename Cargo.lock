@@ -2554,8 +2554,6 @@ name = "fluentbase-e2e"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
- "cargo_metadata",
- "fluentbase-build",
  "fluentbase-codec",
  "fluentbase-contracts-nitro",
  "fluentbase-examples-abi-solidity",

@@ -39,7 +39,7 @@ fluentbase-examples-tiny-keccak = { path = "../examples/tiny-keccak" }
 
 rwasm = { workspace = true, features = ["more-max-pages"] }
 revm = { workspace = true, features = [
-    "wasmtime"
+    #    "wasmtime"
 ] }
 hex = { workspace = true }
 hex-literal = { workspace = true }
@@ -47,11 +47,8 @@ alloy-sol-types = { workspace = true }
 wat = { version = "1.223.0" }
 rand = { version = "0.9.1" }
 
-#tikv-jemallocator = "0.6.0"
 
 [build-dependencies]
-fluentbase-build = { workspace = true }
-cargo_metadata = "0.19.1"
 
 [features]
 default = ["std", "fluentbase-runtime/debug-print"]
