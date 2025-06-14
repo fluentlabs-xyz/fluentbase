@@ -6,14 +6,14 @@ pub enum PtrType {
 }
 
 impl PtrType {
-    pub fn as_ref(&self) -> &u64 {
+    pub fn inner_as_ref(&self) -> &u64 {
         match self {
             PtrType::RcStartPtr(v) => v,
             PtrType::RcBoxStartPtr(v) => v,
             PtrType::PtrToValuePtr(v) => v,
         }
     }
-    pub fn as_ref_mut(&mut self) -> &mut u64 {
+    pub fn inner_as_ref_mut(&mut self) -> &mut u64 {
         match self {
             PtrType::RcStartPtr(v) => v,
             PtrType::RcBoxStartPtr(v) => v,
@@ -21,10 +21,10 @@ impl PtrType {
         }
     }
     pub fn visit_inner<F: Fn(&u64)>(&mut self, f: F) {
-        f(self.as_ref());
+        f(self.inner_as_ref());
     }
     pub fn visit_inner_mut<F: Fn(&mut u64)>(&mut self, f: F) {
-        f(self.as_ref_mut());
+        f(self.inner_as_ref_mut());
     }
     pub fn visit_mut<F: Fn(&mut Self)>(&mut self, f: F) {
         f(self);
@@ -41,7 +41,7 @@ mod tests {
         let inner_val2 = 13;
         let mut ptr1 = PtrType::PtrToValuePtr(inner_val1);
         ptr1.visit_inner_mut(|v| *v = inner_val2);
-        assert_eq!(ptr1.as_ref(), &inner_val2);
+        assert_eq!(ptr1.inner_as_ref(), &inner_val2);
         assert!(matches!(ptr1, PtrType::PtrToValuePtr(_)));
 
         let ptr2 = PtrType::RcBoxStartPtr(inner_val1);

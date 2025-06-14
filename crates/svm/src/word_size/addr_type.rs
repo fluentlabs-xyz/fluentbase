@@ -98,7 +98,23 @@ impl AddrType {
         f(self)
     }
 
-    pub fn try_transform_to_host<F: FnMut(u64) -> u64>(
+    pub fn try_transform_to_host(&mut self, addr: u64) -> Result<(), RuntimeError> {
+        if self.is_vm().is_err() {
+            return Err(RuntimeError::InvalidTransformation);
+        }
+        *self = AddrType::Host(addr);
+        Ok(())
+    }
+
+    pub fn try_transform_to_vm(&mut self, addr: u64) -> Result<(), RuntimeError> {
+        if self.is_host().is_err() {
+            return Err(RuntimeError::InvalidTransformation);
+        }
+        *self = AddrType::Vm(addr);
+        Ok(())
+    }
+
+    pub fn try_transform_to_host_with<F: FnMut(u64) -> u64>(
         &mut self,
         mut f: F,
     ) -> Result<(), RuntimeError> {
@@ -109,7 +125,7 @@ impl AddrType {
         Ok(())
     }
 
-    pub fn try_transform_to_vm<F: FnMut(&u64) -> u64>(
+    pub fn try_transform_to_vm_with<F: FnMut(&u64) -> u64>(
         &mut self,
         mut f: F,
     ) -> Result<(), RuntimeError> {

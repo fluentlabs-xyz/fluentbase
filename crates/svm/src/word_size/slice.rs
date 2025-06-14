@@ -203,7 +203,7 @@ impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
         let mut ptr = SliceFatPtr64Repr::from_fat_ptr_slice(byte_repr);
         let len = ptr.total_size_bytes(Self::ITEM_SIZE_BYTES);
         ptr.first_item_addr
-            .try_transform_to_host(|v| map_addr!(memory_mapping_helper.clone(), v, len))
+            .try_transform_to_host_with(|v| map_addr!(memory_mapping_helper.clone(), v, len))
             .expect("failed to transform addr to host");
 
         let result = Self::new(memory_mapping_helper, ptr.first_item_addr, ptr.len);
