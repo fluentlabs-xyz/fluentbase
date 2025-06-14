@@ -87,6 +87,15 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     }
     Ok(result_accounts)
 }
+pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
+    sdk: &mut SDK,
+    message: &[u8],
+    flush_result_accounts: bool,
+    sapi: &mut Option<&mut SAPI>,
+) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
+    let message = deserialize(message)?;
+    exec_svm_message(sdk, sapi, message, flush_result_accounts)
+}
 
 // pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: StorageAPI>(
 //     sdk: &mut SDK,

@@ -1,6 +1,6 @@
 mod tests {
     use crate::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
+        account::{AccountSharedData, ReadableAccount},
         common::{calculate_max_chunk_size, pubkey_from_address},
         fluentbase::{
             common::{process_svm_result, BatchMessage, MemStorage},

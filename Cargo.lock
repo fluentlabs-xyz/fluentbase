@@ -5874,6 +5874,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?tag=v0.1.0-dev#33cf108c282f7f8636635b37fc1663fd265f0083"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -5892,6 +5893,7 @@ dependencies = [
 [[package]]
 name = "rwasm-legacy"
 version = "0.30.0"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?tag=v0.1.0-dev#33cf108c282f7f8636635b37fc1663fd265f0083"
 dependencies = [
  "byteorder",
  "downcast-rs 1.2.1",

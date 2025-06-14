@@ -4,8 +4,7 @@ mod tests {
         common::{calculate_max_chunk_size, pubkey_from_address},
         fluentbase::{
             common::{BatchMessage, MemStorage},
-            helpers::exec_encoded_svm_message,
-            helpers_v2::exec_encoded_svm_batch_message,
+            helpers_v2::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
         },
         helpers::{storage_read_account_data, storage_write_account_data},
         loaders::bpf_loader_v4::get_state,
