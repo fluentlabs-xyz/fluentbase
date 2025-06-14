@@ -20,7 +20,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use crate::{hash::Hash, solana_program::sysvar::Sysvar};
-use alloc::{boxed::Box, collections::BinaryHeap, string::String, vec::Vec};
+use alloc::{collections::BinaryHeap, vec::Vec};
 use core::{cmp::Ordering, iter::FromIterator, ops::Deref};
 use serde::{Deserialize, Serialize};
 use solana_fee_calculator::FeeCalculator;

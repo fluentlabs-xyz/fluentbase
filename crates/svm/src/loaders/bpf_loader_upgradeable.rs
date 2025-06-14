@@ -9,12 +9,10 @@ use crate::{
         PACKET_DATA_SIZE,
     },
     context::{IndexOfAccount, InvokeContext},
-    create_vm,
     declare_builtin_function,
     deploy_program,
     // loaded_programs::{LoadedProgram, LoadedProgramType},
     native_loader,
-    serialization,
     solana_program::{
         bpf_loader_upgradeable,
         bpf_loader_upgradeable::UpgradeableLoaderState,
@@ -27,27 +25,19 @@ use crate::{
 };
 use crate::{
     common::UPGRADEABLE_LOADER_COMPUTE_UNITS,
-    context::{InstructionContext, TransactionContext},
     loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
     loaders::execute::execute,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use fluentbase_sdk::SharedAPI;
-use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 use solana_bincode::limited_deserialize;
 use solana_feature_set::{
-    bpf_account_data_direct_mapping,
     enable_bpf_loader_extend_program_ix,
     enable_bpf_loader_set_authority_checked_ix,
 };
 use solana_instruction::error::InstructionError;
-use solana_program_entrypoint::SUCCESS;
-use solana_pubkey::{declare_id, Pubkey, PubkeyError};
-use solana_rbpf::{
-    elf::Executable,
-    error::{EbpfError, ProgramResult},
-    memory_region::{AccessType, MemoryMapping},
-};
+use solana_pubkey::{Pubkey, PubkeyError};
+use solana_rbpf::memory_region::MemoryMapping;
 
 declare_builtin_function!(
     Entrypoint<SDK: SharedAPI>,
@@ -257,8 +247,6 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
     // Program Management Instruction
     if native_loader::check_id(program_account.get_owner()) {
         drop(program_account);
-        let program_id =
-            instruction_context.get_last_program_key(&invoke_context.transaction_context)?;
         let program_id =
             instruction_context.get_last_program_key(&invoke_context.transaction_context)?;
         return if bpf_loader_upgradeable::check_id(program_id) {

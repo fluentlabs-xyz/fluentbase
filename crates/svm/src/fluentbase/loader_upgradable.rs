@@ -20,7 +20,6 @@ use crate::{
 };
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
-    debug_log,
     BlockContextReader,
     Bytes,
     ContractContextReader,
@@ -30,8 +29,6 @@ use fluentbase_sdk::{
 };
 
 pub fn deploy(mut sdk: impl SharedAPI) {
-    debug_log!();
-    debug_log!("block_number: {:?}", sdk.context().block_number());
     let mut mem_storage = MemStorage::new();
     // input must be solana elf bytes
     let elf_program_bytes: Bytes = sdk.input().into();
@@ -52,20 +49,6 @@ pub fn deploy(mut sdk: impl SharedAPI) {
         0,
         &system_program::id(),
     );
-    debug_log!("contract_caller_balance {:?}", contract_caller_balance);
-    debug_log!(
-        "payer_account_data.lamports {:?}",
-        payer_account_data.lamports()
-    );
-
-    debug_log!("contract_caller {}", sdk.context().contract_caller());
-    debug_log!("block_coinbase {}", sdk.context().block_coinbase());
-    debug_log!("contract_address {}", sdk.context().contract_address());
-    debug_log!("tx_origin {}", sdk.context().tx_origin());
-    debug_log!(
-        "contract_bytecode_address {}",
-        sdk.context().contract_bytecode_address()
-    );
 
     // setup storage
     storage_write_account_data(
@@ -81,7 +64,6 @@ pub fn deploy(mut sdk: impl SharedAPI) {
     )
     .unwrap();
     storage_write_account_data(&mut mem_storage, &pk_payer, &payer_account_data).unwrap();
-    debug_log!();
 
     let mut batch_message = BatchMessage::new(None);
 
@@ -117,12 +99,12 @@ pub fn deploy(mut sdk: impl SharedAPI) {
     batch_message.append_one(message);
 
     let result = exec_svm_batch_message(&mut sdk, batch_message, true, &mut Some(&mut mem_storage));
-    match &result {
-        Err(e) => {
-            debug_log!("deploy: result error: {:?}", e)
-        }
-        _ => {}
-    }
+    // match &result {
+    //     Err(e) => {
+    //         debug_log!("deploy: result error: {:?}", e)
+    //     }
+    //     _ => {}
+    // }
     let (result_accounts, exit_code) = process_svm_result(result);
     if exit_code != ExitCode::Ok.into_i32() {
         panic!(
@@ -138,34 +120,15 @@ pub fn deploy(mut sdk: impl SharedAPI) {
     // TODO save updated accounts (from result_accounts): payer, exec, program_data
     let payer_account_data =
         storage_read_account_data(&mem_storage, &pk_payer).expect("no payer account"); // caller
-    debug_log!(
-        "deploy: payer_account_data.lamports {}",
-        payer_account_data.lamports()
-    );
     let exec_account_data =
         storage_read_account_data(&mem_storage, &pk_exec).expect("no exec account"); // contract itself
     let programdata_account_data =
         storage_read_account_data(&mem_storage, &pk_programdata).expect("no programdata account");
-    debug_log!(
-        "deploy: pk_exec {:x?} exec_account_data {} {:x?}",
-        &pk_exec.as_ref(),
-        exec_account_data.data().len(),
-        &exec_account_data
-    );
-    debug_log!(
-        "deploy: pk_programdata {:x?} programdata_account_data {} {:x?}",
-        &pk_programdata.as_ref(),
-        programdata_account_data.data().len(),
-        &programdata_account_data
-    );
     let preimage: Bytes = serialize(&programdata_account_data).unwrap().into();
-    debug_log!("deploy: preimage.len: {}", preimage.len());
     let _ = write_protected_preimage(&mut sdk, preimage);
 }
 
 pub fn main(mut sdk: impl SharedAPI) {
-    debug_log!();
-    debug_log!("main: block_number: {:?}", sdk.context().block_number());
     let input = sdk.input();
     let preimage = read_protected_preimage(&sdk);
 
@@ -186,16 +149,6 @@ pub fn main(mut sdk: impl SharedAPI) {
         true,
         Default::default(),
     );
-    debug_log!(
-        "main: exec_account_data {} {:x?}",
-        exec_account_data.data().len(),
-        &exec_account_data
-    );
-    debug_log!(
-        "main: programdata_account_data {} {:x?}",
-        programdata_account_data.data().len(),
-        &programdata_account_data
-    );
 
     storage_write_account_data(
         &mut mem_storage,
@@ -215,34 +168,13 @@ pub fn main(mut sdk: impl SharedAPI) {
     storage_write_account_data(&mut mem_storage, &pk_programdata, &programdata_account_data)
         .expect("failed to write programdata account");
 
-    debug_log!("main: pk_exec {:x?}", &pk_exec.as_ref());
-    debug_log!("main: pk_programdata {:x?}", &pk_programdata.as_ref());
-
-    debug_log!("main: contract_caller {}", sdk.context().contract_caller());
-    debug_log!("main: block_coinbase {}", sdk.context().block_coinbase());
-    debug_log!(
-        "main: contract_address {}",
-        sdk.context().contract_address()
-    );
-    debug_log!("main1: tx_origin {}", sdk.context().tx_origin());
-    debug_log!(
-        "main: contract_bytecode_address {}",
-        sdk.context().contract_bytecode_address()
-    );
-
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
-    debug_log!(
-        "input.len {} input '{:?}' result: {:?}",
-        preimage.len(),
-        preimage,
-        &result
-    );
-    match &result {
-        Err(e) => {
-            debug_log!("main: result error: {:?}", e)
-        }
-        _ => {}
-    }
+    // match &result {
+    //     Err(e) => {
+    //         debug_log!("main: result error: {:?}", e)
+    //     }
+    //     _ => {}
+    // }
     let (result_accounts, exit_code) = process_svm_result(result);
     if exit_code != ExitCode::Ok.into_i32() {
         panic!(

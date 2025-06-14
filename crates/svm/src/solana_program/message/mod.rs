@@ -41,23 +41,18 @@ pub mod compiled_keys;
 pub mod legacy;
 pub mod versions;
 
-#[cfg(not(target_os = "solana"))]
 #[path = ""]
 mod non_bpf_modules {
     mod account_keys;
     mod address_loader;
     mod sanitized;
-    // mod versions;
 
     pub use account_keys::*;
-    pub use address_loader::*;
     pub use sanitized::*;
-    // pub use versions::*;
 }
 
 pub use compiled_keys::CompileError;
 pub use legacy::Message;
-#[cfg(not(target_os = "solana"))]
 pub use non_bpf_modules::*;
 use serde::{Deserialize, Serialize};
 
@@ -97,7 +92,6 @@ pub const MESSAGE_HEADER_LENGTH: usize = 3;
 /// access the same read-write accounts are processed sequentially.
 ///
 /// [PoH]: https://docs.solanalabs.com/consensus/synchronization
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(
     Serialize,
     Deserialize,

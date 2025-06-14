@@ -1,6 +1,5 @@
 use crate::{
     account::AccountSharedData,
-    common::{evm_address_from_pubkey, is_evm_pubkey},
     error::SvmError,
     helpers::{storage_read_account_data, storage_write_account_data},
     native_loader,
@@ -9,9 +8,8 @@ use crate::{
     system_program,
 };
 use alloc::vec::Vec;
-use fluentbase_sdk::{debug_log, ExitCode, SharedAPI, StorageAPI, SyscallResult, U256};
+use fluentbase_sdk::{ExitCode, SharedAPI, StorageAPI, SyscallResult, U256};
 use hashbrown::{HashMap, HashSet};
-use itertools::Itertools;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
@@ -98,14 +96,6 @@ pub(crate) fn flush_accounts<SDK: SharedAPI, SAPI: StorageAPI>(
     accounts: &HashMap<Pubkey, AccountSharedData>,
 ) -> Result<(), SvmError> {
     for (pk, data) in accounts {
-        debug_log!(
-            "flushing account (sdk?:{}) {:?} ({:x?}) is_evm_pubkey:{} address {}",
-            sapi.is_none(),
-            pk,
-            pk.to_bytes(),
-            is_evm_pubkey(&pk),
-            evm_address_from_pubkey::<false>(&pk)?
-        );
         select_sapi!(sapi, sdk, |storage| {
             storage_write_account_data(storage, pk, data)
         })?;

@@ -29,9 +29,9 @@ pub trait StorageSlotCalculator {
     fn storage_slot(&self, slot: u32) -> U256;
 }
 
-pub(crate) struct StorageChunksWriter<SAPI, SC> {
-    pub(crate) _phantom: PhantomData<SAPI>,
-    pub(crate) slot_calc: Rc<SC>,
+pub struct StorageChunksWriter<SAPI, SC> {
+    pub _phantom: PhantomData<SAPI>,
+    pub slot_calc: Rc<SC>,
 }
 impl<'a, SAPI: StorageAPI, SC: StorageSlotCalculator> FixedChunksWriter<'a, SAPI, SC>
     for StorageChunksWriter<SAPI, SC>
@@ -139,7 +139,7 @@ pub trait VariableLengthDataWriter<'a, SAPI: StorageAPI, SC: StorageSlotCalculat
             return Err(data_len.status);
         }
         let data_len = data_len.data;
-        let data_len: usize = data_len.try_into().map_err(|e| ExitCode::Err)?;
+        let data_len: usize = data_len.try_into().map_err(|_e| ExitCode::Err)?;
         if data_len <= 0 {
             return Ok(());
         }
@@ -161,7 +161,7 @@ pub trait VariableLengthDataWriter<'a, SAPI: StorageAPI, SC: StorageSlotCalculat
     }
 }
 
-pub(crate) struct IndexedHash(Bytes32);
+pub struct IndexedHash(Bytes32);
 
 impl Deref for IndexedHash {
     type Target = Bytes32;
@@ -186,33 +186,33 @@ impl Into<U256> for IndexedHash {
 const U32_SIZE: usize = size_of::<u32>();
 
 impl IndexedHash {
-    pub(crate) fn from_hash(hash: &Bytes32) -> IndexedHash {
+    pub fn from_hash(hash: &Bytes32) -> IndexedHash {
         IndexedHash(hash.clone())
     }
 
-    pub(crate) fn from_data_slice(data: &[u8]) -> IndexedHash {
-        let hash = keccak256(data);
-        IndexedHash(hash.0)
-    }
+    // pub fn from_data_slice(data: &[u8]) -> IndexedHash {
+    //     let hash = keccak256(data);
+    //     IndexedHash(hash.0)
+    // }
+    //
+    // pub fn update_with_column(mut self, column: u32) -> IndexedHash {
+    //     if column == 0 {
+    //         let mut preimage = vec![0u8; 32 + U32_SIZE];
+    //         preimage[..U32_SIZE].copy_from_slice(&column.to_le_bytes());
+    //         preimage[U32_SIZE..].copy_from_slice(self.0.as_slice());
+    //         self.0 = keccak256(&preimage).0;
+    //     } else {
+    //         self.0.as_mut_slice()[..U32_SIZE].copy_from_slice(&column.to_le_bytes());
+    //     }
+    //     self
+    // }
+    //
+    // pub fn compute_by_column(&self, column: u32) -> IndexedHash {
+    //     let res = IndexedHash::from_hash(&self.0);
+    //     res.update_with_column(column)
+    // }
 
-    pub(crate) fn update_with_column(mut self, column: u32) -> IndexedHash {
-        if column == 0 {
-            let mut preimage = vec![0u8; 32 + U32_SIZE];
-            preimage[..U32_SIZE].copy_from_slice(&column.to_le_bytes());
-            preimage[U32_SIZE..].copy_from_slice(self.0.as_slice());
-            self.0 = keccak256(&preimage).0;
-        } else {
-            self.0.as_mut_slice()[..U32_SIZE].copy_from_slice(&column.to_le_bytes());
-        }
-        self
-    }
-
-    pub(crate) fn compute_by_column(&self, column: u32) -> IndexedHash {
-        let res = IndexedHash::from_hash(&self.0);
-        res.update_with_column(column)
-    }
-
-    pub(crate) fn update_with_column_index(mut self, column: u32, index: u32) -> IndexedHash {
+    pub fn update_with_column_index(mut self, column: u32, index: u32) -> IndexedHash {
         if index == 0 {
             let mut preimage = vec![0u8; 32 + U32_SIZE * 2];
             preimage[..U32_SIZE].copy_from_slice(&column.to_le_bytes());
@@ -225,14 +225,14 @@ impl IndexedHash {
         self
     }
 
-    pub(crate) fn compute_by_column_index(&self, column: u32, index: u32) -> IndexedHash {
-        let res = IndexedHash::from_hash(&self.0);
-        res.update_with_column_index(column, index)
-    }
+    // pub fn compute_by_column_index(&self, column: u32, index: u32) -> IndexedHash {
+    //     let res = IndexedHash::from_hash(&self.0);
+    //     res.update_with_column_index(column, index)
+    // }
 
-    pub(crate) fn inner(&self) -> &Bytes32 {
-        &self.0
-    }
+    // pub fn inner(&self) -> &Bytes32 {
+    //     &self.0
+    // }
 }
 
 pub trait StorageSlotHardcoded {

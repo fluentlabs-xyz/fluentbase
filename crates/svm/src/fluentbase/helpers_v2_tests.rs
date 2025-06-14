@@ -1,10 +1,11 @@
 mod tests {
     use crate::{
         account::{AccountSharedData, ReadableAccount},
-        common::{calculate_max_chunk_size, pubkey_from_address, pubkey_from_pubkey},
+        common::{calculate_max_chunk_size, pubkey_from_address},
         fluentbase::{
             common::{BatchMessage, MemStorage},
-            helpers_v2::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
+            helpers::exec_encoded_svm_message,
+            helpers_v2::exec_encoded_svm_batch_message,
         },
         helpers::{storage_read_account_data, storage_write_account_data},
         loaders::bpf_loader_v4::get_state,
@@ -20,7 +21,6 @@ mod tests {
         system_program,
         test_helpers::load_program_account_from_elf_file,
     };
-    use byteorder::WriteBytesExt;
     use core::str::from_utf8;
     use fluentbase_sdk::{
         address,
@@ -30,16 +30,12 @@ mod tests {
         SharedAPI,
         SharedContextInputV1,
         StorageAPI,
-        B256,
-        U256,
     };
     use fluentbase_sdk_testing::HostTestingContext;
-    use fluentbase_types::calc_create2_address_no_sdk;
     use hashbrown::HashMap;
-    use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
     use solana_bincode::serialize;
     use solana_instruction::AccountMeta;
-    use solana_pubkey::{Pubkey, SVM_ADDRESS_PREFIX};
+    use solana_pubkey::Pubkey;
 
     fn main_single_message<SAPI: StorageAPI>(
         mut sdk: impl SharedAPI,

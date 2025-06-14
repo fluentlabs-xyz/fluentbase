@@ -14,7 +14,7 @@ use crate::{
 };
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use core::sync::atomic::Ordering;
-use fluentbase_sdk::{debug_log, SharedAPI};
+use fluentbase_sdk::SharedAPI;
 use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
@@ -25,7 +25,7 @@ use solana_rbpf::{
     error::ProgramResult,
     memory_region::{MemoryMapping, MemoryRegion},
     program::{BuiltinProgram, FunctionRegistry},
-    vm::{Config, ContextObject, EbpfVm},
+    vm::{Config, EbpfVm},
 };
 
 pub const DEFAULT_COMPUTE_UNITS: u64 = 2_000;
@@ -151,7 +151,7 @@ pub fn create_vm_exec_program<'a, SDK: SharedAPI>(
         MemoryRegion::new_writable(heap.as_slice_mut(), ebpf::MM_HEAP_START),
     ];
     // let log_collector = invoke_context.get_log_collector();
-    let memory_mapping = MemoryMapping::new(regions, config, sbpf_version).map_err(|err| {
+    let memory_mapping = MemoryMapping::new(regions, config, sbpf_version).map_err(|_err| {
         // ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", err);
         Box::new(InstructionError::ProgramEnvironmentSetupFailure)
     })?;
@@ -436,7 +436,7 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
 
     let environments = invoke_context
         .get_environments_for_slot(effective_slot)
-        .map_err(|err| {
+        .map_err(|_err| {
             // This will never fail since the epoch schedule is already configured.
             // ic_logger_msg!(log_collector, "Failed to get runtime environment {}", err);
             InstructionError::InvalidArgument
@@ -455,9 +455,8 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
         buffer.get_data().len(),
         // &mut load_program_metrics,
     )
-    .map_err(|err| {
+    .map_err(|_err| {
         // ic_logger_msg!(log_collector, "{}", err);
-        // debug_log!("error while LoadedProgram::new: {}", err);
         InstructionError::InvalidAccountData
     })?;
     // load_program_metrics.submit_datapoint(&mut invoke_context.timings);
@@ -629,21 +628,12 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
     invoke_context: &mut InvokeContext<SDK>,
 ) -> Result<u64, Error> {
     // let log_collector = invoke_context.get_log_collector();
-    debug_log!("loader_v4.process_instruction_inner1");
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_last_program_key(transaction_context)?;
-    debug_log!(
-        "loader_v4.process_instruction_inner2 program_id {}",
-        program_id
-    );
     if loader_v4::check_id(program_id) {
         invoke_context.consume_checked(DEFAULT_COMPUTE_UNITS)?;
-        debug_log!(
-            "loader_v4.process_instruction_inner3 instruction_data {:x?}",
-            instruction_data
-        );
         match limited_deserialize_packet_size(instruction_data)? {
             LoaderV4Instruction::Write { offset, bytes } => {
                 process_instruction_write(invoke_context, offset, bytes)
@@ -662,30 +652,23 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
     } else {
         let program = instruction_context.try_borrow_last_program_account(transaction_context)?;
         let program_owner = program.get_owner();
-        debug_log!("instruction_data {:x?}", instruction_data);
         if !loader_v4::check_id(program_owner) {
-            debug_log!("Program not owned by loader");
             return Err(Box::new(InstructionError::InvalidAccountOwner));
         }
         if program.get_data().is_empty() {
-            debug_log!("Program is uninitialized");
             return Err(Box::new(InstructionError::InvalidAccountData));
         }
         let state = get_state(program.get_data())?;
         if matches!(state.status, LoaderV4Status::Retracted) {
-            debug_log!("Program is not deployed");
             return Err(Box::new(InstructionError::InvalidArgument));
         }
-        debug_log!();
+
         // let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
         let loaded_program = invoke_context
             .program_cache_for_tx_batch
             .find(program.get_key())
-            .ok_or_else(|| {
-                debug_log!("Program is not cached");
-                InstructionError::InvalidAccountData
-            })?;
-        debug_log!();
+            .ok_or_else(|| InstructionError::InvalidAccountData)?;
+
         // get_or_create_executor_time.stop();
         // saturating_add_assign!(
         //     invoke_context.timings.get_or_create_executor_us,
@@ -705,7 +688,6 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
                 Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn core::error::Error>)
             }
             ProgramCacheEntryType::Loaded(executable) => {
-                debug_log!();
                 execute(executable.clone(), invoke_context)
             }
             _ => {

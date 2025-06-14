@@ -24,7 +24,6 @@ pub mod slot_hashes;
 pub mod slot_history;
 pub mod stake_history;
 use crate::solana_program::program_stubs;
-use alloc::{boxed::Box, vec::Vec};
 use bincode::{de, enc};
 use solana_account_info::AccountInfo;
 use solana_bincode::{deserialize, serialize_into, serialized_size};
@@ -127,10 +126,6 @@ macro_rules! impl_sysvar_get {
             let mut var = Self::default();
             let var_addr = &mut var as *mut _ as *mut u8;
 
-            #[cfg(target_os = "solana")]
-            let result = unsafe { $crate::syscalls::$syscall_name(var_addr) };
-
-            #[cfg(not(target_os = "solana"))]
             let result = $crate::solana_program::program_stubs::$syscall_name(var_addr);
 
             match result {
@@ -158,10 +153,6 @@ fn get_sysvar(
     let sysvar_id = sysvar_id as *const _ as *const u8;
     let var_addr = dst as *mut _ as *mut u8;
 
-    #[cfg(target_os = "solana")]
-    let result = unsafe { crate::syscalls::sol_get_sysvar(sysvar_id, var_addr, offset, length) };
-
-    #[cfg(not(target_os = "solana"))]
     let result = program_stubs::sol_get_sysvar(sysvar_id, var_addr, offset, length);
 
     match result {

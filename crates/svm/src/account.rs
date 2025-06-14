@@ -308,16 +308,16 @@ fn shared_new_data_with_space<T: serde::Serialize, U: WritableAccount>(
     Ok(account)
 }
 
-fn shared_new_ref_data_with_space<T: serde::Serialize, U: WritableAccount>(
-    lamports: u64,
-    state: &T,
-    space: usize,
-    owner: &Pubkey,
-) -> Result<RefCell<U>, bincode::error::EncodeError> {
-    Ok(RefCell::new(shared_new_data_with_space::<T, U>(
-        lamports, state, space, owner,
-    )?))
-}
+// fn shared_new_ref_data_with_space<T: serde::Serialize, U: WritableAccount>(
+//     lamports: u64,
+//     state: &T,
+//     space: usize,
+//     owner: &Pubkey,
+// ) -> Result<RefCell<U>, bincode::error::EncodeError> {
+//     Ok(RefCell::new(shared_new_data_with_space::<T, U>(
+//         lamports, state, space, owner,
+//     )?))
+// }
 
 /// An Account with data that is stored on chain
 /// This will be the in-memory representation of the 'Account' struct data.

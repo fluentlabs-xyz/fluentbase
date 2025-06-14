@@ -38,7 +38,7 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec::Vec};
-use fluentbase_sdk::{debug_log, BlockContextReader, SharedAPI, StorageAPI};
+use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;
@@ -71,7 +71,6 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sapi: &mut Option<&mut SAPI>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let batch_message = deserialize(batch_message)?;
-    debug_log!("batch_message: {:?}", &batch_message);
     exec_svm_batch_message(sdk, batch_message, flush_result_accounts, sapi)
 }
 pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
@@ -87,15 +86,6 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
         }
     }
     Ok(result_accounts)
-}
-pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
-    sdk: &mut SDK,
-    message: &[u8],
-    flush_result_accounts: bool,
-    sapi: &mut Option<&mut SAPI>,
-) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
-    let message = deserialize(message)?;
-    exec_svm_message(sdk, sapi, message, flush_result_accounts)
 }
 
 // pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: StorageAPI>(
@@ -376,18 +366,9 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
     message: &impl SVMMessage,
     sapi: &mut Option<&mut SAPI>,
     feature_set: &FeatureSet,
-    // rent_collector,
     program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
     loaded_programs: &ProgramCacheForTxBatch<SDK>,
-) -> Result<
-    ((
-        // SanitizedMessage,
-        Vec<(Pubkey, AccountSharedData)>,
-        Vec<Vec<IndexOfAccount>>,
-        // Vec<Pubkey>,
-    )),
-    SvmError,
-> {
+) -> Result<(Vec<(Pubkey, AccountSharedData)>, Vec<Vec<IndexOfAccount>>), SvmError> {
     let account_keys = message.account_keys();
     let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::with_capacity(account_keys.len());
     let mut accounts_found = Vec::with_capacity(account_keys.len());
@@ -505,14 +486,12 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
                 .iter()
                 .any(|(key, _)| key == owner_id)
             {
-                // if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
                 if let Ok(owner_account) =
                     select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, owner_id) })
                 {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
                     {
-                        // error_metrics.invalid_program_for_execution += 1;
                         return Err(TransactionError::InvalidProgramForExecution);
                     }
                     // accumulate_and_check_loaded_account_data_size(
@@ -523,7 +502,6 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
                     // )?;
                     accounts.push((*owner_id, owner_account));
                 } else {
-                    // error_metrics.account_not_found += 1;
                     return Err(TransactionError::ProgramAccountNotFound);
                 }
             }
@@ -531,52 +509,41 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
         })
         .collect::<Result<Vec<Vec<IndexOfAccount>>, TransactionError>>()?;
 
-    Ok((
-        // message,
-        accounts,
-        program_indices,
-        // program_accounts_to_warmup.into_iter().cloned().collect(),
-    ))
+    Ok((accounts, program_indices))
 }
 
 fn filter_executable_program_accounts<'a, SDK: SharedAPI, SAPI: StorageAPI>(
-    // callbacks: &CB,
     sdk: &SDK,
     sapi: &mut Option<&mut SAPI>,
     txs: &[&impl SVMMessage],
-    // validation_results: &[TransactionValidationResult],
     program_owners: &'a [Pubkey],
 ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
     let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> = HashMap::new();
 
     txs.iter().for_each(|etx| {
-        if let tx = etx {
-            tx.account_keys()
-                .iter()
-                .for_each(|key| match result.entry(*key) {
-                    Entry::Occupied(mut entry) => {
-                        let (_, count) = entry.get_mut();
-                        saturating_add_assign!(*count, 1);
-                    }
-                    Entry::Vacant(entry) => {
-                        // if let Some(index) = callbacks.account_matches_owners(key, program_owners) {
-                        let account =
-                            select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, key) });
-                        if let Ok(acc) = account {
-                            // if acc.lamports() <= 0 {
-                            //     return;
-                            // }
-                            if let Some(index) =
-                                program_owners.iter().position(|k| k == acc.owner())
-                            {
-                                if let Some(owner) = program_owners.get(index) {
-                                    entry.insert((owner, 1));
-                                }
+        etx.account_keys()
+            .iter()
+            .for_each(|key| match result.entry(*key) {
+                Entry::Occupied(mut entry) => {
+                    let (_, count) = entry.get_mut();
+                    saturating_add_assign!(*count, 1);
+                }
+                Entry::Vacant(entry) => {
+                    // if let Some(index) = callbacks.account_matches_owners(key, program_owners) {
+                    let account =
+                        select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, key) });
+                    if let Ok(acc) = account {
+                        // if acc.lamports() <= 0 {
+                        //     return;
+                        // }
+                        if let Some(index) = program_owners.iter().position(|k| k == acc.owner()) {
+                            if let Some(owner) = program_owners.get(index) {
+                                entry.insert((owner, 1));
                             }
                         }
                     }
-                });
-        }
+                }
+            });
     });
     result
 }

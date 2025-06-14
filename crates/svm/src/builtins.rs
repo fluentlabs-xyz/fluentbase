@@ -1,6 +1,6 @@
 use crate::{
     alloc::string::ToString,
-    common::{is_evm_pubkey, HasherImpl, Keccak256Hasher, Sha256Hasher},
+    common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
     error::Error,
@@ -10,25 +10,17 @@ use crate::{
         is_nonoverlapping,
         memmove,
         memset_non_contiguous,
-        translate,
         translate_and_check_program_address_inputs,
         translate_slice,
         translate_slice_mut,
         translate_string_and_do,
-        translate_type,
         translate_type_mut,
     },
-    word_size::{
-        common::{MemoryMappingHelper, FAT_PTR64_ELEM_BYTE_SIZE},
-        primitives::RcRefCellMemLayout,
-        ptr_type::PtrType,
-        slice::{SliceFatPtr64, SliceFatPtr64Repr},
-    },
+    word_size::slice::SliceFatPtr64,
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
-use fluentbase_sdk::{debug_log, SharedAPI};
-use solana_account_info::AccountInfo;
+use fluentbase_sdk::SharedAPI;
 use solana_feature_set;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
@@ -156,7 +148,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
 
-        unimplemented!("SyscallMemcmp unimplemented yet");
+        unimplemented!("todo");
 
         // mem_op_consume(invoke_context, n)?;
 
@@ -275,6 +267,7 @@ declare_builtin_function!(
         unsafe {
             let c_buf = alloc::slice::from_raw_parts(host_addr as *const u8, len as usize);
             let len = c_buf.iter().position(|c| *c == 0).unwrap_or(len as usize);
+            #[allow(unused_variables)]
             let message = from_utf8(&c_buf[0..len]).unwrap_or("Invalid UTF-8 String");
             #[cfg(test)]
             println!("message={}", message);
@@ -310,11 +303,10 @@ declare_builtin_function!(
             addr,
             len,
             invoke_context.get_check_aligned(),
-            // true,
+            #[allow(unused_variables)]
             &mut |string: &str| {
-                // stable_log::program_log(&invoke_context.get_log_collector(), string);
                 #[cfg(test)]
-                println!("Log: {}", string);
+                println!("SyscallLog: {}", string);
                 #[cfg(target_arch = "wasm32")]
                 debug_log!("Log: {}", string);
                 Ok(0)
@@ -417,13 +409,6 @@ declare_builtin_function!(
 
             )?;
             for val in vals.iter() {
-                // TODO
-                // let bytes = translate_slice::<u8>(
-                //     memory_mapping,
-                //     val.as_ref().as_ptr() as u64,
-                //     val.as_ref().len() as u64,
-                //     invoke_context.get_check_aligned(),
-                // )?;
                 let bytes = val.as_ref().to_vec_cloned();
                 hasher.hash(&bytes);
             }
@@ -682,7 +667,6 @@ declare_builtin_function!(
         //     .get_compute_budget()
         //     .create_program_address_units;
         // consume_compute_meter(invoke_context, cost)?;
-        debug_log!("in SyscallCreateProgramAddress");
 
         let (seeds, program_id) = translate_and_check_program_address_inputs(
             seeds_addr,
@@ -730,39 +714,6 @@ declare_builtin_function!(
         //     .get_compute_budget()
         //     .create_program_address_units;
         // consume_compute_meter(invoke_context, cost)?;
-        debug_log!(
-            "seeds_addr {} seeds_len {} program_id_addr {} invoke_context.get_check_aligned() {}",
-            seeds_addr,
-            seeds_len,
-            program_id_addr,
-            invoke_context.get_check_aligned(),
-        );
-
-        // let host_addr = memory_mapping.map(AccessType::Load, seeds_addr, 8).unwrap();
-        let word_size = size_of::<usize>();
-        let host_addr = translate(memory_mapping, AccessType::Load, seeds_addr, word_size as u64 * seeds_len)?;
-        let untranslated_seeds = translate_slice::<SliceFatPtr64<u8>>(
-            memory_mapping,
-            seeds_addr,
-            seeds_len,
-            true,
-
-        )?;
-        debug_log!(
-            "seeds_slice_fat_ptr_data2 (addr:{} host_addr:{}): untranslated_seeds ({})",
-            seeds_addr,
-            host_addr,
-            untranslated_seeds.len(),
-        );
-        for (idx, untranslated_seed) in untranslated_seeds.iter().enumerate() {
-            let untranslated_seed_vec = untranslated_seed.as_ref().to_vec_cloned();
-            debug_log!(
-                "untranslated_seed{} ({}): {:x?}",
-                idx,
-                untranslated_seed.as_ref().len(),
-                untranslated_seed_vec
-            );
-        }
         let result = translate_and_check_program_address_inputs(
             seeds_addr,
             seeds_len,
@@ -771,16 +722,11 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
 
         );
-        if let Err(e) = &result {
-            debug_log!("error: {:?}", e);
-        }
         let (seeds, program_id) = result?;
-        debug_log!("seeds {:x?}", &seeds);
 
         let mut bump_seed = [u8::MAX];
-        for i in 0..u8::MAX {
+        for _i in 0..u8::MAX {
             {
-                debug_log!("i={}", i);
                 let mut seeds_with_bump = seeds.clone();
                 seeds_with_bump.push(bump_seed.to_vec());
                 let seeds_with_bump_slice = seeds_with_bump.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>();
@@ -840,28 +786,6 @@ declare_builtin_function!(
         signers_seeds_len: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        debug_log!();
-        let mmh = MemoryMappingHelper::new(Some(memory_mapping));
-        let account_infos = SliceFatPtr64::<AccountInfo>::new::<true>(mmh.clone(), account_infos_addr.into(), account_infos_len as usize);
-        for account_idx in 0..account_infos_len {
-            let lamports_mem_layout_ptr = RcRefCellMemLayout::<&mut u64>::new(
-                mmh.clone(),
-                PtrType::RcStartPtr((account_infos.item_addr_at_idx(account_idx as usize) + FAT_PTR64_ELEM_BYTE_SIZE as u64).inner()),
-            );
-            debug_log!();
-            let addr_to_key_addr = account_infos.item_addr_at_idx(account_idx as usize);
-            let key_vm_addr = SliceFatPtr64Repr::ptr_elem_from_addr(addr_to_key_addr.inner());
-            let key = translate_type::<Pubkey>(
-                memory_mapping,
-                // account_info.owner as *const _ as u64,
-                key_vm_addr,
-                invoke_context.get_check_aligned(),
-                false,
-            )?;
-            let lamports = lamports_mem_layout_ptr.value::<false>();
-            debug_log!("for key (is_svm_pubkey:{}) {} ({:x?}) account_idx {} lamports={}", is_evm_pubkey(key), key, key.to_bytes(), account_idx, lamports);
-        }
-        debug_log!();
         cpi_common::<SDK, Self>(
             invoke_context,
             instruction_addr,

@@ -2,7 +2,7 @@ use crate::solana_program::{
     bpf_loader_upgradeable,
     message::{versions::v0, AccountKeys},
 };
-use alloc::{borrow::Cow, vec, vec::Vec};
+use alloc::{borrow::Cow, vec::Vec};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;

@@ -3,13 +3,7 @@ use crate::word_size::{
     ptr_type::PtrType,
     slice::{reconstruct_slice, SliceFatPtr64Repr},
 };
-use core::{
-    fmt::Display,
-    marker::PhantomData,
-    ops::{Add, Index, RangeBounds},
-    slice::SliceIndex,
-};
-use num_traits::ToPrimitive;
+use core::marker::PhantomData;
 
 pub trait SpecMethods<'a> {
     type Elem;
@@ -187,7 +181,6 @@ mod tests {
     };
     use alloc::rc::Rc;
     use core::cell::RefCell;
-    use fluentbase_sdk::debug_log;
     use solana_account_info::AccountInfo;
     use solana_pubkey::Pubkey;
     use solana_stable_layout::stable_vec::StableVec;
@@ -345,8 +338,6 @@ mod tests {
         type VecOfItemsType<'a> = StableVec<ItemType<'a>>;
         const ITEM_SIZE: usize = size_of::<ItemType>();
         const VEC_OF_ITEMS_TYPE_SIZE: usize = size_of::<VecOfItemsType>();
-        debug_log!("ITEM_SIZE: {}", ITEM_SIZE);
-        debug_log!("VEC_OF_ITEMS_TYPE_SIZE: {}", VEC_OF_ITEMS_TYPE_SIZE);
 
         let mmh = MemoryMappingHelper::default();
 
@@ -438,35 +429,17 @@ mod tests {
             AddrType::Vm(items_original_fixed.as_ref().as_ptr() as u64),
             items_len,
         );
-        debug_log!("vec_of_items_bytes_size {}", vec_of_items_bytes_size);
         let vec_of_items_start_ptr = (&items_original_fixed) as *const _ as u64;
         let first_item_start_ptr = items_original_fixed.as_ptr() as u64;
-        debug_log!(
-            "vec_of_items_start_ptr {} ({:x?}) first_item_start_ptr {} ({:x?})",
-            vec_of_items_start_ptr,
-            &vec_of_items_start_ptr.to_le_bytes(),
-            first_item_start_ptr,
-            &first_item_start_ptr.to_le_bytes()
-        );
         let vec_of_items_as_raw_bytes = unsafe {
             alloc::slice::from_raw_parts(
                 vec_of_items_start_ptr as *const u8,
                 vec_of_items_bytes_size,
             )
         };
-        debug_log!(
-            "vec_of_items_as_raw_bytes ({}): {:x?}",
-            vec_of_items_bytes_size,
-            vec_of_items_as_raw_bytes
-        );
         let items_as_raw_bytes = unsafe {
             alloc::slice::from_raw_parts(first_item_start_ptr as *const u8, items_only_bytes_size)
         };
-        debug_log!(
-            "items_as_raw_bytes ({}): {:x?}",
-            items_only_bytes_size,
-            items_as_raw_bytes
-        );
         for idx in 0..slice.len() {
             let item_original = &items_original_fixed[idx];
             let item_original_ptr = item_original as *const _ as u64;

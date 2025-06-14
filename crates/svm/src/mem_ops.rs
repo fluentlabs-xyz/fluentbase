@@ -11,7 +11,6 @@ use crate::{
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::{slice, str::from_utf8};
-use fluentbase_sdk::debug_log;
 use fluentbase_types::SharedAPI;
 use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN};
 use solana_rbpf::{
@@ -189,27 +188,27 @@ use solana_rbpf::{
 //     }
 // }
 
-fn memmove_non_contiguous(
-    dst_addr: u64,
-    src_addr: u64,
-    n: u64,
-    memory_mapping: &MemoryMapping,
-) -> Result<u64, Error> {
-    let reverse = dst_addr.wrapping_sub(src_addr) < n;
-    iter_memory_pair_chunks(
-        AccessType::Load,
-        src_addr,
-        AccessType::Store,
-        dst_addr,
-        n,
-        memory_mapping,
-        reverse,
-        |src_host_addr, dst_host_addr, chunk_len| {
-            unsafe { core::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
-            Ok(0)
-        },
-    )
-}
+// fn memmove_non_contiguous(
+//     dst_addr: u64,
+//     src_addr: u64,
+//     n: u64,
+//     memory_mapping: &MemoryMapping,
+// ) -> Result<u64, Error> {
+//     let reverse = dst_addr.wrapping_sub(src_addr) < n;
+//     iter_memory_pair_chunks(
+//         AccessType::Load,
+//         src_addr,
+//         AccessType::Store,
+//         dst_addr,
+//         n,
+//         memory_mapping,
+//         reverse,
+//         |src_host_addr, dst_host_addr, chunk_len| {
+//             unsafe { core::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
+//             Ok(0)
+//         },
+//     )
+// }
 
 // Marked unsafe since it assumes that the slices are at least `n` bytes long.
 pub unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
@@ -542,14 +541,12 @@ fn translate_type_inner<'a, T>(
     check_aligned: bool,
     skip_addr_translation: bool,
 ) -> Result<&'a mut T, SvmError> {
-    debug_log!();
     let host_addr = if skip_addr_translation {
         vm_addr
     } else {
         translate(memory_mapping, access_type, vm_addr, size_of::<T>() as u64)?
     };
     if !check_aligned {
-        debug_log!();
         #[cfg(target_pointer_width = "64")]
         {
             Ok(unsafe { core::mem::transmute::<u64, &mut T>(host_addr) })
@@ -605,36 +602,19 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     if len == 0 {
         return Ok(SliceFatPtr64::default(mmh.clone()));
     }
-    // let type_name = type_name::<T>();
     let size_of_t = size_of::<T>();
-    // debug_log!(
-    //     "translate_slice_inner 1: len {} item type '{}' size_of_t {}",
-    //     len,
-    //     type_name,
-    //     size_of_t,
-    // );
 
     let total_size = len.saturating_mul(size_of_t as u64);
     if isize::try_from(total_size).is_err() {
         return Err(SyscallError::InvalidLength.into());
     }
 
-    // debug_log!(
-    //     "translate_slice_inner 2: access_type {:?} vm_addr {} total_size {}",
-    //     access_type,
-    //     vm_addr,
-    //     total_size
-    // );
-
     let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
-    debug_log!();
 
     if check_aligned && !helpers::address_is_aligned::<T>(host_addr) {
         return Err(SyscallError::UnalignedPointer.into());
     }
-    // debug_log!("translate_slice_inner 4");
     let result = SliceFatPtr64::new::<false>(mmh, AddrType::Host(host_addr), len as usize);
-    // let result = unsafe { core::slice::from_raw_parts_mut(host_addr as *mut T, len as usize) };
     Ok(result)
 }
 
@@ -744,20 +724,6 @@ pub fn translate_and_check_program_address_inputs<'a>(
 ) -> Result<(Vec<Vec<u8>>, &'a Pubkey), SvmError> {
     let untranslated_seeds =
         translate_slice::<SliceFatPtr64<u8>>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
-    debug_log!(
-        "seeds_addr {} seeds_len {} untranslated_seeds.len {}",
-        seeds_addr,
-        seeds_len,
-        untranslated_seeds.len(),
-    );
-    for (idx, us) in untranslated_seeds.iter().enumerate() {
-        debug_log!(
-            "untranslated_seed {}: len {} data {:x?}",
-            idx,
-            us.as_ref().len(),
-            us.as_ref().to_vec_cloned(),
-        );
-    }
     if untranslated_seeds.len() > MAX_SEEDS {
         return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
     }
@@ -767,12 +733,6 @@ pub fn translate_and_check_program_address_inputs<'a>(
             if untranslated_seed.as_ref().len() > MAX_SEED_LEN {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
-            debug_log!(
-                "len {} first_item_fat_ptr_addr {} data {:x?}",
-                untranslated_seed.as_ref().len(),
-                untranslated_seed.as_ref().first_item_addr(),
-                untranslated_seed.as_ref().to_vec_cloned(),
-            );
             // let result = translate_slice::<u8>(
             //     memory_mapping,
             //     untranslated_seed.as_ref().first_item_fat_ptr_addr(),
@@ -784,10 +744,9 @@ pub fn translate_and_check_program_address_inputs<'a>(
             Ok(untranslated_seed.as_ref().to_vec_cloned())
         })
         .collect::<Result<Vec<_>, SvmError>>()?;
-    debug_log!();
+
     let program_id =
         translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned, false)?;
-    debug_log!("program_id {}", program_id);
     Ok((seeds, program_id))
 }
 

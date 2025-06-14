@@ -1,9 +1,5 @@
 use crate::{
-    solana_program::{
-        address_lookup_table,
-        address_lookup_table::program::id,
-        instruction::AccountMeta,
-    },
+    solana_program::{address_lookup_table::program::id, instruction::AccountMeta},
     system_program,
 };
 use alloc::{vec, vec::Vec};

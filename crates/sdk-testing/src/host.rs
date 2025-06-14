@@ -1,6 +1,5 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
-use fluentbase_sdk::debug_log;
 use fluentbase_types::{
     native_api::NativeAPI,
     Address,

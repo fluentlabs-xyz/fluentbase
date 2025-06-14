@@ -1,6 +1,5 @@
 use alloc::vec::Vec;
 use byteorder::ByteOrder;
-use hex_literal::hex;
 use solana_instruction::error::InstructionError;
 
 pub struct VecU8 {

@@ -24,7 +24,10 @@ clean:
 test:
 	cargo test --no-fail-fast -q
 
+.PHONY: check
+check:
+	cargo check
+
 .PHONY: custom_tests
 custom_tests:
-	cargo test --profile test --manifest-path /home/bfday/github/fluentlabs-xyz/fluentbase/crates/svm/Cargo.toml
 	cargo test svm_loader_v4 --profile test --manifest-path /home/bfday/github/fluentlabs-xyz/fluentbase/e2e/Cargo.toml

@@ -3,10 +3,9 @@ extern crate solana_rbpf;
 use crate::{alloc::string::ToString, solana_program};
 use alloc::{boxed::Box, rc::Rc, str::Utf8Error, string::String, vec, vec::Vec};
 use core::{
-    alloc::Layout,
     cell::RefCell,
     fmt,
-    fmt::{Display, Formatter, Write},
+    fmt::{Display, Formatter},
 };
 use solana_bincode::{deserialize, serialize, serialized_size};
 use solana_pubkey::{Pubkey, PubkeyError};
@@ -23,38 +22,9 @@ pub const INSTRUCTION_METER_BUDGET: u64 = 1024 * 1024;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct AllocErr;
-impl fmt::Display for AllocErr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for AllocErr {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.write_str("Error: Memory allocation failed")
-    }
-}
-
-#[derive(Debug)]
-pub struct BpfAllocator {
-    len: u64,
-    pos: u64,
-}
-
-impl BpfAllocator {
-    pub fn new(len: u64) -> Self {
-        Self { len, pos: 0 }
-    }
-
-    pub fn alloc(&mut self, layout: Layout) -> Result<u64, AllocErr> {
-        let bytes_to_align = (self.pos as *const u8).align_offset(layout.align()) as u64;
-        if self
-            .pos
-            .saturating_add(bytes_to_align)
-            .saturating_add(layout.size() as u64)
-            <= self.len
-        {
-            self.pos = self.pos.saturating_add(bytes_to_align);
-            let addr = MM_HEAP_START.saturating_add(self.pos);
-            self.pos = self.pos.saturating_add(layout.size() as u64);
-            Ok(addr)
-        } else {
-            Err(AllocErr)
-        }
     }
 }
 
@@ -89,11 +59,12 @@ use crate::{
         InheritableAccountFields,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
+    context::BpfAllocator,
     error::SvmError,
     solana_program::sysvar::Sysvar,
     storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
-use fluentbase_sdk::{debug_log, SharedAPI, StorageAPI};
+use fluentbase_sdk::StorageAPI;
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
@@ -254,8 +225,36 @@ pub enum SyscallError {
 }
 
 impl Display for SyscallError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            SyscallError::InvalidString(_, _) => write!(f, "InvalidString"),
+            SyscallError::Abort => write!(f, "Abort"),
+            SyscallError::Panic(_, _, _) => write!(f, "Panic"),
+            SyscallError::InvokeContextBorrowFailed => write!(f, "InvokeContextBorrowFailed"),
+            SyscallError::MalformedSignerSeed(_, _) => write!(f, "MalformedSignerSeed"),
+            SyscallError::BadSeeds(_) => write!(f, "BadSeeds"),
+            SyscallError::ProgramNotSupported(_) => write!(f, "ProgramNotSupported"),
+            SyscallError::UnalignedPointer => write!(f, "UnalignedPointer"),
+            SyscallError::TooManySigners => write!(f, "TooManySigners"),
+            SyscallError::InstructionTooLarge(_, _) => write!(f, "InstructionTooLarge"),
+            SyscallError::TooManyAccounts => write!(f, "TooManyAccounts"),
+            SyscallError::CopyOverlapping => write!(f, "CopyOverlapping"),
+            SyscallError::ReturnDataTooLarge(_, _) => write!(f, "ReturnDataTooLarge"),
+            SyscallError::TooManySlices => write!(f, "TooManySlices"),
+            SyscallError::InvalidLength => write!(f, "InvalidLength"),
+            SyscallError::MaxInstructionDataLenExceeded { .. } => {
+                write!(f, "MaxInstructionDataLenExceeded")
+            }
+            SyscallError::MaxInstructionAccountsExceeded { .. } => {
+                write!(f, "MaxInstructionAccountsExceeded")
+            }
+            SyscallError::MaxInstructionAccountInfosExceeded { .. } => {
+                write!(f, "MaxInstructionAccountInfosExceeded")
+            }
+            SyscallError::InvalidAttribute => write!(f, "InvalidAttribute"),
+            SyscallError::InvalidPointer => write!(f, "InvalidPointer"),
+            SyscallError::ArithmeticOverflow => write!(f, "ArithmeticOverflow"),
+        }
     }
 }
 
@@ -796,18 +795,7 @@ pub fn storage_read_account_data<SAPI: StorageAPI>(
         _phantom: Default::default(),
     };
     storage_writer.read_data(sapi, &mut buffer)?;
-    debug_log!("for pk {} buffer.len: {}", &pubkey, buffer.len());
     let deserialize_result = deserialize(&buffer);
-    // {
-    //     // debug
-    //     let is = is_svm_pubkey(&pubkey);
-    //     debug_log!(
-    //         "(ok?:{}) for pk {:x?} (is_svm?:{})",
-    //         deserialize_result.is_ok(),
-    //         &pubkey.as_ref()[(SVM_ADDRESS_PREFIX.len() * is as usize)..],
-    //         is
-    //     );
-    // }
     Ok(deserialize_result?)
 }
 
@@ -821,7 +809,6 @@ pub fn storage_write_account_data<SAPI: StorageAPI>(
         _phantom: Default::default(),
     };
     let buffer = serialize(account_data)?;
-    debug_log!("for pk {} buffer.len: {}", &pubkey, buffer.len());
     storage_writer.write_data(sapi, &buffer);
     Ok(())
 }
@@ -858,14 +845,7 @@ pub mod test_utils {
 
             let owner = account.owner();
             if check_loader_id(owner) {
-                let pubkey = invoke_context
-                    .transaction_context
-                    .get_key_of_account_at_index(index)
-                    .expect("Failed to get account key");
-
-                if let Ok(loaded_program) = load_program_from_bytes(
-                    // None,
-                    // &mut load_program_metrics,
+                if let Ok(_loaded_program) = load_program_from_bytes(
                     account.data(),
                     owner,
                     account.data().len(),

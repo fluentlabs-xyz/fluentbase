@@ -57,9 +57,7 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../solana-ee-core/crates/core/test_elfs/out/noop_aligned.so",
             // "../examples/svm/solana-program/assets/solana_program.so",
-            // "../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
             "../examples/svm/solana-program-state-usage/assets/solana_program.so",
         );
 
@@ -84,7 +82,6 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            // "../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
             "../examples/svm/solana-program-state-usage/assets/solana_program.so",
         );
 
@@ -99,14 +96,13 @@ mod tests {
         let program_bytes = account_with_program.data().to_vec();
         let (contract_address, _gas) =
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
-        println!("contract_address {:x?}", contract_address);
 
         let pk_exec = pubkey_from_address(&contract_address);
 
         let seed1 = b"my_seed";
         let seed2 = pk_payer.as_ref();
         let seeds = &[seed1.as_slice(), seed2];
-        let (pk_new, bump) = Pubkey::find_program_address(seeds, &pk_exec);
+        let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_exec);
 
         // exec
 
@@ -123,11 +119,7 @@ mod tests {
         instruction_data.extend_from_slice(seed1);
         instruction_data.extend_from_slice(byte_n_to_set.to_le_bytes().as_slice());
         instruction_data.push(byte_n_val);
-        // println!("instruction_data: {:x?}", instruction_data);
 
-        println!("pk_payer: {:x?}", pk_payer.to_bytes());
-        println!("pk_exec: {:x?}", pk_exec.to_bytes());
-        println!("pk_new: {:x?} bump: {}", pk_new.to_bytes(), bump);
         let instructions = vec![Instruction::new_with_bincode(
             pk_exec.clone(),
             &instruction_data,
@@ -141,12 +133,6 @@ mod tests {
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
-        println!(
-            "input: len {} input '{:x?}' batch_message: {:?}",
-            input.len(),
-            input.as_slice(),
-            &batch_message
-        );
         ctx.sdk = ctx.sdk.with_block_number(1);
         assert_eq!(ctx.sdk.context().block_number(), 1);
         let result =

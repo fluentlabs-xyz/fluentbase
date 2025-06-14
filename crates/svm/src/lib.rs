@@ -1,7 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![feature(new_range_api)]
 #![feature(assert_matches)]
-// #![feature(liballoc_internals)]
+// #![feature(lazy_type_alias)]
 #![feature(trait_alias)]
 
 extern crate alloc;

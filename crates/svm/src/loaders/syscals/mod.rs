@@ -1,10 +1,5 @@
-use crate::{error::Error, helpers::SyscallError};
 #[allow(deprecated)]
-use {
-    core::mem::size_of,
-    solana_feature_set as feature_set,
-    solana_rbpf::memory_region::{AccessType, MemoryMapping},
-};
+use {core::mem::size_of, solana_rbpf::memory_region::AccessType};
 
 pub mod cpi;
 

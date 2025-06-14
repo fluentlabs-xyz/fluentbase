@@ -1,6 +1,5 @@
 use crate::{
     map_addr,
-    remap_addr,
     word_size::{
         addr_type::AddrType,
         common::{
@@ -16,10 +15,8 @@ use core::{
     fmt::{Debug, Formatter},
     iter::Iterator,
     marker::PhantomData,
-    ops::{Bound, Index, RangeBounds},
-    slice::SliceIndex,
+    ops::{Bound, RangeBounds},
 };
-use itertools::Itertools;
 use solana_account_info::AccountInfo;
 use solana_instruction::AccountMeta;
 use solana_rbpf::{

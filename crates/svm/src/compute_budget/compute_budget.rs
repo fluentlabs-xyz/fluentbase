@@ -1,11 +1,3 @@
-// #[cfg(RUSTC_WITH_SPECIALIZATION)]
-// impl ::solana_frozen_abi::abi_example::AbiExample for ComputeBudget {
-//     fn example() -> Self {
-//         // ComputeBudget is not Serialize so just rely on Default.
-//         ComputeBudget::default()
-//     }
-// }
-
 use crate::{
     compute_budget::compute_budget_limits::ComputeBudgetLimits,
     compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT,
