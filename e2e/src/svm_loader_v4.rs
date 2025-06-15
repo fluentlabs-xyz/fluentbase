@@ -3,7 +3,7 @@ mod tests {
     use fluentbase_sdk::{
         address,
         Address,
-        BlockContextReader,
+        ContextReader,
         ContractContextV1,
         SharedAPI,
         PRECOMPILE_SVM_RUNTIME,
@@ -43,7 +43,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "wasmtime")]
     fn test_svm_deploy() {
         let mut ctx = EvmTestingContext::default();
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
@@ -70,7 +69,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "wasmtime")]
     fn test_svm_deploy_exec() {
         let mut ctx = EvmTestingContext::default();
         assert_eq!(ctx.sdk.context().block_number(), 0);

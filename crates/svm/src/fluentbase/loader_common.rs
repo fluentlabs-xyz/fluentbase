@@ -1,4 +1,4 @@
-use fluentbase_sdk::{Bytes, ContractContextReader, SharedAPI, B256, PROTECTED_STORAGE_SLOT_0};
+use fluentbase_sdk::{Bytes, ContextReader, SharedAPI, B256, PROTECTED_STORAGE_SLOT_0};
 
 const SLOT: B256 = PROTECTED_STORAGE_SLOT_0;
 

@@ -5,6 +5,8 @@
 extern crate alloc;
 extern crate core;
 
+use primitives as _;
+
 mod address;
 mod bytecode_type;
 mod context;
@@ -79,11 +81,13 @@ pub fn is_protected_storage_slot<I: Into<B256>>(slot: I) -> bool {
 /// This value is temporary for testing purposes, requires recalculation.
 /// The limit is equal to 2Mb.
 pub const WASM_MAX_CODE_SIZE: usize = 0x200000;
+pub const SVM_MAX_CODE_SIZE: usize = 0x200000;
 
 /// WebAssembly magic bytes
 ///
 /// These values are equal to \0ASM
 pub const WASM_MAGIC_BYTES: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
+pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
 
 /// EIP-170: Contract code size limit
 ///

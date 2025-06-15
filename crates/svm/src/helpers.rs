@@ -64,7 +64,7 @@ use crate::{
     solana_program::sysvar::Sysvar,
     storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
-use fluentbase_sdk::StorageAPI;
+use fluentbase_types::StorageAPI;
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;

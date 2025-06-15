@@ -3,7 +3,7 @@ mod context;
 use crate::{
     alloc_slice,
     byteorder::{ByteOrder, LittleEndian},
-    shared::context::SharedContextReaderImpl,
+    shared::context::ContextReaderImpl,
 };
 use alloc::vec;
 use core::cell::RefCell;
@@ -11,12 +11,12 @@ use fluentbase_types::{
     native_api::NativeAPI,
     Address,
     Bytes,
+    ContextReader,
     ExitCode,
     IsAccountEmpty,
     IsColdAccess,
     SharedAPI,
     SharedContextInputV1,
-    SharedContextReader,
     StorageAPI,
     SyscallResult,
     B256,
@@ -120,8 +120,8 @@ impl<API: NativeAPI> StorageAPI for SharedContextImpl<API> {
 
 /// SharedContextImpl always created from input
 impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
-    fn context(&self) -> impl SharedContextReader {
-        SharedContextReaderImpl(self.shared_context_ref())
+    fn context(&self) -> impl ContextReader {
+        ContextReaderImpl(self.shared_context_ref())
     }
 
     fn keccak256(&self, data: &[u8]) -> B256 {
@@ -135,11 +135,16 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
 
     fn input_size(&self) -> u32 {
         let input_size = self.native_sdk.input_size();
-        assert!(
-            input_size >= SharedContextInputV1::SIZE as u32,
-            "input less than context header"
-        );
-        input_size - SharedContextInputV1::SIZE as u32
+        if input_size < SharedContextInputV1::SIZE as u32 {
+            unsafe {
+                core::hint::unreachable_unchecked();
+            }
+        }
+        unsafe { input_size.unchecked_sub(SharedContextInputV1::SIZE as u32) }
+    }
+
+    fn read_context(&self, target: &mut [u8], offset: u32) {
+        self.native_sdk.read(target, offset)
     }
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
@@ -238,7 +243,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
-    fn emit_log(&mut self, data: Bytes, topics: &[B256]) -> SyscallResult<()> {
+    fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()> {
         let mut buffer = vec![0u8; 1 + topics.len() * B256::len_bytes()];
         assert!(topics.len() <= 4);
         buffer[0] = topics.len() as u8;
@@ -246,7 +251,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             buffer[(1 + i * B256::len_bytes())..(1 + i * B256::len_bytes() + B256::len_bytes())]
                 .copy_from_slice(topic.as_slice());
         }
-        buffer.extend_from_slice(data.as_ref());
+        buffer.extend_from_slice(data);
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk
                 .exec(SYSCALL_ID_EMIT_LOG, &buffer, None, STATE_MAIN);

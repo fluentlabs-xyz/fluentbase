@@ -18,7 +18,6 @@ fluentbase-sdk-testing = { workspace = true }
 fluentbase-types = { workspace = true }
 
 fluentbase-svm = { workspace = true, default-features = false }
-
 fluentbase-contracts-nitro = { path = "../contracts/nitro" }
 
 fluentbase-examples-abi-solidity = { path = "../examples/abi-solidity" }
@@ -37,33 +36,31 @@ fluentbase-examples-simple-storage = { path = "../examples/simple-storage" }
 fluentbase-examples-storage = { path = "../examples/storage" }
 fluentbase-examples-tiny-keccak = { path = "../examples/tiny-keccak" }
 
-rwasm = { workspace = true, features = ["more-max-pages"] }
+rwasm = { workspace = true }
 revm = { workspace = true }
-hex = { workspace = true }
+rwasm-revm = { workspace = true }
+op-revm = { workspace = true }
 hex-literal = { workspace = true }
+hex = { workspace = true }
 alloy-sol-types = { workspace = true }
 wat = { version = "1.223.0" }
 rand = { version = "0.9.1" }
 
 
-[build-dependencies]
-
 [features]
 default = [
     "std",
-    "fluentbase-runtime/debug-print",
-    "wasmtime"
-]
-wasmtime = [
-    "revm/wasmtime"
+    "debug-print",
 ]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
-    "fluentbase-svm/std",
     "fluentbase-runtime/std",
     "fluentbase-sdk/std",
     "rwasm/std",
     "revm/std",
-    #    "fluentbase-svm/std",
+]
+debug-print = [
+    "fluentbase-runtime/debug-print",
+    "revm/debug-print",
 ]

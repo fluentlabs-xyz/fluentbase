@@ -1,5 +1,3 @@
-// use crate::loaded_programs::LoadedProgram;
-// use crate::loaded_programs::LoadedProgramsForTxBatch;
 use crate::{
     account::{
         is_executable_account,
@@ -38,7 +36,7 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec::Vec};
-use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
+use fluentbase_sdk::{ContextReader, SharedAPI, StorageAPI};
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;

@@ -649,7 +649,10 @@ mod tests {
 
         let fill_with = rand::random::<_>();
         let range = 1..3;
-        slice.get_mut(range.clone()).map(|mut s| s.fill(&fill_with));
+        slice
+            .get_mut(range.clone())
+            .map(|mut s| s.fill(&fill_with))
+            .unwrap();
         for idx in range {
             let item = slice.item_at_idx(idx);
             assert_eq!(item.as_ref(), &fill_with);
@@ -716,7 +719,10 @@ mod tests {
 
         let fill_with = rand::random::<_>();
         let range = 1..3;
-        slice.get_mut(range.clone()).map(|mut s| s.fill(&fill_with));
+        slice
+            .get_mut(range.clone())
+            .map(|mut s| s.fill(&fill_with))
+            .unwrap();
         for idx in range {
             let item = slice.item_at_idx(idx);
             assert_eq!(item.as_ref(), &fill_with);

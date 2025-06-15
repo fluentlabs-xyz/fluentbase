@@ -7,7 +7,7 @@ use fluentbase_sdk::{
     alloc_slice,
     entrypoint,
     Bytes,
-    ContractContextReader,
+    ContextReader,
     ExitCode,
     SharedAPI,
     PRECOMPILE_BLS12_381_G1_ADD,
@@ -29,13 +29,13 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let input = Bytes::copy_from_slice(input);
     // call precompiled function
     let precompile_func = match bytecode_address {
-        PRECOMPILE_BLS12_381_G1_ADD => revm_precompile::bls12_381::g1_add::g1_add,
-        PRECOMPILE_BLS12_381_G1_MSM => revm_precompile::bls12_381::g1_msm::g1_msm,
-        PRECOMPILE_BLS12_381_G2_ADD => revm_precompile::bls12_381::g2_add::g2_add,
-        PRECOMPILE_BLS12_381_G2_MSM => revm_precompile::bls12_381::g2_msm::g2_msm,
-        PRECOMPILE_BLS12_381_PAIRING => revm_precompile::bls12_381::pairing::pairing,
-        PRECOMPILE_BLS12_381_MAP_G1 => revm_precompile::bls12_381::map_fp_to_g1::map_fp_to_g1,
-        PRECOMPILE_BLS12_381_MAP_G2 => revm_precompile::bls12_381::map_fp2_to_g2::map_fp2_to_g2,
+        PRECOMPILE_BLS12_381_G1_ADD => precompile::bls12_381::g1_add::g1_add,
+        PRECOMPILE_BLS12_381_G1_MSM => precompile::bls12_381::g1_msm::g1_msm,
+        PRECOMPILE_BLS12_381_G2_ADD => precompile::bls12_381::g2_add::g2_add,
+        PRECOMPILE_BLS12_381_G2_MSM => precompile::bls12_381::g2_msm::g2_msm,
+        PRECOMPILE_BLS12_381_PAIRING => precompile::bls12_381::pairing::pairing,
+        PRECOMPILE_BLS12_381_MAP_G1 => precompile::bls12_381::map_fp_to_g1::map_fp_to_g1,
+        PRECOMPILE_BLS12_381_MAP_G2 => precompile::bls12_381::map_fp2_to_g2::map_fp2_to_g2,
         _ => unreachable!("bls12381: unsupported contract address"),
     };
     let result =
@@ -50,13 +50,7 @@ entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{
-        hex,
-        Address,
-        Bytes,
-        ContractContextV1,
-        FUEL_DENOM_RATE,
-    };
+    use fluentbase_sdk::{hex, Address, Bytes, ContractContextV1, FUEL_DENOM_RATE};
     use fluentbase_sdk_testing::HostTestingContext;
 
     fn exec_evm_precompile(address: Address, inputs: &[u8], expected: &[u8], expected_gas: u64) {

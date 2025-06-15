@@ -1,3 +1,3 @@
 fn main() {
-    fluentbase_build::compile_rust_to_wasm(Default::default())
+    fluentbase_build::build_default_genesis_contract()
 }

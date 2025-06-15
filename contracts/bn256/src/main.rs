@@ -7,14 +7,14 @@ use fluentbase_sdk::{
     alloc_slice,
     entrypoint,
     Bytes,
-    ContractContextReader,
+    ContextReader,
     ExitCode,
     SharedAPI,
     PRECOMPILE_BN256_ADD,
     PRECOMPILE_BN256_MUL,
     PRECOMPILE_BN256_PAIR,
 };
-use revm_precompile::bn128::{
+use precompile::bn128::{
     add::ISTANBUL_ADD_GAS_COST,
     mul::ISTANBUL_MUL_GAS_COST,
     pair::{ISTANBUL_PAIR_BASE, ISTANBUL_PAIR_PER_POINT},
@@ -31,12 +31,12 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     // call precompiled function
     let result = match bytecode_address {
         PRECOMPILE_BN256_ADD => {
-            revm_precompile::bn128::run_add(&input, ISTANBUL_ADD_GAS_COST, gas_limit)
+            precompile::bn128::run_add(&input, ISTANBUL_ADD_GAS_COST, gas_limit)
         }
         PRECOMPILE_BN256_MUL => {
-            revm_precompile::bn128::run_mul(&input, ISTANBUL_MUL_GAS_COST, gas_limit)
+            precompile::bn128::run_mul(&input, ISTANBUL_MUL_GAS_COST, gas_limit)
         }
-        PRECOMPILE_BN256_PAIR => revm_precompile::bn128::run_pair(
+        PRECOMPILE_BN256_PAIR => precompile::bn128::run_pair(
             &input,
             ISTANBUL_PAIR_PER_POINT,
             ISTANBUL_PAIR_BASE,
@@ -55,13 +55,7 @@ entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{
-        hex,
-        Address,
-        Bytes,
-        ContractContextV1,
-        FUEL_DENOM_RATE,
-    };
+    use fluentbase_sdk::{hex, Address, Bytes, ContractContextV1, FUEL_DENOM_RATE};
     use fluentbase_sdk_testing::HostTestingContext;
 
     fn exec_evm_precompile(address: Address, inputs: &[u8], expected: &[u8], expected_gas: u64) {

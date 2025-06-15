@@ -1,16 +1,10 @@
 use crate::{Address, B256, U256};
 use core::cell::RefCell;
-use fluentbase_types::{
-    BlockContextReader,
-    ContractContextReader,
-    SharedContextInputV1,
-    SharedContextReader,
-    TxContextReader,
-};
+use fluentbase_types::{ContextReader, SharedContextInputV1};
 
-pub struct SharedContextReaderImpl<'a>(pub &'a RefCell<Option<SharedContextInputV1>>);
+pub struct ContextReaderImpl<'a>(pub &'a RefCell<Option<SharedContextInputV1>>);
 
-impl<'a> BlockContextReader for SharedContextReaderImpl<'a> {
+impl<'a> ContextReader for ContextReaderImpl<'a> {
     fn block_chain_id(&self) -> u64 {
         self.0.borrow().as_ref().unwrap().block.chain_id
     }
@@ -42,9 +36,7 @@ impl<'a> BlockContextReader for SharedContextReaderImpl<'a> {
     fn block_base_fee(&self) -> U256 {
         self.0.borrow().as_ref().unwrap().block.base_fee
     }
-}
 
-impl<'a> TxContextReader for SharedContextReaderImpl<'a> {
     fn tx_gas_limit(&self) -> u64 {
         self.0.borrow().as_ref().unwrap().tx.gas_limit
     }
@@ -68,9 +60,7 @@ impl<'a> TxContextReader for SharedContextReaderImpl<'a> {
     fn tx_value(&self) -> U256 {
         self.0.borrow().as_ref().unwrap().tx.value
     }
-}
 
-impl<'a> ContractContextReader for SharedContextReaderImpl<'a> {
     fn contract_address(&self) -> Address {
         self.0.borrow().as_ref().unwrap().contract.address
     }
@@ -95,5 +85,3 @@ impl<'a> ContractContextReader for SharedContextReaderImpl<'a> {
         self.0.borrow().as_ref().unwrap().contract.gas_limit
     }
 }
-
-impl<'a> SharedContextReader for SharedContextReaderImpl<'a> {}

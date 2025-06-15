@@ -1,3 +1,4 @@
+use alloy_sol_types::{sol, SolCall};
 use core::str::from_utf8;
 use fluentbase_sdk::{address, bytes, calc_create_address, Address, U256};
 use fluentbase_sdk_testing::{
@@ -6,8 +7,13 @@ use fluentbase_sdk_testing::{
     HostTestingContextNativeAPI,
     TxBuilder,
 };
+use fluentbase_types::{PRECOMPILE_BLAKE2F, PRECOMPILE_SECP256K1_RECOVER};
 use hex_literal::hex;
-use revm::interpreter::opcode;
+use revm::{
+    bytecode::opcode,
+    context::result::ExecutionResult::Revert,
+    primitives::hardfork::SpecId,
+};
 
 #[test]
 fn test_evm_greeting() {
@@ -25,6 +31,7 @@ fn test_evm_greeting() {
     println!("{:?}", result);
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
+    assert!(!bytes.is_empty());
     let bytes = &bytes[64..75];
     assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
     assert_eq!(result.gas_used(), 21_792);
@@ -103,15 +110,14 @@ fn test_evm_simple_send() {
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     const RECIPIENT_ADDRESS: Address = address!("1092381297182319023812093812312309123132");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
-    let gas_price = U256::from(1e9);
+    let gas_price = 1e9 as u128;
     let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, RECIPIENT_ADDRESS, None)
-        .enable_rwasm_proxy()
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 21_000);
-    let tx_cost = gas_price * U256::from(result.gas_used());
+    let tx_cost = U256::from(gas_price) * U256::from(result.gas_used());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18) - tx_cost);
     assert_eq!(ctx.get_balance(RECIPIENT_ADDRESS), U256::from(1e18));
 }
@@ -122,15 +128,14 @@ fn test_evm_create_and_send() {
     let mut ctx = EvmTestingContext::default();
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
-    let gas_price = U256::from(2e9);
+    let gas_price = 2e9 as u128;
     let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, crate::EXAMPLE_GREETING.into())
-        .enable_rwasm_proxy()
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
     let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
-    let tx_cost = gas_price * U256::from(result.gas_used());
+    let tx_cost = U256::from(gas_price) * U256::from(result.gas_used());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18) - tx_cost);
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
 }
@@ -141,9 +146,8 @@ fn test_evm_revert() {
     let mut ctx = EvmTestingContext::default();
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
-    let gas_price = U256::from(0);
+    let gas_price = 0;
     let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, hex!("5f5ffd").into())
-        .enable_rwasm_proxy()
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
@@ -154,7 +158,6 @@ fn test_evm_revert() {
     assert_eq!(ctx.get_balance(contract_address), U256::from(0e18));
     // now send success tx
     let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, crate::EXAMPLE_GREETING.into())
-        .enable_rwasm_proxy()
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
@@ -170,21 +173,20 @@ fn test_evm_revert() {
 
 #[test]
 fn test_evm_self_destruct() {
-    // deploy greeting EVM contract
     let mut ctx = EvmTestingContext::default();
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
-    let gas_price = U256::from(0);
+    let gas_price = 0;
     let result = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
         hex!("6003600c60003960036000F36003ff").into(),
     )
-    .enable_rwasm_proxy()
     .gas_price(gas_price)
     .value(U256::from(1e18))
     .exec();
     let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 0);
+    println!("deployed contract address: {}", contract_address); // 0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5
     assert!(result.is_success());
     assert_eq!(result.gas_used(), 53842);
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
@@ -211,9 +213,9 @@ fn test_evm_self_destruct() {
     let result = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
+        // Calling 0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5
         hex!("6000600060006000600073f91c20c0cafbfdc150adff51bbfc5808edde7cb561FFFFF1").into(),
     )
-    .enable_rwasm_proxy()
     .exec();
     if !result.is_success() {
         println!("status: {:?}", result);
@@ -287,20 +289,18 @@ fn test_evm_balance() {
     bytecode.extend_from_slice(&[32]);
     bytecode.push(opcode::PUSH0);
     bytecode.push(opcode::RETURN);
-    // deploy greeting EVM contract
     let mut ctx = EvmTestingContext::default();
-    ctx.add_bytecode(Address::with_last_byte(255), bytecode.into());
-    let result = ctx.call_evm_tx(
-        OWNER_ADDRESS,
+    ctx.cfg.spec = SpecId::PRAGUE;
+    let contract_address = ctx.deploy_evm_tx(
         Address::with_last_byte(255),
-        hex!("").into(),
-        None,
-        None,
+        wrap_to_init_code(&bytecode).into(),
     );
+    let result = ctx.call_evm_tx(OWNER_ADDRESS, contract_address, hex!("").into(), None, None);
     println!("{:?}", result);
     assert!(result.is_success());
     let output = result.into_output().unwrap_or_default();
     assert_eq!(output.len(), 32);
+    // assert_eq!(result.gas_used(), 21116);
     let balance = U256::from_be_slice(output.as_ref());
     assert_eq!(
         balance,
@@ -325,4 +325,234 @@ fn test_wasm_erc20() {
         println!("{:?}", result);
     };
     transfer_coin(&mut ctx);
+}
+
+fn wrap_to_init_code(runtime: &[u8]) -> Vec<u8> {
+    use opcode::*;
+
+    let runtime_len = runtime.len();
+    assert!(runtime_len <= 255, "runtime too long for PUSH1");
+
+    // This will be calculated after the init prefix is formed
+    let mut init = Vec::new();
+
+    // Placeholder: assume PUSH1 for all pushes
+    init.push(PUSH1);
+    init.push(runtime_len as u8); // PUSH1 <runtime_len>
+    init.push(PUSH1);
+    init.push(0x00); // PUSH1 <offset> (patched later)
+    init.push(PUSH1);
+    init.push(0x00); // PUSH1 0x00
+    init.push(CODECOPY);
+
+    init.push(PUSH1);
+    init.push(runtime_len as u8); // PUSH1 <runtime_len>
+    init.push(PUSH1);
+    init.push(0x00); // PUSH1 0x00
+    init.push(RETURN);
+
+    let code_offset = init.len(); // runtime starts here
+
+    // Patch the offset in the second PUSH1 (which is at index 3)
+    init[3] = code_offset as u8;
+
+    // Append actual runtime code
+    init.extend_from_slice(runtime);
+
+    init
+}
+
+#[test]
+fn test_evm_blake2f() {
+    let mut ctx = EvmTestingContext::default();
+    // ctx.cfg.disable_rwasm_proxy = true;
+    const OWNER_ADDRESS: Address = Address::ZERO;
+
+    // Deploy contract from bytecode (should match Blake2FCaller)
+    let contract_address = ctx.deploy_evm_tx(
+        OWNER_ADDRESS,
+        hex::decode(include_bytes!("../assets/Blake2FCaller.bin"))
+            .unwrap()
+            .into(),
+    );
+
+    // Method selector for `callBlake2F()`
+    let call_selector = hex!("41f32a3a");
+
+    // Call `callBlake2F()` on deployed contract
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        contract_address,
+        call_selector.into(),
+        None,
+        None,
+    );
+
+    println!("{:?}", result);
+    assert!(result.is_success());
+    let output = result.output().unwrap_or_default();
+    assert!(!output.is_empty());
+    let blake2f_output = &output[64..]; // skip 2 32-byte words (offset and length)
+    assert_eq!(blake2f_output.len(), 64);
+    assert_eq!(result.gas_used(), 22579);
+}
+
+/// This test deploys the `HelloWorld` contract and directly calls its `sayHelloWorld()`
+/// function to verify it returns the expected string. Do it using `SolCall` macro for better
+/// readability.
+#[test]
+fn test_evm_greeting_using_sol_macro() {
+    let mut ctx = EvmTestingContext::default();
+    const OWNER_ADDRESS: Address = Address::ZERO;
+    ctx.add_balance(OWNER_ADDRESS, U256::from(1e18));
+
+    // Deploy HelloWorld contract
+    let hello_world_bytecode = hex::decode(include_bytes!("../assets/HelloWorld.bin")).unwrap();
+    let hello_world_address = ctx.deploy_evm_tx(OWNER_ADDRESS, hello_world_bytecode.into());
+
+    // Encode sayHelloWorld() call
+    sol! {
+        function sayHelloWorld() public pure returns (string);
+    }
+    let input_data = sayHelloWorldCall {}.abi_encode();
+
+    // Call contract directly
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        hello_world_address,
+        input_data.into(),
+        None,
+        None,
+    );
+    assert!(result.is_success(), "call to sayHelloWorld() failed");
+
+    // Decode result
+    let output = result.output().unwrap_or_default();
+    let decoded = sayHelloWorldCall::abi_decode_returns_validate(&output).unwrap();
+    assert_eq!(decoded, "Hello, World");
+}
+
+/// This test deploys two contracts: `HelloWorld` and `Caller`.
+/// It uses the `Caller` contract to perform a low-level `call` to the `sayHelloWorld()`
+/// function of the `HelloWorld` contract via the `callExternal(address, bytes)` method.
+#[test]
+fn test_evm_caller() {
+    let mut ctx = EvmTestingContext::default();
+    // ctx.cfg.disable_rwasm_proxy = true;
+    const OWNER_ADDRESS: Address = Address::ZERO;
+    ctx.add_balance(OWNER_ADDRESS, U256::from(1e18));
+
+    // Step 1: Deploy HelloWorld contract
+    let hello_world_bytecode = hex::decode(include_bytes!("../assets/HelloWorld.bin")).unwrap();
+    let hello_world_address = ctx.deploy_evm_tx(OWNER_ADDRESS, hello_world_bytecode.into());
+    // Step 2: Deploy Caller contract
+    let caller_bytecode = hex::decode(include_bytes!("../assets/Caller.bin")).unwrap();
+    let caller_contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, caller_bytecode.into());
+    // Step 3: Encode sayHelloWorld() call (target function)
+    sol! {
+        function sayHelloWorld() public pure returns (string memory);
+    }
+    let say_hello_data = sayHelloWorldCall {}.abi_encode();
+
+    // Step 4: Encode callExternal(address, bytes)
+    sol! {
+        function callExternal(address target, bytes calldata data) external returns (bool success, bytes memory result) ;
+    }
+    let call_input = callExternalCall {
+        target: hello_world_address,
+        data: say_hello_data.into(),
+    }
+    .abi_encode();
+
+    // Step 5: Execute Caller.callExternal(hello_world_address, encoded(sayHelloWorld()))
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        caller_contract_address,
+        call_input.into(),
+        None,
+        None,
+    );
+    println!("{:?}", result);
+    assert!(result.is_success(), "call failed: {:?}", result);
+
+    // Step 6: Decode return value
+    let output = result.output().unwrap_or_default();
+    try_print_utf8_error(&output);
+
+    let return_data = callExternalCall::abi_decode_returns_validate(&output).unwrap();
+    assert!(return_data.success);
+    let return_data = return_data.result.to_vec();
+
+    // ABI return is padded: decode inner string manually
+    let hello_string = sayHelloWorldCall::abi_decode_returns_validate(&return_data).unwrap();
+    assert_eq!(hello_string, "Hello, World");
+
+    assert_eq!(result.gas_used(), 26788);
+}
+
+#[test]
+fn test_evm_ecrecover_out_of_gas() {
+    let mut ctx = EvmTestingContext::default();
+    // ctx.cfg.disable_rwasm_proxy = true;
+    const OWNER_ADDRESS: Address = address!("1234121212121212121212121212121212121234");
+
+    // Some random input data for ecrecover precompile
+    let input = hex!("11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff000000000000000000000000000000000000000000000000000000000000001b3c8f1a1c9d6cc4b11bd8b32c98f627f7796fbc1db6d3fa4a51d87061b512b5b55b81a37853a38a91dc4fc8a3a64b105f334cf5dfd0f28ad89a78533d817c6a19");
+
+    // Call `callBlake2F()` on deployed contract
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        PRECOMPILE_SECP256K1_RECOVER, // calling ecrecover precompile
+        input.into(),
+        Some(25650),         // gas limit
+        Some(U256::from(1)), // value
+    );
+
+    println!("{:?}", result);
+    assert_eq!(result.gas_used(), 25650);
+    assert!(result.is_halt());
+}
+
+// This test calls a contract function that attempts to transfer 1 wei to `TARGET_ADDRESS`.
+// The transfer is expected to fail and revert because the contract itself holds no balance
+// and cannot cover the 1 wei being sent.
+#[test]
+#[ignore]
+fn test_evm_send_one_wei_to_precompile() {
+    let mut ctx = EvmTestingContext::default();
+    // ctx.disabled_rwasm = true;
+    const OWNER_ADDRESS: Address = Address::ZERO;
+    const TARGET_ADDRESS: Address = PRECOMPILE_BLAKE2F; // any precompile
+    ctx.add_balance(OWNER_ADDRESS, U256::from(1e18));
+
+    let contract_address = ctx.deploy_evm_tx(
+        OWNER_ADDRESS,
+        hex::decode(include_bytes!("../assets/SendOneWei.bin"))
+            .unwrap()
+            .into(),
+    );
+    sol! {
+        function sendOneWei(address payable target) external;
+    }
+    let call_data = sendOneWeiCall {
+        target: TARGET_ADDRESS,
+    }
+    .abi_encode();
+    let result = ctx.call_evm_tx(
+        OWNER_ADDRESS,
+        contract_address,
+        call_data.into(),
+        None,
+        Some(U256::ZERO),
+    );
+    println!("{:?}", result);
+    assert!(matches!(result, Revert { .. }));
+    let message = "Transfer failed".as_bytes();
+    let found = result
+        .output()
+        .unwrap()
+        .windows(message.len())
+        .any(|w| w == message);
+    assert!(found, "Expected revert message not found");
+    assert_eq!(result.gas_used(), 29015);
 }

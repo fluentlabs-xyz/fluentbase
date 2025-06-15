@@ -27,7 +27,3 @@ test:
 .PHONY: check
 check:
 	cargo check
-
-.PHONY: custom_tests
-custom_tests:
-	cargo test svm_loader_v4 --profile test --manifest-path /home/bfday/github/fluentlabs-xyz/fluentbase/e2e/Cargo.toml

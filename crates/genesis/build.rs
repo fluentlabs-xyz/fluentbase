@@ -1,38 +1,42 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_types::{
     address,
-    compile_wasm_to_rwasm_with_config,
-    default_compilation_config,
     Address,
     Bytes,
+    GenesisContractBuildOutput,
     B256,
     DEVELOPER_PREVIEW_CHAIN_ID,
     U256,
-    WASM_SIG,
 };
 use std::{collections::BTreeMap, env, fs::File, io::Write, path::PathBuf};
 
 #[rustfmt::skip]
-pub const GENESIS_CONTRACTS: &[(&str, Address, &[u8])] = &[
-    ("fluentbase-contracts-modexp", fluentbase_types::PRECOMPILE_BIG_MODEXP, fluentbase_contracts_modexp::WASM_BYTECODE),
-    ("fluentbase-contracts-blake2f", fluentbase_types::PRECOMPILE_BLAKE2F, fluentbase_contracts_blake2f::WASM_BYTECODE),
-    ("fluentbase-contracts-bn256", fluentbase_types::PRECOMPILE_BN256_ADD, fluentbase_contracts_bn256::WASM_BYTECODE),
-    ("fluentbase-contracts-bn256", fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts_bn256::WASM_BYTECODE),
-    ("fluentbase-contracts-bn256", fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::WASM_BYTECODE),
-    ("fluentbase-contracts-erc20", fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::WASM_BYTECODE),
-    ("fluentbase-contracts-evm", fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::WASM_BYTECODE),
-    ("fluentbase-contracts-svm", fluentbase_types::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts_svm::WASM_BYTECODE),
-    #[cfg(feature = "fairblock")]
-    ("fluentbase-contracts-fairblock", fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::WASM_BYTECODE),
-    ("fluentbase-contracts-identity", fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts_identity::WASM_BYTECODE),
-    ("fluentbase-contracts-kzg", fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_kzg::WASM_BYTECODE),
-    ("fluentbase-contracts-multicall", fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::WASM_BYTECODE),
-    ("fluentbase-contracts-nitro", fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts_nitro::WASM_BYTECODE),
-    ("fluentbase-contracts-oauth2", fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts_oauth2::WASM_BYTECODE),
-    ("fluentbase-contracts-ripemd160", fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts_ripemd160::WASM_BYTECODE),
-    ("fluentbase-contracts-ecrecover", fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_ecrecover::WASM_BYTECODE),
-    ("fluentbase-contracts-sha256", fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts_sha256::WASM_BYTECODE),
-    ("fluentbase-contracts-webauthn", fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts_webauthn::WASM_BYTECODE),
+const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
+    (fluentbase_types::PRECOMPILE_BIG_MODEXP, fluentbase_contracts_modexp::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLAKE2F, fluentbase_contracts_blake2f::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BN256_ADD, fluentbase_contracts_bn256::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts_bn256::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts_evm::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts_identity::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_kzg::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G2_ADD, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G2_MSM, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts_bls12381::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts_nitro::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts_oauth2::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts_ripemd160::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_ecrecover::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts_sha256::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts_webauthn::BUILD_OUTPUT),
 ];
 
 fn devnet_chain_config() -> ChainConfig {
@@ -73,32 +77,16 @@ fn init_contract(
     alloc: &mut BTreeMap<Address, GenesisAccount>,
     name: &str,
     address: Address,
-    binary_data: Vec<u8>,
+    rwasm_bytecode: Bytes,
 ) {
-    let bytecode: Bytes = if binary_data.starts_with(&WASM_SIG) {
-        let mut config = default_compilation_config();
-        // genesis contracts self-manage gas via `charge_fuel_manually` syscall, and additional
-        // charging for each builtin is not expected.
-        config.builtins_consume_fuel(false);
-        let result = compile_wasm_to_rwasm_with_config(&binary_data, config).unwrap();
-        if !result.constructor_params.is_empty() {
-            panic!(
-                "rwasm contract ({}) should not have constructor params",
-                name
-            );
-        }
-        result.rwasm_bytecode
-    } else {
-        Bytes::from(binary_data)
-    };
     print!("creating genesis account {} (0x{})... ", name, address);
     std::io::stdout().flush().unwrap();
-    println!("{} bytes", bytecode.len());
+    println!("{} bytes", rwasm_bytecode.len());
     let mut account = alloc
         .get(&address)
         .cloned()
         .unwrap_or_else(GenesisAccount::default);
-    account.code = Some(bytecode);
+    account.code = Some(rwasm_bytecode);
     alloc.insert(address, account);
 }
 
@@ -106,7 +94,8 @@ macro_rules! initial_devnet_balance {
     ($address:literal) => {
         (
             address!($address),
-            GenesisAccount::default().with_balance(U256::from(1_000_000_000000000000000000u128)),
+            GenesisAccount::default()
+                .with_balance(U256::from(1_000_000_000_000_000000000000000000u128)),
         )
     };
 }
@@ -114,32 +103,20 @@ macro_rules! initial_devnet_balance {
 fn devnet_genesis() -> Genesis {
     let mut alloc = BTreeMap::from([
         // default testing accounts
-        initial_devnet_balance!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-        initial_devnet_balance!("70997970C51812dc3A010C7d01b50e0d17dc79C8"),
-        initial_devnet_balance!("3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
-        initial_devnet_balance!("90F79bf6EB2c4f870365E785982E1f101E93b906"),
-        initial_devnet_balance!("15d34AAf54267DB7D7c367839AAf71A00a2C6A65"),
-        initial_devnet_balance!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc"),
-        initial_devnet_balance!("976EA74026E726554dB657fA54763abd0C3a0aa9"),
-        initial_devnet_balance!("14dC79964da2C08b23698B3D3cc7Ca32193d9955"),
-        initial_devnet_balance!("23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f"),
-        initial_devnet_balance!("a0Ee7A142d267C1f36714E4a8F75612F20a79720"),
-        initial_devnet_balance!("Bcd4042DE499D14e55001CcbB24a551F3b954096"),
-        initial_devnet_balance!("71bE63f3384f5fb98995898A86B02Fb2426c5788"),
-        initial_devnet_balance!("FABB0ac9d68B0B445fB7357272Ff202C5651694a"),
-        initial_devnet_balance!("1CBd3b2770909D4e10f157cABC84C7264073C9Ec"),
-        initial_devnet_balance!("dF3e18d64BC6A983f673Ab319CCaE4f1a57C7097"),
-        initial_devnet_balance!("cd3B766CCDd6AE721141F452C550Ca635964ce71"),
-        initial_devnet_balance!("2546BcD3c84621e976D8185a91A922aE77ECEc30"),
-        initial_devnet_balance!("bDA5747bFD65F08deb54cb465eB87D40e51B197E"),
-        initial_devnet_balance!("dD2FD4581271e230360230F9337D5c0430Bf44C0"),
-        initial_devnet_balance!("8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199"),
-        initial_devnet_balance!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3"),
-        initial_devnet_balance!("33a831e42B24D19bf57dF73682B9a3780A0435BA"),
+        initial_devnet_balance!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3"), // dmitry
+        initial_devnet_balance!("33a831e42B24D19bf57dF73682B9a3780A0435BA"), // daniel
+        initial_devnet_balance!("B72988b6DdC94E577E98C5565E0e11E688537e73"), // faucet
+        initial_devnet_balance!("c1202e7d42655F23097476f6D48006fE56d38d4f"), // marcus
+        initial_devnet_balance!("e92c16763ba7f73a2218a5416aaa493a1f038bef"), // khasan
     ]);
 
-    for (name, address, bytecode) in GENESIS_CONTRACTS {
-        init_contract(&mut alloc, *name, address.clone(), bytecode.to_vec());
+    for (address, contract) in GENESIS_CONTRACTS {
+        init_contract(
+            &mut alloc,
+            contract.name,
+            address.clone(),
+            contract.rwasm_bytecode.into(),
+        );
     }
 
     Genesis {
@@ -163,7 +140,7 @@ fn main() {
     let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let genesis = devnet_genesis();
     let genesis_json = serde_json::to_string_pretty(&genesis).unwrap();
-    let file_name = "assets/genesis-devnet.json";
+    let file_name = "genesis-devnet.json";
     let out_dir = cargo_manifest_dir.join(file_name);
     let mut file = File::create(out_dir).unwrap();
     file.write(genesis_json.as_bytes()).unwrap();

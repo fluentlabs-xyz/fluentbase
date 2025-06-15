@@ -12,7 +12,7 @@ use crate::{
     EVM,
 };
 use core::ptr;
-use fluentbase_sdk::{ContractContextReader, SharedAPI, B256, KECCAK_EMPTY, U256};
+use fluentbase_sdk::{ContextReader, SharedAPI, B256, KECCAK_EMPTY, U256};
 
 pub fn keccak256<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_top!(evm, offset, len_ptr);

@@ -27,7 +27,7 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{BlockContextReader, SharedAPI, StorageAPI};
+use fluentbase_sdk::{ContextReader, SharedAPI, StorageAPI};
 use hashbrown::HashMap;
 use solana_bincode::deserialize;
 use solana_clock::Clock;

@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-revm-precompile = { workspace = true, features = ["secp256r1"] }
+precompile = { workspace = true, features = ["secp256r1"] }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
@@ -18,7 +18,9 @@ sha2 = { version = "0.10", default-features = false }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
+precompile = { workspace = true, features = ["secp256r1"] }
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "revm-precompile/std"]
+std = ["fluentbase-sdk/std", "precompile/std"]

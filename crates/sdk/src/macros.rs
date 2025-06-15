@@ -11,19 +11,18 @@ macro_rules! this_function_path {
 }
 #[macro_export]
 macro_rules! current_line_info {
-    () => {
+    () => {{
         alloc::format!("{}:{}", $crate::this_function_path!(), core::line!())
-    };
+    }};
 }
 
 #[macro_export]
 macro_rules! debug_log {
     () => {{
-        debug_log!("");
+        $crate::debug_log!("");
     }};
     ($msg:tt) => {{
-        use alloc::format;
-        let msg = format!("{}: {}", $crate::current_line_info!(), $msg);
+        let msg = alloc::format!("{}: {}", $crate::current_line_info!(), $msg);
         #[cfg(target_arch = "wasm32")]
         unsafe { $crate::rwasm::_debug_log(msg.as_ptr(), msg.len() as u32) }
         #[cfg(feature = "std")]
@@ -31,7 +30,7 @@ macro_rules! debug_log {
     }};
     ($($arg:tt)*) => {{
         let msg = alloc::format!($($arg)*);
-        debug_log!(msg);
+        $crate::debug_log!(msg);
     }};
 }
 

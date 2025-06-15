@@ -1,5 +1,4 @@
 use crate::{native_api::NativeAPI, Address, B256, U256};
-use tiny_keccak::Hasher;
 
 #[inline(always)]
 pub fn calc_create_address<API: NativeAPI>(deployer: &Address, nonce: u64) -> Address {
@@ -28,42 +27,6 @@ pub fn calc_create2_address<API: NativeAPI>(
     bytes[21..53].copy_from_slice(&salt.to_be_bytes::<32>());
     bytes[53..85].copy_from_slice(init_code_hash.as_slice());
     let hash = API::keccak256(&bytes);
-    Address::from_word(hash)
-}
-
-/*
-#[inline(always)]
-pub fn calc_create2_address_sdk<SDK: SharedAPI>(
-    sdk: &SDK,
-    deployer: &Address,
-    salt: &U256,
-    init_code_hash: &B256,
-) -> Address {
-    let mut bytes = [0; 85];
-    bytes[0] = 0xff;
-    bytes[1..21].copy_from_slice(deployer.as_slice());
-    bytes[21..53].copy_from_slice(&salt.to_be_bytes::<32>());
-    bytes[53..85].copy_from_slice(init_code_hash.as_slice());
-    let hash = sdk.keccak256(&bytes);
-    Address::from_word(hash)
-}
-*/
-
-#[inline(always)]
-pub fn calc_create2_address_no_sdk(
-    deployer: &Address,
-    salt: &U256,
-    init_code_hash: &B256,
-) -> Address {
-    let mut bytes = [0; 85];
-    bytes[0] = 0xff;
-    bytes[1..21].copy_from_slice(deployer.as_slice());
-    bytes[21..53].copy_from_slice(&salt.to_be_bytes::<32>());
-    bytes[53..85].copy_from_slice(init_code_hash.as_slice());
-    let mut hasher = tiny_keccak::Keccak::v256();
-    hasher.update(&bytes);
-    let mut hash = B256::ZERO;
-    hasher.finalize(&mut hash.0);
     Address::from_word(hash)
 }
 

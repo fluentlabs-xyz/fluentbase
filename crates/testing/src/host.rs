@@ -1,16 +1,17 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
-use fluentbase_types::{
+use fluentbase_sdk::{
+    bytes::Buf,
     native_api::NativeAPI,
     Address,
     Bytes,
+    ContextReader,
     ContractContextV1,
     ExitCode,
     IsAccountEmpty,
     IsColdAccess,
     SharedAPI,
     SharedContextInputV1,
-    SharedContextReader,
     StorageAPI,
     SyscallResult,
     B256,
@@ -131,7 +132,7 @@ impl StorageAPI for HostTestingContext {
 }
 
 impl SharedAPI for HostTestingContext {
-    fn context(&self) -> impl SharedContextReader {
+    fn context(&self) -> impl ContextReader {
         self.inner.borrow().shared_context_input_v1.clone()
     }
 
@@ -145,6 +146,19 @@ impl SharedAPI for HostTestingContext {
 
     fn input_size(&self) -> u32 {
         self.inner.borrow().native_sdk.input_size()
+    }
+
+    fn read_context(&self, target: &mut [u8], offset: u32) {
+        let buffer = self
+            .inner
+            .borrow()
+            .shared_context_input_v1
+            .encode_to_vec()
+            .unwrap();
+        assert!(target.len() + offset as usize <= SharedContextInputV1::SIZE);
+        buffer
+            .slice(offset as usize..offset as usize + target.len())
+            .copy_to_slice(target);
     }
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
@@ -165,6 +179,7 @@ impl SharedAPI for HostTestingContext {
     fn exit(&self, exit_code: ExitCode) -> ! {
         self.inner.borrow().native_sdk.exit(exit_code.into_i32());
     }
+
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
         let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
         self.inner
@@ -223,8 +238,11 @@ impl SharedAPI for HostTestingContext {
         SyscallResult::new(preimage_size, 0, 0, 0)
     }
 
-    fn emit_log(&mut self, data: Bytes, topics: &[B256]) -> SyscallResult<()> {
-        self.inner.borrow_mut().logs.push((data, topics.to_vec()));
+    fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()> {
+        self.inner
+            .borrow_mut()
+            .logs
+            .push((Bytes::copy_from_slice(data), topics.to_vec()));
         SyscallResult::new((), 0, 0, 0)
     }
 

@@ -20,7 +20,7 @@ use crate::{
 };
 use alloc::{vec, vec::Vec};
 use bincode::error::DecodeError;
-use fluentbase_sdk::{Bytes, ContractContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{Bytes, ContextReader, ExitCode, SharedAPI};
 use solana_bincode::{deserialize, serialize};
 
 pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
