@@ -128,7 +128,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let contract_address = sdk.context().contract_address();
 
     let mut mem_storage = MemStorage::new();
-    let loader_id = loader_v4::id();
+    let loader_v4 = loader_v4::id();
 
     let pk_caller = pubkey_from_address(&contract_caller);
     let pk_contract = pubkey_from_address(&contract_address);
@@ -173,13 +173,13 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         &system_program::id(),
         &create_loadable_account_for_test("system_program_id", &native_loader::id()), // TODO replace with create_loadable_account_with_fields
     )
-    .unwrap();
+    .expect("failed to write system_program");
     storage_write_account_data(
         &mut mem_storage,
-        &loader_id,
+        &loader_v4,
         &create_loadable_account_for_test("loader_v4_id", &native_loader::id()), // TODO replace with create_loadable_account_with_fields
     )
-    .unwrap();
+    .expect("failed to write loader_v4");
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
     match &result {

@@ -89,10 +89,6 @@ impl<'a> PartialOrd for IterItem<'a> {
 ///
 /// The entries are ordered by descending block height, so the first entry holds
 /// the most recent block hash, and the last entry holds an old block hash.
-#[deprecated(
-    since = "1.9.0",
-    note = "Please do not use, will no longer be available in the future"
-)]
 #[repr(C)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, bincode::Encode, bincode::Decode)]
 pub struct RecentBlockhashes(Vec<Entry>);

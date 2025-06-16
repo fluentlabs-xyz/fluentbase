@@ -1,5 +1,5 @@
 use crate::{HostTestingContext, HostTestingContextNativeAPI};
-use core::{mem::take, str::from_utf8};
+use core::{borrow::Borrow, mem::take, str::from_utf8};
 use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
@@ -9,7 +9,9 @@ use fluentbase_sdk::{
     debug_log,
     Address,
     Bytes,
+    ContextReader,
     ExitCode,
+    SharedAPI,
     SharedContextInputV1,
     KECCAK_EMPTY,
     STATE_MAIN,
@@ -264,7 +266,8 @@ impl<'a> TxBuilder<'a> {
         tx.caller = caller;
         tx.kind = TransactTo::Call(callee);
         tx.gas_limit = 3_000_000;
-        let block = BlockEnv::default();
+        let mut block = BlockEnv::default();
+        block.number = ctx.sdk.borrow().context().block_number();
         Self { ctx, tx, block }
     }
 

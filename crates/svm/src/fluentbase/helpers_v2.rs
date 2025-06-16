@@ -661,9 +661,12 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     // TODO optimize accounts saving
     let mut result_accounts =
         HashMap::with_capacity(transaction_context.get_number_of_accounts() as usize);
+
     for account_idx in 0..transaction_context.get_number_of_accounts() {
         let account_key = transaction_context.get_key_of_account_at_index(account_idx)?;
+
         let account_data = transaction_context.get_account_at_index(account_idx)?;
+
         result_accounts.insert(
             account_key.clone(),
             account_data.borrow().to_account_shared_data(),
@@ -675,31 +678,3 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
 
     Ok(result_accounts)
 }
-
-// #[test]
-// fn mem_mapping_test() {
-//     let config = Config {
-//         max_call_depth: 64,
-//         stack_frame_size: 4096,
-//         enable_address_translation: true,
-//         enable_stack_frame_gaps: true,
-//         instruction_meter_checkpoint_distance: 10000,
-//         enable_instruction_meter: true,
-//         enable_instruction_tracing: false,
-//         enable_symbol_and_section_labels: false,
-//         reject_broken_elfs: true,
-//         noop_instruction_rate: 256,
-//         sanitize_user_provided_values: true,
-//         external_internal_function_hash_collision: true,
-//         reject_callx_r10: true,
-//         optimize_rodata: true,
-//         aligned_memory_mapping: true,
-//         enable_sbpf_v1: true,
-//         enable_sbpf_v2: true,
-//     };
-//     let mut regions = Vec::<MemoryRegion>::new();
-//     regions.push(MemoryRegion::new_for_testing(&[0u8; 0], 0x0, 0, MemoryState::Readable));
-//     let sbpf_version = SBPFVersion::V1;
-//     let mem_map = MemoryMapping::new(regions, &config, &sbpf_version).unwrap();
-//     let result = mem_map.map(AccessType::Load, 8589954744, 32);
-// }

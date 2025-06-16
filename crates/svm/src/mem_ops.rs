@@ -3,7 +3,6 @@ use crate::{
     context::InvokeContext,
     error::{Error, SvmError},
     helpers::SyscallError,
-    solana_program::feature_set,
     word_size::{
         addr_type::AddrType,
         common::MemoryMappingHelper,

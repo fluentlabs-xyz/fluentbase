@@ -664,9 +664,10 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
         }
 
         // let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
+        let program_key = program.get_key().clone();
         let loaded_program = invoke_context
             .program_cache_for_tx_batch
-            .find(program.get_key())
+            .find(&program_key)
             .ok_or_else(|| InstructionError::InvalidAccountData)?;
 
         // get_or_create_executor_time.stop();

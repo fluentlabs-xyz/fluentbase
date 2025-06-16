@@ -546,7 +546,13 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 .map(|(_name, function)| function),
             _ => None,
         }
-        .ok_or(InstructionError::UnsupportedProgramId)?;
+        .ok_or(InstructionError::UnsupportedProgramId);
+        let function = match function {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(e);
+            }
+        };
 
         entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
 

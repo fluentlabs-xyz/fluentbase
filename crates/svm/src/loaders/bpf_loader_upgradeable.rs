@@ -258,10 +258,12 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
             //     log_collector,
             //     "BPF loader management instructions are no longer supported",
             // );
+
             Err(InstructionError::UnsupportedProgramId)
         } else if bpf_loader_deprecated::check_id(program_id) {
             invoke_context.consume_checked(DEPRECATED_LOADER_COMPUTE_UNITS)?;
             // ic_logger_msg!(log_collector, "Deprecated loader is no longer supported");
+
             Err(InstructionError::UnsupportedProgramId)
         } else {
             // ic_logger_msg!(log_collector, "Invalid BPF loader id");

@@ -154,41 +154,37 @@ mod tests {
             ..Default::default()
         });
 
-        // TODO(stas) cannot validate because of the bug in testing env
-        let validate_state = true;
-        if validate_state {
-            let exec_account: AccountSharedData = storage_read_account_data(&ctx.sdk, &pk_exec)
-                .expect(format!("failed to read exec account data: {}", pk_exec).as_str());
-            assert_eq!(exec_account.lamports(), 0);
-            assert_eq!(
-                exec_account.data().len(),
-                LoaderV4State::program_data_offset() + account_with_program.data().len()
-            );
-            assert_eq!(
-                &exec_account.data()[LoaderV4State::program_data_offset()..],
-                account_with_program.data()
-            );
+        let exec_account: AccountSharedData = storage_read_account_data(&ctx.sdk, &pk_exec)
+            .expect(format!("failed to read exec account data: {}", pk_exec).as_str());
+        assert_eq!(exec_account.lamports(), 0);
+        assert_eq!(
+            exec_account.data().len(),
+            LoaderV4State::program_data_offset() + account_with_program.data().len()
+        );
+        assert_eq!(
+            &exec_account.data()[LoaderV4State::program_data_offset()..],
+            account_with_program.data()
+        );
 
-            let payer_account = storage_read_account_data(&ctx.sdk, &pk_payer).expect(
-                format!(
-                    "failed to read payer {} (address:{}) account data",
-                    pk_payer,
-                    evm_address_from_pubkey::<true>(&pk_payer)
-                        .expect("pk_payer must be a compatible pk")
-                )
-                .as_str(),
-            );
-            assert_eq!(
-                payer_account.lamports(),
-                payer_lamports - 1 - lamports_to_send
-            );
-            assert_eq!(payer_account.data().len(), 0);
+        let payer_account = storage_read_account_data(&ctx.sdk, &pk_payer).expect(
+            format!(
+                "failed to read payer {} (address:{}) account data",
+                pk_payer,
+                evm_address_from_pubkey::<true>(&pk_payer)
+                    .expect("pk_payer must be a compatible pk")
+            )
+            .as_str(),
+        );
+        assert_eq!(
+            payer_account.lamports(),
+            payer_lamports - 1 - lamports_to_send
+        );
+        assert_eq!(payer_account.data().len(), 0);
 
-            let new_account = storage_read_account_data(&ctx.sdk, &pk_new)
-                .expect(format!("failed to read new account data: {}", pk_new).as_str());
-            assert_eq!(new_account.lamports(), lamports_to_send);
-            assert_eq!(new_account.data().len(), space as usize);
-            assert_eq!(new_account.data()[byte_n_to_set as usize], byte_n_val);
-        }
+        let new_account = storage_read_account_data(&ctx.sdk, &pk_new)
+            .expect(format!("failed to read new account data: {}", pk_new).as_str());
+        assert_eq!(new_account.lamports(), lamports_to_send);
+        assert_eq!(new_account.data().len(), space as usize);
+        assert_eq!(new_account.data()[byte_n_to_set as usize], byte_n_val);
     }
 }

@@ -2,9 +2,10 @@
 mod tests {
     use crate::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
+        compute_budget::compute_budget::ComputeBudget,
         context::{IndexOfAccount, InvokeContext},
         helpers::create_account_shared_data_for_test,
-        // loaded_programs::LoadedProgram,
+        loaded_programs::ProgramCacheEntry,
         loaders::{
             bpf_loader_v4,
             bpf_loader_v4::{create_program_runtime_environment_v2, get_state_mut},
@@ -16,13 +17,8 @@ mod tests {
             loader_v4::LoaderV4Status,
             loader_v4_instruction::LoaderV4Instruction,
             sysvar,
-            sysvar::clock,
         },
         test_helpers::{mock_process_instruction, new_test_sdk},
-    };
-    use crate::{
-        compute_budget::compute_budget::ComputeBudget,
-        loaded_programs::ProgramCacheEntry,
     };
     use fluentbase_sdk::SharedAPI;
     use solana_bincode::serialize;
@@ -145,9 +141,9 @@ mod tests {
     }
 
     fn clock(slot: Slot) -> AccountSharedData {
-        let clock = clock::Clock {
+        let clock = sysvar::clock::Clock {
             slot,
-            ..clock::Clock::default()
+            ..sysvar::clock::Clock::default()
         };
         create_account_shared_data_for_test(&clock)
     }
@@ -183,7 +179,7 @@ mod tests {
             ),
             (
                 sysvar::clock::id(),
-                create_account_shared_data_for_test(&clock::Clock::default()),
+                create_account_shared_data_for_test(&sysvar::clock::Clock::default()),
             ),
             (
                 sysvar::rent::id(),
@@ -290,7 +286,7 @@ mod tests {
             ),
             (
                 sysvar::clock::id(),
-                create_account_shared_data_for_test(&clock::Clock::default()),
+                create_account_shared_data_for_test(&sysvar::clock::Clock::default()),
             ),
             (
                 sysvar::rent::id(),
@@ -412,7 +408,7 @@ mod tests {
             ),
             (
                 sysvar::clock::id(),
-                create_account_shared_data_for_test(&clock::Clock::default()),
+                create_account_shared_data_for_test(&sysvar::clock::Clock::default()),
             ),
             (
                 sysvar::rent::id(),
@@ -928,7 +924,7 @@ mod tests {
             ),
             (
                 sysvar::clock::id(),
-                create_account_shared_data_for_test(&clock::Clock::default()),
+                create_account_shared_data_for_test(&sysvar::clock::Clock::default()),
             ),
             (
                 sysvar::rent::id(),
