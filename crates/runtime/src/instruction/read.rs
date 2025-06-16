@@ -5,7 +5,7 @@ use rwasm::{Caller, TrapCode};
 pub struct SyscallRead;
 
 impl SyscallRead {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let [target_ptr, offset, length] = caller.stack_pop_n();
         let input = Self::fn_impl(caller.context_mut(), offset.as_u32(), length.as_u32())?;
         let _ = caller.memory_write(target_ptr.as_usize(), &input)?;

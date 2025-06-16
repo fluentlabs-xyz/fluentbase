@@ -5,7 +5,7 @@ use rwasm::{Caller, TrapCode};
 pub struct SyscallForwardOutput;
 
 impl SyscallForwardOutput {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let (offset, length) = caller.stack_pop2();
         Self::fn_impl(&mut caller.context_mut(), offset.as_u32(), length.as_u32()).map_err(
             |err| {

@@ -25,7 +25,7 @@ impl<E: EllipticCurve> SyscallWeierstrassDecompressAssign<E> {
     }
 
     /// Handles the syscall for point addition on a Weierstrass curve.
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let (x_ptr, sign_bit) = caller.stack_pop2_as::<u32>();
 
         let num_limbs = <E::BaseField as NumLimbs>::Limbs::USIZE;

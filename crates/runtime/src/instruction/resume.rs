@@ -10,7 +10,7 @@ use rwasm::{Caller, TrapCode};
 pub struct SyscallResume;
 
 impl SyscallResume {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let [call_id, return_data_ptr, return_data_len, exit_code, fuel16_ptr] =
             caller.stack_pop_n();
         let return_data = caller

@@ -15,7 +15,7 @@ pub struct SyscallFpOp<P, OP> {
 }
 
 impl<P: FpOpField, OP: FieldOp> SyscallFpOp<P, OP> {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let (x_ptr, y_ptr) = caller.stack_pop2_as::<u32>();
 
         let num_words = <P as NumWords>::WordsFieldElement::USIZE;

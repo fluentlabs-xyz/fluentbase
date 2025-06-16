@@ -4,7 +4,7 @@ use rwasm::{Caller, TrapCode};
 pub struct SyscallPreimageSize;
 
 impl SyscallPreimageSize {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let hash32_offset: u32 = caller.stack_pop_as();
         let hash = caller
             .memory_read_fixed::<32>(hash32_offset as usize)?

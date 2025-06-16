@@ -18,7 +18,7 @@ impl<E: EllipticCurve> SyscallWeierstrassDoubleAssign<E> {
     }
 
     /// Handles the syscall for point addition on a Weierstrass curve.
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let p_ptr: u32 = caller.stack_pop_as();
 
         let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;

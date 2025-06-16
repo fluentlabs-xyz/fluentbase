@@ -4,7 +4,7 @@ use rwasm::{Caller, TrapCode};
 pub struct SyscallFuel;
 
 impl SyscallFuel {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let fuel_remaining = caller.store().remaining_fuel().unwrap_or(u64::MAX);
         caller.stack_push(fuel_remaining);
         Ok(())

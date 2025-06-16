@@ -17,7 +17,7 @@ pub(crate) struct SyscallSha256Compress;
 
 impl SyscallSha256Compress {
     #[allow(clippy::many_single_char_names)]
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let (w_ptr, h_ptr) = caller.stack_pop2_as::<u32>();
         if w_ptr == h_ptr {
             caller.context_mut().execution_result.exit_code =

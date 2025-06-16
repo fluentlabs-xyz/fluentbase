@@ -6,7 +6,7 @@ use sp1_curves::edwards::WORDS_FIELD_ELEMENT;
 pub struct SyscallUint256Mul;
 
 impl SyscallUint256Mul {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let [x_ptr, y_ptr, m_ptr] = caller.stack_pop_n();
 
         let x = caller.memory_read_fixed::<WORDS_FIELD_ELEMENT>(x_ptr.as_usize())?;

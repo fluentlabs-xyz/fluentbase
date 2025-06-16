@@ -20,7 +20,6 @@ pub fn default_compilation_config() -> CompilationConfig {
             opcode: Some(Opcode::Call(SysFuncIdx::STATE as u32)),
         })
         .with_import_linker(create_import_linker())
-        .with_wrap_import_functions(true)
         .with_allow_malformed_entrypoint_func_type(false)
         .with_builtins_consume_fuel(true)
 }

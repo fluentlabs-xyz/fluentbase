@@ -39,7 +39,7 @@ impl Display for SysExecResumable {
 }
 
 impl SyscallExec {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let remaining_fuel = caller.store().remaining_fuel().unwrap_or(u64::MAX);
         let disable_fuel = caller.context().disable_fuel;
         let [hash32_ptr, input_ptr, input_len, fuel16_ptr, state] = caller.stack_pop_n();
@@ -75,11 +75,11 @@ impl SyscallExec {
             is_root: caller.store().context().call_depth == 0,
             pc: caller.program_counter() as usize,
         });
-        Err(TrapCode::ExecutionHalted)
+        Err(TrapCode::InterruptionCalled)
     }
 
     pub fn fn_continue(
-        mut caller: Caller<'_, RuntimeContext>,
+        mut caller: Caller<RuntimeContext>,
         context: &SysExecResumable,
     ) -> (u64, i64, i32) {
         let fuel_limit = context.params.fuel_limit;

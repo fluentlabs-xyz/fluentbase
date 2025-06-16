@@ -5,7 +5,7 @@ use rwasm::{Caller, TrapCode};
 pub struct SyscallExit;
 
 impl SyscallExit {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let exit_code: i32 = caller.stack_pop_as();
         Self::fn_impl(caller.context_mut(), exit_code).unwrap_err();
         Err(TrapCode::ExecutionHalted)

@@ -6,7 +6,7 @@ use rwasm::{Caller, TrapCode};
 pub struct SyscallChargeFuelManually;
 
 impl SyscallChargeFuelManually {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         // this method is allowed only in manual fuel mode that is possible with disabled fuel
         if !caller.context().disable_fuel {
             caller.context_mut().execution_result.exit_code =

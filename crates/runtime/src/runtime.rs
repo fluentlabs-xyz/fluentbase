@@ -93,7 +93,6 @@ pub struct Runtime {
     pub engine: ExecutionEngine,
     pub store: Store<RuntimeContext>,
     pub module: Arc<RwasmModule>,
-    pub pc: Option<usize>,
 }
 
 pub(crate) static CALL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -154,7 +153,6 @@ impl Runtime {
                 module,
                 engine,
                 store,
-                pc: None,
             }
         })
     }
@@ -191,8 +189,9 @@ impl Runtime {
         let fuel_consumed_before_the_call = self.store.fuel_consumed();
         let fuel_refunded_before_the_call = self.store.fuel_refunded();
 
-        let mut executor = self.engine.create_executor(&mut self.store, &self.module);
-        executor.advance_ip(self.pc.unwrap());
+        let mut executor = self
+            .engine
+            .create_resumable_executor(&mut self.store, &self.module);
 
         let mut caller = executor.caller();
         if fuel16_ptr > 0 {
@@ -209,6 +208,7 @@ impl Runtime {
             }
         }
         caller.stack_push(exit_code);
+        caller.sync_stack_ptr();
 
         let result = executor.run();
         self.handle_execution_result(
@@ -253,27 +253,22 @@ impl Runtime {
         execution_result.fuel_refunded = self.store.fuel_refunded() - fuel_refunded_before_the_call;
         loop {
             match next_result {
-                Ok(_) => {
-                    if let Some(resumable_context) =
-                        self.store.context_mut().resumable_context.take()
-                    {
-                        if resumable_context.is_root {
-                            unimplemented!("resumable context is root");
-                            // // TODO(dmitry123): "validate this logic, might not be ok in STF
-                            // mode" let (_, _, exit_code) =
-                            // SyscallExec::fn_continue(
-                            //     Caller::new(&mut self.executor),
-                            //     &resumable_context,
-                            // );
-                            // next_result = Ok(exit_code);
-                            // continue;
-                        }
-
-                        // store an IP value during execution
-                        self.pc = Some(resumable_context.pc);
-
-                        self.handle_resumable_state(&mut execution_result, &resumable_context);
+                Ok(_) => break,
+                Err(TrapCode::InterruptionCalled) => {
+                    let resumable_context =
+                        self.store.context_mut().resumable_context.take().unwrap();
+                    if resumable_context.is_root {
+                        unimplemented!("resumable context is root");
+                        // // TODO(dmitry123): "validate this logic, might not be ok in STF
+                        // mode" let (_, _, exit_code) =
+                        // SyscallExec::fn_continue(
+                        //     Caller::new(&mut self.executor),
+                        //     &resumable_context,
+                        // );
+                        // next_result = Ok(exit_code);
+                        // continue;
                     }
+                    self.handle_resumable_state(&mut execution_result, &resumable_context);
                     break;
                 }
                 Err(err) => {

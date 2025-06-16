@@ -10,7 +10,7 @@ pub const STATE_NUM_WORDS: u32 = STATE_SIZE * 2;
 pub struct SyscallKeccak256Permute;
 
 impl SyscallKeccak256Permute {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let state_ptr: u32 = caller.stack_pop_as();
         let state = caller.memory_read_fixed::<{ STATE_NUM_WORDS as usize }>(state_ptr as usize)?;
 

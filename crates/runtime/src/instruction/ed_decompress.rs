@@ -21,7 +21,7 @@ impl<E: EdwardsParameters> SyscallEdwardsDecompress<E> {
     }
 
     #[allow(clippy::many_single_char_names)]
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let (slice_ptr, sign) = caller.stack_pop2();
         // Read the Y bytes from memory
         let y_bytes = caller

@@ -77,7 +77,7 @@ use sp1_curves::{
 };
 
 pub fn invoke_runtime_handler(
-    caller: Caller<'_, RuntimeContext>,
+    caller: Caller<RuntimeContext>,
     sys_func_idx: SysFuncIdx,
 ) -> Result<(), TrapCode> {
     match sys_func_idx {
