@@ -2693,6 +2693,7 @@ dependencies = [
  "alloy-sol-types",
  "fluentbase-codec",
  "fluentbase-contracts-nitro",
+ "fluentbase-evm",
  "fluentbase-examples-abi-solidity",
  "fluentbase-examples-checkmate",
  "fluentbase-examples-client-solidity",
@@ -2719,6 +2720,7 @@ dependencies = [
  "rand 0.9.1",
  "revm",
  "rwasm",
+ "rwasm-revm",
  "wat",
 ]
 

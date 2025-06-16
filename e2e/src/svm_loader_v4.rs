@@ -155,7 +155,7 @@ mod tests {
         });
 
         // TODO(stas) cannot validate because of the bug in testing env
-        let validate_state = false;
+        let validate_state = true;
         if validate_state {
             let exec_account: AccountSharedData = storage_read_account_data(&ctx.sdk, &pk_exec)
                 .expect(format!("failed to read exec account data: {}", pk_exec).as_str());

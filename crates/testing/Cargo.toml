@@ -35,4 +35,6 @@ std = [
 debug-print = [
     "fluentbase-sdk/debug-print",
     "fluentbase-runtime/debug-print",
+    "revm/debug-print",
+    "rwasm-revm/debug-print",
 ]
