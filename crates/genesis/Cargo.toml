@@ -22,6 +22,7 @@ fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
 fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
 fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }
 fluentbase-contracts-evm = { path = "../../contracts/evm" }
+fluentbase-contracts-svm = { path = "../../contracts/svm" }
 fluentbase-contracts-fairblock = { path = "../../contracts/fairblock" }
 fluentbase-contracts-identity = { path = "../../contracts/identity" }
 fluentbase-contracts-kzg = { path = "../../contracts/kzg" }
@@ -46,6 +47,7 @@ fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
 fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
 fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }
 fluentbase-contracts-evm = { path = "../../contracts/evm" }
+fluentbase-contracts-svm = { path = "../../contracts/svm" }
 fluentbase-contracts-fairblock = { path = "../../contracts/fairblock" }
 fluentbase-contracts-identity = { path = "../../contracts/identity" }
 fluentbase-contracts-kzg = { path = "../../contracts/kzg" }
