@@ -835,8 +835,6 @@ mod tests {
         type VecOfItemsType<'a> = StableVec<ItemType<'a>>;
         const ITEM_SIZE: usize = size_of::<ItemType>();
         const VEC_OF_ITEMS_TYPE_SIZE: usize = size_of::<VecOfItemsType>();
-        println!("ITEM_SIZE: {}", ITEM_SIZE);
-        println!("VEC_OF_ITEMS_TYPE_SIZE: {}", VEC_OF_ITEMS_TYPE_SIZE);
 
         let num: u64 = 1;
         let key_1 = Pubkey::new_from_array([num as u8; 32]);
@@ -926,33 +924,17 @@ mod tests {
             (items_original_fixed.as_ref().as_ptr() as u64).into(),
             items_len,
         );
-        println!("vec_of_items_bytes_size {}", vec_of_items_bytes_size);
         let vec_of_items_start_ptr = (&items_original_fixed) as *const _ as u64;
         let first_item_start_ptr = items_original_fixed.as_ptr() as u64;
-        println!(
-            "vec_of_items_start_ptr {} ({:x?}) first_item_start_ptr {} ({:x?})",
-            vec_of_items_start_ptr,
-            &vec_of_items_start_ptr.to_le_bytes(),
-            first_item_start_ptr,
-            &first_item_start_ptr.to_le_bytes()
-        );
         let vec_of_items_as_raw_bytes = unsafe {
             alloc::slice::from_raw_parts(
                 vec_of_items_start_ptr as *const u8,
                 vec_of_items_bytes_size,
             )
         };
-        println!(
-            "vec_of_items_as_raw_bytes ({}): {:x?}",
-            vec_of_items_bytes_size, vec_of_items_as_raw_bytes
-        );
         let items_as_raw_bytes = unsafe {
             alloc::slice::from_raw_parts(first_item_start_ptr as *const u8, items_only_bytes_size)
         };
-        println!(
-            "items_as_raw_bytes ({}): {:x?}",
-            items_only_bytes_size, items_as_raw_bytes
-        );
         for idx in 0..slice.len() {
             let item_original = &items_original_fixed[idx];
         }

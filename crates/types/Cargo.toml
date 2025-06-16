@@ -10,7 +10,6 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-tiny-keccak = { workspace = true }
 serde = { workspace = true, optional = true }
 byteorder = { workspace = true, default-features = false }
 rwasm = { workspace = true }

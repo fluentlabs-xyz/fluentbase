@@ -47,21 +47,12 @@ solana-stable-layout = { workspace = true, default-features = false, features = 
 solana-bincode = { workspace = true, default-features = false, features = [] }
 solana-precompile-error = { workspace = true, default-features = false, features = [] }
 solana-native-token = { workspace = true, default-features = false, features = [] }
-solana-atomic-u64 = { workspace = true, default-features = false, features = [] }
-#solana-account = { workspace = true, default-features = false, features = [] }
-#solana-compute-budget = { workspace = true, default-features = false, features = [] }
-#solana-poseidon = { workspace = true, default-features = false, features = ["serde", "sysvar"] }
 
-bs58 = { workspace = true, default-features = false, features = ["alloc"] }
-five8_const = { workspace = true, default-features = false, features = [] }
-tiny-keccak = { workspace = true }
 paste = { workspace = true }
 scopeguard = { workspace = true, default-features = false, features = [] }
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
 serde_json = { workspace = true, default-features = false, features = ["alloc"] }
 blake3 = { workspace = true, default-features = false, features = ["serde"] }
-hex-literal = { workspace = true, features = [] }
-base64 = { workspace = true, default-features = false, features = ["alloc"] }
 bitflags = { workspace = true, default-features = false, features = ["serde"] }
 bytemuck = { workspace = true, default-features = false, features = [] }
 bytemuck_derive = { workspace = true, default-features = false, features = [] }

@@ -74,11 +74,9 @@ impl HostTestingContext {
     pub fn dump_storage(&self) -> HashMap<(Address, U256), U256> {
         self.inner.borrow().persistent_storage.clone()
     }
-    // #[cfg(test)]
     pub fn visit_inner_storage_mut<F: FnMut(&mut HashMap<(Address, U256), U256>)>(&self, mut f: F) {
         f(&mut self.inner.borrow_mut().persistent_storage)
     }
-    // #[cfg(test)]
     pub fn visit_inner_storage<F: Fn(&HashMap<(Address, U256), U256>)>(&self, f: F) {
         f(&self.inner.borrow_mut().persistent_storage)
     }
