@@ -23,6 +23,9 @@ hex = { workspace = true }
 
 [features]
 default = ["std"]
+enable-svm = [
+    "fluentbase-runtime/enable-svm",
+]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",

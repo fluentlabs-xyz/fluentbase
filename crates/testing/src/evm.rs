@@ -94,11 +94,6 @@ impl EvmTestingContext {
     pub fn db_storage_to_sdk(&mut self) {
         for (address, db_account) in &self.db.cache.accounts {
             self.sdk.visit_inner_storage_mut(|storage| {
-                debug_log!(
-                    "inserting storage for address {} total KVs {}",
-                    address,
-                    db_account.storage.len()
-                );
                 for (k, v) in &db_account.storage {
                     storage.insert((*address, *k), *v);
                 }

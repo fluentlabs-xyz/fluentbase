@@ -42,6 +42,9 @@ hex-literal = { workspace = true }
 
 [features]
 default = ["std"]
+enable-svm = [
+    "fluentbase-genesis/enable-svm",
+]
 std = [
     "rwasm/std",
 ]

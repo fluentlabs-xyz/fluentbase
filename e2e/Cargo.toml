@@ -50,6 +50,10 @@ default = [
     "std",
     "debug-print",
     "wasmtime",
+    "enable-svm",
+]
+enable-svm = [
+    "fluentbase-sdk-testing/enable-svm",
 ]
 std = [
     "fluentbase-codec/std",
