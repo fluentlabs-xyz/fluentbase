@@ -537,7 +537,6 @@ mod tests {
             items_first_item_ptr.into(),
             items_len,
         );
-        println!("slice.item_size_bytes() {}", slice.item_size_bytes());
 
         for (idx, item) in slice.iter().enumerate() {
             assert_eq!(item.as_ref(), &items[idx]);
@@ -594,7 +593,6 @@ mod tests {
         let c1_len = c1.len();
 
         let type_name = core::any::type_name::<SliceFatPtr64<'_, u8>>();
-        println!("type_name: {}", type_name);
 
         let slice = SliceFatPtr64::<SliceFatPtr64<SliceFatPtr64<u8>>>::new(
             MemoryMappingHelper::default(),
@@ -752,7 +750,6 @@ mod tests {
 
         assert_eq!(T1_SIZE, T2_SIZE);
         assert_eq!(T2_SIZE, T3_SIZE);
-        println!("T1_SIZE: {}", T1_SIZE);
     }
 
     #[test]
@@ -762,8 +759,6 @@ mod tests {
         type VecOfItemsType = StableVec<ItemType>;
         const ITEM_SIZE: usize = size_of::<ItemType>();
         const VEC_OF_ITEMS_TYPE_SIZE: usize = size_of::<VecOfItemsType>();
-        println!("ITEM_SIZE: {}", ITEM_SIZE);
-        println!("VEC_OF_ITEMS_TYPE_SIZE: {}", VEC_OF_ITEMS_TYPE_SIZE);
         let items_original_fixed = VecOfItemsType::from(
             [
                 ItemType::new(Pubkey::new_from_array([1; 32]), false),
@@ -788,33 +783,17 @@ mod tests {
             (items_original_fixed.as_ref().as_ptr() as u64).into(),
             items_len,
         );
-        println!("vec_of_items_bytes_size {}", vec_of_items_bytes_size);
         let vec_of_items_start_ptr = unsafe { (&items_original_fixed) as *const _ } as u64;
         let first_item_start_ptr = items_original_fixed.as_ptr() as u64;
-        println!(
-            "vec_of_items_start_ptr {} ({:x?}) first_item_start_ptr {} ({:x?})",
-            vec_of_items_start_ptr,
-            &vec_of_items_start_ptr.to_le_bytes(),
-            first_item_start_ptr,
-            &first_item_start_ptr.to_le_bytes()
-        );
         let vec_of_items_as_raw_bytes = unsafe {
             alloc::slice::from_raw_parts(
                 vec_of_items_start_ptr as *const u8,
                 vec_of_items_bytes_size,
             )
         };
-        println!(
-            "vec_of_items_as_raw_bytes ({}): {:x?}",
-            vec_of_items_bytes_size, vec_of_items_as_raw_bytes
-        );
         let items_as_raw_bytes = unsafe {
             alloc::slice::from_raw_parts(first_item_start_ptr as *const u8, items_only_bytes_size)
         };
-        println!(
-            "items_as_raw_bytes ({}): {:x?}",
-            items_only_bytes_size, items_as_raw_bytes
-        );
         for idx in 0..slice.len() {
             assert_eq!(slice.item_at_idx(idx).as_ref(), &items_original_fixed[idx]);
         }

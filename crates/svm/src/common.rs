@@ -166,7 +166,7 @@ impl<SDK: SharedAPI> HasherImpl for PoseidonHasher<SDK> {
         }
     }
 
-    fn hash(&mut self, val: &[u8]) {
+    fn hash(&mut self, _val: &[u8]) {
         if self.initiated {
             panic!("accumulation not supported yet")
         } else {

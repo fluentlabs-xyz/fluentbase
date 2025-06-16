@@ -634,7 +634,6 @@ pub mod tests {
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
-            // println!("result1: {:?}", result);
             assert!(result.is_ok());
             let accounts_count = invoke_context.transaction_context.get_number_of_accounts();
             assert_eq!(accounts_count, 3);
@@ -763,7 +762,6 @@ pub mod tests {
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
-            // println!("result1: {:?}", result);
             assert!(result.is_ok());
             assert_eq!(result, Ok(()));
             let account1 = invoke_context
@@ -806,7 +804,6 @@ pub mod tests {
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
-            // println!("result2: {:?}", result);
             assert!(result.is_ok());
             assert_eq!(result, Ok(()));
             let account1 = invoke_context
@@ -849,7 +846,6 @@ pub mod tests {
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
-            // println!("result3: {:?}", result);
             assert!(result.is_err());
             assert_eq!(
                 result.err().unwrap(),
@@ -994,7 +990,6 @@ pub mod tests {
         ));
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
-        // println!("result1: {:?}", result);
         assert!(result.is_ok());
         let account1 = invoke_context
             .transaction_context
@@ -1042,7 +1037,6 @@ pub mod tests {
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
-            // println!("result2: {:?}", result);
             assert!(result.is_ok());
             let account1 = invoke_context
                 .transaction_context
@@ -1091,7 +1085,6 @@ pub mod tests {
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
-            // println!("result2: {:?}", result);
             assert!(result.is_ok());
             let account1 = invoke_context
                 .transaction_context
@@ -1246,7 +1239,6 @@ pub mod tests {
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
-            // println!("result1: {:?}", result);
             assert!(result.is_ok());
             let account1 = invoke_context
                 .transaction_context
@@ -1677,7 +1669,6 @@ pub mod tests {
                 SanitizedMessage::Legacy(LegacyMessage::new(m.clone(), &Default::default()));
             let result =
                 MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
-            // println!("result2_{}: {:?}", mn, result);
             assert!(result.is_ok());
         }
         assert_eq!(
@@ -1853,7 +1844,6 @@ pub mod tests {
         ];
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
-        println!("result3: {:?}", result);
         assert!(result.is_ok());
 
         let mut idx = 0;
@@ -2118,7 +2108,6 @@ pub mod tests {
         let program_indices = vec![vec![working_accounts_count, working_accounts_count + 1]];
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
-        println!("result3: {:?}", result);
         assert!(result.is_ok());
         let number_of_accounts = invoke_context.transaction_context.get_number_of_accounts();
         assert_eq!(number_of_accounts, accounts_count as IndexOfAccount);

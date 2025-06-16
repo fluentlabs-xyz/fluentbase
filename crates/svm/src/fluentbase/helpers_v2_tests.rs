@@ -67,7 +67,6 @@ mod tests {
         // setup
 
         let system_program_id = system_program::id();
-        println!("system_program_id: {:?}", system_program_id.to_bytes());
         let native_loader_id = native_loader::id();
         let loader_id = loader_v4::id();
         let sysvar_clock_id = sysvar::clock::id();
@@ -290,9 +289,7 @@ mod tests {
                 ..Default::default()
             })
             .with_input(serialize(&message).unwrap());
-        println!("exec started");
         let result_accounts = main_single_message(sdk.clone(), Some(&mut sapi));
-        println!("result_accounts.len: {}", result_accounts.len());
 
         let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
         assert_eq!(account_data.lamports(), 0);
@@ -308,7 +305,6 @@ mod tests {
         // setup
 
         let system_program_id = system_program::id();
-        println!("system_program_id: {:?}", system_program_id.to_bytes());
         let native_loader_id = native_loader::id();
         let loader_id = loader_v4::id();
         let sysvar_clock_id = sysvar::clock::id();
@@ -331,9 +327,6 @@ mod tests {
         let seed2 = pk_payer.as_ref();
         let seeds = &[seed1, seed2];
         let (pk_new, bump) = Pubkey::find_program_address(seeds, &pk_exec);
-        println!("pk_payer: {:x?}", pk_payer.to_bytes());
-        println!("pk_exec: {:x?}", pk_exec.to_bytes());
-        println!("pk_new: {:x?} bump: {}", pk_new.to_bytes(), bump);
 
         let pk_authority = Pubkey::from([9; 32]);
         // let pk_authority_account = AccountSharedData::new(100, 0, &system_program_id);
@@ -540,9 +533,7 @@ mod tests {
         //         ..Default::default()
         //     })
         //     .with_input(serialize(&message).unwrap());
-        // println!("exec started");
         // let result_accounts = main_single_message(sdk.clone(), Some(&mut sapi));
-        // println!("result_accounts.len: {}", result_accounts.len());
         //
         // let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_tmp).unwrap();
         // assert_eq!(account_data.lamports(), 100);
@@ -576,7 +567,6 @@ mod tests {
         instruction_data.extend_from_slice(seed1);
         instruction_data.extend_from_slice(byte_n_to_set.to_le_bytes().as_slice());
         instruction_data.push(byte_n_val);
-        println!("instruction_data: {:x?}", instruction_data);
 
         let instructions = vec![Instruction::new_with_bincode(
             pk_exec.clone(),
@@ -597,9 +587,7 @@ mod tests {
                 ..Default::default()
             })
             .with_input(serialize(&message).unwrap());
-        println!("exec started");
         let result_accounts = main_single_message(sdk.clone(), Some(&mut sapi));
-        println!("result_accounts.len: {}", result_accounts.len());
 
         let account_data: AccountSharedData =
             storage_read_account_data(&sapi, &pk_new).expect("account must exist in storage");
@@ -635,9 +623,6 @@ mod tests {
         let seed2 = pk_payer.as_ref();
         let seeds = &[seed1, seed2];
         let (pk_new, bump) = Pubkey::find_program_address(seeds, &pk_exec);
-        println!("pk_payer: {:x?}", pk_payer.to_bytes());
-        println!("pk_exec: {:x?}", pk_exec.to_bytes());
-        println!("pk_new: {:x?} bump: {}", pk_new.to_bytes(), bump);
 
         let pk_authority = pk_payer.clone();
 
@@ -753,7 +738,6 @@ mod tests {
         instruction_data.extend_from_slice(seed1);
         instruction_data.extend_from_slice(byte_n_to_set.to_le_bytes().as_slice());
         instruction_data.push(byte_n_val);
-        println!("instruction_data: {:x?}", instruction_data);
 
         let instructions = vec![Instruction::new_with_bincode(
             pk_exec.clone(),

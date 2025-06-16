@@ -99,12 +99,6 @@ pub fn deploy(mut sdk: impl SharedAPI) {
     batch_message.append_one(message);
 
     let result = exec_svm_batch_message(&mut sdk, batch_message, true, &mut Some(&mut mem_storage));
-    // match &result {
-    //     Err(e) => {
-    //         debug_log!("deploy: result error: {:?}", e)
-    //     }
-    //     _ => {}
-    // }
     let (result_accounts, exit_code) = process_svm_result(result);
     if exit_code != ExitCode::Ok.into_i32() {
         panic!(
@@ -169,12 +163,6 @@ pub fn main(mut sdk: impl SharedAPI) {
         .expect("failed to write programdata account");
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
-    // match &result {
-    //     Err(e) => {
-    //         debug_log!("main: result error: {:?}", e)
-    //     }
-    //     _ => {}
-    // }
     let (result_accounts, exit_code) = process_svm_result(result);
     if exit_code != ExitCode::Ok.into_i32() {
         panic!(

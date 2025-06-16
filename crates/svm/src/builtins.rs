@@ -308,7 +308,7 @@ declare_builtin_function!(
                 #[cfg(test)]
                 println!("SyscallLog: {}", string);
                 #[cfg(target_arch = "wasm32")]
-                debug_log!("Log: {}", string);
+                debug_log!("SyscallLog: {}", string);
                 Ok(0)
             },
 

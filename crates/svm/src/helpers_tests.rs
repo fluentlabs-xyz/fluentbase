@@ -91,15 +91,12 @@ pub(crate) mod tests {
             sanitize_user_provided_values: true,
             ..Default::default()
         };
-        // let solana_elf_file_name = "hello_world";
         let solana_elf_file_name = "solana_ee_hello_world";
         let elf_bytes = std::fs::read(format!(
             "../examples/solana-program/assets/{}.so",
             solana_elf_file_name
         ))
         .unwrap();
-
-        println!("ELF file loaded, size: {}", elf_bytes.len());
 
         let sdk = journal_state();
 
@@ -201,8 +198,6 @@ pub(crate) mod tests {
 
             let mem_region = MemoryRegion::new_writable(&mut mem, ebpf::MM_INPUT_START);
 
-            println!("Memory region for input: {:?}", mem_region);
-
             crate::create_vm!(
                 vm,
                 &executable_elf,
@@ -214,12 +209,7 @@ pub(crate) mod tests {
             );
             vm.registers;
 
-            println!(
-                "Executing program with expected result: {}",
-                expected_result
-            );
             let (interpreter_instruction_count, result) = vm.execute_program(&executable_elf, true);
-            println!("Execution result: {:?}", result);
 
             assert_eq!(
                 expected_result,

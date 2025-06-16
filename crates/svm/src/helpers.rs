@@ -271,12 +271,6 @@ impl core::error::Error for SyscallError {}
 //         arg5: u64,
 //         memory_mapping: &mut MemoryMapping,
 //     ) -> Result<u64, Error> {
-//         #[cfg(all(feature = "std", feature = "debug-print"))] {
-//             // println!(
-//             //     "SyscallStubInterceptor: addr {}; len {}; arg3 {}; arg4 {}; arg5 {};",
-//             //     addr, len, arg3, arg4, arg5
-//             // );
-//         }
 //         Ok(0)
 //     }
 // );
@@ -351,12 +345,6 @@ pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
 //     let config = executable.get_config();
 //     let sbpf_version = executable.get_sbpf_version();
 //
-//     // #[cfg(feature = "debug-print")] {
-//     //     println!("Creating memory mapping:");
-//     //     println!("Stack size: {}", stack.len());
-//     //     println!("Heap size: {}", heap.len());
-//     // }
-//
 //     let regions: Vec<MemoryRegion> = vec![
 //         executable.get_ro_region(),
 //         MemoryRegion::new_writable_gapped(
@@ -374,8 +362,6 @@ pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
 //     .chain(additional_regions.into_iter())
 //     .collect();
 //
-//     // #[cfg(feature = "debug-print")]
-//     // println!("Memory regions created: {:?}", regions);
 //     // Program code starts at `0x100000000`
 //     // Stack data starts at `0x200000000`
 //     // Heap data starts at `0x300000000`
@@ -470,10 +456,6 @@ pub struct SvmTransactResult {
 //     {
 //         let analysis =
 //             solana_rbpf::static_analysis::Analysis::from_executable(&executable).unwrap();
-//         #[cfg(feature = "debug-print")] {
-//             println!("result_interpreter={result_interpreter:?}");
-//             println!("result_jit={result_jit:?}");
-//         }
 //         let stdout = std::io::stdout();
 //         analysis
 //             .disassemble_trace_log(&mut stdout.lock(), &tracer_interpreter.trace_log)

@@ -515,16 +515,11 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     }
 
     /// Calls the instruction's program entrypoint method
-    fn process_executable_chain(
-        &mut self,
-        // compute_units_consumed: &mut u64,
-        // timings: &mut ExecuteTimings,
-    ) -> Result<(), InstructionError> {
+    fn process_executable_chain(&mut self) -> Result<(), InstructionError> {
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
-        // let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
         let builtin_id = {
-            // TODO Stanislav: need this check?
+            // TODO (stas): do we need this check
             // debug_assert!(instruction_context.get_number_of_program_accounts() <= 1);
             let borrowed_root_account = instruction_context
                 .try_borrow_program_account(&self.transaction_context, 0)
@@ -595,40 +590,17 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 if let EbpfError::SyscallError(syscall_error) = err {
                     if let Some(instruction_err) = syscall_error.downcast_ref::<InstructionError>()
                     {
-                        // stable_log::program_failure(&logger, &program_id, instruction_err);
                         Err(instruction_err.clone())
                     } else {
-                        // stable_log::program_failure(&logger, &program_id, syscall_error);
                         Err(InstructionError::ProgramFailedToComplete)
                     }
                 } else {
-                    // stable_log::program_failure(&logger, &program_id, err);
                     Err(InstructionError::ProgramFailedToComplete)
                 }
             }
         };
-
-        // let post_remaining_units = self.get_remaining();
-        // *compute_units_consumed = pre_remaining_units.saturating_sub(post_remaining_units);
-
-        // if builtin_id == program_id && result.is_ok() && *compute_units_consumed == 0 {
-        //     return Err(InstructionError::BuiltinProgramsMustConsumeComputeUnits);
-        // }
-
-        // saturating_add_assign!(
-        //     timings
-        //         .execute_accessories
-        //         .process_instructions
-        //         .process_executable_chain_us,
-        //     process_executable_chain_time.end_as_us()
-        // );
         result
     }
-
-    // /// Get this invocation's LogCollector
-    // pub fn get_log_collector(&self) -> Option<Rc<RefCell<LogCollector>>> {
-    //     self.log_collector.clone()
-    // }
 
     /// Consume compute units
     pub fn consume_checked(&self, amount: u64) -> Result<(), Box<dyn core::error::Error>> {
@@ -674,11 +646,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     pub fn get_epoch_total_stake(&self) -> Option<u64> {
         self.environment_config.epoch_total_stake
     }
-
-    // /// Get cached epoch vote accounts.
-    // pub fn get_epoch_vote_accounts(&self) -> Option<&VoteAccountsHashMap> {
-    //     self.environment_config.epoch_vote_accounts
-    // }
 
     // Should alignment be enforced during user pointer translation
     pub fn get_check_aligned(&self) -> bool {
@@ -727,14 +694,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         &self.traces
     }
 
-    // pub fn try_get_common_slot(&mut self) -> Option<Slot> {
-    //     let slot = self.programs_loaded_for_tx_batch.slot();
-    //     if slot != self.programs_modified_by_tx.slot() {
-    //         return None;
-    //     };
-    //     Some(slot)
-    // }
-
     pub fn inc_slots(&mut self, step: u64) {
         self.program_cache_for_tx_batch
             .set_slot_for_tests(self.program_cache_for_tx_batch.slot().saturating_add(step));
@@ -743,14 +702,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     pub fn set_slot(&mut self, slot: Slot) {
         self.program_cache_for_tx_batch.set_slot_for_tests(slot);
     }
-
-    // pub fn find_program_in_cache(&self, pubkey: &Pubkey) -> Option<Arc<LoadedProgram<'a, SDK>>> {
-    //     // First lookup the cache of the programs modified by the current transaction. If not found, lookup
-    //     // the cache of the cache of the programs that are loaded for the transaction batch.
-    //     let r = self.programs_modified_by_tx.find(pubkey);
-    //     let r = r.or_else(|| self.programs_loaded_for_tx_batch.find(pubkey));
-    //     r
-    // }
 
     /// Entrypoint for a cross-program invocation from a builtin program
     pub fn native_invoke(
@@ -770,405 +721,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         )?;
         Ok(())
     }
-
-    // pub fn get_check_aligned(&self) -> bool {
-    //     true
-    // }
-
-    // /// Helper to prepare for process_instruction()
-    // #[allow(clippy::type_complexity)]
-    // pub fn prepare_instruction(
-    //     &mut self,
-    //     instruction: &StableInstruction,
-    //     signers: &[Pubkey],
-    // ) -> Result<(Vec<InstructionAccount>, Vec<IndexOfAccount>), InstructionError> {
-    //     // Finds the index of each account in the instruction by its pubkey.
-    //     // Then normalizes / unifies the privileges of duplicate accounts.
-    //     // Note: This is an O(n^2) algorithm,
-    //     // but performed on a very small slice and requires no heap allocations.
-    //     let instruction_context = self.transaction_context.get_current_instruction_context()?;
-    //     let mut deduplicated_instruction_accounts: Vec<InstructionAccount> = Vec::new();
-    //     let mut duplicate_indices = Vec::with_capacity(instruction.accounts.len());
-    //     for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
-    //         let index_in_transaction = self
-    //             .transaction_context
-    //             .find_index_of_account(&account_meta.pubkey)
-    //             .ok_or_else(|| {
-    //                 // ic_msg!(
-    //                 //     self,
-    //                 //     "Instruction references an unknown account {}",
-    //                 //     account_meta.pubkey,
-    //                 // );
-    //                 InstructionError::MissingAccount
-    //             })?;
-    //         if let Some(duplicate_index) =
-    //             deduplicated_instruction_accounts
-    //                 .iter()
-    //                 .position(|instruction_account| {
-    //                     instruction_account.index_in_transaction == index_in_transaction
-    //                 })
-    //         {
-    //             duplicate_indices.push(duplicate_index);
-    //             let instruction_account = deduplicated_instruction_accounts
-    //                 .get_mut(duplicate_index)
-    //                 .ok_or(InstructionError::NotEnoughAccountKeys)?;
-    //             instruction_account.is_signer |= account_meta.is_signer;
-    //             instruction_account.is_writable |= account_meta.is_writable;
-    //         } else {
-    //             let index_in_caller = instruction_context
-    //                 .find_index_of_instruction_account(
-    //                     &self.transaction_context,
-    //                     &account_meta.pubkey,
-    //                 )
-    //                 .ok_or_else(|| {
-    //                     // ic_msg!(
-    //                     //     self,
-    //                     //     "Instruction references an unknown account {}",
-    //                     //     account_meta.pubkey,
-    //                     // );
-    //                     InstructionError::MissingAccount
-    //                 })?;
-    //             duplicate_indices.push(deduplicated_instruction_accounts.len());
-    //             deduplicated_instruction_accounts.push(InstructionAccount {
-    //                 index_in_transaction,
-    //                 index_in_caller,
-    //                 index_in_callee: instruction_account_index as IndexOfAccount,
-    //                 is_signer: account_meta.is_signer,
-    //                 is_writable: account_meta.is_writable,
-    //             });
-    //         }
-    //     }
-    //     for instruction_account in deduplicated_instruction_accounts.iter() {
-    //         let borrowed_account = instruction_context.try_borrow_instruction_account(
-    //             &self.transaction_context,
-    //             instruction_account.index_in_caller,
-    //         )?;
-    //
-    //         // Readonly in caller cannot become writable in callee
-    //         if instruction_account.is_writable && !borrowed_account.is_writable() {
-    //             // ic_msg!(
-    //             //     self,
-    //             //     "{}'s writable privilege escalated",
-    //             //     borrowed_account.get_key(),
-    //             // );
-    //             return Err(InstructionError::PrivilegeEscalation);
-    //         }
-    //
-    //         // To be signed in the callee,
-    //         // it must be either signed in the caller or by the program
-    //         if instruction_account.is_signer
-    //             && !(borrowed_account.is_signer() || signers.contains(borrowed_account.get_key()))
-    //         {
-    //             // ic_msg!(
-    //             //     self,
-    //             //     "{}'s signer privilege escalated",
-    //             //     borrowed_account.get_key()
-    //             // );
-    //             return Err(InstructionError::PrivilegeEscalation);
-    //         }
-    //     }
-    //     let instruction_accounts = duplicate_indices
-    //         .into_iter()
-    //         .map(|duplicate_index| {
-    //             Ok(deduplicated_instruction_accounts
-    //                 .get(duplicate_index)
-    //                 .ok_or(InstructionError::NotEnoughAccountKeys)?
-    //                 .clone())
-    //         })
-    //         .collect::<Result<Vec<InstructionAccount>, InstructionError>>()?;
-    //
-    //     // Find and validate executables / program accounts
-    //     let callee_program_id = instruction.program_id;
-    //     let program_account_index = instruction_context
-    //         .find_index_of_instruction_account(&self.transaction_context, &callee_program_id)
-    //         .ok_or_else(|| {
-    //             // ic_msg!(self, "Unknown program {}", callee_program_id);
-    //             InstructionError::MissingAccount
-    //         })?;
-    //     let borrowed_program_account = instruction_context
-    //         .try_borrow_instruction_account(&self.transaction_context, program_account_index)?;
-    //     if !borrowed_program_account.is_executable() {
-    //         // ic_msg!(self, "Account {} is not executable", callee_program_id);
-    //         return Err(InstructionError::AccountNotExecutable);
-    //     }
-    //
-    //     Ok((
-    //         instruction_accounts,
-    //         vec![borrowed_program_account.get_index_in_transaction()],
-    //     ))
-    // }
-    //
-    // /// Processes an instruction and returns how many compute units were used
-    // pub fn process_instruction(
-    //     &mut self,
-    //     instruction_data: &[u8],
-    //     instruction_accounts: &[InstructionAccount],
-    //     program_indices: &[IndexOfAccount],
-    //     // compute_units_consumed: &mut u64,
-    // ) -> Result<(), InstructionError> {
-    //     // *compute_units_consumed = 0;
-    //     self.transaction_context
-    //         .get_next_instruction_context()?
-    //         .configure(program_indices, instruction_accounts, instruction_data);
-    //     let push_result = self.push();
-    //     push_result?;
-    //     self.process_executable_chain(/*compute_units_consumed, timings*/)
-    //         // MUST pop if and only if `push` succeeded, independent of `result`.
-    //         // Thus, the `.and()` instead of an `.and_then()`.
-    //         .and(self.pop())
-    // }
-    //
-    // /// Calls the instruction's program entrypoint method
-    // fn process_executable_chain(
-    //     &mut self,
-    //     // compute_units_consumed: &mut u64,
-    //     // timings: &mut ExecuteTimings,
-    // ) -> Result<(), InstructionError> {
-    //     let instruction_context = self.transaction_context.get_current_instruction_context()?;
-    //     // let mut process_executable_chain_time = Measure::start("process_executable_chain_time");
-    //
-    //     let builtin_id = {
-    //         // debug_assert!(instruction_context.get_number_of_program_accounts() <= 1);
-    //         let borrowed_root_account = instruction_context
-    //             .try_borrow_program_account(&self.transaction_context, 0)
-    //             .map_err(|_| InstructionError::UnsupportedProgramId)?;
-    //         let owner_id = borrowed_root_account.get_owner();
-    //         if native_loader::check_id(owner_id) {
-    //             *borrowed_root_account.get_key()
-    //         } else {
-    //             *owner_id
-    //         }
-    //     };
-    //
-    //     // The Murmur3 hash value (used by RBPF) of the string "entrypoint"
-    //     const ENTRYPOINT_KEY: u32 = 0x71E3CF81;
-    //     // #[cfg(test)] {
-    //     //     println!("builtin_id: {:x?}", builtin_id.to_bytes());
-    //     //     let entries = self.programs_loaded_for_tx_batch.entries();
-    //     //     for entry in entries {
-    //     //         println!("entry.pubkey: {:x?}", entry.0.to_bytes());
-    //     //     }
-    //     // }
-    //     let entry = self
-    //         .programs_loaded_for_tx_batch
-    //         .find(&builtin_id)
-    //         .ok_or(InstructionError::UnsupportedProgramId);
-    //     let entry = entry?;
-    //     let function = match entry.program.as_ref() {
-    //         LoadedProgramType::Builtin(program) => {
-    //             let result = program
-    //                 .get_function_registry()
-    //                 .lookup_by_key(ENTRYPOINT_KEY)
-    //                 .map(|(_name, function)| function);
-    //             result
-    //         }
-    //         _ => None,
-    //     }
-    //     .ok_or(InstructionError::UnsupportedProgramId)?;
-    //     entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
-    //
-    //     let program_id = *instruction_context.get_last_program_key(&self.transaction_context)?;
-    //     self.transaction_context
-    //         .set_return_data(program_id, Vec::new())?;
-    //     // let logger = self.get_log_collector();
-    //     // stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
-    //     // let pre_remaining_units = self.get_remaining();
-    //     // In program-runtime v2 we will create this VM instance only once per transaction.
-    //     // `program_runtime_environment_v2.get_config()` will be used instead of `mock_config`.
-    //     // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
-    //     let mock_config = Config {
-    //         enable_instruction_tracing: false,
-    //         reject_broken_elfs: true,
-    //         sanitize_user_provided_values: true,
-    //         ..Default::default()
-    //     };
-    //     let empty_memory_mapping =
-    //         MemoryMapping::new(Vec::new(), &mock_config, &SBPFVersion::V1).unwrap();
-    //     let mut vm = EbpfVm::new(
-    //         self.programs_loaded_for_tx_batch
-    //             .environments
-    //             .program_runtime_v2
-    //             .clone(),
-    //         &SBPFVersion::V1,
-    //         // Removes lifetime tracking
-    //         unsafe {
-    //             core::mem::transmute::<&mut InvokeContext<SDK>, &mut InvokeContext<SDK>>(self)
-    //         },
-    //         empty_memory_mapping,
-    //         0,
-    //     );
-    //     vm.invoke_function(function);
-    //     let result = match vm.program_result {
-    //         ProgramResult::Ok(_) => {
-    //             // stable_log::program_success(&logger, &program_id);
-    //             Ok(())
-    //         }
-    //         ProgramResult::Err(ref err) => {
-    //             if let EbpfError::SyscallError(syscall_error) = err {
-    //                 if let Some(instruction_err) = syscall_error.downcast_ref::<InstructionError>()
-    //                 {
-    //                     // stable_log::program_failure(&logger, &program_id, instruction_err);
-    //                     // #[cfg(test)]
-    //                     // println!("Instruction error: {}", instruction_err);
-    //                     Err(instruction_err.clone())
-    //                 } else {
-    //                     // stable_log::program_failure(&logger, &program_id, syscall_error);
-    //                     // #[cfg(test)]{
-    //                     //     println!("syscall_error: {:?}", syscall_error);
-    //                     // }
-    //                     Err(InstructionError::ProgramFailedToComplete)
-    //                 }
-    //             } else {
-    //                 // stable_log::program_failure(&logger, &program_id, err);
-    //                 Err(InstructionError::ProgramFailedToComplete)
-    //             }
-    //         }
-    //     };
-    //     // let post_remaining_units = self.get_remaining();
-    //     // *compute_units_consumed = pre_remaining_units.saturating_sub(post_remaining_units);
-    //
-    //     // if builtin_id == program_id && result.is_ok() && *compute_units_consumed == 0 {
-    //     //     return Err(InstructionError::BuiltinProgramsMustConsumeComputeUnits);
-    //     // }
-    //
-    //     // process_executable_chain_time.stop();
-    //     // saturating_add_assign!(
-    //     //     timings
-    //     //         .execute_accessories
-    //     //         .process_instructions
-    //     //         .process_executable_chain_us,
-    //     //     process_executable_chain_time.as_us()
-    //     // );
-    //     result
-    // }
-    //
-    // /// Consume compute units
-    // pub fn consume_checked(&self, amount: u64) -> Result<(), Box<dyn core::error::Error>> {
-    //     let mut compute_meter = self.compute_meter.borrow_mut();
-    //     let exceeded = *compute_meter < amount;
-    //     *compute_meter = compute_meter.saturating_sub(amount);
-    //     if exceeded {
-    //         return Err(Box::new(InstructionError::ComputationalBudgetExceeded));
-    //     }
-    //     Ok(())
-    // }
-    //
-    // /// Set compute units
-    // ///
-    // /// Only use for tests and benchmarks
-    // pub fn mock_set_remaining(&self, remaining: u64) {
-    //     *self.compute_meter.borrow_mut() = remaining;
-    // }
-    //
-    // /// Get this invocation's compute budget
-    // pub fn get_compute_budget(&self) -> &ComputeBudget {
-    //     &self.current_compute_budget
-    // }
-    //
-    // /// Get the current feature set.
-    // pub fn get_feature_set(&self) -> &FeatureSet {
-    //     &self.feature_set
-    // }
-    //
-    // /// Get cached sysvars
-    // pub fn get_sysvar_cache(&self) -> &SysvarCache {
-    //     &self.sysvar_cache
-    // }
-
-    // /// Compares an interpreter trace and a JIT trace.
-    // ///
-    // /// The log of the JIT can be longer because it only validates the instruction meter at branches.
-    // pub fn compare_trace_log(interpreter: &Self, jit: &Self) -> bool {
-    //     let interpreter = interpreter.trace_log.as_slice();
-    //     let mut jit = jit.trace_log.as_slice();
-    //     if jit.len() > interpreter.len() {
-    //         jit = &jit[0..interpreter.len()];
-    //     }
-    //     interpreter == jit
-    // }
-    //
-    // // Set this instruction syscall context
-    // pub fn set_syscall_context(
-    //     &mut self,
-    //     syscall_context: SyscallContext,
-    // ) -> Result<(), InstructionError> {
-    //     *self
-    //         .syscall_context
-    //         .last_mut()
-    //         .ok_or(InstructionError::CallDepth)? = Some(syscall_context);
-    //     Ok(())
-    // }
-    //
-    // // Get this instruction's SyscallContext
-    // pub fn get_syscall_context(&self) -> Result<&SyscallContext, InstructionError> {
-    //     self.syscall_context
-    //         .last()
-    //         .and_then(core::option::Option::as_ref)
-    //         .ok_or(InstructionError::CallDepth)
-    // }
-
-    // /// Push a stack frame onto the invocation stack
-    // pub fn push(&mut self) -> Result<(), InstructionError> {
-    //     let instruction_context = self
-    //         .transaction_context
-    //         .get_instruction_context_at_index_in_trace(
-    //             self.transaction_context.get_instruction_trace_length(),
-    //         )?;
-    //     let program_id = instruction_context
-    //         .get_last_program_key(&self.transaction_context)
-    //         .map_err(|_| InstructionError::UnsupportedProgramId)?;
-    //     if self
-    //         .transaction_context
-    //         .get_instruction_context_stack_height()
-    //         == 0
-    //     {
-    //         // self.current_compute_budget = self.compute_budget;
-    //     } else {
-    //         let contains = (0..self
-    //             .transaction_context
-    //             .get_instruction_context_stack_height())
-    //             .any(|level| {
-    //                 self.transaction_context
-    //                     .get_instruction_context_at_nesting_level(level)
-    //                     .and_then(|instruction_context| {
-    //                         instruction_context
-    //                             .try_borrow_last_program_account(&self.transaction_context)
-    //                     })
-    //                     .map(|program_account| program_account.get_key() == program_id)
-    //                     .unwrap_or(false)
-    //             });
-    //         let is_last = self
-    //             .transaction_context
-    //             .get_current_instruction_context()
-    //             .and_then(|instruction_context| {
-    //                 instruction_context.try_borrow_last_program_account(&self.transaction_context)
-    //             })
-    //             .map(|program_account| program_account.get_key() == program_id)
-    //             .unwrap_or(false);
-    //         if contains && !is_last {
-    //             // Reentrancy not allowed unless caller is calling itself
-    //             return Err(InstructionError::ReentrancyNotAllowed);
-    //         }
-    //     }
-    //
-    //     self.syscall_context.push(None);
-    //     self.transaction_context.push()
-    // }
-
-    // /// Pop a stack frame from the invocation stack
-    // pub fn pop(&mut self) -> Result<(), InstructionError> {
-    //     // if let Some(Some(syscall_context)) = self.syscall_context.pop() {
-    //     //     self.traces.push(syscall_context.trace_log);
-    //     // }
-    //     self.transaction_context.pop()
-    // }
-
-    // /// Current height of the invocation stack, top level instructions are height
-    // /// `solana_sdk::instruction::TRANSACTION_LEVEL_STACK_HEIGHT`
-    // pub fn get_stack_height(&self) -> usize {
-    //     self.transaction_context
-    //         .get_instruction_context_stack_height()
-    // }
 }
 
 impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {

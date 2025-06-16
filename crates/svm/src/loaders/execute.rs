@@ -7,7 +7,7 @@ use crate::{
     serialization,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use fluentbase_sdk::{debug_log, SharedAPI};
+use fluentbase_sdk::SharedAPI;
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 use solana_feature_set::bpf_account_data_direct_mapping;
 use solana_instruction::error::InstructionError;
@@ -56,12 +56,6 @@ pub fn execute<'a, SDK: SharedAPI>(
         instruction_context,
         !direct_mapping,
     )?;
-    debug_log!(
-        "agave_version.execute4: parameter_bytes.len {} regions {:?} accounts_metadata {:?}",
-        parameter_bytes.len(),
-        regions,
-        accounts_metadata
-    );
     // serialize_time.stop();
 
     // save the account addresses so in case we hit an AccessViolation error we
@@ -95,8 +89,6 @@ pub fn execute<'a, SDK: SharedAPI>(
             // let mut vm = match vm {
             Ok(info) => info,
             Err(_e) => {
-                // #[cfg(feature = "std")]
-                // println!("Failed to create SBF VM: {}", e);
                 return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
             }
         };

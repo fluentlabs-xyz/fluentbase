@@ -32,7 +32,7 @@ mod tests {
     use fluentbase_sdk_testing::HostTestingContext;
     use solana_bincode::serialize;
     use solana_hash::Hash;
-    use solana_instruction::{AccountMeta, Instruction};
+    use solana_instruction::Instruction;
     use solana_pubkey::Pubkey;
 
     fn main_single_message<SAPI: StorageAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {

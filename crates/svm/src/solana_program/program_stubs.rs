@@ -19,9 +19,7 @@ pub fn set_syscall_stubs(syscall_stubs: Box<dyn SyscallStubs>) -> Box<dyn Syscal
 }
 
 pub trait SyscallStubs: Sync + Send {
-    fn sol_log(&self, _message: &str) {
-        // println!("{message}");
-    }
+    fn sol_log(&self, _message: &str) {}
     fn sol_log_compute_units(&self) {
         sol_log("SyscallStubs: sol_log_compute_units() not available");
     }
@@ -88,16 +86,7 @@ pub trait SyscallStubs: Sync + Send {
         None
     }
     fn sol_set_return_data(&self, _data: &[u8]) {}
-    fn sol_log_data(&self, _fields: &[&[u8]]) {
-        // println!(
-        //     "data: {}",
-        //     fields
-        //         .iter()
-        //         .map(|v| BASE64_STANDARD.encode(v))
-        //         .collect::<Vec<_>>()
-        //         .join(" ")
-        // );
-    }
+    fn sol_log_data(&self, _fields: &[&[u8]]) {}
     fn sol_get_processed_sibling_instruction(&self, _index: usize) -> Option<Instruction> {
         None
     }

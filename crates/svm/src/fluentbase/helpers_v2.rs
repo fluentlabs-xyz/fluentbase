@@ -702,5 +702,4 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
 //     let sbpf_version = SBPFVersion::V1;
 //     let mem_map = MemoryMapping::new(regions, &config, &sbpf_version).unwrap();
 //     let result = mem_map.map(AccessType::Load, 8589954744, 32);
-//     println!("{:?}", result);
 // }

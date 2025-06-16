@@ -94,12 +94,6 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     batch_message.append_one(message);
 
     let result = exec_svm_batch_message(&mut sdk, batch_message, true, &mut Some(&mut mem_storage));
-    // match &result {
-    //     Err(e) => {
-    //         debug_log!("deploy: result error: {:?}", e)
-    //     }
-    //     _ => {}
-    // }
     let (result_accounts, exit_code) = process_svm_result(result);
     if exit_code != ExitCode::Ok.into_i32() {
         panic!(
@@ -189,9 +183,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
     match &result {
-        Err(_e) => {
-            // debug_log!("main: result error: {:?}", e)
-        }
+        Err(_e) => {}
         Ok(accounts) => {
             if accounts.len() > 0 {
                 let mut sapi: Option<&mut SDK> = None;
