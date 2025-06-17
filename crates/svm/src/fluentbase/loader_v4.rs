@@ -12,7 +12,7 @@ use crate::{
         helpers_v2::{exec_encoded_svm_batch_message, exec_svm_batch_message},
         loader_common::{read_protected_preimage, write_protected_preimage},
     },
-    helpers::{storage_read_account_data, storage_write_account_data},
+    helpers::storage_write_account_data,
     native_loader,
     native_loader::create_loadable_account_for_test,
     solana_program::{loader_v4, message::Message},
@@ -51,13 +51,13 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
         &system_program::id(),
         &create_loadable_account_for_test("system_program_id", &native_loader::id()),
     )
-    .unwrap();
+    .expect("failed to write system_program into mem storage");
     storage_write_account_data(
         &mut mem_storage,
         &loader_id,
         &create_loadable_account_for_test("loader_v4_id", &native_loader::id()),
     )
-    .unwrap();
+    .expect("failed to write loader_v4 into mem storage");
     storage_write_account_data(&mut mem_storage, &pk_payer, &payer_account_data).unwrap();
 
     let mut batch_message = BatchMessage::new(None);
@@ -104,7 +104,6 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // TODO save updated accounts (from result_accounts): payer, exec, program_data
     let payer_account_data = result_accounts
         .get(&pk_payer)
-        // storage_read_account_data(&mem_storage, &pk_payer)
         .expect("payer account doesn't exist"); // caller
     let payer_balance_after = payer_account_data.lamports();
     assert_eq!(
@@ -113,7 +112,6 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     );
     let exec_account_data = result_accounts
         .get(&pk_exec)
-        // storage_read_account_data(&mem_storage, &pk_exec)
         .expect("exec account must exist");
     assert_eq!(exec_account_data.lamports(), 0, "exec account balance != 0");
 

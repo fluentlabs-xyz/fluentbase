@@ -8,6 +8,7 @@ use crate::{
     system_program,
 };
 use alloc::{string::String, vec::Vec};
+use core::fmt::{Display, Formatter};
 use fluentbase_sdk::{ExitCode, SharedAPI, StorageAPI, SyscallResult, U256};
 use hashbrown::{HashMap, HashSet};
 use lazy_static::lazy_static;
@@ -99,34 +100,36 @@ pub(crate) fn flush_accounts<SDK: SharedAPI, SAPI: StorageAPI>(
     Ok(())
 }
 
-pub fn svm_error_as_str(svm_error: &SvmError) -> String {
-    match svm_error {
-        SvmError::TransactionError(e) => {
-            alloc::format!("{}", e)
-        }
-        SvmError::BincodeEncodeError(e) => {
-            alloc::format!("{}", e)
-        }
-        SvmError::BincodeDecodeError(e) => {
-            alloc::format!("{}", e)
-        }
-        SvmError::InstructionError(e) => {
-            alloc::format!("{}", e)
-        }
-        SvmError::ElfError(e) => {
-            alloc::format!("{}", e)
-        }
-        SvmError::EbpfError(e) => {
-            alloc::format!("{}", e)
-        }
-        SvmError::SyscallError(e) => {
-            alloc::format!("{}", e)
-        }
-        SvmError::RuntimeError(e) => {
-            alloc::format!("{}", e)
-        }
-        SvmError::ExitCode(e) => {
-            alloc::format!("{}", e)
+impl Display for SvmError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            SvmError::TransactionError(e) => {
+                write!(f, "transaction error: {}", e)
+            }
+            SvmError::BincodeEncodeError(e) => {
+                write!(f, "bincode encode error: {}", e)
+            }
+            SvmError::BincodeDecodeError(e) => {
+                write!(f, "bincode decode error{}", e)
+            }
+            SvmError::InstructionError(e) => {
+                write!(f, "instruction error: {}", e)
+            }
+            SvmError::ElfError(e) => {
+                write!(f, "elf error: {}", e)
+            }
+            SvmError::EbpfError(e) => {
+                write!(f, "ebpf error: {}", e)
+            }
+            SvmError::SyscallError(e) => {
+                write!(f, "syscall error: {}", e)
+            }
+            SvmError::RuntimeError(e) => {
+                write!(f, "runtime error: {}", e)
+            }
+            SvmError::ExitCode(e) => {
+                write!(f, "exit code: {}", e)
+            }
         }
     }
 }
@@ -136,7 +139,7 @@ pub fn process_svm_result(
 ) -> Result<HashMap<Pubkey, AccountSharedData>, String> {
     match result {
         Ok(v) => Ok(v),
-        Err(ref err) => Err(svm_error_as_str(&err)),
+        Err(ref err) => Err(alloc::format!("{}", &err)),
     }
 }
 

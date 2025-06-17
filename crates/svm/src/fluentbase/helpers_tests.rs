@@ -55,7 +55,7 @@ mod tests {
         if let Err(err) = result {
             panic!("exec svm message error: {:?}", err);
         }
-        let (_output, _) = process_svm_result(result);
+        let _output = process_svm_result(result);
 
         let out = Bytes::new();
         sdk.write(out.as_ref());

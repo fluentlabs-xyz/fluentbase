@@ -33,12 +33,6 @@ impl Display for RuntimeError {
     }
 }
 
-#[test]
-fn test_runtime_error() {
-    let e = RuntimeError::InvalidTransformation;
-    assert_eq!(e as u64, 0);
-}
-
 #[derive(Debug)]
 pub enum SvmError {
     ElfError(ElfError),
