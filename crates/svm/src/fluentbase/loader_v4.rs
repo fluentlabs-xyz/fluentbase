@@ -20,7 +20,7 @@ use crate::{
 };
 use alloc::{vec, vec::Vec};
 use bincode::error::DecodeError;
-use fluentbase_sdk::{Bytes, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{Bytes, ContextReader, SharedAPI};
 use solana_bincode::{deserialize, serialize};
 
 pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
@@ -62,7 +62,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     let mut batch_message = BatchMessage::new(None);
 
-    // TODO do we need this?
+    // TODO do we need this to have some specific value?
     let balance_to_transfer = 0;
     let instructions = loader_v4::create_buffer(
         &pk_payer,
@@ -94,25 +94,27 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     batch_message.append_one(message);
 
     let result = exec_svm_batch_message(&mut sdk, batch_message, true, &mut Some(&mut mem_storage));
-    let (result_accounts, exit_code) = process_svm_result(result);
-    if exit_code != ExitCode::Ok.into_i32() {
-        panic!(
-            "svm_exec error exit_code '{}' result_accounts.len '{}'",
-            exit_code,
-            result_accounts.len()
-        );
-    }
+    let result_accounts = match process_svm_result(result) {
+        Ok(v) => v,
+        Err(err_str) => {
+            panic!("failed to execute svm batch message: {}", err_str);
+        }
+    };
 
     // TODO save updated accounts (from result_accounts): payer, exec, program_data
-    let payer_account_data =
-        storage_read_account_data(&mem_storage, &pk_payer).expect("payer account must exist"); // caller
+    let payer_account_data = result_accounts
+        .get(&pk_payer)
+        // storage_read_account_data(&mem_storage, &pk_payer)
+        .expect("payer account doesn't exist"); // caller
     let payer_balance_after = payer_account_data.lamports();
     assert_eq!(
         payer_balance_before, payer_balance_after,
-        "payer account balance shouldn't change"
+        "payer_balance_before != payer_balance_after"
     );
-    let exec_account_data =
-        storage_read_account_data(&mem_storage, &pk_exec).expect("exec account must exist");
+    let exec_account_data = result_accounts
+        .get(&pk_exec)
+        // storage_read_account_data(&mem_storage, &pk_exec)
+        .expect("exec account must exist");
     assert_eq!(exec_account_data.lamports(), 0, "exec account balance != 0");
 
     let preimage = serialize(&exec_account_data).expect("failed to serialize exec account data");
@@ -191,16 +193,16 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             }
         }
     }
-    let (result_accounts, exit_code) = process_svm_result(result);
-    if exit_code != ExitCode::Ok.into_i32() {
-        panic!(
-            "main: svm_exec error '{}' result_accounts.len '{}'",
-            exit_code,
-            result_accounts.len()
-        );
-    }
-    let exec_account_data =
-        storage_read_account_data(&mem_storage, &pk_contract).expect("no exec account");
+    let result_accounts = match process_svm_result(result) {
+        Ok(v) => v,
+        Err(err_str) => {
+            panic!("failed to execute encoded svm batch message: {}", err_str);
+        }
+    };
+    let exec_account_data = result_accounts
+        .get(&pk_contract)
+        // storage_read_account_data(&mem_storage, &pk_contract)
+        .expect("no exec account");
     let exec_account_balance_after = exec_account_data.lamports();
     assert_eq!(
         exec_account_balance_before, exec_account_balance_after,

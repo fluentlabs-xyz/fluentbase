@@ -60,7 +60,7 @@ pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
 
 use crate::{
     compute_budget::compute_budget::ComputeBudget,
-    error::{Error, SvmError},
+    error::{Error, RuntimeError, SvmError},
     loaded_programs::ProgramCacheEntry,
     solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
     storage_helpers::keccak256,
@@ -743,7 +743,7 @@ pub fn evm_address_from_pubkey<const VALIDATE_PREFIX: bool>(
     pk: &Pubkey,
 ) -> Result<Address, SvmError> {
     if VALIDATE_PREFIX && !pk.as_ref().starts_with(&SVM_ADDRESS_PREFIX) {
-        return Err(SvmError::ExitCode(ExitCode::Err));
+        return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
     }
     Ok(Address::from_slice(
         &pk.as_ref()[SVM_ADDRESS_PREFIX.len()..],

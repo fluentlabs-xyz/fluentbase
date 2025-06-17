@@ -1,7 +1,7 @@
 use crate::helpers::SyscallError;
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
-use fluentbase_sdk::ExitCode;
+use fluentbase_types::ExitCode;
 use solana_instruction::error::InstructionError;
 use solana_rbpf::{elf::ElfError, error::EbpfError};
 use solana_transaction_error::TransactionError;
@@ -16,6 +16,7 @@ pub enum RuntimeError {
     InvalidLength,
     InvalidIdx,
     InvalidType,
+    InvalidPrefix,
 }
 
 impl core::error::Error for RuntimeError {}
@@ -27,6 +28,7 @@ impl Display for RuntimeError {
             RuntimeError::InvalidLength => write!(f, "RuntimeError::InvalidLength"),
             RuntimeError::InvalidIdx => write!(f, "RuntimeError::InvalidIdx"),
             RuntimeError::InvalidType => write!(f, "RuntimeError::InvalidType"),
+            RuntimeError::InvalidPrefix => write!(f, "RuntimeError::InvalidPrefix"),
         }
     }
 }

@@ -7,7 +7,7 @@ use crate::{
     solana_program::{loader_v4, message::legacy, sysvar},
     system_program,
 };
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use fluentbase_sdk::{ExitCode, SharedAPI, StorageAPI, SyscallResult, U256};
 use hashbrown::{HashMap, HashSet};
 use lazy_static::lazy_static;
@@ -82,10 +82,6 @@ pub(crate) fn load_program_account<SDK: SharedAPI, SAPI: StorageAPI>(
     let program_account = select_sapi!(sapi, sdk, |s| {
         extract_account_data_or_default(s, account_key)
     })?;
-    // TODO do we need this check?
-    // if !program_account.executable() {
-    //     return Err(TransactionError::InvalidProgramForExecution.into());
-    // }
     program_accounts.push((account_key.clone(), program_account));
     Ok(true)
 }
@@ -103,31 +99,44 @@ pub(crate) fn flush_accounts<SDK: SharedAPI, SAPI: StorageAPI>(
     Ok(())
 }
 
-// TODO
-pub fn process_svm_error(svm_error: SvmError) -> (HashMap<Pubkey, AccountSharedData>, i32) {
+pub fn svm_error_as_str(svm_error: &SvmError) -> String {
     match svm_error {
-        SvmError::TransactionError(_err) => (Default::default(), ExitCode::UnknownError.into_i32()),
-        SvmError::BincodeEncodeError(_err) => {
-            (Default::default(), ExitCode::UnknownError.into_i32())
+        SvmError::TransactionError(e) => {
+            alloc::format!("{}", e)
         }
-        SvmError::BincodeDecodeError(_err) => {
-            (Default::default(), ExitCode::UnknownError.into_i32())
+        SvmError::BincodeEncodeError(e) => {
+            alloc::format!("{}", e)
         }
-        SvmError::ExitCode(_err) => (Default::default(), ExitCode::UnknownError.into_i32()),
-        SvmError::InstructionError(_err) => (Default::default(), ExitCode::UnknownError.into_i32()),
-        SvmError::ElfError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
-        SvmError::EbpfError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
-        SvmError::SyscallError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
-        SvmError::RuntimeError(_) => (Default::default(), ExitCode::UnknownError.into_i32()),
+        SvmError::BincodeDecodeError(e) => {
+            alloc::format!("{}", e)
+        }
+        SvmError::InstructionError(e) => {
+            alloc::format!("{}", e)
+        }
+        SvmError::ElfError(e) => {
+            alloc::format!("{}", e)
+        }
+        SvmError::EbpfError(e) => {
+            alloc::format!("{}", e)
+        }
+        SvmError::SyscallError(e) => {
+            alloc::format!("{}", e)
+        }
+        SvmError::RuntimeError(e) => {
+            alloc::format!("{}", e)
+        }
+        SvmError::ExitCode(e) => {
+            alloc::format!("{}", e)
+        }
     }
 }
 
 pub fn process_svm_result(
     result: Result<HashMap<Pubkey, AccountSharedData>, SvmError>,
-) -> (HashMap<Pubkey, AccountSharedData>, i32) {
+) -> Result<HashMap<Pubkey, AccountSharedData>, String> {
     match result {
-        Ok(v) => (v, ExitCode::Ok.into_i32()),
-        Err(err) => process_svm_error(err),
+        Ok(v) => Ok(v),
+        Err(ref err) => Err(svm_error_as_str(&err)),
     }
 }
 
