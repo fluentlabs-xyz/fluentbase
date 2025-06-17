@@ -1,7 +1,7 @@
 use crate::{context::ContextReader, Address, B256, U256};
 use alloy_primitives::Bytes;
 
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BlockContextV1 {
     pub chain_id: u64,
     pub coinbase: Address,
@@ -11,6 +11,21 @@ pub struct BlockContextV1 {
     pub prev_randao: B256,
     pub gas_limit: u64,
     pub base_fee: U256,
+}
+
+impl Default for BlockContextV1 {
+    fn default() -> Self {
+        Self {
+            chain_id: 0,
+            coinbase: Default::default(),
+            timestamp: 0,
+            number: 0,
+            difficulty: Default::default(),
+            prev_randao: Default::default(),
+            gas_limit: 3_000_000,
+            base_fee: Default::default(),
+        }
+    }
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]

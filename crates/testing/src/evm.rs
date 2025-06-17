@@ -243,8 +243,15 @@ impl<'a> TxBuilder<'a> {
         tx.kind = TransactTo::Create;
         tx.data = init_code;
         tx.gas_limit = 30_000_000;
-        let block = BlockEnv::default();
+        let block = Self::block_env(ctx);
         Self { ctx, tx, block }
+    }
+
+    fn block_env(ctx: &EvmTestingContext) -> BlockEnv {
+        let mut block_env = BlockEnv::default();
+        let ctx = ctx.sdk.borrow().context();
+        block_env.number = ctx.block_number();
+        block_env
     }
 
     pub fn call(
@@ -253,6 +260,7 @@ impl<'a> TxBuilder<'a> {
         callee: Address,
         value: Option<U256>,
     ) -> Self {
+        let block = Self::block_env(ctx);
         let mut tx = TxEnv::default();
         if let Some(value) = value {
             tx.value = value;
@@ -261,8 +269,6 @@ impl<'a> TxBuilder<'a> {
         tx.caller = caller;
         tx.kind = TransactTo::Call(callee);
         tx.gas_limit = 3_000_000;
-        let mut block = BlockEnv::default();
-        block.number = ctx.sdk.borrow().context().block_number();
         Self { ctx, tx, block }
     }
 
