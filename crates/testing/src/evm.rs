@@ -3,7 +3,9 @@ use core::{mem::take, str::from_utf8};
 use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
+    bytes::BytesMut,
     calc_create_address,
+    compile_wasm_to_rwasm,
     Address,
     Bytes,
     ExitCode,
@@ -12,7 +14,6 @@ use fluentbase_sdk::{
     STATE_MAIN,
     U256,
 };
-use fluentbase_types::{bytes::BytesMut, compile_wasm_to_rwasm};
 use revm::{
     context::{
         result::{ExecutionResult, ExecutionResult::Success, Output},

@@ -1,7 +1,7 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
-use fluentbase_sdk::bytes::Buf;
-use fluentbase_types::{
+use fluentbase_sdk::{
+    bytes::Buf,
     native_api::NativeAPI,
     Address,
     Bytes,
