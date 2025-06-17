@@ -81,6 +81,7 @@ impl<API: NativeAPI> SharedContextImpl<API> {
     }
 }
 
+/// SharedContextImpl always created from input
 impl<API: NativeAPI> StorageAPI for SharedContextImpl<API> {
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
         let mut input = [0u8; U256::BYTES + U256::BYTES];

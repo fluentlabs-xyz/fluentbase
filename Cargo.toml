@@ -36,6 +36,8 @@ fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
+fluentbase-sdk-testing = { path = "crates/testing" }
+fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
 
 solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
@@ -98,8 +100,6 @@ solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = 
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
-fluentbase-sdk-testing = { path = "crates/testing" }
-fluentbase-types = { path = "./crates/types", default-features = false }
 
 # rwasm
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.1.0-dev", default-features = false }

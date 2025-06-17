@@ -1,23 +1,6 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
-use fluentbase_sdk::{
-    bytes::Buf,
-    native_api::NativeAPI,
-    Address,
-    Bytes,
-    ContextReader,
-    ContractContextV1,
-    ExitCode,
-    IsAccountEmpty,
-    IsColdAccess,
-    SharedAPI,
-    SharedContextInputV1,
-    StorageAPI,
-    SyscallResult,
-    B256,
-    FUEL_DENOM_RATE,
-    U256,
-};
+use fluentbase_sdk::{bytes::Buf, native_api::NativeAPI, Address, Bytes, ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsColdAccess, SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256};
 use hashbrown::HashMap;
 use std::rc::Rc;
 

@@ -217,9 +217,6 @@ pub fn build_default_genesis_contract_ext(rerun_if_changed: &[&str]) {
         return;
     }
     println!("cargo:rerun-if-changed=src");
-    for path in rerun_if_changed {
-        println!("cargo:rerun-if-changed={}", path);
-    }
     println!("cargo:rerun-if-changed=Cargo.toml");
 
     // Compile Rust to WASM

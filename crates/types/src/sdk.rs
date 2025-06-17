@@ -1,8 +1,8 @@
 use crate::{
-    context::ContextReader,
     evm::{write_evm_exit_message, write_evm_panic_message},
     Address,
     Bytes,
+    ContextReader,
     ExitCode,
     SyscallResult,
     B256,

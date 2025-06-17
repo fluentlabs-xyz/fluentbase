@@ -22,7 +22,6 @@ fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
 fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
 fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }
 fluentbase-contracts-evm = { path = "../../contracts/evm" }
-fluentbase-contracts-svm = { path = "../../contracts/svm" }
 fluentbase-contracts-fairblock = { path = "../../contracts/fairblock" }
 fluentbase-contracts-identity = { path = "../../contracts/identity" }
 fluentbase-contracts-kzg = { path = "../../contracts/kzg" }
@@ -34,6 +33,7 @@ fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160" }
 fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1" }
 fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
 fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
+fluentbase-contracts-svm = { path = "../../contracts/svm" }
 
 [build-dependencies]
 fluentbase-types = { workspace = true }
@@ -47,7 +47,6 @@ fluentbase-contracts-bn256 = { path = "../../contracts/bn256" }
 fluentbase-contracts-ecrecover = { path = "../../contracts/ecrecover" }
 fluentbase-contracts-erc20 = { path = "../../contracts/erc20" }
 fluentbase-contracts-evm = { path = "../../contracts/evm" }
-fluentbase-contracts-svm = { path = "../../contracts/svm" }
 fluentbase-contracts-fairblock = { path = "../../contracts/fairblock" }
 fluentbase-contracts-identity = { path = "../../contracts/identity" }
 fluentbase-contracts-kzg = { path = "../../contracts/kzg" }
@@ -59,12 +58,10 @@ fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160" }
 fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1" }
 fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
 fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
+fluentbase-contracts-svm = { path = "../../contracts/svm" }
 
 [features]
-default = [
-    "std",
-    #    "enable-svm",
-]
+default = ["std"]
 enable-svm = []
 wasmtime = []
 std = [
