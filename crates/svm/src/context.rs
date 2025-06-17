@@ -61,7 +61,7 @@ use solana_stable_layout::stable_instruction::StableInstruction;
 /// Index of an account inside of the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
 
-pub type BuiltinFunctionWithContext<'a, SDK: SharedAPI> = BuiltinFunction<InvokeContext<'a, SDK>>;
+pub type BuiltinFunctionWithContext<'a, SDK> = BuiltinFunction<InvokeContext<'a, SDK>>;
 
 /// Contains account meta data which varies between instruction.
 ///

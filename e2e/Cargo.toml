@@ -48,8 +48,7 @@ rand = { version = "0.9.1" }
 [features]
 default = [
     "std",
-    "debug-print",
-    "wasmtime",
+    #    "wasmtime",
     "enable-svm",
 ]
 enable-svm = [
