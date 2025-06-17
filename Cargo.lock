@@ -5472,7 +5472,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#1d65b11021d5572c14654fcf237b053841114e4b"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#effed1a300f1e6e1b135f2dc7431c975333ffc63"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",

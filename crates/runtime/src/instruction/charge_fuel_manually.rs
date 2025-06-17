@@ -13,12 +13,12 @@ impl SyscallChargeFuelManually {
                 ExitCode::MalformedBuiltinParams.into();
             return Err(TrapCode::ExecutionHalted);
         }
-        let fuel_refunded: i64 = caller.stack_pop_as();
-        let fuel_consumed: u64 = caller.stack_pop_as();
+        let fuel_refunded = caller.stack_pop_i64();
+        let fuel_consumed = caller.stack_pop_u64();
         caller.store_mut().try_consume_fuel(fuel_consumed)?;
         caller.store_mut().refund_fuel(fuel_refunded);
         let remaining_fuel = caller.store().remaining_fuel().unwrap_or(u64::MAX);
-        caller.stack_push(remaining_fuel);
+        caller.stack_push_u64(remaining_fuel);
         Ok(())
     }
 
