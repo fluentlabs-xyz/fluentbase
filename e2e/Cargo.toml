@@ -53,6 +53,8 @@ default = [
     "enable-svm",
 ]
 enable-svm = [
+    "fluentbase-runtime/enable-svm",
+    "fluentbase-genesis/enable-svm",
     "fluentbase-sdk-testing/enable-svm",
 ]
 std = [

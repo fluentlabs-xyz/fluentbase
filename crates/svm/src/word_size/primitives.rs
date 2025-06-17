@@ -335,8 +335,6 @@ mod tests {
         // type ItemType = u64;
         type ItemType<'a> = AccountInfo<'a>;
         type VecOfItemsType<'a> = StableVec<ItemType<'a>>;
-        const ITEM_SIZE: usize = size_of::<ItemType>();
-        const VEC_OF_ITEMS_TYPE_SIZE: usize = size_of::<VecOfItemsType>();
 
         let mmh = MemoryMappingHelper::default();
 

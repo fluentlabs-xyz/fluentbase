@@ -76,9 +76,9 @@ pub fn register_builtins<SDK: SharedAPI>(
     function_registry
         .register_function_hashed("sol_memmove_", SyscallMemmove::vm)
         .unwrap();
-    function_registry
-        .register_function_hashed("sol_memcmp_", SyscallMemcmp::vm)
-        .unwrap();
+    // function_registry
+    //     .register_function_hashed("sol_memcmp_", SyscallMemcmp::vm)
+    //     .unwrap();
     function_registry
         .register_function_hashed("sol_memset_", SyscallMemset::vm)
         .unwrap();
@@ -135,64 +135,62 @@ declare_builtin_function!(
     }
 );
 
-declare_builtin_function!(
-    /// memcmp
-    SyscallMemcmp<SDK: SharedAPI>,
-    fn rust(
-        invoke_context: &mut InvokeContext<SDK>,
-        s1_addr: u64,
-        s2_addr: u64,
-        n: u64,
-        cmp_result_addr: u64,
-        _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
-    ) -> Result<u64, Error> {
-
-        unimplemented!("todo");
-
-        // mem_op_consume(invoke_context, n)?;
-
-        // if invoke_context
-        //     .environment_config.feature_set
-        //     .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
-        // {
-        //     let cmp_result = translate_type_mut::<i32>(
-        //         memory_mapping,
-        //         cmp_result_addr,
-        //         invoke_context.get_check_aligned(),
-        //     )?;
-        //     *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, memory_mapping)?;
-        // } else {
-        //     let s1 = translate_slice::<u8>(
-        //         memory_mapping,
-        //         s1_addr,
-        //         n,
-        //         invoke_context.get_check_aligned(),
-        //     )?;
-        //     let s2 = translate_slice::<u8>(
-        //         memory_mapping,
-        //         s2_addr,
-        //         n,
-        //         invoke_context.get_check_aligned(),
-        //     )?;
-        //     let cmp_result = translate_type_mut::<i32>(
-        //         memory_mapping,
-        //         cmp_result_addr,
-        //         invoke_context.get_check_aligned(),
-        //     )?;
-        //
-        //     debug_assert_eq!(s1.len(), n);
-        //     debug_assert_eq!(s2.len(), n);
-        //     // Safety:
-        //     // memcmp is marked unsafe since it assumes that the inputs are at least
-        //     // `n` bytes long. `s1` and `s2` are guaranteed to be exactly `n` bytes
-        //     // long because `translate_slice` would have failed otherwise.
-        //     *cmp_result = unsafe { memcmp(s1.as_slice(), s2.as_slice(), n as usize) };
-        // }
-
-        Ok(0)
-    }
-);
+// TODO
+// declare_builtin_function!(
+//     /// memcmp
+//     SyscallMemcmp<SDK: SharedAPI>,
+//     fn rust(
+//         invoke_context: &mut InvokeContext<SDK>,
+//         s1_addr: u64,
+//         s2_addr: u64,
+//         n: u64,
+//         cmp_result_addr: u64,
+//         _arg5: u64,
+//         memory_mapping: &mut MemoryMapping,
+//     ) -> Result<u64, Error> {
+//         mem_op_consume(invoke_context, n)?;
+//
+//         if invoke_context
+//             .environment_config.feature_set
+//             .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
+//         {
+//             let cmp_result = translate_type_mut::<i32>(
+//                 memory_mapping,
+//                 cmp_result_addr,
+//                 invoke_context.get_check_aligned(),
+//             )?;
+//             *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, memory_mapping)?;
+//         } else {
+//             let s1 = translate_slice::<u8>(
+//                 memory_mapping,
+//                 s1_addr,
+//                 n,
+//                 invoke_context.get_check_aligned(),
+//             )?;
+//             let s2 = translate_slice::<u8>(
+//                 memory_mapping,
+//                 s2_addr,
+//                 n,
+//                 invoke_context.get_check_aligned(),
+//             )?;
+//             let cmp_result = translate_type_mut::<i32>(
+//                 memory_mapping,
+//                 cmp_result_addr,
+//                 invoke_context.get_check_aligned(),
+//             )?;
+//
+//             debug_assert_eq!(s1.len(), n);
+//             debug_assert_eq!(s2.len(), n);
+//             // Safety:
+//             // memcmp is marked unsafe since it assumes that the inputs are at least
+//             // `n` bytes long. `s1` and `s2` are guaranteed to be exactly `n` bytes
+//             // long because `translate_slice` would have failed otherwise.
+//             *cmp_result = unsafe { memcmp(s1.as_slice(), s2.as_slice(), n as usize) };
+//         }
+//
+//         Ok(0)
+//     }
+// );
 
 declare_builtin_function!(
     /// memmove

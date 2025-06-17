@@ -95,7 +95,6 @@ solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = 
 #solana-native-token = { path = "../agave/sdk/native-token", default-features = false }
 #solana-atomic-u64 = { path = "../agave/sdk/atomic-u64", default-features = false }
 
-#solana-poseidon = { path = "../agave/poseidon", default-features = false }
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 

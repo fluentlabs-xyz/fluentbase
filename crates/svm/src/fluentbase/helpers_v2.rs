@@ -10,7 +10,7 @@ use crate::{
     builtins::register_builtins,
     compute_budget::compute_budget::ComputeBudget,
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
-    error::{RuntimeError, SvmError},
+    error::SvmError,
     fluentbase::common::{extract_account_data_or_default, flush_accounts, BatchMessage},
     helpers::storage_read_account_data,
     loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
@@ -42,7 +42,6 @@ use solana_bincode::deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
 use solana_feature_set::{disable_account_loader_special_case, FeatureSet};
-use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},

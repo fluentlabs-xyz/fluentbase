@@ -6,7 +6,6 @@ use fluentbase_sdk::{
     bytes::BytesMut,
     calc_create_address,
     compile_wasm_to_rwasm,
-    debug_log,
     Address,
     Bytes,
     ContextReader,

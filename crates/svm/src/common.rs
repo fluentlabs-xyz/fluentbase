@@ -11,7 +11,6 @@ use crate::{
         SyscallCreateProgramAddress,
         SyscallHash,
         SyscallLog,
-        SyscallMemcmp,
         SyscallMemcpy,
         SyscallMemmove,
         SyscallMemset,
@@ -29,7 +28,7 @@ use crate::{
 };
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
+use fluentbase_sdk::{Address, SharedAPI, U256};
 use solana_bincode::limited_deserialize;
 use solana_feature_set::{
     bpf_account_data_direct_mapping,
@@ -390,7 +389,7 @@ pub fn create_program_runtime_environment_v1<'a, SDK: SharedAPI>(
     // Memory ops
     result.register_function_hashed(*b"sol_memcpy_", SyscallMemcpy::vm)?;
     result.register_function_hashed(*b"sol_memmove_", SyscallMemmove::vm)?;
-    result.register_function_hashed(*b"sol_memcmp_", SyscallMemcmp::vm)?;
+    // result.register_function_hashed(*b"sol_memcmp_", SyscallMemcmp::vm)?;
     result.register_function_hashed(*b"sol_memset_", SyscallMemset::vm)?;
 
     // Processed sibling instructions
