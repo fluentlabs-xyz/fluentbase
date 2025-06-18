@@ -196,8 +196,7 @@ fn build_wasm(
     fs::create_dir_all(&target_dir)?;
 
     // Build cargo command
-    let mut cargo_args = vec!["cargo".to_string()];
-    cargo_args.extend(args.cargo_build_command());
+    let mut cargo_args = args.cargo_build_command();
 
     // Add target dir for local builds
     // TODO(d1r1): do we actually need to change target dir for local builds?
