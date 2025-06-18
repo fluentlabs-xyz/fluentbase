@@ -61,7 +61,10 @@ fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
 fluentbase-contracts-svm = { path = "../../contracts/svm" }
 
 [features]
-default = ["std"]
+default = [
+    "std",
+    #    "enable-svm"
+]
 enable-svm = []
 wasmtime = []
 std = [
