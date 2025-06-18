@@ -5,7 +5,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-const DOCKER_IMAGE_REGISTRY: &str = "ghcr.io/fluentlabs/fluentbase-build";
+const DOCKER_IMAGE_REGISTRY: &str = "ghcr.io/fluentlabs-xyz/fluentbase-build";
 const DOCKER_IMAGE_ENV_VAR: &str = "FLUENT_DOCKER_IMAGE";
 const DOCKER_PLATFORM: &str = "linux/amd64";
 pub(crate) const CACHE_IMAGE_PREFIX: &str = "fluentbase-build";
