@@ -227,12 +227,12 @@ fn build_with_rust(base: &str, target: &str, rust_version: &str) -> Result<()> {
         r#"FROM {}
 RUN rustup toolchain install {}-x86_64-unknown-linux-gnu && \
     rustup default {}-x86_64-unknown-linux-gnu && \
-    rustup target add wasm32-unknown-unknown && \
+    rustup target add wasm32-unknown-unknown --toolchain {}-x86_64-unknown-linux-gnu && \
     rustup component add rust-src --toolchain {}-x86_64-unknown-linux-gnu
 LABEL rust.version="{}"
 LABEL fluentbase.build.cache="true"
 "#,
-        base, rust_version, rust_version, rust_version, rust_version
+        base, rust_version, rust_version, rust_version, rust_version, rust_version
     );
 
     let mut child = Command::new("docker")
