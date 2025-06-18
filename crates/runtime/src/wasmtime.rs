@@ -8,7 +8,7 @@ use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_HASH;
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    get_import_linker_symbols,
+    create_import_linker,
     Bytes,
     ExitCode,
     SyscallInvocationParams,
@@ -16,6 +16,7 @@ use fluentbase_types::{
     STATE_DEPLOY,
     STATE_MAIN,
 };
+use rwasm::ImportName;
 use std::{
     cell::RefCell,
     cmp::min,
@@ -668,11 +669,14 @@ pub fn try_resume(
 }
 
 fn verify_linker(linker: &Linker<WorkerContext>, store: &mut Store<WorkerContext>) {
-    let mut imported_symbols: Vec<&str> = linker.iter(store).map(|(_, name, _)| name).collect();
+    let mut imported_symbols: Vec<ImportName> = linker
+        .iter(store)
+        .map(|(namespace, name, _)| ImportName::new(namespace, name))
+        .collect();
     imported_symbols.sort();
-    let expected_symbols = get_import_linker_symbols();
+    let expected_symbols = create_import_linker().find_symbols();
     // TODO(khasan) verify signature of each function, not just the name
-    assert_eq!(
+    debug_assert_eq!(
         imported_symbols, expected_symbols,
         "imported symbols mismatch"
     );

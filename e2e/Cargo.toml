@@ -39,10 +39,12 @@ fluentbase-examples-tiny-keccak = { path = "../examples/tiny-keccak" }
 rwasm = { workspace = true }
 revm = { workspace = true }
 rwasm-revm = { workspace = true }
+op-revm = { workspace = true }
 hex-literal = { workspace = true }
 hex = { workspace = true }
 alloy-sol-types = { workspace = true }
 wat = { version = "1.223.0" }
+paste = { workspace = true }
 rand = { version = "0.9.1" }
 
 [features]
@@ -72,4 +74,5 @@ debug-print = [
 ]
 wasmtime = [
     "fluentbase-runtime/wasmtime",
+    "rwasm/debug-print",
 ]
