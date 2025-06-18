@@ -1,15 +1,14 @@
-name: Build Docker Image
+name: fluentbase-build Docker Image
 
 on:
   push:
     branches:
-      - devel      # Main development branch
-      - feat/**
+      - devel      # development branch
     tags:
-      - 'v*'       # Release tags
+      - 'v*'       # release tags
     paths:
       - 'crates/build/**'
-      - '.github/workflows/docker-build.yml'
+      - '.github/workflows/build-docker.yml'
   workflow_dispatch:
 
 env:
@@ -61,11 +60,6 @@ jobs:
             if [[ "${{ github.ref_name }}" == "devel" ]]; then
               TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:devel-latest"
               TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:devel"
-            fi
-
-            # For feature/fix branches add branch-latest
-            if [[ "${{ github.ref_name }}" == feat/* ]] || [[ "${{ github.ref_name }}" == fix/* ]]; then
-              TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}-latest"
             fi
           fi
 
