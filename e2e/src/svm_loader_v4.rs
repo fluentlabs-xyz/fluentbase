@@ -11,11 +11,12 @@ mod tests {
     };
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
-        account::{AccountSharedData, ReadableAccount},
+        account::{AccountSharedData, ReadableAccount, WritableAccount},
         common::{evm_address_from_pubkey, evm_balance_from_lamports, pubkey_from_address},
         fluentbase::common::BatchMessage,
-        helpers::{load_program_account_from_elf_file, storage_read_account_data},
+        helpers::storage_read_account_data,
         pubkey::Pubkey,
+        rent::Rent,
         solana_bincode::serialize,
         solana_program::{
             instruction::{AccountMeta, Instruction},
@@ -27,6 +28,19 @@ mod tests {
     };
     use hex_literal::hex;
     use rand::random_range;
+    use std::{fs::File, io::Read};
+
+    pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
+        let mut file = File::open(path).expect("file open failed");
+        let mut elf = Vec::new();
+        file.read_to_end(&mut elf).unwrap();
+        let rent = Rent::default();
+        let minimum_balance = rent.minimum_balance(elf.len());
+        let mut program_account = AccountSharedData::new(minimum_balance, 0, loader_id);
+        program_account.set_data(elf);
+        program_account.set_executable(true);
+        program_account
+    }
 
     #[test]
     fn test_svm_deploy() {

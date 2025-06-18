@@ -31,6 +31,7 @@ impl Allowance {
         Self::set(sdk, owner, spender, new_allowance);
     }
 
+    #[allow(unused)]
     pub fn subtract(
         sdk: &mut impl SharedAPI,
         owner: Address,

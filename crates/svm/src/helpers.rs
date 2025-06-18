@@ -15,7 +15,6 @@ use solana_rbpf::{
     memory_region::{MemoryCowCallback, MemoryMapping, MemoryRegion},
     vm::ContextObject,
 };
-use std::{fs::File, io::Read};
 
 pub type StdResult<T, E> = Result<T, E>;
 
@@ -58,7 +57,6 @@ use crate::{
         Account,
         AccountSharedData,
         InheritableAccountFields,
-        WritableAccount,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
     context::BpfAllocator,
@@ -68,7 +66,6 @@ use crate::{
 };
 use fluentbase_types::StorageAPI;
 use solana_rbpf::ebpf::MM_HEAP_START;
-use solana_rent::Rent;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
 
@@ -535,18 +532,6 @@ pub fn create_account_shared_data_for_test<S: Sysvar>(sysvar: &S) -> AccountShar
         sysvar,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     ))
-}
-
-pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
-    let mut file = File::open(path).expect("file open failed");
-    let mut elf = Vec::new();
-    file.read_to_end(&mut elf).unwrap();
-    let rent = Rent::default();
-    let minimum_balance = rent.minimum_balance(elf.len());
-    let mut program_account = AccountSharedData::new(minimum_balance, 0, loader_id);
-    program_account.set_data(elf);
-    program_account.set_executable(true);
-    program_account
 }
 
 #[macro_export]

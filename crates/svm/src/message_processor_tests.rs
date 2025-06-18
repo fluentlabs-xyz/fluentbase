@@ -11,7 +11,6 @@ pub mod tests {
         declare_process_instruction,
         epoch_schedule::EpochSchedule,
         hash::Hash,
-        helpers::load_program_account_from_elf_file,
         loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
         message_processor::MessageProcessor,
         native_loader,
@@ -28,7 +27,7 @@ pub mod tests {
         system_processor,
         system_program,
         sysvar_cache::SysvarCache,
-        test_helpers::journal_state,
+        test_helpers::{journal_state, load_program_account_from_elf_file},
     };
     use alloc::{sync::Arc, vec, vec::Vec};
     use fluentbase_sdk::SharedAPI;
