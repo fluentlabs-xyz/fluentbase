@@ -46,8 +46,8 @@ pub struct Environment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rust_toolchain: Option<String>,
 
-    /// SDK/Build version (they are the same)
-    pub fluentbase_version: String,
+    /// SDK/Build version with git info
+    pub fluentbase_sdk: FluentbaseInfo,
 
     /// Build environment
     pub build_platform: String,
@@ -55,6 +55,24 @@ pub struct Environment {
     /// Host information for native builds
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host_info: Option<HostInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FluentbaseInfo {
+    /// Package version from Cargo.toml
+    pub version: String,
+
+    /// Git commit hash (full or short)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+
+    /// Git tag if specified
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_tag: Option<String>,
+
+    /// Git branch if specified
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -179,12 +197,8 @@ pub fn generate(
         ));
     };
 
-    // Get SDK version from dependencies (build and SDK versions should match)
-    let fluentbase_version = cargo_metadata
-        .packages
-        .iter()
-        .find(|p| p.name == "fluentbase-sdk")
-        .map(|p| p.version.to_string())
+    // Get SDK version and git info from dependencies
+    let fluentbase_info = extract_fluentbase_info(&cargo_metadata)
         .ok_or_else(|| anyhow::anyhow!("fluentbase-sdk not found in dependencies"))?;
 
     // Get Rust toolchain info
@@ -229,7 +243,7 @@ pub fn generate(
         size: data.len() as u64,
     });
 
-    // Extract contract info (упрощено - убраны authors и repository)
+    // Extract contract info
     let contract = ContractInfo {
         name: package.name.clone(),
         version: package.version.to_string(),
@@ -240,7 +254,7 @@ pub fn generate(
         environment: Environment {
             rustc_version,
             rust_toolchain,
-            fluentbase_version,
+            fluentbase_sdk: fluentbase_info,
             build_platform,
             host_info,
         },
@@ -263,9 +277,70 @@ pub fn generate(
             rwasm: rwasm_info,
             abi: abi.cloned(),
         },
-        metadata_version: "1.2.0".to_string(),
+        metadata_version: "1.3.0".to_string(), // Bumped version due to format change
         build_timestamp: chrono::Utc::now().to_rfc3339(),
     })
+}
+
+fn extract_fluentbase_info(metadata: &cargo_metadata::Metadata) -> Option<FluentbaseInfo> {
+    metadata
+        .packages
+        .iter()
+        .find(|p| p.name == "fluentbase-sdk")
+        .map(|package| {
+            let mut info = FluentbaseInfo {
+                version: package.version.to_string(),
+                git_commit: None,
+                git_tag: None,
+                git_branch: None,
+            };
+
+            if let Some(source) = &package.source {
+                parse_git_source(&source.repr, &mut info);
+            }
+
+            info
+        })
+}
+
+fn parse_git_source(source_str: &str, info: &mut FluentbaseInfo) {
+    // Only process git sources
+    if !source_str.starts_with("git+") {
+        return;
+    }
+
+    // Extract full commit hash after '#'
+    if let Some(hash_pos) = source_str.rfind('#') {
+        info.git_commit = Some(source_str[hash_pos + 1..].to_string());
+    }
+
+    // Extract tag if present
+    if let Some(tag_start) = source_str.find("?tag=") {
+        let tag_end = source_str[tag_start + 5..]
+            .find(['#', '&'])
+            .map(|i| tag_start + 5 + i)
+            .unwrap_or(source_str.len());
+        info.git_tag = Some(source_str[tag_start + 5..tag_end].to_string());
+    }
+    // Extract branch if present
+    else if let Some(branch_start) = source_str.find("?branch=") {
+        let branch_end = source_str[branch_start + 8..]
+            .find(['#', '&'])
+            .map(|i| branch_start + 8 + i)
+            .unwrap_or(source_str.len());
+        info.git_branch = Some(source_str[branch_start + 8..branch_end].to_string());
+    }
+    // Extract rev if present (short commit)
+    else if let Some(rev_start) = source_str.find("?rev=") {
+        let rev_end = source_str[rev_start + 5..]
+            .find(['#', '&'])
+            .map(|i| rev_start + 5 + i)
+            .unwrap_or(source_str.len());
+        // If we don't have a full commit hash yet, use the rev as short commit
+        if info.git_commit.is_none() {
+            info.git_commit = Some(source_str[rev_start + 5..rev_end].to_string());
+        }
+    }
 }
 
 /// Determine the actual Docker image that will be used
@@ -572,17 +647,119 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_calculate_hash() {
-        let data = b"test data";
-        let hash = calculate_hash(data);
-        assert_eq!(hash.len(), 64); // SHA256 produces 64 hex characters
+    fn test_parse_git_source_with_rev() {
+        let mut info = FluentbaseInfo {
+            version: "0.1.0".to_string(),
+            git_commit: None,
+            git_tag: None,
+            git_branch: None,
+        };
+
+        let source = "git+https://github.com/fluentlabs-xyz/fluentbase?rev=c6fe78da#c6fe78dabf1234567890abcdef1234567890abcd";
+        parse_git_source(source, &mut info);
+
+        assert_eq!(
+            info.git_commit,
+            Some("c6fe78dabf1234567890abcdef1234567890abcd".to_string())
+        );
+        assert_eq!(info.git_tag, None);
+        assert_eq!(info.git_branch, None);
     }
 
     #[test]
-    fn test_calculate_hash_deterministic() {
-        let data = b"test data";
-        let hash1 = calculate_hash(data);
-        let hash2 = calculate_hash(data);
-        assert_eq!(hash1, hash2); // Same data should produce same hash
+    fn test_parse_git_source_with_tag() {
+        let mut info = FluentbaseInfo {
+            version: "0.1.0".to_string(),
+            git_commit: None,
+            git_tag: None,
+            git_branch: None,
+        };
+
+        let source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.2.1-dev#bdadc577abcdef1234567890abcdef1234567890";
+        parse_git_source(source, &mut info);
+
+        assert_eq!(
+            info.git_commit,
+            Some("bdadc577abcdef1234567890abcdef1234567890".to_string())
+        );
+        assert_eq!(info.git_tag, Some("v0.2.1-dev".to_string()));
+        assert_eq!(info.git_branch, None);
+    }
+
+    #[test]
+    fn test_parse_git_source_with_branch() {
+        let mut info = FluentbaseInfo {
+            version: "0.1.0".to_string(),
+            git_commit: None,
+            git_tag: None,
+            git_branch: None,
+        };
+
+        let source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=main#abc123def4567890abcdef1234567890abcdef12";
+        parse_git_source(source, &mut info);
+
+        assert_eq!(
+            info.git_commit,
+            Some("abc123def4567890abcdef1234567890abcdef12".to_string())
+        );
+        assert_eq!(info.git_tag, None);
+        assert_eq!(info.git_branch, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_parse_git_source_non_git() {
+        let mut info = FluentbaseInfo {
+            version: "0.1.0".to_string(),
+            git_commit: None,
+            git_tag: None,
+            git_branch: None,
+        };
+
+        let source = "registry+https://github.com/rust-lang/crates.io-index";
+        parse_git_source(source, &mut info);
+
+        // Should not modify anything for non-git sources
+        assert_eq!(info.git_commit, None);
+        assert_eq!(info.git_tag, None);
+        assert_eq!(info.git_branch, None);
+    }
+
+    #[test]
+    fn test_parse_git_source_without_commit() {
+        let mut info = FluentbaseInfo {
+            version: "0.1.0".to_string(),
+            git_commit: None,
+            git_tag: None,
+            git_branch: None,
+        };
+
+        // Edge case: git source without commit hash
+        let source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=main";
+        parse_git_source(source, &mut info);
+
+        assert_eq!(info.git_commit, None);
+        assert_eq!(info.git_tag, None);
+        assert_eq!(info.git_branch, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_parse_git_source_with_additional_params() {
+        let mut info = FluentbaseInfo {
+            version: "0.1.0".to_string(),
+            git_commit: None,
+            git_tag: None,
+            git_branch: None,
+        };
+
+        // Source with additional parameters
+        let source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v1.0.0&feature=foo#deadbeef1234567890abcdef1234567890abcdef";
+        parse_git_source(source, &mut info);
+
+        assert_eq!(
+            info.git_commit,
+            Some("deadbeef1234567890abcdef1234567890abcdef".to_string())
+        );
+        assert_eq!(info.git_tag, Some("v1.0.0".to_string()));
+        assert_eq!(info.git_branch, None);
     }
 }
