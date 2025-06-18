@@ -22,7 +22,7 @@ pub fn run(args: &[String], work_dir: &Path, docker_config: Option<DockerConfig>
     // Run in Docker
     check_docker()?;
     let image = ensure_image(&config.sdk_tag, config.rust_version.as_deref())?;
-    run_docker(args, work_dir, &image, &config.env_vars)
+    run_docker(args, work_dir, &image, &config.env_vars, &config.mount_dir)
 }
 
 #[derive(Debug)]
@@ -30,6 +30,7 @@ pub struct DockerConfig {
     pub sdk_tag: String,
     pub rust_version: Option<String>,
     pub env_vars: Vec<(String, String)>,
+    pub mount_dir: PathBuf,
 }
 
 // ============================================================
@@ -59,11 +60,15 @@ fn run_docker(
     work_dir: &Path,
     image: &str,
     env_vars: &[(String, String)],
+    mount_dir: &Path,
 ) -> Result<()> {
-    let mount_root = find_workspace_root(work_dir)?;
-    let relative_dir = work_dir
-        .strip_prefix(&mount_root)
-        .with_context(|| format!("Work dir outside of workspace: {}", work_dir.display()))?;
+    let relative_dir = work_dir.strip_prefix(mount_dir).with_context(|| {
+        format!(
+            "Work dir {} is not within mount dir {}",
+            work_dir.display(),
+            mount_dir.display()
+        )
+    })?;
 
     let mut cmd = Command::new("docker");
     cmd.args([
@@ -72,7 +77,7 @@ fn run_docker(
         "--platform",
         DOCKER_PLATFORM,
         "-v",
-        &format!("{}:/workspace", mount_root.display()),
+        &format!("{}:/workspace", mount_dir.display()),
         "-v",
         "cargo-registry:/usr/local/cargo/registry",
         "-v",

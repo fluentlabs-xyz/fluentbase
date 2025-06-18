@@ -44,6 +44,10 @@ pub struct BuildArgs {
     #[arg(long, default_value = DEFAULT_DOCKER_TAG)]
     pub tag: String,
 
+    /// Root directory to mount in Docker (defaults to current directory)
+    #[arg(long)]
+    pub mount_dir: Option<PathBuf>,
+
     /// Rust toolchain version (e.g., "1.85.0", "nightly-2024-01-01")
     /// If not specified, will check rust-toolchain.toml, then use base image version
     #[arg(long)]
@@ -87,6 +91,7 @@ impl Default for BuildArgs {
         Self {
             docker: true,
             tag: DEFAULT_DOCKER_TAG.to_string(),
+            mount_dir: None,
             rust_version: None,
             features: vec![],
             no_default_features: true,

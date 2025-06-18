@@ -129,7 +129,12 @@ pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
     }
 
     // Execute build
-    let args = args.unwrap_or_default();
+    let mut args = args.unwrap_or_default();
+
+    if args.mount_dir.is_none() {
+        args.mount_dir = Some(std::env::current_dir().unwrap_or_else(|_| contract_dir.clone()));
+    }
+
     match execute_build(&args, Some(contract_dir.to_path_buf())) {
         Ok(result) => {
             println!(
@@ -165,6 +170,7 @@ fn build_wasm(args: &BuildArgs, contract_dir: &Path, package_name: &str) -> Resu
                 sdk_tag: args.tag.clone(),
                 rust_version: args.get_rust_version(contract_dir),
                 env_vars: vec![("CARGO_ENCODED_RUSTFLAGS".to_string(), args.rustflags())],
+                mount_dir: args.mount_dir.clone().unwrap(),
             }),
         )?;
     } else {
@@ -316,6 +322,7 @@ fn run_tool(cmd: &[&str], work_dir: &Path, args: &BuildArgs) -> Result<()> {
                 sdk_tag: args.tag.clone(),
                 rust_version: None,
                 env_vars: vec![],
+                mount_dir: args.mount_dir.clone().unwrap(),
             }),
         )
     } else {
