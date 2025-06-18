@@ -74,5 +74,5 @@ debug-print = [
 ]
 wasmtime = [
     "fluentbase-runtime/wasmtime",
-    "rwasm/debug-print",
+    "rwasm-revm/wasmtime",
 ]
