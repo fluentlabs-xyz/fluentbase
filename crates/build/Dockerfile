@@ -1,98 +1,74 @@
 # Global build argument
 ARG BINARYEN_VERSION=120
 
-# Builder stage
-FROM rust:1.87-slim AS builder
+# Stage 1: Download and extract tools
+FROM alpine:3.19 AS tools
 
-# Re-declare ARG in this stage
 ARG BINARYEN_VERSION
 
-# Install all dependencies including wabt from apt
-RUN apt-get update && apt-get install -y \
-    curl \
-    git \
-    pkg-config \
-    libssl-dev \
-    build-essential \
-    python3 \
-    cmake \
-    clang \
-    lld \
-    ca-certificates \
-    wabt \
-    && rm -rf /var/lib/apt/lists/*
+# Install curl and download tools
+RUN apk add --no-cache curl && \
+    # Download binaryen
+    curl -L https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz | \
+    tar xzf - -C /tmp && \
+    # Download wabt
+    curl -L https://github.com/WebAssembly/wabt/releases/download/1.0.36/wabt-1.0.36-ubuntu-20.04.tar.gz | \
+    tar xzf - -C /tmp
 
-# Set environment variables for better network handling
-ENV CARGO_NET_RETRY=10 \
-    CARGO_HTTP_TIMEOUT=120
-
-# Install Rust components
-RUN rustup component add rust-src rustfmt clippy && \
-    rustup target add wasm32-unknown-unknown
-
-# Install wasm-opt from binaryen
-RUN curl -L --retry 5 --retry-delay 5 \
-    https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz | \
-    tar xzf - -C /opt && \
-    ln -s /opt/binaryen-version_${BINARYEN_VERSION}/bin/wasm-opt /usr/local/bin/
-
-# Install cargo tools
-RUN cargo install --locked \
-    cargo-expand \
-    cargo-udeps \
-    cargo-audit \
-    cargo-deny
-
-# Runtime stage
+# Stage 2: Final image
 FROM rust:1.87-slim
 
-# Re-declare ARG for this stage
-ARG BINARYEN_VERSION
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+# Install only essential runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    ca-certificates \
+    # Required for building C dependencies
+    build-essential \
+    # Required for cargo dependencies with native code
     pkg-config \
     libssl-dev \
-    build-essential \
-    clang \
-    lld \
-    ca-certificates \
-    wabt \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Copy Rust toolchain and cargo from builder
-COPY --from=builder /usr/local/rustup /usr/local/rustup
-COPY --from=builder /usr/local/cargo /usr/local/cargo
+# Copy only the tools we need from the tools stage
+COPY --from=tools /tmp/binaryen-version_*/bin/wasm-opt /usr/local/bin/
+COPY --from=tools /tmp/wabt-*/bin/wasm2wat /usr/local/bin/
+COPY --from=tools /tmp/wabt-*/bin/wasm-strip /usr/local/bin/
 
-# Copy wasm-opt from builder
-COPY --from=builder /opt/binaryen-version_${BINARYEN_VERSION}/bin/wasm-opt /usr/local/bin/
+# Make binaries executable
+RUN chmod +x /usr/local/bin/wasm*
+
+# Install Rust target for WASM
+RUN rustup target add wasm32-unknown-unknown
 
 # Set environment variables
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH \
+ENV CARGO_NET_RETRY=10 \
+    CARGO_HTTP_TIMEOUT=120 \
     RUST_BACKTRACE=1
 
 # Create workspace directory
 WORKDIR /workspace
 
 # Configure cargo for better caching
-RUN mkdir -p /usr/local/cargo && \
-    echo '[build]' > /usr/local/cargo/config.toml && \
-    echo 'target-dir = "/target"' >> /usr/local/cargo/config.toml && \
-    echo '[net]' >> /usr/local/cargo/config.toml && \
-    echo 'retry = 10' >> /usr/local/cargo/config.toml
+RUN mkdir -p $CARGO_HOME && \
+    echo '[build]' > $CARGO_HOME/config.toml && \
+    echo 'target-dir = "/target"' >> $CARGO_HOME/config.toml && \
+    echo '' >> $CARGO_HOME/config.toml && \
+    echo '[net]' >> $CARGO_HOME/config.toml && \
+    echo 'retry = 10' >> $CARGO_HOME/config.toml && \
+    echo '' >> $CARGO_HOME/config.toml && \
+    echo '[registries.crates-io]' >> $CARGO_HOME/config.toml && \
+    echo 'protocol = "sparse"' >> $CARGO_HOME/config.toml
 
 # Verify installations
-RUN wasm-opt --version && \
-    wasm2wat --version && \
-    wasm-strip --version && \
-    rustc --version && \
-    cargo --version
+RUN rustc --version && \
+    cargo --version && \
+    wasm-opt --version && \
+    wasm2wat --version
 
 # Labels
 LABEL maintainer="Fluent Labs" \
-      description="Fluent smart contract build environment"
+      description="Fluent smart contract build environment" \
+      org.opencontainers.image.source="https://github.com/fluentlabs-xyz/fluentbase"
 
 CMD ["/bin/bash"]
