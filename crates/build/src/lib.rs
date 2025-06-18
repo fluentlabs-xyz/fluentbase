@@ -37,6 +37,10 @@ pub enum Artifact {
 /// Build configuration for Fluent smart contracts
 #[derive(Clone, Parser, Debug)]
 pub struct BuildArgs {
+    /// Custom contract name for output directory (defaults to package name)
+    #[arg(long)]
+    pub contract_name: Option<String>,
+
     /// Run compilation in Docker for reproducible builds
     #[arg(long)]
     pub docker: bool,
@@ -90,6 +94,7 @@ pub struct BuildArgs {
 impl Default for BuildArgs {
     fn default() -> Self {
         Self {
+            contract_name: None,
             docker: true,
             tag: DEFAULT_DOCKER_TAG.to_string(),
             mount_dir: None,

@@ -56,7 +56,8 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
     }
 
     // From here we know output is Some
-    let output_dir = args.output.as_ref().unwrap().join(&package.name);
+    let contract_name = args.contract_name.as_ref().unwrap_or(&package.name);
+    let output_dir = args.output.as_ref().unwrap().join(contract_name);
 
     // Clean the output directory if it exists
     if output_dir.exists() {
