@@ -4,7 +4,7 @@ use crate::{
 };
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use num::BigUint;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 use sp1_curves::{params::NumWords, weierstrass::FpOpField};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
@@ -15,7 +15,7 @@ pub struct SyscallFpOp<P, OP> {
 }
 
 impl<P: FpOpField, OP: FieldOp> SyscallFpOp<P, OP> {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let (x_ptr, y_ptr) = caller.stack_pop2_as::<u32>();
 
         let num_words = <P as NumWords>::WordsFieldElement::USIZE;

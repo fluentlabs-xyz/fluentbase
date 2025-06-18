@@ -68,7 +68,12 @@ fn devnet_chain_config() -> ChainConfig {
         deposit_contract_address: None,
         prague_time: None,
         osaka_time: None,
+        bpo1_time: None,
+        bpo2_time: None,
+        bpo3_time: None,
+        bpo4_time: None,
         blob_schedule: Default::default(),
+        bpo5_time: None,
     }
 }
 

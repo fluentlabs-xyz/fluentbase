@@ -1,10 +1,10 @@
 use crate::RuntimeContext;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 
 pub(crate) struct SyscallSha256Extend;
 
 impl SyscallSha256Extend {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let w_ptr: u32 = caller.stack_pop_as();
 
         for i in 16..64 {
