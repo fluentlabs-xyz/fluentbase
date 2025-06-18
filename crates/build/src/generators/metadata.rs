@@ -352,7 +352,7 @@ fn get_actual_docker_image(args: &BuildArgs, contract_dir: &Path) -> Result<Stri
 
     if let Some(rust_version) = rust_version {
         // This will match the logic in command.rs
-        let sanitized_tag = args.tag.replace('/', "-").replace(':', "-");
+        let sanitized_tag = args.tag.replace(['/', ':'], "-");
         let cache_image = format!(
             "{}-{}-rust-{}",
             command::CACHE_IMAGE_PREFIX,
@@ -394,7 +394,7 @@ fn get_source_info(contract_dir: &Path) -> Result<SourceInfo> {
     if contract_dir.join(".git").exists() {
         // Get repository URL
         match Command::new("git")
-            .args(&["config", "--get", "remote.origin.url"])
+            .args(["config", "--get", "remote.origin.url"])
             .current_dir(contract_dir)
             .output()
         {
@@ -409,7 +409,7 @@ fn get_source_info(contract_dir: &Path) -> Result<SourceInfo> {
 
         // Get current branch
         match Command::new("git")
-            .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .current_dir(contract_dir)
             .output()
         {
@@ -424,7 +424,7 @@ fn get_source_info(contract_dir: &Path) -> Result<SourceInfo> {
 
         // Get commit hash
         match Command::new("git")
-            .args(&["rev-parse", "HEAD"])
+            .args(["rev-parse", "HEAD"])
             .current_dir(contract_dir)
             .output()
         {
@@ -437,7 +437,7 @@ fn get_source_info(contract_dir: &Path) -> Result<SourceInfo> {
 
         // Check if working directory is clean and get dirty files
         match Command::new("git")
-            .args(&["status", "--porcelain"])
+            .args(["status", "--porcelain"])
             .current_dir(contract_dir)
             .output()
         {
@@ -609,7 +609,7 @@ fn get_docker_image_id(image: &str) -> Result<String> {
 
 fn get_rustc_version_detailed() -> Result<String> {
     let output = Command::new("rustc")
-        .args(&["--version", "--verbose"])
+        .args(["--version", "--verbose"])
         .output()
         .context("Failed to run rustc")?;
 

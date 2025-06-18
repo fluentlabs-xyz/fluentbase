@@ -328,7 +328,7 @@ fn is_local_image(image: &str) -> bool {
 
 fn format_cache_image_name(sdk_tag: &str, rust_version: &str) -> String {
     // Sanitize the tag to remove special characters that might cause issues
-    let sanitized_tag = sdk_tag.replace('/', "-").replace(':', "-");
+    let sanitized_tag = sdk_tag.replace(['/', ':'], "-");
     format!(
         "{}-{}-rust-{}",
         CACHE_IMAGE_PREFIX, sanitized_tag, rust_version

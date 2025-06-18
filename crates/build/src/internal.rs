@@ -42,7 +42,7 @@ impl RustToWasmConfig {
 
 pub fn rust_to_wasm(config: RustToWasmConfig) -> PathBuf {
     let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let cargo_manifest_path = PathBuf::from(cargo_manifest_dir.clone()).join("Cargo.toml");
+    let cargo_manifest_path = cargo_manifest_dir.clone().join("Cargo.toml");
     let mut metadata_cmd = MetadataCommand::new();
     let metadata = metadata_cmd
         .manifest_path(cargo_manifest_path)
@@ -93,19 +93,19 @@ pub fn rust_to_wasm(config: RustToWasmConfig) -> PathBuf {
     }
 
     let wasm_artifact_name = calc_wasm_artifact_name(&metadata);
-    let wasm_artifact_path = target2_dir
+    
+
+    target2_dir
         .join("wasm32-unknown-unknown")
         .join("release")
-        .join(wasm_artifact_name);
-
-    wasm_artifact_path
+        .join(wasm_artifact_name)
 }
 
 pub fn wasm_to_wasmtime(wasm_path: &PathBuf) -> PathBuf {
     let config = wasmtime::Config::new();
     let engine = wasmtime::Engine::new(&config).unwrap();
 
-    let wasm_bytecode = fs::read(&wasm_path).unwrap();
+    let wasm_bytecode = fs::read(wasm_path).unwrap();
     let module =
         wasmtime::Module::new(&engine, wasm_bytecode).expect("failed to compile wasmtime module");
     let module_bytes = module
@@ -141,7 +141,7 @@ pub fn go_to_wasm() -> PathBuf {
 }
 
 pub fn wasm_to_rwasm(wasm_path: &PathBuf, config: CompilationConfig) -> PathBuf {
-    let wasm = fs::read(&wasm_path).unwrap();
+    let wasm = fs::read(wasm_path).unwrap();
     let rwasm: Vec<u8> = compile_wasm_to_rwasm_with_config(wasm.as_slice(), config.clone())
         .unwrap()
         .rwasm_module
@@ -155,7 +155,7 @@ pub fn copy_wasm_and_wat(wasm_path: &PathBuf) {
     let dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let wasm_output = dir.join("lib.wasm");
     let wat_output = dir.join("lib.wat");
-    fs::copy(&wasm_path, &wasm_output).unwrap();
+    fs::copy(wasm_path, &wasm_output).unwrap();
     let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
     if wasm_to_wat.is_ok() {
         fs::write(wat_output, from_utf8(&wasm_to_wat.unwrap().stdout).unwrap()).unwrap();
@@ -198,11 +198,7 @@ fn calc_wasm_artifact_name(metadata: &Metadata) -> String {
 
 pub fn is_tinygo_installed() -> bool {
     let output = Command::new("tinygo").arg("-v").output();
-    if output.is_err() {
-        false
-    } else {
-        true
-    }
+    output.is_ok()
 }
 
 /// Generates the `build_output.rs` file, which is included in the contract's `lib.rs`.
