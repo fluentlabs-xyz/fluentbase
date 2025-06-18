@@ -93,10 +93,15 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
 
     Ok(result)
 }
+
+/// Internal build function for workspace contracts.
+/// Executes the build process with Docker/local compilation and generates artifacts.
+/// Automatically skips execution for cargo check, clippy, and rust-analyzer.
 pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
     if env::var("TARGET").unwrap() == BUILD_TARGET {
         return;
     }
+
     let contract_dir = Path::new(path);
 
     // Canonicalize the path to avoid relative path issues
@@ -120,11 +125,15 @@ pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
         return;
     }
 
-    // Skip for clippy
-    if env::var("RUSTC_WORKSPACE_WRAPPER")
-        .map(|val| val.contains("clippy-driver"))
-        .unwrap_or(false)
-    {
+    // Skip for clippy and rust-analyzer
+    if let Ok(wrapper) = env::var("RUSTC_WORKSPACE_WRAPPER") {
+        if wrapper.contains("clippy-driver") || wrapper.contains("rust-analyzer") {
+            return;
+        }
+    }
+
+    // Skip for cargo check - it doesn't set RUSTC but does set CARGO
+    if env::var("RUSTC").is_err() && env::var("CARGO").is_ok() {
         return;
     }
 
