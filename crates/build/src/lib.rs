@@ -151,6 +151,12 @@ impl BuildArgs {
             "--release".to_string(),
         ];
 
+        if self.docker {
+            let target_subdir = "docker";
+            cmd.push("--target-dir".to_string());
+            cmd.push(format!("target/{}/{}", HELPER_TARGET_SUBDIR, target_subdir));
+        }
+
         if self.no_default_features {
             cmd.push("--no-default-features".to_string());
         }
