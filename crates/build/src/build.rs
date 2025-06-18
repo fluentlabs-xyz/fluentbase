@@ -283,7 +283,7 @@ fn generate_artifacts(
                 let rwasm_result = fluentbase_types::compile_wasm_to_rwasm(&wasm_data)
                     .map_err(|e| anyhow::anyhow!("rWASM compilation failed: {:?}", e))?;
                 let rwasm_path = output_dir.join("lib.rwasm");
-                fs::write(&rwasm_path, rwasm_result.rwasm_bytecode.to_vec())?;
+                fs::write(&rwasm_path, rwasm_result.rwasm_module.serialize())?;
                 result.rwasm_path = Some(rwasm_path);
             }
             Artifact::Abi => {
