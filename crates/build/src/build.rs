@@ -98,23 +98,15 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
 /// Executes the build process with Docker/local compilation and generates artifacts.
 /// Automatically skips execution for cargo check, clippy, and rust-analyzer.
 pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
-    if env::var("TARGET").unwrap() == BUILD_TARGET {
+    // Run artifacts generation only for release
+    if env::var("PROFILE").unwrap() != "release" {
         return;
     }
 
-    let contract_dir = Path::new(path);
-
-    // Canonicalize the path to avoid relative path issues
-    let contract_dir = match contract_dir.canonicalize() {
-        Ok(path) => path,
-        Err(_) => {
-            // If canonicalize fails, try to get absolute path
-            match std::env::current_dir() {
-                Ok(cwd) => cwd.join(contract_dir),
-                Err(e) => panic!("Failed to determine contract directory: {}", e),
-            }
-        }
-    };
+    // To avoid recursion we need to check if target is not BUILD_TARGET
+    if env::var("TARGET").unwrap() == BUILD_TARGET {
+        return;
+    }
 
     // Skip if requested
     if env::var("FLUENTBASE_SKIP_BUILD")
@@ -136,6 +128,20 @@ pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
     if env::var("RUSTC").is_err() && env::var("CARGO").is_ok() {
         return;
     }
+
+    let contract_dir = Path::new(path);
+
+    // Canonicalize the path to avoid relative path issues
+    let contract_dir = match contract_dir.canonicalize() {
+        Ok(path) => path,
+        Err(_) => {
+            // If canonicalize fails, try to get absolute path
+            match std::env::current_dir() {
+                Ok(cwd) => cwd.join(contract_dir),
+                Err(e) => panic!("Failed to determine contract directory: {}", e),
+            }
+        }
+    };
 
     // Load metadata for rerun-if-changed
     if let Ok(metadata) = MetadataCommand::new()
