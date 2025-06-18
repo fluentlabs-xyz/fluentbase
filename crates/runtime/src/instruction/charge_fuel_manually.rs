@@ -15,7 +15,7 @@ impl SyscallChargeFuelManually {
         }
         let fuel_refunded = caller.stack_pop_i64();
         let fuel_consumed = caller.stack_pop_u64();
-        caller.store_mut().try_consume_fuel(fuel_consumed)?;
+        caller.store_mut().try_consume_fuel(fuel_consumed as u32)?;
         caller.store_mut().refund_fuel(fuel_refunded);
         let remaining_fuel = caller.store().remaining_fuel().unwrap_or(u64::MAX);
         caller.stack_push_u64(remaining_fuel);

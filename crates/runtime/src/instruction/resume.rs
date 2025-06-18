@@ -83,7 +83,7 @@ impl SyscallResume {
             let store = &mut recoverable_runtime.store;
             // charge fuel that was spent during the interruption
             // to make sure our fuel calculations are aligned
-            if let Err(_) = store.try_consume_fuel(fuel_consumed) {
+            if let Err(_) = store.try_consume_fuel(fuel_consumed as u32) {
                 return (0, 0, ExitCode::OutOfFuel.into_i32());
             }
         }

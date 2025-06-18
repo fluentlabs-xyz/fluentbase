@@ -6,7 +6,7 @@ pub struct SyscallChargeFuel;
 impl SyscallChargeFuel {
     pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let fuel_consumed: u64 = caller.stack_pop_u64();
-        caller.store_mut().try_consume_fuel(fuel_consumed)?;
+        caller.store_mut().try_consume_fuel(fuel_consumed as u32)?;
         Ok(())
     }
 
