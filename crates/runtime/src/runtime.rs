@@ -1,9 +1,6 @@
 use crate::{
     context::RuntimeContext,
-    instruction::{
-        exec::{SysExecResumable, SyscallExec},
-        invoke_runtime_handler,
-    },
+    instruction::{exec::SysExecResumable, invoke_runtime_handler},
 };
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{
@@ -15,15 +12,7 @@ use fluentbase_types::{
     B256,
 };
 use hashbrown::{hash_map::Entry, HashMap};
-use rwasm::{
-    make_instruction_table,
-    Caller,
-    ExecutorConfig,
-    InstructionTable,
-    RwasmError,
-    RwasmExecutor,
-    RwasmModule,
-};
+use rwasm::{Caller, ExecutionEngine, ExecutorConfig, RwasmModule, Store, TrapCode};
 use std::{
     cell::RefCell,
     fmt::Debug,
@@ -95,27 +84,22 @@ thread_local! {
 #[derive(Default)]
 pub struct RuntimeSyscallHandler {}
 
-fn runtime_syscall_handler(
-    caller: Caller<RuntimeContext>,
-    func_idx: u32,
-) -> Result<(), RwasmError> {
-    let sys_func_idx =
-        SysFuncIdx::from_repr(func_idx).ok_or(RwasmError::UnknownExternalFunction(func_idx))?;
+fn runtime_syscall_handler(caller: Caller<RuntimeContext>, func_idx: u32) -> Result<(), TrapCode> {
+    let sys_func_idx = SysFuncIdx::from_repr(func_idx).ok_or(TrapCode::UnknownExternalFunction)?;
     invoke_runtime_handler(caller, sys_func_idx)
 }
 
 pub struct Runtime {
-    pub executor: RwasmExecutor<RuntimeContext>,
+    pub engine: ExecutionEngine,
+    pub store: Store<RuntimeContext>,
+    pub module: Arc<RwasmModule>,
 }
-
-const INSTRUCTION_TABLE: InstructionTable<RuntimeContext> = make_instruction_table();
 
 pub(crate) static CALL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 impl Runtime {
-    pub fn catch_trap(err: &RwasmError) -> i32 {
+    pub fn catch_trap(err: &TrapCode) -> i32 {
         let err = match err {
-            RwasmError::ExecutionHalted(exit_code) => return *exit_code,
             err => err,
         };
         ExitCode::from(err).into_i32()
@@ -133,10 +117,10 @@ impl Runtime {
             let bytecode_repr = take(&mut runtime_context.bytecode);
 
             // resolve cached module or init it
-            let rwasm_module = match &bytecode_repr {
+            let module = match &bytecode_repr {
                 BytecodeOrHash::Bytecode(bytecode, hash) => {
                     let hash = hash.unwrap();
-                    // if we have a cached module then use it, otherwise create a new one and cache
+                    // if we have a cached module, then use it, otherwise create a new one and cache
                     if let Some(module) = caching_runtime.resolve_module(&hash) {
                         module
                     } else {
@@ -158,16 +142,18 @@ impl Runtime {
             // return bytecode
             runtime_context.bytecode = bytecode_repr;
 
-            let mut executor = RwasmExecutor::new(
-                rwasm_module.clone(),
-                ExecutorConfig::new()
-                    .fuel_limit(runtime_context.fuel_limit)
-                    .trace_enabled(runtime_context.trace)
-                    .fuel_enabled(!runtime_context.disable_fuel),
-                runtime_context,
-            );
-            executor.set_syscall_handler(runtime_syscall_handler);
-            Self { executor }
+            let engine = ExecutionEngine::new();
+            let config = ExecutorConfig::new()
+                .fuel_limit(runtime_context.fuel_limit)
+                .fuel_enabled(!runtime_context.disable_fuel);
+            let mut store = Store::<RuntimeContext>::new(config, runtime_context);
+            store.set_syscall_handler(runtime_syscall_handler);
+
+            Self {
+                module,
+                engine,
+                store,
+            }
         })
     }
 
@@ -183,9 +169,9 @@ impl Runtime {
     }
 
     pub fn call(&mut self) -> ExecutionResult {
-        let fuel_consumed_before_the_call = self.executor.fuel_consumed();
-        let fuel_refunded_before_the_call = self.executor.fuel_refunded();
-        let result = self.executor.run();
+        let fuel_consumed_before_the_call = self.store.fuel_consumed();
+        let fuel_refunded_before_the_call = self.store.fuel_refunded();
+        let result = self.engine.execute(&mut self.store, &self.module);
         self.handle_execution_result(
             result,
             fuel_consumed_before_the_call,
@@ -200,9 +186,14 @@ impl Runtime {
         fuel_refunded: i64,
         exit_code: i32,
     ) -> ExecutionResult {
-        let fuel_consumed_before_the_call = self.executor.fuel_consumed();
-        let fuel_refunded_before_the_call = self.executor.fuel_refunded();
-        let mut caller = Caller::new(&mut self.executor);
+        let fuel_consumed_before_the_call = self.store.fuel_consumed();
+        let fuel_refunded_before_the_call = self.store.fuel_refunded();
+
+        let mut executor = self
+            .engine
+            .create_resumable_executor(&mut self.store, &self.module);
+
+        let mut caller = executor.caller();
         if fuel16_ptr > 0 {
             let mut buffer = [0u8; 16];
             LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
@@ -217,7 +208,9 @@ impl Runtime {
             }
         }
         caller.stack_push(exit_code);
-        let result = self.executor.run();
+        caller.sync_stack_ptr();
+
+        let result = executor.run();
         self.handle_execution_result(
             result,
             fuel_consumed_before_the_call,
@@ -248,71 +241,40 @@ impl Runtime {
 
     fn handle_execution_result(
         &mut self,
-        mut next_result: Result<i32, RwasmError>,
+        next_result: Result<(), TrapCode>,
         fuel_consumed_before_the_call: u64,
         fuel_refunded_before_the_call: i64,
     ) -> ExecutionResult {
-        let mut execution_result = take(&mut self.executor.context_mut().execution_result);
+        let mut execution_result = take(&mut self.store.context_mut().execution_result);
         // once fuel is calculated, we must adjust our fuel limit,
         // because we don't know what gas conversion policy is used,
         // if there is rounding then it can cause miscalculations
-        execution_result.fuel_consumed =
-            self.executor.fuel_consumed() - fuel_consumed_before_the_call;
-        execution_result.fuel_refunded =
-            self.executor.fuel_refunded() - fuel_refunded_before_the_call;
+        execution_result.fuel_consumed = self.store.fuel_consumed() - fuel_consumed_before_the_call;
+        execution_result.fuel_refunded = self.store.fuel_refunded() - fuel_refunded_before_the_call;
         loop {
             match next_result {
-                Ok(exit_code) => {
-                    if exit_code != ExitCode::Ok.into_i32() {
-                        execution_result.exit_code = exit_code;
+                Ok(_) => break,
+                Err(TrapCode::InterruptionCalled) => {
+                    let resumable_context =
+                        self.store.context_mut().resumable_context.take().unwrap();
+                    if resumable_context.is_root {
+                        unimplemented!("resumable context is root");
+                        // // TODO(dmitry123): "validate this logic, might not be ok in STF
+                        // mode" let (_, _, exit_code) =
+                        // SyscallExec::fn_continue(
+                        //     Caller::new(&mut self.executor),
+                        //     &resumable_context,
+                        // );
+                        // next_result = Ok(exit_code);
+                        // continue;
                     }
+                    self.handle_resumable_state(&mut execution_result, &resumable_context);
                     break;
                 }
-                Err(err) => match err {
-                    RwasmError::MalformedBinary => {
-                        unreachable!("runtime: binary format error is not possible here")
-                    }
-                    RwasmError::UnknownExternalFunction(func_idx) => {
-                        unreachable!(
-                            "runtime: unknown external function ({}) error is not possible here",
-                            func_idx
-                        )
-                    }
-                    RwasmError::ExecutionHalted(exit_code) => {
-                        unreachable!(
-                            "runtime: execution halted ({}) error must be unwrapped",
-                            exit_code
-                        )
-                    }
-                    RwasmError::HostInterruption(host_error) => {
-                        let resumable_state = host_error
-                            .downcast_ref::<SysExecResumable>()
-                            .expect("runtime: invalid resumable state");
-
-                        if resumable_state.is_root {
-                            // TODO(dmitry123): "validate this logic, might not be ok in STF mode"
-                            let (_, _, exit_code) = SyscallExec::fn_continue(
-                                Caller::new(&mut self.executor),
-                                resumable_state,
-                            );
-                            next_result = Ok(exit_code);
-                            continue;
-                        }
-
-                        self.handle_resumable_state(&mut execution_result, resumable_state);
-                        break;
-                    }
-                    RwasmError::FloatsAreDisabled => {
-                        unreachable!("runtime: floats are disabled")
-                    }
-                    RwasmError::NotAllowedInFuelMode => {
-                        unreachable!("runtime: now allowed in fuel mode")
-                    }
-                    err => {
-                        execution_result.exit_code = ExitCode::from(err).into_i32();
-                        break;
-                    }
-                },
+                Err(err) => {
+                    execution_result.exit_code = ExitCode::from(err).into_i32();
+                    break;
+                }
             }
         }
         execution_result
@@ -323,14 +285,14 @@ impl Runtime {
         execution_result: &mut ExecutionResult,
         sys_exec_resumable: &SysExecResumable,
     ) {
-        // we disallow nested calls at non-root levels
+        // we disallow nested calls at non-root levels,
         // so we must save the current state
         // to interrupt execution and delegate decision-making
         // to the root execution
-        let output = self.executor.context_mut().output_mut();
+        let output = self.store.context_mut().output_mut();
         output.clear();
         assert!(output.is_empty(), "runtime: return data must be empty");
-        // serialize delegated execution state,
+        // serialize the delegated execution state,
         // but we don't serialize registers and stack state,
         // instead we remember it inside the internal structure
         // and assign a special identifier for recovery
@@ -346,14 +308,14 @@ impl Runtime {
     }
 
     pub fn context(&self) -> &RuntimeContext {
-        self.executor.context()
+        self.store.context()
     }
 
     pub fn context_mut(&mut self) -> &mut RuntimeContext {
-        self.executor.context_mut()
+        self.store.context_mut()
     }
 
     pub fn take_context(&mut self) -> RuntimeContext {
-        take(self.executor.context_mut())
+        take(self.store.context_mut())
     }
 }

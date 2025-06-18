@@ -55,7 +55,8 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
-        let result = SyscallRead::fn_impl(&self.ctx.borrow(), offset, target.len() as u32).unwrap();
+        let result =
+            SyscallRead::fn_impl(&mut self.ctx.borrow_mut(), offset, target.len() as u32).unwrap();
         target.copy_from_slice(&result);
     }
 
@@ -82,7 +83,8 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn read_output(&self, target: &mut [u8], offset: u32) {
         let result =
-            SyscallReadOutput::fn_impl(&self.ctx.borrow(), offset, target.len() as u32).unwrap();
+            SyscallReadOutput::fn_impl(&mut self.ctx.borrow_mut(), offset, target.len() as u32)
+                .unwrap();
         target.copy_from_slice(&result);
     }
 

@@ -3,6 +3,7 @@ mod config;
 use cargo_metadata::{CrateType, Metadata, MetadataCommand, TargetKind};
 pub use config::*;
 use fluentbase_types::{compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256};
+use rwasm::CompilationConfig;
 use std::{env, fs, path::PathBuf, process::Command, str::from_utf8};
 
 pub fn rust_to_wasm(config: RustToWasmConfig) -> PathBuf {
@@ -105,12 +106,12 @@ pub fn go_to_wasm() -> PathBuf {
     wasm_artifact_path
 }
 
-pub fn wasm_to_rwasm(wasm_path: &PathBuf, config: rwasm::legacy::Config) -> PathBuf {
+pub fn wasm_to_rwasm(wasm_path: &PathBuf, config: CompilationConfig) -> PathBuf {
     let wasm = fs::read(&wasm_path).unwrap();
     let rwasm: Vec<u8> = compile_wasm_to_rwasm_with_config(wasm.as_slice(), config.clone())
         .unwrap()
-        .rwasm_bytecode
-        .to_vec();
+        .rwasm_module
+        .serialize();
     let rwasm_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib.rwasm");
     fs::write(&rwasm_path, &rwasm).unwrap();
     rwasm_path
@@ -220,8 +221,7 @@ pub fn build_default_genesis_contract() {
     copy_wasm_and_wat(&wasm_path);
 
     // Compile WASM to RWASM
-    let mut rwasm_config = default_compilation_config();
-    rwasm_config.builtins_consume_fuel(false);
+    let rwasm_config = default_compilation_config().with_builtins_consume_fuel(false);
     let rwasm_path = wasm_to_rwasm(&wasm_path, rwasm_config);
 
     // Compile WASM to WASMTIME module

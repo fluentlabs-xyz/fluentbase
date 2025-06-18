@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::B256;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Caller, TrapCode};
 use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
     Message,
@@ -10,7 +10,7 @@ use secp256k1::{
 pub struct SyscallSecp256k1Recover;
 
 impl SyscallSecp256k1Recover {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
+    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
         let [digest32_ptr, sig64_ptr, output65_ptr, rec_id] = caller.stack_pop_n();
         let digest = caller.memory_read_fixed::<32>(digest32_ptr.as_usize())?;
         let sig = caller.memory_read_fixed::<64>(sig64_ptr.as_usize())?;
