@@ -93,7 +93,6 @@ pub fn rust_to_wasm(config: RustToWasmConfig) -> PathBuf {
     }
 
     let wasm_artifact_name = calc_wasm_artifact_name(&metadata);
-    
 
     target2_dir
         .join("wasm32-unknown-unknown")

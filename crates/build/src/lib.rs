@@ -1,5 +1,5 @@
 mod build;
-mod command;
+mod docker;
 mod generators;
 mod internal;
 mod utils;
@@ -18,6 +18,20 @@ pub const DEFAULT_DOCKER_TAG: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 pub const DEFAULT_STACK_SIZE: u32 = 128 * 1024;
 pub const BUILD_TARGET: &str = "wasm32-unknown-unknown";
 pub const HELPER_TARGET_SUBDIR: &str = "wasm-compilation";
+
+/// Build contract at specified path
+///
+/// Set `FLUENTBASE_SKIP_BUILD` environment variable to skip building.
+pub fn build(path: &str) {
+    build_internal(path, None)
+}
+
+/// Build contract with custom configuration
+///
+/// Set `FLUENTBASE_SKIP_BUILD` environment variable to skip building.
+pub fn build_with_args(path: &str, args: BuildArgs) {
+    build_internal(path, Some(args))
+}
 
 /// Types of artifacts that can be generated
 #[derive(Clone, ValueEnum, Debug, PartialEq)]
@@ -113,7 +127,7 @@ impl Default for BuildArgs {
 
 impl BuildArgs {
     /// Get Rust version to use, checking multiple sources
-    pub fn get_rust_version(&self, contract_dir: &Path) -> Option<String> {
+    pub fn toolchain_version(&self, contract_dir: &Path) -> Option<String> {
         // 1. CLI argument takes precedence
         if let Some(ref version) = self.rust_version {
             return Some(version.clone());
@@ -213,18 +227,4 @@ impl BuildArgs {
 
         flags.join("\x1f")
     }
-}
-
-/// Build contract at specified path
-///
-/// Set `FLUENTBASE_SKIP_BUILD` environment variable to skip building.
-pub fn build(path: &str) {
-    build_internal(path, None)
-}
-
-/// Build contract with custom configuration
-///
-/// Set `FLUENTBASE_SKIP_BUILD` environment variable to skip building.
-pub fn build_with_args(path: &str, args: BuildArgs) {
-    build_internal(path, Some(args))
 }

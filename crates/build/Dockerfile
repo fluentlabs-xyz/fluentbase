@@ -38,8 +38,9 @@ COPY --from=tools /tmp/wabt-*/bin/wasm-strip /usr/local/bin/
 # Make binaries executable
 RUN chmod +x /usr/local/bin/wasm*
 
-# Install Rust target for WASM
-RUN rustup target add wasm32-unknown-unknown
+# Install Rust target for WASM and rust-src component
+RUN rustup target add wasm32-unknown-unknown && \
+    rustup component add rust-src
 
 # Set environment variables
 ENV CARGO_NET_RETRY=10 \
@@ -64,7 +65,8 @@ RUN mkdir -p $CARGO_HOME && \
 RUN rustc --version && \
     cargo --version && \
     wasm-opt --version && \
-    wasm2wat --version
+    wasm2wat --version && \
+    rustup component list --installed
 
 # Labels
 LABEL maintainer="Fluent Labs" \
