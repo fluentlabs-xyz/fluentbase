@@ -268,7 +268,7 @@ fn generate_artifacts(
             Artifact::Solidity => {
                 let abi = abi.as_ref().expect("ABI should be pre-generated");
                 let interface = generators::solidity::generate_interface(&package_name, abi)?;
-                let sol_path = output_dir.join(format!("I{}.sol", package_name));
+                let sol_path = output_dir.join("interface.sol");
                 fs::write(&sol_path, interface)?;
                 result.solidity_path = Some(sol_path);
             }
