@@ -267,8 +267,12 @@ fn generate_artifacts(
         None
     };
 
+    // Sort artifacts to ensure metadata is generated last
+    let mut artifacts = args.generate.clone();
+    artifacts.sort_by_key(|a| matches!(a, Artifact::Metadata));
+
     // Generate each artifact
-    for artifact in &args.generate {
+    for artifact in &artifacts {
         match artifact {
             Artifact::Wat => {
                 run_tool(&["wasm2wat", "lib.wasm", "-o", "lib.wat"], output_dir, args)?;
