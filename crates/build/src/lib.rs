@@ -205,15 +205,22 @@ pub const BUILD_OUTPUT: GenesisContractBuildOutput =
     fs::write(&build_output_path, code).unwrap();
 }
 
+pub fn build_default_genesis_contract() {
+    build_default_genesis_contract_ext(Default::default())
+}
+
 /// Compiles the Genesis contract to WASM, RWASM, and Wasmtime module formats,
 /// and generates the corresponding `build_output.rs` file.
 /// For non-standard configurations (e.g. custom configurations, source code structure, etc.),
 /// it's recommended to copy this function into your own `build.rs` and modify as needed.
-pub fn build_default_genesis_contract() {
+pub fn build_default_genesis_contract_ext(rerun_if_changed: &[&str]) {
     if env::var("TARGET").unwrap() == "wasm32-unknown-unknown" {
         return;
     }
     println!("cargo:rerun-if-changed=src");
+    for path in rerun_if_changed {
+        println!("cargo:rerun-if-changed={}", path);
+    }
     println!("cargo:rerun-if-changed=Cargo.toml");
 
     // Compile Rust to WASM

@@ -144,6 +144,7 @@ impl Runtime {
 
             let engine = ExecutionEngine::new();
             let config = ExecutorConfig::new()
+                // .floats_enabled(true) // need to support solana ee
                 .fuel_limit(runtime_context.fuel_limit)
                 .fuel_enabled(!runtime_context.disable_fuel);
             let mut store = Store::<RuntimeContext>::new(config, runtime_context);

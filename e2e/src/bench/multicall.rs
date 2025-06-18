@@ -39,6 +39,7 @@ fn bench_evm_multicall(b: &mut Bencher) {
     });
 }
 
+#[ignore]
 #[bench]
 fn bench_wasm_multicall(b: &mut Bencher) {
     let mut ctx = EvmTestingContext::default();

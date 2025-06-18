@@ -67,6 +67,10 @@ pub const PROTECTED_STORAGE_SLOT_0: B256 =
 pub const PROTECTED_STORAGE_SLOT_1: B256 =
     b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113c");
 
+pub fn is_precompiled_runtime(address: &Address) -> bool {
+    address == &PRECOMPILE_EVM_RUNTIME || address == &PRECOMPILE_SVM_RUNTIME
+}
+
 pub fn is_protected_storage_slot<I: Into<B256>>(slot: I) -> bool {
     let slot: B256 = slot.into();
     slot == PROTECTED_STORAGE_SLOT_0 || slot == PROTECTED_STORAGE_SLOT_1
@@ -77,11 +81,13 @@ pub fn is_protected_storage_slot<I: Into<B256>>(slot: I) -> bool {
 /// This value is temporary for testing purposes, requires recalculation.
 /// The limit is equal to 2Mb.
 pub const WASM_MAX_CODE_SIZE: usize = 0x200000;
+pub const SVM_MAX_CODE_SIZE: usize = 0x200000;
 
 /// WebAssembly magic bytes
 ///
 /// These values are equal to \0ASM
 pub const WASM_MAGIC_BYTES: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
+pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
 
 /// EIP-170: Contract code size limit
 ///

@@ -17,6 +17,7 @@ use fluentbase_types::{
     IsColdAccess,
     SharedAPI,
     SharedContextInputV1,
+    StorageAPI,
     SyscallResult,
     B256,
     STATE_MAIN,
@@ -81,6 +82,44 @@ impl<API: NativeAPI> SharedContextImpl<API> {
 }
 
 /// SharedContextImpl always created from input
+impl<API: NativeAPI> StorageAPI for SharedContextImpl<API> {
+    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
+        let mut input = [0u8; U256::BYTES + U256::BYTES];
+        unsafe {
+            core::ptr::copy(
+                slot.as_limbs().as_ptr() as *mut u8,
+                input.as_mut_ptr(),
+                U256::BYTES,
+            );
+            core::ptr::copy(
+                value.as_limbs().as_ptr() as *mut u8,
+                input.as_mut_ptr().add(U256::BYTES),
+                U256::BYTES,
+            );
+        }
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk
+                .exec(SYSCALL_ID_STORAGE_WRITE, &input, None, STATE_MAIN);
+        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn storage(&self, slot: &U256) -> SyscallResult<U256> {
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            SYSCALL_ID_STORAGE_READ,
+            slot.as_le_slice(),
+            None,
+            STATE_MAIN,
+        );
+        let mut output = [0u8; U256::BYTES];
+        if SyscallResult::is_ok(exit_code) {
+            self.native_sdk.read_output(&mut output, 0);
+        };
+        let value = U256::from_le_slice(&output);
+        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+    }
+}
+
+/// SharedContextImpl always created from input
 impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     fn context(&self) -> impl ContextReader {
         ContextReaderImpl(self.shared_context_ref())
@@ -124,41 +163,6 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
 
     fn exit(&self, exit_code: ExitCode) -> ! {
         self.native_sdk.exit(exit_code.into_i32())
-    }
-
-    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
-        let mut input = [0u8; U256::BYTES + U256::BYTES];
-        unsafe {
-            core::ptr::copy(
-                slot.as_limbs().as_ptr() as *mut u8,
-                input.as_mut_ptr(),
-                U256::BYTES,
-            );
-            core::ptr::copy(
-                value.as_limbs().as_ptr() as *mut u8,
-                input.as_mut_ptr().add(U256::BYTES),
-                U256::BYTES,
-            );
-        }
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk
-                .exec(SYSCALL_ID_STORAGE_WRITE, &input, None, STATE_MAIN);
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn storage(&self, slot: &U256) -> SyscallResult<U256> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
-            SYSCALL_ID_STORAGE_READ,
-            slot.as_le_slice(),
-            None,
-            STATE_MAIN,
-        );
-        let mut output = [0u8; U256::BYTES];
-        if SyscallResult::is_ok(exit_code) {
-            self.native_sdk.read_output(&mut output, 0);
-        };
-        let value = U256::from_le_slice(&output);
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {

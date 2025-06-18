@@ -1,22 +1,6 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
-use fluentbase_sdk::{
-    bytes::Buf,
-    native_api::NativeAPI,
-    Address,
-    Bytes,
-    ContextReader,
-    ContractContextV1,
-    ExitCode,
-    IsAccountEmpty,
-    IsColdAccess,
-    SharedAPI,
-    SharedContextInputV1,
-    SyscallResult,
-    B256,
-    FUEL_DENOM_RATE,
-    U256,
-};
+use fluentbase_sdk::{bytes::Buf, native_api::NativeAPI, Address, Bytes, ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsColdAccess, SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256};
 use hashbrown::HashMap;
 use std::rc::Rc;
 
@@ -28,12 +12,20 @@ pub struct HostTestingContext {
 pub type HostTestingContextNativeAPI = RuntimeContextWrapper;
 
 impl HostTestingContext {
+    pub fn with_shared_context_input(self, ctx: SharedContextInputV1) -> Self {
+        self.inner.borrow_mut().shared_context_input_v1 = ctx;
+        self
+    }
     pub fn with_contract_context(self, contract_context: ContractContextV1) -> Self {
         self.inner.borrow_mut().shared_context_input_v1.contract = contract_context;
         self
     }
     pub fn with_devnet_genesis(self) -> Self {
         // TODO(dmitry123): "implement this"
+        self
+    }
+    pub fn with_block_number(self, number: u64) -> Self {
+        self.inner.borrow_mut().shared_context_input_v1.block.number = number;
         self
     }
     pub fn with_input<I: Into<Bytes>>(self, input: I) -> Self {
@@ -62,6 +54,15 @@ impl HostTestingContext {
     pub fn exit_code(&self) -> i32 {
         self.inner.borrow_mut().native_sdk.exit_code()
     }
+    pub fn dump_storage(&self) -> HashMap<(Address, U256), U256> {
+        self.inner.borrow().persistent_storage.clone()
+    }
+    pub fn visit_inner_storage_mut<F: FnMut(&mut HashMap<(Address, U256), U256>)>(&self, mut f: F) {
+        f(&mut self.inner.borrow_mut().persistent_storage)
+    }
+    pub fn visit_inner_storage<F: Fn(&HashMap<(Address, U256), U256>)>(&self, f: F) {
+        f(&self.inner.borrow_mut().persistent_storage)
+    }
 }
 
 struct TestingContextInner {
@@ -85,6 +86,29 @@ impl Default for HostTestingContext {
                 preimages: Default::default(),
             })),
         }
+    }
+}
+
+impl StorageAPI for HostTestingContext {
+    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
+        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
+        self.inner
+            .borrow_mut()
+            .persistent_storage
+            .insert((target_address, slot), value);
+        SyscallResult::new((), 0, 0, 0)
+    }
+
+    fn storage(&self, slot: &U256) -> SyscallResult<U256> {
+        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
+        let value = self
+            .inner
+            .borrow()
+            .persistent_storage
+            .get(&(target_address, *slot))
+            .cloned()
+            .unwrap_or_default();
+        SyscallResult::new(value, 0, 0, 0)
     }
 }
 
@@ -135,27 +159,6 @@ impl SharedAPI for HostTestingContext {
 
     fn exit(&self, exit_code: ExitCode) -> ! {
         self.inner.borrow().native_sdk.exit(exit_code.into_i32());
-    }
-
-    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
-        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
-        self.inner
-            .borrow_mut()
-            .persistent_storage
-            .insert((target_address, slot), value);
-        SyscallResult::new((), 0, 0, 0)
-    }
-
-    fn storage(&self, slot: &U256) -> SyscallResult<U256> {
-        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
-        let value = self
-            .inner
-            .borrow()
-            .persistent_storage
-            .get(&(target_address, *slot))
-            .cloned()
-            .unwrap_or_default();
-        SyscallResult::new(value, 0, 0, 0)
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {

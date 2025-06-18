@@ -1,8 +1,8 @@
 use crate::{
-    context::ContextReader,
     evm::{write_evm_exit_message, write_evm_panic_message},
     Address,
     Bytes,
+    ContextReader,
     ExitCode,
     SyscallResult,
     B256,
@@ -13,7 +13,12 @@ use crate::{
 pub type IsColdAccess = bool;
 pub type IsAccountEmpty = bool;
 
-pub trait SharedAPI {
+pub trait StorageAPI {
+    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
+    fn storage(&self, slot: &U256) -> SyscallResult<U256>;
+}
+
+pub trait SharedAPI: StorageAPI {
     fn context(&self) -> impl ContextReader;
 
     fn keccak256(&self, data: &[u8]) -> B256;
@@ -74,9 +79,6 @@ pub trait SharedAPI {
         // exit with panic exit code
         self.exit(ExitCode::Panic)
     }
-
-    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
-    fn storage(&self, slot: &U256) -> SyscallResult<U256>;
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;
     fn delegated_storage(

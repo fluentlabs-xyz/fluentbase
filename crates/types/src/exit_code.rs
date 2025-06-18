@@ -99,6 +99,8 @@ pub enum ExitCode {
     UnknownExternalFunction = -2011,
 }
 
+impl core::error::Error for ExitCode {}
+
 pub trait UnwrapExitCode<T> {
     fn unwrap_exit_code(self) -> T;
 }

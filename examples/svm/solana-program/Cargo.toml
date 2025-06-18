@@ -1,0 +1,17 @@
+[package]
+name = "fluentbase-examples-svm-solana-program"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/solana_program.rs"
+
+[dependencies]
+solana-pubkey = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-account-info = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-program-entrypoint = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-program-error = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-msg = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-program = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+solana-sdk = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }

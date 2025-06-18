@@ -161,7 +161,7 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 }
 
-type TestingContext = RuntimeContextWrapper;
+pub type TestingContext = RuntimeContextWrapper;
 
 impl TestingContext {
     pub fn empty() -> Self {

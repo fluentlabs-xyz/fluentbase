@@ -14,6 +14,8 @@ use fluentbase_sdk::{
     SharedAPI,
     EVM_MAX_INITCODE_SIZE,
     FUEL_DENOM_RATE,
+    SVM_ELF_MAGIC_BYTES,
+    SVM_MAX_CODE_SIZE,
     U256,
     WASM_MAGIC_BYTES,
     WASM_MAX_CODE_SIZE,
@@ -26,12 +28,18 @@ pub fn create<const IS_CREATE2: bool, SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     let mut init_code = Bytes::new();
     let init_gas_cost = if code_len != 0 {
         let code_offset = as_usize_or_fail!(evm, code_offset);
-        let max_initcode_size =
-            if code_len >= 4 && evm.memory.try_slice(code_offset, 4) == Some(&WASM_MAGIC_BYTES) {
+        let max_initcode_size = if code_len >= 4 {
+            let prefix = evm.memory.try_slice(code_offset, 4);
+            if prefix == Some(&WASM_MAGIC_BYTES) {
                 WASM_MAX_CODE_SIZE
+            } else if prefix == Some(&SVM_ELF_MAGIC_BYTES) {
+                SVM_MAX_CODE_SIZE
             } else {
                 EVM_MAX_INITCODE_SIZE
-            };
+            }
+        } else {
+            EVM_MAX_INITCODE_SIZE
+        };
         if code_len > max_initcode_size {
             evm.state = InstructionResult::CreateInitCodeSizeLimit;
             return;

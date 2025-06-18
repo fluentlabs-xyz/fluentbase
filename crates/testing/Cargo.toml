@@ -23,6 +23,9 @@ hex = { workspace = true }
 
 [features]
 default = ["std"]
+enable-svm = [
+    "fluentbase-runtime/enable-svm",
+]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
@@ -35,4 +38,6 @@ std = [
 debug-print = [
     "fluentbase-sdk/debug-print",
     "fluentbase-runtime/debug-print",
+    "revm/debug-print",
+    "rwasm-revm/debug-print",
 ]

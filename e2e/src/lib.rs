@@ -26,6 +26,8 @@ mod nitro;
 mod router;
 #[cfg(test)]
 mod stateless;
+#[cfg(all(test, feature = "enable-svm"))]
+pub mod svm_loader_v4;
 #[cfg(test)]
 mod wasm;
 
