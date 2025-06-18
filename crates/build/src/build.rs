@@ -164,10 +164,7 @@ fn build_wasm(args: &BuildArgs, contract_dir: &Path, package_name: &str) -> Resu
             Some(DockerConfig {
                 sdk_tag: args.tag.clone(),
                 rust_version: args.get_rust_version(contract_dir),
-                env_vars: vec![
-                    ("CARGO_TARGET_DIR".to_string(), "/target".to_string()),
-                    ("CARGO_ENCODED_RUSTFLAGS".to_string(), args.rustflags()),
-                ],
+                env_vars: vec![("CARGO_ENCODED_RUSTFLAGS".to_string(), args.rustflags())],
             }),
         )?;
     } else {
