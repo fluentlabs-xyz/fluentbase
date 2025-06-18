@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - devel      # Main development branch
+      - feat/**
     tags:
       - 'v*'       # Release tags
     paths:
