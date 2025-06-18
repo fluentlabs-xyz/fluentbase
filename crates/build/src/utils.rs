@@ -41,6 +41,20 @@ pub fn validate_rust_version(version: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn versions_match(v1: &str, v2: &str) -> bool {
+    let parse_version = |v: &str| -> (u32, u32) {
+        let v = v.trim_start_matches("rustc ").trim();
+        let parts: Vec<&str> = v.split('.').collect();
+        let major = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        (major, minor)
+    };
+
+    let (major1, minor1) = parse_version(v1);
+    let (major2, minor2) = parse_version(v2);
+    major1 == major2 && minor1 == minor2
+}
+
 /// Searches for Rust version in rust-toolchain.toml, walking up the directory tree
 pub fn find_rust_toolchain_version(start_dir: &Path) -> Result<Option<String>> {
     let mut current_dir = start_dir;

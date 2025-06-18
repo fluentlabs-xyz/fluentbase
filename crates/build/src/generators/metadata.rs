@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{path::Path, process::Command};
 
+// Metadata format version
+pub const METADATA_VERSION: &str = "v1.0.0";
+
+// We always build in release mode
+pub const PROFILE: &str = "release";
+
 /// Build metadata for deterministic reproduction
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildMetadata {
@@ -268,7 +274,7 @@ pub fn generate(
             rustflags: args.rustflags.clone(),
             docker: args.docker,
             docker_image,
-            profile: "release".to_string(), // We always build in release mode
+            profile: PROFILE.to_string(),
         },
         source,
         artifacts: Artifacts {
@@ -277,7 +283,7 @@ pub fn generate(
             rwasm: rwasm_info,
             abi: abi.cloned(),
         },
-        metadata_version: "1.3.0".to_string(), // Bumped version due to format change
+        metadata_version: METADATA_VERSION.to_string(),
         build_timestamp: chrono::Utc::now().to_rfc3339(),
     })
 }

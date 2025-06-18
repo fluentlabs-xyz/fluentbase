@@ -1,3 +1,4 @@
+use crate::utils::versions_match;
 use anyhow::{bail, Context, Result};
 use std::{
     io::Write,
@@ -110,6 +111,30 @@ fn run_docker(
     Ok(())
 }
 
+/// Normalize Rust version for rustup (e.g., "1.87" -> "1.87.0")
+fn normalize_rust_version_for_rustup(version: &str) -> String {
+    let version = version.trim_start_matches("rustc ").trim();
+    let parts: Vec<&str> = version.split('.').collect();
+
+    match parts.len() {
+        1 => format!("{}.0.0", parts[0]),
+        2 => format!("{}.{}.0", parts[0], parts[1]),
+        _ => version.to_string(),
+    }
+}
+
+/// Normalize version for cache image naming (e.g., "1.87.0" -> "1.87")
+fn normalize_version_for_cache(version: &str) -> String {
+    let version = version.trim_start_matches("rustc ").trim();
+    let parts: Vec<&str> = version.split('.').collect();
+
+    if parts.len() >= 2 {
+        format!("{}.{}", parts[0], parts[1])
+    } else {
+        version.to_string()
+    }
+}
+
 fn ensure_image(sdk_tag: &str, rust_version: Option<&str>, work_dir: &Path) -> Result<String> {
     let base_image = get_docker_image(sdk_tag);
 
@@ -135,36 +160,48 @@ fn ensure_image(sdk_tag: &str, rust_version: Option<&str>, work_dir: &Path) -> R
         return Ok(base_image);
     };
 
-    // Check if base image already has this Rust version
-    if let Ok(version) = get_rust_version_from_image(&base_image) {
-        if version == rust_version {
+    // Check if base image already has compatible Rust version
+    if let Ok(base_rust_version) = get_rust_version_from_image(&base_image) {
+        if versions_match(&base_rust_version, &rust_version) {
             println!(
                 "Using Docker image: {} (Rust {} ✓)",
-                base_image, rust_version
+                base_image, base_rust_version
             );
             return Ok(base_image);
         }
         println!(
             "Base image has Rust {}, but project needs Rust {}",
-            version, rust_version
+            base_rust_version, rust_version
         );
     }
 
-    // Build cached image with specific Rust version
-    let cache_image = format_cache_image_name(sdk_tag, &rust_version);
+    // Check if we already have a cached image with compatible version
+    // Use normalized version for cache naming to avoid duplicates
+    let cache_version = normalize_version_for_cache(&rust_version);
+    let cache_image = format_cache_image_name(sdk_tag, &cache_version);
 
-    if !image_exists(&cache_image)? {
-        println!(
-            "Rust {} not found in base image, creating cached image...",
-            rust_version
-        );
-        build_with_rust(&base_image, &cache_image, &rust_version)?;
-    } else {
-        println!(
-            "Using cached image: {} (Rust {})",
-            cache_image, rust_version
-        );
+    // Check if cached image exists and has compatible version
+    if image_exists(&cache_image)? {
+        if let Ok(cached_rust_version) = get_rust_version_from_image(&cache_image) {
+            if versions_match(&cached_rust_version, &rust_version) {
+                println!(
+                    "Using cached image: {} (Rust {} ✓)",
+                    cache_image, cached_rust_version
+                );
+                return Ok(cache_image);
+            }
+        }
     }
+
+    // Build new cached image with specific Rust version
+    println!(
+        "Building cached image with Rust {} toolchain...",
+        rust_version
+    );
+
+    // Use full version for rustup
+    let rustup_version = normalize_rust_version_for_rustup(&rust_version);
+    build_with_rust(&base_image, &cache_image, &rustup_version, &rust_version)?;
 
     Ok(cache_image)
 }
@@ -213,23 +250,28 @@ fn ensure_base_image_exists(image: &str) -> Result<()> {
     Ok(())
 }
 
-fn build_with_rust(base: &str, target: &str, rust_version: &str) -> Result<()> {
+fn build_with_rust(
+    base: &str,
+    target: &str,
+    rustup_version: &str,
+    label_version: &str,
+) -> Result<()> {
     println!(
         "Building Docker image with Rust {} toolchain (one-time setup)...",
-        rust_version
+        label_version
     );
     println!("This may take a few minutes on first run.");
 
     let dockerfile = format!(
         r#"FROM {}
-RUN rustup toolchain install {}-x86_64-unknown-linux-gnu && \
-    rustup default {}-x86_64-unknown-linux-gnu && \
-    rustup target add wasm32-unknown-unknown --toolchain {}-x86_64-unknown-linux-gnu && \
-    rustup component add rust-src --toolchain {}-x86_64-unknown-linux-gnu
+RUN rustup toolchain install {}-x86_64-unknown-linux-gnu
+RUN rustup default {}-x86_64-unknown-linux-gnu
+RUN rustup target add wasm32-unknown-unknown
+RUN rustup component add rust-src --toolchain {}-x86_64-unknown-linux-gnu
 LABEL rust.version="{}"
 LABEL fluentbase.build.cache="true"
 "#,
-        base, rust_version, rust_version, rust_version, rust_version, rust_version
+        base, rustup_version, rustup_version, rustup_version, label_version
     );
 
     let mut child = Command::new("docker")
@@ -254,7 +296,7 @@ LABEL fluentbase.build.cache="true"
 
     let status = child.wait()?;
     if !status.success() {
-        bail!("Failed to build Docker image with Rust {}", rust_version);
+        bail!("Failed to build Docker image with Rust {}", label_version);
     }
 
     println!("Successfully built cached image: {}", target);
