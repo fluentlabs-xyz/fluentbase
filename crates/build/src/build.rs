@@ -131,9 +131,7 @@ pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
     // Execute build
     let mut args = args.unwrap_or_default();
 
-    if args.mount_dir.is_none() {
-        args.mount_dir = Some(std::env::current_dir().unwrap_or_else(|_| contract_dir.clone()));
-    }
+    args.mount_dir = Some(get_mount_dir(args.mount_dir.take(), &contract_dir));
 
     match execute_build(&args, Some(contract_dir.to_path_buf())) {
         Ok(result) => {
@@ -147,6 +145,13 @@ pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
         }
         Err(err) => panic!("Build failed: {err}"),
     }
+}
+
+fn get_mount_dir(specified: Option<PathBuf>, fallback: &Path) -> PathBuf {
+    specified
+        .or_else(|| std::env::current_dir().ok())
+        .and_then(|p| p.canonicalize().ok())
+        .unwrap_or_else(|| fallback.to_path_buf())
 }
 
 fn build_wasm(args: &BuildArgs, contract_dir: &Path, package_name: &str) -> Result<PathBuf> {

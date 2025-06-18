@@ -62,7 +62,15 @@ fn run_docker(
     env_vars: &[(String, String)],
     mount_dir: &Path,
 ) -> Result<()> {
-    let relative_dir = work_dir.strip_prefix(mount_dir).with_context(|| {
+    let mount_dir = mount_dir
+        .canonicalize()
+        .with_context(|| format!("Failed to canonicalize mount dir: {}", mount_dir.display()))?;
+
+    let work_dir = work_dir
+        .canonicalize()
+        .with_context(|| format!("Failed to canonicalize work dir: {}", work_dir.display()))?;
+
+    let relative_dir = work_dir.strip_prefix(&mount_dir).with_context(|| {
         format!(
             "Work dir {} is not within mount dir {}",
             work_dir.display(),
