@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - devel      # development branch
+      - feat/build-artifacts # todo: remove this branch
     tags:
       - 'v*'       # release tags
     paths:

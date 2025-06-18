@@ -12,6 +12,11 @@ on:
         required: false
         default: true
         type: boolean
+  push:
+    branches:
+      - 'feat/build-artifacts'
+    paths:
+      - '.github/workflows/build-docker-manual.yml'
 
 env:
   REGISTRY: ghcr.io
