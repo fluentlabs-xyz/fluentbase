@@ -74,7 +74,6 @@ pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
 
     // Execute build
     let mut args = args.unwrap_or_default();
-    args.mount_dir = Some(find_mount_dir(&contract_dir));
 
     match execute_build(&args, Some(contract_dir.to_path_buf())) {
         Ok(result) => {
@@ -110,6 +109,13 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
         .root_package()
         .ok_or_else(|| anyhow::anyhow!("No root package found"))?;
 
+    // Determine mount_dir once for all Docker operations
+    let mount_dir = args
+        .mount_dir
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| find_mount_dir(&contract_dir));
+
     // Determine Docker image that would be used for all generators
     let docker_image = if args.docker {
         Some(docker::ensure_rust_image(
@@ -121,7 +127,7 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
     };
 
     // Build WASM
-    let target_wasm_path = build_wasm(args, &contract_dir, &package, &docker_image)?;
+    let target_wasm_path = build_wasm(args, &contract_dir, &package, &docker_image, &mount_dir)?;
 
     // Early return if no output directory and no artifacts
     if args.output.is_none() && args.generate.is_empty() {
@@ -169,6 +175,7 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
             &output_wasm_path,
             &package.name,
             &docker_image,
+            &mount_dir,
             &rust_toolchain,
             &mut result,
         )?;
@@ -182,6 +189,7 @@ fn build_wasm(
     contract_dir: &Path,
     package: &Package,
     docker_image: &Option<String>,
+    mount_dir: &Path,
 ) -> Result<PathBuf> {
     // Determine target directory based on build mode
     let target_subdir = if docker_image.is_some() {
@@ -206,13 +214,18 @@ fn build_wasm(
 
     // Run build
     let env_vars = vec![("CARGO_ENCODED_RUSTFLAGS".to_string(), args.rustflags())];
-    run_command(&cargo_args, contract_dir, docker_image, &env_vars)?;
+
+    let docker_config = docker_image
+        .as_ref()
+        .map(|image| (image.as_str(), mount_dir));
+
+    run_command(&cargo_args, contract_dir, docker_config, &env_vars)?;
 
     // Find the built WASM file
     let wasm_path = find_wasm_artifact(&target_dir, &package)?;
 
     if args.wasm_opt {
-        optimize_wasm(&wasm_path, docker_image)?;
+        optimize_wasm(&wasm_path, docker_config)?;
     }
 
     Ok(wasm_path)
@@ -279,7 +292,7 @@ fn find_wasm_artifact(target_dir: &Path, package: &Package) -> Result<PathBuf> {
     }
 }
 
-fn optimize_wasm(wasm_path: &Path, docker_image: &Option<String>) -> Result<()> {
+fn optimize_wasm(wasm_path: &Path, docker_config: Option<(&str, &Path)>) -> Result<()> {
     let work_dir = wasm_path.parent().unwrap();
     let wasm_filename = wasm_path.file_name().unwrap().to_str().unwrap();
     let temp_filename = format!("{}.opt", wasm_filename);
@@ -296,7 +309,7 @@ fn optimize_wasm(wasm_path: &Path, docker_image: &Option<String>) -> Result<()> 
             &temp_filename,
         ],
         work_dir,
-        docker_image,
+        docker_config,
         &[],
     )?;
 
@@ -308,15 +321,14 @@ fn optimize_wasm(wasm_path: &Path, docker_image: &Option<String>) -> Result<()> 
 fn run_command<S: AsRef<str>>(
     args: &[S],
     work_dir: &Path,
-    docker_image: &Option<String>,
+    docker_config: Option<(&str, &Path)>,
     env_vars: &[(String, String)],
 ) -> Result<()> {
     let args: Vec<String> = args.iter().map(|s| s.as_ref().to_string()).collect();
 
-    match docker_image {
-        Some(image) => {
-            let mount_dir = find_mount_dir(work_dir);
-            docker::run_in_docker(&args, image, work_dir, &mount_dir, env_vars)
+    match docker_config {
+        Some((image, mount_dir)) => {
+            docker::run_in_docker(image, &args, &mount_dir, work_dir, env_vars)
         }
         None => {
             // Local execution
@@ -359,6 +371,7 @@ fn generate_artifacts(
     wasm_path: &Path,
     package_name: &str,
     docker_image: &Option<String>,
+    mount_dir: &Path,
     rust_toolchain: &Option<String>,
     result: &mut BuildResult,
 ) -> Result<()> {
@@ -399,10 +412,14 @@ fn generate_artifacts(
     for artifact in &artifacts {
         match artifact {
             Artifact::Wat => {
+                let docker_config = docker_image
+                    .as_ref()
+                    .map(|image| (image.as_str(), mount_dir));
+
                 run_command(
                     &["wasm2wat", "lib.wasm", "-o", "lib.wat"],
                     output_dir,
-                    docker_image,
+                    docker_config,
                     &[],
                 )?;
                 result.wat_path = Some(output_dir.join("lib.wat"));

@@ -12,10 +12,10 @@ const DOCKER_PLATFORM: &str = "linux/amd64";
 
 /// Run command in Docker container
 pub fn run_in_docker(
-    args: &[String],
     image: &str,
-    work_dir: &Path,
+    args: &[String],
     mount_dir: &Path,
+    work_dir: &Path,
     env_vars: &[(String, String)],
 ) -> Result<()> {
     let mount_dir = mount_dir
