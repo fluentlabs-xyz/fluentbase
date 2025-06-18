@@ -316,26 +316,26 @@ fn generate_artifacts(
 }
 
 fn optimize_wasm(wasm_path: &Path, args: &BuildArgs) -> Result<()> {
-    let temp_path = wasm_path.with_extension("opt.wasm");
+    let work_dir = wasm_path.parent().unwrap();
+    let wasm_filename = wasm_path.file_name().unwrap().to_str().unwrap();
+    let temp_filename = format!("{}.opt", wasm_filename);
 
-    // Run wasm-opt
     run_tool(
         &[
             "wasm-opt",
-            "-Oz",                      // Optimize for size
-            "--enable-bulk-memory",     // Enable bulk memory operations
-            "--enable-sign-ext",        // Enable sign extension operations
-            "--enable-mutable-globals", // Enable mutable globals
-            wasm_path.to_str().unwrap(),
+            "-Oz",
+            "--enable-bulk-memory",
+            "--enable-sign-ext",
+            "--enable-mutable-globals",
+            wasm_filename,
             "-o",
-            temp_path.to_str().unwrap(),
+            &temp_filename,
         ],
-        wasm_path.parent().unwrap(),
+        work_dir,
         args,
     )?;
 
-    // Replace original
-    fs::rename(&temp_path, wasm_path)?;
+    fs::rename(work_dir.join(&temp_filename), wasm_path)?;
     Ok(())
 }
 
