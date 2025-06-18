@@ -260,7 +260,7 @@ fn get_rust_version(image: &str) -> Result<String> {
     Ok(version)
 }
 
-fn get_docker_image(tag: &str) -> String {
+pub(crate) fn get_docker_image(tag: &str) -> String {
     std::env::var(DOCKER_IMAGE_ENV_VAR)
         .unwrap_or_else(|_| format!("{}:{}", DOCKER_IMAGE_REGISTRY, tag))
 }
@@ -270,21 +270,4 @@ fn is_local_image(image: &str) -> bool {
     !image.contains("ghcr.io/")
         && !image.contains("docker.io/")
         && (!image.contains('/') || image.starts_with("local/"))
-}
-
-fn find_workspace_root(start: &Path) -> Result<PathBuf> {
-    let mut dir = start.canonicalize()?;
-
-    loop {
-        if dir.join("Cargo.toml").exists() {
-            let content = std::fs::read_to_string(dir.join("Cargo.toml"))?;
-            if content.contains("[workspace]") {
-                return Ok(dir);
-            }
-        }
-
-        if !dir.pop() {
-            return Ok(start.canonicalize()?);
-        }
-    }
 }

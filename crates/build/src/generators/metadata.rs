@@ -1,6 +1,6 @@
 //! Metadata for deterministic build reproduction
 
-use crate::BuildArgs;
+use crate::{command, BuildArgs};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,8 +38,8 @@ pub struct Environment {
     pub rustc_version: String,
     /// SDK version (same as fluent-build version)
     pub fluentbase_sdk_version: String,
-    /// Build host platform
-    pub host: String,
+    /// Build environment
+    pub build_platform: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,6 +56,11 @@ pub struct BuildConfig {
     pub stack_size: u32,
     /// Custom rustflags
     pub rustflags: Vec<String>,
+    /// Docker build
+    pub docker: bool,
+    /// Docker image tag (if docker build)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_tag: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -106,16 +111,27 @@ pub fn generate(
         ));
     };
 
-    // Get exact rustc version with commit hash
-    let rustc_version = get_rustc_version_detailed()?;
-
-    // Get SDK version from dependencies (this is also fluent-build version)
+    // Get SDK version from dependencies
     let fluentbase_sdk_version = cargo_metadata
         .packages
         .iter()
         .find(|p| p.name == "fluentbase-sdk")
         .map(|p| p.version.to_string())
         .ok_or_else(|| anyhow::anyhow!("fluentbase-sdk not found in dependencies"))?;
+
+    // Get actual build platform
+    let build_platform = if args.docker {
+        get_docker_platform(&args.tag)?
+    } else {
+        format!("native:{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+    };
+
+    // Get actual rustc version from build environment
+    let rustc_version = if args.docker {
+        get_docker_rustc_version(&args.tag)?
+    } else {
+        get_rustc_version_detailed()?
+    };
 
     // Calculate artifact hashes
     let (rwasm_hash, rwasm_size) = if let Some(data) = rwasm_data {
@@ -132,7 +148,7 @@ pub fn generate(
         environment: Environment {
             rustc_version,
             fluentbase_sdk_version,
-            host: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            build_platform,
         },
         build_config: BuildConfig {
             features: args.features.clone(),
@@ -141,6 +157,12 @@ pub fn generate(
             wasm_opt: args.wasm_opt,
             stack_size: args.stack_size,
             rustflags: args.rustflags.clone(),
+            docker: args.docker,
+            docker_tag: if args.docker {
+                Some(args.tag.clone())
+            } else {
+                None
+            },
         },
         artifacts: Artifacts {
             lockfile_hash,
@@ -153,6 +175,65 @@ pub fn generate(
         metadata_version: "1.0.0".to_string(),
         build_timestamp: chrono::Utc::now().to_rfc3339(),
     })
+}
+
+fn get_docker_platform(tag: &str) -> Result<String> {
+    let image = command::get_docker_image(tag);
+
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            &image,
+            "sh",
+            "-c",
+            "echo $(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)",
+        ])
+        .output()
+        .context("Failed to get platform info from Docker")?;
+
+    if !output.status.success() {
+        anyhow::bail!("Failed to get Docker platform info");
+    }
+
+    let platform = String::from_utf8(output.stdout)?.trim().to_string();
+
+    Ok(format!("docker:{}", platform))
+}
+
+fn get_docker_rustc_version(tag: &str) -> Result<String> {
+    let image = command::get_docker_image(tag);
+
+    let output = Command::new("docker")
+        .args(["run", "--rm", &image, "rustc", "--version"])
+        .output()
+        .context("Failed to get Rust version from Docker")?;
+
+    if !output.status.success() {
+        anyhow::bail!("Failed to get Docker Rust version");
+    }
+
+    let version = String::from_utf8(output.stdout)?.trim().to_string();
+
+    // Try to get commit hash
+    let verbose_output = Command::new("docker")
+        .args(["run", "--rm", &image, "rustc", "--version", "--verbose"])
+        .output();
+
+    if let Ok(output) = verbose_output {
+        if let Ok(verbose) = String::from_utf8(output.stdout) {
+            for line in verbose.lines() {
+                if line.starts_with("commit-hash: ") {
+                    if let Some(hash) = line.strip_prefix("commit-hash: ") {
+                        let short_hash = hash.chars().take(7).collect::<String>();
+                        return Ok(format!("{} ({})", version, short_hash));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(version)
 }
 
 fn get_rustc_version_detailed() -> Result<String> {
