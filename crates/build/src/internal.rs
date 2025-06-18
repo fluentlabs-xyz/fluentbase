@@ -1,7 +1,43 @@
-use crate::RustToWasmConfig;
+//! Internal build utilities for workspace contracts.
+//! This module is not intended for external use.
+
 use cargo_metadata::{CrateType, Metadata, MetadataCommand, TargetKind};
 use fluentbase_types::{compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256};
 use std::{env, fs, path::PathBuf, process::Command, str::from_utf8};
+
+#[derive(Debug, Clone)]
+pub struct RustToWasmConfig {
+    pub stack_size: u32,
+    pub features: Vec<String>,
+    pub no_default_features: bool,
+}
+
+impl Default for RustToWasmConfig {
+    fn default() -> Self {
+        Self {
+            stack_size: 128 * 1024,
+            features: vec![],
+            no_default_features: true,
+        }
+    }
+}
+
+impl RustToWasmConfig {
+    pub fn with_stack_size(mut self, stack_size: u32) -> Self {
+        self.stack_size = stack_size;
+        self
+    }
+
+    pub fn with_features(mut self, features: Vec<String>) -> Self {
+        self.features = features;
+        self
+    }
+
+    pub fn with_no_default_features(mut self, no_default_features: bool) -> Self {
+        self.no_default_features = no_default_features;
+        self
+    }
+}
 
 pub fn rust_to_wasm(config: RustToWasmConfig) -> PathBuf {
     let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());

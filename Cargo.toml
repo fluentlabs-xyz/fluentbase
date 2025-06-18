@@ -154,7 +154,9 @@ tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
 wasmtime = { version = "31.0.0" }
-
+convert_case = "0.8.0"
+proc-macro2 = { version = "1.0", default-features = false }
+quote = {version = "1.0" }
 # revm
 revm = { path = "revm/crates/revm", default-features = false, features = ["secp256r1"] }
 primitives = { path = "revm/crates/primitives", package = "revm-primitives", default-features = false }
