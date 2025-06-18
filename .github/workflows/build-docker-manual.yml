@@ -4,19 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Tag to build (e.g., v0.2.1-dev). Leave empty for latest tag.'
-        required: false
+        description: 'Tag name for the image (e.g., v0.2.1-dev)'
+        required: true
         type: string
       push_latest:
         description: 'Also tag as :latest'
         required: false
         default: true
         type: boolean
-  push:
-    branches:
-      - 'feat/build-artifacts'
-    paths:
-      - '.github/workflows/build-docker-manual.yml'
 
 env:
   REGISTRY: ghcr.io
@@ -32,37 +27,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Determine tag to build
-        id: determine_tag
-        run: |
-          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
-            # Use provided tag
-            TAG="${{ github.event.inputs.tag_name }}"
-          else
-            # Get latest tag
-            TAG=$(git tag -l 'v*' | sort -V | tail -n 1)
-          fi
-
-          if [ -z "$TAG" ]; then
-            echo "❌ No tag found!"
-            exit 1
-          fi
-
-          # Verify tag exists
-          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "❌ Tag $TAG does not exist!"
-            exit 1
-          fi
-
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "✅ Will build tag: $TAG"
-
-      - name: Checkout tag
-        run: |
-          git checkout ${{ steps.determine_tag.outputs.tag }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -74,21 +38,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare tags
-        id: prepare_tags
+      - name: Prepare build metadata
+        id: meta
         run: |
-          TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.determine_tag.outputs.tag }}"
+          # Prepare tags
+          TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag_name }}"
 
           if [[ "${{ github.event.inputs.push_latest }}" == "true" ]]; then
             TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
           fi
 
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
-          echo "Docker tags to push: $TAGS"
+          echo "timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_OUTPUT
 
-      - name: Get build timestamp
-        id: timestamp
-        run: echo "timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_OUTPUT
+          echo "Docker tags to push: $TAGS"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -97,12 +60,12 @@ jobs:
           file: ./crates/build/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.prepare_tags.outputs.tags }}
+          tags: ${{ steps.meta.outputs.tags }}
           labels: |
             org.opencontainers.image.source=${{ github.event.repository.html_url }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.determine_tag.outputs.tag }}
-            org.opencontainers.image.created=${{ steps.timestamp.outputs.timestamp }}
+            org.opencontainers.image.version=${{ github.event.inputs.tag_name }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.timestamp }}
             org.opencontainers.image.title=Fluent Build Environment
             org.opencontainers.image.description=Docker image for building Fluent smart contracts
           cache-from: type=gha
@@ -114,13 +77,15 @@ jobs:
         run: |
           echo "### 🐳 Docker Image Built Successfully" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Source Tag:** \`${{ steps.determine_tag.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`${{ github.event.inputs.tag_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Source:** Current branch (\`${{ github.ref_name }}\`)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Published Images:**" >> $GITHUB_STEP_SUMMARY
-          IFS=',' read -ra TAGS_ARRAY <<< "${{ steps.prepare_tags.outputs.tags }}"
+          IFS=',' read -ra TAGS_ARRAY <<< "${{ steps.meta.outputs.tags }}"
           for tag in "${TAGS_ARRAY[@]}"; do
             echo "- \`${tag}\`" >> $GITHUB_STEP_SUMMARY
           done
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Build Time:** ${{ steps.timestamp.outputs.timestamp }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Time:** ${{ steps.meta.outputs.timestamp }}" >> $GITHUB_STEP_SUMMARY
           echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
