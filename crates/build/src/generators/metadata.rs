@@ -1,6 +1,6 @@
 //! Metadata for deterministic build reproduction
 
-use crate::{command, BuildArgs};
+use crate::{command, utils, BuildArgs};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,8 +21,13 @@ pub struct BuildMetadata {
     /// Artifacts for verification
     pub artifacts: Artifacts,
 
+    /// Source code information for reproducibility
+    pub source: SourceInfo,
+
     /// Metadata format version
     pub metadata_version: String,
+
+    /// ISO 8601 timestamp
     pub build_timestamp: String,
 }
 
@@ -36,16 +41,36 @@ pub struct ContractInfo {
 pub struct Environment {
     /// Exact rustc version with commit hash
     pub rustc_version: String,
-    /// SDK version (same as fluent-build version)
-    pub fluentbase_sdk_version: String,
+
+    /// Rust toolchain channel from rust-toolchain.toml
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rust_toolchain: Option<String>,
+
+    /// SDK/Build version (they are the same)
+    pub fluentbase_version: String,
+
     /// Build environment
     pub build_platform: String,
+
+    /// Host information for native builds
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_info: Option<HostInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HostInfo {
+    /// OS version/release
+    pub os_version: String,
+    /// CPU architecture details
+    pub cpu_info: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildConfig {
     /// Features enabled
     pub features: Vec<String>,
+    /// All available features in the package
+    pub available_features: Vec<String>,
     /// No default features flag
     pub no_default_features: bool,
     /// Locked dependencies
@@ -58,9 +83,47 @@ pub struct BuildConfig {
     pub rustflags: Vec<String>,
     /// Docker build
     pub docker: bool,
-    /// Docker image tag (if docker build)
+    /// Docker image info (if docker build)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub docker_tag: Option<String>,
+    pub docker_image: Option<DockerImageInfo>,
+    /// Build profile used
+    pub profile: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DockerImageInfo {
+    /// Base image tag requested
+    pub base_tag: String,
+    /// Full image name actually used
+    pub image_used: String,
+    /// Docker image ID for exact reproduction
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_id: Option<String>,
+    /// Whether cache image was created
+    pub cache_created: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SourceInfo {
+    /// Git repository URL (origin)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_repository: Option<String>,
+
+    /// Git commit hash
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+
+    /// Git branch name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
+
+    /// Whether working directory was clean
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_dirty: Option<bool>,
+
+    /// List of uncommitted files (if dirty)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_dirty_files: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,18 +132,23 @@ pub struct Artifacts {
     pub lockfile_hash: String,
 
     /// WASM artifact
-    pub wasm_hash: String,
-    pub wasm_size: u64,
+    pub wasm: ArtifactInfo,
 
     /// rWASM artifact (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub rwasm_hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rwasm_size: Option<u64>,
+    pub rwasm: Option<ArtifactInfo>,
 
     /// ABI (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abi: Option<Vec<Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ArtifactInfo {
+    /// SHA256 hash
+    pub hash: String,
+    /// Size in bytes
+    pub size: u64,
 }
 
 pub fn generate(
@@ -111,80 +179,298 @@ pub fn generate(
         ));
     };
 
-    // Get SDK version from dependencies
-    let fluentbase_sdk_version = cargo_metadata
+    // Get SDK version from dependencies (build and SDK versions should match)
+    let fluentbase_version = cargo_metadata
         .packages
         .iter()
         .find(|p| p.name == "fluentbase-sdk")
         .map(|p| p.version.to_string())
         .ok_or_else(|| anyhow::anyhow!("fluentbase-sdk not found in dependencies"))?;
 
-    // Get actual build platform
-    let build_platform = if args.docker {
-        get_docker_platform(&args.tag)?
+    // Get Rust toolchain info
+    let rust_toolchain = utils::find_rust_toolchain_version(contract_dir)?;
+
+    // Get actual build environment info
+    let (build_platform, rustc_version, docker_image, host_info) = if args.docker {
+        let actual_image = get_actual_docker_image(args, contract_dir)?;
+        let platform = get_docker_platform(&actual_image)?;
+        let rustc = get_docker_rustc_version(&actual_image)?;
+        let image_id = get_docker_image_id(&actual_image).ok();
+
+        let docker_info = DockerImageInfo {
+            base_tag: args.tag.clone(),
+            image_used: actual_image.clone(),
+            image_id,
+            cache_created: actual_image.contains(command::CACHE_IMAGE_PREFIX),
+        };
+
+        (platform, rustc, Some(docker_info), None)
     } else {
-        format!("native:{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+        let platform = format!("native:{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+        let rustc = get_rustc_version_detailed()?;
+        let host = get_host_info();
+        (platform, rustc, None, host)
     };
 
-    // Get actual rustc version from build environment
-    let rustc_version = if args.docker {
-        get_docker_rustc_version(&args.tag)?
-    } else {
-        get_rustc_version_detailed()?
+    // Get source info
+    let source = get_source_info(contract_dir)?;
+
+    // Get available features
+    let available_features: Vec<String> = package.features.keys().cloned().collect();
+
+    // Calculate artifact info
+    let wasm_info = ArtifactInfo {
+        hash: calculate_hash(wasm_data),
+        size: wasm_data.len() as u64,
     };
 
-    // Calculate artifact hashes
-    let (rwasm_hash, rwasm_size) = if let Some(data) = rwasm_data {
-        (Some(calculate_hash(data)), Some(data.len() as u64))
-    } else {
-        (None, None)
+    let rwasm_info = rwasm_data.map(|data| ArtifactInfo {
+        hash: calculate_hash(data),
+        size: data.len() as u64,
+    });
+
+    // Extract contract info (упрощено - убраны authors и repository)
+    let contract = ContractInfo {
+        name: package.name.clone(),
+        version: package.version.to_string(),
     };
 
     Ok(BuildMetadata {
-        contract: ContractInfo {
-            name: package.name.clone(),
-            version: package.version.to_string(),
-        },
+        contract,
         environment: Environment {
             rustc_version,
-            fluentbase_sdk_version,
+            rust_toolchain,
+            fluentbase_version,
             build_platform,
+            host_info,
         },
         build_config: BuildConfig {
             features: args.features.clone(),
+            available_features,
             no_default_features: args.no_default_features,
             locked: args.locked,
             wasm_opt: args.wasm_opt,
             stack_size: args.stack_size,
             rustflags: args.rustflags.clone(),
             docker: args.docker,
-            docker_tag: if args.docker {
-                Some(args.tag.clone())
-            } else {
-                None
-            },
+            docker_image,
+            profile: "release".to_string(), // We always build in release mode
         },
+        source,
         artifacts: Artifacts {
             lockfile_hash,
-            wasm_hash: calculate_hash(wasm_data),
-            wasm_size: wasm_data.len() as u64,
-            rwasm_hash,
-            rwasm_size,
+            wasm: wasm_info,
+            rwasm: rwasm_info,
             abi: abi.cloned(),
         },
-        metadata_version: "1.0.0".to_string(),
+        metadata_version: "1.2.0".to_string(),
         build_timestamp: chrono::Utc::now().to_rfc3339(),
     })
 }
 
-fn get_docker_platform(tag: &str) -> Result<String> {
-    let image = command::get_docker_image(tag);
+/// Determine the actual Docker image that will be used
+fn get_actual_docker_image(args: &BuildArgs, contract_dir: &Path) -> Result<String> {
+    let base_image = command::get_docker_image(&args.tag);
 
+    // Check if we need a custom Rust version
+    let rust_version = args.get_rust_version(contract_dir);
+
+    if let Some(rust_version) = rust_version {
+        // This will match the logic in command.rs
+        let sanitized_tag = args.tag.replace('/', "-").replace(':', "-");
+        let cache_image = format!(
+            "{}-{}-rust-{}",
+            command::CACHE_IMAGE_PREFIX,
+            sanitized_tag,
+            rust_version
+        );
+
+        // Check if cache image exists or will be created
+        if command::image_exists(&cache_image)? {
+            return Ok(cache_image);
+        }
+
+        // Check if base image has the right version
+        if let Ok(base_rust_version) = get_docker_rustc_version(&base_image) {
+            // Extract just the version number for comparison
+            let base_version = base_rust_version.split_whitespace().nth(1).unwrap_or("");
+            if base_version == rust_version {
+                return Ok(base_image);
+            }
+        }
+
+        // Cache image will be created
+        Ok(cache_image)
+    } else {
+        Ok(base_image)
+    }
+}
+
+fn get_source_info(contract_dir: &Path) -> Result<SourceInfo> {
+    let mut source = SourceInfo {
+        git_repository: None,
+        git_commit: None,
+        git_branch: None,
+        git_dirty: None,
+        git_dirty_files: None,
+    };
+
+    // Try to get git info (but don't fail if git is not available)
+    if contract_dir.join(".git").exists() {
+        // Get repository URL
+        match Command::new("git")
+            .args(&["config", "--get", "remote.origin.url"])
+            .current_dir(contract_dir)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !url.is_empty() {
+                    source.git_repository = Some(url);
+                }
+            }
+            _ => {}
+        }
+
+        // Get current branch
+        match Command::new("git")
+            .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(contract_dir)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !branch.is_empty() && branch != "HEAD" {
+                    source.git_branch = Some(branch);
+                }
+            }
+            _ => {}
+        }
+
+        // Get commit hash
+        match Command::new("git")
+            .args(&["rev-parse", "HEAD"])
+            .current_dir(contract_dir)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                source.git_commit =
+                    Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
+            }
+            _ => {}
+        }
+
+        // Check if working directory is clean and get dirty files
+        match Command::new("git")
+            .args(&["status", "--porcelain"])
+            .current_dir(contract_dir)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let status_output = String::from_utf8_lossy(&output.stdout);
+                let is_dirty = !status_output.is_empty();
+                source.git_dirty = Some(is_dirty);
+
+                if is_dirty {
+                    let dirty_files: Vec<String> = status_output
+                        .lines()
+                        .map(|line| {
+                            // Remove status prefix (e.g., "M ", "?? ")
+                            line.split_at(3).1.trim().to_string()
+                        })
+                        .collect();
+                    source.git_dirty_files = Some(dirty_files);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(source)
+}
+
+fn get_host_info() -> Option<HostInfo> {
+    // Try to get OS version
+    let os_version = if cfg!(target_os = "linux") {
+        std::fs::read_to_string("/etc/os-release")
+            .ok()
+            .and_then(|content| {
+                content
+                    .lines()
+                    .find(|line| line.starts_with("PRETTY_NAME="))
+                    .map(|line| {
+                        line.trim_start_matches("PRETTY_NAME=")
+                            .trim_matches('"')
+                            .to_string()
+                    })
+            })
+    } else if cfg!(target_os = "macos") {
+        Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    Some(format!(
+                        "macOS {}",
+                        String::from_utf8_lossy(&output.stdout).trim()
+                    ))
+                } else {
+                    None
+                }
+            })
+    } else if cfg!(target_os = "windows") {
+        Some(format!("Windows {}", std::env::consts::ARCH))
+    } else {
+        None
+    };
+
+    // Get CPU info
+    let cpu_info = if cfg!(target_os = "linux") {
+        std::fs::read_to_string("/proc/cpuinfo")
+            .ok()
+            .and_then(|content| {
+                content
+                    .lines()
+                    .find(|line| line.starts_with("model name"))
+                    .map(|line| line.split(':').nth(1).unwrap_or("").trim().to_string())
+            })
+    } else if cfg!(target_os = "macos") {
+        Command::new("sysctl")
+            .arg("-n")
+            .arg("machdep.cpu.brand_string")
+            .output()
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
+    } else {
+        None
+    };
+
+    match (os_version, cpu_info) {
+        (Some(os), Some(cpu)) => Some(HostInfo {
+            os_version: os,
+            cpu_info: cpu,
+        }),
+        (Some(os), None) => Some(HostInfo {
+            os_version: os,
+            cpu_info: std::env::consts::ARCH.to_string(),
+        }),
+        _ => None,
+    }
+}
+
+fn get_docker_platform(image: &str) -> Result<String> {
     let output = Command::new("docker")
         .args([
             "run",
             "--rm",
-            &image,
+            image,
             "sh",
             "-c",
             "echo $(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)",
@@ -197,15 +483,12 @@ fn get_docker_platform(tag: &str) -> Result<String> {
     }
 
     let platform = String::from_utf8(output.stdout)?.trim().to_string();
-
     Ok(format!("docker:{}", platform))
 }
 
-fn get_docker_rustc_version(tag: &str) -> Result<String> {
-    let image = command::get_docker_image(tag);
-
+fn get_docker_rustc_version(image: &str) -> Result<String> {
     let output = Command::new("docker")
-        .args(["run", "--rm", &image, "rustc", "--version"])
+        .args(["run", "--rm", image, "rustc", "--version"])
         .output()
         .context("Failed to get Rust version from Docker")?;
 
@@ -217,7 +500,7 @@ fn get_docker_rustc_version(tag: &str) -> Result<String> {
 
     // Try to get commit hash
     let verbose_output = Command::new("docker")
-        .args(["run", "--rm", &image, "rustc", "--version", "--verbose"])
+        .args(["run", "--rm", image, "rustc", "--version", "--verbose"])
         .output();
 
     if let Ok(output) = verbose_output {
@@ -234,6 +517,19 @@ fn get_docker_rustc_version(tag: &str) -> Result<String> {
     }
 
     Ok(version)
+}
+
+fn get_docker_image_id(image: &str) -> Result<String> {
+    let output = Command::new("docker")
+        .args(["inspect", "--format", "{{.Id}}", image])
+        .output()
+        .context("Failed to inspect Docker image")?;
+
+    if !output.status.success() {
+        anyhow::bail!("Failed to get Docker image ID");
+    }
+
+    Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
 fn get_rustc_version_detailed() -> Result<String> {

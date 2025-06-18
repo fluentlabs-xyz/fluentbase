@@ -2,6 +2,7 @@ mod build;
 mod command;
 mod generators;
 mod internal;
+mod utils;
 
 use crate::build::build_internal;
 pub use build::{execute_build, BuildResult};
