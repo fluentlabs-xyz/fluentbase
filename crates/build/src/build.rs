@@ -23,7 +23,6 @@ pub struct BuildResult {
     pub solidity_path: Option<PathBuf>,
     pub metadata_path: Option<PathBuf>,
 }
-
 pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<BuildResult> {
     // Setup
     let contract_dir = contract_dir
@@ -58,6 +57,15 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
 
     // From here we know output is Some
     let output_dir = args.output.as_ref().unwrap().join(&package.name);
+
+    // Clean the output directory if it exists
+    if output_dir.exists() {
+        fs::remove_dir_all(&output_dir).with_context(|| {
+            format!("Failed to clean output directory: {}", output_dir.display())
+        })?;
+    }
+
+    // Create fresh output directory
     fs::create_dir_all(&output_dir)?;
 
     // Copy WASM to output directory
@@ -84,7 +92,6 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
 
     Ok(result)
 }
-
 pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
     if env::var("TARGET").unwrap() == BUILD_TARGET {
         return;
