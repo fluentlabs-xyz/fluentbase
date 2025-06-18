@@ -592,8 +592,6 @@ mod tests {
         let c1_first_item_ptr = c1.as_ptr() as usize;
         let c1_len = c1.len();
 
-        let type_name = core::any::type_name::<SliceFatPtr64<'_, u8>>();
-
         let slice = SliceFatPtr64::<SliceFatPtr64<SliceFatPtr64<u8>>>::new(
             MemoryMappingHelper::default(),
             c1_first_item_ptr.into(),
@@ -635,13 +633,13 @@ mod tests {
 
         let fill_with = 0;
         slice.fill(&fill_with);
-        for (idx, item) in slice.iter().enumerate() {
+        for (_idx, item) in slice.iter().enumerate() {
             assert_eq!(item.as_ref(), &fill_with);
         }
 
         let fill_with = rand::random::<_>();
         slice.fill(&fill_with);
-        for (idx, item) in slice.iter().enumerate() {
+        for (_idx, item) in slice.iter().enumerate() {
             assert_eq!(item.as_ref(), &fill_with);
         }
 
@@ -701,13 +699,13 @@ mod tests {
 
         let fill_with = 0;
         slice.fill(&fill_with);
-        for (idx, item) in slice.iter().enumerate() {
+        for (_idx, item) in slice.iter().enumerate() {
             assert_eq!(item.as_ref(), &fill_with);
         }
 
         let fill_with = rand::random::<_>();
         slice.fill(&fill_with);
-        for (idx, item) in slice.iter().enumerate() {
+        for (_idx, item) in slice.iter().enumerate() {
             assert_eq!(item.as_ref(), &fill_with);
         }
 
@@ -741,13 +739,6 @@ mod tests {
         define_symbols!(2, u16);
         define_symbols!(3, StableVec<AccountMeta>);
 
-        let vec = [
-            AccountMeta::new(Pubkey::new_unique(), false),
-            AccountMeta::new(Pubkey::new_unique(), true),
-        ]
-        .to_vec();
-        let stable_vec = StableVec::from(vec);
-
         assert_eq!(T1_SIZE, T2_SIZE);
         assert_eq!(T2_SIZE, T3_SIZE);
     }
@@ -757,8 +748,6 @@ mod tests {
         // type ItemType = u64;
         type ItemType = AccountMeta;
         type VecOfItemsType = StableVec<ItemType>;
-        const ITEM_SIZE: usize = size_of::<ItemType>();
-        const VEC_OF_ITEMS_TYPE_SIZE: usize = size_of::<VecOfItemsType>();
         let items_original_fixed = VecOfItemsType::from(
             [
                 ItemType::new(Pubkey::new_from_array([1; 32]), false),
@@ -775,25 +764,12 @@ mod tests {
         );
         assert_eq!(items_original_fixed.len(), items_new_fixed.len());
         let items_len = items_original_fixed.len();
-        let vec_of_items_bytes_size = VEC_OF_ITEMS_TYPE_SIZE;
-        let items_only_bytes_size = ITEM_SIZE * items_original_fixed.len();
 
         let mut slice = SliceFatPtr64::<ItemType>::new(
             MemoryMappingHelper::default(),
             (items_original_fixed.as_ref().as_ptr() as u64).into(),
             items_len,
         );
-        let vec_of_items_start_ptr = unsafe { (&items_original_fixed) as *const _ } as u64;
-        let first_item_start_ptr = items_original_fixed.as_ptr() as u64;
-        let vec_of_items_as_raw_bytes = unsafe {
-            alloc::slice::from_raw_parts(
-                vec_of_items_start_ptr as *const u8,
-                vec_of_items_bytes_size,
-            )
-        };
-        let items_as_raw_bytes = unsafe {
-            alloc::slice::from_raw_parts(first_item_start_ptr as *const u8, items_only_bytes_size)
-        };
         for idx in 0..slice.len() {
             assert_eq!(slice.item_at_idx(idx).as_ref(), &items_original_fixed[idx]);
         }
@@ -804,118 +780,6 @@ mod tests {
         slice.copy_from_slice(items_new_fixed.as_ref());
         for (idx, item) in slice.iter().enumerate() {
             assert_eq!(item.as_ref(), &items_new_fixed[idx]);
-        }
-    }
-
-    #[test]
-    fn stable_vec_of_account_infos_mutations_test() {
-        // type ItemType = u64;
-        type ItemType<'a> = AccountInfo<'a>;
-        type VecOfItemsType<'a> = StableVec<ItemType<'a>>;
-        const ITEM_SIZE: usize = size_of::<ItemType>();
-        const VEC_OF_ITEMS_TYPE_SIZE: usize = size_of::<VecOfItemsType>();
-
-        let num: u64 = 1;
-        let key_1 = Pubkey::new_from_array([num as u8; 32]);
-        let owner_1 = Pubkey::new_from_array([num as u8 + 10; 32]);
-        let mut lamports_1 = num + 20;
-        let rent_epoch_1 = num + 30;
-        let mut data_1 = [1, 2, 3].to_vec();
-
-        let num: u64 = 2;
-        let key_2 = Pubkey::new_from_array([num as u8; 32]);
-        let owner_2 = Pubkey::new_from_array([num as u8 + 10; 32]);
-        let mut lamports_2 = num + 20;
-        let rent_epoch_2 = num + 30;
-        let mut data_2 = [1, 2, 3, 4].to_vec();
-
-        let num: u64 = 4;
-        let key_3 = Pubkey::new_from_array([num as u8; 32]);
-        let owner_3 = Pubkey::new_from_array([num as u8 + 10; 32]);
-        let mut lamports_3 = num + 20;
-        let rent_epoch_3 = num + 30;
-        let mut data_3 = [1, 2, 3, 4].to_vec();
-
-        let num: u64 = 3;
-        let key_4 = Pubkey::new_from_array([num as u8; 32]);
-        let owner_4 = Pubkey::new_from_array([num as u8 + 10; 32]);
-        let mut lamports_4 = num + 20;
-        let rent_epoch_4 = num + 30;
-        let mut data_4 = [1, 2, 3, 4].to_vec();
-
-        let items_original_fixed: StableVec<ItemType> = VecOfItemsType::from(
-            [
-                ItemType::new(
-                    &key_1,
-                    true,
-                    true,
-                    &mut lamports_1,
-                    &mut data_1,
-                    &owner_1,
-                    true,
-                    rent_epoch_1,
-                ),
-                ItemType::new(
-                    &key_2,
-                    true,
-                    true,
-                    &mut lamports_2,
-                    &mut data_2,
-                    &owner_2,
-                    true,
-                    rent_epoch_2,
-                ),
-            ]
-            .to_vec(),
-        );
-        let items_new_fixed: StableVec<ItemType> = VecOfItemsType::from(
-            [
-                ItemType::new(
-                    &key_3,
-                    true,
-                    true,
-                    &mut lamports_3,
-                    &mut data_3,
-                    &owner_3,
-                    true,
-                    rent_epoch_3,
-                ),
-                ItemType::new(
-                    &key_4,
-                    true,
-                    true,
-                    &mut lamports_4,
-                    &mut data_4,
-                    &owner_4,
-                    true,
-                    rent_epoch_4,
-                ),
-            ]
-            .to_vec(),
-        );
-        assert_eq!(items_original_fixed.len(), items_new_fixed.len());
-        let items_len = items_original_fixed.len();
-        let vec_of_items_bytes_size = VEC_OF_ITEMS_TYPE_SIZE;
-        let items_only_bytes_size = ITEM_SIZE * items_original_fixed.len();
-
-        let mut slice = SliceFatPtr64::<ItemType>::new(
-            MemoryMappingHelper::default(),
-            (items_original_fixed.as_ref().as_ptr() as u64).into(),
-            items_len,
-        );
-        let vec_of_items_start_ptr = (&items_original_fixed) as *const _ as u64;
-        let first_item_start_ptr = items_original_fixed.as_ptr() as u64;
-        let vec_of_items_as_raw_bytes = unsafe {
-            alloc::slice::from_raw_parts(
-                vec_of_items_start_ptr as *const u8,
-                vec_of_items_bytes_size,
-            )
-        };
-        let items_as_raw_bytes = unsafe {
-            alloc::slice::from_raw_parts(first_item_start_ptr as *const u8, items_only_bytes_size)
-        };
-        for idx in 0..slice.len() {
-            let item_original = &items_original_fixed[idx];
         }
     }
 }

@@ -11,12 +11,11 @@ mod tests {
     };
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
+        account::{AccountSharedData, ReadableAccount},
         common::{evm_address_from_pubkey, evm_balance_from_lamports, pubkey_from_address},
         fluentbase::common::BatchMessage,
-        helpers::storage_read_account_data,
+        helpers::{load_program_account_from_elf_file, storage_read_account_data},
         pubkey::Pubkey,
-        rent::Rent,
         solana_bincode::serialize,
         solana_program::{
             instruction::{AccountMeta, Instruction},
@@ -28,19 +27,6 @@ mod tests {
     };
     use hex_literal::hex;
     use rand::random_range;
-    use std::{fs::File, io::Read};
-
-    pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
-        let mut file = File::open(path).expect("file open failed");
-        let mut elf = Vec::new();
-        file.read_to_end(&mut elf).unwrap();
-        let rent = Rent::default();
-        let minimum_balance = rent.minimum_balance(elf.len());
-        let mut program_account = AccountSharedData::new(minimum_balance, 0, loader_id);
-        program_account.set_data(elf);
-        program_account.set_executable(true);
-        program_account
-    }
 
     #[test]
     fn test_svm_deploy() {
@@ -63,9 +49,8 @@ mod tests {
 
         let program_bytes = account_with_program.data().to_vec();
         ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1e18));
-        let (contract_address, _gas_used) =
+        let (_contract_address, _gas_used) =
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
-        println!("contract_addr {:x?}", contract_address);
     }
 
     #[test]

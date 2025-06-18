@@ -22,7 +22,7 @@ clean:
 
 .PHONY: test
 test:
-	cargo test --no-fail-fast -q
+	cargo test -q --no-fail-fast
 
 .PHONY: check
 check:

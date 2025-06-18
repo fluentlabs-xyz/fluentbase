@@ -15,6 +15,7 @@ use solana_rbpf::{
     memory_region::{MemoryCowCallback, MemoryMapping, MemoryRegion},
     vm::ContextObject,
 };
+use std::{fs::File, io::Read};
 
 pub type StdResult<T, E> = Result<T, E>;
 
@@ -57,6 +58,7 @@ use crate::{
         Account,
         AccountSharedData,
         InheritableAccountFields,
+        WritableAccount,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
     context::BpfAllocator,
@@ -66,6 +68,7 @@ use crate::{
 };
 use fluentbase_types::StorageAPI;
 use solana_rbpf::ebpf::MM_HEAP_START;
+use solana_rent::Rent;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
 
@@ -534,79 +537,17 @@ pub fn create_account_shared_data_for_test<S: Sysvar>(sysvar: &S) -> AccountShar
     ))
 }
 
-// #[macro_export]
-// macro_rules! with_mock_invoke_context {
-//     (
-//         $invoke_context:ident,
-//         $transaction_context:ident,
-//         $sdk:expr,
-//         $loader:expr,
-//         $transaction_accounts:expr $(,)?
-//     ) => {
-//         use crate::{
-//             account::ReadableAccount,
-//             context::TransactionContext,
-//             hash::Hash,
-//             loaded_programs::{LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
-//             rent::Rent,
-//             sysvar_cache::SysvarCache,
-//         };
-//         use alloc::sync::Arc;
-//         use solana_feature_set::FeatureSet;
-//         use $crate::context::InvokeContext;
-//         let compute_budget = $crate::compute_budget::ComputeBudget::default();
-//         let $transaction_context = TransactionContext::new(
-//             $transaction_accounts,
-//             Rent::default(),
-//             compute_budget.max_invoke_stack_height,
-//             compute_budget.max_instruction_trace_length,
-//         );
-//         let mut sysvar_cache = SysvarCache::default();
-//         sysvar_cache.fill_missing_entries(|pubkey, callback| {
-//             for index in 0..$transaction_context.get_number_of_accounts() {
-//                 if $transaction_context
-//                     .get_key_of_account_at_index(index)
-//                     .unwrap()
-//                     == pubkey
-//                 {
-//                     callback(
-//                         $transaction_context
-//                             .get_account_at_index(index)
-//                             .unwrap()
-//                             .borrow()
-//                             .data(),
-//                     );
-//                 }
-//             }
-//         });
-//         let programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
-//             Default::default(),
-//             ProgramRuntimeEnvironments {
-//                 program_runtime_v1: $loader.clone(),
-//                 program_runtime_v2: $loader.clone(),
-//             },
-//         );
-//         let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
-//             Default::default(),
-//             ProgramRuntimeEnvironments {
-//                 program_runtime_v1: $loader.clone(),
-//                 program_runtime_v2: $loader.clone(),
-//             },
-//         );
-//         let mut $invoke_context = InvokeContext::new(
-//             $transaction_context,
-//             sysvar_cache,
-//             $sdk,
-//             // Some(LogCollector::new_ref()),
-//             compute_budget,
-//             programs_loaded_for_tx_batch,
-//             programs_modified_by_tx,
-//             Arc::new($crate::solana_program::feature_set::feature_set_default()),
-//             Hash::default(),
-//             0,
-//         );
-//     };
-// }
+pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
+    let mut file = File::open(path).expect("file open failed");
+    let mut elf = Vec::new();
+    file.read_to_end(&mut elf).unwrap();
+    let rent = Rent::default();
+    let minimum_balance = rent.minimum_balance(elf.len());
+    let mut program_account = AccountSharedData::new(minimum_balance, 0, loader_id);
+    program_account.set_data(elf);
+    program_account.set_executable(true);
+    program_account
+}
 
 #[macro_export]
 macro_rules! with_mock_invoke_context {
@@ -618,19 +559,18 @@ macro_rules! with_mock_invoke_context {
         $transaction_accounts:expr $(,)?
     ) => {
         use alloc::sync::Arc;
-        use solana_feature_set::FeatureSet;
         use solana_rent::Rent;
-        // use solana_log_collector::LogCollector;
-        use $crate::{account::ReadableAccount, context::TransactionContext, hash::Hash};
         use $crate::{
+            account::ReadableAccount,
             compute_budget::compute_budget::ComputeBudget,
-            context::{EnvironmentConfig, InvokeContext},
+            context::{EnvironmentConfig, InvokeContext, TransactionContext},
+            hash::Hash,
             loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
             solana_program::feature_set::feature_set_default,
             sysvar_cache::SysvarCache,
         };
         let compute_budget = ComputeBudget::default();
-        let mut $transaction_context = TransactionContext::new(
+        let $transaction_context = TransactionContext::new(
             $transaction_accounts,
             Rent::default(),
             compute_budget.max_instruction_stack_depth,
@@ -661,14 +601,14 @@ macro_rules! with_mock_invoke_context {
             0,
             sysvar_cache,
         );
-        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
+        let program_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: $loader.clone(),
                 program_runtime_v2: $loader.clone(),
             },
         );
-        let mut $invoke_context = InvokeContext::new(
+        let $invoke_context = InvokeContext::new(
             $transaction_context,
             program_cache_for_tx_batch,
             environment_config,

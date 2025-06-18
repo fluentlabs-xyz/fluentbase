@@ -24,6 +24,7 @@ impl Balance {
 }
 
 impl Allowance {
+    #[allow(unused)]
     pub fn add(sdk: &mut impl SharedAPI, owner: Address, spender: Address, amount: U256) {
         let current_allowance = Self::get(sdk, owner, spender);
         let new_allowance = current_allowance + amount;

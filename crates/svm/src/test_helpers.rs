@@ -1,5 +1,5 @@
 use crate::{
-    account::{AccountSharedData, WritableAccount},
+    account::AccountSharedData,
     builtins::register_builtins,
     common::TestSdkType,
     context::{
@@ -9,16 +9,14 @@ use crate::{
         InvokeContext,
         TransactionAccount,
     },
-    helpers::{create_account_shared_data_for_test, test_utils},
-    // loaded_programs::LoadedProgram,
-    loaders::bpf_loader_upgradeable,
+    helpers::create_account_shared_data_for_test,
+    loaded_programs::ProgramCacheEntry,
     native_loader,
+    pubkey::Pubkey,
     solana_program::{instruction::AccountMeta, sysvar},
     with_mock_invoke_context,
 };
-use crate::{loaded_programs::ProgramCacheEntry, pubkey::Pubkey};
 use alloc::sync::Arc;
-use core::cell::RefCell;
 use fluentbase_sdk::{Address, ContractContextV1, SharedAPI, U256};
 use fluentbase_sdk_testing::HostTestingContext;
 use solana_epoch_schedule::EpochSchedule;
@@ -27,8 +25,6 @@ use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
 };
-use solana_rent::Rent;
-use std::{fs::File, io::Read};
 
 pub(crate) fn prepare_vars_for_tests<'a, SDK: SharedAPI>(
 ) -> (Config, Arc<BuiltinProgram<InvokeContext<'a, SDK>>>) {
@@ -45,17 +41,6 @@ pub(crate) fn prepare_vars_for_tests<'a, SDK: SharedAPI>(
     let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
     (config, loader)
-}
-pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
-    let mut file = File::open(path).expect("file open failed");
-    let mut elf = Vec::new();
-    file.read_to_end(&mut elf).unwrap();
-    let rent = Rent::default();
-    let minimum_balance = rent.minimum_balance(elf.len());
-    let mut program_account = AccountSharedData::new(minimum_balance, 0, loader_id);
-    program_account.set_data(elf);
-    program_account.set_executable(true);
-    program_account
 }
 pub(crate) fn mock_process_instruction<
     'a,
@@ -134,6 +119,7 @@ pub(crate) fn mock_process_instruction<
         loader,
         transaction_accounts
     );
+    let mut invoke_context = invoke_context;
 
     invoke_context.program_cache_for_tx_batch.replenish(
         *loader_id,
@@ -160,31 +146,6 @@ pub(crate) fn mock_process_instruction<
     transaction_accounts
 }
 
-pub(crate) fn process_instruction<SDK: SharedAPI>(
-    sdk: &SDK,
-    loader_id: &Pubkey,
-    program_indices: &[IndexOfAccount],
-    instruction_data: &[u8],
-    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
-    instruction_accounts: Vec<AccountMeta>,
-    expected_result: Result<(), InstructionError>,
-) -> Vec<AccountSharedData> {
-    mock_process_instruction(
-        sdk,
-        loader_id,
-        program_indices.to_vec(),
-        instruction_data,
-        transaction_accounts,
-        instruction_accounts,
-        expected_result,
-        bpf_loader_upgradeable::Entrypoint::vm,
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
-        |_invoke_context| {},
-    )
-}
-
 pub(crate) fn contract_context() -> ContractContextV1 {
     ContractContextV1 {
         address: Address::from_slice(&[01; 20]),
@@ -196,13 +157,9 @@ pub(crate) fn contract_context() -> ContractContextV1 {
     }
 }
 pub(crate) fn journal_state() -> HostTestingContext {
-    let mut tc = HostTestingContext::default();
+    let tc = HostTestingContext::default();
     let cc = contract_context();
     tc.with_contract_context(cc)
-}
-
-pub(crate) fn new_test_sdk_rc() -> Arc<RefCell<TestSdkType>> {
-    Arc::new(RefCell::new(new_test_sdk()))
 }
 
 pub(crate) fn new_test_sdk() -> TestSdkType {

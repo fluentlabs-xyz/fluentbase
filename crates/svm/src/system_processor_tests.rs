@@ -31,7 +31,6 @@ mod tests {
         test_helpers::{mock_process_instruction, new_test_sdk, prepare_vars_for_tests},
         with_mock_invoke_context,
     };
-    use alloc::sync::Arc;
     use fluentbase_sdk::SharedAPI;
     use solana_bincode::serialize;
     use solana_fee_calculator::FeeCalculator;
@@ -205,7 +204,7 @@ mod tests {
     fn test_address_create_with_seed_mismatch() {
         let sdk = new_test_sdk();
 
-        let (config, loader) = prepare_vars_for_tests();
+        let (_config, loader) = prepare_vars_for_tests();
         with_mock_invoke_context!(
             invoke_context,
             transaction_context,
@@ -799,9 +798,9 @@ mod tests {
         let sdk = new_test_sdk();
 
         let from = Pubkey::new_unique();
-        let mut from_account = AccountSharedData::new(100, 0, &system_program::id());
+        let from_account = AccountSharedData::new(100, 0, &system_program::id());
         let to = Pubkey::from([3; 32]);
-        let mut to_account = AccountSharedData::new(1, 0, &to); // account owner should not matter
+        let to_account = AccountSharedData::new(1, 0, &to); // account owner should not matter
         let transaction_accounts = vec![
             (from.clone(), from_account.clone()),
             (to.clone(), to_account.clone()),
@@ -1011,7 +1010,7 @@ mod tests {
                 #[allow(deprecated)]
                 (
                     meta.pubkey,
-                    if sysvar::recent_blockhashes::check_id(&meta.pubkey) {
+                    if recent_blockhashes::check_id(&meta.pubkey) {
                         create_default_recent_blockhashes_account()
                     } else if sysvar::rent::check_id(&meta.pubkey) {
                         create_account_shared_data_for_test(&Rent::free())
@@ -1080,7 +1079,7 @@ mod tests {
         let nonce_address = Pubkey::new_unique();
         let nonce_account = nonce_account::create_account(1_000_000).into_inner();
         #[allow(deprecated)]
-        let blockhash_id = sysvar::recent_blockhashes::id();
+        let blockhash_id = recent_blockhashes::id();
         let accounts = process_instruction(
             &sdk,
             &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
@@ -1275,7 +1274,7 @@ mod tests {
         let nonce_address = Pubkey::new_unique();
         let nonce_account = nonce_account::create_account(1_000_000).into_inner();
         #[allow(deprecated)]
-        let blockhash_id = sysvar::recent_blockhashes::id();
+        let blockhash_id = recent_blockhashes::id();
         process_instruction(
             &sdk,
             &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
@@ -1312,7 +1311,7 @@ mod tests {
         let nonce_address = Pubkey::new_unique();
         let nonce_account = nonce_account::create_account(1_000_000).into_inner();
         #[allow(deprecated)]
-        let blockhash_id = sysvar::recent_blockhashes::id();
+        let blockhash_id = recent_blockhashes::id();
         let accounts = process_instruction(
             &sdk,
             &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
@@ -1371,8 +1370,6 @@ mod tests {
 
     #[test]
     fn test_get_system_account_kind_system_ok() {
-        let sdk = new_test_sdk();
-
         let system_account = AccountSharedData::default();
         assert_eq!(
             get_system_account_kind(&system_account),
@@ -1396,8 +1393,6 @@ mod tests {
 
     #[test]
     fn test_get_system_account_kind_uninitialized_nonce_account_fail() {
-        let sdk = new_test_sdk();
-
         assert_eq!(
             get_system_account_kind(&nonce_account::create_account(42).borrow()),
             None
@@ -1406,8 +1401,6 @@ mod tests {
 
     #[test]
     fn test_get_system_account_kind_system_owner_nonzero_nonnonce_data_fail() {
-        let sdk = new_test_sdk();
-
         let other_data_account =
             AccountSharedData::new_data(42, b"other", &Pubkey::default()).unwrap();
         assert_eq!(get_system_account_kind(&other_data_account), None);
@@ -1415,8 +1408,6 @@ mod tests {
 
     #[test]
     fn test_get_system_account_kind_nonsystem_owner_with_nonce_data_fail() {
-        let sdk = new_test_sdk();
-
         let nonce_account = AccountSharedData::new_data(
             42,
             &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::default())),
@@ -1433,10 +1424,9 @@ mod tests {
         let nonce_address = Pubkey::new_unique();
         let nonce_account = nonce_account::create_account(1_000_000).into_inner();
         #[allow(deprecated)]
-        let blockhash_id = sysvar::recent_blockhashes::id();
+        let blockhash_id = recent_blockhashes::id();
         #[allow(deprecated)]
-        let new_recent_blockhashes_account =
-            recent_blockhashes_account::create_account_with_data_for_test(vec![]);
+        let new_recent_blockhashes_account = create_account_with_data_for_test(vec![]);
         process_instruction(
             &sdk,
             &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
@@ -1473,7 +1463,7 @@ mod tests {
         let nonce_address = Pubkey::new_unique();
         let nonce_account = nonce_account::create_account(1_000_000).into_inner();
         #[allow(deprecated)]
-        let blockhash_id = sysvar::recent_blockhashes::id();
+        let blockhash_id = recent_blockhashes::id();
         let accounts = process_instruction(
             &sdk,
             &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
@@ -1502,8 +1492,7 @@ mod tests {
             Ok(()),
         );
         #[allow(deprecated)]
-        let new_recent_blockhashes_account =
-            recent_blockhashes_account::create_account_with_data_for_test(vec![]);
+        let new_recent_blockhashes_account = create_account_with_data_for_test(vec![]);
         mock_process_instruction(
             &sdk,
             &system_program::id(),

@@ -41,10 +41,6 @@ where
     to_account(&recent_blockhashes, account)
 }
 
-#[deprecated(
-    since = "1.5.17",
-    note = "Please use `create_account_with_data_for_test` instead"
-)]
 #[allow(deprecated)]
 pub fn create_account_with_data<'a, I>(lamports: u64, recent_blockhash_iter: I) -> AccountSharedData
 where
@@ -54,10 +50,6 @@ where
     create_account_with_data_and_fields(recent_blockhash_iter, (lamports, INITIAL_RENT_EPOCH))
 }
 
-#[deprecated(
-    since = "1.9.0",
-    note = "Please do not use, will no longer be available in the future"
-)]
 #[allow(deprecated)]
 pub fn create_account_with_data_and_fields<'a, I>(
     recent_blockhash_iter: I,
@@ -74,10 +66,6 @@ where
     account
 }
 
-#[deprecated(
-    since = "1.9.0",
-    note = "Please do not use, will no longer be available in the future"
-)]
 #[allow(deprecated)]
 pub fn create_account_with_data_for_test<'a, I>(recent_blockhash_iter: I) -> AccountSharedData
 where

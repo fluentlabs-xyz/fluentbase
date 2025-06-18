@@ -99,7 +99,7 @@ impl<'a, 'b, T> VmValue<'a, 'b, T> {
 ///
 /// At the start of a CPI, this can be different from the data stored in the
 /// corresponding BorrowedAccount, and needs to be synched.
-struct CallerAccount<'a, 'b, SDK: SharedAPI> {
+pub struct CallerAccount<'a, 'b, SDK: SharedAPI> {
     lamports: &'a mut u64,
     owner: &'a mut Pubkey,
     // The original data length of the account at the start of the current
@@ -446,7 +446,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
 type TranslatedAccounts<'a, 'b, SDK> = Vec<(IndexOfAccount, Option<CallerAccount<'a, 'b, SDK>>)>;
 
 /// Implemented by language specific data structure translators
-trait SyscallInvokeSigned<SDK: SharedAPI> {
+pub trait SyscallInvokeSigned<SDK: SharedAPI> {
     fn translate_instruction(
         addr: u64,
         memory_mapping: &MemoryMapping,
@@ -680,20 +680,20 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
 //     is_signer: bool,
 // }
 
-/// Rust representation of C's SolAccountInfo
-#[derive(Debug)]
-#[repr(C)]
-struct SolAccountInfo {
-    key_addr: u64,
-    lamports_addr: u64,
-    data_len: u64,
-    data_addr: u64,
-    owner_addr: u64,
-    rent_epoch: u64,
-    is_signer: bool,
-    is_writable: bool,
-    executable: bool,
-}
+// /// Rust representation of C's SolAccountInfo
+// #[derive(Debug)]
+// #[repr(C)]
+// struct SolAccountInfo {
+//     key_addr: u64,
+//     lamports_addr: u64,
+//     data_len: u64,
+//     data_addr: u64,
+//     owner_addr: u64,
+//     rent_epoch: u64,
+//     is_signer: bool,
+//     is_writable: bool,
+//     executable: bool,
+// }
 
 // /// Rust representation of C's SolSignerSeed
 // #[derive(Debug)]
@@ -1179,7 +1179,7 @@ fn check_authorized_program<SDK: SharedAPI>(
 }
 
 /// Call process instruction, common to both Rust and C
-pub(crate) fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
+pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     invoke_context: &mut InvokeContext<SDK>,
     instruction_addr: u64,
     account_infos_addr: u64,

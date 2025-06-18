@@ -6,7 +6,11 @@ mod tests {
             common::{process_svm_result, BatchMessage, MemStorage},
             helpers::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
         },
-        helpers::{storage_read_account_data, storage_write_account_data},
+        helpers::{
+            load_program_account_from_elf_file,
+            storage_read_account_data,
+            storage_write_account_data,
+        },
         native_loader,
         native_loader::create_loadable_account_for_test,
         solana_program::{
@@ -16,7 +20,6 @@ mod tests {
             sysvar::{clock, rent},
         },
         system_program,
-        test_helpers::load_program_account_from_elf_file,
     };
     use core::str::from_utf8;
     use fluentbase_sdk::{
@@ -107,7 +110,7 @@ mod tests {
                 gas_limit: 0,
             },
         };
-        let mut sdk = HostTestingContext::default().with_shared_context_input(shared_context);
+        let sdk = HostTestingContext::default().with_shared_context_input(shared_context);
         let mut sapi = MemStorage::new();
 
         storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
