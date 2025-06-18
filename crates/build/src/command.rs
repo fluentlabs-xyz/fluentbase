@@ -136,21 +136,18 @@ fn ensure_image(sdk_tag: &str, rust_version: Option<&str>, work_dir: &Path) -> R
     };
 
     // Check if base image already has this Rust version
-    // Only check if it's not a local/custom image
-    if !is_local_image(&base_image) {
-        if let Ok(version) = get_rust_version_from_image(&base_image) {
-            if version == rust_version {
-                println!(
-                    "Using Docker image: {} (Rust {} ✓)",
-                    base_image, rust_version
-                );
-                return Ok(base_image);
-            }
+    if let Ok(version) = get_rust_version_from_image(&base_image) {
+        if version == rust_version {
+            println!(
+                "Using Docker image: {} (Rust {} ✓)",
+                base_image, rust_version
+            );
+            return Ok(base_image);
         }
-    } else {
-        // For local images, assume they have the correct Rust version
-        println!("Using local image: {}", base_image);
-        return Ok(base_image);
+        println!(
+            "Base image has Rust {}, but project needs Rust {}",
+            version, rust_version
+        );
     }
 
     // Build cached image with specific Rust version
