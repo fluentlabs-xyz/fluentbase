@@ -90,9 +90,11 @@ pub fn ensure_rust_image(base_tag: &str, rust_toolchain: Option<&str>) -> Result
         return Ok(base_image);
     };
 
+    let normalized_toolchain = normalize_toolchain_for_rustup(requested_toolchain);
+
     // Check if base image already has the right toolchain
     if let Ok(base_toolchain) = get_image_toolchain(&base_image) {
-        if toolchain_compatible(&base_toolchain, requested_toolchain) {
+        if toolchain_compatible(&base_toolchain, &normalized_toolchain) {
             println!(
                 "Using base image: {} (Rust {} ✓)",
                 base_image, base_toolchain
@@ -101,7 +103,7 @@ pub fn ensure_rust_image(base_tag: &str, rust_toolchain: Option<&str>) -> Result
         }
         println!(
             "Base image has Rust {}, but project needs Rust {}",
-            base_toolchain, requested_toolchain
+            base_toolchain, normalized_toolchain
         );
     }
 
@@ -109,19 +111,19 @@ pub fn ensure_rust_image(base_tag: &str, rust_toolchain: Option<&str>) -> Result
     let cache_image = format!(
         "fluentbase-cache-{}-rust-{}",
         base_tag.replace(['/', ':'], "-"),
-        requested_toolchain.replace('.', "_")
+        normalized_toolchain.replace('.', "_")
     );
 
     if !image_exists(&cache_image)? {
         println!(
             "Building image with Rust {} toolchain (one-time setup)...",
-            requested_toolchain
+            normalized_toolchain
         );
-        create_toolchain_image(&base_image, &cache_image, requested_toolchain)?;
+        create_toolchain_image(&base_image, &cache_image, &normalized_toolchain)?;
     } else {
         println!(
             "Using cached image: {} (Rust {})",
-            cache_image, requested_toolchain
+            cache_image, normalized_toolchain
         );
     }
 
@@ -468,5 +470,14 @@ mod tests {
         // This is the case that's causing your issue!
         // Base image has 1.87.0, user requests 1.87
         assert!(toolchain_compatible("1.87.0", "1.87"));
+    }
+
+    #[test]
+    fn test_normalize_toolchain_for_rustup() {
+        assert_eq!(normalize_toolchain_for_rustup("1.87"), "1.87.0");
+        assert_eq!(
+            normalize_toolchain_for_rustup("nightly-2024-06-01"),
+            "nightly-2024-06-01"
+        );
     }
 }
