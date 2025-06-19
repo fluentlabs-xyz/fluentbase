@@ -1,101 +1,93 @@
 name: fluentbase-build Docker Image
 
 on:
-  push:
-    branches:
-      - devel      # development branch
-    tags:
-      - 'v*'       # release tags
-    paths:
-      - 'crates/build/**'
-      - '.github/workflows/build-docker.yml'
-  workflow_dispatch:
+    push:
+        branches:
+            - devel
+        tags:
+            - "v*"
+        paths:
+            - "crates/build/**"
+            - ".github/workflows/build-docker.yml"
+    workflow_dispatch:
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/fluentbase-build
+    REGISTRY: ghcr.io
+    IMAGE_NAME: ${{ github.repository_owner }}/fluentbase-build
+    RUST_VERSION: "1.87.0"
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    build:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+            - name: Log in to GitHub Container Registry
+              uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate Docker tags
-        id: tags
-        run: |
-          TAGS=""
-          SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)
+            - name: Generate Docker tags
+              id: tags
+              run: |
+                  TAGS=""
+                  SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)
 
-          # For tags (releases)
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/}
-            TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
-            TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                  if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+                    VERSION=${GITHUB_REF#refs/tags/}
+                    TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
+                    TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                  elif [[ "${{ github.ref_name }}" == "devel" ]]; then
+                    TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:devel-${SHA_SHORT}"
+                    TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:devel"
+                  fi
 
-          # For branches
-          else
-            # Make branch name Docker-safe
-            BRANCH_NAME=$(echo ${{ github.ref_name }} | sed 's/[^a-zA-Z0-9._-]/-/g')
+                  echo "tags=${TAGS}" >> $GITHUB_OUTPUT
 
-            # Main tag: branch-sha
-            TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}-${SHA_SHORT}"
+            - name: Build and push Docker image
+              uses: docker/build-push-action@v5
+              with:
+                  context: ./crates/build
+                  file: ./crates/build/Dockerfile
+                  platforms: linux/amd64
+                  push: true
+                  tags: ${{ steps.tags.outputs.tags }}
+                  labels: |
+                      org.opencontainers.image.source=${{ github.event.repository.html_url }}
+                      org.opencontainers.image.revision=${{ github.sha }}
+                      org.opencontainers.image.ref.name=${{ github.ref }}
+                      org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+                      org.opencontainers.image.title=Fluent Build Environment
+                      org.opencontainers.image.description=Docker image for building Fluent smart contracts
+                      rust.version=${{ env.RUST_VERSION }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+                  build-args: |
+                      BINARYEN_VERSION=120
+                      RUST_VERSION=${{ env.RUST_VERSION }}
 
-            # For devel branch, also update devel-latest and devel
-            if [[ "${{ github.ref_name }}" == "devel" ]]; then
-              TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:devel-latest"
-              TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:devel"
-            fi
-          fi
-
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
-          echo "Generated tags: ${TAGS}"
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./crates/build
-          file: ./crates/build/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          labels: |
-            org.opencontainers.image.source=${{ github.event.repository.html_url }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.ref.name=${{ github.ref }}
-            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
-            org.opencontainers.image.title=Fluent Build Environment
-            org.opencontainers.image.description=Docker image for building Fluent smart contracts
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            BINARYEN_VERSION=120
-
-      - name: Print summary
-        run: |
-          echo "### Docker Image Published 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
-          IFS=',' read -ra ADDR <<< "${{ steps.tags.outputs.tags }}"
-          for tag in "${ADDR[@]}"; do
-            echo "- \`${tag}\`" >> $GITHUB_STEP_SUMMARY
-          done
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Actor:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+            - name: Print summary
+              run: |
+                  echo "### Docker Image Published 🚀" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "**Rust Version:** \`${{ env.RUST_VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
+                  IFS=',' read -ra ADDR <<< "${{ steps.tags.outputs.tags }}"
+                  for tag in "${ADDR[@]}"; do
+                    echo "- \`${tag}\`" >> $GITHUB_STEP_SUMMARY
+                  done
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "**Actor:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
