@@ -304,21 +304,23 @@ fn get_image_toolchain(image: &str) -> Result<String> {
 
     Ok(version)
 }
-
 fn create_toolchain_image(base: &str, target: &str, toolchain: &str) -> Result<()> {
     // Normalize toolchain for rustup (expects full version like 1.87.0)
     let rustup_toolchain = normalize_toolchain_for_rustup(toolchain);
 
+    let toolchain_with_arch = format!("{}-x86_64-unknown-linux-gnu", rustup_toolchain);
+    println!("Toolchain with architecture: {}", toolchain_with_arch);
+
     let dockerfile = format!(
         r#"ARG BUILD_PLATFORM=linux/amd64
 FROM --platform=${{BUILD_PLATFORM}} {}
-RUN rustup toolchain install {}-x86_64-unknown-linux-gnu
-RUN rustup default {}-x86_64-unknown-linux-gnu
+RUN rustup toolchain install {}
+RUN rustup default {}
 RUN rustup target add wasm32-unknown-unknown
-RUN rustup component add rust-src --toolchain {}-x86_64-unknown-linux-gnu
+RUN rustup component add rust-src --toolchain {}
 LABEL rust.toolchain="{}"
 "#,
-        base, rustup_toolchain, rustup_toolchain, rustup_toolchain, toolchain
+        base, toolchain_with_arch, toolchain_with_arch, toolchain_with_arch, toolchain
     );
 
     let mut child = Command::new("docker")
@@ -398,5 +400,73 @@ fn normalize_toolchain_for_rustup(toolchain: &str) -> String {
     match parts.len() {
         2 => format!("{}.{}.0", parts[0], parts[1]), // 1.77 -> 1.77.0
         _ => toolchain.to_string(),                  // 1.77.2 -> 1.77.2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_toolchain_compatible_stable_versions() {
+        // Test case: installed 1.87.0, requested 1.87 -> should be compatible
+        assert!(toolchain_compatible("1.87.0", "1.87"));
+
+        // Test case: installed 1.87.1, requested 1.87 -> should be compatible
+        assert!(toolchain_compatible("1.87.1", "1.87"));
+
+        // Test case: installed 1.87.2, requested 1.87 -> should be compatible
+        assert!(toolchain_compatible("1.87.2", "1.87"));
+
+        // Test case: installed 1.87.0, requested 1.87.0 -> should be compatible
+        assert!(toolchain_compatible("1.87.0", "1.87.0"));
+
+        // Test case: installed 1.87.1, requested 1.87.0 -> should NOT be compatible
+        assert!(!toolchain_compatible("1.87.1", "1.87.0"));
+
+        // Test case: installed 1.86.0, requested 1.87 -> should NOT be compatible
+        assert!(!toolchain_compatible("1.86.0", "1.87"));
+
+        // Test case: installed 1.87.0, requested 1.86 -> should NOT be compatible
+        assert!(!toolchain_compatible("1.87.0", "1.86"));
+    }
+
+    #[test]
+    fn test_toolchain_compatible_nightly_versions() {
+        // Nightly must match exactly
+        assert!(toolchain_compatible(
+            "nightly-2024-06-01",
+            "nightly-2024-06-01"
+        ));
+        assert!(!toolchain_compatible(
+            "nightly-2024-06-01",
+            "nightly-2024-06-02"
+        ));
+
+        // Mixed stable/nightly should not be compatible
+        assert!(!toolchain_compatible("1.87.0", "nightly-2024-06-01"));
+        assert!(!toolchain_compatible("nightly-2024-06-01", "1.87.0"));
+    }
+
+    #[test]
+    fn test_toolchain_compatible_beta_versions() {
+        // Beta must match exactly
+        assert!(toolchain_compatible("beta-2024-05-15", "beta-2024-05-15"));
+        assert!(!toolchain_compatible("beta-2024-05-15", "beta-2024-05-16"));
+
+        // Mixed stable/beta should not be compatible
+        assert!(!toolchain_compatible("1.87.0", "beta-2024-05-15"));
+        assert!(!toolchain_compatible("beta-2024-05-15", "1.87.0"));
+    }
+
+    #[test]
+    fn test_toolchain_compatible_edge_cases() {
+        // Invalid versions
+        assert!(!toolchain_compatible("1", "1.87"));
+        assert!(!toolchain_compatible("1.87", "1.87.0"));
+
+        // This is the case that's causing your issue!
+        // Base image has 1.87.0, user requests 1.87
+        assert!(toolchain_compatible("1.87.0", "1.87"));
     }
 }
