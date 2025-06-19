@@ -130,7 +130,7 @@ impl BuildArgs {
     pub fn toolchain_version(&self, contract_dir: &Path) -> Option<String> {
         // 1. CLI argument takes precedence
         if let Some(ref version) = self.rust_version {
-            return Some(version.clone());
+            return Self::normalize_toolchain(version);
         }
 
         // 2. Check rust-toolchain.toml
@@ -144,7 +144,9 @@ impl BuildArgs {
                     if line.starts_with("channel") && line.contains('=') {
                         if let Some(version) = line.split('=').nth(1) {
                             let version = version.trim().trim_matches('"').trim_matches('\'');
-                            return Some(version.to_string());
+                            if let Some(normalized) = Self::normalize_toolchain(version) {
+                                return Some(normalized);
+                            }
                         }
                     }
                 }
@@ -157,13 +159,61 @@ impl BuildArgs {
             if let Ok(version) = std::fs::read_to_string(&toolchain_file) {
                 let trimmed = version.trim();
                 if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
+                    if let Some(normalized) = Self::normalize_toolchain(trimmed) {
+                        return Some(normalized);
+                    }
                 }
             }
         }
 
         // 4. None - will use base image version
         None
+    }
+
+    /// Normalize toolchain by removing architecture suffix
+    fn normalize_toolchain(toolchain: &str) -> Option<String> {
+        // Remove any architecture/platform suffix
+        let normalized = toolchain
+            .split('-')
+            .take_while(|part| {
+                !matches!(
+                    *part,
+                    "x86_64"
+                        | "aarch64"
+                        | "i686"
+                        | "arm"
+                        | "windows"
+                        | "linux"
+                        | "darwin"
+                        | "apple"
+                        | "pc"
+                        | "unknown"
+                        | "gnu"
+                        | "msvc"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("-");
+
+        // Don't allow generic channels
+        if matches!(normalized.as_str(), "stable" | "nightly" | "beta") {
+            eprintln!("Error: Generic channel '{}' not allowed. Use specific version like '1.85.0' or 'nightly-2024-12-01'", normalized);
+            return None;
+        }
+
+        // Basic validation for nightly format
+        if normalized.starts_with("nightly-") {
+            let date_part = &normalized[8..];
+            if date_part.len() != 10 || date_part.matches('-').count() != 2 {
+                eprintln!(
+                    "Error: Invalid nightly format. Expected 'nightly-YYYY-MM-DD', got '{}'",
+                    normalized
+                );
+                return None;
+            }
+        }
+
+        Some(normalized)
     }
 
     /// Generate cargo build command

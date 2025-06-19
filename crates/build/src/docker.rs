@@ -305,38 +305,6 @@ fn get_image_toolchain(image: &str) -> Result<String> {
     Ok(version)
 }
 
-fn toolchain_compatible(installed: &str, requested: &str) -> bool {
-    // Normalize versions by removing "rustc" prefix if present
-    let installed = installed.trim_start_matches("rustc ").trim();
-    let requested = requested.trim_start_matches("rustc ").trim();
-
-    // Split into parts
-    let installed_parts: Vec<&str> = installed.split('.').collect();
-    let requested_parts: Vec<&str> = requested.split('.').collect();
-
-    // Compatibility rules:
-    // - Major and minor must match
-    // - If requested is "1.87", it matches "1.87.0", "1.87.1", etc.
-    // - If requested is "1.87.0", it only matches "1.87.0"
-    if installed_parts.len() >= 2 && requested_parts.len() >= 2 {
-        // Major and minor must match
-        if installed_parts[0] != requested_parts[0] || installed_parts[1] != requested_parts[1] {
-            return false;
-        }
-
-        // If requested has patch version, it must match exactly
-        if requested_parts.len() >= 3 && installed_parts.len() >= 3 {
-            return installed_parts[2] == requested_parts[2];
-        }
-
-        // Otherwise, major.minor match is sufficient
-        true
-    } else {
-        // Fallback to exact match
-        installed == requested
-    }
-}
-
 fn create_toolchain_image(base: &str, target: &str, toolchain: &str) -> Result<()> {
     // Normalize toolchain for rustup (expects full version like 1.87.0)
     let rustup_toolchain = normalize_toolchain_for_rustup(toolchain);
@@ -382,14 +350,53 @@ LABEL rust.toolchain="{}"
     Ok(())
 }
 
-fn normalize_toolchain_for_rustup(toolchain: &str) -> String {
-    let toolchain = toolchain.trim_start_matches("rustc ").trim();
-    let parts: Vec<&str> = toolchain.split('.').collect();
+fn toolchain_compatible(installed: &str, requested: &str) -> bool {
+    // For nightly and beta versions - must match exactly
+    if installed.starts_with("nightly-") || requested.starts_with("nightly-") {
+        return installed == requested;
+    }
 
-    // Rustup expects full version like 1.87.0
+    if installed.starts_with("beta-") || requested.starts_with("beta-") {
+        return installed == requested;
+    }
+
+    // For stable versions
+    let installed_parts: Vec<&str> = installed.split('.').collect();
+    let requested_parts: Vec<&str> = requested.split('.').collect();
+
+    // Must have at least major.minor
+    if installed_parts.len() < 2 || requested_parts.len() < 2 {
+        return false;
+    }
+
+    // Major and minor must match
+    if installed_parts[0] != requested_parts[0] || installed_parts[1] != requested_parts[1] {
+        return false;
+    }
+
+    // If requested has no patch version (e.g., "1.77"), any patch version is compatible
+    if requested_parts.len() == 2 {
+        return true;
+    }
+
+    // If requested has patch version (e.g., "1.77.2"), it must match exactly
+    if requested_parts.len() == 3 && installed_parts.len() >= 3 {
+        return installed_parts[2] == requested_parts[2];
+    }
+
+    false
+}
+
+fn normalize_toolchain_for_rustup(toolchain: &str) -> String {
+    // For nightly and beta - return as is
+    if toolchain.starts_with("nightly-") || toolchain.starts_with("beta-") {
+        return toolchain.to_string();
+    }
+
+    // For stable versions, ensure we have full version for rustup
+    let parts: Vec<&str> = toolchain.split('.').collect();
     match parts.len() {
-        1 => format!("{}.0.0", parts[0]),
-        2 => format!("{}.{}.0", parts[0], parts[1]),
-        _ => toolchain.to_string(),
+        2 => format!("{}.{}.0", parts[0], parts[1]), // 1.77 -> 1.77.0
+        _ => toolchain.to_string(),                  // 1.77.2 -> 1.77.2
     }
 }
