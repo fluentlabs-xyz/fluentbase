@@ -118,10 +118,7 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
 
     // Determine Docker image that would be used for all generators
     let docker_image = if args.docker {
-        Some(docker::ensure_rust_image(
-            &args.tag,
-            rust_toolchain.as_deref(),
-        )?)
+        Some(docker::ensure_rust_image(&args.tag)?)
     } else {
         None
     };
