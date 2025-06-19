@@ -73,7 +73,7 @@ pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
     }
 
     // Execute build
-    let mut args = args.unwrap_or_default();
+    let args = args.unwrap_or_default();
 
     match execute_build(&args, Some(contract_dir.to_path_buf())) {
         Ok(result) => {
@@ -127,7 +127,7 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
     };
 
     // Build WASM
-    let target_wasm_path = build_wasm(args, &contract_dir, &package, &docker_image, &mount_dir)?;
+    let target_wasm_path = build_wasm(args, &contract_dir, package, &docker_image, &mount_dir)?;
 
     // Early return if no output directory and no artifacts
     if args.output.is_none() && args.generate.is_empty() {
@@ -222,7 +222,7 @@ fn build_wasm(
     run_command(&cargo_args, contract_dir, docker_config, &env_vars)?;
 
     // Find the built WASM file
-    let wasm_path = find_wasm_artifact(&target_dir, &package)?;
+    let wasm_path = find_wasm_artifact(&target_dir, package)?;
 
     if args.wasm_opt {
         optimize_wasm(&wasm_path, docker_config)?;
@@ -328,7 +328,7 @@ fn run_command<S: AsRef<str>>(
 
     match docker_config {
         Some((image, mount_dir)) => {
-            docker::run_in_docker(image, &args, &mount_dir, work_dir, env_vars)
+            docker::run_in_docker(image, &args, mount_dir, work_dir, env_vars)
         }
         None => {
             // Local execution
