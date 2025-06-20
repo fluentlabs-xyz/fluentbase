@@ -54,6 +54,10 @@ struct VerifyCommand {
     /// Path to the contract directory
     path: PathBuf,
 
+    /// Disable Docker (Docker is enabled by default)
+    #[arg(long)]
+    no_docker: bool,
+
     /// Contract address to verify
     #[arg(long)]
     address: String,
@@ -156,6 +160,9 @@ fn handle_build(cmd: BuildCommand) -> Result<()> {
 fn handle_verify(cmd: VerifyCommand) -> Result<()> {
     // Create BuildArgs with defaults for verification
     let mut build_args = BuildArgs::default();
+
+    // Docker is enabled by default, disable if --no-docker is passed
+    build_args.docker = !cmd.no_docker;
 
     // Set provided options
     build_args.features = cmd.features;
