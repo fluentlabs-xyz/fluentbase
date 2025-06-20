@@ -32,7 +32,7 @@ jobs:
 
        steps:
            - name: Delete old package versions
-             uses: actions/delete-package-versions@v4
+             uses: actions/delete-package-versions@v5
              with:
                  package-name: ${{ env.PACKAGE_NAME }}
                  package-type: "container"
@@ -42,7 +42,7 @@ jobs:
                  token: ${{ secrets.GITHUB_TOKEN }}
 
            - name: Delete old untagged versions
-             uses: actions/delete-package-versions@v4
+             uses: actions/delete-package-versions@v5
              with:
                  package-name: ${{ env.PACKAGE_NAME }}
                  package-type: "container"
