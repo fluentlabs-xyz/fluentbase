@@ -187,7 +187,13 @@ impl StorageKind {
     /// Generates the key calculation logic for this storage type
     pub fn key_calculation(&self, args: &[StorageParam]) -> TokenStream2 {
         match self {
-            Self::Mapping(_) => Self::mapping_key_calculation(args),
+            Self::Mapping(_) => {
+                if args.len() > 1 {
+                    Self::mapping_key_calculation(args)
+                } else {
+                    Self::simple_mapping_key_calculation(&args[0])
+                }
+            }
             Self::Array(_) => Self::array_key_calculation(args),
             Self::Primitive(_) | Self::FixedBytesExtended(_, _) => {
                 Self::primitive_key_calculation()
@@ -222,6 +228,52 @@ impl StorageKind {
     }
 
     /// Generates key calculation for mapping types
+    fn simple_mapping_key_calculation(arg: &StorageParam) -> TokenStream2 {
+        let calculate_keys_fn = quote! {
+            fn calculate_keys<SDK: fluentbase_sdk::SharedAPI>(
+                sdk: &SDK,
+                slot: fluentbase_sdk::U256,
+                args: [fluentbase_sdk::U256; 1]
+            ) -> fluentbase_sdk::U256 {
+                Self::key_hash(sdk, slot, args[0])
+            }
+        };
+
+        let key_hash_fn = quote! {
+            fn key_hash<SDK: fluentbase_sdk::SharedAPI>(
+                sdk: &SDK,
+                slot: fluentbase_sdk::U256,
+                key: fluentbase_sdk::U256
+            ) -> fluentbase_sdk::U256 {
+                let mut raw_storage_key: [u8; 64] = [0; 64];
+                raw_storage_key[0..32].copy_from_slice(&key.to_be_bytes::<32>());
+                raw_storage_key[32..64].copy_from_slice(&slot.to_be_bytes::<32>());
+                use fluentbase_sdk::native_api::NativeAPI;
+                let storage_key = sdk.keccak256(&raw_storage_key[..]);
+                fluentbase_sdk::U256::from_be_bytes(storage_key.0)
+            }
+        };
+
+        let (ty, name) = (&arg.ty, &arg.name);
+
+        let key_fn = quote! {
+            fn key<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK, #name: #ty) -> fluentbase_sdk::U256 {
+                let key = fluentbase_sdk::U256::from_be_bytes({
+                    let mut buf: [u8; 32] = [0; 32];
+                    fluentbase_sdk::codec::SolidityABI::encode(#name, &mut buf, 0).unwrap();
+                    buf
+                });
+                Self::calculate_keys(sdk, Self::SLOT, [key])
+            }
+        };
+
+        quote! {
+            #calculate_keys_fn
+            #key_hash_fn
+            #key_fn
+        }
+    }
+
     fn mapping_key_calculation(args: &[StorageParam]) -> TokenStream2 {
         let arguments: Vec<TokenStream2> = args.iter().map(|arg| arg.to_token_stream()).collect();
         let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();

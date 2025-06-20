@@ -25,7 +25,7 @@ fn test_tuple_bytes_address_solidity() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -63,7 +63,7 @@ fn test_tuple_single_solidity() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -100,7 +100,7 @@ fn test_tuple_wasm() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    CompactABI::encode(&test_value, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -143,7 +143,7 @@ fn test_nested_tuple_static() {
         let point_expected = point_sol.abi_encode();
 
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&point_tuple, &mut buf, 0).unwrap();
+        SolidityABI::encode(&point_tuple, &mut buf).unwrap();
         let encoded = buf.freeze();
 
         assert_eq!(
@@ -163,7 +163,7 @@ fn test_nested_tuple_static() {
         let complex_point_expected = complex_point_sol.abi_encode();
 
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&complex_point_tuple, &mut buf, 0).unwrap();
+        SolidityABI::encode(&complex_point_tuple, &mut buf).unwrap();
         let encoded = buf.freeze();
 
         assert_eq!(
@@ -233,7 +233,7 @@ fn test_nested_tuple_dynamic() {
 
     {
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&small_tuple, &mut buf, 0).unwrap();
+        SolidityABI::encode(&small_tuple, &mut buf).unwrap();
         let small_encoded = buf.freeze();
 
         assert_eq!(
@@ -251,7 +251,7 @@ fn test_nested_tuple_dynamic() {
 
     {
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&nested_tuple, &mut buf, 0).unwrap();
+        SolidityABI::encode(&nested_tuple, &mut buf).unwrap();
         let encoded = buf.freeze();
 
         assert_eq!(
@@ -289,7 +289,7 @@ fn test_single_tuple_solidity() {
         let sol_dynamic_encoded = sol_dynamic_value.abi_encode();
 
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&dynamic_tuple, &mut buf, 0).unwrap();
+        SolidityABI::encode(&dynamic_tuple, &mut buf).unwrap();
         let dynamic_encoded = buf.freeze();
 
         assert_eq!(
@@ -323,7 +323,7 @@ fn test_single_tuple_solidity() {
         let sol_static_encoded = sol_static_value.abi_encode();
 
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&static_tuple, &mut buf, 0).unwrap();
+        SolidityABI::encode(&static_tuple, &mut buf).unwrap();
         let static_encoded = buf.freeze();
 
         assert_eq!(

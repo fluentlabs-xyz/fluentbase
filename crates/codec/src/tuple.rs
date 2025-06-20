@@ -4,7 +4,7 @@ use crate::{
     error::{CodecError, DecodingError},
 };
 use byteorder::ByteOrder;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 
 impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bool>
     Encoder<B, ALIGN, SOL_MODE, IS_STATIC> for ()
@@ -12,8 +12,8 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
     const HEADER_SIZE: usize = 0;
     const IS_DYNAMIC: bool = false;
 
-    fn encode(&self, _buf: &mut BytesMut, _offset: usize) -> Result<(), CodecError> {
-        Ok(())
+    fn encode(&self, _buf: &mut impl BufMut, offset: usize) -> Result<usize, CodecError> {
+        Ok(offset)
     }
 
     fn decode(_buf: &impl Buf, _offset: usize) -> Result<Self, CodecError> {
@@ -33,36 +33,21 @@ where
     const HEADER_SIZE: usize = align_up::<ALIGN>(T::HEADER_SIZE);
     const IS_DYNAMIC: bool = T::IS_DYNAMIC;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let mut current_offset = offset;
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        let offset_before = offset;
         let header_el_size = if SOL_MODE {
             align_up::<ALIGN>(32)
         } else {
             align_up::<ALIGN>(4)
         };
         if Self::IS_DYNAMIC {
-            let buf_len = buf.len();
-            let dynamic_offset = if buf_len == 0 {
-                header_el_size
-            } else {
-                buf_len
-            };
-            write_u32_aligned::<B, ALIGN>(buf, current_offset, dynamic_offset as u32);
-            current_offset += header_el_size;
-
-            let aligned_header_size = align_up::<ALIGN>(T::HEADER_SIZE);
-            if buf_len < current_offset + aligned_header_size {
-                buf.resize(current_offset + aligned_header_size, 0);
-            }
-            let mut tmp = buf.split_off(current_offset);
-
-            self.0.encode(&mut tmp, 0)?;
-            buf.unsplit(tmp);
+            let dynamic_offset = if offset == 0 { header_el_size } else { offset };
+            offset += write_u32_aligned::<B, ALIGN>(buf, dynamic_offset as u32);
+            offset += self.0.encode(buf, offset)?;
         } else {
-            self.0.encode(buf, current_offset)?;
+            offset += self.0.encode(buf, offset)?;
         }
-
-        Ok(())
+        Ok(offset - offset_before)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -72,7 +57,6 @@ where
         } else {
             &buf.chunk()[offset..]
         };
-
         Ok((T::decode(&chunk, 0)?,))
     }
 
@@ -112,100 +96,48 @@ macro_rules! impl_encoder_for_tuple {
                 is_dynamic
             };
 
-
-            fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+            fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+                let offset_before = offset;
                 assert!(is_power_of_two(ALIGN), "ALIGN must be a power of two");
-
 
                 if $is_solidity {
                     // Solidity mode
-                    let aligned_offset = align_up::<ALIGN>(offset);
-                    let is_dynamic = Self::IS_DYNAMIC;
-
-                    let aligned_header_size = {
-                        let mut size = 0;
-                        $(
-                            size += if $T::IS_DYNAMIC {
-                                align_up::<ALIGN>(4)
-                            } else {
-                                align_up::<ALIGN>($T::HEADER_SIZE)
-                            };
-                        )+
-                        size
+                    if Self::IS_DYNAMIC {
+                        let dynamic_offset = if offset == 0 { align_up::<ALIGN>(4) } else { offset };
+                        offset += write_u32_aligned::<B, ALIGN>(buf, dynamic_offset as u32);
                     };
 
-                    let mut tail = if is_dynamic {
-                        let buf_len = buf.len();
-                        let offset = if buf_len == 0 { align_up::<ALIGN>(4) } else { buf_len };
-                        write_u32_aligned::<B, ALIGN>(buf, aligned_offset, offset as u32);
-                        if buf.len() < aligned_header_size + offset {
-                            buf.resize(aligned_header_size + offset, 0);
-                        }
-                        buf.split_off(offset)
-                    } else {
-                        if buf.len() < aligned_offset + aligned_header_size {
-                            buf.resize(aligned_offset + aligned_header_size, 0);
-                        }
-                        buf.split_off(aligned_offset)
-                    };
-
-                    let mut tail_offset = 0;
                     $(
                         if $T::IS_DYNAMIC {
-                            self.$idx.encode(&mut tail, tail_offset)?;
-                            tail_offset += align_up::<ALIGN>(4);
+                            offset += self.$idx.encode(buf, offset)?;
                         } else {
-                            self.$idx.encode(&mut tail, tail_offset)?;
-                            tail_offset += align_up::<ALIGN>($T::HEADER_SIZE);
+                            offset += self.$idx.encode(buf, offset)?;
                         }
                     )+
-
-                    buf.unsplit(tail);
                 } else {
                     // WASM mode
                     let mut current_offset = offset;
                     let header_el_size = align_up::<ALIGN>(4);
 
                     if Self::IS_DYNAMIC {
-                        let buf_len = buf.len();
-                        let dynamic_offset = if buf_len == 0 {
+                        let dynamic_offset = if offset == 0 {
                             header_el_size
                         } else {
-                            buf_len
+                            offset
                         };
-                        write_u32_aligned::<B, ALIGN>(buf, current_offset, dynamic_offset as u32);
-                        current_offset += header_el_size;
+                        offset += write_u32_aligned::<B, ALIGN>(buf, dynamic_offset as u32);
 
-                        let aligned_header_size = {
-                            let mut size = 0;
-                            $(
-                                size += align_up::<ALIGN>($T::HEADER_SIZE);
-                            )+
-                            size
-                        };
-
-                        if buf_len < current_offset + aligned_header_size {
-                            buf.resize(current_offset + aligned_header_size, 0);
-                        }
-                        let mut tmp = buf.split_off(current_offset);
-
-                        let mut current_tmp_offset = 0;
                         $(
-                            self.$idx.encode(&mut tmp, current_tmp_offset)?;
-                            current_tmp_offset += align_up::<ALIGN>($T::HEADER_SIZE);
+                            offset += self.$idx.encode(buf, offset)?;
                         )+
-
-                        buf.unsplit(tmp);
                     } else {
-                        let mut current_field_offset = current_offset;
                         $(
-                            self.$idx.encode(buf, current_field_offset)?;
-                            current_field_offset += align_up::<ALIGN>($T::HEADER_SIZE);
+                            offset += self.$idx.encode(buf, offset)?;
                         )+
                     }
                 }
 
-                Ok(())
+                Ok(offset - offset_before)
             }
 
             fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -282,7 +214,7 @@ mod tests {
         let t = ();
         let mut buf = BytesMut::new();
 
-        CompactABI::encode(&t, &mut buf, 0).unwrap();
+        CompactABI::encode(&t, &mut buf).unwrap();
         let encoded = buf.freeze();
         assert_eq!(hex::encode(&encoded), "");
         let decoded: () = CompactABI::decode(&encoded, 0).unwrap();
@@ -293,7 +225,7 @@ mod tests {
     fn test_single_element_tuple() {
         let original: (u32,) = (100u32,);
         let mut buf = BytesMut::new();
-        CompactABI::encode(&original, &mut buf, 0).unwrap();
+        CompactABI::encode(&original, &mut buf).unwrap();
 
         let encoded = buf.freeze();
         assert_eq!(hex::encode(&encoded), "64000000");
@@ -307,7 +239,7 @@ mod tests {
         type Tuple = (u32, u16);
         let original: Tuple = (100u32, 20u16);
         let mut buf = BytesMut::new();
-        CompactABI::encode(&original, &mut buf, 0).unwrap();
+        CompactABI::encode(&original, &mut buf).unwrap();
 
         let encoded = buf.freeze();
         println!("{:?}", encoded);
@@ -322,7 +254,7 @@ mod tests {
         type Tuple = (u32, u16, u8, u64, u32, u16, u8, u64);
         let original: Tuple = (100u32, 20u16, 30u8, 40u64, 50u32, 60u16, 70u8, 80u64);
         let mut buf = BytesMut::new();
-        CompactABI::encode(&original, &mut buf, 0).unwrap();
+        CompactABI::encode(&original, &mut buf).unwrap();
 
         let encoded = buf.freeze();
         println!("{:?}", hex::encode(&encoded));
@@ -346,7 +278,7 @@ mod tests {
         let original: TestTuple = (contract_address, value, gas_limit, msg);
 
         let mut buf = BytesMut::new();
-        CompactABI::encode(&original, &mut buf, 0).unwrap();
+        CompactABI::encode(&original, &mut buf).unwrap();
 
         let encoded = buf.freeze();
         println!("Encoded: {}", hex::encode(&encoded));

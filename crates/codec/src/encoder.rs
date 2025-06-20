@@ -1,6 +1,6 @@
 use crate::{alloc::string::ToString, error::CodecError};
 use byteorder::{ByteOrder, BE, LE};
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use core::marker::PhantomData;
 
 // TODO: @d1r1 Investigate whether decoding the result into an uninitialized memory (e.g., using
@@ -31,8 +31,8 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const 
     /// * `offset` - The starting offset in the buffer for encoding.
     ///
     /// # Returns
-    /// `Ok(())` if encoding was successful, or an error if encoding failed.
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError>;
+    /// `Ok(usize)` the new offset if encoding was successful, or an error if encoding failed.
+    fn encode(&self, buf: &mut impl BufMut, offset: usize) -> Result<usize, CodecError>;
 
     /// Decodes a value from the given buffer starting at the specified offset.
     ///
@@ -62,6 +62,7 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const 
         align_up::<ALIGN>(Self::HEADER_SIZE)
     }
 }
+
 macro_rules! define_encoder_mode {
     ($name:ident, $byte_order:ty, $align:expr, $sol_mode:expr) => {
         pub struct $name<T>(PhantomData<T>);
@@ -74,8 +75,8 @@ macro_rules! define_encoder_mode {
                 <T as Encoder<$byte_order, $align, $sol_mode, false>>::IS_DYNAMIC
             }
 
-            pub fn encode(value: &T, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-                value.encode(buf, offset)
+            pub fn encode(value: &T, buf: &mut impl BufMut) -> Result<usize, CodecError> {
+                value.encode(buf, 0)
             }
 
             pub fn decode(buf: &impl Buf, offset: usize) -> Result<T, CodecError> {
@@ -105,8 +106,8 @@ macro_rules! define_encoder_mode {
                 T::IS_DYNAMIC
             }
 
-            pub fn encode(value: &T, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-                value.encode(buf, offset)
+            pub fn encode(value: &T, buf: &mut impl BufMut) -> Result<usize, CodecError> {
+                value.encode(buf, 0)
             }
 
             pub fn decode(buf: &impl Buf, offset: usize) -> Result<T, CodecError> {
@@ -175,22 +176,20 @@ pub fn is_dynamic<
 }
 
 pub fn write_u32_aligned<B: ByteOrder, const ALIGN: usize>(
-    buf: &mut BytesMut,
-    offset: usize,
+    buf: &mut impl BufMut,
     value: u32,
-) {
+) -> usize {
     let aligned_value_size = align_up::<ALIGN>(4);
-
-    ensure_buf_size(buf, offset + aligned_value_size);
-
     if is_big_endian::<B>() {
         // For big-endian, copy to the end of the aligned array
-        let start = offset + aligned_value_size - 4;
-        B::write_u32(&mut buf[start..], value);
+        buf.put_bytes(0, aligned_value_size - 4);
+        buf.put_u32(value);
     } else {
         // For little-endian, copy to the start of the aligned array
-        B::write_u32(&mut buf[offset..offset + 4], value);
+        buf.put_u32_le(value);
+        buf.put_bytes(0, aligned_value_size - 4);
     }
+    aligned_value_size
 }
 
 pub fn read_u32_aligned<B: ByteOrder, const ALIGN: usize>(
@@ -224,28 +223,21 @@ pub fn read_u32_aligned<B: ByteOrder, const ALIGN: usize>(
     }
 }
 
-/// Returns a mutable slice of the buffer at the specified offset, aligned to the specified
-/// alignment. This slice is guaranteed to be large enough to hold the value of value_size.
-pub(crate) fn get_aligned_slice<B: ByteOrder, const ALIGN: usize>(
-    buf: &mut BytesMut,
-    offset: usize,
-    value_size: usize,
-) -> &mut [u8] {
-    let aligned_offset = align_up::<ALIGN>(offset);
-    let word_size = align_up::<ALIGN>(ALIGN.max(value_size));
-
-    // Ensure the buffer is large enough
-    ensure_buf_size(buf, aligned_offset + word_size);
-
-    let write_offset = if is_big_endian::<B>() {
+pub(crate) fn write_aligned_slice<B: ByteOrder, const ALIGN: usize>(
+    buf: &mut impl BufMut,
+    value: &[u8],
+) -> usize {
+    let padded_bytes = value.len() % ALIGN;
+    if is_big_endian::<B>() {
         // For big-endian, return slice at the end of the aligned space
-        aligned_offset + word_size - value_size
+        buf.put_bytes(0, padded_bytes);
+        buf.put_slice(value);
     } else {
         // For little-endian, return slice at the beginning of the aligned space
-        aligned_offset
+        buf.put_slice(value);
+        buf.put_bytes(0, padded_bytes);
     };
-
-    &mut buf[write_offset..write_offset + value_size]
+    value.len() + padded_bytes
 }
 
 pub(crate) fn get_aligned_indices<B: ByteOrder, const ALIGN: usize>(
@@ -264,11 +256,4 @@ pub(crate) fn get_aligned_indices<B: ByteOrder, const ALIGN: usize>(
     };
 
     (write_offset, write_offset + value_size)
-}
-
-/// Ensure the buffer is large enough to hold the data
-pub fn ensure_buf_size(buf: &mut BytesMut, required_size: usize) {
-    if buf.len() < required_size {
-        buf.resize(required_size, 0);
-    }
 }

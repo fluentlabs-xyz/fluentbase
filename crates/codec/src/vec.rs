@@ -6,7 +6,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 use byteorder::ByteOrder;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 
 /// We encode dynamic arrays as following:
 /// - header
@@ -28,43 +28,21 @@ impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for Ve
 where
     T: Default + Sized + Encoder<B, ALIGN, false, false> + alloc::fmt::Debug,
 {
-    const HEADER_SIZE: usize = core::mem::size_of::<u32>() * 3;
+    const HEADER_SIZE: usize = size_of::<u32>() * 3;
     const IS_DYNAMIC: bool = true;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        let original_offset = offset;
         let aligned_elem_size = align_up::<ALIGN>(4);
         let aligned_header_size = aligned_elem_size * 3;
-
-        // Ensure buffer can store header
-        if buf.len() < offset + aligned_header_size {
-            buf.resize(offset + aligned_header_size, 0);
-        }
-
         // Write length of the vector
-        write_u32_aligned::<B, ALIGN>(buf, offset, self.len() as u32);
-
-        if self.is_empty() {
-            // Write offset and size for empty vector
-            write_u32_aligned::<B, ALIGN>(
-                buf,
-                offset + aligned_elem_size,
-                aligned_header_size as u32,
-            );
-            write_u32_aligned::<B, ALIGN>(buf, offset + aligned_elem_size * 2, 0);
-            return Ok(());
-        }
-
+        offset += write_u32_aligned::<B, ALIGN>(buf, self.len() as u32);
+        offset += write_u32_aligned::<B, ALIGN>(buf, 0);
         // Encode values
-        let mut value_encoder = BytesMut::zeroed(ALIGN.max(T::HEADER_SIZE) * self.len());
-        for (index, obj) in self.iter().enumerate() {
-            let elem_offset = ALIGN.max(T::HEADER_SIZE) * index;
-            obj.encode(&mut value_encoder, elem_offset)?;
+        for obj in self.iter() {
+            offset += Encoder::<B, ALIGN, false, false>::encode(obj, buf, offset)?;
         }
-
-        let data = value_encoder.freeze();
-        write_bytes_wasm::<B, ALIGN>(buf, offset + aligned_elem_size, &data);
-
-        Ok(())
+        Ok(offset - original_offset)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -108,32 +86,16 @@ where
     const HEADER_SIZE: usize = 32;
     const IS_DYNAMIC: bool = true;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        // Ensure buffer can store header
-        if buf.len() < offset + Self::HEADER_SIZE {
-            buf.resize(offset + Self::HEADER_SIZE, 0);
-        }
-
-        // Write offset
-        write_u32_aligned::<B, ALIGN>(buf, offset, buf.len() as u32);
-
-        if self.is_empty() {
-            // Write length for empty vector
-            write_u32_aligned::<B, ALIGN>(buf, buf.len(), 0);
-            return Ok(());
-        }
-
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        let offset_before = offset;
+        // Write offset and len
+        offset += write_u32_aligned::<B, ALIGN>(buf, offset as u32);
+        offset += write_u32_aligned::<B, ALIGN>(buf, self.len() as u32);
         // Encode values
-        let mut value_encoder = BytesMut::zeroed(32 * self.len());
-        for (index, obj) in self.iter().enumerate() {
-            let elem_offset = ALIGN.max(T::HEADER_SIZE) * index;
-            obj.encode(&mut value_encoder, elem_offset)?;
+        for obj in self.iter() {
+            offset += obj.encode(buf, offset)?;
         }
-
-        let data = value_encoder.freeze();
-        write_bytes_solidity::<B, ALIGN>(buf, offset + Self::HEADER_SIZE, &data, self.len() as u32);
-
-        Ok(())
+        Ok(offset - offset_before)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {

@@ -2864,7 +2864,6 @@ dependencies = [
  "fluentbase-genesis",
  "fluentbase-runtime",
  "fluentbase-sdk",
- "fluentbase-types",
  "hashbrown 0.15.4",
  "hex",
  "revm",

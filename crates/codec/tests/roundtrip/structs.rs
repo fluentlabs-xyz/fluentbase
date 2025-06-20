@@ -39,7 +39,7 @@ fn test_struct_wasm() {
 
     // Encode using CompactABI
     let mut buf = BytesMut::new();
-    CompactABI::encode(&test_struct, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_struct, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     // Verify encoding matches reference data
@@ -100,7 +100,7 @@ fn test_complex_struct_solidity_packed() {
 
     let mut buf = BytesMut::new();
 
-    SolidityPackedABI::encode(&original, &mut buf, 0).unwrap();
+    SolidityPackedABI::encode(&original, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(expected_encoded, hex::encode(&encoded));
@@ -129,7 +129,7 @@ mod solidity {
         };
 
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&test_struct, &mut buf, 0).unwrap();
+        SolidityABI::encode(&test_struct, &mut buf).unwrap();
         let encoded = buf.freeze();
 
         assert_eq!(expected_encoded, encoded.to_vec());
@@ -172,7 +172,7 @@ mod solidity {
 
         // Perform encoding using SolidityABI
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&test_struct, &mut buf, 0).unwrap();
+        SolidityABI::encode(&test_struct, &mut buf).unwrap();
         let encoded = buf.freeze();
 
         // Verify encoding matches Solidity reference
@@ -258,7 +258,7 @@ mod solidity {
         let sol_small_encoded = sol_small_value.abi_encode();
 
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&small_value, &mut buf, 0).unwrap();
+        SolidityABI::encode(&small_value, &mut buf).unwrap();
         let small_encoded = buf.freeze();
 
         assert_eq!(
@@ -269,7 +269,7 @@ mod solidity {
 
         // Encode struct using SolidityABI
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&nested_value, &mut buf, 0).unwrap();
+        SolidityABI::encode(&nested_value, &mut buf).unwrap();
         let encoded = buf.freeze();
 
         // Verify encoding matches Solidity reference
@@ -346,7 +346,7 @@ mod solidity {
         // Simple test case - check if point is encoded correctly
         {
             let mut buf = BytesMut::new();
-            SolidityABI::encode(&point, &mut buf, 0).unwrap();
+            SolidityABI::encode(&point, &mut buf).unwrap();
             let encoded = buf.freeze();
             assert_eq!(
                 hex::encode(&point_expected),
@@ -422,7 +422,7 @@ mod solidity {
 
         let mut buf = BytesMut::new();
 
-        SolidityABI::encode(&original, &mut buf, 0).unwrap();
+        SolidityABI::encode(&original, &mut buf).unwrap();
         let encoded = buf.freeze();
 
         assert_eq!(expected_encoded, hex::encode(&encoded));

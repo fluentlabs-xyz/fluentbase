@@ -44,7 +44,7 @@ where
     fn set(sdk: &mut SDK, key: U256, value: T) {
         let buffer_size = value.size_hint();
         let mut encoded_buffer = BytesMut::with_capacity(buffer_size);
-        SolidityABI::<T>::encode(&value, &mut encoded_buffer, 0).expect("Encoding failed");
+        SolidityABI::<T>::encode(&value, &mut encoded_buffer).expect("Encoding failed");
 
         let chunk_size = 32;
         let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
@@ -88,7 +88,7 @@ where
     fn set(sdk: &mut SDK, key: U256, value: T) {
         let buffer_size = value.size_hint();
         let mut encoded_buffer = BytesMut::with_capacity(buffer_size);
-        CompactABI::<T>::encode(&value, &mut encoded_buffer, 0)
+        CompactABI::<T>::encode(&value, &mut encoded_buffer)
             .unwrap_or_else(|_| unreachable!("ABI encoding failure"));
 
         let chunk_size = 32;

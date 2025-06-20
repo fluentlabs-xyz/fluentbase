@@ -5,7 +5,7 @@ use crate::{
 };
 use alloc::{format, string::ToString, vec::Vec};
 use byteorder::ByteOrder;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use core::{fmt::Debug, hash::Hash};
 use hashbrown::{HashMap, HashSet};
 
@@ -18,48 +18,22 @@ where
     const HEADER_SIZE: usize = 4 + 8 + 8; // length + keys_header + values_header
     const IS_DYNAMIC: bool = true;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let aligned_header_el_size = align_up::<ALIGN>(4);
-        let aligned_header_size = align_up::<ALIGN>(Self::HEADER_SIZE);
-
-        // Ensure buf is large enough for the header
-        if buf.len() < offset + aligned_header_size {
-            buf.resize(offset + aligned_header_size, 0);
-        }
-
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        let offset_before = offset;
         // Write map size
-        write_u32_aligned::<B, ALIGN>(buf, offset, self.len() as u32);
-
-        // Make sure keys & values are sorted
+        offset += write_u32_aligned::<B, ALIGN>(buf, self.len() as u32);
+        // Make sure keys and values are sorted
         let mut entries: Vec<_> = self.iter().collect();
         entries.sort_by(|a, b| a.0.cmp(b.0));
-
         // Encode and write keys
-        let mut key_buf = BytesMut::zeroed(align_up::<ALIGN>(K::HEADER_SIZE) * self.len());
-
-        for (i, (key, _)) in entries.iter().enumerate() {
-            let key_offset = align_up::<ALIGN>(K::HEADER_SIZE) * i;
-            key.encode(&mut key_buf, key_offset)?;
+        for (key, _) in entries.iter() {
+            offset += key.encode(buf, offset)?;
         }
-
-        // write keys header and keys data
-        write_bytes::<B, ALIGN, false>(
-            buf,
-            offset + aligned_header_el_size,
-            &key_buf,
-            entries.len() as u32,
-        );
-
         // Encode and write values
-        let mut value_buf = BytesMut::zeroed(align_up::<ALIGN>(V::HEADER_SIZE) * self.len());
-        for (i, (_, value)) in entries.iter().enumerate() {
-            let value_offset = align_up::<ALIGN>(V::HEADER_SIZE) * i;
-            value.encode(&mut value_buf, value_offset)?;
+        for (_, value) in entries.iter() {
+            offset += value.encode(buf, offset)?;
         }
-
-        write_bytes_wasm::<B, ALIGN>(buf, offset + aligned_header_el_size * 3, &value_buf);
-
-        Ok(())
+        Ok(offset - offset_before)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -137,50 +111,22 @@ where
 
     const IS_DYNAMIC: bool = true;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        // Ensure buf is large enough for the header
-        if buf.len() < offset + Self::HEADER_SIZE {
-            buf.resize(offset + Self::HEADER_SIZE, 0);
-        }
-
-        // Write offset size
-        write_u32_aligned::<B, ALIGN>(buf, offset, 32_u32);
-
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        let offset_before = offset;
         // Write map size
-        write_u32_aligned::<B, ALIGN>(buf, offset + 32, self.len() as u32);
-
-        // Make sure keys & values are sorted
+        offset += write_u32_aligned::<B, ALIGN>(buf, self.len() as u32);
+        // Make sure keys and values are sorted
         let mut entries: Vec<_> = self.iter().collect();
         entries.sort_by(|a, b| a.0.cmp(b.0));
-
         // Encode and write keys
-        let mut key_buf = BytesMut::zeroed(align_up::<ALIGN>(K::HEADER_SIZE) * self.len());
-
-        for (i, (key, _)) in entries.iter().enumerate() {
-            let key_offset = align_up::<ALIGN>(K::HEADER_SIZE) * i;
-            key.encode(&mut key_buf, key_offset)?;
+        for (key, _) in entries.iter() {
+            offset += key.encode(buf, offset)?;
         }
-        let relative_key_offset = buf.len() - offset - 64;
-        // Write key offset
-        write_u32_aligned::<B, ALIGN>(buf, offset + 64, relative_key_offset as u32);
-
-        // write key header and keys data to the buf
-        write_bytes_solidity::<B, ALIGN>(buf, offset + 64, &key_buf, entries.len() as u32);
-
-        // Write values offset
-        let relative_value_offset = buf.len() - offset - 96;
-        write_u32_aligned::<B, ALIGN>(buf, offset + 96, relative_value_offset as u32);
-
         // Encode and write values
-        let mut value_buf = BytesMut::zeroed(align_up::<ALIGN>(V::HEADER_SIZE) * self.len());
-        for (i, (_, value)) in entries.iter().enumerate() {
-            let value_offset = align_up::<ALIGN>(V::HEADER_SIZE) * i;
-            value.encode(&mut value_buf, value_offset)?;
+        for (_, value) in entries.iter() {
+            offset += value.encode(buf, offset)?;
         }
-
-        write_bytes_solidity::<B, ALIGN>(buf, buf.len(), &value_buf, entries.len() as u32);
-
-        Ok(())
+        Ok(offset - offset_before)
     }
 
     // current solidity decode nested map
@@ -280,39 +226,18 @@ where
     const HEADER_SIZE: usize = 4 + 8; // length + data_header
     const IS_DYNAMIC: bool = true;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let aligned_offset = align_up::<ALIGN>(offset);
-        let aligned_header_el_size = align_up::<ALIGN>(4);
-        let aligned_header_size = align_up::<ALIGN>(Self::HEADER_SIZE);
-
-        // Ensure buf is large enough for the header
-        if buf.len() < aligned_offset + aligned_header_size {
-            buf.resize(aligned_offset + aligned_header_size, 0);
-        }
-
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        let offset_before = offset;
         // Write set size
-        write_u32_aligned::<B, ALIGN>(buf, aligned_offset, self.len() as u32);
-
+        write_u32_aligned::<B, ALIGN>(buf, self.len() as u32);
         // Make sure a set is sorted
         let mut entries: Vec<_> = self.iter().collect();
         entries.sort();
-
         // Encode values
-        let mut value_buf = BytesMut::zeroed(align_up::<ALIGN>(T::HEADER_SIZE) * self.len());
-        for (i, value) in entries.iter().enumerate() {
-            let value_offset = align_up::<ALIGN>(T::HEADER_SIZE) * i;
-            value.encode(&mut value_buf, value_offset)?;
+        for value in entries {
+            offset += value.encode(buf, offset)?;
         }
-
-        // Write values
-        write_bytes::<B, ALIGN, false>(
-            buf,
-            aligned_offset + aligned_header_el_size,
-            &value_buf,
-            entries.len() as u32,
-        );
-
-        Ok(())
+        Ok(offset - offset_before)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -379,39 +304,19 @@ where
 {
     const HEADER_SIZE: usize = 32 + 32 + 32; // offset + length + data_header
     const IS_DYNAMIC: bool = true;
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let aligned_offset = align_up::<ALIGN>(offset);
 
-        // Ensure buf is large enough for the header
-        if buf.len() < aligned_offset + Self::HEADER_SIZE {
-            buf.resize(aligned_offset + Self::HEADER_SIZE, 0);
-        }
-
-        // Write offset size
-        write_u32_aligned::<B, ALIGN>(buf, aligned_offset, 32_u32);
-
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        let offset_before = offset;
         // Write set size
-        write_u32_aligned::<B, ALIGN>(buf, aligned_offset + 32, self.len() as u32);
-
-        // Make sure set is sorted
+        write_u32_aligned::<B, ALIGN>(buf, self.len() as u32);
+        // Make sure a set is sorted
         let mut entries: Vec<_> = self.iter().collect();
         entries.sort();
-
         // Encode values
-        let mut value_buf = BytesMut::zeroed(align_up::<ALIGN>(T::HEADER_SIZE) * self.len());
-        for (i, value) in entries.iter().enumerate() {
-            let value_offset = align_up::<ALIGN>(T::HEADER_SIZE) * i;
-            value.encode(&mut value_buf, value_offset)?;
+        for value in entries {
+            offset += value.encode(buf, offset)?;
         }
-
-        // Write data offset
-        let relative_data_offset = buf.len() - aligned_offset - 64;
-        write_u32_aligned::<B, ALIGN>(buf, aligned_offset + 64, relative_data_offset as u32);
-
-        // Write values
-        write_bytes_solidity::<B, ALIGN>(buf, buf.len(), &value_buf, entries.len() as u32);
-
-        Ok(())
+        Ok(offset - offset_before)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -515,7 +420,7 @@ mod tests {
         values.insert(1000, HashMap::from([(7, 8), (9, 4)]));
 
         let mut buf = BytesMut::new();
-        CompactABI::encode(&values, &mut buf, 0).unwrap();
+        CompactABI::encode(&values, &mut buf).unwrap();
 
         let encoded = buf.freeze();
         let expected_encoded = "03000000140000000c000000200000005c0000000300000064000000e8030000000000003c000000000000003c00000000000000020000003c000000080000004400000008000000020000004c0000000800000054000000080000000100000003000000020000000400000007000000090000000800000004000000";
@@ -541,7 +446,7 @@ mod tests {
         ];
 
         let mut buf = BytesMut::new();
-        CompactABI::encode(&values, &mut buf, 0).unwrap();
+        CompactABI::encode(&values, &mut buf).unwrap();
 
         let result = buf.freeze();
         println!("{}", hex::encode(&result));
@@ -562,7 +467,7 @@ mod tests {
         values.insert(vec![0, 1, 6], vec![3, 4, 5]);
         let mut buf = BytesMut::new();
 
-        CompactABI::encode(&values, &mut buf, 0).unwrap();
+        CompactABI::encode(&values, &mut buf).unwrap();
         let encoded = buf.freeze();
 
         // Note: The expected encoded string might need to be updated based on the new encoding
@@ -579,7 +484,7 @@ mod tests {
         let values = HashSet::from([1, 2, 3]);
         let mut buf = BytesMut::new();
 
-        CompactABI::encode(&values, &mut buf, 0).unwrap();
+        CompactABI::encode(&values, &mut buf).unwrap();
         let encoded = buf.freeze();
 
         println!("{}", hex::encode(&encoded));
@@ -595,12 +500,12 @@ mod tests {
         let values1 = HashSet::from([1, 2, 3, 4, 5, 6, 7, 8, 9]);
         let mut buf1 = BytesMut::new();
 
-        CompactABI::encode(&values1, &mut buf1, 0).unwrap();
+        CompactABI::encode(&values1, &mut buf1).unwrap();
 
         let values2 = HashSet::from([8, 3, 2, 4, 5, 9, 7, 1, 6]);
         let mut buf2 = BytesMut::new();
 
-        CompactABI::encode(&values2, &mut buf2, 0).unwrap();
+        CompactABI::encode(&values2, &mut buf2).unwrap();
 
         assert_eq!(&buf1.chunk(), &buf2.chunk());
     }
@@ -609,7 +514,7 @@ mod tests {
     fn test_set_solidity() {
         let values = HashSet::from([1, 2, 3]);
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&values, &mut buf, 0).unwrap();
+        SolidityABI::encode(&values, &mut buf).unwrap();
         let encoded = buf.freeze();
         print_bytes::<BE, 32>(&encoded);
 
@@ -623,12 +528,12 @@ mod tests {
         let values1 = HashSet::from([1, 2, 3, 4, 5, 6, 7, 8, 9]);
         let mut buf1 = BytesMut::new();
 
-        SolidityABI::encode(&values1, &mut buf1, 0).unwrap();
+        SolidityABI::encode(&values1, &mut buf1).unwrap();
 
         let values2 = HashSet::from([8, 3, 2, 4, 5, 9, 7, 1, 6]);
         let mut buf2 = BytesMut::new();
 
-        SolidityABI::encode(&values2, &mut buf2, 0).unwrap();
+        SolidityABI::encode(&values2, &mut buf2).unwrap();
 
         assert_eq!(
             &buf1.chunk(),

@@ -1,13 +1,13 @@
 use crate::{
     alloc::string::ToString,
     bytes_codec::{read_bytes, read_bytes_header, write_bytes},
-    encoder::{align_up, get_aligned_slice, is_big_endian, write_u32_aligned, Encoder},
+    encoder::{align_up, is_big_endian, write_aligned_slice, write_u32_aligned, Encoder},
     error::{CodecError, DecodingError},
 };
 use alloc::string::String;
 use alloy_primitives::{Address, Bytes, FixedBytes, Signed, Uint};
 use byteorder::ByteOrder;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 
 impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for Bytes {
     const HEADER_SIZE: usize = 32;
@@ -16,28 +16,18 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for Bytes 
     /// Encode the bytes into the buffer for Solidity mode.
     /// First, we encode the header and write it to the given offset.
     /// After that, we encode the actual data and write it to the end of the buffer.
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let aligned_header_size =
-            align_up::<32>(<Self as Encoder<B, ALIGN, true, false>>::HEADER_SIZE);
-
-        // Ensure the buffer has enough space for the offset + header size
-        if buf.len() < offset + aligned_header_size {
-            buf.resize(offset + aligned_header_size, 0);
-        }
-
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
         // Write the offset of the data (current length of the buffer)
-        write_u32_aligned::<B, ALIGN>(buf, offset, buf.len() as u32);
-
+        offset += write_u32_aligned::<B, ALIGN>(buf, offset as u32);
         // Write the actual data to the buffer at the current length
-        let _ = write_bytes::<B, ALIGN, true>(buf, buf.len(), self, self.len() as u32);
-
+        offset += write_bytes::<B, ALIGN, true>(buf, offset + ALIGN, self, self.len() as u32);
         // Add padding if necessary to ensure the buffer remains aligned
-        if buf.len() % ALIGN != 0 {
-            let padding = ALIGN - (buf.len() % ALIGN);
-            buf.resize(buf.len() + padding, 0);
+        let unpadded_bytes = self.len() % ALIGN;
+        if unpadded_bytes != 0 {
+            buf.put_bytes(0, ALIGN - unpadded_bytes);
+            offset += ALIGN - unpadded_bytes;
         }
-
-        Ok(())
+        Ok(offset)
     }
 
     /// Decode the bytes from the buffer for Solidity mode.
@@ -60,23 +50,15 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for Bytes
     /// Encode the bytes into the buffer.
     /// First, we encode the header and write it to the given offset.
     /// After that, we encode the actual data and write it to the end of the buffer.
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let aligned_el_size = align_up::<ALIGN>(4);
-
-        // Ensure the buffer has enough space for the offset and header size
-        if buf.len() < offset + aligned_el_size {
-            buf.resize(offset + aligned_el_size, 0);
-        }
-
-        let _ = write_bytes::<B, ALIGN, false>(buf, offset, self, self.len() as u32);
-
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        offset += write_bytes::<B, ALIGN, false>(buf, offset, self, self.len() as u32);
         // Add padding if necessary to ensure the buffer remains aligned
-        if buf.len() % ALIGN != 0 {
-            let padding = ALIGN - (buf.len() % ALIGN);
-            buf.resize(buf.len() + padding, 0);
+        let unpadded_bytes = self.len() % ALIGN;
+        if unpadded_bytes != 0 {
+            buf.put_bytes(0, ALIGN - unpadded_bytes);
+            offset += ALIGN - unpadded_bytes;
         }
-
-        Ok(())
+        Ok(offset)
     }
 
     /// Decode the bytes from the buffer.
@@ -96,7 +78,7 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for String
     const HEADER_SIZE: usize = <Bytes as Encoder<B, ALIGN, true, false>>::HEADER_SIZE;
     const IS_DYNAMIC: bool = true;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+    fn encode(&self, buf: &mut impl BufMut, offset: usize) -> Result<usize, CodecError> {
         <Bytes as Encoder<B, ALIGN, true, false>>::encode(
             &Bytes::copy_from_slice(self.as_bytes()),
             buf,
@@ -122,7 +104,7 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for Strin
     const HEADER_SIZE: usize = <Bytes as Encoder<B, ALIGN, false, false>>::HEADER_SIZE;
     const IS_DYNAMIC: bool = true;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+    fn encode(&self, buf: &mut impl BufMut, offset: usize) -> Result<usize, CodecError> {
         <Bytes as Encoder<B, ALIGN, false, false>>::encode(
             &Bytes::copy_from_slice(self.as_bytes()),
             buf,
@@ -152,10 +134,9 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
 
     /// Encode the fixed bytes into the buffer.
     /// Writes the fixed bytes directly to the buffer at the given offset.
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let slice = get_aligned_slice::<B, ALIGN>(buf, offset, N);
-        slice.copy_from_slice(self.as_ref());
-        Ok(())
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        offset += write_aligned_slice::<B, N>(buf, &self.0);
+        Ok(offset)
     }
 
     /// Decode the fixed bytes from the buffer.
@@ -183,17 +164,14 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
 impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     Encoder<B, ALIGN, true, IS_STATIC> for FixedBytes<N>
 {
-    const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
+    const HEADER_SIZE: usize = N; // Always 32 bytes for Solidity ABI
     const IS_DYNAMIC: bool = false;
 
     /// Encode the fixed bytes into the buffer for Solidity mode.
     /// Writes the fixed bytes directly to the buffer at the given offset, zero-padding to 32 bytes.
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let slice = get_aligned_slice::<B, 32>(buf, offset, 32);
-        slice[..N].copy_from_slice(self.as_ref());
-        // Zero-pad the rest
-        slice[N..].fill(0);
-        Ok(())
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        offset += write_aligned_slice::<B, N>(buf, &self.0);
+        Ok(offset)
     }
 
     /// Decode the fixed bytes from the buffer for Solidity mode.
@@ -229,10 +207,13 @@ macro_rules! impl_evm_fixed {
 
             /// Encode the fixed bytes into the buffer.
             /// Writes the fixed bytes directly to the buffer at the given offset.
-            fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-                let slice = get_aligned_slice::<B, ALIGN>(buf, offset, <$type>::len_bytes());
-                slice.copy_from_slice(self.as_ref());
-                Ok(())
+            fn encode(
+                &self,
+                buf: &mut impl BufMut,
+                mut offset: usize,
+            ) -> Result<usize, CodecError> {
+                offset += write_aligned_slice::<B, ALIGN>(buf, self.as_slice());
+                Ok(offset)
             }
 
             /// Decode the fixed bytes from the buffer.
@@ -269,14 +250,13 @@ macro_rules! impl_evm_fixed {
             /// Encode the fixed bytes into the buffer for Solidity mode.
             /// Writes the fixed bytes directly to the buffer at the given offset, zero-padding to
             /// 32 bytes.
-            fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-                let slice = get_aligned_slice::<B, 32>(buf, offset, 32);
-                let size = <$type>::len_bytes();
-                // Zero-pad the beginning
-                slice[..32 - size].fill(0);
-                // Copy the address bytes to the end
-                slice[32 - size..].copy_from_slice(self.as_ref());
-                Ok(())
+            fn encode(
+                &self,
+                buf: &mut impl BufMut,
+                mut offset: usize,
+            ) -> Result<usize, CodecError> {
+                offset += write_aligned_slice::<B, ALIGN>(buf, self.as_slice());
+                Ok(offset)
             }
 
             /// Decode the fixed bytes from the buffer for Solidity mode.
@@ -320,20 +300,14 @@ impl<
     const HEADER_SIZE: usize = Self::BYTES;
     const IS_DYNAMIC: bool = false;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let word_size = align_up::<ALIGN>(Self::BYTES);
-
-        let slice = get_aligned_slice::<B, ALIGN>(buf, offset, word_size);
-
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
         let bytes = if is_big_endian::<B>() {
-            self.to_be_bytes_vec()
+            self.to_be_bytes::<32>()
         } else {
-            self.to_le_bytes_vec()
+            self.to_le_bytes::<32>()
         };
-
-        slice[..Self::BYTES].copy_from_slice(&bytes);
-
-        Ok(())
+        offset += write_aligned_slice::<B, ALIGN>(buf, &bytes);
+        Ok(offset)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -376,20 +350,14 @@ impl<
     const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
     const IS_DYNAMIC: bool = false;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let slice = get_aligned_slice::<B, 32>(buf, offset, 32);
-
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
         let bytes = if is_big_endian::<B>() {
-            self.to_be_bytes_vec()
+            self.to_be_bytes::<32>()
         } else {
-            self.to_le_bytes_vec()
+            self.to_le_bytes::<32>()
         };
-
-        // For Solidity ABI, right-align the data
-        slice[32 - Self::BYTES..].copy_from_slice(&bytes);
-        slice[..32 - Self::BYTES].fill(0); // Zero-pad the rest
-
-        Ok(())
+        offset += write_aligned_slice::<B, ALIGN>(buf, &bytes);
+        Ok(offset)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -429,20 +397,14 @@ impl<
     const HEADER_SIZE: usize = Self::BYTES;
     const IS_DYNAMIC: bool = false;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let word_size = align_up::<ALIGN>(Self::BYTES);
-
-        let slice = get_aligned_slice::<B, ALIGN>(buf, offset, word_size);
-
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
         let bytes = if is_big_endian::<B>() {
-            self.into_raw().to_be_bytes_vec()
+            self.to_be_bytes::<32>()
         } else {
-            self.into_raw().to_le_bytes_vec()
+            self.to_le_bytes::<32>()
         };
-
-        slice[..Self::BYTES].copy_from_slice(&bytes);
-
-        Ok(())
+        offset += write_aligned_slice::<B, ALIGN>(buf, &bytes);
+        Ok(offset)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -485,28 +447,29 @@ impl<
     const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
     const IS_DYNAMIC: bool = false;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let slice = get_aligned_slice::<B, 32>(buf, offset, 32);
-
-        let bytes = if is_big_endian::<B>() {
-            self.into_raw().to_be_bytes_vec()
-        } else {
-            self.into_raw().to_le_bytes_vec()
-        };
-
-        // For Solidity ABI, right-align the data
-        slice[32 - Self::BYTES..].copy_from_slice(&bytes);
-
-        // For signed integers, we need to sign-extend the value
-        // If the most significant bit of the value is set (negative number),
-        // fill the padding with 1s, otherwise fill with 0s
-        if self.is_negative() {
-            slice[..32 - Self::BYTES].fill(0xFF);
-        } else {
-            slice[..32 - Self::BYTES].fill(0);
-        }
-
-        Ok(())
+    fn encode(&self, buf: &mut impl BufMut, offset: usize) -> Result<usize, CodecError> {
+        todo!()
+        // let slice = get_aligned_slice::<B, 32>(buf, offset, 32);
+        //
+        // let bytes = if is_big_endian::<B>() {
+        //     self.into_raw().to_be_bytes_vec()
+        // } else {
+        //     self.into_raw().to_le_bytes_vec()
+        // };
+        //
+        // // For Solidity ABI, right-align the data
+        // slice[32 - Self::BYTES..].copy_from_slice(&bytes);
+        //
+        // // For signed integers, we need to sign-extend the value
+        // // If the most significant bit of the value is set (negative number),
+        // // fill the padding with 1s, otherwise fill with 0s
+        // if self.is_negative() {
+        //     slice[..32 - Self::BYTES].fill(0xFF);
+        // } else {
+        //     slice[..32 - Self::BYTES].fill(0);
+        // }
+        //
+        // Ok(offset)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -732,10 +695,10 @@ mod tests {
             );
             // Encode the value
             let mut buf = BytesMut::new();
-            SolidityABI::encode(test_value, &mut buf, 0).unwrap();
+            SolidityABI::encode(test_value, &mut buf).unwrap();
             let encoded = buf.freeze();
 
-            // Verify encoding matches expected value
+            // Verify encoding matches the expected value
             let expected_encoded = hex::decode(expected_hex).unwrap();
             assert_eq!(
                 encoded.to_vec(),
@@ -813,10 +776,10 @@ mod tests {
             );
             // Encode the value
             let mut buf = BytesMut::new();
-            SolidityABI::encode(test_value, &mut buf, 0).unwrap();
+            SolidityABI::encode(test_value, &mut buf).unwrap();
             let encoded = buf.freeze();
 
-            // Verify encoding matches expected value
+            // Verify encoding matches the expected value
             let expected_encoded = hex::decode(expected_hex).unwrap();
             assert_eq!(
                 encoded.to_vec(),
@@ -874,10 +837,10 @@ mod tests {
             );
             // Encode the value
             let mut buf = BytesMut::new();
-            CompactABI::encode(test_value, &mut buf, 0).unwrap();
+            CompactABI::encode(test_value, &mut buf).unwrap();
             let encoded = buf.freeze();
 
-            // Verify encoding matches expected value
+            // Verify encoding matches the expected value
             let expected_encoded = hex::decode(expected_hex).unwrap();
             assert_eq!(
                 encoded.to_vec(),
@@ -946,7 +909,7 @@ mod tests {
             );
             // Encode the value
             let mut buf = BytesMut::new();
-            CompactABI::encode(test_value, &mut buf, 0).unwrap();
+            CompactABI::encode(test_value, &mut buf).unwrap();
             let encoded = buf.freeze();
 
             // Verify encoding matches expected value

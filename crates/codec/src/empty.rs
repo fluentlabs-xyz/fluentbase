@@ -4,7 +4,8 @@ use crate::{
     error::{CodecError, DecodingError},
 };
 use byteorder::ByteOrder;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
+
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct EmptyVec;
 
@@ -13,21 +14,14 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false, false> for Empty
     const HEADER_SIZE: usize = size_of::<u32>() * 3; // 12 bytes
     const IS_DYNAMIC: bool = true;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
         let aligned_elem_size = align_up::<ALIGN>(4);
-
         // Write number of elements (0 for EmptyVec)
-        write_u32_aligned::<B, ALIGN>(buf, offset, 0);
-
+        offset += write_u32_aligned::<B, ALIGN>(buf, 0);
         // Write offset and length (both 0 for EmptyVec)
-        write_u32_aligned::<B, ALIGN>(
-            buf,
-            offset + aligned_elem_size,
-            (aligned_elem_size * 3) as u32,
-        );
-        write_u32_aligned::<B, ALIGN>(buf, offset + aligned_elem_size * 2, 0);
-
-        Ok(())
+        offset += write_u32_aligned::<B, ALIGN>(buf, (aligned_elem_size * 3) as u32);
+        offset += write_u32_aligned::<B, ALIGN>(buf, 0);
+        Ok(offset)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -94,14 +88,12 @@ impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for EmptyV
     const HEADER_SIZE: usize = 32; // Solidity uses 32 bytes for dynamic array header
     const IS_DYNAMIC: bool = true;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
         // Write offset to data
-        write_u32_aligned::<B, ALIGN>(buf, offset, (offset + 32) as u32);
-
+        offset += write_u32_aligned::<B, ALIGN>(buf, 32);
         // Write length (0 for EmptyVec)
-        write_u32_aligned::<B, ALIGN>(buf, offset + 32, 0);
-
-        Ok(())
+        offset += write_u32_aligned::<B, ALIGN>(buf, 0);
+        Ok(offset)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -151,7 +143,7 @@ mod tests {
     fn test_empty_vec_wasm_little_endian() {
         let empty_vec = EmptyVec;
         let mut buf = BytesMut::new();
-        CompactABI::encode(&empty_vec, &mut buf, 0).unwrap();
+        CompactABI::encode(&empty_vec, &mut buf).unwrap();
 
         let encoded = buf.freeze();
         assert_eq!(hex::encode(&encoded), "000000000c00000000000000");
@@ -187,7 +179,7 @@ mod tests {
     fn test_empty_vec_solidity() {
         let empty_vec = EmptyVec;
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&empty_vec, &mut buf, 0).unwrap();
+        SolidityABI::encode(&empty_vec, &mut buf).unwrap();
 
         let encoded = buf.freeze();
 
@@ -205,7 +197,7 @@ mod tests {
     fn test_empty_vec_wasm_with_offset() {
         let empty_vec = EmptyVec;
         let mut buf = BytesMut::from(&[0xFF, 0xFF, 0xFF][..]);
-        CompactABI::encode(&empty_vec, &mut buf, 3).unwrap();
+        CompactABI::encode(&empty_vec, &mut buf).unwrap();
 
         let encoded = buf.freeze();
         println!("{}", hex::encode(&encoded));

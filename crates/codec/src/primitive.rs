@@ -1,10 +1,11 @@
 use crate::{
     alloc::string::ToString,
-    encoder::{align_up, get_aligned_indices, get_aligned_slice, is_big_endian, Encoder},
+    encoder::{align_up, get_aligned_indices, is_big_endian, Encoder},
     error::{CodecError, DecodingError},
+    write_u32_aligned,
 };
 use byteorder::ByteOrder;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use core::{marker::PhantomData, mem::size_of};
 
 impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bool>
@@ -13,8 +14,8 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
     const HEADER_SIZE: usize = 0;
     const IS_DYNAMIC: bool = false;
 
-    fn encode(&self, _buf: &mut BytesMut, _offset: usize) -> Result<(), CodecError> {
-        Ok(())
+    fn encode(&self, _buf: &mut impl BufMut, offset: usize) -> Result<usize, CodecError> {
+        Ok(0)
     }
 
     fn decode(_buf: &impl Buf, _offset: usize) -> Result<Self, CodecError> {
@@ -32,25 +33,21 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
     const HEADER_SIZE: usize = size_of::<u8>();
     const IS_DYNAMIC: bool = false;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let word_size =
-            align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE);
-
-        if buf.len() < offset + word_size {
-            buf.resize(offset + word_size, 0);
+    fn encode(&self, buf: &mut impl BufMut, _offset: usize) -> Result<usize, CodecError> {
+        let alignment = ALIGN.max(1);
+        if is_big_endian::<B>() {
+            buf.put_bytes(0, alignment - 1);
+            buf.put_u8(*self);
+        } else {
+            buf.put_u8(*self);
+            buf.put_bytes(0, alignment - 1);
         }
-
-        let write_to = get_aligned_slice::<B, ALIGN>(buf, offset, 1);
-
-        write_to[0] = *self;
-
-        Ok(())
+        Ok(alignment)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let word_size =
             align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE);
-
         if buf.remaining() < offset + word_size {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
                 expected: offset + word_size,
@@ -58,14 +55,12 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
                 msg: "buf too small to read aligned u8".to_string(),
             }));
         }
-
         let chunk = &buf.chunk()[offset..];
         let value = if is_big_endian::<B>() {
             chunk[word_size - 1]
         } else {
             chunk[0]
         };
-
         Ok(value)
     }
 
@@ -80,18 +75,31 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
 impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bool>
     Encoder<B, ALIGN, SOL_MODE, IS_STATIC> for bool
 {
-    const HEADER_SIZE: usize = core::mem::size_of::<bool>();
+    const HEADER_SIZE: usize = size_of::<bool>();
     const IS_DYNAMIC: bool = false;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        let offset_before = offset;
+        let alignment = ALIGN.checked_sub(1).unwrap_or(0);
         let value: u8 = if *self { 1 } else { 0 };
-
-        <u8 as Encoder<B, ALIGN, SOL_MODE, true>>::encode(&value, buf, offset)
+        if is_big_endian::<B>() {
+            // For big-endian, copy to the end of the aligned array
+            buf.put_bytes(0, alignment);
+            offset += alignment;
+            buf.put_u8(value);
+            offset += 1;
+        } else {
+            // For little-endian, copy to the start of the aligned array
+            buf.put_u8(value);
+            offset += 1;
+            buf.put_bytes(0, alignment);
+            offset += alignment;
+        }
+        Ok(offset - offset_before)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let value = <u8 as Encoder<B, ALIGN, SOL_MODE, true>>::decode(buf, offset)?;
-
         Ok(value != 0)
     }
 
@@ -104,44 +112,23 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
 }
 
 macro_rules! impl_int {
-    ($typ:ty, $read_method:ident, $write_method:ident) => {
+    ($typ:ty, $read_method:ident, $write_method_be:ident, $write_method_le:ident) => {
         impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bool>
             Encoder<B, ALIGN, SOL_MODE, IS_STATIC> for $typ
         {
             const HEADER_SIZE: usize = core::mem::size_of::<$typ>();
             const IS_DYNAMIC: bool = false;
 
-            fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-                let word_size = align_up::<ALIGN>(
-                    <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE,
-                );
-
-                if buf.len() < offset + word_size {
-                    buf.resize(offset + word_size, 0);
+            fn encode(&self, buf: &mut impl BufMut, offset: usize) -> Result<usize, CodecError> {
+                let alignment = ALIGN.max(size_of::<$typ>());
+                if is_big_endian::<B>() {
+                    buf.put_bytes(0, alignment - size_of::<$typ>());
+                    buf.$write_method_be(*self);
+                } else {
+                    buf.$write_method_le(*self);
+                    buf.put_bytes(0, alignment - size_of::<$typ>());
                 }
-
-                let (start, end) = get_aligned_indices::<B, ALIGN>(
-                    offset,
-                    <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE,
-                );
-
-                B::$write_method(&mut buf[start..end], *self);
-
-                // Fill the rest of the buffer with 0x00 or 0xFF depending on the sign of the
-                // integer
-                let fill_val = if *self > 0 { 0x00 } else { 0xFF };
-
-                for i in offset..start {
-                    buf[i] = fill_val;
-                }
-
-                B::$write_method(&mut buf[start..end], *self);
-
-                for i in end..(offset + word_size) {
-                    buf[i] = fill_val;
-                }
-
-                Ok(())
+                Ok(alignment)
             }
 
             fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -186,12 +173,12 @@ macro_rules! impl_int {
     };
 }
 
-impl_int!(u16, read_u16, write_u16);
-impl_int!(u32, read_u32, write_u32);
-impl_int!(u64, read_u64, write_u64);
-impl_int!(i16, read_i16, write_i16);
-impl_int!(i32, read_i32, write_i32);
-impl_int!(i64, read_i64, write_i64);
+impl_int!(u16, read_u16, put_u16, put_u16_le);
+impl_int!(u32, read_u32, put_u32, put_u32_le);
+impl_int!(u64, read_u64, put_u64, put_u64_le);
+impl_int!(i16, read_i16, put_i16, put_i16_le);
+impl_int!(i32, read_i32, put_i32, put_i32_le);
+impl_int!(i64, read_i64, put_i64, put_i64_le);
 
 /// Encodes and decodes Option<T> where T is an Encoder.
 /// The encoded data is prefixed with a single byte that indicates whether the Option is Some or
@@ -204,27 +191,18 @@ where
     const HEADER_SIZE: usize = 1 + T::HEADER_SIZE;
     const IS_DYNAMIC: bool = false;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let aligned_header =
-            align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE);
-        if buf.len() < offset + aligned_header {
-            buf.resize(offset + aligned_header, 0);
-        }
-        // Get aligned slice for the option flag
-        let flag_slice = get_aligned_slice::<B, ALIGN>(buf, offset, 1);
-        flag_slice[0] = if self.is_some() { 1 } else { 0 };
-
-        let inner_offset = offset + ALIGN;
-
+    fn encode(&self, buf: &mut impl BufMut, offset: usize) -> Result<usize, CodecError> {
         match self {
-            Some(inner_value) => inner_value.encode(buf, inner_offset)?,
-            None => {
-                let default_value = T::default();
-                default_value.encode(buf, inner_offset)?;
+            Some(inner_value) => {
+                Encoder::<B, ALIGN, SOL_MODE, IS_STATIC>::encode(&1u32, buf, offset)?;
+                inner_value.encode(buf, offset + ALIGN)
             }
-        };
-
-        Ok(())
+            None => {
+                Encoder::<B, ALIGN, SOL_MODE, IS_STATIC>::encode(&0u32, buf, offset)?;
+                let default_value = T::default();
+                default_value.encode(buf, offset + ALIGN)
+            }
+        }
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -301,18 +279,12 @@ where
     const HEADER_SIZE: usize = align_up::<ALIGN>(T::HEADER_SIZE) * N;
     const IS_DYNAMIC: bool = false;
 
-    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let item_size = align_up::<ALIGN>(T::HEADER_SIZE);
-
-        if buf.len() < offset + (item_size * N) {
-            buf.resize(offset + (item_size * N), 0);
+    fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
+        let offset_before = offset;
+        for item in self.iter() {
+            offset += item.encode(buf, offset)?;
         }
-
-        for (i, item) in self.iter().enumerate() {
-            item.encode(buf, offset + (item_size * i))?;
-        }
-
-        Ok(())
+        Ok(offset - offset_before)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -356,7 +328,7 @@ mod tests {
         let original: u8 = 1;
         const ALIGNMENT: usize = 32;
 
-        let mut buf = BytesMut::zeroed(ALIGNMENT);
+        let mut buf = BytesMut::new();
 
         println!("Buffer capacity: {}", buf.capacity());
 
@@ -390,7 +362,7 @@ mod tests {
     fn test_u8_le_encode_decode() {
         let original: u8 = 1;
         const ALIGNMENT: usize = 32;
-        let mut buf = BytesMut::zeroed(ALIGNMENT);
+        let mut buf = BytesMut::new();
 
         println!("Buffer capacity: {}", buf.capacity());
 
@@ -424,7 +396,7 @@ mod tests {
         let original: bool = true;
         const ALIGNMENT: usize = 32;
 
-        let mut buf = BytesMut::zeroed(ALIGNMENT);
+        let mut buf = BytesMut::new();
 
         println!("Buffer capacity: {}", buf.capacity());
 
@@ -460,7 +432,7 @@ mod tests {
         let original: bool = true;
         const ALIGNMENT: usize = 32;
 
-        let mut buf = BytesMut::zeroed(ALIGNMENT);
+        let mut buf = BytesMut::new();
 
         println!("Buffer capacity: {}", buf.capacity());
 
@@ -591,7 +563,7 @@ mod tests {
     #[test]
     fn test_option_u32_encode_decode() {
         let original: Option<u32> = Some(0x12345678);
-        let mut buf = BytesMut::with_capacity(8);
+        let mut buf = BytesMut::new();
 
         let ok =
             <Option<u32> as Encoder<LittleEndian, 4, false, true>>::encode(&original, &mut buf, 0);
@@ -647,9 +619,9 @@ mod tests {
         let value3: u8 = 0xDE;
         let mut buf = BytesMut::new();
 
-        SolidityPackedABI::<u32>::encode(&value1, &mut buf, 0).unwrap();
-        SolidityPackedABI::<u16>::encode(&value2, &mut buf, 4).unwrap();
-        SolidityPackedABI::<u8>::encode(&value3, &mut buf, 6).unwrap();
+        SolidityPackedABI::<u32>::encode(&value1, &mut buf).unwrap();
+        SolidityPackedABI::<u16>::encode(&value2, &mut buf).unwrap();
+        SolidityPackedABI::<u8>::encode(&value3, &mut buf).unwrap();
 
         assert_eq!(buf.to_vec(), vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE]);
     }
@@ -660,7 +632,7 @@ mod tests {
         let mut buf = BytesMut::new();
 
         // Using the existing implementation with packed parameters
-        SolidityPackedABI::<[u16; 3]>::encode(&arr, &mut buf, 0).unwrap();
+        SolidityPackedABI::<[u16; 3]>::encode(&arr, &mut buf).unwrap();
 
         assert_eq!(buf.to_vec(), vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]);
 

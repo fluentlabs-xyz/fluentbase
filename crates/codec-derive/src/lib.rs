@@ -200,17 +200,17 @@ impl CodecStruct {
             if sol_mode {
                 quote! {
                     if <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC {
-                        <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::encode(&self.#ident, &mut tail, tail_offset)?;
-                        tail_offset += #crate_path::align_up::<ALIGN>(4);
+                        <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::encode(&self.#ident, buf, offset)?;
+                        offset += #crate_path::align_up::<ALIGN>(4);
                     } else {
-                        <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::encode(&self.#ident, &mut tail, tail_offset)?;
-                        tail_offset += #crate_path::align_up::<ALIGN>(<#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::HEADER_SIZE);
+                        <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::encode(&self.#ident, buf, offset)?;
+                        offset += #crate_path::align_up::<ALIGN>(<#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::HEADER_SIZE);
                     }
                 }
             } else {
                 quote! {
-                    <#ty as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::encode(&self.#ident, buf, current_offset)?;
-                    current_offset += #crate_path::align_up::<ALIGN>(<#ty as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE);
+                    <#ty as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::encode(&self.#ident, buf, offset)?;
+                    offset += #crate_path::align_up::<ALIGN>(<#ty as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE);
                 }
             }
         });
@@ -254,42 +254,18 @@ impl CodecStruct {
 
         if sol_mode {
             quote! {
-                let aligned_offset = #crate_path::align_up::<ALIGN>(offset);
                 let is_dynamic = <Self as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC;
                 let aligned_header_size = #aligned_header_size;
-
-                let mut tail = if is_dynamic {
-                    let buf_len = buf.len();
-                    let offset = if buf_len != 0 { buf_len } else { 32 };
-                    #crate_path::write_u32_aligned::<B, ALIGN>(buf, aligned_offset, offset as u32);
-                    if buf.len() < aligned_header_size + offset {
-                        buf.resize(aligned_header_size + offset, 0);
-                    }
-                    buf.split_off(offset)
-                } else {
-                    if buf.len() < aligned_offset + aligned_header_size {
-                        buf.resize(aligned_offset + aligned_header_size, 0);
-                    }
-                    buf.split_off(aligned_offset)
-                };
-                let mut tail_offset = 0;
-
+                if is_dynamic {
+                    let struct_offset = if offset != 0 { offset } else { 32 };
+                    #crate_path::write_u32_aligned::<B, ALIGN>(buf, offset as u32);
+                }
                 #encode_fields
-
-                buf.unsplit(tail);
-                Ok(())
             }
         } else {
             quote! {
-                let mut current_offset = #crate_path::align_up::<ALIGN>(offset);
                 let header_size = <Self as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE;
-
-                if buf.len() < current_offset + header_size {
-                    buf.resize(current_offset + header_size, 0);
-                }
-
                 #encode_fields
-                Ok(())
             }
         }
     }
@@ -397,8 +373,10 @@ impl CodecStruct {
                 const HEADER_SIZE: usize = #header_size;
                 const IS_DYNAMIC: bool = #is_dynamic;
 
-                fn encode(&self, buf: &mut #crate_path::bytes::BytesMut, offset: usize) -> Result<(), #crate_path::CodecError> {
+                fn encode(&self, buf: &mut impl #crate_path::bytes::BufMut, mut offset: usize) -> Result<usize, #crate_path::CodecError> {
+                    let offset_before = offset;
                     #encode_impl
+                    Ok(offset - offset_before)
                 }
 
                 fn decode(buf: &impl #crate_path::bytes::Buf, offset: usize) -> Result<Self, #crate_path::CodecError> {

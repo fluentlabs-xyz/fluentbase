@@ -4,7 +4,7 @@ use crate::{
     error::{CodecError, DecodingError},
 };
 use byteorder::ByteOrder;
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use core::mem;
 
 /// Universal function to write bytes in Solidity or WASM compatible format
@@ -39,7 +39,7 @@ use core::mem;
 /// assert_eq!(written, 37);
 /// ```
 pub fn write_bytes<B, const ALIGN: usize, const SOL_MODE: bool>(
-    buf: &mut BytesMut,
+    buf: &mut impl BufMut,
     offset: usize,
     data: &[u8],
     elements: u32, // number of elements in a dynamic array
@@ -48,7 +48,7 @@ where
     B: ByteOrder,
 {
     if SOL_MODE {
-        write_bytes_solidity::<B, ALIGN>(buf, offset, data, elements)
+        write_bytes_solidity::<B, ALIGN>(buf, data, elements)
     } else {
         write_bytes_wasm::<B, ALIGN>(buf, offset, data)
     }
@@ -56,53 +56,34 @@ where
 
 /// Write bytes in Solidity compatible format
 pub fn write_bytes_solidity<B: ByteOrder, const ALIGN: usize>(
-    buf: &mut BytesMut,
-    offset: usize,
+    buf: &mut impl BufMut,
     data: &[u8],
     elements: u32, // Number of elements
 ) -> usize {
-    // Ensure we have enough space to write the offset
-
-    if buf.len() < offset {
-        buf.resize(offset, 0);
-    }
-    let data_offset = buf.len();
-
     // Write length of the data (number of elements)
-    write_u32_aligned::<B, ALIGN>(buf, data_offset, elements);
-
+    let mut n = write_u32_aligned::<B, ALIGN>(buf, elements);
     // Append the actual data
-    buf.extend_from_slice(data);
-
+    buf.put_slice(data);
+    n += data.len();
     // Return the number of bytes written (including alignment)
-    buf.len() - data_offset
+    n
 }
 
 /// Write bytes in WASM compatible format
 pub fn write_bytes_wasm<B: ByteOrder, const ALIGN: usize>(
-    buf: &mut BytesMut,
+    buf: &mut impl BufMut,
     offset: usize,
     data: &[u8],
 ) -> usize {
-    let aligned_elem_size = align_up::<ALIGN>(mem::size_of::<u32>());
-    let aligned_header_size = aligned_elem_size * 2;
-
-    // Ensure we have enough space to write the header
-    if buf.len() < offset + aligned_header_size {
-        buf.resize(offset + aligned_header_size, 0);
-    }
-
-    // We append the data to the end of buffer
-    let data_offset = buf.len();
-
+    let mut n = 0;
     // Write offset and data size
-    write_u32_aligned::<B, ALIGN>(buf, offset, data_offset as u32);
-    write_u32_aligned::<B, ALIGN>(buf, offset + aligned_elem_size, data.len() as u32);
-
+    n += write_u32_aligned::<B, ALIGN>(buf, offset as u32);
+    n += write_u32_aligned::<B, ALIGN>(buf, data.len() as u32);
     // Append the actual data
-    buf.extend_from_slice(data);
-
-    buf.len() - data_offset
+    buf.put_slice(data);
+    n += data.len();
+    // Total bytes written
+    n
 }
 
 pub fn read_bytes<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>(
@@ -212,7 +193,7 @@ mod tests {
 
         // For byte slice
         let bytes: &[u8] = &[1, 2, 3, 4, 5];
-        let written = write_bytes_solidity::<BigEndian, 32>(&mut buf, 0, bytes, bytes.len() as u32);
+        let written = write_bytes_solidity::<BigEndian, 32>(&mut buf, bytes, bytes.len() as u32);
         assert_eq!(written, 37); // length (32) + (data + padding) (32)
         let expected = [
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -222,13 +203,11 @@ mod tests {
         assert_eq!(buf.to_vec(), expected);
         let mut buf = BytesMut::new();
 
-        let offset = buf.len();
-
         // For Vec<u32>
 
         let vec_u32 = [0u8, 0, 0, 10, 0, 0, 0, 20, 0, 0, 0, 30];
 
-        let written = write_bytes_solidity::<BigEndian, 32>(&mut buf, offset, &vec_u32, 3);
+        let written = write_bytes_solidity::<BigEndian, 32>(&mut buf, &vec_u32, 3);
         assert_eq!(written, 44); // length (32) + data
 
         let expected = [
@@ -243,7 +222,7 @@ mod tests {
         let original = alloy_primitives::Bytes::from(vec![1, 2, 3, 4, 5]);
 
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&original, &mut buf, 0).unwrap();
+        SolidityABI::encode(&original, &mut buf).unwrap();
 
         let encoded = buf.freeze();
 
@@ -264,7 +243,7 @@ mod tests {
         let original: Vec<Vec<u32>> = vec![vec![1, 2, 3], vec![4, 5]];
 
         let mut buf = BytesMut::new();
-        SolidityABI::encode(&original, &mut buf, 0).unwrap();
+        SolidityABI::encode(&original, &mut buf).unwrap();
 
         let encoded = buf.freeze();
         println!("encoded: {:?}", hex::encode(&encoded));
@@ -287,7 +266,7 @@ mod tests {
         let original = alloy_primitives::Bytes::from(vec![1, 2, 3, 4, 5]);
 
         let mut buf = BytesMut::new();
-        CompactABI::encode(&original, &mut buf, 0).unwrap();
+        CompactABI::encode(&original, &mut buf).unwrap();
 
         let encoded = buf.freeze();
         println!("encoded: {:?}", hex::encode(&encoded));

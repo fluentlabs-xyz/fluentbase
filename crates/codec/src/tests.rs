@@ -22,7 +22,7 @@ fn test_fixed_array_solidity() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
     assert_eq!(
         hex::encode(&encoded),
@@ -53,7 +53,7 @@ fn test_bytes_solidity() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -87,7 +87,7 @@ fn test_fixed_bytes_solidity() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -127,7 +127,7 @@ fn test_address_solidity() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -171,7 +171,7 @@ fn test_vector_solidity_simple() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -221,7 +221,7 @@ fn test_vector_solidity_nested() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -252,7 +252,7 @@ fn test_vector_solidity_empty() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -321,7 +321,7 @@ fn test_vector_wasm_nested() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    CompactABI::encode(&test_value, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -352,7 +352,7 @@ fn test_bytes_empty_solidity() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -387,7 +387,7 @@ fn test_vector_solidity_partial_decode() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&test_value, &mut buf, 0).unwrap();
+    SolidityABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -434,7 +434,7 @@ fn test_vector_wasm_partial_decode() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    CompactABI::encode(&test_value, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -476,7 +476,7 @@ fn test_map_sol_simple() {
     original.insert(100, 60);
 
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&original, &mut buf, 0).unwrap();
+    SolidityABI::encode(&original, &mut buf).unwrap();
 
     let encoded = buf.freeze();
     println!("Encoded Map: {:?}", hex::encode(&encoded));
@@ -501,7 +501,7 @@ fn test_map_sol_nested() {
     original.insert(2, HashMap::from([(7, 8)]));
 
     let mut buf = BytesMut::new();
-    SolidityABI::encode(&original, &mut buf, 0).unwrap();
+    SolidityABI::encode(&original, &mut buf).unwrap();
 
     let encoded = buf.freeze();
 
@@ -546,7 +546,7 @@ fn test_map_wasm_simple() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    CompactABI::encode(&test_value, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
@@ -605,7 +605,7 @@ fn test_map_wasm_nested() {
 
     // Encode and verify
     let mut buf = BytesMut::new();
-    CompactABI::encode(&test_value, &mut buf, 0).unwrap();
+    CompactABI::encode(&test_value, &mut buf).unwrap();
     let encoded = buf.freeze();
 
     assert_eq!(
