@@ -84,8 +84,8 @@ jobs:
                       org.opencontainers.image.description=Docker image for building Fluent smart contracts
                       rust.version=${{ env.RUST_VERSION }}
                       fluentbase.sdk.rev=${{ steps.sdk_rev.outputs.rev }}
-                  cache-from: type=gha
-                  cache-to: type=gha,mode=max
+                #   cache-from: type=gha
+                #   cache-to: type=gha,mode=max
                   build-args: |
                       BINARYEN_VERSION=120
                       RUST_VERSION=${{ env.RUST_VERSION }}
