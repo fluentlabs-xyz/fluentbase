@@ -1,7 +1,28 @@
-# Global build argument
+# Global build arguments
 ARG BINARYEN_VERSION=120
 
-# Stage 1: Download and extract tools
+# Stage 1: Base dependencies (most stable)
+FROM rust:1.87-slim AS base-deps
+
+# Install only essential runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    ca-certificates \
+    # Required for building C dependencies
+    build-essential \
+    # Required for cargo dependencies with native code
+    pkg-config \
+    libssl-dev \
+    # Tool for downloading
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Install Rust target for WASM and rust-src component
+RUN rustup target add wasm32-unknown-unknown && \
+    rustup component add rust-src
+
+# Stage 2: Tools (changes infrequently)
 FROM alpine:3.19 AS tools
 
 ARG BINARYEN_VERSION
@@ -15,37 +36,42 @@ RUN apk add --no-cache curl && \
     curl -L https://github.com/WebAssembly/wabt/releases/download/1.0.36/wabt-1.0.36-ubuntu-20.04.tar.gz | \
     tar xzf - -C /tmp
 
-# Stage 2: Final image
-FROM rust:1.87-slim
+# Stage 3: Build and cache dependencies
+FROM base-deps AS builder
 
-# Install only essential runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    ca-certificates \
-    # Required for building C dependencies
-    build-essential \
-    # Required for cargo dependencies with native code
-    pkg-config \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+# Copy the entire workspace
+WORKDIR /build
+COPY . .
 
-# Copy only the tools we need from the tools stage
+# Fetch all workspace dependencies and build only the CLI
+RUN cargo fetch && \
+    # Build and install the CLI (it's small and needed)
+    cargo install --path ./bins/cli
+
+# Stage 4: Final image
+FROM base-deps AS final
+
+# Copy tools from tools stage
 COPY --from=tools /tmp/binaryen-version_*/bin/wasm-opt /usr/local/bin/
 COPY --from=tools /tmp/wabt-*/bin/wasm2wat /usr/local/bin/
 COPY --from=tools /tmp/wabt-*/bin/wasm-strip /usr/local/bin/
 
-# Make binaries executable
-RUN chmod +x /usr/local/bin/wasm*
+# Copy CLI from builder stage
+COPY --from=builder /usr/local/cargo/bin/fluentbase* /usr/local/bin/
 
-# Install Rust target for WASM and rust-src component
-RUN rustup target add wasm32-unknown-unknown && \
-    rustup component add rust-src
+# Copy cached dependencies from builder stage
+COPY --from=builder /usr/local/cargo/registry /usr/local/cargo/registry
+COPY --from=builder /usr/local/cargo/git /usr/local/cargo/git
+
+# Make binaries executable
+RUN chmod +x /usr/local/bin/wasm* && \
+    chmod +x /usr/local/bin/fluentbase*
 
 # Set environment variables
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120 \
-    RUST_BACKTRACE=1
+    RUST_BACKTRACE=1 \
+    CARGO_TARGET_DIR=/target
 
 # Create workspace directory
 WORKDIR /workspace
@@ -66,6 +92,7 @@ RUN rustc --version && \
     cargo --version && \
     wasm-opt --version && \
     wasm2wat --version && \
+    fluentbase --version && \
     rustup component list --installed
 
 # Labels
