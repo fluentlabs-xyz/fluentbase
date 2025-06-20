@@ -70,8 +70,8 @@ jobs:
             - name: Build and push Docker image
               uses: docker/build-push-action@v5
               with:
-                  context: ./crates/build
-                  file: ./crates/build/Dockerfile
+                  context: ./
+                  file: ./Dockerfile
                   platforms: linux/amd64
                   push: true
                   tags: ${{ steps.tags.outputs.tags }}
