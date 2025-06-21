@@ -1,14 +1,24 @@
 use crate::RuntimeContext;
 use fluentbase_types::{keccak256, B256};
-use rwasm::{Caller, TrapCode};
+use rwasm::{Caller, TrapCode, Value};
 
 pub struct SyscallKeccak256;
 
 impl SyscallKeccak256 {
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let [data_offset, data_len, output_offset] = caller.stack_pop_n();
-        let data = caller.memory_read_vec(data_offset.as_usize(), data_len.as_usize())?;
-        caller.memory_write(output_offset.as_usize(), Self::fn_impl(&data).as_slice())?;
+    pub fn fn_handler(
+        caller: &mut dyn Caller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (data_offset, data_len, output_offset) = (
+            params[0].i32().unwrap() as usize,
+            params[1].i32().unwrap() as usize,
+            params[2].i32().unwrap() as usize,
+        );
+        let mut data = vec![0u8; data_len];
+        caller.memory_read(data_offset, &mut data)?;
+        let hash = Self::fn_impl(&data);
+        caller.memory_write(output_offset, hash.as_slice())?;
         Ok(())
     }
 

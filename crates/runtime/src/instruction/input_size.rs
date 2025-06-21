@@ -1,16 +1,21 @@
 use crate::RuntimeContext;
-use rwasm::{Caller, TrapCode};
+use core::cell::Ref;
+use rwasm::{Caller, TrapCode, Value};
 
 pub struct SyscallInputSize;
 
 impl SyscallInputSize {
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
+    pub fn fn_handler(
+        caller: &mut dyn Caller<RuntimeContext>,
+        _params: &[Value],
+        result: &mut [Value],
+    ) -> Result<(), TrapCode> {
         let input_size = Self::fn_impl(caller.context());
-        caller.stack_push(input_size);
+        result[0] = Value::I32(input_size as i32);
         Ok(())
     }
 
-    pub fn fn_impl(ctx: &RuntimeContext) -> u32 {
+    pub fn fn_impl(ctx: Ref<RuntimeContext>) -> u32 {
         ctx.input_size()
     }
 }

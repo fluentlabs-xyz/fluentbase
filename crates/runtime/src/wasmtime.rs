@@ -39,7 +39,7 @@ static MODULES_CACHE: HashMap<B256, Module> = {
         let module = unsafe {
             // Unsafe because no validations are performed on the module bytes.
             // So only trusted modules should be used.
-            Module::deserialize(&engine, &contract.wasmtime_module_bytes).unwrap()
+            Module::deserialize(&engine, &contract.cranelift_binary).unwrap()
         };
         map.insert(hash.clone(), module);
     }

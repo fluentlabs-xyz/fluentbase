@@ -64,7 +64,7 @@ fn test_wrong_indirect_type() {
         .with_state(STATE_DEPLOY);
     let mut runtime = Runtime::new(ctx);
     let res = runtime.call();
-    let ctx = runtime.take_context();
+    let ctx = runtime.context().clone();
     assert_eq!(res.exit_code, 0);
     let res = Runtime::run_with_context(ctx.with_state(STATE_MAIN));
     assert_eq!(res.exit_code, -2003);

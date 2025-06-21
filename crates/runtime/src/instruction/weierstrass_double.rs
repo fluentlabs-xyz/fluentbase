@@ -1,6 +1,6 @@
 use crate::{instruction::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Caller, TrapCode, Value};
 use sp1_curves::{params::NumWords, AffinePoint, EllipticCurve};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
@@ -18,11 +18,16 @@ impl<E: EllipticCurve> SyscallWeierstrassDoubleAssign<E> {
     }
 
     /// Handles the syscall for point addition on a Weierstrass curve.
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let p_ptr: u32 = caller.stack_pop_as();
+    pub fn fn_handler(
+        caller: &mut dyn Caller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let p_ptr: u32 = params[0].i32().unwrap() as u32;
 
         let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;
-        let p = caller.memory_read_vec(p_ptr as usize, num_words * 4)?;
+        let mut p = vec![0u8; num_words * 4];
+        caller.memory_read(p_ptr as usize, &mut p)?;
 
         let result_vec = Self::fn_impl(&p);
         caller.memory_write(p_ptr as usize, &result_vec)?;

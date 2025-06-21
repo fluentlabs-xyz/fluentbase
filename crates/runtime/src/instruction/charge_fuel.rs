@@ -1,16 +1,21 @@
 use crate::RuntimeContext;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Caller, TrapCode, Value};
+use std::cell::RefMut;
 
 pub struct SyscallChargeFuel;
 
 impl SyscallChargeFuel {
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let fuel_consumed: u64 = caller.stack_pop_u64();
-        caller.store_mut().try_consume_fuel(fuel_consumed as u32)?;
+    pub fn fn_handler(
+        caller: &mut dyn Caller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let fuel_consumed = params[0].i64().unwrap() as u64;
+        caller.try_consume_fuel(fuel_consumed)?;
         Ok(())
     }
 
-    pub fn fn_impl(ctx: &mut RuntimeContext, fuel_consumed: u64) {
+    pub fn fn_impl(mut ctx: RefMut<RuntimeContext>, fuel_consumed: u64) {
         ctx.try_consume_fuel(fuel_consumed).unwrap();
     }
 }

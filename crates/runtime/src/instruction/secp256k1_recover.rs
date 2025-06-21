@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::B256;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Caller, TrapCode, Value};
 use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
     Message,
@@ -10,18 +10,29 @@ use secp256k1::{
 pub struct SyscallSecp256k1Recover;
 
 impl SyscallSecp256k1Recover {
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let [digest32_ptr, sig64_ptr, output65_ptr, rec_id] = caller.stack_pop_n();
-        let digest = caller.memory_read_fixed::<32>(digest32_ptr.as_usize())?;
-        let sig = caller.memory_read_fixed::<64>(sig64_ptr.as_usize())?;
-        let public_key = Self::fn_impl(&B256::from(digest), &sig, rec_id.as_u32() as u8);
+    pub fn fn_handler(
+        caller: &mut dyn Caller<RuntimeContext>,
+        params: &[Value],
+        result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (digest32_ptr, sig64_ptr, output65_ptr, rec_id) = (
+            params[0].i32().unwrap() as usize,
+            params[1].i32().unwrap() as usize,
+            params[2].i32().unwrap() as usize,
+            params[3].i32().unwrap() as u32,
+        );
+        let mut digest = [0u8; 32];
+        caller.memory_read(digest32_ptr, &mut digest)?;
+        let mut sig = [0u8; 64];
+        caller.memory_read(sig64_ptr, &mut sig)?;
+        let public_key = Self::fn_impl(&B256::from(digest), &sig, rec_id as u8);
         match public_key {
             Some(public_key) => {
-                caller.memory_write(output65_ptr.as_usize(), &public_key)?;
-                caller.stack_push(0);
+                caller.memory_write(output65_ptr, &public_key)?;
+                result[0] = Value::I32(0i32);
             }
             None => {
-                caller.stack_push(1);
+                result[0] = Value::I32(1i32);
             }
         };
         Ok(())

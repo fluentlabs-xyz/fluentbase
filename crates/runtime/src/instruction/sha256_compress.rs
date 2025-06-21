@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Caller, TrapCode, Value};
 
 pub const SHA_COMPRESS_K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -17,8 +17,15 @@ pub(crate) struct SyscallSha256Compress;
 
 impl SyscallSha256Compress {
     #[allow(clippy::many_single_char_names)]
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let (w_ptr, h_ptr) = caller.stack_pop2_as::<u32>();
+    pub fn fn_handler(
+        caller: &mut dyn Caller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (w_ptr, h_ptr) = (
+            params[0].i32().unwrap() as u32,
+            params[1].i32().unwrap() as u32,
+        );
         if w_ptr == h_ptr {
             caller.context_mut().execution_result.exit_code =
                 ExitCode::MalformedBuiltinParams.into_i32();
@@ -28,12 +35,9 @@ impl SyscallSha256Compress {
         // Execute the "initialize" phase where we read in the h values.
         let mut hx = [0u32; 8];
         for i in 0..8 {
-            let value = u32::from_be_bytes(
-                caller
-                    .memory_read_fixed::<4>((h_ptr + i as u32 * 4) as usize)?
-                    .try_into()
-                    .unwrap(),
-            );
+            let mut value = [0u8; 4];
+            caller.memory_read((h_ptr + i as u32 * 4) as usize, &mut value)?;
+            let value = u32::from_be_bytes(value);
             hx[i] = value;
         }
 
@@ -50,12 +54,9 @@ impl SyscallSha256Compress {
         for i in 0..64 {
             let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ (!e & g);
-            let w_i = u32::from_be_bytes(
-                caller
-                    .memory_read_fixed::<4>((w_ptr + i * 4) as usize)?
-                    .try_into()
-                    .unwrap(),
-            );
+            let mut w_i = [0u8; 4];
+            caller.memory_read((w_ptr + i * 4) as usize, &mut w_i)?;
+            let w_i = u32::from_be_bytes(w_i);
             original_w.push(w_i);
             let temp1 = h
                 .wrapping_add(s1)

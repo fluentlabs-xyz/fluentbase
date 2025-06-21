@@ -1,19 +1,28 @@
 use crate::RuntimeContext;
+use core::cell::RefMut;
 use fluentbase_types::ExitCode;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Caller, TrapCode, Value};
 
 pub struct SyscallReadOutput;
 
 impl SyscallReadOutput {
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let [target_ptr, offset, length] = caller.stack_pop_n();
-        let input = Self::fn_impl(caller.context_mut(), offset.as_u32(), length.as_u32())?;
-        let _ = caller.memory_write(target_ptr.as_usize(), &input)?;
+    pub fn fn_handler(
+        caller: &mut dyn Caller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (target_ptr, offset, length) = (
+            params[0].i32().unwrap() as usize,
+            params[1].i32().unwrap() as u32,
+            params[2].i32().unwrap() as u32,
+        );
+        let input = Self::fn_impl(caller.context_mut(), offset, length)?;
+        let _ = caller.memory_write(target_ptr, &input)?;
         Ok(())
     }
 
     pub fn fn_impl(
-        ctx: &mut RuntimeContext,
+        mut ctx: RefMut<RuntimeContext>,
         offset: u32,
         length: u32,
     ) -> Result<Vec<u8>, TrapCode> {

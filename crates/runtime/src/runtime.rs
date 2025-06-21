@@ -12,11 +12,12 @@ use fluentbase_types::{
     B256,
 };
 use hashbrown::{hash_map::Entry, HashMap};
-use rwasm::{Caller, ExecutionEngine, ExecutorConfig, RwasmModule, Store, TrapCode};
+use rwasm::{Caller, ExecutionEngine, ExecutorConfig, RwasmModule, Store, TrapCode, Value};
 use std::{
-    cell::RefCell,
+    cell::{Ref, RefCell, RefMut},
     fmt::Debug,
     mem::take,
+    rc::Rc,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -84,9 +85,14 @@ thread_local! {
 #[derive(Default)]
 pub struct RuntimeSyscallHandler {}
 
-fn runtime_syscall_handler(caller: Caller<RuntimeContext>, func_idx: u32) -> Result<(), TrapCode> {
+fn runtime_syscall_handler(
+    caller: &mut dyn Caller<RuntimeContext>,
+    func_idx: u32,
+    params: &[Value],
+    result: &mut [Value],
+) -> Result<(), TrapCode> {
     let sys_func_idx = SysFuncIdx::from_repr(func_idx).ok_or(TrapCode::UnknownExternalFunction)?;
-    invoke_runtime_handler(caller, sys_func_idx)
+    invoke_runtime_handler(caller, sys_func_idx, params, result)
 }
 
 pub struct Runtime {
@@ -147,7 +153,9 @@ impl Runtime {
                 // .floats_enabled(true) // need to support solana ee
                 .fuel_limit(runtime_context.fuel_limit)
                 .fuel_enabled(!runtime_context.disable_fuel);
-            let mut store = Store::<RuntimeContext>::new(config, runtime_context);
+            // TODO(dmitry123): "add import linker"
+            let mut store =
+                Store::<RuntimeContext>::new(config, runtime_context, Rc::new(Default::default()));
             store.set_syscall_handler(runtime_syscall_handler);
 
             Self {
@@ -208,7 +216,7 @@ impl Runtime {
                 );
             }
         }
-        caller.stack_push(exit_code);
+        caller.stack_push(exit_code.into());
         caller.sync_stack_ptr();
 
         let result = executor.run();
@@ -219,7 +227,7 @@ impl Runtime {
         )
     }
 
-    pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
+    pub(crate) fn remember_runtime(self, _root_ctx: &mut RefMut<RuntimeContext>) -> i32 {
         // save the current runtime state for future recovery
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             // TODO(dmitry123): "don't use global call counter"
@@ -290,9 +298,11 @@ impl Runtime {
         // so we must save the current state
         // to interrupt execution and delegate decision-making
         // to the root execution
-        let output = self.store.context_mut().output_mut();
+        let mut binding = self.store.context_mut();
+        let output = binding.output_mut();
         output.clear();
         assert!(output.is_empty(), "runtime: return data must be empty");
+        drop(binding);
         // serialize the delegated execution state,
         // but we don't serialize registers and stack state,
         // instead we remember it inside the internal structure
@@ -308,15 +318,11 @@ impl Runtime {
         execution_result.interrupted = true;
     }
 
-    pub fn context(&self) -> &RuntimeContext {
+    pub fn context(&self) -> Ref<RuntimeContext> {
         self.store.context()
     }
 
-    pub fn context_mut(&mut self) -> &mut RuntimeContext {
+    pub fn context_mut(&mut self) -> RefMut<RuntimeContext> {
         self.store.context_mut()
-    }
-
-    pub fn take_context(&mut self) -> RuntimeContext {
-        take(self.store.context_mut())
     }
 }
