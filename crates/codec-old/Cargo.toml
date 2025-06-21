@@ -1,0 +1,33 @@
+[package]
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "fluentbase-codec-old"
+readme.workspace = true
+repository.workspace = true
+version = "0.1.0"
+
+[dependencies]
+alloy-primitives = { workspace = true }
+byteorder = { workspace = true }
+bytes = { workspace = true, default-features = false }
+fluentbase-codec-derive = { workspace = true }
+hashbrown = { workspace = true }
+serde = { workspace = true, default-features = false }
+
+[dev-dependencies]
+alloy-sol-types = { workspace = true }
+hex = { workspace = true }
+hex-literal = { workspace = true }
+
+[features]
+default = ["std", "derive"]
+derive = []
+std = [
+    "byteorder/std",
+    "alloy-primitives/std",
+    "serde/std",
+    "bytes/std",
+]
