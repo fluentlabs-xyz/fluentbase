@@ -2354,6 +2354,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "fluentbase-codec-derive",
+ "fluentbase-codec-old",
  "hashbrown 0.15.4",
  "hex",
  "hex-literal 1.0.0",
@@ -2373,6 +2374,21 @@ dependencies = [
  "quote",
  "serde",
  "syn 2.0.103",
+]
+
+[[package]]
+name = "fluentbase-codec-old"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "byteorder",
+ "bytes",
+ "fluentbase-codec-derive",
+ "hashbrown 0.15.4",
+ "hex",
+ "hex-literal 1.0.0",
+ "serde",
 ]
 
 [[package]]

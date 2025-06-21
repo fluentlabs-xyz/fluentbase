@@ -10,6 +10,7 @@ repository.workspace = true
 version = "0.1.0"
 
 [dependencies]
+fluentbase-codec-old = { path = "../codec-old"}
 alloy-primitives = { workspace = true }
 byteorder = { workspace = true }
 bytes = { workspace = true, default-features = false }
@@ -31,3 +32,13 @@ std = [
     "serde/std",
     "bytes/std",
 ]
+
+[[example]]
+name = "primitives_old"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "primitives_new"
+crate-type = ["cdylib"]
+
+
