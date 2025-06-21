@@ -52,6 +52,7 @@ default = [
     "std",
     "wasmtime",
     "enable-svm",
+    "debug-print"
 ]
 enable-svm = [
     "fluentbase-runtime/enable-svm",
