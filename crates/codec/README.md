@@ -145,3 +145,7 @@ fluentbase-codec = "0.1.0"
 ## License
 
 MIT or Apache-2.0
+
+## DEV section
+
+- [x] primitives
