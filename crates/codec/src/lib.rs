@@ -10,13 +10,13 @@ mod error;
 mod evm;
 mod hash;
 mod primitive;
-mod tuple;
-mod vec;
-
 #[cfg(test)]
 mod test_utils;
 #[cfg(test)]
 mod tests;
+mod tuple;
+mod vec;
+// mod vec_sol;
 
 pub use ::byteorder;
 pub use ::bytes;

@@ -61,6 +61,13 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const 
     fn size_hint(&self) -> usize {
         align_up::<ALIGN>(Self::HEADER_SIZE)
     }
+
+    #[inline]
+    fn size_hint_nested(&self, is_nested: bool) -> usize {
+        // По умолчанию используем обычный size_hint
+        // Типы, которым нужна разная логика, переопределят этот метод
+        self.size_hint()
+    }
 }
 
 macro_rules! define_encoder_mode {
@@ -179,6 +186,7 @@ pub fn write_u32_aligned<B: ByteOrder, const ALIGN: usize>(
     buf: &mut impl BufMut,
     value: u32,
 ) -> usize {
+    eprintln!("write_u32_aligned: value={}, ALIGN={}", value, ALIGN);
     let aligned_value_size = align_up::<ALIGN>(4);
     if is_big_endian::<B>() {
         // For big-endian, copy to the end of the aligned array
