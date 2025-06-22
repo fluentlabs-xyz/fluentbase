@@ -4,7 +4,7 @@ extern crate fluentbase_codec as codec;
 
 use byteorder::{BigEndian, LittleEndian};
 use bytes::BytesMut;
-use codec::{encoder::Encoder, CompactABI, SolidityABI};
+use codec::optimized::{encoder::Encoder, CompactABI, SolidityABI};
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
@@ -13,32 +13,31 @@ pub extern "C" fn main() {
 
     // Test u32 encoding (CompactABI - LE, align 4)
     let test_u32: u32 = 0x12345678;
-    <u32 as Encoder<LittleEndian, 4, false, true>>::encode(&test_u32, &mut buf, 0).unwrap();
+    <u32 as Encoder<LittleEndian, 4, false>>::encode(&test_u32, &mut buf, None).unwrap();
     buf.clear();
 
     // Test u32 encoding (SolidityABI - BE, align 32)
-    <u32 as Encoder<BigEndian, 32, true, true>>::encode(&test_u32, &mut buf, 0).unwrap();
+    <u32 as Encoder<BigEndian, 32, true>>::encode(&test_u32, &mut buf, None).unwrap();
     buf.clear();
 
     // Test bool encoding
     let test_bool = true;
-    <bool as Encoder<LittleEndian, 4, false, true>>::encode(&test_bool, &mut buf, 0).unwrap();
+    <bool as Encoder<LittleEndian, 4, false>>::encode(&test_bool, &mut buf, None).unwrap();
     buf.clear();
 
     // Test array encoding
     let test_array: [u8; 5] = [1, 2, 3, 4, 5];
-    <[u8; 5] as Encoder<LittleEndian, 4, false, true>>::encode(&test_array, &mut buf, 0).unwrap();
+    <[u8; 5] as Encoder<LittleEndian, 4, false>>::encode(&test_array, &mut buf, None).unwrap();
     buf.clear();
 
     // Test u64 encoding
     let test_u64: u64 = 0x123456789ABCDEF0;
-    <u64 as Encoder<LittleEndian, 8, false, true>>::encode(&test_u64, &mut buf, 0).unwrap();
+    <u64 as Encoder<LittleEndian, 8, false>>::encode(&test_u64, &mut buf, None).unwrap();
     buf.clear();
 
     // Test Option<u32> encoding
     let test_option: Option<u32> = Some(42);
-    <Option<u32> as Encoder<LittleEndian, 4, false, true>>::encode(&test_option, &mut buf, 0)
-        .unwrap();
+    <Option<u32> as Encoder<LittleEndian, 4, false>>::encode(&test_option, &mut buf, None).unwrap();
     buf.clear();
 
     // Test using high-level API
