@@ -7,6 +7,7 @@ use crate::{
 use alloc::{fmt::Debug, vec::Vec};
 use byteorder::ByteOrder;
 use bytes::{Buf, BufMut, BytesMut};
+use core::mem::MaybeUninit;
 
 /// We encode dynamic arrays as following:
 /// - header
@@ -91,8 +92,6 @@ where
     }
 }
 
-use core::mem::MaybeUninit;
-
 /// Solidity ABI encoder implementation for Vec<T>
 ///
 /// # Encoding Rules:
@@ -114,6 +113,7 @@ where
     const IS_DYNAMIC: bool = true;
 
     fn encode(&self, buf: &mut impl BufMut, offset: usize) -> Result<usize, CodecError> {
+        // QUESTION: it will not work if we are trying to right to dirty buffer (from offset)
         // offset == 0 means this is a top-level dynamic type
         // offset != 0 means this is nested inside another structure
         let is_top_level = offset == 0;
@@ -221,7 +221,8 @@ fn encode_static_single_pass<T, B: ByteOrder, const ALIGN: usize>(
     is_top_level: bool,
 ) -> Result<usize, CodecError>
 where
-    T: Encoder<B, ALIGN, true, false>,
+    T: Encoder<B, ALIGN, true, false>, /* QUESTION: function called encode_static_single_pass,
+                                        * bit IS_STATIC const generic arg set to false */
 {
     let mut total_size = 0;
 
@@ -271,6 +272,7 @@ where
     T: Encoder<B, ALIGN, true, false>,
 {
     // Optimization: use stack buffer for small arrays
+    // QUESTION: how we can calculate STACK_BUFFER_SIZE?
     if vec.len() <= STACK_BUFFER_SIZE {
         encode_dynamic_stack_optimized::<T, B, ALIGN>(vec, buf, is_top_level)
     } else {
@@ -288,6 +290,8 @@ fn encode_dynamic_stack_optimized<T, B: ByteOrder, const ALIGN: usize>(
 where
     T: Encoder<B, ALIGN, true, false>,
 {
+    // QUESTION: do we actually need SizeInfo struct here? maybe simple number would be more
+    // efficient?
     let mut sizes = [SizeInfo { encoded_size: 0 }; STACK_BUFFER_SIZE];
 
     // PASS 1: Calculate sizes
@@ -413,14 +417,10 @@ unsafe impl BufMut for ByteCounter {
         self.count += cnt;
     }
 
+    // Explicitly forbid chunk_mut usage
     #[inline(always)]
     fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
-        // Return a dummy buffer - we only count, never write
-        static mut DUMMY: [MaybeUninit<u8>; 1024] = [MaybeUninit::uninit(); 1024];
-        unsafe {
-            // Convert [MaybeUninit<u8>] to UninitSlice
-            bytes::buf::UninitSlice::from_raw_parts_mut(DUMMY.as_mut_ptr() as *mut u8, 1024)
-        }
+        panic!("chunk_mut should not be called on ByteCounter");
     }
 
     // Optimize common write operations to just count bytes
@@ -636,19 +636,65 @@ mod tests {
     // 4. Manual Tests for Specific Behaviors
 
     #[test]
+    fn test_alloy_vec_u32_dirty_buffer() {
+        use alloy_sol_types::{sol_data::*, SolType, SolValue};
+        // Original data
+        let original: Vec<u32> = vec![1, 2, 3, 4, 5];
+
+        // Create dirty buffer
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(&[0xFF, 0xFF, 0xFF]);
+
+        // Encode using Alloy
+        let encoded = original.abi_encode();
+        buf.extend_from_slice(&encoded);
+
+        // Print the buffer for reference
+        println!("Buffer contents: {:?}", hex::encode(&buf));
+        println!("Buffer length: {}", buf.len());
+        assert_eq!(true, false);
+
+        // Decode (skipping the garbage bytes)
+        // let encoded_slice = &buf[3..]; // Skip first 3 bytes
+        // let decoded: Vec<u32> = Vec::<u32>::abi_decode(encoded_slice, true).unwrap();
+
+        // assert_eq!(original, decoded);
+    }
+    #[test]
     fn vec_encoding_with_offset() {
         let original: Vec<u32> = vec![1, 2, 3, 4, 5];
         let mut buf = BytesMut::new();
         buf.extend_from_slice(&[0xFF, 0xFF, 0xFF]); // Add some initial data
 
-        <Vec<u32> as fluentbase_codec_old::Encoder<LittleEndian, 4, false, false>>::encode(
+        <Vec<u32> as fluentbase_codec_old::Encoder<BigEndian, 32, true, false>>::encode(
             &original, &mut buf, 3,
         )
         .unwrap();
         let encoded = buf.freeze();
 
+        eprintln!("encoded: {:?}", hex::encode(&encoded));
+
+        let expected_encoded = hex::decode(concat!(
+            "ffffff",
+            "0000000000000000000000000000000000000000000000000000000000000020",
+            "0000000000000000000000000000000000000000000000000000000000000005",
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "0000000000000000000000000000000000000000000000000000000000000002",
+            "0000000000000000000000000000000000000000000000000000000000000003",
+            "0000000000000000000000000000000000000000000000000000000000000004",
+            "0000000000000000000000000000000000000000000000000000000000000005"
+        ))
+        .unwrap();
+
+        if encoded != expected_encoded {
+            eprintln!("Encoded mismatch!");
+            eprintln!("Expected: {}", hex::encode(&expected_encoded));
+            eprintln!("Actual:   {}", hex::encode(&encoded));
+        }
+        assert_eq!(expected_encoded, encoded);
+
         let decoded =
-            <Vec<u32> as fluentbase_codec_old::Encoder<LittleEndian, 4, false, false>>::decode(
+            <Vec<u32> as fluentbase_codec_old::Encoder<BigEndian, 32, true, false>>::decode(
                 &encoded, 3,
             )
             .unwrap();

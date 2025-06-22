@@ -37,6 +37,12 @@ pub extern "C" fn main() {
     let _decoded: Vec<Vec<u32>> = SolidityABI::<Vec<Vec<u32>>>::decode(&buf, 0).unwrap();
     buf.clear();
 
+    // Large vectors
+    let large_vec: Vec<u32> = (0..1000).collect();
+    SolidityABI::<Vec<u32>>::encode(&large_vec, &mut buf).unwrap();
+    let _decoded: Vec<u32> = SolidityABI::<Vec<u32>>::decode(&buf, 0).unwrap();
+    buf.clear();
+
     // Low-level API
     let example: Vec<Vec<u32>> = vec![vec![7, 8], vec![9]];
     <Vec<Vec<u32>> as Encoder<BigEndian, 32, true, false>>::encode(&example, &mut buf, 0).unwrap();

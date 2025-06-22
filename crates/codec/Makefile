@@ -23,6 +23,70 @@ NEW_WAT := $(OUTPUT_DIR)/$(MODULE)_new.wat
 .PHONY: compare
 compare: build-both analyze ## Build and compare both versions
 
+.PHONY: compare-existing
+compare-existing: ## Compare two existing WASM files (usage: make compare-existing WASM1=file1.wasm WASM2=file2.wasm)
+	@if [ -z "$(WASM1)" ] || [ -z "$(WASM2)" ]; then \
+		echo "$(YELLOW)Usage: make compare-existing WASM1=path/to/file1.wasm WASM2=path/to/file2.wasm$(NC)"; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(WASM1)" ]; then \
+		echo "$(YELLOW)Error: File $(WASM1) not found$(NC)"; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(WASM2)" ]; then \
+		echo "$(YELLOW)Error: File $(WASM2) not found$(NC)"; \
+		exit 1; \
+	fi
+
+	@echo "$(BLUE)=== Comparing existing WASM files ===$(NC)"
+	@echo "File 1: $(WASM1)"
+	@echo "File 2: $(WASM2)"
+
+	@echo ""
+	@echo "$(BLUE)=== Size Comparison ===$(NC)"
+	@size1=$$(stat -f%z $(WASM1) 2>/dev/null || stat -c%s $(WASM1)); \
+	size2=$$(stat -f%z $(WASM2) 2>/dev/null || stat -c%s $(WASM2)); \
+	diff=$$((size1 - size2)); \
+	if [ $$size1 -ne 0 ]; then \
+		percent=$$((diff * 100 / size1)); \
+	else \
+		percent=0; \
+	fi; \
+	echo "File 1: $$size1 bytes"; \
+	echo "File 2: $$size2 bytes"; \
+	echo "Difference: $$diff bytes ($$percent% reduction)"
+
+	@echo ""
+	@echo "$(BLUE)=== Twiggy Diff ===$(NC)"
+	@twiggy diff $(WASM1) $(WASM2) | head -20 || echo "Install twiggy: cargo install twiggy"
+
+	@echo ""
+	@echo "$(BLUE)=== Generating temporary disassembly ===$(NC)"
+	@mkdir -p $(OUTPUT_DIR)/temp
+	@wasm-objdump -d $(WASM1) > $(OUTPUT_DIR)/temp/wasm1.disasm
+	@wasm-objdump -d $(WASM2) > $(OUTPUT_DIR)/temp/wasm2.disasm
+
+	@echo ""
+	@echo "$(BLUE)=== Generating temporary WAT files ===$(NC)"
+	@wasm2wat $(WASM1) -o $(OUTPUT_DIR)/temp/wasm1.wat
+	@wasm2wat $(WASM2) -o $(OUTPUT_DIR)/temp/wasm2.wat
+	@echo "Generated WAT files for comparison"
+
+	@echo ""
+	@echo "$(BLUE)=== Total opcodes ===$(NC)"
+	@echo "File 1 total: $$(grep -c '^ [0-9a-f]\+:' $(OUTPUT_DIR)/temp/wasm1.disasm)"
+	@echo "File 2 total: $$(grep -c '^ [0-9a-f]\+:' $(OUTPUT_DIR)/temp/wasm2.disasm)"
+
+	@echo ""
+	@echo "$(BLUE)=== Function count comparison ===$(NC)"
+	@func1=$$(grep -c '^[0-9a-f]* func\[' $(OUTPUT_DIR)/temp/wasm1.disasm); \
+	func2=$$(grep -c '^[0-9a-f]* func\[' $(OUTPUT_DIR)/temp/wasm2.disasm); \
+	echo "File 1 functions: $$func1"; \
+	echo "File 2 functions: $$func2"
+
+	@# Cleanup temp files
+	@rm -rf $(OUTPUT_DIR)/temp
+
 .PHONY: build-both
 build-both: ## Build old and new versions
 	@echo "$(YELLOW)Building WASM files...$(NC)"
