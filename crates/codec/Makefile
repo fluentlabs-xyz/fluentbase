@@ -58,7 +58,7 @@ compare-existing: ## Compare two existing WASM files (usage: make compare-existi
 
 	@echo ""
 	@echo "$(BLUE)=== Twiggy Diff ===$(NC)"
-	@twiggy diff $(WASM1) $(WASM2) | head -20 || echo "Install twiggy: cargo install twiggy"
+	@twiggy diff $(WASM1) $(WASM2) | head -40 || echo "Install twiggy: cargo install twiggy"
 
 	@echo ""
 	@echo "$(BLUE)=== Generating temporary disassembly ===$(NC)"

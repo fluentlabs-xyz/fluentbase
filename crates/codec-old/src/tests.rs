@@ -5,10 +5,51 @@ use crate::{
 };
 use alloc::vec;
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
+use alloy_sol_types::sol;
 use byteorder::BE;
 use bytes::{Buf, BytesMut};
 use hashbrown::HashMap;
 use hex_literal::hex;
+
+#[test]
+fn sol_golden_values() {
+    use alloy_sol_types::{sol, SolValue};
+    use alloy_primitives::U256;
+
+    // Кодируем [[1, 2, 3], [4, 5]] напрямую через SolValue
+    let data: Vec<Vec<U256>> = vec![
+        vec![U256::from(1), U256::from(2), U256::from(3)],
+        vec![U256::from(4), U256::from(5)]
+    ];
+
+    // Используем SolValue trait для кодирования
+    let encoded = data.abi_encode();
+    let hex_encoded = hex::encode(&encoded);
+
+    println!("Encoded [[1,2,3], [4,5]]:");
+    println!("{}", hex_encoded);
+
+    // Ожидаемое значение из вашего теста
+    let expected = "0000000000000000000000000000000000000000000000000000000000000020\
+                    0000000000000000000000000000000000000000000000000000000000000002\
+                    0000000000000000000000000000000000000000000000000000000000000040\
+                    00000000000000000000000000000000000000000000000000000000000000c0\
+                    0000000000000000000000000000000000000000000000000000000000000003\
+                    0000000000000000000000000000000000000000000000000000000000000001\
+                    0000000000000000000000000000000000000000000000000000000000000002\
+                    0000000000000000000000000000000000000000000000000000000000000003\
+                    0000000000000000000000000000000000000000000000000000000000000002\
+                    0000000000000000000000000000000000000000000000000000000000000004\
+                    0000000000000000000000000000000000000000000000000000000000000005";
+
+    assert_eq!(hex_encoded, expected);
+    println!("✓ Encoding matches expected value!");
+
+    // Проверяем декодирование
+    let decoded: Vec<Vec<U256>> = Vec::<Vec<U256>>::abi_decode(&encoded).unwrap();
+    assert_eq!(decoded, data);
+    println!("✓ Decoding works correctly!");
+}
 
 #[test]
 fn test_fixed_array_solidity() {

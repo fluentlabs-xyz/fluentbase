@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolValue};
 use byteorder::BE;
 use bytes::BytesMut;
-use fluentbase_codec::{
+use fluentbase_codec_old::{
     byteorder,
     encoder::{CompactABI, Encoder, SolidityABI, SolidityPackedABI},
     Codec,
