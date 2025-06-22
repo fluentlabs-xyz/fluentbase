@@ -1,13 +1,6 @@
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
-    common::{
-        calculate_max_chunk_size,
-        evm_address_from_pubkey,
-        evm_balance_from_lamports,
-        is_evm_pubkey,
-        lamports_from_evm_balance,
-        pubkey_from_address,
-    },
+    common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_address},
     fluentbase::{
         common::{
             extract_account_data_or_default,
@@ -16,7 +9,6 @@ use crate::{
             BatchMessage,
             MemStorage,
         },
-        helpers::settle_balances,
         helpers_v2::{exec_encoded_svm_batch_message, exec_svm_batch_message},
         loader_common::{read_protected_preimage, write_protected_preimage},
     },
@@ -28,9 +20,8 @@ use crate::{
 };
 use alloc::{vec, vec::Vec};
 use bincode::error::DecodeError;
-use fluentbase_sdk::{debug_log, debug_log_ext, Address, Bytes, ContextReader, SharedAPI};
+use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI};
 use hashbrown::HashMap;
-use itertools::Itertools;
 use solana_bincode::{deserialize, serialize};
 use solana_pubkey::Pubkey;
 

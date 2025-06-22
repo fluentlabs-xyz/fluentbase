@@ -32,7 +32,7 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{debug_log, debug_log_ext, Address, ContextReader, SharedAPI, StorageAPI};
+use fluentbase_sdk::{debug_log, debug_log_ext, ContextReader, SharedAPI, StorageAPI};
 use hashbrown::HashMap;
 use itertools::Itertools;
 use solana_bincode::deserialize;
@@ -291,6 +291,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     Ok(result_accounts)
 }
 
+#[allow(unused)]
 pub(crate) fn settle_balances<SDK: SharedAPI>(
     sdk: &mut SDK,
     balance_changes: HashMap<Pubkey, (u64, u64)>,
