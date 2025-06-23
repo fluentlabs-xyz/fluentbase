@@ -39,7 +39,10 @@ mod tests {
     fn main_single_message<SAPI: StorageAPI>(
         mut sdk: impl SharedAPI,
         mut sapi: Option<&mut SAPI>,
-    ) -> HashMap<Pubkey, AccountSharedData> {
+    ) -> (
+        HashMap<Pubkey, AccountSharedData>,
+        HashMap<Pubkey, (u64, u64)>,
+    ) {
         let input = sdk.input();
 
         let result = exec_encoded_svm_message(&mut sdk, input, true, &mut sapi);
@@ -52,7 +55,10 @@ mod tests {
     fn main_batch_message<SAPI: StorageAPI>(
         mut sdk: impl SharedAPI,
         mut sapi: Option<&mut SAPI>,
-    ) -> HashMap<Pubkey, AccountSharedData> {
+    ) -> (
+        HashMap<Pubkey, AccountSharedData>,
+        HashMap<Pubkey, (u64, u64)>,
+    ) {
         let input = sdk.input();
 
         let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut sapi);

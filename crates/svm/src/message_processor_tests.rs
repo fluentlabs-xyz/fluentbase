@@ -40,6 +40,7 @@ pub mod tests {
         vm::Config,
     };
     use solana_transaction_error::TransactionError;
+    use std::assert_matches::assert_matches;
 
     #[test]
     fn test_process_message_readonly_handling_mocked() {
@@ -734,7 +735,7 @@ pub mod tests {
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             assert!(result.is_ok());
-            assert_eq!(result, Ok(()));
+            assert_matches!(result, Ok(_));
             let account1 = invoke_context
                 .transaction_context
                 .get_account_at_index(0)
@@ -776,7 +777,7 @@ pub mod tests {
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             assert!(result.is_ok());
-            assert_eq!(result, Ok(()));
+            assert_matches!(result, Ok(_));
             let account1 = invoke_context
                 .transaction_context
                 .get_account_at_index(0)
