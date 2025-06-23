@@ -462,31 +462,31 @@ mod tests {
 
     // 4. Manual Tests for Specific Behaviors
 
-    // #[test]
-    // fn test_alloy_vec_u32_dirty_buffer() {
-    //     use alloy_sol_types::{sol_data::*, SolType, SolValue};
-    //     // Original data
-    //     let original: Vec<u32> = vec![1, 2, 3, 4, 5];
+    #[test]
+    fn test_alloy_vec_u32_dirty_buffer() {
+        use alloy_sol_types::{sol_data::*, SolType, SolValue};
+        // Original data
+        let original: Vec<u32> = vec![1, 2, 3, 4, 5];
 
-    //     // Create dirty buffer
-    //     let mut buf = BytesMut::new();
-    //     buf.extend_from_slice(&[0xFF, 0xFF, 0xFF]);
+        // Create dirty buffer
+        let mut buf = BytesMut::new();
+        // buf.extend_from_slice(&[0xFF, 0xFF, 0xFF]);
 
-    //     // Encode using Alloy
-    //     let encoded = original.abi_encode();
-    //     buf.extend_from_slice(&encoded);
+        // Encode using Alloy
+        let encoded = original.abi_encode();
+        buf.extend_from_slice(&encoded);
 
-    //     // Print the buffer for reference
-    //     println!("Buffer contents: {:?}", hex::encode(&buf));
-    //     println!("Buffer length: {}", buf.len());
-    //     assert_eq!(true, false);
+        // Print the buffer for reference
+        println!("Buffer contents: {:?}", hex::encode(&buf));
+        println!("Buffer length: {}", buf.len());
+        assert_eq!(true, false);
 
-    //     // Decode (skipping the garbage bytes)
-    //     // let encoded_slice = &buf[3..]; // Skip first 3 bytes
-    //     // let decoded: Vec<u32> = Vec::<u32>::abi_decode(encoded_slice, true).unwrap();
+        // Decode (skipping the garbage bytes)
+        // let encoded_slice = &buf[3..]; // Skip first 3 bytes
+        // let decoded: Vec<u32> = Vec::<u32>::abi_decode(encoded_slice, true).unwrap();
 
-    //     // assert_eq!(original, decoded);
-    // }
+        // assert_eq!(original, decoded);
+    }
     #[test]
     fn vec_encoding_with_offset() {
         let original: Vec<u32> = vec![1, 2, 3, 4, 5];

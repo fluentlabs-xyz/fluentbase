@@ -112,6 +112,7 @@ where
 }
 
 /// Two-pass encoding for dynamic elements
+#[inline]
 fn encode_dynamic_elements<T>(
     vec: &[T],
     buf: &mut impl BufMut,
@@ -120,52 +121,93 @@ fn encode_dynamic_elements<T>(
 where
     T: Encoder<BigEndian, 32, true>,
 {
-    // Small vectors optimization threshold
     const SMALL_VEC_THRESHOLD: usize = 16;
 
-    // PASS 1: Calculate sizes
-    let sizes = if vec.len() <= SMALL_VEC_THRESHOLD {
-        // Stack allocation for small vectors
-        let mut stack_sizes = [0usize; SMALL_VEC_THRESHOLD];
-
-        for (i, element) in vec.iter().enumerate() {
-            let mut counter = ByteCounter::new();
-            element.encode(&mut counter, Some(ctx))?;
-            stack_sizes[i] = counter.count;
-        }
-
-        stack_sizes[..vec.len()].to_vec()
+    if vec.len() <= SMALL_VEC_THRESHOLD {
+        encode_small_dynamic(vec, buf, ctx)
     } else {
-        // Heap allocation for large vectors
-        vec.iter()
-            .map(|element| {
-                let mut counter = ByteCounter::new();
-                element.encode(&mut counter, Some(ctx))?;
-                Ok(counter.count)
-            })
-            .collect::<Result<Vec<_>, CodecError>>()?
-    };
+        encode_large_dynamic(vec, buf, ctx)
+    }
+}
 
-    // Calculate and write offsets
-    let offsets_size = vec.len() * 32;
+/// Encode small vectors (≤16 elements) without heap allocations
+#[inline]
+fn encode_small_dynamic<T>(
+    vec: &[T],
+    buf: &mut impl BufMut,
+    ctx: &mut EncodingContext,
+) -> Result<usize, CodecError>
+where
+    T: Encoder<BigEndian, 32, true>,
+{
+    const STACK_SIZE: usize = 16;
 
-    // First element starts after length field + all offsets
-    let mut element_position = 32 + offsets_size;
+    // Stack-allocated array for sizes - no heap allocation
+    let mut sizes = [0usize; STACK_SIZE];
 
-    for &size in &sizes {
-        // Offsets are relative to the start of array data (where length is stored)
-        // So we subtract 32 (length field size) from absolute position
-        write_u32_aligned::<BigEndian, 32>(buf, (element_position - 32) as u32);
-        element_position += size;
+    // Pass 1: Calculate element sizes
+    for (i, element) in vec.iter().enumerate() {
+        let mut counter = ByteCounter::new();
+        element.encode(&mut counter, Some(ctx))?;
+        sizes[i] = counter.count;
     }
 
-    // PASS 2: Write actual element data
+    // Pass 2: Write offsets and elements using common logic
+    write_offsets_and_elements(vec, buf, ctx, &sizes[..vec.len()])
+}
+
+/// Encode large vectors (>16 elements) with single heap allocation
+#[inline(never)]
+fn encode_large_dynamic<T>(
+    vec: &[T],
+    buf: &mut impl BufMut,
+    ctx: &mut EncodingContext,
+) -> Result<usize, CodecError>
+where
+    T: Encoder<BigEndian, 32, true>,
+{
+    // Pass 1: Single allocation with exact capacity
+    let mut sizes = Vec::with_capacity(vec.len());
+
+    // Calculate element sizes
+    for element in vec {
+        let mut counter = ByteCounter::new();
+        element.encode(&mut counter, Some(ctx))?;
+        sizes.push(counter.count);
+    }
+
+    // Pass 2: Write offsets and elements using common logic
+    write_offsets_and_elements(vec, buf, ctx, &sizes)
+}
+
+/// Common logic for writing offsets and element data
+#[inline(always)]
+fn write_offsets_and_elements<T>(
+    vec: &[T],
+    buf: &mut impl BufMut,
+    ctx: &mut EncodingContext,
+    sizes: &[usize],
+) -> Result<usize, CodecError>
+where
+    T: Encoder<BigEndian, 32, true>,
+{
+    // Calculate offsets and write them
+    let offsets_size = vec.len() * 32;
+    let mut current_offset = offsets_size;
+
+    // Write offset pointers
+    for &size in sizes {
+        write_u32_aligned::<BigEndian, 32>(buf, current_offset as u32);
+        current_offset += size;
+    }
+
+    // Write actual element data
     let mut total_size = offsets_size;
 
     for (i, element) in vec.iter().enumerate() {
         let written = element.encode(buf, Some(ctx))?;
 
-        // Verify size consistency in debug mode
+        // Verify size consistency in debug builds
         #[cfg(debug_assertions)]
         {
             if written != sizes[i] {
@@ -339,6 +381,7 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000000000005"  // 5
         )
     );
+
     #[test]
     fn vec_encoding_with_offset() {
         let original: Vec<u32> = vec![1, 2, 3, 4, 5];

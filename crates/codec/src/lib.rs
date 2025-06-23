@@ -9,6 +9,7 @@ pub mod encoder;
 mod error;
 mod evm;
 mod hash;
+pub mod optimized;
 mod primitive;
 #[cfg(test)]
 mod test_utils;
