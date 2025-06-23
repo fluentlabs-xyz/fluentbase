@@ -5,17 +5,25 @@ use core::marker::PhantomData;
 
 /// Encoding context for complex types requiring offset calculation
 pub struct EncodingContext {
-    _phantom: PhantomData<()>,
-    // pub heads: Vec<u8>,
-    // pub tails: Vec<u8>,
-    // pub tail_offset: usize,
+    stack_offsets: [usize; 32],
+    heap_offsets: Vec<usize>,
 }
 
 impl EncodingContext {
-    #[inline]
     pub fn new() -> Self {
         Self {
-            _phantom: PhantomData,
+            stack_offsets: [0; 32],
+            heap_offsets: Vec::new(),
+        }
+    }
+
+    pub fn temp_offsets(&mut self, len: usize) -> &mut [usize] {
+        if len <= self.stack_offsets.len() {
+            &mut self.stack_offsets[..len]
+        } else {
+            self.heap_offsets.clear();
+            self.heap_offsets.resize(len, 0);
+            &mut self.heap_offsets
         }
     }
 }

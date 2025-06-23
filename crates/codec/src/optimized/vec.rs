@@ -94,6 +94,7 @@ where
 }
 
 /// Single-pass encoding for static elements
+#[inline(always)]
 fn encode_static_elements<T>(
     vec: &[T],
     buf: &mut impl BufMut,
@@ -111,8 +112,7 @@ where
     Ok(size)
 }
 
-/// Two-pass encoding for dynamic elements
-#[inline]
+#[inline(always)]
 fn encode_dynamic_elements<T>(
     vec: &[T],
     buf: &mut impl BufMut,
@@ -121,68 +121,50 @@ fn encode_dynamic_elements<T>(
 where
     T: Encoder<BigEndian, 32, true>,
 {
-    const SMALL_VEC_THRESHOLD: usize = 16;
-
-    if vec.len() <= SMALL_VEC_THRESHOLD {
-        encode_small_dynamic(vec, buf, ctx)
-    } else {
-        encode_large_dynamic(vec, buf, ctx)
+    let len = vec.len();
+    if len == 0 {
+        return Ok(0);
     }
-}
 
-/// Encode small vectors (≤16 elements) without heap allocations
-#[inline]
-fn encode_small_dynamic<T>(
-    vec: &[T],
-    buf: &mut impl BufMut,
-    ctx: &mut EncodingContext,
-) -> Result<usize, CodecError>
-where
-    T: Encoder<BigEndian, 32, true>,
-{
-    const STACK_SIZE: usize = 16;
+    // Step 1: Borrow just once to get the buffer
+    let (mut sizes_buf, rest_ctx) = {
+        let slice = ctx.temp_offsets(len);
+        (slice as *mut [usize], ctx)
+    };
 
-    // Stack-allocated array for sizes - no heap allocation
-    let mut sizes = [0usize; STACK_SIZE];
+    // SAFETY: we guarantee no use of ctx until after `sizes_buf` is dropped
+    let sizes = unsafe { &mut *sizes_buf };
 
-    // Pass 1: Calculate element sizes
+    // Step 2: Calculate size per element
     for (i, element) in vec.iter().enumerate() {
-        let mut counter = ByteCounter::new();
-        element.encode(&mut counter, Some(ctx))?;
-        sizes[i] = counter.count;
+        sizes[i] = if T::IS_DYNAMIC {
+            let mut counter = ByteCounter::new();
+            element.encode(&mut counter, Some(rest_ctx))?;
+            counter.count
+        } else {
+            align_up::<32>(T::HEADER_SIZE)
+        };
     }
 
-    // Pass 2: Write offsets and elements using common logic
-    write_offsets_and_elements(vec, buf, ctx, &sizes[..vec.len()])
+    // Step 3: Write offsets and encoded elements
+    write_offsets(buf, &sizes[..len])?;
+    let data_written = write_elements(vec, buf, rest_ctx, &sizes[..len])?;
+
+    Ok(len * 32 + data_written)
 }
 
-/// Encode large vectors (>16 elements) with single heap allocation
-#[inline(never)]
-fn encode_large_dynamic<T>(
-    vec: &[T],
-    buf: &mut impl BufMut,
-    ctx: &mut EncodingContext,
-) -> Result<usize, CodecError>
-where
-    T: Encoder<BigEndian, 32, true>,
-{
-    // Pass 1: Single allocation with exact capacity
-    let mut sizes = Vec::with_capacity(vec.len());
-
-    // Calculate element sizes
-    for element in vec {
-        let mut counter = ByteCounter::new();
-        element.encode(&mut counter, Some(ctx))?;
-        sizes.push(counter.count);
-    }
-
-    // Pass 2: Write offsets and elements using common logic
-    write_offsets_and_elements(vec, buf, ctx, &sizes)
-}
-
-/// Common logic for writing offsets and element data
 #[inline(always)]
-fn write_offsets_and_elements<T>(
+fn write_offsets(buf: &mut impl BufMut, sizes: &[usize]) -> Result<(), CodecError> {
+    let mut offset = sizes.len() * 32;
+    for &size in sizes {
+        write_u32_aligned::<BigEndian, 32>(buf, offset as u32);
+        offset += size;
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn write_elements<T>(
     vec: &[T],
     buf: &mut impl BufMut,
     ctx: &mut EncodingContext,
@@ -191,36 +173,20 @@ fn write_offsets_and_elements<T>(
 where
     T: Encoder<BigEndian, 32, true>,
 {
-    // Calculate offsets and write them
-    let offsets_size = vec.len() * 32;
-    let mut current_offset = offsets_size;
-
-    // Write offset pointers
-    for &size in sizes {
-        write_u32_aligned::<BigEndian, 32>(buf, current_offset as u32);
-        current_offset += size;
-    }
-
-    // Write actual element data
-    let mut total_size = offsets_size;
+    let mut total = 0;
 
     for (i, element) in vec.iter().enumerate() {
         let written = element.encode(buf, Some(ctx))?;
 
-        // Verify size consistency in debug builds
         #[cfg(debug_assertions)]
-        {
-            if written != sizes[i] {
-                return Err(CodecError::InvalidData(
-                    "size mismatch between calculation and actual encoding",
-                ));
-            }
+        if written != sizes[i] {
+            return Err(CodecError::InvalidData("encode size mismatch"));
         }
 
-        total_size += written;
+        total += written;
     }
 
-    Ok(total_size)
+    Ok(total)
 }
 
 /// Counting writer that tracks bytes without storing them
