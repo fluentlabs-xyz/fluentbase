@@ -51,21 +51,23 @@ pub fn read_u32_aligned<B: ByteOrder, const ALIGN: usize>(
     buf: &impl Buf,
     offset: usize,
 ) -> Result<u32, CodecError> {
-    let aligned_value_size = align_up::<ALIGN>(4);
+    let word_size = align_up::<ALIGN>(4);
 
-    let start = offset;
-    let end = start + aligned_value_size;
+
+    let end = offset + word_size ;
 
     if buf.remaining() < end {
-        return Err(CodecError::BufferTooSmall {
+        println!("read_u32_aligned>>>Buffer too small : expected {}, actual {}", end, buf.remaining());
+        return Err(CodecError::BufferTooSmallMsg {
             expected: end,
             actual: buf.remaining(),
+            message: "read_u32_aligned",
         });
     }
     if is_big_endian::<B>() {
         Ok(B::read_u32(&buf.chunk()[end - 4..end]))
     } else {
-        Ok(B::read_u32(&buf.chunk()[start..start + 4]))
+        Ok(B::read_u32(&buf.chunk()[offset..offset + 4]))
     }
 }
 

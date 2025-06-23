@@ -3,28 +3,38 @@ use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use bytes::{Buf, BufMut};
 use core::marker::PhantomData;
 
-/// Encoding context for complex types requiring offset calculation
+/// Encoding context for recursive ABI encoding with bounded depth.
+/// Tracks current recursion depth for safety.
 pub struct EncodingContext {
-    stack_offsets: [usize; 32],
-    heap_offsets: Vec<usize>,
+    depth: usize,
+    max_depth: usize,
 }
 
 impl EncodingContext {
     pub fn new() -> Self {
         Self {
-            stack_offsets: [0; 32],
-            heap_offsets: Vec::new(),
+            depth: 0,
+            max_depth: 32,
         }
     }
 
-    pub fn temp_offsets(&mut self, len: usize) -> &mut [usize] {
-        if len <= self.stack_offsets.len() {
-            &mut self.stack_offsets[..len]
-        } else {
-            self.heap_offsets.clear();
-            self.heap_offsets.resize(len, 0);
-            &mut self.heap_offsets
+    #[inline]
+    pub fn enter(&mut self) -> Result<(), CodecError> {
+        if self.depth >= self.max_depth {
+            return Err(CodecError::InvalidData("max encoding depth exceeded"));
         }
+        self.depth += 1;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn exit(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+
+    #[inline]
+    pub fn depth(&self) -> usize {
+        self.depth
     }
 }
 
@@ -56,13 +66,8 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
     /// * `offset` - Starting position in the buffer
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError>;
 
-    /// Returns the exact encoded size of this value
-    ///
-    /// For dynamic types, this includes all nested data.
-    /// Used for offset calculations in complex structures.
-    fn encoded_size(&self) -> usize {
-        // Default implementation for static types
-        align_up::<ALIGN>(Self::HEADER_SIZE)
+    fn partial_decode(_buf: &impl Buf, _offset: usize) -> Result<Self, CodecError> {
+        todo!()
     }
 }
 
@@ -104,11 +109,6 @@ macro_rules! define_abi_codec {
             pub fn decode(buf: &impl Buf, offset: usize) -> Result<T, CodecError> {
                 T::decode(buf, offset)
             }
-
-            #[inline]
-            pub fn encoded_size(value: &T) -> usize {
-                value.encoded_size()
-            }
         }
     };
 
@@ -134,12 +134,6 @@ macro_rules! define_abi_codec {
             pub fn decode(buf: &impl Buf, offset: usize) -> Result<T, CodecError> {
                 let _ = <T as PackedValidation>::ASSERT_STATIC;
                 T::decode(buf, offset)
-            }
-
-            #[inline]
-            pub fn encoded_size(value: &T) -> usize {
-                let _ = <T as PackedValidation>::ASSERT_STATIC;
-                value.encoded_size()
             }
         }
     };

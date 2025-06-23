@@ -27,10 +27,6 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     fn decode(_buf: &impl Buf, _offset: usize) -> Result<Self, CodecError> {
         Ok(PhantomData)
     }
-
-    fn encoded_size(&self) -> usize {
-        0
-    }
 }
 
 impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, SOL_MODE> for u8 {
@@ -56,9 +52,10 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let word_size = align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE>>::HEADER_SIZE);
         if buf.remaining() < offset + word_size {
-            return Err(CodecError::BufferTooSmall {
+            return Err(CodecError::BufferTooSmallMsg {
                 expected: offset + word_size,
                 actual: buf.remaining(),
+                message: "primitive::decode::u8",
             });
         }
         let chunk = &buf.chunk()[offset..];
@@ -68,10 +65,6 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
             chunk[0]
         };
         Ok(value)
-    }
-
-    fn encoded_size(&self) -> usize {
-        align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE>>::HEADER_SIZE)
     }
 }
 
@@ -91,11 +84,6 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let value = <u8 as Encoder<B, ALIGN, SOL_MODE>>::decode(buf, offset)?;
         Ok(value != 0)
-    }
-
-    fn encoded_size(&self) -> usize {
-        let value: u8 = if *self { 1 } else { 0 };
-        <u8 as Encoder<B, ALIGN, SOL_MODE>>::encoded_size(&value)
     }
 }
 
@@ -128,9 +116,14 @@ macro_rules! impl_int {
                     align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE>>::HEADER_SIZE);
 
                 if buf.remaining() < offset + ALIGN {
-                    return Err(CodecError::BufferTooSmall {
+                    return Err(CodecError::BufferTooSmallMsg {
                         expected: offset + ALIGN,
                         actual: buf.remaining(),
+                        message: concat!(
+                            "primitive::decode::",
+                            stringify!($typ),
+                            " - buffer too small"
+                        ),
                     });
                 }
 
@@ -207,15 +200,6 @@ where
             Ok(None)
         }
     }
-
-    fn encoded_size(&self) -> usize {
-        let inner = match self {
-            Some(inner) => inner.encoded_size(),
-            None => T::default().encoded_size(),
-        };
-
-        align_up::<ALIGN>(1) + inner
-    }
 }
 
 impl<T, B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const N: usize>
@@ -256,10 +240,6 @@ where
         }
 
         Ok(result)
-    }
-
-    fn encoded_size(&self) -> usize {
-        self.iter().map(|v| v.encoded_size()).sum()
     }
 }
 

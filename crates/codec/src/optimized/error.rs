@@ -4,6 +4,11 @@ use core::fmt;
 pub enum CodecError {
     /// Not enough data in buffer
     BufferTooSmall { expected: usize, actual: usize },
+    BufferTooSmallMsg {
+        expected: usize,
+        actual: usize,
+        message: &'static str,
+    },
     /// Overflow in calculations
     Overflow,
     /// Invalid format or data
@@ -18,6 +23,15 @@ impl fmt::Display for CodecError {
             Self::BufferTooSmall { expected, actual } => {
                 write!(f, "buffer too small: expected {}, got {}", expected, actual)
             }
+            Self::BufferTooSmallMsg {
+                expected,
+                actual,
+                message,
+            } => write!(
+                f,
+                "buffer too small: expected {}, got {}. Message: {}",
+                expected, actual, message
+            ),
             Self::Overflow => write!(f, "numeric overflow"),
             Self::InvalidData(msg) => write!(f, "invalid data: {}", msg),
             Self::DynamicTypeInPackedMode => {

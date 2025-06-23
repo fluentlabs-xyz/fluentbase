@@ -17,6 +17,7 @@ bytes = { workspace = true, default-features = false }
 fluentbase-codec-derive = { workspace = true }
 hashbrown = { workspace = true }
 serde = { workspace = true, default-features = false }
+smallvec = "1.15.1"
 
 [dev-dependencies]
 alloy-sol-types = { workspace = true }
