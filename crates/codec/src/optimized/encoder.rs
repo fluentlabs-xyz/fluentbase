@@ -2,12 +2,20 @@ use crate::optimized::{counter::ByteCounter, error::CodecError, utils::align_up}
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use bytes::{Buf, BufMut};
 use core::marker::PhantomData;
+use smallvec::SmallVec;
 
 /// Encoding context for recursive ABI encoding with bounded depth.
 /// Tracks current recursion depth for safety.
 pub struct EncodingContext {
     depth: usize,
     max_depth: usize,
+    element_info: SmallVec<[(usize, usize, usize); 32]>,
+}
+
+pub struct ElementInfo {
+    depth: usize,
+    length: usize, // Length of the element
+    size: usize,   // Size of the element in bytes
 }
 
 impl EncodingContext {
@@ -15,6 +23,7 @@ impl EncodingContext {
         Self {
             depth: 0,
             max_depth: 32,
+            element_info: SmallVec::new(),
         }
     }
 
@@ -35,6 +44,24 @@ impl EncodingContext {
     #[inline]
     pub fn depth(&self) -> usize {
         self.depth
+    }
+    pub fn push_element_info(&mut self, length: usize, offset: usize, size: usize) {
+        self.element_info.push((length, offset, size));
+    }
+
+    pub fn pop_element_info(&mut self) -> Option<(usize, usize, usize)> {
+        self.element_info.pop()
+    }
+    pub fn get_element_info(&self, index: usize) -> Option<(usize, usize, usize)> {
+        self.element_info.get(index).copied()
+    }
+
+    pub fn element_info_len(&self) -> usize {
+        self.element_info.len()
+    }
+
+    pub fn truncate_element_info(&mut self, len: usize) {
+        self.element_info.truncate(len);
     }
 }
 
@@ -70,6 +97,10 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
         todo!()
     }
 
+    // what is the best solution - this one or encode data method - that would allow to encode only
+    // data? this would allow us to separate encoding for compact mode - where we should caclulate
+    // meta and only after that actually write data. The realisation should be pretty
+    // streightforward - as shown bellow
     fn data_size(&self, ctx: &mut EncodingContext) -> Result<usize, CodecError> {
         if Self::IS_DYNAMIC {
             let mut counter = ByteCounter::new();
@@ -78,6 +109,21 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
         } else {
             Ok(Self::HEADER_SIZE)
         }
+    }
+
+    #[inline(always)]
+    fn encode_data(
+        &self,
+        buf: &mut impl BufMut,
+        ctx: Option<&mut EncodingContext>,
+    ) -> Result<usize, CodecError> {
+        // For primitive types - encode as is
+        if !Self::IS_DYNAMIC {
+            return self.encode(buf, ctx);
+        }
+        // Динамические типы переопределяют метод,
+        // сюда управление не должно попасть
+        unreachable!("encode_data must be specialised for dynamic types")
     }
 
     fn len(&self) -> usize {
@@ -196,3 +242,33 @@ mod tests {
         // Error: SolidityPackedABI does not support dynamic types
     }
 }
+
+// [3, 12, 20, 24, 16, 36, 24, 2, 12, 8, 1, 2, 1, 12, 4, 3, 3, 12, 12, 4, 5, 6]
+
+// let expected_encoded = hex::decode(concat!(
+// // Main array header
+// "03000000", // length = 3 vectors
+// "0c000000", // offset = 12 (to first element header)
+// "3C000000", // size = 60 (36 bytes headers + 24 bytes data)
+// // Nested vector headers
+// // vec[0] = [1, 2]
+// "02000000", // length = 2
+// "24000000", // offset = 36 (from start of this header to its data)
+// "08000000", // size = 8 bytes
+// // vec[1] = [3]
+// "01000000", // length = 1
+// "2c000000", // offset = 44 (from start of this header to its data)
+// "04000000", // size = 4 bytes
+// // vec[2] = [4, 5, 6]
+// "03000000", // length = 3
+// "30000000", // offset = 48 (from start of this header to its data)
+// "0c000000", // size = 12 bytes
+// // Data sections
+// "01000000", // 1
+// "02000000", // 2
+// "03000000", // 3
+// "04000000", // 4
+// "05000000", // 5
+// "06000000"  // 6
+// ))
+// .unwrap();

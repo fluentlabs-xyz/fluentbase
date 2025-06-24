@@ -24,43 +24,63 @@ where
     const HEADER_SIZE: usize = size_of::<u32>() * 3;
     const IS_DYNAMIC: bool = true;
 
-    // asdf
     fn encode(
         &self,
         buf: &mut impl BufMut,
-        ctx_opt: Option<&mut EncodingContext>,
+        ctx: Option<&mut EncodingContext>,
     ) -> Result<usize, CodecError> {
-        // ctx
-        let mut default_ctx = EncodingContext::new();
-        let ctx = ctx_opt.unwrap_or(&mut default_ctx);
+        let word_size = align_up::<ALIGN>(4);
+        let mut written = 0;
 
-        // empty vector
-        let word = align_up::<ALIGN>(4);
+        // Setup context
+        let mut default_ctx;
+        let ctx = match ctx {
+            Some(ctx) => ctx,
+            None => {
+                default_ctx = EncodingContext::new();
+                &mut default_ctx
+            }
+        };
+
+        // header:
+        // len - number of elements (vec_len)
+        // offset - offset to the actual data. For nested vectors - to the header of the first
+        // element. size - size of the data in bytes (not number of elements)
+        // For nested vectors, this is the size of the whole vector data, including nested headers,
+        // but excluding main level header size.
+
         if self.is_empty() {
+            // len
             write_u32_aligned::<B, ALIGN>(buf, 0);
-            write_u32_aligned::<B, ALIGN>(buf, (word * 3) as u32);
+            // offset to data
+            write_u32_aligned::<B, ALIGN>(buf, (word_size * 3) as u32);
+            // data size (bytes)
             write_u32_aligned::<B, ALIGN>(buf, 0);
-            return Ok(word * 3);
-        }
-        // dyn (nested)
-        if T::IS_DYNAMIC {
-            // encode_vec_two_pass handle ctx internally
-            return encode_vec_two_pass2::<T, B, ALIGN>(self, buf, ctx);
+
+            return Ok(word_size * 3);
         }
 
-        // static (flat)
         ctx.enter()?;
+ 
 
-        let len = self.len() as u32;
-        let data_size = len * align_up::<ALIGN>(T::HEADER_SIZE) as u32;
+        // asdf
+        if T::IS_DYNAMIC {
+           
+            written += encode_vec_two_pass::<T, B, ALIGN>(self, buf, ctx)?;
+        } else {
+            let len = self.len() as u32;
+            let data_size = len * align_up::<ALIGN>(T::HEADER_SIZE) as u32;
+            // len
+            write_u32_aligned::<B, ALIGN>(buf, len);
+            // offset
+            write_u32_aligned::<B, ALIGN>(buf, (word_size * 3) as u32);
+            // data size
+            write_u32_aligned::<B, ALIGN>(buf, data_size);
+            written += word_size * 3;
 
-        write_u32_aligned::<B, ALIGN>(buf, len);
-        write_u32_aligned::<B, ALIGN>(buf, (word * 3) as u32);
-        write_u32_aligned::<B, ALIGN>(buf, data_size);
-
-        let mut written = word * 3;
-        for el in self {
-            written += el.encode(buf, Some(ctx))?;
+            for element in self.iter() {
+                written += element.encode(buf, Some(ctx))?;
+            }
         }
 
         ctx.exit();
@@ -75,10 +95,7 @@ where
         let mut default_ctx;
         let ctx = match ctx_opt {
             Some(c) => c,
-            None => {
-                default_ctx = EncodingContext::new();
-                &mut default_ctx
-            }
+            None => { default_ctx = EncodingContext::new(); &mut default_ctx }
         };
 
         // 2. фиксируем вход во вложенность
@@ -88,9 +105,9 @@ where
         let mut written = 0;
         for el in self {
             written += if T::IS_DYNAMIC {
-                el.encode_data(buf, Some(ctx))? // рекурсивно data-часть
+                el.encode_data(buf, Some(ctx))?   // рекурсивно data-часть
             } else {
-                el.encode(buf, Some(ctx))? // статические целиком
+                el.encode(buf, Some(ctx))?        // статические целиком
             };
         }
 
@@ -109,47 +126,48 @@ where
 
 fn encode_vec_two_pass<T, B: ByteOrder, const ALIGN: usize>(
     vec: &[T],
-    buf: &mut impl BufMut,
+    buf: &mut impl BufMut,             // любой BufMut
     ctx: &mut EncodingContext,
 ) -> Result<usize, CodecError>
 where
     T: Encoder<B, ALIGN, false>,
 {
-    ctx.enter()?; // --- depth +1
+    ctx.enter()?;
 
-    /* ---------- первый проход: только считаем размеры ---------- */
+    /* ---------- первый проход: только считаем ---------- */
     let word = align_up::<ALIGN>(4);
-    let hdr = word * 3;
+    let hdr  = word * 3;
 
-    let mut body_sizes = SmallVec::<[usize; 32]>::with_capacity(vec.len());
-    let mut total_body = 0usize;
+    // Временный стек метаданных на стеке/SmallVec (heap-alloc = 0)
+    let mut sizes   = SmallVec::<[usize; 32]>::with_capacity(vec.len());
+    let mut totals  = 0usize;
 
     for el in vec {
-        let sz = el.data_size(ctx)?; // bytes of element *body*
-        body_sizes.push(sz);
-        total_body += sz;
+        let sz = el.data_size(ctx)?;         // body-size элемента
+        sizes.push(sz);
+        totals += sz;
     }
 
-    let total_size = hdr * vec.len() + total_body; // всё, кроме main-header
+    let total_size = hdr * vec.len() + totals;
+    let start_pos  = buf.remaining_mut();    // для отчёта
 
     /* ---------- второй проход: пишем заголовки и данные ---------- */
-    // A. главный header вектора
-    write_u32_aligned::<B, ALIGN>(buf, vec.len() as u32); // len
-    write_u32_aligned::<B, ALIGN>(buf, hdr as u32); // offset до данных
-    write_u32_aligned::<B, ALIGN>(buf, total_size as u32); // size данных
+    // 0. главный header
+    write_u32_aligned::<B, ALIGN>(buf, vec.len()  as u32);
+    write_u32_aligned::<B, ALIGN>(buf, hdr        as u32);
+    write_u32_aligned::<B, ALIGN>(buf, total_size as u32);
 
-    // B. заголовки элементов
-    let mut data_offset = hdr * vec.len(); // смещение 1-го data-блока
-    for (el, &body) in vec.iter().zip(&body_sizes) {
-        let elem_len_field = el.len() as u32; // ***кол-во элементов***
-        write_u32_aligned::<B, ALIGN>(buf, elem_len_field); // len
-        write_u32_aligned::<B, ALIGN>(buf, data_offset as u32);
-        write_u32_aligned::<B, ALIGN>(buf, body as u32); // size (bytes)
-
-        data_offset += body;
+    // 1. headers элементов
+    let mut offset = hdr * vec.len();
+    for &body in &sizes {
+        let len = body + T::HEADER_SIZE;
+        write_u32_aligned::<B, ALIGN>(buf, len   as u32);
+        write_u32_aligned::<B, ALIGN>(buf, offset as u32);
+        write_u32_aligned::<B, ALIGN>(buf, body  as u32);
+        offset += body;
     }
 
-    // C. сами данные
+    // 2. данные
     for el in vec {
         if T::IS_DYNAMIC {
             el.encode_data(buf, Some(ctx))?;
@@ -158,55 +176,8 @@ where
         }
     }
 
-    ctx.exit(); // --- depth −1
-    Ok(hdr + total_size) // точный объём, записанный в buf
-}
-
-fn encode_vec_two_pass2<T, B: ByteOrder, const ALIGN: usize>(
-    vec: &[T],
-    buf: &mut impl BufMut,          // append-only буфер
-    ctx: &mut EncodingContext,
-) -> Result<usize, CodecError>
-where
-    T: Encoder<B, ALIGN, false>,
-{
-    ctx.enter()?;                               // depth +1
-    let word = align_up::<ALIGN>(4);
-    let hdr  = word * 3;
-
-    /* ---------- PASS #1: только считаем ---------- */
-    let mut total_body = 0usize;
-    for el in vec {
-        total_body += el.data_size(ctx)?;       // ни байта в buf, ни одной аллокации
-    }
-    let total_size = hdr * vec.len() + total_body;
-
-    /* ---------- пишем главный header ---------- */
-    write_u32_aligned::<B, ALIGN>(buf, vec.len()  as u32);  // len
-    write_u32_aligned::<B, ALIGN>(buf, hdr        as u32);  // offset до данных
-    write_u32_aligned::<B, ALIGN>(buf, total_size as u32);  // size данных
-
-    /* ---------- PASS #2: headers элементов + data ---------- */
-    let mut data_offset = hdr * vec.len();                  // где начнётся первый body
-
-    for el in vec {
-        // 2-а. ещё раз быстро узнаём размер body
-        let body = el.data_size(ctx)?;
-
-        // 2-б. header элемента
-        write_u32_aligned::<B, ALIGN>(buf, el.len() as u32); // len (кол-во эл-тов)
-        write_u32_aligned::<B, ALIGN>(buf, data_offset as u32);
-        write_u32_aligned::<B, ALIGN>(buf, body as u32);
-        
-        data_offset += body;
-    }
-    
-    for el in vec {
-        el.encode_data(buf, Some(ctx))?;
-    }
-
-    ctx.exit();                              // depth −1
-    Ok(hdr + total_size)                     // записанный объём
+    ctx.exit();
+    Ok(start_pos - buf.remaining_mut())      // сколько байт мы добавили
 }
 
 
@@ -388,6 +359,9 @@ where
     // elements count
 
     let mut current_offset = 0; // len + offset + size for each element
+
+
+
 
     // Write headers for all elements
     for element in vec.iter() {
