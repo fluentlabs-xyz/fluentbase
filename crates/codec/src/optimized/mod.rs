@@ -1,3 +1,4 @@
+mod counter;
 pub mod encoder;
 mod error;
 mod primitive;

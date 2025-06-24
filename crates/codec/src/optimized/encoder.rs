@@ -1,4 +1,4 @@
-use crate::optimized::{error::CodecError, utils::align_up};
+use crate::optimized::{counter::ByteCounter, error::CodecError, utils::align_up};
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use bytes::{Buf, BufMut};
 use core::marker::PhantomData;
@@ -68,6 +68,20 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
 
     fn partial_decode(_buf: &impl Buf, _offset: usize) -> Result<Self, CodecError> {
         todo!()
+    }
+
+    fn data_size(&self, ctx: &mut EncodingContext) -> Result<usize, CodecError> {
+        if Self::IS_DYNAMIC {
+            let mut counter = ByteCounter::new();
+            self.encode(&mut counter, Some(ctx))?;
+            Ok(counter.count() - Self::HEADER_SIZE)
+        } else {
+            Ok(Self::HEADER_SIZE)
+        }
+    }
+
+    fn len(&self) -> usize {
+        1
     }
 }
 

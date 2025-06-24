@@ -6,31 +6,105 @@ use crate::optimized::{
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
 use smallvec::SmallVec;
+use crate::optimized::counter::ByteCounter;
 
-/// Vec implementation for Solidity ABI (always 32-byte aligned, big-endian)
-impl<T> Encoder<BigEndian, 4, false> for Vec<T>
+const COMPACT_WORD_SIZE: usize = 4; // Compact ABI uses 4-byte alignment
+
+/// Vec implementation for Compact ABI
+/// - header
+///   - length: number of elements inside vector
+///   - offset: offset inside structure
+///   - size: number of encoded bytes
+/// - body
+///   - raw bytes of the vector
+impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for Vec<T>
 where
-    T: Encoder<BigEndian, 4, false>,
+    T: Encoder<B, ALIGN, false>,
 {
-    const HEADER_SIZE: usize = 4; // offset pointer for top-level
+    const HEADER_SIZE: usize = size_of::<u32>() * 3;
     const IS_DYNAMIC: bool = true;
 
     fn encode(
         &self,
-        _buf: &mut impl BufMut,
-        _ctx: Option<&mut EncodingContext>,
+        buf: &mut impl BufMut,
+        ctx: Option<&mut EncodingContext>,
     ) -> Result<usize, CodecError> {
-        todo!()
+        let mut written = 0;
+        let word_size = align_up::<ALIGN>(4);
+        let header_size = word_size * 3;
+        let start_remaining = buf.remaining_mut();
+
+        // Setup context
+        let mut default_ctx;
+        let ctx = match ctx {
+            Some(ctx) => ctx,
+            None => {
+                default_ctx = EncodingContext::new();
+                &mut default_ctx
+            }
+        };
+
+        // header:
+        // len - number of elements (vec_len)
+        // offset - offset to the actual data. For nested vectors - to the header of the first
+        // element. size - size of the data in bytes (not number of elements)
+        // For nested vectors, this is the size of the whole vector data, including nested headers,
+        // but excluding main level header size.
+
+        if self.is_empty() {
+            // len
+            write_u32_aligned::<B, ALIGN>(buf, 0);
+            // offset to data
+            write_u32_aligned::<B, ALIGN>(buf, header_size as u32);
+            // data size (bytes)
+            write_u32_aligned::<B, ALIGN>(buf, 0);
+            written += word_size * 3;
+
+            return Ok(written);
+        }
+
+        //
+        if T::IS_DYNAMIC {
+            written += encode_dynamic_elements_compact::<T, B, ALIGN>(self, buf, ctx)?;
+        } else {
+            let len = self.len();
+            // len
+            write_u32_aligned::<B, ALIGN>(buf, len as u32);
+            // size (bytes)
+            let data_size = len * align_up::<ALIGN>(T::HEADER_SIZE);
+            // offset
+            write_u32_aligned::<B, ALIGN>(buf, (written + word_size * 3) as u32);
+            // data size
+            write_u32_aligned::<B, ALIGN>(buf, data_size as u32);
+
+            // existing data + header
+            written += word_size * 3;
+
+            for element in self.iter() {
+                written += element.encode(buf, Some(ctx))?;
+            }
+        }
+
+        ctx.exit();
+        Ok(written)
     }
+
     fn decode(_buf: &impl Buf, _offset: usize) -> Result<Self, CodecError> {
         todo!()
     }
 }
 
-/// Vec implementation for Solidity ABI (always 32-byte aligned, big-endian)
-impl<T> Encoder<BigEndian, 32, true> for Vec<T>
+/// Vec implementation for Solidity ABI
+/// For Solidity, we don't have size:
+/// - header
+///   - offset
+/// - body
+///   - length
+///   - raw bytes of the vector
+
+impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for Vec<T>
 where
-    T: Encoder<BigEndian, 32, true>,
+    T: Encoder<B, ALIGN, true>,
 {
     const HEADER_SIZE: usize = 32; // offset pointer for top-level
     const IS_DYNAMIC: bool = true;
@@ -39,11 +113,10 @@ where
         &self,
         buf: &mut impl BufMut,
         ctx: Option<&mut EncodingContext>,
-    ) -> Result<usize, CodecError>
-    where
-        T: Encoder<BigEndian, 32, true>,
-    {
-        let mut total_size = 0;
+    ) -> Result<usize, CodecError> {
+        let mut written = 0;
+
+        let word_size: u32 = align_up::<ALIGN>(T::HEADER_SIZE) as u32;
 
         let mut default_ctx;
         let ctx = match ctx {
@@ -54,30 +127,32 @@ where
             }
         };
 
+        // Write offset for outer container
         if ctx.depth() == 0 {
-            write_u32_aligned::<BigEndian, 32>(buf, 32);
-            total_size += 32;
+            write_u32_aligned::<BigEndian, ALIGN>(buf, word_size);
+            written += word_size;
         }
 
         ctx.enter()?;
 
-        write_u32_aligned::<BigEndian, 32>(buf, self.len() as u32);
-        total_size += 32;
+        // write data len
+        write_u32_aligned::<BigEndian, ALIGN>(buf, self.len() as u32);
+        written += word_size;
 
         if self.is_empty() {
-            return Ok(total_size);
+            return Ok(written as usize);
         }
 
         if T::IS_DYNAMIC {
-            total_size += encode_dynamic_elements(self, buf, ctx)?;
+            written += encode_dynamic_elements(self, buf, ctx)? as u32;
         } else {
             for element in self.iter() {
-                total_size += element.encode(buf, Some(ctx))?;
+                written += element.encode(buf, Some(ctx))? as u32;
             }
         }
 
         ctx.exit();
-        Ok(total_size)
+        Ok(written as usize)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -103,31 +178,32 @@ where
 }
 
 #[inline(always)]
-fn encode_dynamic_elements<T>(
+fn encode_dynamic_elements<T, B: ByteOrder, const ALIGN: usize>(
     vec: &[T],
     buf: &mut impl BufMut,
     ctx: &mut EncodingContext,
 ) -> Result<usize, CodecError>
 where
-    T: Encoder<BigEndian, 32, true>,
+    T: Encoder<B, ALIGN, true>,
 {
     let len = vec.len();
     if len == 0 {
         return Ok(0);
     }
+    let word_size = align_up::<ALIGN>(T::HEADER_SIZE);
 
-    let mut current_offset = len * 32;
+    let mut current_offset = len * word_size;
 
     for element in vec.iter() {
         let size = if T::IS_DYNAMIC {
             let mut counter = ByteCounter::new();
             element.encode(&mut counter, Some(ctx))?;
-            counter.count
+            counter.count()
         } else {
-            align_up::<32>(T::HEADER_SIZE)
+            word_size
         };
 
-        write_u32_aligned::<BigEndian, 32>(buf, current_offset as u32);
+        write_u32_aligned::<BigEndian, ALIGN>(buf, current_offset as u32);
         current_offset += size;
     }
 
@@ -139,71 +215,72 @@ where
         total_written += written;
     }
 
-    Ok(len * 32 + total_written)
+    Ok(len * word_size + total_written)
 }
 
-/// Counting writer that tracks bytes without storing them
-struct ByteCounter {
-    count: usize,
-}
+#[inline(always)]
+fn encode_dynamic_elements_compact<T, B: ByteOrder, const ALIGN: usize>(
+    vec: &[T],
+    buf: &mut impl BufMut,
+    ctx: &mut EncodingContext,
+) -> Result<usize, CodecError>
+where
+    T: Encoder<B, ALIGN, false>,
+{
+    let len = vec.len();
+    let word_size = align_up::<ALIGN>(4);
+    let header_size = word_size * 3;
+    let elem_header_size = word_size * 3;
 
-impl ByteCounter {
-    #[inline]
-    fn new() -> Self {
-        Self { count: 0 }
-    }
-}
 
-unsafe impl BufMut for ByteCounter {
-    #[inline]
-    fn remaining_mut(&self) -> usize {
-        usize::MAX
-    }
+    let mut elem_sizes = Vec::with_capacity(len);
+    let mut total_data_size = 0;
 
-    #[inline]
-    unsafe fn advance_mut(&mut self, cnt: usize) {
-        self.count += cnt;
-    }
-
-    fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
-        unreachable!(
-            "ByteCounter does not support chunk_mut(). \
-            This is a counting-only implementation. \
-            All writes must use put_* methods."
-        )
+    for element in vec.iter() {
+        let mut counter = ByteCounter::new();
+        element.encode(&mut counter, Some(ctx))?;
+        let data_size = counter.count() - elem_header_size; // только данные
+        elem_sizes.push(data_size);
+        total_data_size += data_size;
     }
 
-    #[inline]
-    fn put_slice(&mut self, src: &[u8]) {
-        self.count += src.len();
+    // Общий размер = заголовки элементов + данные
+    let total_size = len * elem_header_size + total_data_size;
+
+    // Записываем главный заголовок
+    write_u32_aligned::<B, ALIGN>(buf, len as u32);
+    write_u32_aligned::<B, ALIGN>(buf, header_size as u32);
+    write_u32_aligned::<B, ALIGN>(buf, total_size as u32); // исправлено!
+
+    // Записываем заголовки элементов
+    let mut current_offset = len * elem_header_size;
+    for (i, element) in vec.iter().enumerate() {
+        // Получаем длину элемента
+        let mut temp = Vec::new();
+        element.encode(&mut temp, Some(ctx))?;
+        let elem_len = read_u32_aligned::<B, ALIGN>(&&temp[..], 0)?;
+
+        write_u32_aligned::<B, ALIGN>(buf, elem_len);
+        write_u32_aligned::<B, ALIGN>(buf, current_offset as u32);
+        write_u32_aligned::<B, ALIGN>(buf, elem_sizes[i] as u32);
+
+        current_offset += elem_sizes[i];
     }
 
-    #[inline]
-    fn put_bytes(&mut self, _: u8, cnt: usize) {
-        self.count += cnt;
+    // Записываем только данные элементов (без их заголовков)
+    for element in vec.iter() {
+        let mut temp = Vec::new();
+        element.encode(&mut temp, Some(ctx))?;
+        buf.put_slice(&temp[elem_header_size..]); // пропускаем заголовок
     }
 
-    // Override common methods for efficiency
-    #[inline]
-    fn put_u8(&mut self, _: u8) {
-        self.count += 1;
-    }
-
-    #[inline]
-    fn put_u32(&mut self, _: u32) {
-        self.count += 4;
-    }
-
-    #[inline]
-    fn put_u32_le(&mut self, _: u32) {
-        self.count += 4;
-    }
+    Ok(header_size + total_size)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byteorder::BigEndian;
+    use byteorder::{BigEndian, LittleEndian};
     use bytes::BytesMut;
 
     /// Macro for testing a standard roundtrip (encode -> decode) against a hex snapshot.
@@ -395,5 +472,83 @@ mod tests {
         let decoded = <Vec<u32> as Encoder<BigEndian, 32, true>>::decode(&encoded, 3).unwrap();
 
         assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn vec_compact_u32_simple() {
+        let vec: Vec<u32> = vec![1, 2, 3, 4];
+        let mut buf = BytesMut::new();
+
+        // Encode
+        let result = <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode(&vec, &mut buf, None);
+        assert!(result.is_ok());
+
+        let encoded = buf.freeze();
+        let encoded_hex = hex::encode(&encoded);
+        let expected_encoded = hex::decode(concat!(
+            "04000000", // length 3
+            "0c000000", // offset 12 (3 header fields × 4 bytes)
+            "10000000", // size = 16 (3 elements × 4 bytes)
+            "01000000", // 1
+            "02000000", // 2
+            "03000000", // 3
+            "04000000", // 4
+        ))
+        .unwrap();
+        assert_eq!(encoded_hex, hex::encode(expected_encoded));
+
+        // Verify size
+        assert_eq!(result.unwrap(), 28); // header(12) + data(16)
+    }
+
+    #[test]
+    fn vec_compact_nested() {
+        let test_value: Vec<Vec<u32>> = vec![vec![1, 2], vec![3], vec![4, 5, 6]];
+        let mut buf = BytesMut::new();
+
+        // Encode
+        let result =
+            <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode(&test_value, &mut buf, None);
+        assert!(result.is_ok());
+
+        let encoded = buf.freeze();
+        let encoded_hex = hex::encode(&encoded);
+
+        let expected_encoded = hex::decode(concat!(
+            // Main array header
+            "03000000", // length = 3 vectors
+            "0c000000", // offset = 12 (to first element header)
+            "3C000000", // size = 60 (36 bytes headers + 24 bytes data)
+            // Nested vector headers
+            // vec[0] = [1, 2]
+            "02000000", // length = 2
+            "24000000", // offset = 36 (from start of this header to its data)
+            "08000000", // size = 8 bytes
+            // vec[1] = [3]
+            "01000000", // length = 1
+            "2c000000", // offset = 44 (from start of this header to its data)
+            "04000000", // size = 4 bytes
+            // vec[2] = [4, 5, 6]
+            "03000000", // length = 3
+            "30000000", // offset = 48 (from start of this header to its data)
+            "0c000000", // size = 12 bytes
+            // Data sections
+            "01000000", // 1
+            "02000000", // 2
+            "03000000", // 3
+            "04000000", // 4
+            "05000000", // 5
+            "06000000"  // 6
+        ))
+        .unwrap();
+
+        assert_eq!(
+            hex::encode(&expected_encoded),
+            encoded_hex,
+            "Nested vector encoding doesn't match expected value"
+        );
+
+        // Verify total size
+        assert_eq!(result.unwrap(), 72); // main header(12) + nested headers(36) + data(24)
     }
 }
