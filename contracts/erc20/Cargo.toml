@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true, features = ["fast-panic"] }
+bincode = { workspace = true, default-features = false, features = ["serde"] }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }

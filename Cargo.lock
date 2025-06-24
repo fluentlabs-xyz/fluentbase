@@ -2552,6 +2552,7 @@ dependencies = [
 name = "fluentbase-contracts-erc20"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
  "fluentbase-build",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
