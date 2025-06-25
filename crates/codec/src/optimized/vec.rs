@@ -6,7 +6,82 @@ use crate::optimized::{
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
 use core::mem::size_of;
+use smallvec::SmallVec;
 use crate::optimized::counter::ByteCounter;
+use crate::optimized::encoder::NodeMeta;
+
+// fn collect_metadata<T, B: ByteOrder, const ALIGN: usize, >(
+//     value: &Vec<T>,
+//     ctx: &mut EncodingContext,
+// ) -> usize
+// where
+//     T: Encoder<B, ALIGN, false>,
+// {
+//     todo!()
+//     // let idx = ctx.nodes.len();
+//     // ctx.nodes.push(NodeMeta {
+//     //     len: 0,
+//     //     tail: 0,
+//     //     first_child: None,
+//     // });
+//     //
+//     // if T::IS_DYNAMIC {
+//     //     let mut total_tail = 0;
+//     //     let mut count = 0;
+//     //
+//     //     for child in value {
+//     //         total_tail += collect_metadata::<T, B, ALIGN>(child, ctx);
+//     //         count += 1;
+//     //     }
+//     //
+//     //     ctx.nodes[idx].len = count;
+//     //     ctx.nodes[idx].tail = total_tail - count * Vec::<T>::HEADER_SIZE;
+//     //     ctx.nodes[idx].first_child = Some(idx + 1);
+//     //     total_tail
+//     // } else {
+//     //     let data_bytes = value.len() * T::HEADER_SIZE;
+//     //     ctx.nodes[idx].tail = data_bytes;
+//     //     data_bytes
+//     // }
+// }
+// trait CollectChildren {
+//     type Item;
+//     fn children(&self) -> &[Self::Item];
+// }
+//
+// impl<T> CollectChildren for Vec<T> {
+//     type Item = T;
+//     fn children(&self) -> &[T] {
+//         self.as_slice()
+//     }
+// }
+// fn collect_metadata_vec<T, B: ByteOrder, const ALIGN: usize>(
+//     vec: &Vec<T>,
+//     nodes: &mut SmallVec<[NodeMeta; 32]>,
+// ) -> usize
+// where
+//     T: Encoder<B, ALIGN, false>,
+// {
+//     let idx = nodes.len();
+//     nodes.push(NodeMeta {
+//         len: 0,
+//         tail: 0,
+//         first_child: None,
+//     });
+//
+//     let mut total_tail = 0;
+//     for child in vec {
+//         total_tail += collect_metadata_leaf::<T, B, ALIGN>(child, nodes); // or recursive call if needed
+//     }
+//
+//     let count = vec.len();
+//     nodes[idx].len = count;
+//     nodes[idx].tail = total_tail - count * T::HEADER_SIZE;
+//     nodes[idx].first_child = Some(idx + 1);
+//     total_tail
+// }
+
+
 
 /// Vec implementation for Compact ABI
 /// For Compact ABI, we have:
@@ -24,70 +99,113 @@ impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for Vec<T>
 where
     T: Encoder<B, ALIGN, false>,
 {
-    const IS_DYNAMIC: bool = true;
-    const HEADER_SIZE: usize = size_of::<u32>() * 3;
-
+    const IS_DYNAMIC:  bool  = true;
+    const HEADER_SIZE: usize = core::mem::size_of::<u32>() * 3;
+    
+    /// `encode_head` – **pass 1: metadata collection only**  
+    /// * pushes one `NodeMeta { len, tail }` per vector in pre-order  
+    /// * maintains `ctx.depth` via `enter/exit` (DoS guard)  
+    /// * returns the pure-data byte count (`tail`) of the current subtree
     fn encode_head(
         &self,
-        out: &mut impl BufMut,
+        _buf: &mut impl BufMut,      // nothing is written in pass-1
         ctx: &mut EncodingContext,
-    ) -> Result<usize, CodecError> {
-        let word = align_up::<ALIGN>(4);
-        let hdr = word * 3;
+    ) -> Result<usize, CodecError>
+    {
+        /* depth guard ---------------------------------------------------- */
+        ctx.enter()?;                           // depth +1  (max_depth checked)
 
+        /* reserve slot for this vector ---------------------------------- */
+        let me = ctx.nodes.len();
+        ctx.nodes.push(NodeMeta { len: self.len(), tail: 0 });
+
+        /* empty vector – nothing to recurse into ------------------------ */
         if self.is_empty() {
-            write_u32_aligned::<B, ALIGN>(out, 0);
-            return Ok(word);
+            ctx.exit();                         // depth −1
+            return Ok(0);
         }
 
-        ctx.enter()?; // depth +1
-
-        let mut total_body = 0usize;
-        for el in self {
-            let mut counter = ByteCounter::new();
-            el.encode(&mut counter, ctx)?;
-            total_body += el.encode(&mut counter, ctx)?; // ByteCounter, zero-alloc
+        /* recurse into children, collecting their NodeMeta records ------ */
+        let first_child_idx = me + 1;
+        for child in self {
+            //   real child vector, NOT slice::from_ref(child)
+            child.encode_head(_buf, ctx)?;
         }
-        
-        // own header
-        write_u32_aligned::<B, ALIGN>(out, self.len() as u32); // len
-        write_u32_aligned::<B, ALIGN>(out, hdr as u32); // offset (=12)
-        write_u32_aligned::<B, ALIGN>(out, total_body as u32); // size
 
-        let mut bytes_written = hdr;
-
-        // encode child elements' headers
+        /* compute pure-data size (tail) --------------------------------- */
         if T::IS_DYNAMIC {
-            for el in self {
-                bytes_written += el.encode_head(out, ctx)?;
+            // sum of children's tail­-bytes (their headers are excluded)
+            let mut data_bytes = 0;
+            for idx in first_child_idx .. first_child_idx + self.len() {
+                data_bytes += ctx.nodes[idx].tail;
             }
+            ctx.nodes[me].tail = data_bytes;
+        } else {
+            // vector of statics: each element has fixed aligned size
+            ctx.nodes[me].tail = self.len() * align_up::<ALIGN>(T::HEADER_SIZE);
         }
 
-        ctx.exit(); // depth −1
-        Ok(bytes_written)
+        let tail_out = ctx.nodes[me].tail;
+        ctx.exit();                               // depth −1
+        Ok(tail_out)
     }
 
-    // Encode the tail of the vector, which contains the actual data.
+
+    /*───────────────────────── 1 st pass — collect ─────────────────────────*/
+    // fn encode_head(
+    //     &self,
+    //     _buf: &mut impl BufMut,         // ← ignored in this phase
+    //     ctx: &mut EncodingContext,
+    // ) -> Result<usize, CodecError>
+    // {
+    //     // ---- push *this* vector in pre-order ---------------------------
+    //     let idx = ctx.nodes.len();
+    //     ctx.nodes.push(NodeMeta { len: 0, tail: 0, first_child: None });
+    //
+    //     // empty → nothing to recurse, tail = 0
+    //     if self.is_empty() {
+    //         return Ok(0);
+    //     }
+    //
+    //     // dynamic (any Vec) – walk children
+    //     let mut tail_bytes = 0;
+    //     let first_child_idx = idx + 1;
+    //
+    //     for child in self {
+    //         let mut counter = ByteCounter::new();
+    //         // recurse; child returns *its* data-bytes
+    //         tail_bytes += child.encode_tail(&mut counter, ctx)?;
+    //     }
+    //
+    //     // fill current NodeMeta
+    //     ctx.nodes[idx].len  = self.len();
+    //     ctx.nodes[idx].tail = tail_bytes;               // pure data bytes
+    //     if self.len() != 0 {
+    //         ctx.nodes[idx].first_child = Some(first_child_idx);
+    //     }
+    //
+    //     // return data-bytes (parent needs only tail, not headers)
+    //     Ok(tail_bytes)
+    // }
+
+
+
+    /*──────────────────────── tail – DFS, unchanged ───────────────────────*/
     fn encode_tail(
         &self,
         out: &mut impl BufMut,
         ctx: &mut EncodingContext,
-    ) -> Result<usize, CodecError> {
-        if self.is_empty() {
-            return Ok(0);
-        }
+    ) -> Result<usize, CodecError>
+    {
+        if self.is_empty() { return Ok(0); }
         ctx.enter()?;
-        let mut written = 0;
-        for el in self {
-            written += el.encode_tail(out, ctx)?;
-        }
+        let mut bytes = 0;
+        for el in self { bytes += el.encode_tail(out, ctx)?; }
         ctx.exit();
-        Ok(written)
+        Ok(bytes)
     }
 
-    fn len(&self) -> usize {
-        self.len()
-    }
+    #[inline] fn len(&self) -> usize { self.len() }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let word = align_up::<ALIGN>(4);
@@ -118,6 +236,8 @@ where
         Ok(out)
     }
 }
+
+
 
 /// Vec implementation for Solidity ABI
 /// For Solidity, we don't have size:
@@ -597,7 +717,7 @@ mod tests {
     //     assert_eq!(original, decoded);
     // }
 
-    // asdf
+
     #[test]
     fn vec_compact_u32_simple() {
         let vec: Vec<u32> = vec![1, 2, 3, 4];
@@ -662,86 +782,91 @@ mod tests {
         assert_eq!(decoded, vec, "Decoded value mismatch");
     }
 
+    // asdf
     #[test]
     fn vec_compact_nested() {
-        let vec: Vec<Vec<u32>> = vec![vec![1, 2], vec![3], vec![4, 5, 6]];
+        let vec: Vec<Vec<Vec<u32>>> = vec![vec![vec![1, 2], vec![3], vec![4, 5, 6]]];
 
-        // Encode tail
-        let mut buf = BytesMut::new();
-        let mut ctx = EncodingContext::new();
-        let result_tail = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode_tail(
-            &vec, &mut buf, &mut ctx,
-        );
-        let expected_tail = hex::decode(concat!(
-            // vec[0]
-            "01000000", // 1
-            "02000000", // 2
-            // vec[1]
-            "03000000", // 3
-            // vec[2]
-            "04000000", // 4
-            "05000000", // 5
-            "06000000"  // 6
-        ))
-        .unwrap();
-        let encoded_tail = buf.freeze();
-        assert!(result_tail.is_ok());
-        assert_eq!(encoded_tail.len(), 24);
-        assert_eq!(hex::encode(&expected_tail), hex::encode(&encoded_tail));
+        // // Encode tail
+        // let mut buf = BytesMut::new();
+        // let mut ctx = EncodingContext::new();
+        // let result_tail = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode_tail(
+        //     &vec, &mut buf, &mut ctx,
+        // );
+        // let expected_tail = hex::decode(concat!(
+        //     // vec[0]
+        //     "01000000", // 1
+        //     "02000000", // 2
+        //     // vec[1]
+        //     "03000000", // 3
+        //     // vec[2]
+        //     "04000000", // 4
+        //     "05000000", // 5
+        //     "06000000"  // 6
+        // ))
+        // .unwrap();
+        // let encoded_tail = buf.freeze();
+        // assert!(result_tail.is_ok());
+        // assert_eq!(encoded_tail.len(), 24);
+        // assert_eq!(hex::encode(&expected_tail), hex::encode(&encoded_tail));
 
         // Encode head
         let mut buf = BytesMut::new();
         let mut ctx = EncodingContext::new();
-        let result_head = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode_head(
+        let result_head = <Vec<Vec<Vec<u32>>> as Encoder<LittleEndian, 4, false>>::encode_head(
             &vec, &mut buf, &mut ctx,
         );
-        let encoded_head = buf.freeze();
-        let expected_head = hex::decode(concat!(
-            // Main header
-            "03000000", // length = 3
-            "0c000000", // offset = 12
-            "3C000000", // total size = 60
-            // Nested headers
-            "02000000", // len = 2
-            "24000000", // offset = 36
-            "08000000", // size = 8
-            "01000000", // len = 1
-            "2c000000", // offset = 44
-            "04000000", // size = 4
-            "03000000", // len = 3
-            "30000000", // offset = 48
-            "0c000000", // size = 12
-        ))
-        .unwrap();
-        assert!(result_head.is_ok());
-        assert_eq!(hex::encode(&expected_head), hex::encode(&encoded_head));
-        assert_eq!(encoded_head.len(), 12 + 3 * 12); // top-level + 3 nested headers
-
-        // Full encode
-        let expected: Vec<u8> = expected_head
-            .iter()
-            .chain(expected_tail.iter())
-            .cloned()
-            .collect();
-
-        let mut buf = BytesMut::new();
-        let mut ctx = EncodingContext::new();
-        let result =
-            <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode(&vec, &mut buf, &mut ctx);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 72); // 12 + 36 + 24
-
-        let encoded_full = buf.freeze();
-        assert_eq!(
-            hex::encode(&expected),
-            hex::encode(&encoded_full),
-            "full (head + tail) encoding mismatch"
-        );
-
-        // Decode
-        let decoded = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::decode(&encoded_full, 0)
-            .expect("decode full");
-        assert_eq!(decoded, vec, "Decoded value mismatch");
+        // asdf
+        println!("ctx: {:?}", ctx);
+        assert_eq!(true, false);
+        // let encoded_head = buf.freeze();
+        // // asdf
+        // let expected_head = hex::decode(concat!(
+        //     // Main header
+        //     "03000000", // length = 3
+        //     "0c000000", // offset = 12
+        //     "3C000000", // total size = 60
+        //     // Nested headers
+        //     "02000000", // len = 2
+        //     "24000000", // offset = 36
+        //     "08000000", // size = 8
+        //     "01000000", // len = 1
+        //     "2c000000", // offset = 44
+        //     "04000000", // size = 4
+        //     "03000000", // len = 3
+        //     "30000000", // offset = 48
+        //     "0c000000", // size = 12
+        // ))
+        // .unwrap();
+        // assert!(result_head.is_ok());
+        // assert_eq!(hex::encode(&expected_head), hex::encode(&encoded_head));
+        // assert_eq!(encoded_head.len(), 12 + 3 * 12); // top-level + 3 nested headers
+        //
+        // // Full encode
+        // let expected: Vec<u8> = expected_head
+        //     .iter()
+        //     .chain(expected_tail.iter())
+        //     .cloned()
+        //     .collect();
+        //
+        // let mut buf = BytesMut::new();
+        // let mut ctx = EncodingContext::new();
+        // let result =
+        //     <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode(&vec, &mut buf, &mut ctx);
+        // assert!(result.is_ok());
+        // assert_eq!(result.unwrap(), 72); // 12 + 36 + 24
+        //
+        // let encoded_full = buf.freeze();
+        // assert_eq!(
+        //     hex::encode(&expected),
+        //     hex::encode(&encoded_full),
+        //     "full (head + tail) encoding mismatch"
+        // );
+        //
+        // // Decode
+        // let decoded = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::decode(&encoded_full, 0)
+        //     .expect("decode full");
+        // assert_eq!(decoded, vec, "Decoded value mismatch");
     }
 
     #[test]
@@ -802,4 +927,8 @@ mod tests {
         // total bytes: main-hdr(12) + A-hdr(12) + B-hdr(12) + A-body(36) + B-body(16) = 88
         assert_eq!(sz, 88);
     }
+
+
 }
+
+

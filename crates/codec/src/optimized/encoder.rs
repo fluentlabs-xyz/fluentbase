@@ -21,35 +21,62 @@ use crate::optimized::{counter::ByteCounter, error::CodecError};
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
 use core::marker::PhantomData;
-
 /* ──────────────────────── EncodingContext ──────────────────────── */
-pub struct EncodingContext {
-    pub depth: u32,
-    pub max_depth: u32,
-    pub skip_self: bool,     // parent already printed my header?
+use smallvec::SmallVec;
+
+/// Metadata collected during pass 1 of encoding.
+/// Each `NodeMeta` represents a node in the pre-order tree of dynamic values.
+#[derive(Debug)]
+pub struct NodeMeta {
+    pub len: usize,               // number of children (0 = leaf/static)
+    pub tail: usize,             // size of data only (no headers)
 }
+
+
+/// Runtime state shared by all recursive `encode_*` calls.
+///
+/// * `depth`     – current recursion depth (DoS guard)
+/// * `max_depth` – hard limit, panic-safe error if exceeded
+/// * `nodes`     – collected node metadata for two-pass flat encoding
+#[derive(Debug)]
+pub struct EncodingContext {
+    pub depth:     u32,
+    pub max_depth: u32,
+    pub nodes:     SmallVec<[NodeMeta; 32]>,
+}
+
 impl EncodingContext {
     #[inline]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             depth: 0,
             max_depth: 32,
-            skip_self:   false,
+            nodes: SmallVec::new(),
         }
     }
+
     #[inline]
     pub fn enter(&mut self) -> Result<(), CodecError> {
-        if self.depth >= self.max_depth {
-            return Err(CodecError::InvalidData("max encoding depth exceeded"));
+        if self.depth == self.max_depth {
+            return Err(CodecError::InvalidData("max depth exceeded"));
         }
         self.depth += 1;
         Ok(())
     }
+
     #[inline]
     pub fn exit(&mut self) {
         self.depth -= 1;
     }
+
+    #[inline]
+    pub fn clear_for_encode(&mut self) {
+        self.depth = 0;
+        self.nodes.clear();
+    }
 }
+
+
 
 /* ───────────────────────── Encoder trait ───────────────────────── */
 pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized {
