@@ -1,5 +1,5 @@
 use crate::{
-    consts::{ERR_CONVERSION, ERR_INVALID_MINTER, SIG_TOTAL_SUPPLY},
+    consts::ERR_CONVERSION,
     storage::{ADDRESS_LEN_BYTES, U256_LEN_BYTES},
 };
 use fluentbase_sdk::{Address, SharedAPI, U256};

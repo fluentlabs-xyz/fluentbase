@@ -2,12 +2,7 @@
 extern crate core;
 
 use fluentbase_erc20::{
-    common::{
-        fixed_bytes_from_u256,
-        u256_from_bytes_slice,
-        u256_from_bytes_slice_try,
-        u256_from_fixed_bytes,
-    },
+    common::{fixed_bytes_from_u256, u256_from_bytes_slice_try, u256_from_fixed_bytes},
     consts::{
         emit_approval_event,
         emit_pause_event,
@@ -17,7 +12,6 @@ use fluentbase_erc20::{
         ERR_ALREADY_UNPAUSED,
         ERR_DECODE,
         ERR_INSUFFICIENT_ALLOWANCE,
-        ERR_INSUFFICIENT_BALANCE,
         ERR_INVALID_META_NAME,
         ERR_INVALID_META_SYMBOL,
         ERR_INVALID_MINTER,
