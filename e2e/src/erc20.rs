@@ -5,6 +5,10 @@ use fluentbase_erc20::{
     consts::{
         ERR_ALREADY_PAUSED,
         ERR_ALREADY_UNPAUSED,
+        ERR_INSUFFICIENT_ALLOWANCE,
+        ERR_INVALID_META_SYMBOL,
+        ERR_MINTABLE_PLUGIN_NOT_ACTIVE,
+        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE,
         SIG_ALLOWANCE,
         SIG_APPROVE,
         SIG_BALANCE_OF,
@@ -25,6 +29,100 @@ use fluentbase_sdk_testing::EvmTestingContext;
 use fluentbase_types::{ContractContextV1, PRECOMPILE_ERC20};
 use revm::context::result::ExecutionResult;
 use std::ops::Add;
+
+fn call_with_sig(
+    ctx: &mut EvmTestingContext,
+    input: Bytes,
+    caller: &Address,
+    callee: &Address,
+) -> Vec<u8> {
+    let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
+    println!("result: {:?}", result);
+    assert!(result.is_success());
+    let output_data = result.output().unwrap().to_vec();
+    output_data
+}
+
+fn call_with_sig_revert(
+    ctx: &mut EvmTestingContext,
+    input: Bytes,
+    caller: &Address,
+    callee: &Address,
+) -> u32 {
+    let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
+    match &result {
+        ExecutionResult::Revert {
+            gas_used: _,
+            output,
+        } => {
+            let error_code = u32::from_be_bytes(output[32..].try_into().unwrap());
+            error_code
+        }
+        _ => {
+            panic!("expected revert, got: {:?}", &result)
+        }
+    }
+}
+
+#[test]
+fn erc20_no_plugins_enabled_test() {
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
+    const USER_ADDR: Address = address!("2222222222222222222222222222222222222222");
+    ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
+        address: PRECOMPILE_ERC20,
+        ..Default::default()
+    });
+    let mut initial_settings = InitialSettings::new();
+    let total_supply = U256::from(0xffff_ffffu64);
+    let amount_to_mint = 93842;
+    initial_settings.add_feature(Feature::InitialSupply {
+        amount: fixed_bytes_from_u256(&total_supply),
+        owner: DEPLOYER_ADDR.into(),
+        decimals: DECIMALS_DEFAULT,
+    });
+
+    let init_bytecode = initial_settings
+        .try_encode_for_deploy()
+        .expect("failed to encode settings for deploy")
+        .into();
+    let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDR, init_bytecode);
+
+    let mut input = Vec::<u8>::new();
+    input.extend(sig_to_bytes(SIG_TOTAL_SUPPLY));
+    let output_data = call_with_sig(
+        &mut ctx,
+        input.clone().into(),
+        &DEPLOYER_ADDR,
+        &contract_address,
+    );
+    let total_supply_recovered = U256::from_be_slice(output_data.as_ref());
+    assert_eq!(total_supply, total_supply_recovered);
+
+    // SIG_PAUSE
+    let mut input = Vec::<u8>::new();
+    input.extend(sig_to_bytes(SIG_PAUSE));
+    let error_code = call_with_sig_revert(
+        &mut ctx,
+        input.clone().into(),
+        &DEPLOYER_ADDR,
+        &contract_address,
+    );
+    assert_eq!(error_code, ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
+
+    // SIG_MINT
+    let mut input = Vec::<u8>::new();
+    input.extend(sig_to_bytes(SIG_MINT));
+    input.extend(USER_ADDR.as_slice());
+    input.extend(fixed_bytes_from_u256(&U256::from(amount_to_mint)));
+    let error_code = call_with_sig_revert(
+        &mut ctx,
+        input.clone().into(),
+        &DEPLOYER_ADDR,
+        &contract_address,
+    );
+    assert_eq!(error_code, ERR_MINTABLE_PLUGIN_NOT_ACTIVE);
+}
 
 #[test]
 fn erc20_test() {
@@ -65,40 +163,6 @@ fn erc20_test() {
         .expect("failed to encode settings for deploy")
         .into();
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDR, init_bytecode);
-
-    fn call_with_sig(
-        ctx: &mut EvmTestingContext,
-        input: Bytes,
-        caller: &Address,
-        callee: &Address,
-    ) -> Vec<u8> {
-        let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
-        println!("result: {:?}", result);
-        assert!(result.is_success());
-        let output_data = result.output().unwrap().to_vec();
-        output_data
-    }
-
-    fn call_with_sig_revert(
-        ctx: &mut EvmTestingContext,
-        input: Bytes,
-        caller: &Address,
-        callee: &Address,
-    ) -> u32 {
-        let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
-        match &result {
-            ExecutionResult::Revert {
-                gas_used: _,
-                output,
-            } => {
-                let error_code = u32::from_be_bytes(output[32..].try_into().unwrap());
-                error_code
-            }
-            _ => {
-                panic!("expected revert, got: {:?}", &result)
-            }
-        }
-    }
 
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_TOTAL_SUPPLY));
@@ -198,6 +262,21 @@ fn erc20_test() {
     assert_eq!(total_supply, recovered);
 
     // ALLOWANCE TESTS:
+    // SIG_TRANSFER_FROM: before approve
+    let mut input = Vec::<u8>::new();
+    input.extend(sig_to_bytes(SIG_TRANSFER_FROM));
+    input.extend(USER_ADDR);
+    input.extend(DEPLOYER_ADDR);
+    input.extend(fixed_bytes_from_u256(&U256::from(
+        deployer_2_1_transfer_from,
+    )));
+    let error_code = call_with_sig_revert(
+        &mut ctx,
+        input.clone().into(),
+        &DEPLOYER_ADDR,
+        &contract_address,
+    );
+    assert_eq!(error_code, ERR_INSUFFICIENT_ALLOWANCE);
     // SIG_ALLOWANCE: before approve
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_ALLOWANCE));
@@ -309,10 +388,6 @@ fn erc20_test() {
     let recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(expected, recovered);
     // SIG_PAUSE: 2nd time
-    // println!(
-    //     "ERR_ALREADY_PAUSED bytes: {:x?}",
-    //     sig_to_bytes(ERR_ALREADY_PAUSED)
-    // );
     let mut input = Vec::<u8>::new();
     input.extend(sig_to_bytes(SIG_PAUSE));
     let error_code = call_with_sig_revert(

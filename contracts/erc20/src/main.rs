@@ -16,6 +16,7 @@ use fluentbase_erc20::{
         ERR_ALREADY_PAUSED,
         ERR_ALREADY_UNPAUSED,
         ERR_DECODE,
+        ERR_INSUFFICIENT_ALLOWANCE,
         ERR_INSUFFICIENT_BALANCE,
         ERR_INVALID_META_NAME,
         ERR_INVALID_META_SYMBOL,
@@ -25,7 +26,7 @@ use fluentbase_erc20::{
         ERR_MALFORMED_INPUT,
         ERR_MINTABLE_PLUGIN_NOT_ACTIVE,
         ERR_OVERFLOW,
-        ERR_PAUSABLE_PLUGIN_NOT_ENABLED,
+        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE,
         ERR_VALIDATION,
         SIG_ALLOWANCE,
         SIG_APPROVE,
@@ -109,7 +110,7 @@ fn transfer_from(mut sdk: impl SharedAPI, input: &[u8]) {
             sdk.evm_exit(ERR_MALFORMED_INPUT);
         };
         if !Allowance::subtract(&mut sdk, from, spender, amount) {
-            sdk.evm_exit(ERR_INSUFFICIENT_BALANCE);
+            sdk.evm_exit(ERR_INSUFFICIENT_ALLOWANCE);
         }
         from
     };
@@ -178,7 +179,7 @@ fn mint(mut sdk: impl SharedAPI, input: &[u8]) {
         sdk.evm_exit(ERR_INVALID_MINTER);
     }
     if config.pausable_plugin_enabled(&mut sdk) && config.paused(&mut sdk) {
-        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ENABLED);
+        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
     }
     let Ok(to) = Address::try_from(&input[..ADDRESS_LEN_BYTES]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
@@ -206,7 +207,7 @@ fn mint(mut sdk: impl SharedAPI, input: &[u8]) {
 fn pause(mut sdk: impl SharedAPI, _input: &[u8]) {
     let mut config = Config::new();
     if !config.pausable_plugin_enabled(&mut sdk) {
-        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ENABLED);
+        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
     }
     let pauser = sdk.context().contract_caller();
     if pauser != Settings::pauser_get(&sdk) {
@@ -224,7 +225,7 @@ fn pause(mut sdk: impl SharedAPI, _input: &[u8]) {
 fn unpause(mut sdk: impl SharedAPI, _input: &[u8]) {
     let mut config = Config::new();
     if !config.pausable_plugin_enabled(&mut sdk) {
-        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ENABLED);
+        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
     }
     let pauser = sdk.context().contract_caller();
     if pauser != Settings::pauser_get(&sdk) {

@@ -9,12 +9,13 @@ use fluentbase_sdk::{
 
 pub const ERR_MALFORMED_INPUT: u32 = derive_evm_error!("MalformedInput()");
 pub const ERR_INSUFFICIENT_BALANCE: u32 = derive_evm_error!("InsufficientBalance()");
+pub const ERR_INSUFFICIENT_ALLOWANCE: u32 = derive_evm_error!("InsufficientAllowance()");
 pub const ERR_INDEX_OUT_OF_BOUNDS: u32 = derive_evm_error!("IndexOutOfBounds()");
 pub const ERR_DECODE: u32 = derive_evm_error!("DecodeError()");
 pub const ERR_INVALID_META_NAME: u32 = derive_evm_error!("InvalidMetaName()");
 pub const ERR_INVALID_META_SYMBOL: u32 = derive_evm_error!("InvalidMetaSymbol()");
 pub const ERR_MINTABLE_PLUGIN_NOT_ACTIVE: u32 = derive_evm_error!("MintablePluginNotActive()");
-pub const ERR_PAUSABLE_PLUGIN_NOT_ENABLED: u32 = derive_evm_error!("PausablePluginNotActive()");
+pub const ERR_PAUSABLE_PLUGIN_NOT_ACTIVE: u32 = derive_evm_error!("PausablePluginNotActive()");
 pub const ERR_ALREADY_PAUSED: u32 = derive_evm_error!("AlreadyPaused()");
 pub const ERR_ALREADY_UNPAUSED: u32 = derive_evm_error!("AlreadyUnpaused()");
 pub const ERR_INVALID_MINTER: u32 = derive_evm_error!("InvalidMinter()");
