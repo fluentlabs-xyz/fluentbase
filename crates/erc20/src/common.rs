@@ -4,6 +4,7 @@ use crate::{
 };
 use fluentbase_sdk::{Address, SharedAPI, U256};
 
+// provides the best performance in bench_native_erc20 benchmark test
 const ENDIANNESS_BE: bool = true;
 
 #[inline(always)]
