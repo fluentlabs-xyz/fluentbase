@@ -4,7 +4,7 @@ use crate::{
 };
 use fluentbase_sdk::{Address, SharedAPI, U256};
 
-const ENDIANNESS_BE: bool = false;
+const ENDIANNESS_BE: bool = true;
 
 #[inline(always)]
 pub fn u256_from_bytes_slice(sdk: &mut impl SharedAPI, value: &[u8]) -> U256 {

@@ -348,16 +348,8 @@ impl Allowance {
 #[cfg(test)]
 mod tests {
     use crate::{
-        common::{fixed_bytes_from_u256, u256_from_address_try},
-        storage::{
-            address_from_u256,
-            deserialize,
-            serialize,
-            u256_from_address,
-            Feature,
-            InitialSettings,
-            ADDRESS_LEN_BYTES,
-        },
+        common::fixed_bytes_from_u256,
+        storage::{deserialize, serialize, Feature, InitialSettings, ADDRESS_LEN_BYTES},
     };
     use fluentbase_sdk::{address, Address, U256};
 

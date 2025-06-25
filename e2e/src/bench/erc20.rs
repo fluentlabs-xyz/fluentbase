@@ -115,3 +115,6 @@ fn bench_native_erc20(b: &mut Bencher) {
 // wasm erc20: 136839.875 ns/iter (+/- 6614.3399999999965)
 // native erc20 (be u256): 133378.0925 ns/iter (+/- 4874.236499999999)
 // native erc20 (le u256): 129444.015625 ns/iter (+/- 4271.5389062500035)
+
+// native erc20 (le u256): 80671.52 ns/iter (+/- 3405.3866249999846) 29% faster wasm erc20
+// native erc20 (be u256): 43017.572916666664 ns/iter (+/- 2429.1224305555515) 68% faster wasm erc20
