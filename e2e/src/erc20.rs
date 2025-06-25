@@ -95,7 +95,7 @@ fn erc20_no_plugins_enabled_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    let total_supply_recovered = U256::from_be_slice(output_data.as_ref());
+    let total_supply_recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(total_supply, total_supply_recovered);
 
     // SIG_PAUSE
@@ -171,7 +171,7 @@ fn erc20_test() {
         &DEPLOYER_ADDR,
         &contract_address,
     );
-    let total_supply_recovered = U256::from_be_slice(output_data.as_ref());
+    let total_supply_recovered = u256_from_bytes_slice_try(output_data.as_ref()).unwrap();
     assert_eq!(total_supply, total_supply_recovered);
 
     // SIG_TRANSFER

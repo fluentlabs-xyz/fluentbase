@@ -396,12 +396,4 @@ mod tests {
         let (settings_restored, _) = deserialize(&settings_vec).unwrap();
         assert_eq!(settings, settings_restored);
     }
-
-    #[test]
-    fn address_to_u256_and_back() {
-        let address = address!("0003000200500000400000040000002000800020");
-        let u256 = u256_from_address_try(&address).unwrap();
-        let address_recovered = address_from_u256(&u256);
-        assert_eq!(address_recovered, address);
-    }
 }

@@ -2,7 +2,12 @@
 extern crate core;
 
 use fluentbase_erc20::{
-    common::{fixed_bytes_from_u256, u256_from_bytes_slice_try, u256_from_fixed_bytes},
+    common::{
+        bytes_to_sig,
+        fixed_bytes_from_u256,
+        u256_from_bytes_slice_try,
+        u256_from_fixed_bytes,
+    },
     consts::{
         emit_approval_event,
         emit_pause_event,
@@ -47,14 +52,7 @@ use fluentbase_erc20::{
         U256_LEN_BYTES,
     },
 };
-use fluentbase_sdk::{
-    byteorder::{ByteOrder, LittleEndian},
-    entrypoint,
-    Address,
-    ContextReader,
-    SharedAPI,
-    U256,
-};
+use fluentbase_sdk::{entrypoint, Address, ContextReader, SharedAPI, U256};
 
 fn symbol(mut sdk: impl SharedAPI, _input: &[u8]) {
     sdk.write(&Settings::symbol(&sdk));
@@ -290,7 +288,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     }
     let (sig, input) = sdk.input().split_at(SIG_LEN_BYTES);
-    let signature = LittleEndian::read_u32(sig);
+    let signature = bytes_to_sig(sig);
     match signature {
         SIG_SYMBOL => symbol(sdk, input),
         SIG_NAME => name(sdk, input),
