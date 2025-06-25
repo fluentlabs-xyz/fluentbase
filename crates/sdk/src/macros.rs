@@ -36,6 +36,7 @@ macro_rules! debug_log_ext {
         $crate::debug_log_ext!("");
     }};
     ($msg:tt) => {{
+        extern crate alloc;
         let msg = alloc::format!("{}: {}", $crate::current_line_info!(), $msg);
         #[cfg(target_arch = "wasm32")]
         unsafe { $crate::rwasm::_debug_log(msg.as_ptr(), msg.len() as u32) }
@@ -43,6 +44,7 @@ macro_rules! debug_log_ext {
         println!("{}", msg);
     }};
     ($($arg:tt)*) => {{
+        extern crate alloc;
         let msg = alloc::format!($($arg)*);
         $crate::debug_log_ext!(msg);
     }};

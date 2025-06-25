@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true, features = ["fast-panic"] }
-bincode = { workspace = true, default-features = false, features = ["serde"] }
+fluentbase-sdk = { workspace = true, features = ["fast-panic", "debug-print"] }
+fluentbase-erc20 = { workspace = true }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
