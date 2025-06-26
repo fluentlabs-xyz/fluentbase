@@ -1,12 +1,11 @@
 use crate::RuntimeContext;
-use core::cell::Ref;
-use rwasm::{Caller, TrapCode, Value};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 
 pub struct SyscallFuel;
 
 impl SyscallFuel {
     pub fn fn_handler(
-        caller: &mut dyn Caller<RuntimeContext>,
+        caller: &mut TypedCaller<RuntimeContext>,
         _params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -15,7 +14,7 @@ impl SyscallFuel {
         Ok(())
     }
 
-    pub fn fn_impl(ctx: Ref<RuntimeContext>) -> u64 {
+    pub fn fn_impl(ctx: &RuntimeContext) -> u64 {
         ctx.remaining_fuel()
     }
 }

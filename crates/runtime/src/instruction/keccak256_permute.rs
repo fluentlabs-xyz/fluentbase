@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use rwasm::{Caller, TrapCode, Value};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use tiny_keccak::keccakf;
 
 pub(crate) const STATE_SIZE: u32 = 25;
@@ -11,7 +11,7 @@ pub struct SyscallKeccak256Permute;
 
 impl SyscallKeccak256Permute {
     pub fn fn_handler(
-        caller: &mut dyn Caller<RuntimeContext>,
+        caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

@@ -32,7 +32,7 @@ use revm::{
     ExecuteCommitEvm,
     MainBuilder,
 };
-use rwasm::RwasmModule;
+use rwasm::{RwasmModule, Store};
 use rwasm_revm::{RwasmBuilder, RwasmContext};
 
 #[allow(dead_code)]
@@ -371,7 +371,7 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
         .with_input(context_input);
     // .with_tracer();
     let mut runtime = Runtime::new(ctx);
-    runtime.context_mut().clear_output();
+    runtime.store.context_mut(|ctx| ctx.clear_output());
     let result = runtime.call();
     println!(
         "exit_code: {} ({})",

@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Caller, TrapCode, Value};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::{
     curve25519_dalek::CompressedEdwardsY,
     edwards::{ed25519::decompress, EdwardsParameters, WORDS_FIELD_ELEMENT},
@@ -22,7 +22,7 @@ impl<E: EdwardsParameters> SyscallEdwardsDecompress<E> {
 
     #[allow(clippy::many_single_char_names)]
     pub fn fn_handler(
-        caller: &mut dyn Caller<RuntimeContext>,
+        caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -34,7 +34,7 @@ impl<E: EdwardsParameters> SyscallEdwardsDecompress<E> {
         let mut y_bytes = [0u8; WORDS_FIELD_ELEMENT * 4];
         caller.memory_read(slice_ptr + COMPRESSED_POINT_BYTES, &mut y_bytes)?;
         let result_vec = Self::fn_impl(y_bytes, sign).map_err(|err| {
-            caller.context_mut().execution_result.exit_code = err.into();
+            caller.context_mut(|ctx| ctx.execution_result.exit_code = err.into());
             TrapCode::ExecutionHalted
         })?;
         // Write the decompressed X back to memory

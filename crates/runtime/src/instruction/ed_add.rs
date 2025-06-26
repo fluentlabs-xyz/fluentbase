@@ -1,6 +1,6 @@
 use crate::{instruction::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use rwasm::{Caller, TrapCode, Value};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::{edwards::EdwardsParameters, params::NumWords, AffinePoint, EllipticCurve};
 use std::marker::PhantomData;
 
@@ -19,7 +19,7 @@ impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
 
 impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
     pub fn fn_handler(
-        caller: &mut dyn Caller<RuntimeContext>,
+        caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

@@ -1,19 +1,15 @@
 use crate::{Runtime, RuntimeContext};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    Bytes,
     ExitCode,
 };
-#[cfg(feature = "wasmtime")]
-use num::ToPrimitive;
-use rwasm::{Caller, TrapCode, Value};
-use std::cell::RefMut;
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 
 pub struct SyscallResume;
 
 impl SyscallResume {
     pub fn fn_handler(
-        caller: &mut dyn Caller<RuntimeContext>,
+        caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -35,15 +31,17 @@ impl SyscallResume {
         } else {
             (0, 0)
         };
-        let (fuel_consumed, fuel_refunded, exit_code) = Self::fn_impl(
-            caller.context_mut(),
-            call_id,
-            return_data,
-            exit_code,
-            fuel_consumed,
-            fuel_refunded,
-            fuel16_ptr as u32,
-        );
+        let (fuel_consumed, fuel_refunded, exit_code) = caller.context_mut(|ctx| {
+            Self::fn_impl(
+                ctx,
+                call_id,
+                &return_data,
+                exit_code,
+                fuel_consumed,
+                fuel_refunded,
+                fuel16_ptr as u32,
+            )
+        });
         if fuel16_ptr > 0 {
             caller.memory_write(fuel16_ptr, &fuel_consumed.to_le_bytes())?;
             caller.memory_write(fuel16_ptr + 8, &fuel_refunded.to_le_bytes())?;
@@ -53,9 +51,9 @@ impl SyscallResume {
     }
 
     pub fn fn_impl(
-        mut ctx: RefMut<RuntimeContext>,
+        ctx: &mut RuntimeContext,
         call_id: u32,
-        return_data: Vec<u8>,
+        return_data: &[u8],
         exit_code: i32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -66,23 +64,12 @@ impl SyscallResume {
             return (0, 0, ExitCode::RootCallOnly.into_i32());
         }
 
-        #[cfg(feature = "wasmtime")]
-        if let Some((fuel_consumed, fuel_refunded, exit_code, output)) = crate::wasmtime::try_resume(
-            call_id.to_i32().unwrap(),
-            return_data.clone(),
-            exit_code,
-            fuel_consumed,
-            fuel_refunded,
-            fuel16_ptr,
-        ) {
-            ctx.execution_result.return_data = output;
-            return (fuel_consumed, fuel_refunded, exit_code);
-        }
-
         let mut recoverable_runtime = Runtime::recover_runtime(call_id);
 
         // during the résumé we must clear output, otherwise collision might happen
-        recoverable_runtime.context_mut().clear_output();
+        recoverable_runtime
+            .store
+            .context_mut(|ctx| ctx.clear_output());
 
         // we can charge fuel only if fuel is not disabled,
         // when fuel is disabled,
@@ -98,11 +85,10 @@ impl SyscallResume {
         }
 
         // copy return data into return data
-        let mut binding = recoverable_runtime.store.context_mut();
-        let return_data_mut = binding.return_data_mut();
-        return_data_mut.clear();
-        return_data_mut.extend(&return_data);
-        drop(binding);
+        recoverable_runtime.store.context_mut(|ctx| {
+            ctx.return_data_mut().clear();
+            ctx.return_data_mut().extend(return_data);
+        });
 
         let mut execution_result =
             recoverable_runtime.resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code);
@@ -111,7 +97,7 @@ impl SyscallResume {
         if execution_result.interrupted {
             // then we remember this runtime and assign call id into exit code (positive exit code
             // stands for interrupted runtime call id, negative or zero for error)
-            execution_result.exit_code = recoverable_runtime.remember_runtime(&mut ctx);
+            execution_result.exit_code = recoverable_runtime.remember_runtime(ctx);
         }
 
         ctx.execution_result.return_data = execution_result.output.clone();

@@ -8,9 +8,8 @@ use fluentbase_types::{
     B256,
     CALL_STACK_LIMIT,
 };
-use rwasm::{Caller, TrapCode, Value};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use std::{
-    cell::RefMut,
     cmp::min,
     fmt::{Debug, Display, Formatter},
 };
@@ -23,8 +22,6 @@ pub struct SysExecResumable {
     pub params: SyscallInvocationParams,
     /// A depth level of the current call, for root it's always zero
     pub is_root: bool,
-    /// An instruction pointer
-    pub pc: usize,
 }
 
 impl Debug for SysExecResumable {
@@ -41,12 +38,12 @@ impl Display for SysExecResumable {
 
 impl SyscallExec {
     pub fn fn_handler(
-        caller: &mut dyn Caller<RuntimeContext>,
+        caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
         let remaining_fuel = caller.remaining_fuel().unwrap_or(u64::MAX);
-        let disable_fuel = caller.context().disable_fuel;
+        let disable_fuel = caller.context(|ctx| ctx.disable_fuel);
         let (hash32_ptr, input_ptr, input_len, fuel16_ptr, state) = (
             params[0].i32().unwrap() as usize,
             params[1].i32().unwrap() as usize,
@@ -73,41 +70,46 @@ impl SyscallExec {
         };
         let mut code_hash = [0u8; 32];
         caller.memory_read(hash32_ptr, &mut code_hash)?;
+        let code_hash = B256::from(code_hash);
         let mut input = vec![0u8; input_len];
         caller.memory_read(input_ptr, &mut input)?;
-        let is_root = caller.context().call_depth == 0;
+        let input = Bytes::from(input);
+        let is_root = caller.context(|ctx| ctx.call_depth) == 0;
         // return resumable error
-        caller.context_mut().resumable_context = Some(SysExecResumable {
-            params: SyscallInvocationParams {
-                code_hash: B256::from(code_hash),
-                input: Bytes::from(input),
-                fuel_limit,
-                state,
-                fuel16_ptr: fuel16_ptr as u32,
-            },
-            is_root,
-            pc: caller.program_counter() as usize,
+        caller.context_mut(|ctx| {
+            ctx.resumable_context = Some(SysExecResumable {
+                params: SyscallInvocationParams {
+                    code_hash,
+                    input: input.clone(),
+                    fuel_limit,
+                    state,
+                    fuel16_ptr: fuel16_ptr as u32,
+                },
+                is_root,
+            })
         });
         Err(TrapCode::InterruptionCalled)
     }
 
     pub fn fn_continue(
-        caller: &mut dyn Caller<RuntimeContext>,
+        caller: &mut TypedCaller<RuntimeContext>,
         context: &SysExecResumable,
     ) -> (u64, i64, i32) {
         let fuel_limit = context.params.fuel_limit;
-        let (fuel_consumed, fuel_refunded, exit_code) = Self::fn_impl(
-            caller.context_mut(),
-            context.params.code_hash,
-            context.params.input.as_ref(),
-            fuel_limit,
-            context.params.state,
-        );
+        let (fuel_consumed, fuel_refunded, exit_code) = caller.context_mut(|ctx| {
+            Self::fn_impl(
+                ctx,
+                context.params.code_hash,
+                context.params.input.as_ref(),
+                fuel_limit,
+                context.params.state,
+            )
+        });
         (fuel_consumed, fuel_refunded, exit_code)
     }
 
     pub fn fn_impl<I: Into<BytecodeOrHash>>(
-        mut ctx: RefMut<RuntimeContext>,
+        ctx: &mut RuntimeContext,
         code_hash: I,
         input: &[u8],
         fuel_limit: u64,
@@ -119,18 +121,6 @@ impl SyscallExec {
         }
 
         let bytecode_or_hash = code_hash.into().with_resolved_hash();
-
-        #[cfg(feature = "wasmtime")]
-        {
-            use fluentbase_genesis::is_system_precompile_hash;
-            let hash = bytecode_or_hash.resolve_hash();
-            if is_system_precompile_hash(&hash) {
-                let (fuel_consumed, fuel_refunded, exit_code, output) =
-                    crate::wasmtime::execute(&hash, input.to_vec(), fuel_limit, state);
-                ctx.execution_result.return_data = output;
-                return (fuel_consumed, fuel_refunded, exit_code);
-            }
-        }
 
         // create a new runtime instance with the context
         let ctx2 = RuntimeContext::new(bytecode_or_hash)
@@ -147,7 +137,7 @@ impl SyscallExec {
         if execution_result.interrupted {
             // then we remember this runtime and assign call id into exit code (positive exit code
             // stands for interrupted runtime call id, negative or zero for error)
-            execution_result.exit_code = runtime.remember_runtime(&mut ctx);
+            execution_result.exit_code = runtime.remember_runtime(ctx);
         }
 
         ctx.execution_result.return_data = execution_result.output.clone();

@@ -3,18 +3,34 @@ use crate::{
     instruction::{exec::SysExecResumable, invoke_runtime_handler},
 };
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
+#[cfg(feature = "wasmtime")]
+use fluentbase_genesis::{is_system_precompile_hash, GENESIS_CONTRACTS_BY_HASH};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
+    create_import_linker,
     BytecodeOrHash,
     Bytes,
     ExitCode,
     SysFuncIdx,
     B256,
+    STATE_DEPLOY,
+    STATE_MAIN,
 };
 use hashbrown::{hash_map::Entry, HashMap};
-use rwasm::{Caller, ExecutionEngine, ExecutorConfig, RwasmModule, Store, TrapCode, Value};
+use rwasm::{
+    ExecutionEngine,
+    ExecutorConfig,
+    ImportLinker,
+    RwasmModule,
+    Store,
+    Strategy,
+    TrapCode,
+    TypedCaller,
+    TypedStore,
+    Value,
+};
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::RefCell,
     fmt::Debug,
     mem::take,
     rc::Rc,
@@ -46,35 +62,58 @@ impl ExecutionResult {
 pub struct CachingRuntime {
     // TODO(dmitry123): "add LRU cache to this map to avoid memory leak"
     cached_bytecode: HashMap<B256, Bytes>,
-    modules: HashMap<B256, Arc<RwasmModule>>,
+    strategies: HashMap<B256, Arc<Strategy>>,
     recoverable_runtimes: HashMap<u32, Runtime>,
+    import_linker: Rc<ImportLinker>,
 }
 
 impl CachingRuntime {
     pub fn new() -> Self {
         Self {
             cached_bytecode: HashMap::new(),
-            modules: HashMap::new(),
+            strategies: HashMap::new(),
             recoverable_runtimes: HashMap::new(),
+            import_linker: create_import_linker(),
         }
     }
 
-    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<RwasmModule> {
+    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<Strategy> {
         let rwasm_bytecode = self
             .cached_bytecode
             .get(&rwasm_hash)
             .expect("runtime: missing cached bytecode");
-        let entry = match self.modules.entry(rwasm_hash) {
+        let entry = match self.strategies.entry(rwasm_hash) {
             Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
             Entry::Vacant(entry) => entry,
         };
-        let reduced_module = Arc::new(RwasmModule::new_or_empty(rwasm_bytecode));
-        entry.insert(reduced_module.clone());
-        reduced_module
+        let rwasm_module = Rc::new(RwasmModule::new_or_empty(rwasm_bytecode));
+        #[cfg(feature = "wasmtime")]
+        if is_system_precompile_hash(&rwasm_hash) {
+            let wasmtime_module = GENESIS_CONTRACTS_BY_HASH
+                .get(&rwasm_hash)
+                .map(|genesis_contract| {
+                    rwasm::deserialize_wasmtime_module(genesis_contract.cranelift_binary.as_ref())
+                        .unwrap()
+                })
+                .unwrap_or_else(|| {
+                    rwasm::compile_wasmtime_module(&rwasm_module.wasm_section).unwrap()
+                });
+            let strategy = Arc::new(Strategy::Wasmtime {
+                module: Rc::new(wasmtime_module),
+            });
+            entry.insert(strategy.clone());
+            return strategy;
+        }
+        let strategy = Arc::new(Strategy::Rwasm {
+            module: rwasm_module,
+            engine: ExecutionEngine::acquire_shared(),
+        });
+        entry.insert(strategy.clone());
+        strategy
     }
 
-    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<RwasmModule>> {
-        self.modules.get(rwasm_hash).cloned()
+    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<Strategy>> {
+        self.strategies.get(rwasm_hash).cloned()
     }
 }
 
@@ -86,7 +125,7 @@ thread_local! {
 pub struct RuntimeSyscallHandler {}
 
 fn runtime_syscall_handler(
-    caller: &mut dyn Caller<RuntimeContext>,
+    caller: &mut TypedCaller<RuntimeContext>,
     func_idx: u32,
     params: &[Value],
     result: &mut [Value],
@@ -96,9 +135,8 @@ fn runtime_syscall_handler(
 }
 
 pub struct Runtime {
-    pub engine: ExecutionEngine,
-    pub store: Store<RuntimeContext>,
-    pub module: Arc<RwasmModule>,
+    pub strategy: Arc<Strategy>,
+    pub store: TypedStore<RuntimeContext>,
 }
 
 pub(crate) static CALL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -123,7 +161,7 @@ impl Runtime {
             let bytecode_repr = take(&mut runtime_context.bytecode);
 
             // resolve cached module or init it
-            let module = match &bytecode_repr {
+            let strategy = match &bytecode_repr {
                 BytecodeOrHash::Bytecode(bytecode, hash) => {
                     let hash = hash.unwrap();
                     // if we have a cached module, then use it, otherwise create a new one and cache
@@ -148,44 +186,35 @@ impl Runtime {
             // return bytecode
             runtime_context.bytecode = bytecode_repr;
 
-            let engine = ExecutionEngine::new();
             let config = ExecutorConfig::new()
                 // .floats_enabled(true) // need to support solana ee
                 .fuel_limit(runtime_context.fuel_limit)
                 .fuel_enabled(!runtime_context.disable_fuel);
-            // TODO(dmitry123): "add import linker"
-            let mut store =
-                Store::<RuntimeContext>::new(config, runtime_context, Rc::new(Default::default()));
-            store.set_syscall_handler(runtime_syscall_handler);
 
-            Self {
-                module,
-                engine,
-                store,
-            }
+            let store = strategy.create_store(
+                config,
+                caching_runtime.import_linker.clone(),
+                runtime_context,
+                runtime_syscall_handler,
+            );
+
+            Self { strategy, store }
         })
     }
 
-    pub fn is_warm_bytecode(hash: &B256) -> bool {
-        CACHING_RUNTIME
-            .with_borrow(|caching_runtime| caching_runtime.cached_bytecode.contains_key(hash))
-    }
-
-    pub fn warmup_bytecode(hash: B256, bytecode: Bytes) {
-        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
-            caching_runtime.cached_bytecode.insert(hash, bytecode);
-        });
-    }
-
     pub fn call(&mut self) -> ExecutionResult {
-        let fuel_consumed_before_the_call = self.store.fuel_consumed();
-        let fuel_refunded_before_the_call = self.store.fuel_refunded();
-        let result = self.engine.execute(&mut self.store, &self.module);
-        self.handle_execution_result(
-            result,
-            fuel_consumed_before_the_call,
-            fuel_refunded_before_the_call,
-        )
+        let fuel_remaining = self.store.remaining_fuel();
+        let fuel_refunded_before_the_call =
+            self.store.context(|ctx| ctx.execution_result.fuel_refunded);
+        let func_name = match self.store.context(|ctx| ctx.state) {
+            STATE_MAIN => "main",
+            STATE_DEPLOY => "deploy",
+            _ => unreachable!(),
+        };
+        let result = self
+            .strategy
+            .execute(&mut self.store, func_name, &[], &mut []);
+        self.handle_execution_result(result, fuel_remaining, fuel_refunded_before_the_call)
     }
 
     pub fn resume(
@@ -195,39 +224,33 @@ impl Runtime {
         fuel_refunded: i64,
         exit_code: i32,
     ) -> ExecutionResult {
-        let fuel_consumed_before_the_call = self.store.fuel_consumed();
-        let fuel_refunded_before_the_call = self.store.fuel_refunded();
+        let fuel_remaining_before_the_call = self.store.remaining_fuel();
+        let fuel_refunded_before_the_call =
+            self.store.context(|ctx| ctx.execution_result.fuel_refunded);
 
-        let mut executor = self
-            .engine
-            .create_resumable_executor(&mut self.store, &self.module);
-
-        let mut caller = executor.caller();
+        let mut memory_changes: Vec<(u32, Box<[u8]>)> = Vec::with_capacity(1);
         if fuel16_ptr > 0 {
             let mut buffer = [0u8; 16];
             LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
             LittleEndian::write_i64(&mut buffer[8..], fuel_refunded);
-            // if we can't write a result into memory, then process it as an error
-            if let Err(err) = caller.memory_write(fuel16_ptr as usize, &buffer) {
-                return self.handle_execution_result(
-                    Err(err),
-                    fuel_consumed_before_the_call,
-                    fuel_refunded_before_the_call,
-                );
-            }
+            memory_changes.push((fuel16_ptr, buffer.into()));
         }
-        caller.stack_push(exit_code.into());
-        caller.sync_stack_ptr();
 
-        let result = executor.run();
+        let result = self.strategy.resume_wth_memory(
+            &mut self.store,
+            &[Value::I32(exit_code)],
+            &mut [],
+            memory_changes,
+        );
+
         self.handle_execution_result(
             result,
-            fuel_consumed_before_the_call,
+            fuel_remaining_before_the_call,
             fuel_refunded_before_the_call,
         )
     }
 
-    pub(crate) fn remember_runtime(self, _root_ctx: &mut RefMut<RuntimeContext>) -> i32 {
+    pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
         // save the current runtime state for future recovery
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             // TODO(dmitry123): "don't use global call counter"
@@ -251,21 +274,28 @@ impl Runtime {
     fn handle_execution_result(
         &mut self,
         next_result: Result<(), TrapCode>,
-        fuel_consumed_before_the_call: u64,
+        fuel_consumed_before_the_call: Option<u64>,
         fuel_refunded_before_the_call: i64,
     ) -> ExecutionResult {
-        let mut execution_result = take(&mut self.store.context_mut().execution_result);
+        let mut execution_result = self
+            .store
+            .context_mut(|ctx| take(&mut ctx.execution_result));
         // once fuel is calculated, we must adjust our fuel limit,
         // because we don't know what gas conversion policy is used,
         // if there is rounding then it can cause miscalculations
-        execution_result.fuel_consumed = self.store.fuel_consumed() - fuel_consumed_before_the_call;
-        execution_result.fuel_refunded = self.store.fuel_refunded() - fuel_refunded_before_the_call;
+        if let Some(fuel_consumed_before_the_call) = fuel_consumed_before_the_call {
+            execution_result.fuel_consumed =
+                fuel_consumed_before_the_call - self.store.remaining_fuel().unwrap();
+        }
+        execution_result.fuel_refunded =
+            execution_result.fuel_refunded - fuel_refunded_before_the_call;
         loop {
             match next_result {
                 Ok(_) => break,
                 Err(TrapCode::InterruptionCalled) => {
-                    let resumable_context =
-                        self.store.context_mut().resumable_context.take().unwrap();
+                    let resumable_context = self
+                        .store
+                        .context_mut(|ctx| ctx.resumable_context.take().unwrap());
                     if resumable_context.is_root {
                         unimplemented!("resumable context is root");
                         // // TODO(dmitry123): "validate this logic, might not be ok in STF
@@ -298,11 +328,11 @@ impl Runtime {
         // so we must save the current state
         // to interrupt execution and delegate decision-making
         // to the root execution
-        let mut binding = self.store.context_mut();
-        let output = binding.output_mut();
-        output.clear();
-        assert!(output.is_empty(), "runtime: return data must be empty");
-        drop(binding);
+        self.store.context_mut(|ctx| {
+            let output = ctx.output_mut();
+            output.clear();
+            assert!(output.is_empty(), "runtime: return data must be empty");
+        });
         // serialize the delegated execution state,
         // but we don't serialize registers and stack state,
         // instead we remember it inside the internal structure
@@ -316,13 +346,5 @@ impl Runtime {
         // interruption is a special exit code that indicates to the root what happened inside
         // the call
         execution_result.interrupted = true;
-    }
-
-    pub fn context(&self) -> Ref<RuntimeContext> {
-        self.store.context()
-    }
-
-    pub fn context_mut(&mut self) -> RefMut<RuntimeContext> {
-        self.store.context_mut()
     }
 }

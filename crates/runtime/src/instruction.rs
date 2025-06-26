@@ -66,7 +66,7 @@ use crate::{
 };
 use fluentbase_types::SysFuncIdx;
 use num::BigUint;
-use rwasm::{Caller, TrapCode, Value};
+use rwasm::{TrapCode, TypedCaller, Value};
 use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{
@@ -78,7 +78,7 @@ use sp1_curves::{
 
 #[rustfmt::skip]
 pub fn invoke_runtime_handler(
-    caller: &mut dyn Caller<RuntimeContext>,
+    caller: &mut TypedCaller<RuntimeContext>,
     sys_func_idx: SysFuncIdx,
     params: &[Value],
     result: &mut [Value],

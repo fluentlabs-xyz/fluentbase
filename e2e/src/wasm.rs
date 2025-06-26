@@ -147,6 +147,7 @@ fn test_wasm_erc20() {
     let mut ctx = EvmTestingContext::default();
     const OWNER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
+    // call with empty input (should fail)
     let result = ctx.call_evm_tx(
         OWNER_ADDRESS,
         contract_address,
