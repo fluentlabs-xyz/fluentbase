@@ -1,7 +1,7 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::{
     params::NumLimbs,
     weierstrass::{bls12_381::bls12381_decompress, secp256k1::secp256k1_decompress},
@@ -25,20 +25,27 @@ impl<E: EllipticCurve> SyscallWeierstrassDecompressAssign<E> {
     }
 
     /// Handles the syscall for point addition on a Weierstrass curve.
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let (x_ptr, sign_bit) = caller.stack_pop2_as::<u32>();
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (x_ptr, sign_bit) = (
+            params[0].i32().unwrap() as u32,
+            params[1].i32().unwrap() as u32,
+        );
 
         let num_limbs = <E::BaseField as NumLimbs>::Limbs::USIZE;
         let num_words_field_element = num_limbs / 4;
 
-        let x_bytes = caller.memory_read_vec(
-            (x_ptr + (num_limbs as u32)) as usize,
-            num_words_field_element * 4,
-        )?;
+        let mut x_bytes = vec![0u8; num_words_field_element * 4];
+        caller.memory_read((x_ptr + (num_limbs as u32)) as usize, &mut x_bytes)?;
 
-        let result_vec = Self::fn_impl(&x_bytes, sign_bit).map_err(|err| {
-            caller.context_mut().execution_result.exit_code = err.into_i32();
-            TrapCode::ExecutionHalted
+        let result_vec = caller.context_mut(|ctx| {
+            Self::fn_impl(&x_bytes, sign_bit).map_err(|err| {
+                ctx.execution_result.exit_code = err.into_i32();
+                TrapCode::ExecutionHalted
+            })
         })?;
         caller.memory_write(x_ptr as usize, &result_vec)?;
 

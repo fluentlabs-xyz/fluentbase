@@ -1,7 +1,7 @@
 use crate::{instruction::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use num::BigUint;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::{params::NumWords, weierstrass::FpOpField};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
@@ -11,13 +11,22 @@ pub struct SyscallFp2Mul<P> {
 }
 
 impl<P: FpOpField> SyscallFp2Mul<P> {
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let (x_ptr, y_ptr) = caller.stack_pop2_as::<u32>();
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (x_ptr, y_ptr) = (
+            params[0].i32().unwrap() as u32,
+            params[1].i32().unwrap() as u32,
+        );
 
         let num_words = <P as NumWords>::WordsFieldElement::USIZE;
 
-        let x = caller.memory_read_vec(x_ptr as usize, num_words * 4)?;
-        let y = caller.memory_read_vec(y_ptr as usize, num_words * 4)?;
+        let mut x = vec![0u8; num_words * 4];
+        caller.memory_read(x_ptr as usize, &mut x)?;
+        let mut y = vec![0u8; num_words * 4];
+        caller.memory_read(y_ptr as usize, &mut y)?;
 
         let result_vec = Self::fn_impl(&x, &y);
         caller.memory_write(x_ptr as usize, &result_vec)?;

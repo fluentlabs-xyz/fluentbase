@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use core::cell::Cell;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 
 pub struct SyscallDebugLog;
 
@@ -9,10 +9,17 @@ thread_local! {
 }
 
 impl SyscallDebugLog {
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let [message_ptr, message_len] = caller.stack_pop_n();
-        let mut buffer = vec![0u8; message_len.as_usize()];
-        caller.memory_read(message_ptr.as_usize(), &mut buffer)?;
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (message_ptr, message_len) = (
+            params[0].i32().unwrap() as usize,
+            params[1].i32().unwrap() as usize,
+        );
+        let mut buffer = vec![0u8; message_len];
+        caller.memory_read(message_ptr, &mut buffer)?;
         Self::fn_impl(&buffer);
         Ok(())
     }
@@ -31,7 +38,7 @@ impl SyscallDebugLog {
             0
         };
         LAST_LOG_TIME.set(curr_time);
-        const MSG_LIMIT: usize = 300000;
+        const MSG_LIMIT: usize = 256;
         let msg = if msg.len() > MSG_LIMIT {
             &msg[..MSG_LIMIT]
         } else {

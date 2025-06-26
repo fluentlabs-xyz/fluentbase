@@ -51,9 +51,9 @@ rand = { version = "0.9.1" }
 [features]
 default = [
     "std",
-    #    "wasmtime",
-    "enable-svm",
-    "debug-print"
+    "wasmtime",
+    #    "debug-print",
+    #    "enable-svm",
 ]
 enable-svm = [
     "fluentbase-runtime/enable-svm",
@@ -73,6 +73,7 @@ debug-print = [
     "revm/debug-print",
     "rwasm-revm/debug-print",
     "fluentbase-svm/debug-print",
+    "rwasm/debug-print",
 ]
 wasmtime = [
     "fluentbase-runtime/wasmtime",

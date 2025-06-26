@@ -1,13 +1,18 @@
 use crate::RuntimeContext;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 
 pub struct SyscallWrite;
 
 impl SyscallWrite {
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let (offset, length) = caller.stack_pop2_as::<u32>();
-        let data = caller.memory_read_vec(offset as usize, length as usize)?;
-        Self::fn_impl(caller.context_mut(), &data);
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (offset, length) = (params[0].i32().unwrap(), params[1].i32().unwrap());
+        let mut data = vec![0u8; length as usize];
+        caller.memory_read(offset as usize, &mut data)?;
+        caller.context_mut(|ctx| Self::fn_impl(ctx, &data));
         Ok(())
     }
 

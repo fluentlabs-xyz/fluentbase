@@ -1,8 +1,8 @@
 use crate::{rwasm::block_fuel::MINIMAL_BASE_FUEL_COST, SysFuncIdx};
+use alloc::rc::Rc;
 use rwasm::{instruction_set, ImportLinker, ImportName, ValType};
 
-pub fn create_import_linker() -> ImportLinker {
-    // TODO(dmitry123): "optimize it, don't clone or use Arc/Rc"
+pub fn create_import_linker() -> Rc<ImportLinker> {
     let mut import_linker = ImportLinker::default();
     macro_rules! import_function {
         ($func_name:literal, $sys_func_idx:ident, $params:expr, $results:expr, $fuel_expr:ident) => {
@@ -70,7 +70,7 @@ pub fn create_import_linker() -> ImportLinker {
     );
     import_function!(
         "_resume",
-        EXEC,
+        RESUME,
         &[ValType::I32; 5],
         &[ValType::I32; 1],
         RESUME_FUEL
@@ -125,5 +125,5 @@ pub fn create_import_linker() -> ImportLinker {
         &[ValType::I32; 1],
         SECP256K1_RECOVER_FUEL
     );
-    import_linker
+    Rc::new(import_linker)
 }

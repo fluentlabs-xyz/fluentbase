@@ -66,7 +66,7 @@ use crate::{
 };
 use fluentbase_types::SysFuncIdx;
 use num::BigUint;
-use rwasm::{Caller, TrapCode};
+use rwasm::{TrapCode, TypedCaller, Value};
 use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{
@@ -76,77 +76,58 @@ use sp1_curves::{
     },
 };
 
+#[rustfmt::skip]
 pub fn invoke_runtime_handler(
-    caller: Caller<RuntimeContext>,
+    caller: &mut TypedCaller<RuntimeContext>,
     sys_func_idx: SysFuncIdx,
+    params: &[Value],
+    result: &mut [Value],
 ) -> Result<(), TrapCode> {
     match sys_func_idx {
-        SysFuncIdx::EXIT => SyscallExit::fn_handler(caller),
-        SysFuncIdx::STATE => SyscallState::fn_handler(caller),
-        SysFuncIdx::READ_INPUT => SyscallRead::fn_handler(caller),
-        SysFuncIdx::INPUT_SIZE => SyscallInputSize::fn_handler(caller),
-        SysFuncIdx::WRITE_OUTPUT => SyscallWrite::fn_handler(caller),
-        SysFuncIdx::OUTPUT_SIZE => SyscallOutputSize::fn_handler(caller),
-        SysFuncIdx::READ_OUTPUT => SyscallReadOutput::fn_handler(caller),
-        SysFuncIdx::EXEC => SyscallExec::fn_handler(caller),
-        SysFuncIdx::RESUME => SyscallResume::fn_handler(caller),
-        SysFuncIdx::FORWARD_OUTPUT => SyscallForwardOutput::fn_handler(caller),
-        SysFuncIdx::CHARGE_FUEL_MANUALLY => SyscallChargeFuelManually::fn_handler(caller),
-        SysFuncIdx::CHARGE_FUEL => SyscallChargeFuel::fn_handler(caller),
-        SysFuncIdx::FUEL => SyscallFuel::fn_handler(caller),
-        SysFuncIdx::PREIMAGE_SIZE => SyscallPreimageSize::fn_handler(caller),
-        SysFuncIdx::PREIMAGE_COPY => SyscallPreimageCopy::fn_handler(caller),
-        SysFuncIdx::DEBUG_LOG => SyscallDebugLog::fn_handler(caller),
-        SysFuncIdx::KECCAK256 => SyscallKeccak256::fn_handler(caller),
-        SysFuncIdx::KECCAK256_PERMUTE => SyscallKeccak256Permute::fn_handler(caller),
-        SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller),
-        SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller),
-        SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller),
-        SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller),
-        SysFuncIdx::SECP256K1_RECOVER => SyscallSecp256k1Recover::fn_handler(caller),
-        SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller),
-        SysFuncIdx::SECP256K1_DECOMPRESS => {
-            SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller)
-        }
-        SysFuncIdx::SECP256K1_DOUBLE => {
-            SyscallWeierstrassDoubleAssign::<Secp256k1>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_DECOMPRESS => {
-            SyscallWeierstrassDecompressAssign::<Bls12381>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_ADD => SyscallWeierstrassAddAssign::<Bls12381>::fn_handler(caller),
-        SysFuncIdx::BLS12381_DOUBLE => {
-            SyscallWeierstrassDoubleAssign::<Bls12381>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP_ADD => {
-            SyscallFpOp::<Bls12381BaseField, FieldAdd>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP_SUB => {
-            SyscallFpOp::<Bls12381BaseField, FieldSub>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP_MUL => {
-            SyscallFpOp::<Bls12381BaseField, FieldMul>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP2_ADD => {
-            SyscallFp2AddSub::<Bls12381BaseField, FieldAdd>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP2_SUB => {
-            SyscallFp2AddSub::<Bls12381BaseField, FieldSub>::fn_handler(caller)
-        }
-        SysFuncIdx::BLS12381_FP2_MUL => SyscallFp2Mul::<Bls12381BaseField>::fn_handler(caller),
-        SysFuncIdx::BN254_ADD => SyscallWeierstrassAddAssign::<Bn254>::fn_handler(caller),
-        SysFuncIdx::BN254_DOUBLE => SyscallWeierstrassDoubleAssign::<Bn254>::fn_handler(caller),
-        SysFuncIdx::BN254_FP_ADD => SyscallFpOp::<Bn254BaseField, FieldAdd>::fn_handler(caller),
-        SysFuncIdx::BN254_FP_SUB => SyscallFpOp::<Bn254BaseField, FieldSub>::fn_handler(caller),
-        SysFuncIdx::BN254_FP_MUL => SyscallFpOp::<Bn254BaseField, FieldMul>::fn_handler(caller),
-        SysFuncIdx::BN254_FP2_ADD => {
-            SyscallFp2AddSub::<Bn254BaseField, FieldAdd>::fn_handler(caller)
-        }
-        SysFuncIdx::BN254_FP2_SUB => {
-            SyscallFp2AddSub::<Bn254BaseField, FieldSub>::fn_handler(caller)
-        }
-        SysFuncIdx::BN254_FP2_MUL => SyscallFp2Mul::<Bn254BaseField>::fn_handler(caller),
-        SysFuncIdx::UINT256_MUL => SyscallUint256Mul::fn_handler(caller),
+        SysFuncIdx::EXIT => SyscallExit::fn_handler(caller, params, result),
+        SysFuncIdx::STATE => SyscallState::fn_handler(caller, params, result),
+        SysFuncIdx::READ_INPUT => SyscallRead::fn_handler(caller, params, result),
+        SysFuncIdx::INPUT_SIZE => SyscallInputSize::fn_handler(caller, params, result),
+        SysFuncIdx::WRITE_OUTPUT => SyscallWrite::fn_handler(caller, params, result),
+        SysFuncIdx::OUTPUT_SIZE => SyscallOutputSize::fn_handler(caller, params, result),
+        SysFuncIdx::READ_OUTPUT => SyscallReadOutput::fn_handler(caller, params, result),
+        SysFuncIdx::EXEC => SyscallExec::fn_handler(caller, params, result),
+        SysFuncIdx::RESUME => SyscallResume::fn_handler(caller, params, result),
+        SysFuncIdx::FORWARD_OUTPUT => SyscallForwardOutput::fn_handler(caller, params, result),
+        SysFuncIdx::CHARGE_FUEL_MANUALLY => SyscallChargeFuelManually::fn_handler(caller, params, result),
+        SysFuncIdx::CHARGE_FUEL => SyscallChargeFuel::fn_handler(caller, params, result),
+        SysFuncIdx::FUEL => SyscallFuel::fn_handler(caller, params, result),
+        SysFuncIdx::PREIMAGE_SIZE => SyscallPreimageSize::fn_handler(caller, params, result),
+        SysFuncIdx::PREIMAGE_COPY => SyscallPreimageCopy::fn_handler(caller, params, result),
+        SysFuncIdx::DEBUG_LOG => SyscallDebugLog::fn_handler(caller, params, result),
+        SysFuncIdx::KECCAK256 => SyscallKeccak256::fn_handler(caller, params, result),
+        SysFuncIdx::KECCAK256_PERMUTE => SyscallKeccak256Permute::fn_handler(caller, params, result),
+        SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller, params, result),
+        SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_RECOVER => SyscallSecp256k1Recover::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_DECOMPRESS => SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller, params, result),
+        SysFuncIdx::SECP256K1_DOUBLE => SyscallWeierstrassDoubleAssign::<Secp256k1>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_DECOMPRESS => SyscallWeierstrassDecompressAssign::<Bls12381>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_ADD => SyscallWeierstrassAddAssign::<Bls12381>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_DOUBLE => SyscallWeierstrassDoubleAssign::<Bls12381>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_FP_ADD => SyscallFpOp::<Bls12381BaseField, FieldAdd>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_FP_SUB => SyscallFpOp::<Bls12381BaseField, FieldSub>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_FP_MUL => SyscallFpOp::<Bls12381BaseField, FieldMul>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_FP2_ADD => SyscallFp2AddSub::<Bls12381BaseField, FieldAdd>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_FP2_SUB => SyscallFp2AddSub::<Bls12381BaseField, FieldSub>::fn_handler(caller, params, result),
+        SysFuncIdx::BLS12381_FP2_MUL => SyscallFp2Mul::<Bls12381BaseField>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_ADD => SyscallWeierstrassAddAssign::<Bn254>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_DOUBLE => SyscallWeierstrassDoubleAssign::<Bn254>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP_ADD => SyscallFpOp::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP_SUB => SyscallFpOp::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP_MUL => SyscallFpOp::<Bn254BaseField, FieldMul>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP2_ADD => SyscallFp2AddSub::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP2_SUB => SyscallFp2AddSub::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_FP2_MUL => SyscallFp2Mul::<Bn254BaseField>::fn_handler(caller, params, result),
+        SysFuncIdx::UINT256_MUL => SyscallUint256Mul::fn_handler(caller, params, result),
         _ => unreachable!("unknown system function ({})", sys_func_idx),
     }
 }
