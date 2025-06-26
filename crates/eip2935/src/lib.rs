@@ -3,6 +3,3 @@
 pub mod consts;
 pub mod entry;
 pub mod helpers;
-
-extern crate alloc;
-extern crate core;

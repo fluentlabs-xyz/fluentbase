@@ -30,13 +30,7 @@ fn submit(mut sdk: impl SharedAPI) {
     let hash_key = U256::from(slot);
     sdk.write_storage(hash_key, hash_value);
 }
-
-pub fn main_entry(mut sdk: impl SharedAPI) {
-    let caller = sdk.context().contract_caller();
-    if caller == SYSTEM_ADDRESS {
-        submit(sdk);
-        return;
-    }
+fn retrieve(mut sdk: impl SharedAPI) {
     let input = sdk.input();
     if input.len() != U256_LEN_BYTES {
         throw(&mut sdk);
@@ -61,4 +55,13 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let hash_key = user_requested_block_number % U256::from(HISTORY_SERVE_WINDOW);
     let hash_value = sdk.storage(&hash_key);
     sdk.write(slice_from_u256(&hash_value));
+}
+
+pub fn main_entry(mut sdk: impl SharedAPI) {
+    let caller = sdk.context().contract_caller();
+    if caller == SYSTEM_ADDRESS {
+        submit(sdk);
+        return;
+    }
+    retrieve(sdk);
 }
