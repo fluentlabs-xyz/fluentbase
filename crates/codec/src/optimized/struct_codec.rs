@@ -59,7 +59,74 @@ struct Example {
     age: u32,
     tags: Vec<u8>,
 }
+// data layout
 
+// nums_header, nums_header0, nums_headerN, age, tags_header || nums_header0_data, nums_headerN_data, tags_header_data
+
+// offsets
+
+// nums_header:
+//     len = 2 (outer Vec length)
+//     offset ? (to first inner Vec header || to data section)
+//     size ? (first inner Vec header size || full size of data Vec<Vec<u32>> )
+
+
+//  let test_value: Vec<Vec<Vec<u32>>> = vec![vec![vec![1, 2, 3], vec![4, 5], vec![6, 7, 8, 9, 10]]];
+// let expected_encoded = hex::decode(concat!(
+// // Main array header
+// ------------ container start
+// "03000000", // length (3)
+// "0c000000", // offset to first vector
+// "4c000000", // offset to second vector
+// ------------ // First vector header
+// // First vector [1,2,3] 
+// "03000000", // length 
+// "24000000", // relative offset
+// "0c000000", // data offset
+// ------------
+
+// // Second vector [4,5]
+// "02000000", // length
+// "30000000", // relative offset
+// "08000000", // data offset
+// ------------
+// // Third vector [6,7,8,9,10]
+// "05000000", // length
+// "38000000", // relative offset since Main array header
+// "14000000", // data offset
+// ------------
+// // Data sections
+// "01000000", // 1
+// "02000000", // 2
+// "03000000", // 3
+// "04000000", // 4
+// "05000000", // 5
+// "06000000", // 6
+// "07000000", // 7
+// "08000000", // 8
+// "09000000", // 9
+// "0a000000"  // 10
+// ))
+// .unwrap();
+
+// maps offsets [keys] [values] - independent || related?
+// let expected_encoded = hex::decode(concat!(
+// // Header
+// "03000000", // length (3 pairs)
+// "14000000", // keys_offset (20)
+// "0c000000", // keys_size (12)
+// "20000000", // values_offset (32)
+// "0c000000", // values_size (12)
+// // Keys (sorted)
+// "03000000", // key = 3
+// "64000000", // key = 100
+// "e8030000", // key = 1000
+// // Values (in same order as keys)
+// "05000000", // value = 5
+// "14000000", // value = 20
+// "3c000000"  // value = 60
+// ))
+// .unwrap();
 
 impl Encoder<BigEndian, 4, true> for Example {
     type Ctx = EncodingContext;
