@@ -18,6 +18,7 @@ const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
     (fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts_bn256::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_EIP2935, fluentbase_contracts_eip2935::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::BUILD_OUTPUT),
     #[cfg(feature = "enable-svm")]
     (fluentbase_types::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts_svm::BUILD_OUTPUT),

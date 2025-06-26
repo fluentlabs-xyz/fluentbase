@@ -17,6 +17,8 @@ mod deployer;
 #[cfg(test)]
 mod erc20;
 #[cfg(test)]
+mod eip2935;
+#[cfg(test)]
 mod evm;
 #[cfg(test)]
 mod gas;
