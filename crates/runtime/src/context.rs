@@ -1,7 +1,9 @@
 use crate::{instruction::exec::SysExecResumable, ExecutionResult};
 use fluentbase_types::{BytecodeOrHash, Bytes, B256};
 use rwasm::TrapCode;
+use std::mem::take;
 
+#[derive(Debug, Clone)]
 pub struct RuntimeContext {
     // context inputs
     pub(crate) bytecode: BytecodeOrHash,
@@ -127,6 +129,10 @@ impl RuntimeContext {
 
     pub fn into_return_data(self) -> Bytes {
         self.execution_result.return_data.into()
+    }
+
+    pub fn take_return_data(&mut self) -> Vec<u8> {
+        take(&mut self.execution_result.return_data)
     }
 
     pub fn return_data_mut(&mut self) -> &mut Vec<u8> {

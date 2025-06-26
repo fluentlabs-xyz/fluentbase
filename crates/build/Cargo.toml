@@ -14,8 +14,7 @@ fluentbase-sdk-derive-core = { path = "../sdk-derive/derive-core", default-featu
 anyhow = { workspace = true }
 cargo_metadata = "0.19.1"
 fluentbase-types = { workspace = true }
-rwasm = { workspace = true }
-wasmtime = { workspace = true }
+rwasm = { workspace = true, features = ["std", "wasmtime"] }
 clap = { workspace = true }
 chrono = { version = "0.4.38", default-features = false, features = ["clock"] }
 syn = { workspace = true, features = ["full", "visit"] }
@@ -32,7 +31,8 @@ quote = { workspace = true }
 tempfile = "3.20"
 
 [features]
-default = []
+default = ["std"]
 std = [
-    "fluentbase-types/std"
+    "fluentbase-types/std",
+    "rwasm/std",
 ]

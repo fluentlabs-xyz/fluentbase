@@ -27,7 +27,7 @@ fn test_simple_nested_call() {
             ConsumeFuel(1000u32)
             // add one memory page
             I32Const(1)
-            MemoryGrow // it costs 1024 fuel
+            MemoryGrow
             Drop
             // write exit code into 0 memory offset
             I32Const(0)
@@ -48,7 +48,7 @@ fn test_simple_nested_call() {
             ConsumeFuel(2000u32)
             // add one memory page
             I32Const(1)
-            MemoryGrow // it costs 1024 fuel
+            MemoryGrow
             Drop
             // write exit code into 0 memory offset
             I32Const(0)

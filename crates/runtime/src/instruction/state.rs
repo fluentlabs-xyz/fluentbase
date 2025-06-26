@@ -1,12 +1,16 @@
 use crate::RuntimeContext;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 
 pub struct SyscallState;
 
 impl SyscallState {
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let state = Self::fn_impl(caller.context());
-        caller.stack_push(state);
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        _params: &[Value],
+        result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let state = caller.context(Self::fn_impl);
+        result[0] = Value::I32(state as i32);
         Ok(())
     }
 
