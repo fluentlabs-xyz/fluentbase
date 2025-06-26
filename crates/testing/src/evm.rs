@@ -1,6 +1,6 @@
 use crate::{HostTestingContext, HostTestingContextNativeAPI};
 use core::{borrow::Borrow, mem::take, str::from_utf8};
-use fluentbase_genesis::{devnet_genesis_from_file, Genesis};
+use fluentbase_genesis::{devnet_genesis_from_file, Genesis, GENESIS_CONTRACTS_BY_ADDRESS};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
     bytes::BytesMut,
@@ -57,15 +57,13 @@ impl EvmTestingContext {
         let mut db = InMemoryDB::default();
         // convert all accounts from genesis into jzkt
         for (k, v) in genesis.alloc.iter() {
-            let code_hash = v
-                .code
-                .as_ref()
-                .map(|value| keccak256(&value))
-                .unwrap_or(KECCAK_EMPTY);
+            let genesis_account = GENESIS_CONTRACTS_BY_ADDRESS.get(k);
             let mut info: AccountInfo = AccountInfo {
                 balance: v.balance,
                 nonce: v.nonce.unwrap_or_default(),
-                code_hash,
+                code_hash: genesis_account
+                    .map(|v| v.rwasm_bytecode_hash)
+                    .unwrap_or(KECCAK_EMPTY),
                 code: None,
             };
             info.code = v.code.clone().map(Bytecode::new_raw);

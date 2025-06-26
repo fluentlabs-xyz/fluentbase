@@ -1,12 +1,14 @@
 use crate::{
-    account::WritableAccount,
+    account::{ReadableAccount, WritableAccount},
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     precompiles::is_precompile,
     solana_program::{message::SanitizedMessage, sysvar::instructions},
 };
 use alloc::vec::Vec;
 use fluentbase_sdk::SharedAPI;
+use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
+use solana_pubkey::Pubkey;
 use solana_transaction_error::TransactionError;
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
@@ -16,28 +18,12 @@ impl MessageProcessor {
     pub fn process_message<'a, SDK: SharedAPI>(
         message: &SanitizedMessage,
         program_indices: &[Vec<IndexOfAccount>],
-        // transaction_context: &mut TransactionContext,
-        // programs_loaded_for_tx_batch: LoadedProgramsForTxBatch<'a, SDK>,
-        // sdk: &'a mut SDK,
-        // log_collector: Option<Rc<RefCell<LogCollector>>>,
-        // programs_modified_by_tx: &mut LoadedProgramsForTxBatch<>,
-        // feature_set: Arc<FeatureSet>,
-        // compute_budget: ComputeBudget,
-        // timings: &mut ExecuteTimings,
-        // sysvar_cache: &SysvarCache,
-        // blockhash: Hash,
-        // lamports_per_signature: u64,
-        // accumulated_consumed_units: &mut u64,
         invoke_context: &mut InvokeContext<'_, SDK>,
-    ) -> Result<(), TransactionError> {
-        // let mut invoke_context = InvokeContext::new(
-        //     transaction_context,
-        //     sdk,
-        //     programs_loaded_for_tx_batch,
-        //     0,
-        // );
-
+    ) -> Result<HashMap<Pubkey, (u64, u64)>, TransactionError> {
         debug_assert_eq!(program_indices.len(), message.instructions().len());
+        // TODO replace pubkey with index in transaction?
+        let mut balances_history: HashMap<Pubkey, (u64, u64)> = Default::default();
+        // let mut instruction_account_keys: HashSet<Pubkey> = Default::default();
         for (instruction_index, ((program_id, instruction), program_indices)) in message
             .program_instructions_iter()
             .zip(program_indices.iter())
@@ -77,13 +63,28 @@ impl MessageProcessor {
                     .unwrap_or(instruction_account_index)
                     as IndexOfAccount;
                 let index_in_transaction = *index_in_transaction as usize;
-                instruction_accounts.push(InstructionAccount {
+                let instruction_account = InstructionAccount {
                     index_in_transaction: index_in_transaction as IndexOfAccount,
                     index_in_caller: index_in_transaction as IndexOfAccount,
                     index_in_callee,
                     is_signer: message.is_signer(index_in_transaction),
                     is_writable: message.is_writable(index_in_transaction),
-                });
+                };
+                instruction_accounts.push(instruction_account);
+            }
+
+            for instruction_account in instruction_accounts.iter() {
+                let instruction_account_key = invoke_context
+                    .transaction_context
+                    .get_key_of_account_at_index(instruction_account.index_in_transaction)
+                    .expect("instruction account key must always exist");
+                // instruction_account_keys.insert(instruction_account_key.clone());
+                let account_data = invoke_context
+                    .transaction_context
+                    .get_account_at_index(instruction_account.index_in_transaction)
+                    .expect("instruction account must always exist");
+                let balance = account_data.borrow().lamports();
+                balances_history.insert(instruction_account_key.clone(), (balance, balance));
             }
 
             let result = if is_precompile {
@@ -131,9 +132,25 @@ impl MessageProcessor {
                 result
             };
 
+            for instruction_account in instruction_accounts.iter() {
+                let instruction_account_key = invoke_context
+                    .transaction_context
+                    .get_key_of_account_at_index(instruction_account.index_in_transaction)
+                    .expect("instruction account key must always exist");
+                let account_data = invoke_context
+                    .transaction_context
+                    .get_account_at_index(instruction_account.index_in_transaction)
+                    .expect("instruction account must always exist");
+                let balance = account_data.borrow().lamports();
+                let balance_history = balances_history
+                    .get_mut(instruction_account_key)
+                    .expect("balance history entry must exist");
+                balance_history.1 = balance;
+            }
+
             result
                 .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
         }
-        Ok(())
+        Ok(balances_history)
     }
 }

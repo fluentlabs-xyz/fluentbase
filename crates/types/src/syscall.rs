@@ -95,7 +95,7 @@ impl<T> SyscallResult<T> {
         }
     }
     pub fn expect<I: Into<String>>(self, msg: I) -> Self {
-        if !SyscallResult::is_ok(self.status) {
+        if !self.status.is_ok() {
             panic!("syscall result has status {}: {}", self.status, msg.into());
         }
         self

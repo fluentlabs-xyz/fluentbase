@@ -134,9 +134,7 @@ impl Display for SvmError {
     }
 }
 
-pub fn process_svm_result(
-    result: Result<HashMap<Pubkey, AccountSharedData>, SvmError>,
-) -> Result<HashMap<Pubkey, AccountSharedData>, String> {
+pub fn process_svm_result<T>(result: Result<T, SvmError>) -> Result<T, String> {
     match result {
         Ok(v) => Ok(v),
         Err(ref err) => Err(alloc::format!("{}", &err)),

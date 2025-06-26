@@ -734,6 +734,7 @@ pub fn pubkey_from_pubkey(value: &Pubkey) -> Pubkey {
     ))
 }
 
+#[inline(always)]
 pub fn is_evm_pubkey(pk: &Pubkey) -> bool {
     pk.as_ref().starts_with(&SVM_ADDRESS_PREFIX)
 }
@@ -741,7 +742,7 @@ pub fn is_evm_pubkey(pk: &Pubkey) -> bool {
 pub fn evm_address_from_pubkey<const VALIDATE_PREFIX: bool>(
     pk: &Pubkey,
 ) -> Result<Address, SvmError> {
-    if VALIDATE_PREFIX && !pk.as_ref().starts_with(&SVM_ADDRESS_PREFIX) {
+    if VALIDATE_PREFIX && !is_evm_pubkey(pk) {
         return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
     }
     Ok(Address::from_slice(

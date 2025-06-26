@@ -15,6 +15,8 @@ mod constructor;
 #[cfg(test)]
 mod deployer;
 #[cfg(test)]
+mod erc20;
+#[cfg(test)]
 mod evm;
 #[cfg(test)]
 mod gas;

@@ -2590,6 +2590,7 @@ name = "fluentbase-contracts-erc20"
 version = "0.1.0"
 dependencies = [
  "fluentbase-build",
+ "fluentbase-erc20",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
 ]
@@ -2740,6 +2741,7 @@ dependencies = [
  "alloy-sol-types",
  "fluentbase-codec",
  "fluentbase-contracts-nitro",
+ "fluentbase-erc20",
  "fluentbase-examples-abi-solidity",
  "fluentbase-examples-checkmate",
  "fluentbase-examples-client-solidity",
@@ -2770,6 +2772,14 @@ dependencies = [
  "rwasm",
  "rwasm-revm",
  "wat",
+]
+
+[[package]]
+name = "fluentbase-erc20"
+version = "0.1.0"
+dependencies = [
+ "bincode 2.0.1",
+ "fluentbase-sdk",
 ]
 
 [[package]]

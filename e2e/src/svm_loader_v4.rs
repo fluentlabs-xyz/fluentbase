@@ -170,7 +170,7 @@ mod tests {
                 "failed to read payer {} (address:{}) account data",
                 pk_payer,
                 evm_address_from_pubkey::<true>(&pk_payer)
-                    .expect("pk_payer must be a compatible pk")
+                    .expect("pk payer must be evm compatible")
             )
             .as_str(),
         );
