@@ -94,18 +94,15 @@ impl NativeAPI for RuntimeContextWrapper {
 
     #[inline(always)]
     fn fuel(&self) -> u64 {
-        let ctx = self.ctx.borrow();
-        SyscallFuel::fn_impl(&ctx)
+        SyscallFuel::fn_impl(&self.ctx.borrow())
     }
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
-        let mut ctx = self.ctx.borrow_mut();
-        SyscallChargeFuelManually::fn_impl(&mut ctx, fuel_consumed, fuel_refunded)
+        SyscallChargeFuelManually::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed, fuel_refunded)
     }
 
     fn charge_fuel(&self, fuel_consumed: u64) {
-        let mut ctx = self.ctx.borrow_mut();
-        SyscallChargeFuel::fn_impl(&mut ctx, fuel_consumed);
+        SyscallChargeFuel::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed);
     }
 
     fn exec<I: Into<BytecodeOrHash>>(
@@ -115,9 +112,8 @@ impl NativeAPI for RuntimeContextWrapper {
         fuel_limit: Option<u64>,
         state: u32,
     ) -> (u64, i64, i32) {
-        let mut ctx = self.ctx.borrow_mut();
         let (fuel_consumed, fuel_refunded, exit_code) = SyscallExec::fn_impl(
-            &mut ctx,
+            &mut self.ctx.borrow_mut(),
             code_hash,
             input,
             fuel_limit.unwrap_or(u64::MAX),
@@ -134,11 +130,10 @@ impl NativeAPI for RuntimeContextWrapper {
         fuel_consumed: u64,
         fuel_refunded: i64,
     ) -> (u64, i64, i32) {
-        let mut ctx = self.ctx.borrow_mut();
         let (fuel_consumed, fuel_refunded, exit_code) = SyscallResume::fn_impl(
-            &mut ctx,
+            &mut self.ctx.borrow_mut(),
             call_id,
-            return_data.to_vec(),
+            return_data,
             exit_code,
             fuel_consumed,
             fuel_refunded,

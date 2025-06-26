@@ -1,6 +1,6 @@
 [package]
 name = "fluentbase-build"
-version = "0.1.0"
+version.workspace = true
 authors.workspace = true
 repository.workspace = true
 edition.workspace = true
@@ -10,10 +10,29 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+fluentbase-sdk-derive-core = { path = "../sdk-derive/derive-core", default-features = false }
+anyhow = { workspace = true }
 cargo_metadata = "0.19.1"
 fluentbase-types = { workspace = true }
-rwasm = { workspace = true }
-wasmtime = { workspace = true }
+rwasm = { workspace = true, features = ["std", "wasmtime"] }
+clap = { workspace = true }
+chrono = { version = "0.4.38", default-features = false, features = ["clock"] }
+syn = { workspace = true, features = ["full", "visit"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+toml = "0.8"
+tracing = "0.1"
+convert_case = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.20"
 
 [features]
-default = []
+default = ["std"]
+std = [
+    "fluentbase-types/std",
+    "rwasm/std",
+]

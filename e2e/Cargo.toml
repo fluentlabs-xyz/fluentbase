@@ -19,8 +19,8 @@ fluentbase-types = { workspace = true }
 
 fluentbase-svm = { workspace = true, default-features = false }
 fluentbase-erc20 = { workspace = true }
-fluentbase-eip2935 = { workspace = true }
 fluentbase-contracts-nitro = { path = "../contracts/nitro" }
+fluentbase-eip2935 = { workspace = true }
 
 fluentbase-examples-abi-solidity = { path = "../examples/abi-solidity" }
 fluentbase-examples-checkmate = { path = "../examples/checkmate" }
@@ -53,7 +53,8 @@ rand = { version = "0.9.1" }
 default = [
     "std",
     #    "wasmtime",
-    "enable-svm",
+    #    "debug-print",
+    #    "enable-svm",
     "debug-print"
 ]
 enable-svm = [
@@ -74,6 +75,7 @@ debug-print = [
     "revm/debug-print",
     "rwasm-revm/debug-print",
     "fluentbase-svm/debug-print",
+    "rwasm/debug-print",
 ]
 wasmtime = [
     "fluentbase-runtime/wasmtime",

@@ -6,6 +6,7 @@ members = [
     "revm/crates/*",
     "examples/*",
     "e2e",
+    "bins/cli"
 ]
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
@@ -15,6 +16,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
+version = "0.2.1-dev"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
@@ -103,7 +105,6 @@ solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = 
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
-
 # rwasm
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 
@@ -134,7 +135,6 @@ bincode_v1_3_3 = { package = "bincode", git = "https://github.com/fluentlabs-xyz
 num-derive = { version = "0.4" }
 num-traits = { version = "0.2", features = ["i128"], default-features = false }
 
-
 hashbrown = { version = "0.15.0", default-features = false, features = ["default-hasher", "inline-more"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false }
@@ -156,8 +156,10 @@ syn = "2.0"
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
-wasmtime = { version = "31.0.0" }
-
+wasmtime = { version = "33.0.0" }
+convert_case = "0.8.0"
+proc-macro2 = { version = "1.0", default-features = false }
+quote = { version = "1.0" }
 # revm
 revm = { path = "revm/crates/revm", default-features = false, features = ["secp256r1"] }
 primitives = { path = "revm/crates/primitives", package = "revm-primitives", default-features = false }
@@ -208,7 +210,7 @@ criterion = { package = "codspeed-criterion-compat", version = "2.7" }
 bitflags = { version = "2.6.0", default-features = false }
 cfg-if = { version = "1.0", default-features = false }
 derive-where = { version = "1.2.7", default-features = false }
-once_cell = { version = "1.19", default-features = false }
+once_cell = { version = "1.19", default-features = false, features = ["alloc"] }
 rand = "0.8"
 tokio = "1.44"
 either = { version = "1.15.0", default-features = false }

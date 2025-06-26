@@ -1,16 +1,19 @@
 use crate::RuntimeContext;
-use rwasm::{Caller, TrapCode};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 
 pub struct SyscallPreimageSize;
 
 impl SyscallPreimageSize {
-    pub fn fn_handler(mut caller: Caller<RuntimeContext>) -> Result<(), TrapCode> {
-        let hash32_offset: u32 = caller.stack_pop_as();
-        let hash = caller
-            .memory_read_fixed::<32>(hash32_offset as usize)?
-            .to_vec();
-        let preimage_size = Self::fn_impl(caller.context_mut(), &hash)?;
-        caller.stack_push(preimage_size);
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        params: &[Value],
+        result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let hash32_offset = params[0].i32().unwrap();
+        let mut hash = [0u8; 32];
+        caller.memory_read(hash32_offset as usize, &mut hash)?;
+        let preimage_size = caller.context(|ctx| Self::fn_impl(ctx, &hash))?;
+        result[0] = Value::I32(preimage_size as i32);
         Ok(())
     }
 

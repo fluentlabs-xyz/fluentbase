@@ -40,23 +40,23 @@ const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
 ];
 
 pub struct GenesisContract {
-    pub name: String,
-    pub hash: B256,
+    pub contract_name: String,
+    pub rwasm_bytecode_hash: B256,
     pub address: Address,
-    pub wasm_bytecode: Bytes,
     pub rwasm_bytecode: Bytes,
-    pub wasmtime_module_bytes: Bytes,
+    pub wasm_bytecode: Bytes,
+    pub cranelift_binary: Bytes,
 }
 
 impl GenesisContract {
     pub fn from_build_output(address: &Address, build_output: &GenesisContractBuildOutput) -> Self {
         Self {
-            name: build_output.name.to_string(),
-            hash: B256::new(build_output.rwasm_bytecode_hash),
+            contract_name: build_output.name.to_string(),
+            rwasm_bytecode_hash: B256::new(build_output.rwasm_bytecode_hash),
             address: address.clone(),
-            wasm_bytecode: Bytes::from_static(build_output.wasm_bytecode),
             rwasm_bytecode: Bytes::from_static(build_output.rwasm_bytecode),
-            wasmtime_module_bytes: Bytes::from_static(build_output.wasmtime_module_bytes),
+            wasm_bytecode: Bytes::from_static(build_output.wasm_bytecode),
+            cranelift_binary: Bytes::from_static(build_output.wasmtime_module_bytes),
         }
     }
 }
@@ -68,7 +68,7 @@ lazy_static! {
             let contract = GenesisContract::from_build_output(addr, contract_build_output);
             println!(
                 "genesis contract address={} hash={} name={}",
-                contract.address, contract.hash, contract.name
+                contract.address, contract.rwasm_bytecode_hash, contract.contract_name
             );
             map.insert(addr.clone(), contract);
         }
@@ -78,7 +78,7 @@ lazy_static! {
         let mut map = HashMap::new();
         for (addr, contract_build_output) in GENESIS_CONTRACTS {
             let contract = GenesisContract::from_build_output(addr, contract_build_output);
-            map.insert(contract.hash, contract);
+            map.insert(contract.rwasm_bytecode_hash, contract);
         }
         map
     };
