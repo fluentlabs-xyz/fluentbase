@@ -49,7 +49,7 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
     }
 
     // Encodes static fields and offsets for the dynamic fields (calculated in `build_ctx`)
-    fn encode_header(&self, out: &mut impl BufMut, ctx: &Self::Ctx) -> Result<usize, CodecError>;
+    fn encode_header(&self, out: &mut impl BufMut, ctx: &mut Self::Ctx) -> Result<usize, CodecError>;
 
     // Encodes dynamic fields like raw data
     fn encode_tail(&self, out: &mut impl BufMut) -> Result<usize, CodecError> {
@@ -66,7 +66,7 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
         let mut ctx = Self::Ctx::default();
         self.build_ctx(&mut ctx)?;
 
-        let head = self.encode_header(out, &ctx)?;
+        let head = self.encode_header(out, &mut ctx)?;
         let tail = if Self::IS_DYNAMIC {
             self.encode_tail(out)?
         } else {

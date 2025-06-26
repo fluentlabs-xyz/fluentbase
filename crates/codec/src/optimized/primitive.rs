@@ -18,7 +18,7 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     const IS_DYNAMIC: bool = false;
     const HEADER_SIZE: usize = 0;
 
-    fn encode_header(&self, _buf: &mut impl BufMut, _ctx: &Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_header(&self, _buf: &mut impl BufMut, _ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
         Ok(0)
     }
 
@@ -33,7 +33,7 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     const HEADER_SIZE: usize = size_of::<u8>();
     const IS_DYNAMIC: bool = false;
 
-    fn encode_header(&self, buf: &mut impl BufMut, _ctx: &Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_header(&self, buf: &mut impl BufMut, _ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
         let alignment = ALIGN.max(1);
         if is_big_endian::<B>() {
             buf.put_bytes(0, alignment - 1);
@@ -69,7 +69,7 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     const HEADER_SIZE: usize = size_of::<u8>();
     const IS_DYNAMIC: bool = false;
 
-    fn encode_header(&self, buf: &mut impl BufMut, ctx: &Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_header(&self, buf: &mut impl BufMut, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
         let value: u8 = if *self { 1 } else { 0 };
         <u8 as Encoder<B, ALIGN, SOL_MODE>>::encode_header(&value, buf, ctx)
     }
@@ -89,7 +89,7 @@ macro_rules! impl_int {
             const HEADER_SIZE: usize = core::mem::size_of::<$typ>();
             const IS_DYNAMIC: bool = false;
 
-            fn encode_header(&self, buf: &mut impl BufMut, ctx: &Self::Ctx) -> Result<usize, CodecError> {
+            fn encode_header(&self, buf: &mut impl BufMut, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
                 let alignment = ALIGN.max(size_of::<$typ>());
                 if is_big_endian::<B>() {
                     buf.put_bytes(0, alignment - size_of::<$typ>());
@@ -149,7 +149,7 @@ where
     const HEADER_SIZE: usize = align_up::<ALIGN>(1) + T::HEADER_SIZE;
     const IS_DYNAMIC: bool = false;
 
-    fn encode_header(&self, buf: &mut impl BufMut, _ctx: &Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_header(&self, buf: &mut impl BufMut, _ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
         let flag: u8 = if self.is_some() { 1 } else { 0 };
 
         // Align 1-byte flag
@@ -198,7 +198,7 @@ where
     const HEADER_SIZE: usize = align_up::<ALIGN>(T::HEADER_SIZE) * N;
     const IS_DYNAMIC: bool = false;
 
-    fn encode_header(&self, buf: &mut impl BufMut, _ctx: &Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_header(&self, buf: &mut impl BufMut, _ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
         let mut total = 0;
         for item in self.iter() {
             total += item.encode(buf)?;

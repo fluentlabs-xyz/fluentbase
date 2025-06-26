@@ -10,45 +10,29 @@ use smallvec::SmallVec;
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialOrd, PartialEq)]
 pub struct NodeMeta {
-    pub len: u32,
-    pub tail: u32,
+    pub len:     u32,   // number of children
+    pub tail:    u32,   // bytes of raw body
+    pub total_hdr_len: u32,   // bytes of headers in subtree (including self)
 }
 
-/// Minimal encoder context (32-bit friendly)
 #[derive(Default, Debug, PartialOrd, PartialEq)]
 #[repr(C)]
 pub struct EncodingContext {
-    pub depth: u8, // current recursion level
-    // 2 bytes implicit padding inserted by the compiler -> 4-alignment ok
+    /// DFS-flattened list filled in `build_ctx`
     pub nodes: SmallVec<[NodeMeta; 32]>,
+    /// next NodeMeta to encode
+    pub index: usize,
+    pub hdr_written:  u32,  // bytes of headers already written in the whole buffer
+    pub body_reserved: u32, // bytes of body already reserved in the whole buffer
+    pub root_hdr:     u32, // total header size (used in structs) all headers+all statics
+
 }
 
 impl EncodingContext {
     #[inline]
     pub fn new() -> Self {
-        Self {
-            depth: 0,
-            nodes: SmallVec::new(),
-        }
+        Self::default()
     }
 
-    /* depth guard --------------------------------------------------- */
-    #[inline]
-    pub fn enter(&mut self) -> Result<(), CodecError> {
-        if self.depth >= 32 {
-            return Err(CodecError::InvalidData("max depth exceeded"));
-        }
-        self.depth += 1;
-        Ok(())
-    }
-    #[inline]
-    pub fn exit(&mut self) {
-        self.depth -= 1;
-    }
 
-    #[inline]
-    pub fn reset(&mut self) {
-        self.depth = 0;
-        self.nodes.clear();
-    }
 }
