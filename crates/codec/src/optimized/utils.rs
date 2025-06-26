@@ -2,9 +2,8 @@ use crate::{
     alloc::string::ToString,
     optimized::{encoder::Encoder, error::CodecError},
 };
-use byteorder::{ByteOrder, BE, LE};
-use bytes::{Buf, BufMut, BytesMut};
-use core::marker::PhantomData;
+use byteorder::ByteOrder;
+use bytes::{Buf, BufMut};
 
 /// Checks if the given byte order is big-endian.
 pub fn is_big_endian<B: ByteOrder>() -> bool {
@@ -16,16 +15,6 @@ pub fn is_big_endian<B: ByteOrder>() -> bool {
 #[inline]
 pub const fn align_up<const ALIGN: usize>(offset: usize) -> usize {
     (offset + ALIGN - 1) & !(ALIGN - 1)
-}
-
-/// Checks if the given type is dynamic.
-pub fn is_dynamic<
-    T: Encoder<B, ALIGN, SOL_MODE>,
-    B: ByteOrder,
-    const ALIGN: usize,
-    const SOL_MODE: bool,
->() -> bool {
-    T::IS_DYNAMIC
 }
 
 pub fn write_u32_aligned<B: ByteOrder, const ALIGN: usize>(buf: &mut impl BufMut, value: u32) {
@@ -53,11 +42,14 @@ pub fn read_u32_aligned<B: ByteOrder, const ALIGN: usize>(
 ) -> Result<u32, CodecError> {
     let word_size = align_up::<ALIGN>(4);
 
-
-    let end = offset + word_size ;
+    let end = offset + word_size;
 
     if buf.remaining() < end {
-        println!("read_u32_aligned>>>Buffer too small : expected {}, actual {}", end, buf.remaining());
+        println!(
+            "read_u32_aligned>>>Buffer too small : expected {}, actual {}",
+            end,
+            buf.remaining()
+        );
         return Err(CodecError::BufferTooSmallMsg {
             expected: end,
             actual: buf.remaining(),
@@ -71,51 +63,71 @@ pub fn read_u32_aligned<B: ByteOrder, const ALIGN: usize>(
     }
 }
 
-/// Returns a mutable slice of the buffer at the specified offset, aligned to the specified
-/// alignment. This slice is guaranteed to be large enough to hold the value of value_size.
-pub(crate) fn get_aligned_slice<B: ByteOrder, const ALIGN: usize>(
-    buf: &mut BytesMut,
-    offset: usize,
-    value_size: usize,
-) -> &mut [u8] {
-    let aligned_offset = align_up::<ALIGN>(offset);
-    let word_size = align_up::<ALIGN>(ALIGN.max(value_size));
+#[cfg(test)]
+pub(crate) mod tests {
+    use crate::optimized::{ctx::EncodingContext, encoder::Encoder};
+    use byteorder::{BigEndian, LittleEndian};
+    use bytes::BytesMut;
 
-    // Ensure the buffer is large enough
-    ensure_buf_size(buf, aligned_offset + word_size);
+    pub fn assert_codec<T>(value: &T, expected_header_hex: &str, expected_tail_hex: &str)
+    where
+        T: Encoder<LittleEndian, 4, false, Ctx = EncodingContext>
+            + PartialEq
+            + std::fmt::Debug
+            + Clone,
+    {
+        // Header
+        let mut ctx = EncodingContext::new();
+        let _ = T::header_size(value, &mut ctx);
+        ctx.data_ptr = ctx.hdr_ptr;
 
-    let write_offset = if is_big_endian::<B>() {
-        // For big-endian, return slice at the end of the aligned space
-        aligned_offset + word_size - value_size
-    } else {
-        // For little-endian, return slice at the beginning of the aligned space
-        aligned_offset
-    };
+        let mut header_buf = BytesMut::new();
+        let w = T::encode_header(value, &mut header_buf, &mut ctx);
+        assert!(w.is_ok(), "encode_header failed: {:?}", w);
+        assert_eq!(
+            expected_header_hex,
+            hex::encode(header_buf.clone()),
+            "header bytes mismatch"
+        );
 
-    &mut buf[write_offset..write_offset + value_size]
-}
+        // Tail
+        let mut tail_buf = BytesMut::new();
+        let w = T::encode_tail(value, &mut tail_buf);
+        assert!(w.is_ok(), "encode_tail failed: {:?}", w);
+        assert_eq!(
+            expected_tail_hex,
+            hex::encode(tail_buf.clone()),
+            "tail bytes mismatch"
+        );
 
-pub(crate) fn get_aligned_indices<B: ByteOrder, const ALIGN: usize>(
-    offset: usize,
-    value_size: usize,
-) -> (usize, usize) {
-    let aligned_offset = align_up::<ALIGN>(offset);
-    let word_size = align_up::<ALIGN>(ALIGN.max(value_size));
-
-    let write_offset = if is_big_endian::<B>() {
-        // For big-endian, return indices at the end of the aligned space
-        aligned_offset + word_size - value_size
-    } else {
-        // For little-endian, return indices at the beginning of the aligned space
-        aligned_offset
-    };
-
-    (write_offset, write_offset + value_size)
-}
-
-/// Ensure the buffer is large enough to hold the data
-pub fn ensure_buf_size(buf: &mut BytesMut, required_size: usize) {
-    if buf.len() < required_size {
-        buf.resize(required_size, 0);
+        // Decode header+tail
+        let mut full_buf = header_buf.clone();
+        full_buf.extend_from_slice(&tail_buf);
+        let decoded = T::decode(&mut &full_buf[..], 0).expect("decode failed");
+        assert_eq!(decoded, *value, "decoded value mismatch");
     }
+
+    pub fn assert_solidity_codec<T>(
+        value: &T,
+        expected_hex: &str,
+    ) where
+        T: Encoder<BigEndian, 32, true> + PartialEq + std::fmt::Debug + Clone,
+    {
+        use bytes::BytesMut;
+        // Encode
+        let mut buf = BytesMut::new();
+        let w = T::encode(value, &mut buf, None);
+        assert!(w.is_ok(), "Solidity encode failed: {:?}", w);
+
+        assert_eq!(
+            expected_hex,
+            hex::encode(buf.clone()),
+            "Solidity ABI encoded bytes mismatch"
+        );
+
+        // Decode
+        let decoded = T::decode(&buf, 0).expect("Solidity decode failed");
+        assert_eq!(*value, decoded, "Solidity roundtrip value mismatch");
+    }
+
 }

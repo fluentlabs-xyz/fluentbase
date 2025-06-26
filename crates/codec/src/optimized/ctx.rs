@@ -1,8 +1,7 @@
-use crate::optimized::encoder::Encoder;
-use byteorder::BigEndian;
+use smallvec::SmallVec;
 
 ///
-#[derive(Default, Debug, PartialOrd, PartialEq)]
+#[derive(Debug, PartialOrd, PartialEq)]
 #[repr(C)]
 pub struct EncodingContext {
     /// the full size of the header section
@@ -14,12 +13,23 @@ pub struct EncodingContext {
     pub hdr_ptr: u32,
     /// tail of the body section
     pub data_ptr: u32,
+    
 }
 
+impl Default for EncodingContext {
+    fn default() -> Self {
+        let mut meta_base = SmallVec::<[u32; 16]>::new();
+        meta_base.push(0);
+        Self {
+            hdr_size: 0,
+            hdr_ptr: 0,
+            data_ptr: 0,
+        }
+    }
+}
 impl EncodingContext {
     #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 }
-
