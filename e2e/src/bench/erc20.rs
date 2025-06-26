@@ -13,7 +13,32 @@ use hex_literal::hex;
 use test::Bencher;
 
 #[bench]
-fn bench_evm_erc20(b: &mut Bencher) {
+fn bench_original_evm_erc20(b: &mut Bencher) {
+    let mut ctx = EvmTestingContext::default();
+    ctx.disabled_rwasm = true;
+    const OWNER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(
+        OWNER_ADDRESS,
+        hex::decode(include_bytes!("../../assets/ERC20.bin"))
+            .unwrap()
+            .into(),
+    );
+    let transfer_coin = |ctx: &mut EvmTestingContext| {
+        ctx.call_evm_tx(
+            OWNER_ADDRESS,
+            contract_address,
+            hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into(),
+            None,
+            None,
+        );
+    };
+    b.iter(|| {
+        transfer_coin(&mut ctx);
+    });
+}
+
+#[bench]
+fn bench_emulated_evm_erc20(b: &mut Bencher) {
     let mut ctx = EvmTestingContext::default();
     const OWNER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(
@@ -22,7 +47,6 @@ fn bench_evm_erc20(b: &mut Bencher) {
             .unwrap()
             .into(),
     );
-
     let transfer_coin = |ctx: &mut EvmTestingContext| {
         ctx.call_evm_tx(
             OWNER_ADDRESS,
@@ -32,18 +56,16 @@ fn bench_evm_erc20(b: &mut Bencher) {
             None,
         );
     };
-
     b.iter(|| {
         transfer_coin(&mut ctx);
     });
 }
 
 #[bench]
-fn bench_wasm_erc20(b: &mut Bencher) {
+fn bench_rwasm_contract_erc20(b: &mut Bencher) {
     let mut ctx = EvmTestingContext::default();
     const OWNER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
-
     let transfer_coin = |ctx: &mut EvmTestingContext| {
         ctx.call_evm_tx(
             OWNER_ADDRESS,
@@ -53,14 +75,13 @@ fn bench_wasm_erc20(b: &mut Bencher) {
             None,
         );
     };
-
     b.iter(|| {
         transfer_coin(&mut ctx);
     });
 }
 
 #[bench]
-fn bench_native_erc20(b: &mut Bencher) {
+fn bench_precompiled_erc20(b: &mut Bencher) {
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
@@ -78,7 +99,7 @@ fn bench_native_erc20(b: &mut Bencher) {
         DEPLOYER_ADDR,
         initial_settings
             .try_encode_for_deploy()
-            .expect("failed to encode settings for deploy")
+            .expect("failed to encode settings for deployment")
             .into(),
     );
 

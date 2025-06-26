@@ -83,7 +83,7 @@ fn erc20_no_plugins_enabled_test() {
 
     let init_bytecode = initial_settings
         .try_encode_for_deploy()
-        .expect("failed to encode settings for deploy")
+        .expect("failed to encode settings for deployment")
         .into();
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDR, init_bytecode);
 
