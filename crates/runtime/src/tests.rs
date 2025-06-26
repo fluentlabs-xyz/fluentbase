@@ -1,6 +1,7 @@
 use crate::{runtime::Runtime, RuntimeContext};
 use fluentbase_types::{compile_wasm_to_rwasm, Bytes, STATE_DEPLOY, STATE_MAIN};
 use hex_literal::hex;
+use rwasm::Store;
 
 pub(crate) fn wat2rwasm(wat: &str) -> Bytes {
     let wasm_binary = wat::parse_str(wat).unwrap();
@@ -64,7 +65,7 @@ fn test_wrong_indirect_type() {
         .with_state(STATE_DEPLOY);
     let mut runtime = Runtime::new(ctx);
     let res = runtime.call();
-    let ctx = runtime.context().clone();
+    let ctx = runtime.store.context(|ctx| ctx.clone());
     assert_eq!(res.exit_code, 0);
     let res = Runtime::run_with_context(ctx.with_state(STATE_MAIN));
     assert_eq!(res.exit_code, -2003);

@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Caller, TrapCode, Value};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 
 pub const SHA_COMPRESS_K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -18,7 +18,7 @@ pub(crate) struct SyscallSha256Compress;
 impl SyscallSha256Compress {
     #[allow(clippy::many_single_char_names)]
     pub fn fn_handler(
-        caller: &mut dyn Caller<RuntimeContext>,
+        caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
@@ -27,8 +27,9 @@ impl SyscallSha256Compress {
             params[1].i32().unwrap() as u32,
         );
         if w_ptr == h_ptr {
-            caller.context_mut().execution_result.exit_code =
-                ExitCode::MalformedBuiltinParams.into_i32();
+            caller.context_mut(|ctx| {
+                ctx.execution_result.exit_code = ExitCode::MalformedBuiltinParams.into_i32()
+            });
             return Err(TrapCode::ExecutionHalted);
         }
 

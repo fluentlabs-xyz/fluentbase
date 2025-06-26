@@ -1,7 +1,7 @@
 use crate::{instruction::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use num::BigUint;
-use rwasm::{Caller, TrapCode, Value};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::{params::NumWords, weierstrass::FpOpField};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
@@ -12,7 +12,7 @@ pub struct SyscallFp2Mul<P> {
 
 impl<P: FpOpField> SyscallFp2Mul<P> {
     pub fn fn_handler(
-        caller: &mut dyn Caller<RuntimeContext>,
+        caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {

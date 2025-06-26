@@ -31,9 +31,6 @@ tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 num = "0.4.3"
 sp1-curves = { version = "5.0.0" }
 sp1-primitives = { version = "5.0.0" }
-wasmtime = { workspace = true, optional = true }
-anyhow = { version = "1.0.97", optional = true }
-ctor = { version = "0.4.1", optional = true }
 
 [dev-dependencies]
 sha2 = { version = "0.10.8" }
@@ -52,4 +49,4 @@ rwasm = []
 debug-print = [
     "dep:hex"
 ]
-wasmtime = ["dep:wasmtime", "dep:ctor", "dep:anyhow", "dep:fluentbase-genesis"]
+wasmtime = ["dep:fluentbase-genesis", "rwasm/wasmtime"]

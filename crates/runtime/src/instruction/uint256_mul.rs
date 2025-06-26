@@ -1,13 +1,13 @@
 use crate::RuntimeContext;
 use num::{BigUint, One, Zero};
-use rwasm::{Caller, TrapCode, Value};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::edwards::WORDS_FIELD_ELEMENT;
 
 pub struct SyscallUint256Mul;
 
 impl SyscallUint256Mul {
     pub fn fn_handler(
-        caller: &mut dyn Caller<RuntimeContext>,
+        caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
