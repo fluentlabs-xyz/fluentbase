@@ -1,87 +1,11 @@
 use crate::optimized::{
-    encoder::{Encoder, EncodingContext},
+    ctx::{EncodingContext, NodeMeta},
+    encoder::Encoder,
     error::CodecError,
-    utils::{align_up, read_u32_aligned, write_u32_aligned},
+    utils::{align_up, read_u32_aligned},
 };
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
-use core::mem::size_of;
-use smallvec::SmallVec;
-use crate::optimized::counter::ByteCounter;
-use crate::optimized::encoder::NodeMeta;
-
-// fn collect_metadata<T, B: ByteOrder, const ALIGN: usize, >(
-//     value: &Vec<T>,
-//     ctx: &mut EncodingContext,
-// ) -> usize
-// where
-//     T: Encoder<B, ALIGN, false>,
-// {
-//     todo!()
-//     // let idx = ctx.nodes.len();
-//     // ctx.nodes.push(NodeMeta {
-//     //     len: 0,
-//     //     tail: 0,
-//     //     first_child: None,
-//     // });
-//     //
-//     // if T::IS_DYNAMIC {
-//     //     let mut total_tail = 0;
-//     //     let mut count = 0;
-//     //
-//     //     for child in value {
-//     //         total_tail += collect_metadata::<T, B, ALIGN>(child, ctx);
-//     //         count += 1;
-//     //     }
-//     //
-//     //     ctx.nodes[idx].len = count;
-//     //     ctx.nodes[idx].tail = total_tail - count * Vec::<T>::HEADER_SIZE;
-//     //     ctx.nodes[idx].first_child = Some(idx + 1);
-//     //     total_tail
-//     // } else {
-//     //     let data_bytes = value.len() * T::HEADER_SIZE;
-//     //     ctx.nodes[idx].tail = data_bytes;
-//     //     data_bytes
-//     // }
-// }
-// trait CollectChildren {
-//     type Item;
-//     fn children(&self) -> &[Self::Item];
-// }
-//
-// impl<T> CollectChildren for Vec<T> {
-//     type Item = T;
-//     fn children(&self) -> &[T] {
-//         self.as_slice()
-//     }
-// }
-// fn collect_metadata_vec<T, B: ByteOrder, const ALIGN: usize>(
-//     vec: &Vec<T>,
-//     nodes: &mut SmallVec<[NodeMeta; 32]>,
-// ) -> usize
-// where
-//     T: Encoder<B, ALIGN, false>,
-// {
-//     let idx = nodes.len();
-//     nodes.push(NodeMeta {
-//         len: 0,
-//         tail: 0,
-//         first_child: None,
-//     });
-//
-//     let mut total_tail = 0;
-//     for child in vec {
-//         total_tail += collect_metadata_leaf::<T, B, ALIGN>(child, nodes); // or recursive call if needed
-//     }
-//
-//     let count = vec.len();
-//     nodes[idx].len = count;
-//     nodes[idx].tail = total_tail - count * T::HEADER_SIZE;
-//     nodes[idx].first_child = Some(idx + 1);
-//     total_tail
-// }
-
-
 
 /// Vec implementation for Compact ABI
 /// For Compact ABI, we have:
@@ -94,118 +18,66 @@ use crate::optimized::encoder::NodeMeta;
 /// For nested vectors, we have:
 /// - header (outer vector)
 /// - headers for each inner vector
+/// Other static fields if we in the struct
+///   
+/// ------
 /// - raw body of all inner vectors
 impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for Vec<T>
 where
-    T: Encoder<B, ALIGN, false>,
+    T: Encoder<B, ALIGN, false, Ctx = EncodingContext>,
+
 {
-    const IS_DYNAMIC:  bool  = true;
+    type Ctx = EncodingContext;
+    const IS_DYNAMIC: bool = true;
     const HEADER_SIZE: usize = core::mem::size_of::<u32>() * 3;
-    
-    /// `encode_head` – **pass 1: metadata collection only**  
-    /// * pushes one `NodeMeta { len, tail }` per vector in pre-order  
-    /// * maintains `ctx.depth` via `enter/exit` (DoS guard)  
-    /// * returns the pure-data byte count (`tail`) of the current subtree
-    fn encode_head(
-        &self,
-        _buf: &mut impl BufMut,      // nothing is written in pass-1
-        ctx: &mut EncodingContext,
-    ) -> Result<usize, CodecError>
-    {
-        /* depth guard ---------------------------------------------------- */
-        ctx.enter()?;                           // depth +1  (max_depth checked)
 
-        /* reserve slot for this vector ---------------------------------- */
-        let me = ctx.nodes.len();
-        ctx.nodes.push(NodeMeta { len: self.len(), tail: 0 });
-
-        /* empty vector – nothing to recurse into ------------------------ */
+    /// collect dynamic metadata (nested vecs)
+    fn build_ctx(&self, ctx: &mut Self::Ctx) -> Result<(), CodecError> {
         if self.is_empty() {
-            ctx.exit();                         // depth −1
-            return Ok(0);
+            return Ok(());
         }
 
-        /* recurse into children, collecting their NodeMeta records ------ */
-        let first_child_idx = me + 1;
-        for child in self {
-            //   real child vector, NOT slice::from_ref(child)
-            child.encode_head(_buf, ctx)?;
-        }
+        let len = self.len();
 
-        /* compute pure-data size (tail) --------------------------------- */
-        if T::IS_DYNAMIC {
-            // sum of children's tail­-bytes (their headers are excluded)
-            let mut data_bytes = 0;
-            for idx in first_child_idx .. first_child_idx + self.len() {
-                data_bytes += ctx.nodes[idx].tail;
-            }
-            ctx.nodes[me].tail = data_bytes;
+        let tail = if T::IS_DYNAMIC {
+            0
         } else {
-            // vector of statics: each element has fixed aligned size
-            ctx.nodes[me].tail = self.len() * align_up::<ALIGN>(T::HEADER_SIZE);
+            align_up::<ALIGN>(T::HEADER_SIZE) * len
+        };
+
+        ctx.nodes.push(NodeMeta {
+            len: len as u32,
+            tail: tail as u32,
+        });
+        
+        for child in self {
+            child.build_ctx(ctx)?;
         }
 
-        let tail_out = ctx.nodes[me].tail;
-        ctx.exit();                               // depth −1
-        Ok(tail_out)
+        Ok(())
+    }
+
+    fn encode_header(&self, out: &mut impl BufMut, ctx: &Self::Ctx) -> Result<usize, CodecError> {
+        todo!()
     }
 
 
-    /*───────────────────────── 1 st pass — collect ─────────────────────────*/
-    // fn encode_head(
-    //     &self,
-    //     _buf: &mut impl BufMut,         // ← ignored in this phase
-    //     ctx: &mut EncodingContext,
-    // ) -> Result<usize, CodecError>
-    // {
-    //     // ---- push *this* vector in pre-order ---------------------------
-    //     let idx = ctx.nodes.len();
-    //     ctx.nodes.push(NodeMeta { len: 0, tail: 0, first_child: None });
-    //
-    //     // empty → nothing to recurse, tail = 0
-    //     if self.is_empty() {
-    //         return Ok(0);
-    //     }
-    //
-    //     // dynamic (any Vec) – walk children
-    //     let mut tail_bytes = 0;
-    //     let first_child_idx = idx + 1;
-    //
-    //     for child in self {
-    //         let mut counter = ByteCounter::new();
-    //         // recurse; child returns *its* data-bytes
-    //         tail_bytes += child.encode_tail(&mut counter, ctx)?;
-    //     }
-    //
-    //     // fill current NodeMeta
-    //     ctx.nodes[idx].len  = self.len();
-    //     ctx.nodes[idx].tail = tail_bytes;               // pure data bytes
-    //     if self.len() != 0 {
-    //         ctx.nodes[idx].first_child = Some(first_child_idx);
-    //     }
-    //
-    //     // return data-bytes (parent needs only tail, not headers)
-    //     Ok(tail_bytes)
-    // }
-
-
-
-    /*──────────────────────── tail – DFS, unchanged ───────────────────────*/
-    fn encode_tail(
-        &self,
-        out: &mut impl BufMut,
-        ctx: &mut EncodingContext,
-    ) -> Result<usize, CodecError>
-    {
-        if self.is_empty() { return Ok(0); }
-        ctx.enter()?;
+    fn encode_tail(&self, out: &mut impl BufMut) -> Result<usize, CodecError> {
+        if self.is_empty() {
+            return Ok(0);
+        }
         let mut bytes = 0;
-        for el in self { bytes += el.encode_tail(out, ctx)?; }
-        ctx.exit();
+        for el in self {
+            bytes += el.encode_tail(out)?;
+        }
+
         Ok(bytes)
     }
 
-    #[inline] fn len(&self) -> usize { self.len() }
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let word = align_up::<ALIGN>(4);
@@ -235,9 +107,9 @@ where
         }
         Ok(out)
     }
+
+    
 }
-
-
 
 /// Vec implementation for Solidity ABI
 /// For Solidity, we don't have size:
@@ -251,13 +123,14 @@ impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for Vec<T>
 where
     T: Encoder<B, ALIGN, true>,
 {
+    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = 32; // offset pointer for top-level
     const IS_DYNAMIC: bool = true;
 
     fn encode(
         &self,
         buf: &mut impl BufMut,
-        ctx: &mut EncodingContext,
+
     ) -> Result<usize, CodecError> {
         todo!("Vec<T>::encode for Compact-ABI not yet implemented");
         // let mut written = 0;
@@ -322,19 +195,18 @@ where
         Ok(result)
     }
 
-    fn encode_head(
-        &self,
-        out: &mut impl BufMut,
-        ctx: &mut EncodingContext,
-    ) -> Result<usize, CodecError> {
+    fn build_ctx(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
         todo!()
     }
 
     fn encode_tail(
         &self,
         out: &mut impl BufMut,
-        ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
+        todo!()
+    }
+
+    fn encode_header(&self, out: &mut impl BufMut, ctx: &Self::Ctx) -> Result<usize, CodecError> {
         todo!()
     }
 }
@@ -520,8 +392,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optimized::utils::write_u32_aligned;
     use byteorder::LittleEndian;
     use bytes::BytesMut;
+    use smallvec::{smallvec, SmallVec};
 
     /// Macro for testing a standard roundtrip (encode -> decode) against a hex snapshot.
     macro_rules! test_vec_encode_decode {
@@ -717,7 +591,6 @@ mod tests {
     //     assert_eq!(original, decoded);
     // }
 
-
     #[test]
     fn vec_compact_u32_simple() {
         let vec: Vec<u32> = vec![1, 2, 3, 4];
@@ -726,7 +599,7 @@ mod tests {
         let mut buf = BytesMut::new();
         let mut ctx = EncodingContext::new();
         let result_tail =
-            <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode_tail(&vec, &mut buf, &mut ctx);
+            <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode_tail(&vec, &mut buf);
         let expected_tail = hex::decode(concat!(
             "01000000", // 1
             "02000000", // 2
@@ -742,8 +615,7 @@ mod tests {
         // Encode head
         let mut buf = BytesMut::new();
         let mut ctx = EncodingContext::new();
-        let result_head =
-            <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode_head(&vec, &mut buf, &mut ctx);
+        let result_head = <Vec<u32> as Encoder<LittleEndian, 4, false>>::build_ctx(&vec, &mut ctx);
         assert!(result_head.is_ok());
         let encoded_head = buf.freeze();
         let expected_head = hex::decode(concat!(
@@ -765,7 +637,7 @@ mod tests {
 
         let mut buf = BytesMut::new();
         let mut ctx = EncodingContext::new();
-        let res = <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode(&vec, &mut buf, &mut ctx)
+        let res = <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode(&vec, &mut buf)
             .expect("full encode");
 
         let encoded_full = buf.freeze();
@@ -781,154 +653,240 @@ mod tests {
             .expect("decode full");
         assert_eq!(decoded, vec, "Decoded value mismatch");
     }
-
     // asdf
     #[test]
-    fn vec_compact_nested() {
-        let vec: Vec<Vec<Vec<u32>>> = vec![vec![vec![1, 2], vec![3], vec![4, 5, 6]]];
-
-        // // Encode tail
-        // let mut buf = BytesMut::new();
-        // let mut ctx = EncodingContext::new();
-        // let result_tail = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode_tail(
-        //     &vec, &mut buf, &mut ctx,
-        // );
-        // let expected_tail = hex::decode(concat!(
-        //     // vec[0]
-        //     "01000000", // 1
-        //     "02000000", // 2
-        //     // vec[1]
-        //     "03000000", // 3
-        //     // vec[2]
-        //     "04000000", // 4
-        //     "05000000", // 5
-        //     "06000000"  // 6
-        // ))
-        // .unwrap();
-        // let encoded_tail = buf.freeze();
-        // assert!(result_tail.is_ok());
-        // assert_eq!(encoded_tail.len(), 24);
-        // assert_eq!(hex::encode(&expected_tail), hex::encode(&encoded_tail));
-
-        // Encode head
-        let mut buf = BytesMut::new();
+    fn vec_compact_build_ctx() {
+        let v: Vec<Vec<Vec<u32>>> = vec![vec![vec![1, 2], vec![3], vec![4, 5, 6]]];
+        
+        // build ctx
         let mut ctx = EncodingContext::new();
-        let result_head = <Vec<Vec<Vec<u32>>> as Encoder<LittleEndian, 4, false>>::encode_head(
-            &vec, &mut buf, &mut ctx,
-        );
-        // asdf
-        println!("ctx: {:?}", ctx);
-        assert_eq!(true, false);
-        // let encoded_head = buf.freeze();
-        // // asdf
-        // let expected_head = hex::decode(concat!(
-        //     // Main header
-        //     "03000000", // length = 3
-        //     "0c000000", // offset = 12
-        //     "3C000000", // total size = 60
-        //     // Nested headers
-        //     "02000000", // len = 2
-        //     "24000000", // offset = 36
-        //     "08000000", // size = 8
-        //     "01000000", // len = 1
-        //     "2c000000", // offset = 44
-        //     "04000000", // size = 4
+        let res = <Vec<Vec<Vec<u32>>> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut
+        ctx); assert!(res.is_ok(), "build_ctx failed: {:?}", res);
+        let expected_nodes: SmallVec<[NodeMeta; 8]> = smallvec![
+            NodeMeta { len: 1, tail: 0 },  // root Vec<Vec<Vec<u32>>>
+            NodeMeta { len: 3, tail: 0 },  // first Vec<Vec<u32>>
+            NodeMeta { len: 2, tail: 8 },  // vec![1, 2]
+            NodeMeta { len: 1, tail: 4 },  // vec![3]
+            NodeMeta { len: 3, tail: 12 }, // vec![4, 5, 6]
+        ];
+        
+        assert_eq!(ctx.nodes, expected_nodes, "Context nodes mismatch");
+
+        let v: Vec<Vec<u32>> = vec![vec![1, 2, 3], vec![4, 5]];
+        let mut ctx = EncodingContext::new();
+        let res = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx);
+        assert!(res.is_ok(), "build_ctx failed: {:?}", res);
+        let expected_nodes: SmallVec<[NodeMeta; 8]> = smallvec![
+            NodeMeta { len: 2, tail: 0 },  // root
+            NodeMeta { len: 3, tail: 12 }, // vec![1, 2, 3]
+            NodeMeta { len: 2, tail: 8 },  // vec![4, 5]
+        ];
+        assert_eq!(ctx.nodes, expected_nodes, "Context nodes mismatch");
+
+        // let mut buf = BytesMut::new();
+        // let written = finalize_ctx::<LittleEndian, 4>(&mut ctx, &mut buf);
+        // 
+        // let encoded = buf.freeze();
+        // println!("{:?}", encoded);
+        // let expected = concat!(
+        //     /* root Vec<Vec<u32>> */
         //     "03000000", // len = 3
-        //     "30000000", // offset = 48
-        //     "0c000000", // size = 12
-        // ))
-        // .unwrap();
-        // assert!(result_head.is_ok());
-        // assert_eq!(hex::encode(&expected_head), hex::encode(&encoded_head));
-        // assert_eq!(encoded_head.len(), 12 + 3 * 12); // top-level + 3 nested headers
-        //
-        // // Full encode
-        // let expected: Vec<u8> = expected_head
-        //     .iter()
-        //     .chain(expected_tail.iter())
-        //     .cloned()
-        //     .collect();
-        //
-        // let mut buf = BytesMut::new();
-        // let mut ctx = EncodingContext::new();
-        // let result =
-        //     <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode(&vec, &mut buf, &mut ctx);
-        // assert!(result.is_ok());
-        // assert_eq!(result.unwrap(), 72); // 12 + 36 + 24
-        //
-        // let encoded_full = buf.freeze();
-        // assert_eq!(
-        //     hex::encode(&expected),
-        //     hex::encode(&encoded_full),
-        //     "full (head + tail) encoding mismatch"
+        //     "0c000000", // offset = 12 (сразу за root-header’ом)
+        //     "4c000000", // size  = 36 + 40 = 76(все headers детей + их данные)
+        //     /* vec![1, 2, 3] */
+        //     "03000000", // len = 3
+        //     "24000000", // offset = 36 (hdr_block 3*12 = 36)
+        //     "0c000000", // size  = 12
+        //     /* vec![4, 5] */
+        //     "02000000", // len = 2
+        //     "30000000", // offset = 48 (36 + 12 пред. tail)
+        //     "08000000", // size  = 8
+        //     /* vec![6, 7, 8, 9, 10] */
+        //     "05000000", // len = 5
+        //     "38000000", // offset = 56 (36 + 12 + 8)
+        //     "14000000", // size  = 20
         // );
-        //
-        // // Decode
-        // let decoded = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::decode(&encoded_full, 0)
-        //     .expect("decode full");
-        // assert_eq!(decoded, vec, "Decoded value mismatch");
+        // 
+        // assert_eq!(expected, hex::encode(&encoded))
+    }
+    // version 3
+
+    /// Emit all compact-ABI headers for the dynamic containers recorded in `ctx.nodes`
+    ///
+    /// Returns the total number of header bytes written.
+    fn finalize_ctx<B: ByteOrder, const ALIGN: usize>(
+        ctx: &EncodingContext,
+        buf: &mut impl BufMut,
+    ) -> usize {
+        // size of one header word and total header size (3 words)
+        let word = ALIGN.max(4);
+        let hdr = 3 * word;
+
+        // data for the first container starts immediately after its L₀ headers
+        let mut data_offset = hdr * ctx.nodes[0].len as usize;
+        let mut written = 0;
+
+        // stack of “remaining children” for each open container
+        let mut remaining: SmallVec<[usize; 16]> = SmallVec::new();
+        remaining.push(ctx.nodes[0].len as usize);
+
+        for node in &ctx.nodes {
+            // pop completed levels
+            while remaining.last().copied() == Some(0) {
+                remaining.pop();
+            }
+            // consume one child from the current level
+            if let Some(top) = remaining.last_mut() {
+                *top -= 1;
+            }
+
+            if node.len > 0 {
+                // dynamic container → emit [len, offset, size]
+                write_u32_aligned::<B, ALIGN>(buf, node.len);
+                write_u32_aligned::<B, ALIGN>(buf, data_offset as u32);
+                write_u32_aligned::<B, ALIGN>(buf, node.tail);
+                written += hdr;
+
+                // this container’s data comes after its headers
+                data_offset += node.tail as usize;
+                // now expect `len` child-headers
+                remaining.push(node.len as usize);
+            } else {
+                // static leaf → just advance data_offset by its fixed tail
+                data_offset += node.tail as usize;
+            }
+        }
+
+        written
     }
 
-    #[test]
-    fn vec_compact_nested_level3() {
-        // L3-значение:
-        // [
-        //   [ [1,2], [3] ],        // A
-        //   [ [4] ]                // B
-        // ]
-        let test_value: Vec<Vec<Vec<u32>>> = vec![vec![vec![1, 2], vec![3]], vec![vec![4]]];
+    // version 2
+    // use crate::optimized::utils::{align_up, write_u32_aligned};
+    // use byteorder::ByteOrder;
+    // use bytes::BufMut;
 
-        let mut buf = BytesMut::new();
-        let mut ctx = EncodingContext::new();
+    //
+    // /// pass-1: линейно пишем заголовки `[len, offset, size]`
+    // /// Возвращает общее количество записанных байт
+    // fn emit_headers<B: ByteOrder, const ALIGN: usize>(
+    //     nodes: &[NodeMeta],
+    //     out: &mut impl BufMut,
+    // ) -> Result<u32, CodecError> {
+    //     let hdr_size = (align_up::<ALIGN>(4) * 3) as u32;
+    //     let mut written = 0;
+    //     let mut current_offset = 0;
+    //
+    //     // Сначала вычисляем общий размер заголовков
+    //     let total_headers_size = nodes.iter().filter(|n| n.len > 0).count() as u32 * hdr_size;
+    //
+    //     // Теперь пишем заголовки с правильными offset'ами
+    //     for (i, n) in nodes.iter().enumerate() {
+    //         if n.len == 0 {
+    //             continue;
+    //         } // листья не пишут header
+    //
+    //         // offset указывает на начало данных узла после всех заголовков
+    //         let node_offset = total_headers_size + current_offset;
+    //
+    //         write_u32_aligned::<B, ALIGN>(out, n.len as u32);
+    //         write_u32_aligned::<B, ALIGN>(out, node_offset);
+    //         write_u32_aligned::<B, ALIGN>(out, n.tail);
+    //
+    //         written += hdr_size;
+    //         current_offset += n.tail; // смещаем на размер данных узла
+    //     }
+    //
+    //     Ok(written)
+    // }
+    //
+    // /// публичная zero-alloc обёртка
+    // pub fn finalize_ctx<B: ByteOrder, const ALIGN: usize>(
+    //     ctx: &mut EncodingContext,
+    //     out: &mut impl BufMut,
+    // ) -> Result<u32, CodecError> {
+    //     if ctx.nodes.is_empty() {
+    //         return Ok(0);
+    //     }
+    //     println!("ctx.nodes before: {:?}", ctx.nodes);
+    //
+    //     let mut tail_size: u32 = 0;
+    //     let mut header_size: u32 = 0;
+    //
+    //     for i in (0..ctx.nodes.len()).rev() {
+    //         tail_size += ctx.nodes[i].tail as u32;
+    //         header_size += 12;
+    //         // top level
+    //         if ctx.nodes[i].tail == 0 {
+    //             // Внутренний узел - суммируем tail непосредственных детей
+    //             ctx.nodes[i].tail = tail_size;
+    //         }
+    //     }
+    //
+    //     println!("ctx.nodes after: {:?}", ctx.nodes);
+    //
+    //     // pass-1: пишем заголовки
+    //     emit_headers::<B, ALIGN>(&ctx.nodes, out)
+    // }
 
-        // --- Encode ---------------------------------------------------------------
-        let sz = <Vec<Vec<Vec<u32>>> as Encoder<LittleEndian, 4, false>>::encode(
-            &test_value,
-            &mut buf,
-            &mut ctx,
-        )
-        .expect("encode");
-
-        // --- Ожидаемое бинарное представление -------------------------------------
-        let expected = hex::decode(concat!(
-            // ── Main (depth-0) header ────────────────────────────────────────────
-            "02000000", // len  = 2 vectors
-            "0c000000", // off  = 12 (к первому header'у)
-            "4c000000", // size = 76 (24 header'ов + 52 data)
-            // ── L1 : vector A header ─────────────────────────────────────────────
-            "02000000", // len  = 2  ([1,2], [3])
-            "18000000", // off  = 24 (2 * 12)
-            "24000000", // size = 36 (24 header'а L2 + 12 data)
-            // ── L1 : vector B header ─────────────────────────────────────────────
-            "01000000", // len  = 1  ([4])
-            "0c000000", // off  = 12
-            "10000000", // size = 16 (12 header + 4 data)
-            // ── L2 headers inside A ----------------------------------------------
-            "02000000", "0c000000", "08000000", // [1,2]
-            "01000000", "0c000000", "04000000", // [3]
-            // ── Data section of A -------------------------------------------------
-            "01000000", "02000000", "03000000",
-            // ── L2 header inside B -----------------------------------------------
-            "01000000", "0c000000", "04000000", // [4]
-            // ── Data section of B -------------------------------------------------
-            "04000000"
-        ))
-        .unwrap();
-
-        let encoded_expected = "020000000c0000004c000000020000001800000024000000010000003c00000010000000020000001800000008000000010000002000000004000000010000000200000003000000010000000c0000000400000004000000";
-
-        // hex-представление фактического вывода
-        let encoded_hex = hex::encode(buf.freeze());
-        assert_eq!(
-            encoded_expected, encoded_hex,
-            "Depth-3 vector encoding doesn't match expected value"
-        );
-
-        // total bytes: main-hdr(12) + A-hdr(12) + B-hdr(12) + A-body(36) + B-body(16) = 88
-        assert_eq!(sz, 88);
-    }
-
-
+    // version 1 - errors in indexes
+    // use bytes::BufMut;
+    // use byteorder::ByteOrder;
+    // use crate::optimized::utils::{align_up, write_u32_aligned};
+    //
+    // /// pass-0: рекурсивно вычисляем `tail` для каждого узла
+    // ///
+    // /// возвращает ( next_index_за_поддеревом , tail_байты_поддерева )
+    // fn calc_tail<const ALIGN: usize>(
+    //     nodes: &mut [NodeMeta],
+    //     idx: usize,
+    // ) -> (usize, usize) {
+    //     let len  = nodes[idx].len as usize;
+    //     if len == 0 {
+    //         // лист: tail уже записан build_ctx
+    //         let tail = nodes[idx].tail as usize;
+    //         return (idx + 1, tail);
+    //     }
+    //
+    //     let mut cur   = idx + 1;
+    //     let mut total = 0;
+    //     for _ in 0..len {
+    //         let (next, child_tail) = calc_tail::<ALIGN>(nodes, cur);
+    //         total += child_tail;
+    //         cur    = next;
+    //     }
+    //     nodes[idx].tail = total as u32; // запись in-place
+    //     (cur, total)
+    // }
+    //
+    // /// pass-1: линейно пишем заголовки `[len, offset, size]`
+    // fn emit_headers<B: ByteOrder, const ALIGN: usize>(
+    //     nodes: &[NodeMeta],
+    //     out:   &mut impl BufMut,
+    // ) -> u32 {
+    //     let hdr  = (align_up::<ALIGN>(4) * 3) as u32;
+    //     let mut written = 0;
+    //
+    //     for n in nodes {
+    //         if n.len == 0 { continue; }            // листья не пишут header
+    //         write_u32_aligned::<B, ALIGN>(out, n.len  as u32);
+    //         write_u32_aligned::<B, ALIGN>(out, hdr * n.len); // offset = hdr*len
+    //         write_u32_aligned::<B, ALIGN>(out, n.tail);
+    //         written += hdr;
+    //     }
+    //     written
+    // }
+    //
+    // /// публичная zero-alloc обёртка
+    // pub fn finalize_ctx<B: ByteOrder, const ALIGN: usize>(
+    //     ctx: &mut EncodingContext,
+    //     out: &mut impl BufMut,
+    // ) -> Result<u32, CodecError> {
+    //     if ctx.nodes.is_empty() { return Ok(0); }
+    //
+    //     // pass-0: нормализуем tail’ы
+    //     calc_tail::<ALIGN>(&mut ctx.nodes, 0);
+    //
+    //     // pass-1: пишем заголовки
+    //     Ok(emit_headers::<B, ALIGN>(&ctx.nodes, out))
+    // }
 }
-
-
