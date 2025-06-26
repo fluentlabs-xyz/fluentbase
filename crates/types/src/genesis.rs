@@ -15,6 +15,10 @@ pub const PRECOMPILE_OAUTH2_VERIFIER: Address =
     address!("0000000000000000000000000000000000520006");
 pub const PRECOMPILE_NITRO_VERIFIER: Address = address!("0000000000000000000000000000000000520007");
 pub const PRECOMPILE_ERC20: Address = address!("0000000000000000000000000000000000520008");
+pub const PRECOMPILE_EIP2935: Address = address!("0000F90827F1C53a10cb7A02335B175320002935");
+pub const HISTORY_STORAGE_ADDRESS: Address = PRECOMPILE_EIP2935;
+
+pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
 
 const fn evm_address(value: u8) -> Address {
     Address::with_last_byte(value)

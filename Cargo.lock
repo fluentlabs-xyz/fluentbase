@@ -2586,6 +2586,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-eip2935"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+]
+
+[[package]]
 name = "fluentbase-contracts-erc20"
 version = "0.1.0"
 dependencies = [
@@ -2740,7 +2748,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
  "fluentbase-codec",
- "fluentbase-contracts-nitro",
  "fluentbase-erc20",
  "fluentbase-examples-abi-solidity",
  "fluentbase-examples-checkmate",
@@ -2954,6 +2961,7 @@ dependencies = [
  "fluentbase-contracts-bls12381",
  "fluentbase-contracts-bn256",
  "fluentbase-contracts-ecrecover",
+ "fluentbase-contracts-eip2935",
  "fluentbase-contracts-erc20",
  "fluentbase-contracts-evm",
  "fluentbase-contracts-fairblock",

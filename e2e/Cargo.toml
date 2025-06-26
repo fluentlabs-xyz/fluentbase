@@ -16,10 +16,8 @@ fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
 fluentbase-sdk-testing = { workspace = true }
 fluentbase-types = { workspace = true }
-
 fluentbase-svm = { workspace = true, default-features = false }
 fluentbase-erc20 = { workspace = true }
-fluentbase-contracts-nitro = { path = "../contracts/nitro" }
 
 fluentbase-examples-abi-solidity = { path = "../examples/abi-solidity" }
 fluentbase-examples-checkmate = { path = "../examples/checkmate" }

@@ -34,6 +34,7 @@ fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1" }
 fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
 fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
 fluentbase-contracts-svm = { path = "../../contracts/svm" }
+fluentbase-contracts-eip2935 = { path = "../../contracts/eip2935" }
 
 [build-dependencies]
 fluentbase-types = { workspace = true }
@@ -59,6 +60,7 @@ fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1" }
 fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
 fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
 fluentbase-contracts-svm = { path = "../../contracts/svm" }
+fluentbase-contracts-eip2935 = { path = "../../contracts/eip2935" }
 
 [features]
 default = [
