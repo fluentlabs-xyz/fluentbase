@@ -142,6 +142,11 @@ impl EvmTestingContext {
         account.info.nonce
     }
 
+    pub fn get_code(&mut self, address: Address) -> Option<&Bytecode> {
+        let account = self.db.load_account(address).unwrap();
+        account.info.code.as_ref()
+    }
+
     pub fn add_balance(&mut self, address: Address, value: U256) {
         let account = self.db.load_account(address).unwrap();
         account.info.balance += value;

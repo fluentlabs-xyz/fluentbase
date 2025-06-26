@@ -1,11 +1,14 @@
 pub use alloy_genesis::Genesis;
-use fluentbase_types::{Address, Bytes, GenesisContractBuildOutput, HashMap, B256};
+use fluentbase_types::{address, Address, Bytes, GenesisContractBuildOutput, HashMap, B256};
 use lazy_static::lazy_static;
 
 pub fn devnet_genesis_from_file() -> Genesis {
     let json_file = include_str!("../genesis-devnet.json");
     serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
 }
+
+pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
+pub const UPDATE_GENESIS_PREFIX: &'static [u8] = b"UPDATE_DEVNET";
 
 #[rustfmt::skip]
 const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
