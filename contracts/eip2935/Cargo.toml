@@ -5,10 +5,6 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true, features = ["fast-panic", "debug-print"] }
-fluentbase-eip2935 = { workspace = true }
-
-[dev-dependencies]
-fluentbase-sdk-testing = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
