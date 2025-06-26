@@ -67,30 +67,58 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     batch_message: &[u8],
     flush_result_accounts: bool,
     sapi: &mut Option<&mut SAPI>,
-) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
+) -> Result<
+    (
+        HashMap<Pubkey, AccountSharedData>,
+        HashMap<Pubkey, (u64, u64)>,
+    ),
+    SvmError,
+> {
     let batch_message = deserialize(batch_message)?;
     exec_svm_batch_message(sdk, batch_message, flush_result_accounts, sapi)
 }
 pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sdk: &mut SDK,
     batch_message: BatchMessage,
-    flush_result_accounts: bool,
+    do_flush: bool,
     sapi: &mut Option<&mut SAPI>,
-) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
-    let mut result_accounts = HashMap::new();
-    for (_message_idx, message) in batch_message.messages().iter().enumerate() {
-        for (pk, data) in exec_svm_message(sdk, sapi, message.clone(), flush_result_accounts)? {
-            result_accounts.insert(pk, data);
+) -> Result<
+    (
+        HashMap<Pubkey, AccountSharedData>,
+        HashMap<Pubkey, (u64, u64)>,
+    ),
+    SvmError,
+> {
+    let mut result_accounts: HashMap<Pubkey, AccountSharedData> = Default::default();
+    let mut balance_changes: HashMap<Pubkey, (u64, u64)> = Default::default();
+    for message in batch_message.messages() {
+        let (ra, bhs) = exec_svm_message(sdk, sapi, message.clone(), do_flush)?;
+        result_accounts.extend(ra);
+        for (account_key, balance_change) in bhs {
+            match balance_changes.entry(account_key) {
+                Entry::Occupied(v) => {
+                    v.into_mut().1 = balance_change.1;
+                }
+                Entry::Vacant(v) => {
+                    v.insert(balance_change);
+                }
+            }
         }
     }
-    Ok(result_accounts)
+    Ok((result_accounts, balance_changes))
 }
 pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sdk: &mut SDK,
     message: &[u8],
     flush_result_accounts: bool,
     sapi: &mut Option<&mut SAPI>,
-) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
+) -> Result<
+    (
+        HashMap<Pubkey, AccountSharedData>,
+        HashMap<Pubkey, (u64, u64)>,
+    ),
+    SvmError,
+> {
     let message = deserialize(message)?;
     exec_svm_message(sdk, sapi, message, flush_result_accounts)
 }
@@ -560,7 +588,13 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     sapi: &mut Option<&mut SAPI>,
     message: legacy::Message,
     flush_result_accounts: bool,
-) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
+) -> Result<
+    (
+        HashMap<Pubkey, AccountSharedData>,
+        HashMap<Pubkey, (u64, u64)>,
+    ),
+    SvmError,
+> {
     let config = init_config();
 
     let block_number = sdk.context().block_number();
@@ -608,8 +642,6 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     );
 
     let feature_set = feature_set_default();
-    // let (accounts, program_indices, program_accounts_to_warmup) =
-    //     prepare_data_for_tx_ctx1(sdk, &message, sapi)?;
     let program_accounts =
         filter_executable_program_accounts(sdk, sapi, &[&message], &PROGRAM_OWNERS);
     let result = prepare_data_for_tx_ctx2(
@@ -625,7 +657,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     // TODO compute hardcoded parameters
     let transaction_context = TransactionContext::new(accounts, rent.clone(), 100, 200);
 
-    let transaction_context = {
+    let (transaction_context, balance_changes) = {
         let feature_set = feature_set_default();
 
         // TODO need specific blockhash?
@@ -654,8 +686,9 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
             };
         }
 
-        MessageProcessor::process_message(&message, &program_indices, &mut invoke_context)?;
-        invoke_context.transaction_context
+        let balance_changes =
+            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context)?;
+        (invoke_context.transaction_context, balance_changes)
     };
 
     // TODO optimize accounts saving
@@ -676,5 +709,5 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
         flush_accounts(sdk, sapi, &result_accounts)?;
     }
 
-    Ok(result_accounts)
+    Ok((result_accounts, balance_changes))
 }

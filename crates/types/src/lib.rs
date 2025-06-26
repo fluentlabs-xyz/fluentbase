@@ -87,7 +87,10 @@ pub const SVM_MAX_CODE_SIZE: usize = 0x200000;
 ///
 /// These values are equal to \0ASM
 pub const WASM_MAGIC_BYTES: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
+/// Solana magic bytes
 pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
+/// ERC20 magic bytes: as char codes for "ERC" and the number 0x20
+pub const ERC20_MAGIC_BYTES: [u8; 4] = [0x45, 0x52, 0x43, 0x20];
 
 /// EIP-170: Contract code size limit
 ///

@@ -1,0 +1,23 @@
+[package]
+name = "fluentbase-erc20"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+fluentbase-sdk = { workspace = true, features = ["fast-panic"] }
+bincode = { workspace = true, default-features = false, features = ["serde"] }
+
+[dev-dependencies]
+
+[features]
+default = [
+    "std",
+]
+std = []
+debug-print = []

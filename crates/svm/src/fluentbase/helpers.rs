@@ -2,7 +2,12 @@ use crate::{
     account::{AccountSharedData, ReadableAccount},
     account_utils::StateMut,
     builtins::register_builtins,
-    common::compile_accounts_for_tx_ctx,
+    common::{
+        compile_accounts_for_tx_ctx,
+        evm_address_from_pubkey,
+        evm_balance_from_lamports,
+        is_evm_pubkey,
+    },
     compute_budget::compute_budget::ComputeBudget,
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
     error::SvmError,
@@ -27,8 +32,9 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{ContextReader, SharedAPI, StorageAPI};
+use fluentbase_sdk::{debug_log, debug_log_ext, ContextReader, SharedAPI, StorageAPI};
 use hashbrown::HashMap;
+use itertools::Itertools;
 use solana_bincode::deserialize;
 use solana_clock::Clock;
 use solana_epoch_schedule::EpochSchedule;
@@ -283,4 +289,88 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     }
 
     Ok(result_accounts)
+}
+
+#[allow(unused)]
+pub(crate) fn settle_balances<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    balance_changes: HashMap<Pubkey, (u64, u64)>,
+) {
+    let contract_caller = sdk.context().contract_caller();
+    let balance_receivers = balance_changes
+        .iter()
+        .filter(|(_pk, (before, after))| after > before)
+        .map(|(pk, (before, after))| (pk, *after - *before))
+        .collect_vec();
+    let balance_senders = balance_changes
+        .iter()
+        .filter(|(_pk, (before, after))| before > after)
+        .map(|(pk, (before, after))| (pk, *before - *after))
+        .collect_vec();
+    let balance_to_receive = balance_receivers
+        .iter()
+        .fold(0u64, |accum, (_, next)| accum + next);
+    let balance_to_send = balance_senders
+        .iter()
+        .fold(0u64, |accum, (_, next)| accum + next);
+    assert_eq!(balance_to_receive, balance_to_send);
+    debug_log_ext!("balance_changes.len={}", balance_changes.len());
+    for balance_change_filtered in &balance_changes {
+        debug_log_ext!("balance_change={:?}", balance_change_filtered);
+    }
+    let mut run = balance_receivers.len() > 0;
+    if run {
+        let mut receiver_idx = 0;
+        let mut sender_idx = 0;
+        let (mut sender_pk, mut sender_delta) = balance_senders[sender_idx];
+        let (mut receiver_pk, mut receiver_delta) = balance_receivers[receiver_idx];
+        assert!(is_evm_pubkey(sender_pk));
+        assert!(is_evm_pubkey(receiver_pk));
+        while run {
+            debug_log!(
+                "sender_pk {} receiver_pk {} amount {}",
+                sender_pk,
+                receiver_pk,
+                core::cmp::min(sender_delta, receiver_delta)
+            );
+
+            // TODO can be optimised
+            let evm_address_from = evm_address_from_pubkey::<true>(sender_pk)
+                .expect("sender pk must be evm compatible");
+            // TODO can be optimised
+            let address_to = evm_address_from_pubkey::<true>(receiver_pk)
+                .expect("receiver pk must be evm compatible");
+            assert_eq!(evm_address_from, contract_caller);
+
+            let amount;
+            if sender_delta > receiver_delta {
+                amount = receiver_delta;
+                sender_delta -= receiver_delta;
+                receiver_idx += 1;
+                (receiver_pk, receiver_delta) = balance_receivers[receiver_idx];
+                assert!(is_evm_pubkey(receiver_pk));
+            } else if sender_delta < receiver_delta {
+                amount = sender_delta;
+                receiver_delta -= sender_delta;
+                sender_idx += 1;
+                (sender_pk, sender_delta) = balance_senders[sender_idx];
+                assert!(is_evm_pubkey(sender_pk));
+            } else {
+                sender_idx += 1;
+                receiver_idx += 1;
+                amount = sender_delta;
+                if sender_idx < balance_senders.len() {
+                    (receiver_pk, receiver_delta) = balance_receivers[receiver_idx];
+                    (sender_pk, sender_delta) = balance_senders[sender_idx];
+                    assert!(is_evm_pubkey(receiver_pk));
+                    assert!(is_evm_pubkey(sender_pk));
+                } else {
+                    run = false;
+                }
+            }
+
+            sdk.call(address_to, evm_balance_from_lamports(amount), &[], None)
+                .expect("failed to send while settling evm-svm balances");
+        }
+    }
 }
