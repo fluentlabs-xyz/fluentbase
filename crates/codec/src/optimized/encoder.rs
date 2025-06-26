@@ -41,7 +41,7 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
 
 
     // Build offset layouts for dynamic fields and calculate actual data sizes
-    fn build_ctx(&self, ctx: &mut Self::Ctx) -> Result<(), CodecError> {
+    fn header_size(&self, ctx: &mut Self::Ctx) -> Result<(), CodecError> {
         const {
             assert!(!Self::IS_DYNAMIC, "dynamic type must override build_ctx");
         }
@@ -64,7 +64,7 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
 
     fn encode(&self, out: &mut impl BufMut) -> Result<usize, CodecError> {
         let mut ctx = Self::Ctx::default();
-        self.build_ctx(&mut ctx)?;
+        self.header_size(&mut ctx)?;
 
         let head = self.encode_header(out, &mut ctx)?;
         let tail = if Self::IS_DYNAMIC {

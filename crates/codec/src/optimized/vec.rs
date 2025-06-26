@@ -1,11 +1,11 @@
 use crate::optimized::{
-    ctx::{EncodingContext, NodeMeta},
+    ctx::EncodingContext,
     encoder::Encoder,
     error::CodecError,
-    utils::{align_up, read_u32_aligned},
+    utils::{align_up, read_u32_aligned, write_u32_aligned},
 };
-use byteorder::{BigEndian, ByteOrder, LittleEndian};
-use bytes::{Buf, BufMut, BytesMut};
+use byteorder::{BigEndian, ByteOrder};
+use bytes::{Buf, BufMut};
 
 /// Vec implementation for Compact ABI
 /// For Compact ABI, we have:
@@ -22,6 +22,22 @@ use bytes::{Buf, BufMut, BytesMut};
 ///
 /// ------
 /// - raw body of all inner vectors
+/// Compact-ABI (vectors). Header = 12 B `[len | off | size]` (u32 LE);  
+// `off` counts from parent-meta start, `size` is bytes of *data-zone* (root = 0).
+// *meta-zone* = all headers + static fields; *data-zone* = raw bytes of dynamic fields.
+// Two-pass encode: ① DFS sums meta bytes, ② headers are written pre-order, data post-order
+// (append-only BufMut). Example `Vec<Vec<u32>>` `[[1,2,3],[4,5]]`  (4-byte little-endian words,
+// `//` decimal): 00: "02 00 00 00", // 2        root.len
+//     "0C 00 00 00", // 12       root.off
+//     "00 00 00 00", // 0        root.size
+// 0C: "03 00 00 00", // 3        child0.len
+//     "24 00 00 00", // 36       child0.off
+//     "0C 00 00 00", // 12       child0.size
+// 18: "02 00 00 00", // 2        child1.len
+//     "30 00 00 00", // 48       child1.off
+//     "08 00 00 00", // 8        child1.size
+// 30: "01 00 00 00  02 00 00 00  03 00 00 00", // child0 data
+// 3C: "04 00 00 00  05 00 00 00",             // child1 data
 impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for Vec<T>
 where
     T: Encoder<B, ALIGN, false, Ctx = EncodingContext>,
@@ -33,37 +49,12 @@ where
 
     // TODO: for structs and static types we need to update implementation - to add static element
     // header size into root_hdr -
-    fn build_ctx(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        let me = ctx.nodes.len();
-        ctx.nodes.push(NodeMeta {
-            len: self.len() as u32,
-            tail: 0,
-            total_hdr_len: 0,
-        });
-
-        let mut body = 0usize;
-        let mut hdr = Self::HEADER_SIZE as u32;
-
+    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
+        ctx.hdr_size += Self::HEADER_SIZE as u32;
         if T::IS_DYNAMIC {
-            for child in self {
-                let child_root = ctx.nodes.len();
-                child.build_ctx(ctx)?;
-                let c = ctx.nodes[child_root];
-
-                body += c.tail as usize;
-                hdr += c.total_hdr_len;
+            for el in self.iter() {
+                el.header_size(ctx)?;
             }
-        }
-
-        if !T::IS_DYNAMIC {
-            body += align_up::<ALIGN>(T::HEADER_SIZE) * self.len();
-        }
-
-        ctx.nodes[me].tail = body as u32;
-        ctx.nodes[me].total_hdr_len = hdr;
-
-        if me == 0 {
-            ctx.root_hdr = hdr; // root header size
         }
         Ok(())
     }
@@ -76,39 +67,28 @@ where
         out: &mut impl bytes::BufMut,
         ctx: &mut EncodingContext, // {nodes, index, hdr_written, body_reserved}
     ) -> Result<usize, CodecError> {
-        /* take NodeMeta */
-        let id = ctx.index;
-        ctx.index += 1;
-        let m = ctx.nodes[id]; // {len, tail, total_hdr_len}
+        let hdr_ptr = ctx.hdr_ptr;
 
-        /* -------- off -------- */
-        // check if it's nested vectors
-        let (off, size) = if T::IS_DYNAMIC {
-            // if we have dynamic children, we need to reserve space for their headers and size
-            // would be header size
-            (T::HEADER_SIZE as u32, T::HEADER_SIZE as u32) // jump to the first child-header
+        let len = self.len() as u32;
+        let off = (ctx.hdr_size - ctx.hdr_ptr) as u32; // offset to the first element header
+                                                       // actual data size:
+        let size = if T::IS_DYNAMIC {
+            0
         } else {
-            ((ctx.root_hdr - ctx.hdr_written) + ctx.body_reserved, m.tail)
+            len * T::HEADER_SIZE as u32 // static elements, no dynamic children
         };
 
-        /* len / off / size */
-        out.put_u32_le(m.len);
-        out.put_u32_le(off);
-        out.put_u32_le(size); // full slice length
+        write_u32_aligned::<B, ALIGN>(out, len);
+        write_u32_aligned::<B, ALIGN>(out, off);
+        write_u32_aligned::<B, ALIGN>(out, size);
+        ctx.hdr_ptr += Self::HEADER_SIZE as u32;
 
-        ctx.hdr_written += 12;
-        let mut written = 12;
-
-        /* children */
-        if T::IS_DYNAMIC {
-            for child in self {
-                written += child.encode_header(out, ctx)? as u32;
+        for el in self.iter() {
+            if T::IS_DYNAMIC {
+                let _ = el.encode_header(out, ctx)?;
             }
         }
-
-        /* reserve body for younger siblings */
-        ctx.body_reserved += m.tail;
-        Ok(written as usize)
+        Ok((ctx.hdr_ptr - hdr_ptr) as usize)
     }
 
     fn encode_tail(&self, out: &mut impl BufMut) -> Result<usize, CodecError> {
@@ -239,7 +219,7 @@ where
         Ok(result)
     }
 
-    fn build_ctx(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
+    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
         todo!()
     }
 
@@ -436,11 +416,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use byteorder::LittleEndian;
-    use bytes::BytesMut;
-    use smallvec::{smallvec, SmallVec};
-
     /// Macro for testing a standard roundtrip (encode -> decode) against a hex snapshot.
     macro_rules! test_vec_encode_decode {
         (
@@ -473,7 +448,9 @@ mod tests {
                 assert_eq!(
                     hex::encode(&encoded),
                     $expected,
-                    "Encoded data mismatch\nActual:   {}\nExpected: {}",
+                    "Encoded data mismatch\
+                 Actual:   {}\
+                 Expected: {}",
                     hex::encode(&encoded),
                     $expected
                 );
@@ -635,308 +612,399 @@ mod tests {
     //     assert_eq!(original, decoded);
     // }
 
-    #[cfg(test)]
-    mod compact {
-        use super::*;
-        use bytes::{Bytes, BytesMut};
-
+    mod compact2 {
         /* helper: run full CompactABI encode (header+tail) */
+        use crate::optimized::{ctx::EncodingContext, encoder::Encoder};
+        use byteorder::LittleEndian;
+        use bytes::BytesMut;
 
         #[test]
-        fn vec_compact_build_ctx() {
+        fn vec_compact_header_size() {
             // build ctx
 
             let v: Vec<u32> = vec![1, 2, 3, 4];
             let mut ctx = EncodingContext::new();
-            let res = <Vec<u32> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx);
-            assert!(res.is_ok(), "build_ctx failed: {:?}", res);
-            let expected_nodes: SmallVec<[NodeMeta; 8]> = smallvec![NodeMeta {
-                len: 4,
-                tail: 16,
-                total_hdr_len: 12
-            },];
-            assert_eq!(expected_nodes, ctx.nodes, "Context nodes mismatch");
+            let res = <Vec<u32> as Encoder<LittleEndian, 4, false>>::header_size(&v, &mut ctx);
+            assert!(res.is_ok(), "header_size failed: {:?}", res);
+
+            println!("ctx: {:?}", ctx);
+
+            assert_eq!(ctx.hdr_size, 12, "Header size mismatch");
 
             // build ctx
             let v: Vec<Vec<u32>> = vec![vec![1, 2, 3], vec![4, 5]];
             let mut ctx = EncodingContext::new();
-            let res = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx);
-            assert!(res.is_ok(), "build_ctx failed: {:?}", res);
-            let expected_nodes: SmallVec<[NodeMeta; 8]> = smallvec![
-                NodeMeta {
-                    len: 2,
-                    tail: 20,
-                    total_hdr_len: 36
-                }, // root
-                NodeMeta {
-                    len: 3,
-                    tail: 12,
-                    total_hdr_len: 12
-                }, // vec![1, 2, 3]
-                NodeMeta {
-                    len: 2,
-                    tail: 8,
-                    total_hdr_len: 12
-                }, // vec![4, 5]
-            ];
+            let res = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::header_size(&v, &mut ctx);
+            assert!(res.is_ok(), "header_size failed: {:?}", res);
 
-            assert_eq!(expected_nodes, ctx.nodes, "Context nodes mismatch");
-            assert_eq!(expected_nodes, ctx.nodes, "Context nodes mismatch nested 2");
+            assert_eq!(ctx.hdr_size, 36, "Header size mismatch nested 2");
 
             // build ctx
             let v: Vec<Vec<Vec<u32>>> = vec![vec![vec![1, 2], vec![3], vec![4, 5, 6]]];
             let mut ctx = EncodingContext::new();
             let res =
-                <Vec<Vec<Vec<u32>>> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx);
-            assert!(res.is_ok(), "build_ctx failed: {:?}", res);
-            let expected_nodes: SmallVec<[NodeMeta; 8]> = smallvec![
-                NodeMeta {
-                    len: 1,
-                    tail: 24,
-                    total_hdr_len: 60
-                }, // root Vec<Vec<Vec<u32>>>
-                NodeMeta {
-                    len: 3,
-                    tail: 24,
-                    total_hdr_len: 48
-                }, // first Vec<Vec<u32>>
-                NodeMeta {
-                    len: 2,
-                    tail: 8,
-                    total_hdr_len: 12
-                }, // vec![1, 2]
-                NodeMeta {
-                    len: 1,
-                    tail: 4,
-                    total_hdr_len: 12
-                }, // vec![3]
-                NodeMeta {
-                    len: 3,
-                    tail: 12,
-                    total_hdr_len: 12
-                }, // vec![4, 5, 6]
-            ];
-
-            assert_eq!(expected_nodes, ctx.nodes, "Context nodes mismatch nested 3");
+                <Vec<Vec<Vec<u32>>> as Encoder<LittleEndian, 4, false>>::header_size(&v, &mut ctx);
+            assert!(res.is_ok(), "header_size failed: {:?}", res);
+            assert_eq!(ctx.hdr_size, 60, "Header size mismatch nested 2");
         }
 
         #[test]
-        fn vec_compact_write_header() {
-            // empty
-            let v: Vec<u32> = vec![];
-            let mut ctx = EncodingContext::new();
-            let res = <Vec<u32> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx);
-            assert!(res.is_ok(), "build_ctx failed: {:?}", res);
-            println!("ctx: {:?}", ctx);
-            let mut buf = BytesMut::new();
-            let written = <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode_header(
-                &v, &mut buf, &mut ctx,
-            )
-            .expect("encode_header must succeed");
-
-            let encoded = buf.freeze();
-            let expected = concat!(
-                "00000000", // length 4
-                "0c000000", // offset 12 (3 header fields × 4 bytes)
-                "00000000"  // size = 16 (4 elements × 4 bytes)
-            );
-            assert_eq!(
-                hex::encode(&encoded),
-                expected,
-                "Empty header encoding mismatch"
-            );
-
+        fn vec_compact_encode_header() {
             // simple
-            let v: Vec<u32> = vec![1, 2, 3, 4];
-            // prepare ctx
-            let mut ctx = EncodingContext::new();
-            <Vec<u32> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx)
-                .expect("build_ctx must succeed");
+            {
+                let v: Vec<u32> = vec![1, 2, 3, 4];
+                let mut ctx = EncodingContext::new();
+                let res = <Vec<u32> as Encoder<LittleEndian, 4, false>>::header_size(&v, &mut ctx);
+                assert!(res.is_ok(), "header_size failed: {:?}", res);
 
-            println!("ctx: {:?}", ctx);
+                let mut buf = BytesMut::new();
+                let w = <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode_header(
+                    &v, &mut buf, &mut ctx,
+                );
 
-            let mut buf = BytesMut::new();
-            let written = <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode_header(
-                &v, &mut buf, &mut ctx,
-            )
-            .expect("encode_header must succeed");
-
-            let encoded = buf.freeze();
-            let expected = concat!(
-                "04000000", // length 4
-                "0c000000", // offset 12 (3 header fields × 4 bytes)
-                "10000000"  // size = 16 (4 elements × 4 bytes)
-            );
-            assert_eq!(hex::encode(&encoded), expected, "Header encoding mismatch");
-
+                assert!(w.is_ok(), "encode_header failed: {:?}", w);
+                assert_eq!(w.unwrap(), 12, "header size mismatch");
+                let encoded = buf.freeze();
+                let expected = concat!(
+                    "04000000", // length 4
+                    "0c000000", // offset 12 (3 header fields × 4 bytes)
+                    "10000000"  // size = 16 (4 elements × 4 bytes)
+                );
+                assert_eq!(expected, hex::encode(encoded), "encoded data mismatch");
+            }
             // nested
-            let v: Vec<Vec<u32>> = vec![vec![1, 2, 3], vec![4, 5]];
-            let mut ctx = EncodingContext::new();
-            let res = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx);
-            assert!(res.is_ok(), "build_ctx failed: {:?}", res);
+            {
+                let v: Vec<Vec<u32>> = vec![vec![1, 2, 3], vec![4, 5]];
+                let mut ctx = EncodingContext::new();
+                let res =
+                    <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::header_size(&v, &mut ctx);
+                assert!(res.is_ok(), "build_ctx failed: {:?}", res);
+                let mut buf = BytesMut::new();
+                let w = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode_header(
+                    &v, &mut buf, &mut ctx,
+                );
 
-            let expected_nodes: SmallVec<[NodeMeta; 8]> = smallvec![
-                NodeMeta {
-                    len: 2,
-                    tail: 20,
-                    total_hdr_len: 36
-                }, // root
-                NodeMeta {
-                    len: 3,
-                    tail: 12,
-                    total_hdr_len: 12
-                }, // vec![1, 2, 3]
-                NodeMeta {
-                    len: 2,
-                    tail: 8,
-                    total_hdr_len: 12
-                }, // vec![4, 5]
-            ];
-            assert_eq!(expected_nodes, ctx.nodes, "Context nodes mismatch nested 2");
-            println!("ctx: {:?}", ctx);
-
-            let mut buf = BytesMut::new();
-            let written = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode_header(
-                &v, &mut buf, &mut ctx,
-            )
-            .expect("encode_header must succeed");
-            assert_eq!(written, 36, "Header size should be 36 bytes (3 headers)");
-
-            let encoded = buf.freeze();
-            // root Vec [[1,2,3], [4,5]]
-            let expected_encode = concat!(
-                /* ── root header ─────────────────────────────── */
-                "02000000", /* len(root)  = 2 */
-                "0c000000", /* off(root)  = 12 → jump to 1-st child hdr */
-                "0c000000", /* size(root) = 12 → size of 1-st child hdr */
-                /* ── child-0 header (vec![1,2,3]) ─────────────── */
-                "03000000", /* len = 3 */
-                "18000000", /* off = 24 → jump to its data */
-                "0c000000", /* size = 12 (=3×4) */
-                /* ── child-1 header (vec![4,5]) ────────────────── */
-                "02000000", /* len = 2 */
-                "18000000", /* off = 24 → jump past child-0 data */
-                "08000000"  /* size = 8 (=2×4) */
-            );
-            assert_eq!(
-                expected_encode,
-                hex::encode(encoded),
-                "Header encoding mismatch"
-            );
-        }
-
-        #[inline]
-        fn encode_full<T>(value: &T) -> Vec<u8>
-        where
-            T: Encoder<LittleEndian, 4, false, Ctx = EncodingContext>,
-        {
-            let mut ctx = EncodingContext::default();
-            <T as Encoder<LittleEndian, 4, false>>::build_ctx(value, &mut ctx).unwrap();
-            println!("ctx: {:?}", ctx);
-            let mut buf = BytesMut::new();
-            <T as Encoder<LittleEndian, 4, false>>::encode_header(value, &mut buf, &mut ctx)
-                .unwrap();
-            <T as Encoder<LittleEndian, 4, false>>::encode_tail(value, &mut buf).unwrap();
-
-            buf.freeze().to_vec()
-        }
-
-        /* helper: round-trip decode */
-        fn decode_full<T>(bytes: &[u8]) -> T
-        where
-            T: Encoder<LittleEndian, 4, false>,
-        {
-            let b = Bytes::from(bytes.to_vec());
-            <T as Encoder<LittleEndian, 4, false>>::decode(&b, 0).unwrap()
-        }
-
-
-        #[test]
-        fn roundtrip_vec_u32() {
-            let v: Vec<u32> = vec![1, 2, 3, 4];
-            let got = encode_full(&v);
-            let want = hex::decode(concat!(
-                /* header (12 B) */
-                "04000000", /* len  = 4 */
-                "0c000000", /* off  = 12 → data */
-                "10000000", /* size = 16 bytes */
-                /* data (4×u32) */
-                "01000000", "02000000", "03000000", "04000000",
-            ))
-            .unwrap();
-            assert_eq!(got, want, "Vec<u32> full encode mismatch");
-
-            /* ---------- round-trip decode ---------- */
-            let decoded = {
-                let bytes = bytes::Bytes::from(got);        // borrow as Buf
-                <Vec<u32> as Encoder<LittleEndian, 4, false>>::decode(&bytes, 0)
-                    .expect("decode must succeed")
-            };
-            assert_eq!(decoded, v, "Vec<u32> round-trip mismatch");
-        }
-
-
-
-        #[test]
-        fn roundtrip_vec_vec_u32() {
-            let v: Vec<Vec<u32>> = vec![vec![1, 2, 3], vec![4, 5]];
-            let got = encode_full(&v);
-            let want = hex::decode(concat!(
-                /* root header */
-                "02000000", "0c000000", "0c000000",
-                /* child-0 header (len=3, off=24, size=12) */
-                "03000000", "18000000", "0c000000",
-                /* child-1 header (len=2, off=24, size=8) */
-                "02000000", "18000000", "08000000", /* data: 1 2 3 4 5 */
-                "01000000", "02000000", "03000000", "04000000", "05000000",
-            ))
-            .unwrap();
-            assert_eq!(got, want, "Vec<Vec<u32>> full encode mismatch");
-
-            /* ---------- round-trip decode ---------- */
-            let decoded = {
-                let bytes = bytes::Bytes::from(got);        // borrow as Buf
-                <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::decode(&bytes, 0)
-                    .expect("decode must succeed")
-            };
-            assert_eq!(decoded, v, "Vec<Vec<u32>> round-trip mismatch");
-        }
-        
-        #[test]
-        fn roundtrip_vec_vec_vec_u32() {
-            // [[[1,2] , [3] , [4,5,6]]]
-            let v: Vec<Vec<Vec<u32>>> = vec![vec![vec![1, 2], vec![3], vec![4, 5, 6]]];
-
-            let got = encode_full(&v);
-
-            let want = hex::decode(concat!(
-                /* ── root Vec<Vec<Vec<u32>>> ─────────────────────────────── */
-                "01000000", /* len  = 1 */
-                "0c000000", /* off  = 12 → header of inner Vec<Vec<u32>> */
-                "0c000000", /* size = 12 (exactly one child header) */
-                /* ── level-2 Vec<Vec<u32>>  ──────────────────────────────── */
-                "03000000", /* len  = 3 */
-                "0c000000", /* off  = 12 → header of first leaf Vec<u32> */
-                "0c000000", /* size = 12 (one leaf header) */
-                /* ── leaf #0  Vec<u32> = [1,2] ───────────────────────────── */
-                "02000000", /* len  = 2 */
-                "24000000", /* off  = 36 → jump to its data */
-                "08000000", /* size = 8  (= 2 × 4-byte u32) */
-                /* ── leaf #1  Vec<u32> = [3]  ────────────────────────────── */
-                "01000000", /* len  = 1 */
-                "20000000", /* off  = 32 → jump to its data */
-                "04000000", /* size = 4  (= 1 × 4-byte u32) */
-                /* ── leaf #2  Vec<u32> = [4,5,6] ─────────────────────────── */
-                "03000000", /* len  = 3 */
-                "18000000", /* off  = 24 → jump to its data */
-                "0c000000", /* size = 12 (= 3 × 4-byte u32) */
-                /* ── payload bytes (u32 LE): 1 2 3 4 5 6 ─────────────────── */
-                "01000000", "02000000", "03000000", "04000000", "05000000", "06000000",
-            ))
-            .unwrap();
-
-            println!("got: {:?}", hex::encode(&got));
-            assert_eq!(got, want, "Vec<Vec<Vec<u32>>> full encode mismatch");
+                assert!(w.is_ok(), "encode_header failed: {:?}", w);
+                assert_eq!(w.unwrap(), 36, "header size mismatch");
+                let encoded = buf.freeze();
+                let expected = concat!(
+                    "02000000", // 2
+                    "24000000", // 36
+                    "00000000", // 0
+                    "03000000", // 3
+                    "18000000", // 24
+                    "0c000000", // 12
+                    "02000000", // 2
+                    "0c000000", // 12
+                    "08000000", // 8
+                );
+                assert_eq!(expected, hex::encode(encoded), "encoded data mismatch");
+            }
         }
     }
+
+    // #[cfg(test)]
+    // mod compact {
+    //     use super::*;
+    //     use bytes::{Bytes, BytesMut};
+    //
+    //     /* helper: run full CompactABI encode (header+tail) */
+    //
+    //     #[test]
+    //     fn vec_compact_build_ctx() {
+    //         // build ctx
+    //
+    //         let v: Vec<u32> = vec![1, 2, 3, 4];
+    //         let mut ctx = EncodingContext::new();
+    //         let res = <Vec<u32> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx);
+    //         assert!(res.is_ok(), "build_ctx failed: {:?}", res);
+    //         let expected_nodes: SmallVec<[NodeMeta; 8]> = smallvec![NodeMeta {
+    //             len: 4,
+    //             tail: 16,
+    //             total_hdr_len: 12
+    //         },];
+    //         assert_eq!(expected_nodes, ctx.nodes, "Context nodes mismatch");
+    //
+    //         // build ctx
+    //         let v: Vec<Vec<u32>> = vec![vec![1, 2, 3], vec![4, 5]];
+    //         let mut ctx = EncodingContext::new();
+    //         let res = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut
+    // ctx);         assert!(res.is_ok(), "build_ctx failed: {:?}", res);
+    //         let expected_nodes: SmallVec<[NodeMeta; 8]> = smallvec![
+    //             NodeMeta {
+    //                 len: 2,
+    //                 tail: 20,
+    //                 total_hdr_len: 36
+    //             }, // root
+    //             NodeMeta {
+    //                 len: 3,
+    //                 tail: 12,
+    //                 total_hdr_len: 12
+    //             }, // vec![1, 2, 3]
+    //             NodeMeta {
+    //                 len: 2,
+    //                 tail: 8,
+    //                 total_hdr_len: 12
+    //             }, // vec![4, 5]
+    //         ];
+    //
+    //         assert_eq!(expected_nodes, ctx.nodes, "Context nodes mismatch");
+    //         assert_eq!(expected_nodes, ctx.nodes, "Context nodes mismatch nested 2");
+    //
+    //         // build ctx
+    //         let v: Vec<Vec<Vec<u32>>> = vec![vec![vec![1, 2], vec![3], vec![4, 5, 6]]];
+    //         let mut ctx = EncodingContext::new();
+    //         let res =
+    //             <Vec<Vec<Vec<u32>>> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx);
+    //         assert!(res.is_ok(), "build_ctx failed: {:?}", res);
+    //         let expected_nodes: SmallVec<[NodeMeta; 8]> = smallvec![
+    //             NodeMeta {
+    //                 len: 1,
+    //                 tail: 24,
+    //                 total_hdr_len: 60
+    //             }, // root Vec<Vec<Vec<u32>>>
+    //             NodeMeta {
+    //                 len: 3,
+    //                 tail: 24,
+    //                 total_hdr_len: 48
+    //             }, // first Vec<Vec<u32>>
+    //             NodeMeta {
+    //                 len: 2,
+    //                 tail: 8,
+    //                 total_hdr_len: 12
+    //             }, // vec![1, 2]
+    //             NodeMeta {
+    //                 len: 1,
+    //                 tail: 4,
+    //                 total_hdr_len: 12
+    //             }, // vec![3]
+    //             NodeMeta {
+    //                 len: 3,
+    //                 tail: 12,
+    //                 total_hdr_len: 12
+    //             }, // vec![4, 5, 6]
+    //         ];
+    //
+    //         assert_eq!(expected_nodes, ctx.nodes, "Context nodes mismatch nested 3");
+    //     }
+    //
+    //     #[test]
+    //     fn vec_compact_write_header() {
+    //         // empty
+    //         let v: Vec<u32> = vec![];
+    //         let mut ctx = EncodingContext::new();
+    //         let res = <Vec<u32> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx);
+    //         assert!(res.is_ok(), "build_ctx failed: {:?}", res);
+    //         println!("ctx: {:?}", ctx);
+    //         let mut buf = BytesMut::new();
+    //         let written = <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode_header(
+    //             &v, &mut buf, &mut ctx,
+    //         )
+    //         .expect("encode_header must succeed");
+    //
+    //         let encoded = buf.freeze();
+    //         let expected = concat!(
+    //             "00000000", // length 4
+    //             "0c000000", // offset 12 (3 header fields × 4 bytes)
+    //             "00000000"  // size = 16 (4 elements × 4 bytes)
+    //         );
+    //         assert_eq!(
+    //             hex::encode(&encoded),
+    //             expected,
+    //             "Empty header encoding mismatch"
+    //         );
+    //
+    //         // simple
+    //         let v: Vec<u32> = vec![1, 2, 3, 4];
+    //         // prepare ctx
+    //         let mut ctx = EncodingContext::new();
+    //         <Vec<u32> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut ctx)
+    //             .expect("build_ctx must succeed");
+    //
+    //         println!("ctx: {:?}", ctx);
+    //
+    //         let mut buf = BytesMut::new();
+    //         let written = <Vec<u32> as Encoder<LittleEndian, 4, false>>::encode_header(
+    //             &v, &mut buf, &mut ctx,
+    //         )
+    //         .expect("encode_header must succeed");
+    //
+    //         let encoded = buf.freeze();
+    //         let expected = concat!(
+    //             "04000000", // length 4
+    //             "0c000000", // offset 12 (3 header fields × 4 bytes)
+    //             "10000000"  // size = 16 (4 elements × 4 bytes)
+    //         );
+    //         assert_eq!(hex::encode(&encoded), expected, "Header encoding mismatch");
+    //
+    //         // nested
+    //         let v: Vec<Vec<u32>> = vec![vec![1, 2, 3], vec![4, 5]];
+    //         let mut ctx = EncodingContext::new();
+    //         let res = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::build_ctx(&v, &mut
+    // ctx);         assert!(res.is_ok(), "build_ctx failed: {:?}", res);
+    //
+    //         let expected_nodes: SmallVec<[NodeMeta; 8]> = smallvec![
+    //             NodeMeta {
+    //                 len: 2,
+    //                 tail: 20,
+    //                 total_hdr_len: 36
+    //             }, // root
+    //             NodeMeta {
+    //                 len: 3,
+    //                 tail: 12,
+    //                 total_hdr_len: 12
+    //             }, // vec![1, 2, 3]
+    //             NodeMeta {
+    //                 len: 2,
+    //                 tail: 8,
+    //                 total_hdr_len: 12
+    //             }, // vec![4, 5]
+    //         ];
+    //         assert_eq!(expected_nodes, ctx.nodes, "Context nodes mismatch nested 2");
+    //         println!("ctx: {:?}", ctx);
+    //
+    //         let mut buf = BytesMut::new();
+    //         let written = <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::encode_header(
+    //             &v, &mut buf, &mut ctx,
+    //         )
+    //         .expect("encode_header must succeed");
+    //         assert_eq!(written, 36, "Header size should be 36 bytes (3 headers)");
+    //
+    //         let encoded = buf.freeze();
+    //         // root Vec [[1,2,3], [4,5]]
+    //         let expected_encode = concat!(
+    //             /* ── root header ─────────────────────────────── */
+    //             "02000000", /* len(root)  = 2 */
+    //             "0c000000", /* off(root)  = 12 → jump to 1-st child hdr */
+    //             "0c000000", /* size(root) = 12 → size of 1-st child hdr */
+    //             /* ── child-0 header (vec![1,2,3]) ─────────────── */
+    //             "03000000", /* len = 3 */
+    //             "18000000", /* off = 24 → jump to its data */
+    //             "0c000000", /* size = 12 (=3×4) */
+    //             /* ── child-1 header (vec![4,5]) ────────────────── */
+    //             "02000000", /* len = 2 */
+    //             "18000000", /* off = 24 → jump past child-0 data */
+    //             "08000000"  /* size = 8 (=2×4) */
+    //         );
+    //         assert_eq!(
+    //             expected_encode,
+    //             hex::encode(encoded),
+    //             "Header encoding mismatch"
+    //         );
+    //     }
+    //
+    //     #[inline]
+    //     fn encode_full<T>(value: &T) -> Vec<u8>
+    //     where
+    //         T: Encoder<LittleEndian, 4, false, Ctx = EncodingContext>,
+    //     {
+    //         let mut ctx = EncodingContext::default();
+    //         <T as Encoder<LittleEndian, 4, false>>::build_ctx(value, &mut ctx).unwrap();
+    //         println!("ctx: {:?}", ctx);
+    //         let mut buf = BytesMut::new();
+    //         <T as Encoder<LittleEndian, 4, false>>::encode_header(value, &mut buf, &mut ctx)
+    //             .unwrap();
+    //         <T as Encoder<LittleEndian, 4, false>>::encode_tail(value, &mut buf).unwrap();
+    //
+    //         buf.freeze().to_vec()
+    //     }
+    //
+    //     /* helper: round-trip decode */
+    //     fn decode_full<T>(bytes: &[u8]) -> T
+    //     where
+    //         T: Encoder<LittleEndian, 4, false>,
+    //     {
+    //         let b = Bytes::from(bytes.to_vec());
+    //         <T as Encoder<LittleEndian, 4, false>>::decode(&b, 0).unwrap()
+    //     }
+    //
+    //
+    //     #[test]
+    //     fn roundtrip_vec_u32() {
+    //         let v: Vec<u32> = vec![1, 2, 3, 4];
+    //         let got = encode_full(&v);
+    //         let want = hex::decode(concat!(
+    //             /* header (12 B) */
+    //             "04000000", /* len  = 4 */
+    //             "0c000000", /* off  = 12 → data */
+    //             "10000000", /* size = 16 bytes */
+    //             /* data (4×u32) */
+    //             "01000000", "02000000", "03000000", "04000000",
+    //         ))
+    //         .unwrap();
+    //         assert_eq!(got, want, "Vec<u32> full encode mismatch");
+    //
+    //         /* ---------- round-trip decode ---------- */
+    //         let decoded = {
+    //             let bytes = bytes::Bytes::from(got);        // borrow as Buf
+    //             <Vec<u32> as Encoder<LittleEndian, 4, false>>::decode(&bytes, 0)
+    //                 .expect("decode must succeed")
+    //         };
+    //         assert_eq!(decoded, v, "Vec<u32> round-trip mismatch");
+    //     }
+    //
+    //
+    //
+    //     #[test]
+    //     fn roundtrip_vec_vec_u32() {
+    //         let v: Vec<Vec<u32>> = vec![vec![1, 2, 3], vec![4, 5]];
+    //         let got = encode_full(&v);
+    //         let want = hex::decode(concat!(
+    //             /* root header */
+    //             "02000000", "0c000000", "0c000000",
+    //             /* child-0 header (len=3, off=24, size=12) */
+    //             "03000000", "18000000", "0c000000",
+    //             /* child-1 header (len=2, off=24, size=8) */
+    //             "02000000", "18000000", "08000000", /* data: 1 2 3 4 5 */
+    //             "01000000", "02000000", "03000000", "04000000", "05000000",
+    //         ))
+    //         .unwrap();
+    //         assert_eq!(got, want, "Vec<Vec<u32>> full encode mismatch");
+    //
+    //         /* ---------- round-trip decode ---------- */
+    //         let decoded = {
+    //             let bytes = bytes::Bytes::from(got);        // borrow as Buf
+    //             <Vec<Vec<u32>> as Encoder<LittleEndian, 4, false>>::decode(&bytes, 0)
+    //                 .expect("decode must succeed")
+    //         };
+    //         assert_eq!(decoded, v, "Vec<Vec<u32>> round-trip mismatch");
+    //     }
+    //
+    //     #[test]
+    //     fn roundtrip_vec_vec_vec_u32() {
+    //         // [[[1,2] , [3] , [4,5,6]]]
+    //         let v: Vec<Vec<Vec<u32>>> = vec![vec![vec![1, 2], vec![3], vec![4, 5, 6]]];
+    //
+    //         let got = encode_full(&v);
+    //
+    //         let want = hex::decode(concat!(
+    //             /* ── root Vec<Vec<Vec<u32>>> ─────────────────────────────── */
+    //             "01000000", /* len  = 1 */
+    //             "0c000000", /* off  = 12 → header of inner Vec<Vec<u32>> */
+    //             "0c000000", /* size = 12 (exactly one child header) */
+    //             /* ── level-2 Vec<Vec<u32>>  ──────────────────────────────── */
+    //             "03000000", /* len  = 3 */
+    //             "0c000000", /* off  = 12 → header of first leaf Vec<u32> */
+    //             "0c000000", /* size = 12 (one leaf header) */
+    //             /* ── leaf #0  Vec<u32> = [1,2] ───────────────────────────── */
+    //             "02000000", /* len  = 2 */
+    //             "24000000", /* off  = 36 → jump to its data */
+    //             "08000000", /* size = 8  (= 2 × 4-byte u32) */
+    //             /* ── leaf #1  Vec<u32> = [3]  ────────────────────────────── */
+    //             "01000000", /* len  = 1 */
+    //             "20000000", /* off  = 32 → jump to its data */
+    //             "04000000", /* size = 4  (= 1 × 4-byte u32) */
+    //             /* ── leaf #2  Vec<u32> = [4,5,6] ─────────────────────────── */
+    //             "03000000", /* len  = 3 */
+    //             "18000000", /* off  = 24 → jump to its data */
+    //             "0c000000", /* size = 12 (= 3 × 4-byte u32) */
+    //             /* ── payload bytes (u32 LE): 1 2 3 4 5 6 ─────────────────── */
+    //             "01000000", "02000000", "03000000", "04000000", "05000000", "06000000",
+    //         ))
+    //         .unwrap();
+    //
+    //         println!("got: {:?}", hex::encode(&got));
+    //         assert_eq!(got, want, "Vec<Vec<Vec<u32>>> full encode mismatch");
+    //     }
+    // }
 }
