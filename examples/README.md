@@ -157,7 +157,7 @@ rustup target add wasm32-unknown-unknown
 > wasm2wat target/wasm32-unknown-unknown/release/hello_world.wasm
 > ```
 
-The next step is to [deploy your contract](./deploy.md).
+The next step is to [deploy your contract](#deploy).
 
 ## Deploy
 
