@@ -1,5 +1,5 @@
 pub use alloy_genesis::Genesis;
-use fluentbase_types::{address, Address, Bytes, GenesisContractBuildOutput, HashMap, B256};
+use fluentbase_types::{address, hex, Address, Bytes, GenesisContractBuildOutput, HashMap, B256};
 use lazy_static::lazy_static;
 
 pub fn devnet_genesis_from_file() -> Genesis {
@@ -7,8 +7,12 @@ pub fn devnet_genesis_from_file() -> Genesis {
     serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
 }
 
+/// The authority address that is allowed to update the code of arbitrary accounts
 pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
-pub const UPDATE_GENESIS_PREFIX: &'static [u8] = b"UPDATE_DEVNET";
+
+/// The prefix that must appear at the beginning of the transaction `call data`
+/// to signal that the transaction is intended to perform an account update.
+pub const UPDATE_GENESIS_PREFIX: [u8; 4] = hex!("0x69bc6f64");
 
 #[rustfmt::skip]
 const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
