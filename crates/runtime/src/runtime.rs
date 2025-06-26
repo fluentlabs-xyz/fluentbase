@@ -5,6 +5,7 @@ use crate::{
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
+    create_import_linker,
     BytecodeOrHash,
     Bytes,
     ExitCode,
@@ -17,7 +18,6 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     fmt::Debug,
     mem::take,
-    rc::Rc,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -153,9 +153,8 @@ impl Runtime {
                 // .floats_enabled(true) // need to support solana ee
                 .fuel_limit(runtime_context.fuel_limit)
                 .fuel_enabled(!runtime_context.disable_fuel);
-            // TODO(dmitry123): "add import linker"
-            let mut store =
-                Store::<RuntimeContext>::new(config, runtime_context, Rc::new(Default::default()));
+            let linker = create_import_linker();
+            let mut store = Store::<RuntimeContext>::new(config, runtime_context, linker);
             store.set_syscall_handler(runtime_syscall_handler);
 
             Self {

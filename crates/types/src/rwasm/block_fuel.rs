@@ -1,3 +1,6 @@
+use crate::SysFuncIdx;
+use rwasm::{instruction_set, InstructionSet, TrapCode};
+
 /// In this file, we define the fuel procedures that will be inserted by the rwasm translator
 /// before the builtin calls. Each fuel procedure is a set of rwasm Opcodes that will be
 /// executed. Fuel procedures can potentially access the variables of the function they are
@@ -16,80 +19,92 @@ macro_rules! linear_fuel {
         // compile-time overflow check
         const _: () = {
             assert!(
-                ($base_cost as u128) + ($word_cost as u128) * (u32::MAX as u128)
-                    <= (u64::MAX as u128),
-                "base_cost + word_cost * u32::MAX must fit into u64"
+                ($base_cost as u128) + ($word_cost as u128) * (MAX_X as u128) <= (u32::MAX as u128),
+                "base_cost + word_cost * MAX_X must fit into u32"
             );
         };
 
-        &[
-            Opcode::LocalGet(LocalDepth::from_u32($local_depth)),
-            Opcode::I64ExtendI32U, // we extend the length of local variable to u64
-            Opcode::I64Const(UntypedValue::from_bits(31)),
-            Opcode::I64Add,
-            Opcode::I64Const(UntypedValue::from_bits(32)),
-            Opcode::I64DivU,
-            Opcode::I64Const(UntypedValue::from_bits($word_cost as u64)),
-            Opcode::I64Mul,
-            Opcode::I64Const(UntypedValue::from_bits($base_cost as u64)),
-            Opcode::I64Add,
-            Opcode::Call(FuncIdx::from_u32(CHARGE_FUEL as u32)),
-        ]
+        instruction_set! {
+            LocalGet($local_depth) // Compare x with MAX_X
+            I32Const(MAX_X)
+            I32GtU
+            BrIfEqz(2)
+            Trap(TrapCode::IntegerOverflow)
+
+            LocalGet($local_depth) // Calculate cost
+            I32Const(31)
+            I32Add
+            I32Const(32)
+            I32DivU
+            I32Const($word_cost)
+            I32Mul
+            I32Const($base_cost)
+            I32Add
+            I32Const(0) // Push two 32-bit values, which are interpreted as a single 64-bit value inside the builtin.
+            Call(SysFuncIdx::CHARGE_FUEL)
+        }
     }};
 }
 
 macro_rules! const_fuel {
     ($cost:expr) => {
-        &[
-            Opcode::I64Const(UntypedValue::from_bits($cost as u64)),
-            Opcode::Call(FuncIdx::from_u32(CHARGE_FUEL as u32)),
-        ]
+        instruction_set! {
+            I32Const($cost)
+            I32Const(0) // Push two 32-bit values, which are interpreted as a single 64-bit value inside the builtin.
+            Call(SysFuncIdx::CHARGE_FUEL)
+        }
     };
 }
 
 macro_rules! no_fuel {
     () => {
-        &[]
+        instruction_set! {}
     };
 }
 
-/// Constants used to calculate the fuel cost of builtin functions.
-/// Their values are loosely based on the EVM opcodes in the revm interpreter.
-/// But multiplied by 1000 to compensate denomination.
-/// Note: values must be small enough to not overflow u64 when multiplied by u32::MAX
-pub const KECCAK_BASE_FUEL_COST: u64 = 30_000; // correspond to KECCAK opcode cost
-pub const KECCAK_WORD_FUEL_COST: u64 = 6_000;
-pub const COPY_WORD_FUEL_COST: u64 = 3_000; // correspond to COPY opcode cost
-pub const COPY_BASE_FUEL_COST: u64 = 3_000;
-pub const EXEC_BASE_FUEL_COST: u64 = 2_600_000; // correspond to COLD_ACCOUNT_ACCESS_COST
-pub const SECP256K1_RECOVER_BASE_FUEL_COST: u64 = 100_000;
-pub const MINIMAL_BASE_FUEL_COST: u64 = 1_000;
-pub const CHARGE_FUEL_BASE_COST: u64 = 1_000;
+/// Values are loosely based on the EVM opcodes in the revm interpreter.
+pub const KECCAK_BASE_FUEL_COST: u32 = 30_000;
+pub const KECCAK_WORD_FUEL_COST: u32 = 6_000;
+pub const COPY_WORD_FUEL_COST: u32 = 3_000;
+pub const COPY_BASE_FUEL_COST: u32 = 3_000;
+pub const SECP256K1_RECOVER_BASE_FUEL_COST: u32 = 100_000;
+pub const LOW_FUEL_COST: u32 = 1_000;
+pub const CHARGE_FUEL_BASE_COST: u32 = 1_000;
 
-// This fuel charging procedures will be emitted inside the rwasm translator right before
-// the builtin call.
-// pub(crate) const KECCAK256_FUEL: &[Opcode] =
-//     linear_fuel!(2, KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST);
-// pub(crate) const EXIT_FUEL: &[Opcode] = const_fuel!(MINIMAL_BASE_FUEL_COST);
-// pub(crate) const STATE_FUEL: &[Opcode] = const_fuel!(MINIMAL_BASE_FUEL_COST);
-// pub(crate) const INPUT_SIZE_FUEL: &[Opcode] = const_fuel!(MINIMAL_BASE_FUEL_COST);
-// pub(crate) const OUTPUT_SIZE_FUEL: &[Opcode] = const_fuel!(MINIMAL_BASE_FUEL_COST);
-// pub(crate) const CHARGE_FUEL_FUEL: &[Opcode] = const_fuel!(CHARGE_FUEL_BASE_COST);
-// pub(crate) const FUEL_FUEL: &[Opcode] = const_fuel!(MINIMAL_BASE_FUEL_COST);
-// pub(crate) const READ_INPUT_FUEL: &[Opcode] =
-//     linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST);
-// pub(crate) const WRITE_OUTPUT_FUEL: &[Opcode] =
-//     linear_fuel!(1, COPY_WORD_FUEL_COST, COPY_WORD_FUEL_COST);
-// pub(crate) const READ_OUTPUT_FUEL: &[Opcode] =
-//     linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST);
-// pub(crate) const EXEC_FUEL: &[Opcode] = linear_fuel!(3, EXEC_BASE_FUEL_COST,
-// COPY_WORD_FUEL_COST); pub(crate) const RESUME_FUEL: &[Opcode] = const_fuel!(EXEC_BASE_FUEL_COST);
-// pub(crate) const FORWARD_OUTPUT_FUEL: &[Opcode] =
-//     linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST);
-// pub(crate) const CHARGE_FUEL_MANUALLY_FUEL: &[Opcode] = no_fuel!();
-// pub(crate) const PREIMAGE_SIZE_FUEL: &[Opcode] = const_fuel!(MINIMAL_BASE_FUEL_COST);
-// pub(crate) const PREIMAGE_COPY_FUEL: &[Opcode] = const_fuel!(MINIMAL_BASE_FUEL_COST);
-// pub(crate) const DEBUG_LOG_FUEL: &[Opcode] =
-//     linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST);
-// pub(crate) const SECP256K1_RECOVER_FUEL: &[Opcode] =
-// const_fuel!(SECP256K1_RECOVER_BASE_FUEL_COST);
+/// The maximum allowed value for the `x` parameter used in linear gas cost calculation
+/// of builtins.
+/// This limit ensures the result does not overflow a `u32`.
+/// Specifically:
+/// - `word_cost` is assumed to be at most `8191` (i.e. `2^13-1`)
+/// - `base_cost` is assumed to be at most `2_147_483_647` (i.e. `2^31-1`)
+const MAX_X: u32 = 262_143; // 2^18 - 1
+
+pub(crate) fn emit_fuel_procedure(sys_func_idx: SysFuncIdx) -> InstructionSet {
+    match sys_func_idx {
+        // Builtins charging no fuel (free builtins)
+        SysFuncIdx::CHARGE_FUEL_MANUALLY => no_fuel!(),
+        SysFuncIdx::EXEC => no_fuel!(),
+        SysFuncIdx::EXIT => no_fuel!(),
+        SysFuncIdx::RESUME => no_fuel!(),
+
+        // Builtins charging a constant amount of fuel
+        SysFuncIdx::CHARGE_FUEL => const_fuel!(CHARGE_FUEL_BASE_COST),
+        SysFuncIdx::FUEL => const_fuel!(LOW_FUEL_COST),
+        SysFuncIdx::INPUT_SIZE => const_fuel!(LOW_FUEL_COST),
+        SysFuncIdx::OUTPUT_SIZE => const_fuel!(LOW_FUEL_COST),
+        SysFuncIdx::PREIMAGE_COPY => const_fuel!(LOW_FUEL_COST),
+        SysFuncIdx::PREIMAGE_SIZE => const_fuel!(LOW_FUEL_COST),
+        SysFuncIdx::SECP256K1_RECOVER => const_fuel!(SECP256K1_RECOVER_BASE_FUEL_COST),
+        SysFuncIdx::STATE => const_fuel!(LOW_FUEL_COST),
+
+        // Builtins charging a variable amount of fuel based on a parameter
+        SysFuncIdx::DEBUG_LOG => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
+        SysFuncIdx::FORWARD_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
+        SysFuncIdx::KECCAK256 => linear_fuel!(2, KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST),
+        SysFuncIdx::READ_INPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
+        SysFuncIdx::READ_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
+        SysFuncIdx::WRITE_OUTPUT => linear_fuel!(1, COPY_WORD_FUEL_COST, COPY_WORD_FUEL_COST),
+
+        _ => no_fuel!(),
+    }
+}
