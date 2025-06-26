@@ -40,6 +40,8 @@ fluentbase-sdk-testing = { path = "crates/testing" }
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
 fluentbase-erc20 = { path = "./crates/erc20", default-features = false }
+fluentbase-eip2935 = { path = "./crates/eip2935", default-features = false }
+fluentbase-helpers = { path = "./crates/helpers", default-features = false }
 
 solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-instruction = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }

@@ -19,6 +19,7 @@ fluentbase-types = { workspace = true }
 
 fluentbase-svm = { workspace = true, default-features = false }
 fluentbase-erc20 = { workspace = true }
+fluentbase-eip2935 = { workspace = true }
 fluentbase-contracts-nitro = { path = "../contracts/nitro" }
 
 fluentbase-examples-abi-solidity = { path = "../examples/abi-solidity" }

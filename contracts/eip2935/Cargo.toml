@@ -1,0 +1,21 @@
+[package]
+name = "fluentbase-contracts-eip2935"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true, features = ["fast-panic", "debug-print"] }
+fluentbase-eip2935 = { workspace = true }
+
+[dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
+
+[build-dependencies]
+fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std"
+]

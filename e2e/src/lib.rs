@@ -15,6 +15,8 @@ mod constructor;
 #[cfg(test)]
 mod deployer;
 #[cfg(test)]
+mod eip2935;
+#[cfg(test)]
 mod erc20;
 #[cfg(test)]
 mod evm;
