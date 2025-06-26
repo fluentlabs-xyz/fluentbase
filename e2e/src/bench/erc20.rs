@@ -99,7 +99,7 @@ fn bench_precompiled_erc20(b: &mut Bencher) {
         DEPLOYER_ADDR,
         initial_settings
             .try_encode_for_deploy()
-            .expect("failed to encode settings for deploy")
+            .expect("failed to encode settings for deployment")
             .into(),
     );
 

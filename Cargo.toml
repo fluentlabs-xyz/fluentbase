@@ -252,6 +252,7 @@ codegen-units = 1
 
 [profile.dev.build-override]
 debug = false # disable debug symbols for build.rs to avoid 200+MB build-script binaries
+opt-level = 3
 
 # Use the `--profile profiling` flag to show symbols in release mode.
 # e.g. `cargo build --profile profiling`
