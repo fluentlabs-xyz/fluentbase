@@ -9,7 +9,7 @@ members = [
     "bins/cli"
 ]
 exclude = [
-    # exclude revm e2e testing suite to let it be a separate crate
+    # Exclude revm's E2E testing suite so it can be maintained as a separate crate
     "revm/e2e",
     "examples/svm",
 ]
@@ -20,7 +20,7 @@ version = "0.2.1-dev"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
-repository = "https://github.com/fluentlabs-xyz/fuentbase"
+repository = "https://github.com/fluentlabs-xyz/fluentbase"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
