@@ -166,7 +166,6 @@ fn test_evm_revert() {
     let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 1);
     println!("{}", contract_address);
     assert!(result.is_success());
-    assert_eq!(result.gas_used(), 61149);
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
 }

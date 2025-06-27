@@ -1500,7 +1500,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2369,7 +2369,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cea14ef9355e3beab063703aa9dab15afd25f0667c341310c1e5274bb1d0da18"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2729,6 +2729,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-wasm"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "rwasm",
+]
+
+[[package]]
 name = "fluentbase-contracts-webauthn"
 version = "0.1.0"
 dependencies = [
@@ -2975,6 +2984,7 @@ dependencies = [
  "fluentbase-contracts-secp256r1",
  "fluentbase-contracts-sha256",
  "fluentbase-contracts-svm",
+ "fluentbase-contracts-wasm",
  "fluentbase-contracts-webauthn",
  "fluentbase-types",
  "lazy_static",
@@ -3947,7 +3957,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5937,7 +5947,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5950,7 +5960,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6007,7 +6017,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#049eac223c46aa8cd3419450dfee5235c006c360"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#ba67e868dfedf39cb89f14a0878b03ace5842fdd"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -6035,6 +6045,7 @@ dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk",
  "revm",
+ "rwasm",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -7200,7 +7211,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.7",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8292,7 +8303,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

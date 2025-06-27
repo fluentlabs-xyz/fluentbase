@@ -142,6 +142,11 @@ impl EvmTestingContext {
         account.info.nonce
     }
 
+    pub fn get_code(&mut self, address: Address) -> Option<&Bytecode> {
+        let account = self.db.load_account(address).unwrap();
+        account.info.code.as_ref()
+    }
+
     pub fn add_balance(&mut self, address: Address, value: U256) {
         let account = self.db.load_account(address).unwrap();
         account.info.balance += value;
@@ -294,11 +299,6 @@ impl<'a> TxBuilder<'a> {
 
     pub fn timestamp(mut self, timestamp: u64) -> Self {
         self.block.timestamp = timestamp;
-        self
-    }
-
-    pub fn disable_builtins_consume_fuel(self) -> Self {
-        self.ctx.cfg.disable_builtins_consume_fuel = true;
         self
     }
 

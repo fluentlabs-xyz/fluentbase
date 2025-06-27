@@ -1,11 +1,18 @@
 pub use alloy_genesis::Genesis;
-use fluentbase_types::{Address, Bytes, GenesisContractBuildOutput, HashMap, B256};
+use fluentbase_types::{address, hex, Address, Bytes, GenesisContractBuildOutput, HashMap, B256};
 use lazy_static::lazy_static;
 
 pub fn devnet_genesis_from_file() -> Genesis {
     let json_file = include_str!("../genesis-devnet.json");
     serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
 }
+
+/// The authority address that is allowed to update the code of arbitrary accounts
+pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
+
+/// The prefix that must appear at the beginning of the transaction `call data`
+/// to signal that the transaction is intended to perform an account update.
+pub const UPDATE_GENESIS_PREFIX: [u8; 4] = hex!("0x69bc6f64");
 
 #[rustfmt::skip]
 const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
@@ -14,7 +21,7 @@ const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
     (fluentbase_types::PRECOMPILE_BN256_ADD, fluentbase_contracts_bn256::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts_bn256::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_ERC20_RUNTIME, fluentbase_contracts_erc20::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_EIP2935, fluentbase_contracts_eip2935::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::BUILD_OUTPUT),
     #[cfg(feature = "enable-svm")]
@@ -29,11 +36,11 @@ const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
     (fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts_bls12381::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts_bls12381::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts_bls12381::BUILD_OUTPUT),
-
     (fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts_nitro::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts_oauth2::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts_ripemd160::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_WASM_RUNTIME, fluentbase_contracts_wasm::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_ecrecover::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts_sha256::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts_webauthn::BUILD_OUTPUT),

@@ -223,7 +223,7 @@ fn test_wasm_rwasm() {
     assert!(result.is_success());
 
     let output = result.output().unwrap_or_default();
-    let module = RwasmModule::new(&output);
+    let (module, _) = RwasmModule::new(&output);
     assert!(module.code_section.len() > 0);
     assert!(unsafe { from_utf8_unchecked(&module.data_section).contains("Hello, World") })
 }
