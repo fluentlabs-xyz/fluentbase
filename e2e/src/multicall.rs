@@ -5,7 +5,6 @@ use fluentbase_sdk::{address, compile_wasm_to_rwasm, Address, Bytes};
 use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
 
-#[ignore]
 #[test]
 fn test_multicall_greeting() {
     let mut ctx = EvmTestingContext::default();
@@ -33,7 +32,6 @@ fn test_multicall_greeting() {
     assert_eq!(hex::encode(expected_output), hex::encode(output));
 }
 
-#[ignore]
 #[test]
 fn test_multicall() {
     let mut ctx = EvmTestingContext::default();
