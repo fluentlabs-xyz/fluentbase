@@ -314,7 +314,6 @@ mod tests {
         {
             let mut ctx = EncodingContext::default();
             let _ = T::header_size(value, &mut ctx);
-            ctx.data_ptr = ctx.hdr_ptr;
 
             let mut header_buf = BytesMut::new();
             let w = T::encode_header(value, &mut header_buf, &mut ctx);
@@ -432,7 +431,7 @@ mod tests {
             );
         }
     }
-    #[cfg(test)]
+
     mod solidity {
         use crate::optimized::{ctx::EncodingContext, encoder::Encoder};
         use byteorder::BigEndian;

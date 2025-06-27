@@ -7,6 +7,7 @@ mod vec;
 mod ctx;
 mod struct_codec;
 
+mod hash;
 
 
 pub use encoder::{CompactABI, SolidityABI, SolidityPackedABI};
