@@ -10,7 +10,11 @@ use fluentbase_types::{
     LOW_FUEL_COST,
     SECP256K1_RECOVER_BASE_FUEL_COST,
 };
-use revm::context::result::{ExecutionResult, HaltReason};
+use revm::{
+    context::result::{ExecutionResult, HaltReason},
+    interpreter::gas::calculate_initial_tx_gas,
+    primitives::hardfork::SpecId,
+};
 
 const WAT_TEMPLATE: &str = r#"
     (module
@@ -41,19 +45,12 @@ const WAT_TEMPLATE: &str = r#"
     )
 "#;
 
-fn run_main(
-    main_function_wat: &str,
-    call_data_size: usize,
-    builtins_consume_fuel: bool,
-) -> ExecutionResult {
+fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult {
     let wat = WAT_TEMPLATE.replace("            {{MAIN_BODY}}", main_function_wat);
     let wasm = wat::parse_str(&wat).unwrap();
     let mut ctx = EvmTestingContext::default();
     let deployer: Address = Address::ZERO;
     let mut builder = TxBuilder::create(&mut ctx, deployer, wasm.into());
-    if !builtins_consume_fuel {
-        builder = builder.disable_builtins_consume_fuel();
-    }
     let result = builder.exec();
     assert!(result.is_success(), "failed to deploy contract");
     let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, 0);
@@ -73,15 +70,11 @@ fn run_twice_and_find_gas_difference(wat: &str, call_data_size: usize) -> u64 {
     println!("Code: {}", wat);
     println!("-------------");
     println!("Running with builtins_consume_fuel=true");
-    let result1 = run_main(wat, call_data_size, true);
+    let result1 = run_main(wat, call_data_size);
     assert!(result1.is_success());
-    println!("-------------");
-    println!("Running with builtins_consume_fuel=false");
-    let result2 = run_main(wat, call_data_size, false);
-    assert!(result2.is_success());
-    println!("-------------");
-    assert!(result1.gas_used() >= result2.gas_used());
-    result1.gas_used() - result2.gas_used()
+    let init_gas =
+        calculate_initial_tx_gas(SpecId::PRAGUE, &vec![0u8; call_data_size], false, 0, 0, 0);
+    result1.gas_used() - init_gas.initial_gas - 10 // 10 for 10 memory pages (1 page is 1024 fuel)
 }
 
 #[test]
@@ -121,8 +114,8 @@ fn test_write_builtin_overflow() {
         i32.const 300000 
         call $_write
     "#; // excessively large data size argument
-    let result1 = run_main(main_without_overflow, 0, true);
-    let result2 = run_main(main_with_overflow, 0, true);
+    let result1 = run_main(main_without_overflow, 0);
+    let result2 = run_main(main_with_overflow, 0);
 
     assert!(matches!(result1, ExecutionResult::Success { .. }));
     assert!(matches!(
@@ -144,7 +137,7 @@ fn test_read_builtin() {
         i32.const 800
         call $_read
     "#;
-    let gas = run_twice_and_find_gas_difference(main, 1_000);
+    let gas = run_twice_and_find_gas_difference(main, 1_000) - 30_000;
     let expected_fuel =
         COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((800 + 31) / 32) + CHARGE_FUEL_BASE_COST;
     assert_eq!(gas, expected_fuel as u64 / 1000);

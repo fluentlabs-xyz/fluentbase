@@ -86,7 +86,7 @@ impl CachingRuntime {
             Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
             Entry::Vacant(entry) => entry,
         };
-        let rwasm_module = Rc::new(RwasmModule::new_or_empty(rwasm_bytecode));
+        let rwasm_module = Rc::new(RwasmModule::new_or_empty(rwasm_bytecode).0);
         #[cfg(feature = "wasmtime")]
         if is_system_precompile_hash(&rwasm_hash) {
             let wasmtime_module = GENESIS_CONTRACTS_BY_HASH

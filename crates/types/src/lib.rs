@@ -69,8 +69,11 @@ pub const PROTECTED_STORAGE_SLOT_0: B256 =
 pub const PROTECTED_STORAGE_SLOT_1: B256 =
     b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113c");
 
-pub fn is_precompiled_runtime(address: &Address) -> bool {
-    address == &PRECOMPILE_EVM_RUNTIME || address == &PRECOMPILE_SVM_RUNTIME
+pub fn is_delegated_runtime_address(address: &Address) -> bool {
+    address == &PRECOMPILE_EVM_RUNTIME
+        || address == &PRECOMPILE_SVM_RUNTIME
+        || address == &PRECOMPILE_ERC20_RUNTIME
+        || address == &PRECOMPILE_WASM_RUNTIME
 }
 
 pub fn is_protected_storage_slot<I: Into<B256>>(slot: I) -> bool {

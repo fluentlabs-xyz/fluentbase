@@ -14,9 +14,9 @@ pub const PRECOMPILE_WEBAUTHN_VERIFIER: Address =
 pub const PRECOMPILE_OAUTH2_VERIFIER: Address =
     address!("0000000000000000000000000000000000520006");
 pub const PRECOMPILE_NITRO_VERIFIER: Address = address!("0000000000000000000000000000000000520007");
-pub const PRECOMPILE_ERC20: Address = address!("0000000000000000000000000000000000520008");
+pub const PRECOMPILE_ERC20_RUNTIME: Address = address!("0000000000000000000000000000000000520008");
+pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0000000000000000000000000000000000520009");
 pub const PRECOMPILE_EIP2935: Address = address!("0000F90827F1C53a10cb7A02335B175320002935");
-pub const HISTORY_STORAGE_ADDRESS: Address = PRECOMPILE_EIP2935;
 
 pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
 
@@ -41,7 +41,6 @@ pub const PRECOMPILE_BLS12_381_G2_MSM: Address = evm_address(0x0e);
 pub const PRECOMPILE_BLS12_381_PAIRING: Address = evm_address(0x0f);
 pub const PRECOMPILE_BLS12_381_MAP_G1: Address = evm_address(0x10);
 pub const PRECOMPILE_BLS12_381_MAP_G2: Address = evm_address(0x11);
-pub const PRECOMPILE_RWASM: Address = evm_address(0x12);
 
 // "R native" + keccak256("multicall(bytes[])")[..4]
 pub const PRECOMPILE_NATIVE_MULTICALL: Address =

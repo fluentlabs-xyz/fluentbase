@@ -8,7 +8,7 @@ use fluentbase_erc20::{
 };
 use fluentbase_sdk::{address, Address, Bytes, U256};
 use fluentbase_sdk_testing::EvmTestingContext;
-use fluentbase_types::{ContractContextV1, PRECOMPILE_ERC20};
+use fluentbase_types::{ContractContextV1, PRECOMPILE_ERC20_RUNTIME};
 use hex_literal::hex;
 use test::Bencher;
 
@@ -85,7 +85,7 @@ fn bench_precompiled_erc20(b: &mut Bencher) {
     let mut ctx = EvmTestingContext::default();
     const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
-        address: PRECOMPILE_ERC20,
+        address: PRECOMPILE_ERC20_RUNTIME,
         ..Default::default()
     });
     let mut initial_settings = InitialSettings::new();

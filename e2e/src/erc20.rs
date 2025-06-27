@@ -25,7 +25,7 @@ use fluentbase_erc20::{
 };
 use fluentbase_sdk::{address, Address, Bytes, U256};
 use fluentbase_sdk_testing::EvmTestingContext;
-use fluentbase_types::{ContractContextV1, PRECOMPILE_ERC20};
+use fluentbase_types::{ContractContextV1, PRECOMPILE_ERC20_RUNTIME};
 use revm::context::result::ExecutionResult;
 use std::ops::Add;
 
@@ -69,7 +69,7 @@ fn erc20_no_plugins_enabled_test() {
     const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
     const USER_ADDR: Address = address!("2222222222222222222222222222222222222222");
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
-        address: PRECOMPILE_ERC20,
+        address: PRECOMPILE_ERC20_RUNTIME,
         ..Default::default()
     });
     let mut initial_settings = InitialSettings::new();
@@ -129,7 +129,7 @@ fn erc20_test() {
     const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
     const USER_ADDR: Address = address!("2222222222222222222222222222222222222222");
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
-        address: PRECOMPILE_ERC20,
+        address: PRECOMPILE_ERC20_RUNTIME,
         ..Default::default()
     });
     let mut initial_settings = InitialSettings::new();
