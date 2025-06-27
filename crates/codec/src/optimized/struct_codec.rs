@@ -79,8 +79,8 @@ struct Example {
 // "0c000000", // offset to first vector
 // "4c000000", // offset to second vector
 // ------------ // First vector header
-// // First vector [1,2,3] 
-// "03000000", // length 
+// // First vector [1,2,3]
+// "03000000", // length
 // "24000000", // relative offset
 // "0c000000", // data offset
 // ------------
@@ -149,14 +149,14 @@ impl Encoder<BigEndian, 4, true> for Example {
         // let mut written = 0;
         // let mut offset = 0; // Offset within body section
         // let mut node = 0; // Index in context.nodes
-        // 
+        //
         // // --- Outer vector (nums) ---
         // let meta = ctx.nodes[node]; node += 1;
         // out.put_u32_le(meta.len);   written += 4;
         // out.put_u32_le(offset);     written += 4;
         // out.put_u32_le(meta.tail);  written += 4;
         // offset += meta.tail;
-        // 
+        //
         // // --- Inner vectors (nums[i]) ---
         // for _ in 0..meta.len {
         //     let m = ctx.nodes[node]; node += 1;
@@ -164,30 +164,31 @@ impl Encoder<BigEndian, 4, true> for Example {
         //     out.put_u32_le(m.tail);  written += 4;
         //     out.put_u32_le(m.tail);  written += 4;
         // }
-        // 
+        //
         // // --- Static field ---
         // out.put_u32_le(self.age);   written += 4;
-        // 
+        //
         // // --- tags vec<u8> ---
         // let meta = ctx.nodes[node]; node += 1;
         // out.put_u32_le(meta.len);   written += 4;
         // out.put_u32_le(offset);     written += 4;
         // out.put_u32_le(meta.tail);  written += 4;
         // offset += meta.tail;
-        // 
+        //
         // Ok(written)
     }
 
     // encode dynamic fields like raw data
-    fn encode_tail(&self, out: &mut impl bytes::BufMut) -> Result<usize, CodecError> {
-        let mut written = 0;
-        // actually encode the dynamic fields (only fields without any metadata)
-        written += <Vec<Vec<u32>> as Encoder<BigEndian, 4, true>>::encode_tail(&self.nums, out)?;
-
-        // u32 - should be written inside the encode header
-        written += <u32 as Encoder<BigEndian, 4, true>>::encode_tail(&self.age, out)?;
-
-        Ok(written)
+    fn encode_tail(&self, out: &mut impl bytes::BufMut, ctx: &mut EncodingContext) -> Result<usize, CodecError> {
+        todo!();
+        // let mut written = 0;
+        // // actually encode the dynamic fields (only fields without any metadata)
+        // written += <Vec<Vec<u32>> as Encoder<BigEndian, 4, true>>::encode_tail(&self.nums, out)?;
+        //
+        // // u32 - should be written inside the encode header
+        // written += <u32 as Encoder<BigEndian, 4, true>>::encode_tail(&self.age, out)?;
+        //
+        // Ok(written)
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
