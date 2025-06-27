@@ -28,9 +28,6 @@ jobs:
         with:
           root-reserve-mb: '30720'
           remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
@@ -56,9 +53,6 @@ jobs:
         with:
           root-reserve-mb: '30720'
           remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
@@ -117,9 +111,6 @@ jobs:
         with:
           root-reserve-mb: '30720'
           remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
