@@ -24,8 +24,6 @@ use crate::optimized::{
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
 use core::mem::size_of;
-use smallvec::SmallVec;
-
 
 /// Compact ABI encoder for Vec<T>
 impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for Vec<T>
@@ -41,7 +39,8 @@ where
         ctx.hdr_size += Self::HEADER_SIZE as u32;
 
         if T::IS_DYNAMIC {
-            // Dynamic fields have their own headers pointing to data; offset and size fields aren't needed here
+            // Dynamic fields have their own headers pointing to data; offset and size fields aren't
+            // needed here
             ctx.hdr_size -= (2 * align_up::<ALIGN>(4)) as u32;
 
             for el in self {
@@ -85,7 +84,6 @@ where
 
         Ok((ctx.hdr_ptr - hdr_ptr) as usize)
     }
-
 
     fn encode_tail(
         &self,
@@ -141,7 +139,6 @@ where
 
         Ok(out)
     }
-
 }
 
 /// Vec implementation for Solidity ABI
@@ -180,58 +177,8 @@ where
         buf: &mut impl BufMut,
         ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
-        let start_hdr_ptr = ctx.hdr_ptr;
-        let len = self.len() as u32;
-
-        let is_top_level = ctx.base_offset_stack.is_empty();
-
-        if is_top_level {
-            // Для top-level всегда пишем 32
-            write_u32_aligned::<BigEndian, 32>(buf, 32);
-            ctx.hdr_ptr += 32;
-            ctx.push_section(32); // базовый offset для top-level данных
-        } else {
-            let relative_data_offset = ctx.current_offset() - ctx.base_offset();
-            write_u32_aligned::<BigEndian, 32>(buf, relative_data_offset);
-            ctx.hdr_ptr += 32;
-            ctx.push_section(ctx.current_offset());
-        }
-
-        // Пишем длину массива
-        write_u32_aligned::<BigEndian, 32>(buf, len);
-        ctx.hdr_ptr += 32;
-
-        if T::IS_DYNAMIC {
-            // Предварительный проход: вычисляем размеры всех вложенных элементов
-            let mut sizes: SmallVec<[usize; 8]> = SmallVec::with_capacity(self.len());
-            for el in self {
-                let mut counter = ByteCounter::new();
-                let mut tmp_ctx = ctx.clone();
-                el.encode(&mut counter, &mut tmp_ctx)?;
-                sizes.push(counter.count());
-            }
-
-            // Считаем относительный offset каждого элемента внутри текущего массива
-            let mut local_offset = 32 + len * 32; // длина + оффсеты
-            for size in &sizes {
-                write_u32_aligned::<BigEndian, 32>(buf, local_offset);
-                ctx.hdr_ptr += 32;
-                local_offset += *size as u32;
-            }
-
-            // Обновляем текущий глобальный offset
-            ctx.advance_current_offset(local_offset);
-        } else {
-            let total_size = len * T::HEADER_SIZE as u32;
-            ctx.advance_current_offset(total_size);
-        }
-
-        ctx.pop_section();
-
-        Ok((ctx.hdr_ptr - start_hdr_ptr) as usize)
+        todo!()
     }
-
-
 
     /// Encodes the tail (actual data for each element).
     fn encode_tail(
@@ -252,132 +199,105 @@ where
         Ok(written)
     }
 
-    /// Complete encode: header_size -> encode_header -> encode_tail
     fn encode(
         &self,
-        buf: &mut impl BufMut,
+        out: &mut impl BufMut,
         ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
-        self.header_size(ctx)?;
-        let head = self.encode_header(buf, ctx)?;
-        let tail = self.encode_tail(buf, ctx)?;
-        Ok(head + tail)
-    }
+        let mut written = 0;
 
-    // fn encode(
-    //     &self,
-    //     out: &mut impl BufMut,
-    //     ctx: &mut EncodingContext,
-    // ) -> Result<usize, CodecError> {
-    //     todo!()
-    // let mut written = 0;
-    //
-    // let word_size: u32 = align_up::<ALIGN>(T::HEADER_SIZE) as u32;
-    //
-    // // Write offset for outer container
-    // if ctx.depth() == 0 {
-    //     write_u32_aligned::<BigEndian, ALIGN>(out, word_size);
-    //     written += word_size;
-    // }
-    //
-    // ctx.enter()?;
-    //
-    // // write data len
-    // write_u32_aligned::<BigEndian, ALIGN>(out, self.len() as u32);
-    // written += word_size;
-    //
-    // if self.is_empty() {
-    //     return Ok(written as usize);
-    // }
-    //
-    // if T::IS_DYNAMIC {
-    //     written += encode_dynamic_elements(self, out, ctx)? as u32;
-    // } else {
-    //     for element in self.iter() {
-    //         written += element.encode(out, ctx)? as u32;
-    //     }
-    // }
-    //
-    // ctx.exit();
-    // Ok(written as usize)
-    // }
+        let word_size: u32 = align_up::<ALIGN>(T::HEADER_SIZE) as u32;
+
+        // Write offset for outer container
+        if ctx.depth == 0 {
+            write_u32_aligned::<BigEndian, ALIGN>(out, word_size);
+            written += word_size;
+        }
+
+        ctx.depth += 1;
+
+        // write data len
+        write_u32_aligned::<BigEndian, ALIGN>(out, self.len() as u32);
+        written += word_size;
+
+        if self.is_empty() {
+            return Ok(written as usize);
+        }
+
+        if T::IS_DYNAMIC {
+            written += encode_dynamic_elements(self, out, ctx)? as u32;
+        } else {
+            for element in self.iter() {
+                written += element.encode(out, ctx)? as u32;
+            }
+        }
+
+        ctx.depth -= 1;
+        Ok(written as usize)
+    }
 
     /// Decodes a Solidity ABI vector from the buffer.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        let data_offset = read_u32_aligned::<BigEndian, 32>(buf, offset)? as usize;
-        let len = read_u32_aligned::<BigEndian, 32>(buf, data_offset)? as usize;
+        let data_offset = read_u32_aligned::<BigEndian, 32>(buf, offset)?;
+
+        let len = read_u32_aligned::<BigEndian, 32>(buf, data_offset as usize)? as usize;
+
         if len == 0 {
             return Ok(Vec::new());
         }
-        let mut result = Vec::with_capacity(len);
-        let mut element_offsets = Vec::with_capacity(len);
 
-        // For dynamic elements, read offsets; for static, calculate directly
-        if T::IS_DYNAMIC {
-            for i in 0..len {
-                let elem_offset =
-                    read_u32_aligned::<BigEndian, 32>(buf, data_offset + 32 + i * 32)? as usize;
-                element_offsets.push(elem_offset);
-            }
-            for elem_offset in element_offsets {
-                let value = T::decode(buf, data_offset + elem_offset)?;
-                result.push(value);
-            }
-        } else {
-            // For static elements: just decode in order, after length
-            let mut elem_data_offset = data_offset + 32;
-            for _ in 0..len {
-                let value = T::decode(buf, elem_data_offset)?;
-                result.push(value);
-                elem_data_offset += align_up::<32>(T::HEADER_SIZE);
-            }
+        let mut result = Vec::with_capacity(len);
+        let chunk = &buf.chunk()[(data_offset + 32) as usize..];
+
+        for i in 0..len {
+            let elem_offset = i * align_up::<32>(T::HEADER_SIZE);
+            let value = T::decode(&chunk, elem_offset)?;
+            result.push(value);
         }
+
         Ok(result)
     }
 }
-//
-// #[inline(always)]
-// fn encode_dynamic_elements<T, B: ByteOrder, const ALIGN: usize>(
-//     vec: &[T],
-//     buf: &mut impl BufMut,
-//     ctx: &mut EncodingContext,
-// ) -> Result<usize, CodecError>
-// where
-//     T: Encoder<B, ALIGN, true>,
-// {
-//     let len = vec.len();
-//     if len == 0 {
-//         return Ok(0);
-//     }
-//     let word_size = align_up::<ALIGN>(1);
-//
-//     let mut current_offset = len * word_size;
 
-    // todo!();
+#[inline(always)]
+fn encode_dynamic_elements<T, B: ByteOrder, const ALIGN: usize>(
+    vec: &[T],
+    buf: &mut impl BufMut,
+    ctx: &mut EncodingContext,
+) -> Result<usize, CodecError>
+where
+    T: Encoder<B, ALIGN, true, Ctx = EncodingContext>,
+{
+    let len = vec.len();
+    if len == 0 {
+        return Ok(0);
+    }
 
-    // for element in vec.iter() {
-    //     let size = if T::IS_DYNAMIC {
-    //         let mut counter = ByteCounter::new();
-    //         element.encode(&mut counter, Some(ctx))?;
-    //         counter.count()
-    //     } else {
-    //         align_up::<ALIGN>(T::HEADER_SIZE)
-    //     };
-    //
-    //     write_u32_aligned::<BigEndian, ALIGN>(buf, current_offset as u32);
-    //     current_offset += size;
-    // }
-    //
-    // // Write actual elements
-    // let mut total_written = 0;
-    // for element in vec.iter() {
-    //     let written = element.encode(buf, Some(ctx))?;
-    //
-    //     total_written += written;
-    // }
-    //
-    // Ok(len * word_size + total_written)
-// }
+    let mut current_offset = len * 32;
+
+    for element in vec.iter() {
+        let size = if T::IS_DYNAMIC {
+            let mut counter = ByteCounter::new();
+            element.encode(&mut counter, ctx)?;
+            counter.count()
+        } else {
+            align_up::<32>(T::HEADER_SIZE)
+        };
+
+        write_u32_aligned::<BigEndian, 32>(buf, current_offset as u32);
+        current_offset += size;
+    }
+
+    // Write actual elements
+    let mut total_written = 0;
+    for element in vec.iter() {
+        let written = element.encode(buf, ctx)?;
+
+        total_written += written;
+    }
+
+    Ok(len * 32 + total_written)
+}
 
 #[cfg(test)]
 mod tests {
@@ -514,10 +434,9 @@ mod tests {
     }
     #[cfg(test)]
     mod solidity {
-        use crate::optimized::encoder::Encoder;
+        use crate::optimized::{ctx::EncodingContext, encoder::Encoder};
         use byteorder::BigEndian;
         use bytes::BytesMut;
-        use crate::optimized::ctx::EncodingContext;
 
         /// Checks Solidity ABI encode/decode roundtrip and encoded hex.
         fn assert_solidity_codec<T>(value: &T, expected_hex: &str)
@@ -622,7 +541,6 @@ mod tests {
 
         #[test]
         fn test_encode_large() {
-
             let large_vec1: Vec<u32> = (0..1000).collect();
             let large_vec2: Vec<u32> = (1000..1200).collect();
             let large_vec3: Vec<u32> = (1200..1300).collect();
@@ -635,8 +553,11 @@ mod tests {
             ];
 
             let mut buf = BytesMut::new();
-            let encode_result =
-                <Vec<Vec<Vec<u32>>> as Encoder<BigEndian, 32, true>>::encode(&v, &mut buf, &mut EncodingContext::default());
+            let encode_result = <Vec<Vec<Vec<u32>>> as Encoder<BigEndian, 32, true>>::encode(
+                &v,
+                &mut buf,
+                &mut EncodingContext::default(),
+            );
 
             assert!(
                 encode_result.is_ok(),
@@ -658,11 +579,12 @@ mod tests {
         }
 
         // TODO: check do we actually need this use case
-        // TLDR: Decoding from dirty buffers with offset might be caller's responsibility to handle
-        // This test verifies decoding from a buffer with dirty/garbage data at the beginning.
-        // Current implementation expects clean buffers - decoding with offset into dirty buffer
-        // fails. This might be correct behavior: the caller should ensure proper buffer
-        // alignment/cleaning  rather than the decoder handling arbitrary offsets in dirty
+        // TLDR: Decoding from dirty buffers with offset might be caller's responsibility to
+        // handle This test verifies decoding from a buffer with dirty/garbage data
+        // at the beginning. Current implementation expects clean buffers - decoding
+        // with offset into dirty buffer fails. This might be correct behavior: the
+        // caller should ensure proper buffer alignment/cleaning  rather than the
+        // decoder handling arbitrary offsets in dirty
         #[test]
         #[ignore]
         fn vec_decoding_from_dirty_buf() {
@@ -678,10 +600,11 @@ mod tests {
             // eprintln!("encoded: {:?}", hex::encode(&encoded));
             //
             // let expected_encoded = hex::decode(concat!(
-            //     "ffffff",                                                           // Initial
-            // data
+            //     "ffffff",                                                           //
+            // Initial data
             //     "0000000000000000000000000000000000000000000000000000000000000020", // offset
-            //     "0000000000000000000000000000000000000000000000000000000000000005", // length = 5
+            //     "0000000000000000000000000000000000000000000000000000000000000005", // length
+            // = 5
             //     "0000000000000000000000000000000000000000000000000000000000000001", // 1
             //     "0000000000000000000000000000000000000000000000000000000000000002", // 2
             //     "0000000000000000000000000000000000000000000000000000000000000003", // 3

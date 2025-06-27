@@ -6,9 +6,8 @@ pub struct EncodingContext {
     pub hdr_size: u32,
     pub hdr_ptr: u32,
     pub data_ptr: u32,
-
-    pub base_offset_stack: SmallVec<[u32; 8]>,
-    pub current_offset_stack: SmallVec<[u32; 8]>,
+    
+    pub depth: u8,
 }
 
 impl Default for EncodingContext {
@@ -17,8 +16,7 @@ impl Default for EncodingContext {
             hdr_size: 0,
             hdr_ptr: 0,
             data_ptr: 0,
-            base_offset_stack: SmallVec::new(),
-            current_offset_stack: SmallVec::new(),
+            depth: 0,
         }
     }
 }
@@ -28,27 +26,6 @@ impl EncodingContext {
         Self::default()
     }
 
-    pub fn push_section(&mut self, base: u32) {
-        self.base_offset_stack.push(base);
-        self.current_offset_stack.push(base);
-    }
-
-    pub fn pop_section(&mut self) {
-        self.base_offset_stack.pop();
-        self.current_offset_stack.pop();
-    }
-
-    pub fn base_offset(&self) -> u32 {
-        *self.base_offset_stack.last().unwrap_or(&32)
-    }
-
-    pub fn current_offset(&self) -> u32 {
-        *self.current_offset_stack.last().unwrap_or(&32)
-    }
-
-    pub fn advance_current_offset(&mut self, size: u32) {
-        if let Some(last) = self.current_offset_stack.last_mut() {
-            *last += size;
-        }
-    }
+   
 }
+

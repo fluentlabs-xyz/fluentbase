@@ -24,19 +24,11 @@ use core::marker::PhantomData;
 /// ABI Encoder trait. Encodes a type into ABI-compliant bytes in a zero-allocation, phase-based
 /// manner.
 pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized {
-    /// Context type for multi-phase encoding (stack state, offsets, etc).
     type Ctx: Default;
 
-    /// For static values - actual size; for dynamic values - metadata size.
     const HEADER_SIZE: usize;
-
-    /// If a value is dynamic, it is encoded in three phases:
-    /// 1. `header_size` – calculates offsets and sizes of dynamic fields.
-    /// 2. `encode_header` – encodes static fields and offsets for dynamic fields.
-    /// 3. `encode_tail` – encodes the actual data of dynamic fields.
     const IS_DYNAMIC: bool;
 
-    /// Build offset layouts for dynamic fields and calculate actual data sizes.
     fn header_size(&self, ctx: &mut Self::Ctx) -> Result<(), CodecError> {
         const {
             assert!(!Self::IS_DYNAMIC, "dynamic type must override header_size");
@@ -44,24 +36,20 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
         Ok(())
     }
 
-    /// Encodes static fields and offsets for dynamic fields (calculated in `header_size`).
     fn encode_header(
         &self,
         out: &mut impl BufMut,
         ctx: &mut Self::Ctx,
     ) -> Result<usize, CodecError>;
 
-    /// Encodes dynamic fields (payload data).
     fn encode_tail(&self, out: &mut impl BufMut, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
         if !Self::IS_DYNAMIC {
-            // For static values, no tail is encoded.
             Ok(0)
         } else {
             unreachable!("Dynamic types must override encode_tail")
         }
     }
 
-    /// High-level encoding: performs header sizing, encodes header and tail.
     fn encode(&self, out: &mut impl BufMut, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
         self.header_size(ctx)?;
         let head = self.encode_header(out, ctx)?;
@@ -73,17 +61,14 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
         Ok(head + tail)
     }
 
-    /// Decodes value from buffer at the given offset.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError>;
 
-    /// Calculates tail (data section) size for this value.
     fn tail_size(&self, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
         let mut counter = ByteCounter::new();
         self.encode_tail(&mut counter, ctx)?;
         Ok(counter.count())
     }
 
-    /// Logical element count for this value (default is 1).
     fn len(&self) -> usize {
         1
     }

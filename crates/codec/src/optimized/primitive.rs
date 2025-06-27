@@ -12,8 +12,8 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
 for PhantomData<B>
 {
     type Ctx = EncodingContext;
-    const IS_DYNAMIC: bool = false;
     const HEADER_SIZE: usize = 0;
+    const IS_DYNAMIC: bool = false;
 
     fn encode_header(&self, _buf: &mut impl BufMut, _ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
         Ok(0)
