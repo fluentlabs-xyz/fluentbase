@@ -2697,6 +2697,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts-rwasm"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-build",
+ "fluentbase-sdk",
+ "rwasm",
+]
+
+[[package]]
 name = "fluentbase-contracts-secp256r1"
 version = "0.1.0"
 dependencies = [
@@ -2972,6 +2981,7 @@ dependencies = [
  "fluentbase-contracts-nitro",
  "fluentbase-contracts-oauth2",
  "fluentbase-contracts-ripemd160",
+ "fluentbase-contracts-rwasm",
  "fluentbase-contracts-secp256r1",
  "fluentbase-contracts-sha256",
  "fluentbase-contracts-svm",
@@ -6035,6 +6045,7 @@ dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk",
  "revm",
+ "rwasm",
  "serde",
  "serde_json",
  "sha2 0.10.9",

@@ -41,6 +41,7 @@ pub const PRECOMPILE_BLS12_381_G2_MSM: Address = evm_address(0x0e);
 pub const PRECOMPILE_BLS12_381_PAIRING: Address = evm_address(0x0f);
 pub const PRECOMPILE_BLS12_381_MAP_G1: Address = evm_address(0x10);
 pub const PRECOMPILE_BLS12_381_MAP_G2: Address = evm_address(0x11);
+pub const PRECOMPILE_RWASM: Address = evm_address(0x12);
 
 // "R native" + keccak256("multicall(bytes[])")[..4]
 pub const PRECOMPILE_NATIVE_MULTICALL: Address =

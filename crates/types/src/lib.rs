@@ -45,6 +45,8 @@ pub const NATIVE_TRANSFER_KECCAK: B256 =
     b256!("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
 pub const NATIVE_TRANSFER_ADDRESS: Address = address!("0000000000000000000000000000000000000000");
 
+pub const SYSTEM_ADDRESS: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
+
 pub const STATE_MAIN: u32 = 0;
 pub const STATE_DEPLOY: u32 = 1;
 
