@@ -20,7 +20,7 @@ env:
 jobs:
   unit-tests:
     name: Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-amd64-8core
     timeout-minutes: 30
     steps:
       - name: Maximize build space
@@ -48,7 +48,7 @@ jobs:
 
   coverage:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-amd64-8core
     if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Maximize build space
@@ -90,7 +90,7 @@ jobs:
 
   rust-fmt-lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-amd64-8core
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
@@ -109,7 +109,7 @@ jobs:
 
   evm-e2e-tests:
     name: EVM Testing Suite
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-amd64-8core
     timeout-minutes: 40
     steps:
       - name: Maximize build space
