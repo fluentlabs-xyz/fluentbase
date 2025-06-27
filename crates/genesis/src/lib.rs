@@ -21,7 +21,7 @@ const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
     (fluentbase_types::PRECOMPILE_BN256_ADD, fluentbase_contracts_bn256::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts_bn256::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_ERC20, fluentbase_contracts_erc20::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_ERC20_RUNTIME, fluentbase_contracts_erc20::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_EIP2935, fluentbase_contracts_eip2935::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::BUILD_OUTPUT),
     #[cfg(feature = "enable-svm")]
@@ -36,11 +36,11 @@ const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
     (fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts_bls12381::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts_bls12381::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts_bls12381::BUILD_OUTPUT),
-
     (fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts_nitro::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts_oauth2::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts_ripemd160::BUILD_OUTPUT),
+    (fluentbase_types::PRECOMPILE_WASM_RUNTIME, fluentbase_contracts_wasm::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_ecrecover::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts_sha256::BUILD_OUTPUT),
     (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts_webauthn::BUILD_OUTPUT),

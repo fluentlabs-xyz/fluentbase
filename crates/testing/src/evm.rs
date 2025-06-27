@@ -302,11 +302,6 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
-    pub fn disable_builtins_consume_fuel(self) -> Self {
-        self.ctx.cfg.disable_builtins_consume_fuel = true;
-        self
-    }
-
     pub fn exec(&mut self) -> ExecutionResult {
         self.tx.nonce = self.ctx.nonce(self.tx.caller);
         let db = take(&mut self.ctx.db);

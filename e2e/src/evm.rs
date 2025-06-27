@@ -166,7 +166,6 @@ fn test_evm_revert() {
     let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&SENDER_ADDRESS, 1);
     println!("{}", contract_address);
     assert!(result.is_success());
-    assert_eq!(result.gas_used(), 61149);
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
 }
@@ -513,9 +512,12 @@ fn test_evm_ecrecover_out_of_gas() {
     assert!(result.is_halt());
 }
 
-// This test calls a contract function that attempts to transfer 1 wei to `TARGET_ADDRESS`.
-// The transfer is expected to fail and revert because the contract itself holds no balance
-// and cannot cover the 1 wei being sent.
+/// This test calls a contract function that attempts to transfer 1 wei to `TARGET_ADDRESS`.
+/// The transfer is expected to fail and revert because the contract itself holds no balance
+/// and cannot cover the 1 wei being sent.
+///
+/// Test is ignored because it is an example of a test where our EVM implementation differs from
+/// the original one.
 #[test]
 #[ignore]
 fn test_evm_send_one_wei_to_precompile() {

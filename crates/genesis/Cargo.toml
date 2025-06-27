@@ -30,6 +30,7 @@ fluentbase-contracts-multicall = { path = "../../contracts/multicall" }
 fluentbase-contracts-nitro = { path = "../../contracts/nitro" }
 fluentbase-contracts-oauth2 = { path = "../../contracts/oauth2" }
 fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160" }
+fluentbase-contracts-wasm = { path = "../../contracts/wasm" }
 fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1" }
 fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
 fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
@@ -56,6 +57,7 @@ fluentbase-contracts-multicall = { path = "../../contracts/multicall" }
 fluentbase-contracts-nitro = { path = "../../contracts/nitro" }
 fluentbase-contracts-oauth2 = { path = "../../contracts/oauth2" }
 fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160" }
+fluentbase-contracts-wasm = { path = "../../contracts/wasm" }
 fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1" }
 fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
 fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }

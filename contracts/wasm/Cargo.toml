@@ -1,0 +1,23 @@
+[package]
+name = "fluentbase-contracts-wasm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+rwasm = { workspace = true }
+
+[dev-dependencies]
+
+[build-dependencies]
+fluentbase-build = { workspace = true }
+rwasm = { workspace = true }
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std",
+]
