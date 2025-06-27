@@ -127,6 +127,8 @@ fn bench_precompiled_erc20(b: &mut Bencher) {
         call_with_sig(ctx, input, &DEPLOYER_ADDR, &contract_address);
     };
 
+    // warmup
+    transfer_coin(&mut ctx);
     b.iter(|| {
         transfer_coin(&mut ctx);
     });
