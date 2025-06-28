@@ -310,73 +310,11 @@ where
 #[cfg(test)]
 mod tests {
     mod compact {
-        use crate::optimized::{ctx::EncodingContext, encoder::Encoder, utils::read_u32_aligned};
+        use crate::optimized::{ctx::EncodingContext, encoder::Encoder, utils::test_utils::*};
         use byteorder::LittleEndian;
         use bytes::BytesMut;
         use core::hash::Hash;
         use hashbrown::HashMap;
-        use hex::encode;
-        fn assert_codec<T>(expected_header_hex: &str, expected_tail_hex: &str, value: &T)
-        where
-            T: Encoder<LittleEndian, 4, false, Ctx = EncodingContext> + PartialEq + std::fmt::Debug,
-        {
-            let mut ctx = EncodingContext::default();
-            value.header_size(&mut ctx).unwrap();
-
-            let mut header_buf = BytesMut::new();
-            let w = value.encode_header(&mut header_buf, &mut ctx);
-            assert!(w.is_ok(), "encode_header failed: {:?}", w);
-            assert_eq!(
-                expected_header_hex,
-                encode(&header_buf),
-                "header bytes mismatch"
-            );
-
-            let mut tail_buf = BytesMut::new();
-            let w = value.encode_tail(&mut tail_buf, &mut ctx);
-            assert!(w.is_ok(), "encode_tail failed: {:?}", w);
-            assert_eq!(expected_tail_hex, encode(&tail_buf), "tail bytes mismatch");
-
-            let mut full_buf = header_buf.clone();
-            full_buf.extend_from_slice(&tail_buf);
-            let decoded = T::decode(&mut &full_buf[..], 0).expect("decode failed");
-            assert_eq!(decoded, *value, "decoded value mismatch");
-        }
-
-        fn assert_roundtrip<T>(value: &T)
-        where
-            T: Encoder<LittleEndian, 4, false, Ctx = EncodingContext> + PartialEq + std::fmt::Debug,
-        {
-            let mut ctx = EncodingContext::default();
-            value.header_size(&mut ctx).expect("header_size failed");
-
-            let mut header_buf = BytesMut::new();
-            value
-                .encode_header(&mut header_buf, &mut ctx)
-                .expect("encode_header failed");
-
-            let mut tail_buf = BytesMut::new();
-            value
-                .encode_tail(&mut tail_buf, &mut ctx)
-                .expect("encode_tail failed");
-
-            let mut full_buf = header_buf.clone();
-            full_buf.extend_from_slice(&tail_buf);
-
-            let decoded = T::decode(&mut &full_buf[..], 0).expect("decode failed");
-            assert_eq!(decoded, *value, "decoded value mismatch");
-        }
-
-        #[allow(dead_code)]
-        fn print_encoded(buf: &BytesMut) {
-            println!("concat!(");
-            for chunk in buf.chunks_exact(4) {
-                let hex_chunk = encode(chunk);
-                let decimal_value = read_u32_aligned::<LittleEndian, 4>(&chunk, 0).unwrap();
-                println!("    \"{}\", // {}", hex_chunk, decimal_value);
-            }
-            println!(");");
-        }
 
         mod map {
             use super::*;
@@ -395,7 +333,7 @@ mod tests {
                 // No keys, no values
                 );
 
-                assert_codec(expected_header_hex, expected_tail_hex, &test_value);
+                assert_codec_compact(expected_header_hex, expected_tail_hex, &test_value);
             }
 
             #[test]
@@ -413,7 +351,7 @@ mod tests {
                     "05000000", "14000000", "3c000000" // Values
                 );
 
-                assert_codec(expected_header_hex, expected_tail_hex, &test_value);
+                assert_codec_compact(expected_header_hex, expected_tail_hex, &test_value);
             }
 
             #[test]
@@ -451,7 +389,7 @@ mod tests {
                     "04000000", // [22] 4 -- ok m[1][v1]
                 );
 
-                assert_codec(expected_header_hex, expected_tail_hex, &test_value);
+                assert_codec_compact(expected_header_hex, expected_tail_hex, &test_value);
             }
 
             #[test]
@@ -462,11 +400,11 @@ mod tests {
                     HashMap::from([(7, 8), (9, 4)]),
                 ];
 
-                assert_roundtrip(&with_empty);
+                assert_roundtrip_compact(&with_empty);
 
                 let large_hashmap: HashMap<u32, u32> = (0..1000).map(|i| (i, i * 2)).collect();
 
-                assert_roundtrip(&large_hashmap)
+                assert_roundtrip_compact(&large_hashmap)
             }
         }
 
@@ -477,7 +415,7 @@ mod tests {
             #[test]
             fn test_empty_hashset() {
                 let value: HashSet<u32> = HashSet::new();
-                assert_codec(
+                assert_codec_compact(
                     "000000000c00000000000000", // len = 0, offset = 12, size = 0
                     "",                         // no tail
                     &value,
@@ -487,7 +425,7 @@ mod tests {
             #[test]
             fn test_hashset_u32_codec() {
                 let value = HashSet::from([3u32, 1, 4, 5, 2]);
-                assert_codec(
+                assert_codec_compact(
                     concat!(
                         "05000000", // len = 5
                         "0c000000", // offset = 12

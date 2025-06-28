@@ -91,28 +91,61 @@ where
 
 /// ABI wrapper macro for different ABI flavors (SolidityABI, CompactABI, SolidityPackedABI).
 macro_rules! define_abi {
-    // Generic ABI (header + tail).
+    // Generic ABI (header_size, header, tail encoding separately)
     ($name:ident, $byte_order:ty, $align:expr, $sol_mode:expr) => {
         pub struct $name<T>(PhantomData<T>);
+
         impl<T> $name<T>
         where
             T: Encoder<$byte_order, $align, $sol_mode>,
         {
+            #[inline]
+            pub fn header_size(value: &T, ctx: &mut T::Ctx) -> Result<(), CodecError> {
+                value.header_size(ctx)
+            }
+
+            #[inline]
+            pub fn encode_header(
+                value: &T,
+                buf: &mut impl BufMut,
+                ctx: &mut T::Ctx,
+            ) -> Result<usize, CodecError> {
+                value.encode_header(buf, ctx)
+            }
+
+            #[inline]
+            pub fn encode_tail(
+                value: &T,
+                buf: &mut impl BufMut,
+                ctx: &mut T::Ctx,
+            ) -> Result<usize, CodecError> {
+                value.encode_tail(buf, ctx)
+            }
+
             #[inline]
             pub fn encode(
                 value: &T,
                 buf: &mut impl BufMut,
                 ctx: &mut T::Ctx,
             ) -> Result<usize, CodecError> {
-                T::encode(value, buf, ctx)
+                Self::header_size(value, ctx)?;
+                let header_bytes = Self::encode_header(value, buf, ctx)?;
+                let tail_bytes = if T::IS_DYNAMIC {
+                    Self::encode_tail(value, buf, ctx)?
+                } else {
+                    0
+                };
+                Ok(header_bytes + tail_bytes)
             }
+
             #[inline]
             pub fn decode(buf: &impl Buf, offset: usize) -> Result<T, CodecError> {
                 T::decode(buf, offset)
             }
         }
     };
-    // Packed Solidity ABI (static types, single pass).
+
+    // Packed Solidity ABI (static types, single pass)
     ($name:ident, $byte_order:ty, $align:expr, $sol_mode:expr, packed) => {
         pub struct $name<T>(PhantomData<T>);
         impl<T> $name<T>
@@ -128,6 +161,7 @@ macro_rules! define_abi {
                 let _ = <T as PackedSafe>::ASSERT_STATIC;
                 value.encode(buf, ctx)
             }
+
             #[inline]
             pub fn decode(buf: &impl Buf, offset: usize) -> Result<T, CodecError> {
                 let _ = <T as PackedSafe>::ASSERT_STATIC;

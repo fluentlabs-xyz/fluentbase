@@ -1,6 +1,6 @@
 use crate::optimized::error::CodecError;
 use byteorder::ByteOrder;
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes};
 
 /// Returns `true` if the byte order is big-endian.
 pub fn is_big_endian<B: ByteOrder>() -> bool {
@@ -55,5 +55,229 @@ pub fn read_u32_aligned<B: ByteOrder, const ALIGN: usize>(
         Ok(B::read_u32(&buf.chunk()[end - 4..end]))
     } else {
         Ok(B::read_u32(&buf.chunk()[offset..offset + 4]))
+    }
+}
+
+/// Reads raw bytes from a buffer given explicit offset and length.
+/// Creates a `Bytes` object from the slice (with allocation).
+pub fn read_bytes(buf: &impl Buf, offset: usize, len: usize) -> Result<Bytes, CodecError> {
+    if buf.remaining() < offset + len {
+        return Err(CodecError::BufferTooSmallMsg {
+            expected: offset + len,
+            actual: buf.remaining(),
+            message: "Buffer too small to read requested bytes",
+        });
+    }
+
+    Ok(Bytes::copy_from_slice(&buf.chunk()[offset..offset + len]))
+}
+
+/// Reads header information and returns (data_offset, data_length).
+/// Solidity and WASM modes are handled explicitly.
+pub fn read_bytes_header<B: ByteOrder, const ALIGN: usize>(
+    buf: &impl Buf,
+    offset: usize,
+    sol_mode: bool,
+) -> Result<(usize, usize), CodecError> {
+    if sol_mode {
+        read_bytes_header_solidity::<B, ALIGN>(buf, offset)
+    } else {
+        read_bytes_header_compact::<B, ALIGN>(buf, offset)
+    }
+}
+
+/// Reads WASM-compatible header:
+/// Returns `(data_offset, data_length)` directly from two consecutive u32 fields.
+pub fn read_bytes_header_compact<B: ByteOrder, const ALIGN: usize>(
+    buf: &impl Buf,
+    offset: usize,
+) -> Result<(usize, usize), CodecError> {
+    let word = align_up::<ALIGN>(4);
+    let required_size = offset + word * 2;
+
+    if buf.remaining() < required_size {
+        return Err(CodecError::BufferTooSmallMsg {
+            expected: required_size,
+            actual: buf.remaining(),
+            message: "Compact header: insufficient buffer size",
+        });
+    }
+
+    let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
+    let data_len = read_u32_aligned::<B, ALIGN>(buf, offset + word)? as usize;
+
+    Ok((data_offset, data_len))
+}
+
+pub fn read_bytes_header_solidity<B: ByteOrder, const ALIGN: usize>(
+    buf: &impl Buf,
+    offset: usize,
+) -> Result<(usize, usize), CodecError> {
+    let word = align_up::<ALIGN>(4);
+    let offset_end = offset + word;
+
+    if buf.remaining() < offset_end {
+        return Err(CodecError::BufferTooSmallMsg {
+            expected: offset_end,
+            actual: buf.remaining(),
+            message: "Solidity header: insufficient buffer size for offset",
+        });
+    }
+
+    // Data offset position
+    let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
+
+    // Solidity length is stored exactly at data_offset position
+    let length_end = data_offset + word;
+    if buf.remaining() < length_end {
+        return Err(CodecError::BufferTooSmallMsg {
+            expected: length_end,
+            actual: buf.remaining(),
+            message: "Solidity header: insufficient buffer size for length",
+        });
+    }
+
+    let data_len = read_u32_aligned::<B, ALIGN>(buf, data_offset)? as usize;
+
+    // Data starts immediately after aligned length
+    Ok((data_offset + word, data_len))
+}
+
+#[cfg(test)]
+pub mod test_utils {
+    use crate::optimized::{ctx::EncodingContext, encoder::Encoder, utils::read_u32_aligned};
+    use byteorder::{BigEndian, ByteOrder, LittleEndian};
+    use bytes::BytesMut;
+    use hex::encode;
+
+    pub(crate) fn assert_codec_compact<T>(
+        expected_header_hex: &str,
+        expected_tail_hex: &str,
+        value: &T,
+    ) where
+        T: Encoder<LittleEndian, 4, false, Ctx = EncodingContext>
+            + PartialEq
+            + std::fmt::Debug
+            + Clone,
+    {
+        let mut ctx = EncodingContext::default();
+        let _ = T::header_size(value, &mut ctx);
+
+        let mut header_buf = BytesMut::new();
+        let w = T::encode_header(value, &mut header_buf, &mut ctx);
+        assert!(w.is_ok(), "encode_header failed: {:?}", w);
+
+        assert_eq!(
+            expected_header_hex,
+            encode(&header_buf),
+            "header bytes mismatch"
+        );
+
+        let mut tail_buf = BytesMut::new();
+        let w = T::encode_tail(value, &mut tail_buf, &mut ctx);
+        assert!(w.is_ok(), "encode_tail failed: {:?}", w);
+        assert_eq!(
+            expected_tail_hex,
+            encode(&tail_buf),
+            "tail bytes mismatch"
+        );
+
+        let mut full_buf = header_buf.clone();
+        full_buf.extend_from_slice(&tail_buf);
+        let decoded = T::decode(&mut &full_buf[..], 0).expect("decode failed");
+        assert_eq!(decoded, *value, "decoded value mismatch");
+    }
+    pub(crate) fn assert_codec_sol<T>(expected_header_hex: &str, expected_tail_hex: &str, value: &T)
+    where
+        T: Encoder<BigEndian, 32, true, Ctx = EncodingContext>
+            + PartialEq
+            + std::fmt::Debug
+            + Clone,
+    {
+        let mut ctx = EncodingContext::default();
+        let _ = T::header_size(value, &mut ctx);
+
+        let mut header_buf = BytesMut::new();
+        let w = T::encode_header(value, &mut header_buf, &mut ctx);
+        assert!(w.is_ok(), "encode_header failed: {:?}", w);
+
+        assert_eq!(
+            expected_header_hex,
+            encode(&header_buf),
+            "header bytes mismatch"
+        );
+
+        let mut tail_buf = BytesMut::new();
+        let w = T::encode_tail(value, &mut tail_buf, &mut ctx);
+        assert!(w.is_ok(), "encode_tail failed: {:?}", w);
+        assert_eq!(
+            expected_tail_hex,
+            encode(&tail_buf),
+            "tail bytes mismatch"
+        );
+
+        let mut full_buf = header_buf.clone();
+        full_buf.extend_from_slice(&tail_buf);
+        let decoded = T::decode(&mut &full_buf[..], 0).expect("decode failed");
+        assert_eq!(decoded, *value, "decoded value mismatch");
+    }
+
+    pub(crate) fn assert_roundtrip_compact<T>(value: &T)
+    where
+        T: Encoder<LittleEndian, 4, false, Ctx = EncodingContext> + PartialEq + std::fmt::Debug,
+    {
+        let mut ctx = EncodingContext::default();
+        value.header_size(&mut ctx).expect("header_size failed");
+
+        let mut header_buf = BytesMut::new();
+        value
+            .encode_header(&mut header_buf, &mut ctx)
+            .expect("encode_header failed");
+
+        let mut tail_buf = BytesMut::new();
+        value
+            .encode_tail(&mut tail_buf, &mut ctx)
+            .expect("encode_tail failed");
+
+        let mut full_buf = header_buf.clone();
+        full_buf.extend_from_slice(&tail_buf);
+
+        let decoded = T::decode(&mut &full_buf[..], 0).expect("decode failed");
+        assert_eq!(decoded, *value, "decoded value mismatch");
+    }
+
+    pub(crate) fn assert_roundtrip_sol<T>(value: &T)
+    where
+        T: Encoder<BigEndian, 32, true, Ctx = EncodingContext> + PartialEq + std::fmt::Debug,
+    {
+        let mut ctx = EncodingContext::default();
+        value.header_size(&mut ctx).expect("header_size failed");
+
+        let mut header_buf = BytesMut::new();
+        value
+            .encode_header(&mut header_buf, &mut ctx)
+            .expect("encode_header failed");
+
+        let mut tail_buf = BytesMut::new();
+        value
+            .encode_tail(&mut tail_buf, &mut ctx)
+            .expect("encode_tail failed");
+
+        let mut full_buf = header_buf.clone();
+        full_buf.extend_from_slice(&tail_buf);
+
+        let decoded = T::decode(&mut &full_buf[..], 0).expect("decode failed");
+        assert_eq!(decoded, *value, "decoded value mismatch");
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn print_encoded<B: ByteOrder, const ALIGN: usize>(buf: &BytesMut) {
+        println!("concat!(");
+        for chunk in buf.chunks_exact(ALIGN) {
+            let hex_chunk = encode(chunk);
+            let decimal_value = read_u32_aligned::<B, ALIGN>(&chunk, 0).unwrap();
+            println!("    \"{}\", // {}", hex_chunk, decimal_value);
+        }
+        println!(");");
     }
 }

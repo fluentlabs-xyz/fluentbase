@@ -301,73 +301,39 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::optimized::utils::test_utils::assert_codec_compact;
     mod compact {
-        use crate::optimized::{ctx::EncodingContext, encoder::Encoder};
+        use super::*;
         use byteorder::LittleEndian;
-        use bytes::BytesMut;
-        pub fn assert_codec<T>(value: &T, expected_header_hex: &str, expected_tail_hex: &str)
-        where
-            T: Encoder<LittleEndian, 4, false, Ctx = EncodingContext>
-                + PartialEq
-                + std::fmt::Debug
-                + Clone,
-        {
-            let mut ctx = EncodingContext::default();
-            let _ = T::header_size(value, &mut ctx);
-
-            let mut header_buf = BytesMut::new();
-            let w = T::encode_header(value, &mut header_buf, &mut ctx);
-            assert!(w.is_ok(), "encode_header failed: {:?}", w);
-            assert_eq!(
-                expected_header_hex,
-                hex::encode(&header_buf),
-                "header bytes mismatch"
-            );
-
-            let mut tail_buf = BytesMut::new();
-            let w = T::encode_tail(value, &mut tail_buf, &mut ctx);
-            assert!(w.is_ok(), "encode_tail failed: {:?}", w);
-            assert_eq!(
-                expected_tail_hex,
-                hex::encode(&tail_buf),
-                "tail bytes mismatch"
-            );
-
-            let mut full_buf = header_buf.clone();
-            full_buf.extend_from_slice(&tail_buf);
-            let decoded = T::decode(&mut &full_buf[..], 0).expect("decode failed");
-            assert_eq!(decoded, *value, "decoded value mismatch");
-        }
-
         #[test]
         fn test_empty_vec() {
             let value: Vec<u32> = vec![];
-            assert_codec(
-                &value,
+            assert_codec_compact(
                 "000000000c00000000000000", // len = 0, offset = 12, size = 0
                 "",                         // no tail
+                &value,
             );
         }
 
         #[test]
         fn test_vec_u32_codec() {
             let value = vec![1u32, 2, 3, 4, 5];
-            assert_codec(
-                &value,
+            assert_codec_compact(
                 concat!(
                     "05000000", // len = 5
                     "0c000000", // offset = 12
                     "14000000"  // size = 20 (5 * 4)
                 ),
                 concat!("01000000", "02000000", "03000000", "04000000", "05000000"),
+                &value,
             );
         }
 
         #[test]
         fn test_vec_vec_u32_codec() {
             let value = vec![vec![1u32, 2, 3], vec![4, 5]];
-            assert_codec(
-                &value,
+            assert_codec_compact(
                 concat!(
                     "02000000", // 2  - len
                     "03000000", // 3  - len (v0)
@@ -378,14 +344,14 @@ mod tests {
                     "08000000", // 8  - size (v1 data) 2 * 4B = 8B
                 ),
                 concat!("01000000", "02000000", "03000000", "04000000", "05000000"),
+                &value,
             );
         }
 
         #[test]
         fn test_deep_nested_vec() {
             let value = vec![vec![vec![1u32, 2], vec![3], vec![4, 5, 6]]];
-            assert_codec(
-                &value,
+            assert_codec_compact(
                 concat!(
                     // root Vec<Vec<Vec<u32>>>
                     "01000000", // 1 element
@@ -409,6 +375,7 @@ mod tests {
                     "03000000", // [3]
                     "04000000", "05000000", "06000000" // [4, 5, 6]
                 ),
+                &value,
             );
         }
 
