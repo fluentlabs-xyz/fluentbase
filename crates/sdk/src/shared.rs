@@ -471,19 +471,29 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 
-    fn metadata_size(&self, address: &Address) -> SyscallResult<u32> {
+    fn metadata_size(
+        &self,
+        address: &Address,
+    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
         let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
             SYSCALL_ID_METADATA_SIZE,
             address.as_slice(),
             None,
             STATE_MAIN,
         );
-        let mut output: [u8; 4] = [0u8; 4];
+        let mut output: [u8; 6] = [0u8; 6];
         if SyscallResult::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
         };
-        let value = LittleEndian::read_u32(&output);
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+        let value = LittleEndian::read_u32(&output[0..4]);
+        let is_cold_access = output[4] != 0x00;
+        let is_account_empty = output[5] != 0x00;
+        SyscallResult::new(
+            (value, is_cold_access, is_account_empty),
+            fuel_consumed,
+            fuel_refunded,
+            exit_code,
+        )
     }
 
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes> {

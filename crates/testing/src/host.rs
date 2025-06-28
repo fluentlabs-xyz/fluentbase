@@ -335,7 +335,10 @@ impl SharedAPI for HostTestingContext {
         unimplemented!("not supported for testing context")
     }
 
-    fn metadata_size(&self, _address: &Address) -> SyscallResult<u32> {
+    fn metadata_size(
+        &self,
+        _address: &Address,
+    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
         unimplemented!("not supported for testing context")
     }
 

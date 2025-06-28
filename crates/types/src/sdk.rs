@@ -152,6 +152,9 @@ pub trait SharedAPI: StorageAPI {
         offset: u32,
         metadata: Bytes,
     ) -> SyscallResult<()>;
-    fn metadata_size(&self, address: &Address) -> SyscallResult<u32>;
+    fn metadata_size(
+        &self,
+        address: &Address,
+    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)>;
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
 }

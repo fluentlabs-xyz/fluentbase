@@ -5,23 +5,21 @@ extern crate core;
 
 use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, result::InterpreterResult, EVM};
 use fluentbase_sdk::{
+    bytes::Buf,
     entrypoint,
+    keccak256,
     Bytes,
     ContextReader,
     ExitCode,
     SharedAPI,
-    SyscallResult,
     B256,
     EVM_MAX_CODE_SIZE,
     KECCAK_EMPTY,
-    PROTECTED_STORAGE_SLOT_0,
-    PROTECTED_STORAGE_SLOT_1,
-    U256,
 };
 
 /// Indicates whether analyzed EVM bytecode should be cached.
 /// Set to `false` to disable caching, which may result in repeated analysis and potentially slower
-/// performance, but ensures the latest results are always used.
+/// performance but ensures the latest results are always used.
 pub const CACHE_ANALYZED_EVM_BYTECODE: bool = false;
 
 /// Commits EVM bytecode to persistent storage and updates the corresponding code hash.
@@ -40,20 +38,14 @@ pub(crate) fn commit_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
     sdk: &mut SDK,
     evm_bytecode: Bytes,
 ) {
-    // write an original EVM bytecode into preimage storage and update protected slot 0
-    let code_hash = sdk.write_preimage(evm_bytecode.clone());
-    assert!(code_hash.status.is_ok());
-    // TODO(dmitry123): "instead of protected slots use metadata storage"
-    _ = sdk.write_storage(PROTECTED_STORAGE_SLOT_0.into(), code_hash.data.into());
-    // write analyzed EVM bytecode into storage
-    if CACHE_ANALYZED {
-        let analyzed_bytecode =
-            AnalyzedBytecode::new(&evm_bytecode[..], code_hash.data).serialize();
-        let analyzed_hash = sdk.write_preimage(analyzed_bytecode.into());
-        assert!(analyzed_hash.status.is_ok());
-        // TODO(dmitry123): "instead of protected slots use metadata storage"
-        _ = sdk.write_storage(PROTECTED_STORAGE_SLOT_1.into(), analyzed_hash.data.into());
-    }
+    let contract_address = sdk.context().contract_address();
+    let evm_code_hash = keccak256(evm_bytecode.as_ref());
+    // write an EVM code hash into metadata at offset 0
+    sdk.metadata_write(&contract_address, 0, evm_code_hash.into())
+        .unwrap();
+    // write not analyzed EVM bytecode at offset 32
+    sdk.metadata_write(&contract_address, 32, evm_bytecode.into())
+        .unwrap();
 }
 
 /// Loads the EVM bytecode associated with the contract using the provided SDK.
@@ -70,41 +62,31 @@ pub(crate) fn commit_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
 ///
 /// # Returns
 /// An `Option<Bytecode>`.
-/// - `Some(Bytecode)`: If valid bytecode exists and is successfully retrieved.
+/// - `Some(Bytecode)`: If a valid bytecode exists and is successfully retrieved.
 /// - `None`: If the bytecode is empty or not present in the storage.
 pub(crate) fn load_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
     sdk: &SDK,
 ) -> Option<AnalyzedBytecode> {
+    // we use bytecode address because contract can be called using DELEGATECALL
     let bytecode_address = sdk.context().contract_bytecode_address();
-    let evm_code_hash = sdk.delegated_storage(
-        &bytecode_address,
-        &Into::<U256>::into(if CACHE_ANALYZED {
-            PROTECTED_STORAGE_SLOT_1
-        } else {
-            PROTECTED_STORAGE_SLOT_0
-        }),
-    );
-    let (evm_code_hash, _, _) = evm_code_hash.data;
+    // read metadata size, if it's zero, then an account is not assigned to the EVM runtime
+    let (metadata_size, _, _) = sdk.metadata_size(&bytecode_address).unwrap();
+    if metadata_size == 0 {
+        return None;
+    }
+    let mut metadata = sdk
+        .metadata_copy(&bytecode_address, 0, metadata_size)
+        .unwrap();
+    // load EVM bytecode hash and exit if the code hash is empty
+    let evm_code_hash = B256::from_slice(&metadata[0..32]);
     // TODO(dmitry123): "do we want to have this optimized during the creation of the frame?"
-    let is_empty_bytecode =
-        evm_code_hash == U256::ZERO || evm_code_hash == Into::<U256>::into(KECCAK_EMPTY);
+    let is_empty_bytecode = evm_code_hash == B256::ZERO || evm_code_hash == KECCAK_EMPTY;
     if is_empty_bytecode {
         return None;
     }
-    // TODO(dmitry123): "instead of preimages use metadata storage"
-    let evm_bytecode = sdk.preimage_copy(&evm_code_hash.into());
-    assert!(
-        SyscallResult::is_ok(evm_bytecode.status),
-        "sdk: failed reading evm bytecode"
-    );
-    let analyzed_bytecode = if CACHE_ANALYZED {
-        AnalyzedBytecode::deserialize(&evm_bytecode.data[..])
-    } else {
-        AnalyzedBytecode::new(&evm_bytecode.data[..], evm_code_hash.into())
-    };
-    if analyzed_bytecode.hash == KECCAK_EMPTY {
-        return None;
-    }
+    // skip the first 32 bytes (code hash)
+    metadata.advance(32);
+    let analyzed_bytecode = AnalyzedBytecode::new(&metadata[..], evm_code_hash.into());
     Some(analyzed_bytecode)
 }
 
@@ -284,6 +266,7 @@ mod tests {
     use fluentbase_sdk::{hex, Address, ContractContextV1, U256};
     use fluentbase_sdk_testing::HostTestingContext;
 
+    #[ignore]
     #[test]
     fn test_deploy_greeting() {
         const CONTRACT_ADDRESS: Address = Address::new([

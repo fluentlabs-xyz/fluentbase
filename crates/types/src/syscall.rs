@@ -80,7 +80,7 @@ impl SyscallResult<()> {
     }
 }
 
-impl<T> SyscallResult<T> {
+impl<T: Default> SyscallResult<T> {
     pub fn new<I: Into<ExitCode>>(
         data: T,
         fuel_consumed: u64,
@@ -96,9 +96,22 @@ impl<T> SyscallResult<T> {
     }
     pub fn expect<I: Into<String>>(self, msg: I) -> Self {
         if !self.status.is_ok() {
-            panic!("syscall result has status {}: {}", self.status, msg.into());
+            panic!("syscall failed with status {}: {}", self.status, msg.into());
         }
         self
+    }
+    pub fn unwrap(self) -> T {
+        if !self.status.is_ok() {
+            panic!("syscall failed with status ({})", self.status);
+        }
+        self.data
+    }
+    pub fn unwrap_or_default(self) -> T {
+        if self.status.is_ok() {
+            self.data
+        } else {
+            T::default()
+        }
     }
 }
 
