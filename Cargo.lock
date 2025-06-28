@@ -5582,6 +5582,7 @@ name = "revm-bytecode"
 version = "4.0.1"
 dependencies = [
  "bitvec",
+ "keccak-hash",
  "once_cell",
  "paste",
  "phf",
