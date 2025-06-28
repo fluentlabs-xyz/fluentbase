@@ -3151,7 +3151,6 @@ dependencies = [
  "fluentbase-codec",
  "hashbrown 0.15.4",
  "hex-literal 1.0.0",
- "once_cell",
  "paste",
  "revm-precompile",
  "revm-primitives",
@@ -5582,7 +5581,6 @@ name = "revm-bytecode"
 version = "4.0.1"
 dependencies = [
  "bitvec",
- "keccak-hash",
  "once_cell",
  "paste",
  "phf",

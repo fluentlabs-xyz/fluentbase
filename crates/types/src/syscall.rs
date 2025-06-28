@@ -135,12 +135,17 @@ pub const SYSCALL_ID_TRANSIENT_READ: B256 = B256::with_last_byte(0x11);
 pub const SYSCALL_ID_TRANSIENT_WRITE: B256 = B256::with_last_byte(0x12);
 
 // TODO(dmitry123): "rethink these syscalls"
+// #[deprecated(note = "use metadata")]
 pub const SYSCALL_ID_WRITE_PREIMAGE: B256 = B256::with_last_byte(0x30);
+// #[deprecated(note = "use metadata")]
 pub const SYSCALL_ID_PREIMAGE_COPY: B256 = B256::with_last_byte(0x31);
+// #[deprecated(note = "use metadata")]
 pub const SYSCALL_ID_PREIMAGE_SIZE: B256 = B256::with_last_byte(0x32);
 
 // TODO(dmitry123): "rethink this syscall"
+// #[deprecated(note = "use metadata")]
 pub const SYSCALL_ID_DELEGATED_STORAGE: B256 = B256::with_last_byte(0x33);
+
 pub const SYSCALL_ID_METADATA_WRITE: B256 = B256::with_last_byte(0x34);
 pub const SYSCALL_ID_METADATA_SIZE: B256 = B256::with_last_byte(0x35);
-pub const SYSCALL_ID_METADATA_READ: B256 = B256::with_last_byte(0x36);
+pub const SYSCALL_ID_METADATA_COPY: B256 = B256::with_last_byte(0x36);

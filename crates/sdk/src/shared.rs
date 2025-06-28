@@ -33,6 +33,9 @@ use fluentbase_types::{
     SYSCALL_ID_DELEGATE_CALL,
     SYSCALL_ID_DESTROY_ACCOUNT,
     SYSCALL_ID_EMIT_LOG,
+    SYSCALL_ID_METADATA_COPY,
+    SYSCALL_ID_METADATA_SIZE,
+    SYSCALL_ID_METADATA_WRITE,
     SYSCALL_ID_PREIMAGE_COPY,
     SYSCALL_ID_PREIMAGE_SIZE,
     SYSCALL_ID_SELF_BALANCE,
@@ -450,5 +453,48 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             STATE_MAIN,
         );
         SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn metadata_write(
+        &mut self,
+        address: &Address,
+        offset: u32,
+        metadata: Bytes,
+    ) -> SyscallResult<()> {
+        let mut buffer = vec![0u8; 20 + 4 + metadata.len()];
+        buffer[0..20].copy_from_slice(address.as_slice());
+        LittleEndian::write_u32(&mut buffer[20..24], offset);
+        buffer[24..].copy_from_slice(&metadata);
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk
+                .exec(SYSCALL_ID_METADATA_WRITE, &buffer, None, STATE_MAIN);
+        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn metadata_size(&self, address: &Address) -> SyscallResult<u32> {
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            SYSCALL_ID_METADATA_SIZE,
+            address.as_slice(),
+            None,
+            STATE_MAIN,
+        );
+        let mut output: [u8; 4] = [0u8; 4];
+        if SyscallResult::is_ok(exit_code) {
+            self.native_sdk.read_output(&mut output, 0);
+        };
+        let value = LittleEndian::read_u32(&output);
+        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes> {
+        let mut buffer = [0u8; 20 + 4 + 4];
+        buffer[0..20].copy_from_slice(address.as_slice());
+        LittleEndian::write_u32(&mut buffer[20..24], offset);
+        LittleEndian::write_u32(&mut buffer[24..28], length);
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk
+                .exec(SYSCALL_ID_METADATA_COPY, &buffer, None, STATE_MAIN);
+        let value = self.native_sdk.return_data();
+        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 }

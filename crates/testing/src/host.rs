@@ -1,6 +1,23 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
-use fluentbase_sdk::{bytes::Buf, native_api::NativeAPI, Address, Bytes, ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsColdAccess, SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256, FUEL_DENOM_RATE, U256};
+use fluentbase_sdk::{
+    bytes::Buf,
+    native_api::NativeAPI,
+    Address,
+    Bytes,
+    ContextReader,
+    ContractContextV1,
+    ExitCode,
+    IsAccountEmpty,
+    IsColdAccess,
+    SharedAPI,
+    SharedContextInputV1,
+    StorageAPI,
+    SyscallResult,
+    B256,
+    FUEL_DENOM_RATE,
+    U256,
+};
 use hashbrown::HashMap;
 use std::rc::Rc;
 
@@ -228,19 +245,19 @@ impl SharedAPI for HostTestingContext {
     }
 
     fn self_balance(&self) -> SyscallResult<U256> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
     }
 
     fn balance(&self, _address: &Address) -> SyscallResult<U256> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
     }
 
     fn code_size(&self, _address: &Address) -> SyscallResult<u32> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
     }
 
     fn code_hash(&self, _address: &Address) -> SyscallResult<B256> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
     }
 
     fn code_copy(
@@ -249,7 +266,7 @@ impl SharedAPI for HostTestingContext {
         _code_offset: u64,
         _code_length: u64,
     ) -> SyscallResult<Bytes> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
     }
 
     fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256> {
@@ -264,7 +281,7 @@ impl SharedAPI for HostTestingContext {
         _value: &U256,
         _init_code: &[u8],
     ) -> SyscallResult<Bytes> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
     }
 
     fn call(
@@ -274,7 +291,7 @@ impl SharedAPI for HostTestingContext {
         _input: &[u8],
         _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
     }
 
     fn call_code(
@@ -284,7 +301,7 @@ impl SharedAPI for HostTestingContext {
         _input: &[u8],
         _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
     }
 
     fn delegate_call(
@@ -293,7 +310,7 @@ impl SharedAPI for HostTestingContext {
         _input: &[u8],
         _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
     }
 
     fn static_call(
@@ -302,10 +319,32 @@ impl SharedAPI for HostTestingContext {
         _input: &[u8],
         _fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
     }
 
     fn destroy_account(&mut self, _address: Address) -> SyscallResult<()> {
-        panic!("not supported for testing context")
+        unimplemented!("not supported for testing context")
+    }
+
+    fn metadata_write(
+        &mut self,
+        _address: &Address,
+        _offset: u32,
+        _metadata: Bytes,
+    ) -> SyscallResult<()> {
+        unimplemented!("not supported for testing context")
+    }
+
+    fn metadata_size(&self, _address: &Address) -> SyscallResult<u32> {
+        unimplemented!("not supported for testing context")
+    }
+
+    fn metadata_copy(
+        &self,
+        _address: &Address,
+        _offset: u32,
+        _length: u32,
+    ) -> SyscallResult<Bytes> {
+        unimplemented!("not supported for testing context")
     }
 }
