@@ -20,16 +20,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 use core::cmp::min;
-use fluentbase_sdk::{
-    calc_preimage_address,
-    debug_log,
-    ContextReader,
-    SharedAPI,
-    B256,
-    KECCAK_EMPTY,
-    PROTECTED_STORAGE_SLOT_0,
-    U256,
-};
+use fluentbase_sdk::{debug_log, ContextReader, SharedAPI, B256, KECCAK_EMPTY, U256};
 
 pub fn balance<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
@@ -45,107 +36,77 @@ pub fn selfbalance<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
 
 pub fn extcodesize<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
-    let delegated_code_hash = evm
-        .sdk
-        .delegated_storage(&address, &PROTECTED_STORAGE_SLOT_0.into());
-    assert!(
-        !delegated_code_hash.status.is_error(),
-        "evm: delegated storage failed with error ({:?})",
-        delegated_code_hash.status
-    );
-    let is_delegated = delegated_code_hash.status.is_ok();
-    let (delegated_code_hash, is_cold_accessed, _is_empty) = delegated_code_hash.data;
-    let preimage_address = if is_delegated {
-        calc_preimage_address(&delegated_code_hash.into())
-    } else {
+    let (metadata_size, is_cold_access, _is_account_empty) =
+        evm.sdk.metadata_size(&address).unwrap_or_default();
+    debug_log!(
+        "extcodesize: address={}, metadata_size={metadata_size}, is_cold_access={is_cold_access}",
         address
+    );
+    let evm_code_size = if metadata_size > 0 {
+        // 32 is a size of code hash
+        metadata_size - 32
+    } else {
+        unwrap_syscall!(@gasless evm, evm.sdk.code_size(&address))
     };
-    let code_size = evm.sdk.code_size(&preimage_address);
-    if !code_size.status.is_ok() {
-        evm.state = instruction_result_from_exit_code(code_size.status);
-        return;
-    }
-    gas!(evm, warm_cold_cost(is_cold_accessed));
-    push!(evm, U256::from(code_size.data));
+    gas!(evm, warm_cold_cost(is_cold_access));
+    push!(evm, U256::from(evm_code_size));
 }
 
 /// EIP-1052: EXTCODEHASH opcode
 pub fn extcodehash<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
-    let delegated_code_hash = evm
-        .sdk
-        .delegated_storage(&address, &PROTECTED_STORAGE_SLOT_0.into());
-    assert!(
-        !delegated_code_hash.status.is_error(),
-        "evm: delegated storage failed with error ({:?})",
-        delegated_code_hash.status
-    );
-    let is_delegated = delegated_code_hash.status.is_ok();
-    let (mut delegated_code_hash, is_cold_accessed, is_empty) = delegated_code_hash.data;
+    let (metadata_size, is_cold_access, is_account_empty) =
+        evm.sdk.metadata_size(&address).unwrap_or_default();
     // for delegated accounts, we can instantly return code hash
     // since the account is managed by the same runtime and store EVM code hash in this field
-    if is_delegated {
-        // if delegated code hash is zero, then it might be a contract deployment stage,
+    let evm_code_hash = if metadata_size > 0 {
+        let evm_code_hash = unwrap_syscall!(@gasless evm, evm.sdk.metadata_copy(&address, 0, 32));
+        let mut evm_code_hash = B256::from_slice(evm_code_hash.as_ref());
+        // if the delegated code hash is zero, then it might be a contract deployment stage,
         // for non-empty account return KECCAK_EMPTY
-        if delegated_code_hash == U256::ZERO && !is_empty {
-            delegated_code_hash = Into::<U256>::into(KECCAK_EMPTY);
+        if evm_code_hash == B256::ZERO && !is_account_empty {
+            evm_code_hash = KECCAK_EMPTY;
         }
-        // charge the gas according to the cold/warm access to the account
-        gas!(evm, warm_cold_cost(is_cold_accessed));
-        // there is no need to request code hash for a delegated account
-        // since we already know the result and can safely push it
-        push!(evm, delegated_code_hash);
-        return;
+        evm_code_hash
+    } else {
+        let evm_code_hash = evm.sdk.code_hash(&address);
+        if !evm_code_hash.status.is_ok() {
+            evm.state = instruction_result_from_exit_code(evm_code_hash.status);
+            return;
+        }
+        evm_code_hash.data
     };
-    let code_hash = evm.sdk.code_hash(&address);
-    if !code_hash.status.is_ok() {
-        evm.state = instruction_result_from_exit_code(code_hash.status);
-        return;
-    }
-    gas!(evm, warm_cold_cost(is_cold_accessed));
-    push_b256!(evm, code_hash.data);
+    gas!(evm, warm_cold_cost(is_cold_access));
+    push_b256!(evm, evm_code_hash);
 }
 
 pub fn extcodecopy<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
     pop!(evm, memory_offset, code_offset, len_u256);
+    // load metadata info
+    let (metadata_size, is_cold_access, _is_account_empty) =
+        evm.sdk.metadata_size(&address).unwrap_or_default();
     debug_log!(
-        "EXTCODECOPY: address={} memory_offset={} code_offset={} len_u256={}",
-        address,
-        memory_offset,
-        code_offset,
-        len_u256
+        "extcodecopy: address={}, metadata_size={metadata_size}, is_cold_access={is_cold_access}",
+        address
     );
-
-    let delegated_code_hash = evm
-        .sdk
-        .delegated_storage(&address, &PROTECTED_STORAGE_SLOT_0.into());
-    assert!(
-        !delegated_code_hash.status.is_error(),
-        "evm: delegated storage failed with error ({:?})",
-        delegated_code_hash.status
-    );
-    let is_delegated = delegated_code_hash.status.is_ok();
-    let (delegated_code_hash, is_cold_accessed, _) = delegated_code_hash.data;
-
+    // charge gas
     let code_length = as_usize_or_fail!(evm, len_u256);
     gas_or_fail!(
         evm,
-        gas::extcodecopy_cost(code_length as u64, is_cold_accessed)
+        gas::extcodecopy_cost(code_length as u64, is_cold_access)
     );
     if code_length == 0 {
         return;
     }
-
     let memory_offset = as_usize_or_fail!(evm, memory_offset);
     let code_offset = as_usize_saturated!(code_offset);
-
-    let preimage_address = if is_delegated {
-        calc_preimage_address(&delegated_code_hash.into())
+    // get evm bytecode (32 is EVM code hash size)
+    let code = if metadata_size > 0 {
+        unwrap_syscall!(@gasless evm, evm.sdk.metadata_copy(&address, 32, metadata_size - 32))
     } else {
-        address
+        unwrap_syscall!(@gasless evm, evm.sdk.code_copy(&address, code_offset as u64, code_length as u64))
     };
-    let code = unwrap_syscall!(@gasless evm, evm.sdk.code_copy(&preimage_address, code_offset as u64, code_length as u64));
     let code_offset = min(code_offset, code.len());
     resize_memory!(evm, memory_offset, code_length as usize);
     // Note: this can't panic because we resized memory to fit.

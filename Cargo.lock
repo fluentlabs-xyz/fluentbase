@@ -3151,7 +3151,6 @@ dependencies = [
  "fluentbase-codec",
  "hashbrown 0.15.4",
  "hex-literal 1.0.0",
- "once_cell",
  "paste",
  "revm-precompile",
  "revm-primitives",

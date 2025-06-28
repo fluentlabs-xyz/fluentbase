@@ -80,7 +80,7 @@ impl SyscallResult<()> {
     }
 }
 
-impl<T> SyscallResult<T> {
+impl<T: Default> SyscallResult<T> {
     pub fn new<I: Into<ExitCode>>(
         data: T,
         fuel_consumed: u64,
@@ -96,9 +96,22 @@ impl<T> SyscallResult<T> {
     }
     pub fn expect<I: Into<String>>(self, msg: I) -> Self {
         if !self.status.is_ok() {
-            panic!("syscall result has status {}: {}", self.status, msg.into());
+            panic!("syscall failed with status {}: {}", self.status, msg.into());
         }
         self
+    }
+    pub fn unwrap(self) -> T {
+        if !self.status.is_ok() {
+            panic!("syscall failed with status ({})", self.status);
+        }
+        self.data
+    }
+    pub fn unwrap_or_default(self) -> T {
+        if self.status.is_ok() {
+            self.data
+        } else {
+            T::default()
+        }
     }
 }
 
@@ -135,9 +148,17 @@ pub const SYSCALL_ID_TRANSIENT_READ: B256 = B256::with_last_byte(0x11);
 pub const SYSCALL_ID_TRANSIENT_WRITE: B256 = B256::with_last_byte(0x12);
 
 // TODO(dmitry123): "rethink these syscalls"
+// #[deprecated(note = "use metadata")]
 pub const SYSCALL_ID_WRITE_PREIMAGE: B256 = B256::with_last_byte(0x30);
+// #[deprecated(note = "use metadata")]
 pub const SYSCALL_ID_PREIMAGE_COPY: B256 = B256::with_last_byte(0x31);
+// #[deprecated(note = "use metadata")]
 pub const SYSCALL_ID_PREIMAGE_SIZE: B256 = B256::with_last_byte(0x32);
 
 // TODO(dmitry123): "rethink this syscall"
+// #[deprecated(note = "use metadata")]
 pub const SYSCALL_ID_DELEGATED_STORAGE: B256 = B256::with_last_byte(0x33);
+
+pub const SYSCALL_ID_METADATA_WRITE: B256 = B256::with_last_byte(0x34);
+pub const SYSCALL_ID_METADATA_SIZE: B256 = B256::with_last_byte(0x35);
+pub const SYSCALL_ID_METADATA_COPY: B256 = B256::with_last_byte(0x36);
