@@ -89,7 +89,7 @@ where
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let mut current_offset = offset;
 
-        // If tuple is dynamic, read the offset first
+        // If the tuple is dynamic, read the offset first
         if Self::IS_DYNAMIC {
             let data_offset = read_u32_aligned::<B, ALIGN>(buf, current_offset)? as usize;
             // For dynamic tuples, the actual data starts at offset + data_offset
@@ -103,6 +103,8 @@ where
 // Macro for multiple element tuples
 macro_rules! impl_encoder_for_tuple {
     ($($T:ident),+; $($idx:tt),+) => {
+        #[allow(unused_assignments)]
+        #[allow(unused_variables)]
         impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, $($T,)+>
             Encoder<B, ALIGN, SOL_MODE> for ($($T,)+)
         where
@@ -325,7 +327,7 @@ mod tests {
                 "00000000", // [0x0044] 68 = 0
                 ),
                 concat!(
-                // string bytes (11 bytes + padding to 4-byte boundary)
+                // string bytes (11 bytes plus padding to 4-byte boundary)
                 "48656c6c", // [0x0048] 72 = 1819043144
                 "6f20576f", // [0x004c] 76 = 1867980911
                 "726c6400", // [0x0050] 80 = 6581362

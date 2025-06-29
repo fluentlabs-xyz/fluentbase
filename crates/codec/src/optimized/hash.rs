@@ -62,11 +62,9 @@ where
 
         if V::IS_DYNAMIC {
             // No values offset/size written
-            ctx.depth += 1;
             for (_, value) in &entries {
                 value.encode_header(out, ctx)?;
             }
-            ctx.depth -= 1;
         } else {
             // Write values offset and size (static case)
             let values_off = (ctx.hdr_size - hdr_ptr_start + ctx.data_ptr) as u32;
@@ -396,11 +394,9 @@ where
         elements.sort();
 
         if T::IS_DYNAMIC {
-            ctx.depth += 1;
             for key in elements {
                 key.encode_header(out, ctx)?;
             }
-            ctx.depth -= 1;
         } else {
             // Write keys offset and size (static case)
             let keys_off = (ctx.hdr_size - hdr_ptr_start + ctx.data_ptr) as u32;
@@ -904,7 +900,7 @@ mod tests {
             use super::*;
             use crate::optimized::{
                 encoder::Encoder,
-                utils::test_utils::{assert_roundtrip_sol, encode_alloy_sol},
+                utils::test_utils::assert_roundtrip_sol,
             };
             use hashbrown::HashSet;
 

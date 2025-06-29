@@ -14,7 +14,7 @@ pub const fn align_up<const ALIGN: usize>(offset: usize) -> usize {
     (offset + ALIGN - 1) & !(ALIGN - 1)
 }
 
-/// Writes a u32 to the buffer with required alignment and endianness.
+/// Writes an u32 to the buffer with required alignment and endianness.
 /// For big-endian: pads first, then writes the value.
 /// For little-endian: writes the value, then pads.
 pub fn write_u32_aligned<B: ByteOrder, const ALIGN: usize>(buf: &mut impl BufMut, value: u32) {
@@ -74,7 +74,13 @@ pub fn read_bytes(buf: &impl Buf, offset: usize, len: usize) -> Result<Bytes, Co
 
 #[cfg(test)]
 pub mod test_utils {
-    use crate::optimized::{ctx::EncodingContext, encoder::Encoder, utils::read_u32_aligned};
+    use crate::optimized::{
+        ctx::EncodingContext,
+        encoder::Encoder
+        ,
+        utils::read_u32_aligned,
+    };
+    use alloy_sol_types::SolValue;
     use byteorder::{BigEndian, ByteOrder, LittleEndian};
     use bytes::BytesMut;
     use hex::encode;
@@ -111,6 +117,7 @@ pub mod test_utils {
         let decoded = T::decode(&mut &full_buf[..], 0).expect("decode failed");
         assert_eq!(decoded, *value, "decoded value mismatch");
     }
+
     pub(crate) fn assert_codec_sol<T>(expected_header_hex: &str, expected_tail_hex: &str, value: &T)
     where
         T: Encoder<BigEndian, 32, true> + PartialEq + std::fmt::Debug + Clone,
@@ -118,12 +125,19 @@ pub mod test_utils {
         let mut ctx = EncodingContext::default();
         ctx.hdr_size = value.header_size() as u32;
 
-        println!("hdr_size: {}", ctx.hdr_size);
+        println!("ctx.hdr_size: {}", ctx.hdr_size);
+        assert_eq!(hex::decode(expected_header_hex).unwrap().len(), ctx.hdr_size as usize, "header size mismatch");
 
         let mut header_buf = BytesMut::new();
         let w = T::encode_header(value, &mut header_buf, &mut ctx);
         assert!(w.is_ok(), "encode_header failed: {:?}", w);
+        println!("// actual header");
+        print_encoded::<BigEndian, 32>(&header_buf);
+        
 
+        println!("// expected header");
+        print_encoded::<BigEndian, 32>(&hex::decode(expected_header_hex).unwrap());
+        
         assert_eq!(
             expected_header_hex,
             encode(&header_buf),
@@ -210,13 +224,56 @@ pub mod test_utils {
         println!(");");
     }
 
-    pub fn encode_alloy_sol<T: alloy_sol_types::SolValue>(value: &T) -> Vec<u8> {
+    pub fn encode_alloy_sol<T: SolValue>(value: &T) -> Vec<u8> {
         value.abi_encode()
     }
 
-    pub fn decode_alloy_sol<T: alloy_sol_types::SolType>(
-        data: &[u8],
-    ) -> Result<T::RustType, alloy_sol_types::Error> {
-        T::abi_decode(data)
+
+    // Helper function to test encoding compatibility
+    pub(crate) fn assert_alloy_sol_roundtrip<T>(value: &T, name: &str)
+    where
+        T: Encoder<BigEndian, 32, true> + SolValue + PartialEq + std::fmt::Debug + Clone,
+    {
+        // Encode using our encoder
+        let mut ctx = EncodingContext::default();
+        ctx.hdr_size = value.header_size() as u32;
+
+        let mut our_buf = BytesMut::new();
+        value
+            .encode_header(&mut our_buf, &mut ctx)
+            .expect("Our encode_header failed");
+        value
+            .encode_tail(&mut our_buf, &mut ctx)
+            .expect("Our encode_tail failed");
+
+        // Encode using Alloy's SolValue
+        let alloy_encoded = value.abi_encode();
+
+        // Compare
+        if our_buf[..] != alloy_encoded[..] {
+            println!("\n{} encoding mismatch!", name);
+            println!("Our   ({} bytes): {}", our_buf.len(), encode(&our_buf));
+            println!(
+                "Alloy ({} bytes): {}",
+                alloy_encoded.len(),
+                encode(&alloy_encoded)
+            );
+
+            // Find first difference
+            for (i, (our, alloy)) in our_buf.iter().zip(alloy_encoded.iter()).enumerate() {
+                if our != alloy {
+                    println!(
+                        "First difference at byte {}: our={:02x}, alloy={:02x}",
+                        i, our, alloy
+                    );
+                    break;
+                }
+            }
+            panic!("{} encoding doesn't match Alloy", name);
+        }
+
+        // Test our decoding
+        let decoded = T::decode(&our_buf, 0).expect("Our decode failed");
+        assert_eq!(decoded, *value, "{} roundtrip failed", name);
     }
 }

@@ -2,15 +2,7 @@ use crate::optimized::{
     ctx::EncodingContext,
     encoder::Encoder,
     error::CodecError,
-    utils::{
-        align_up,
-        is_big_endian,
-        read_bytes
-
-        ,
-        read_u32_aligned,
-        write_u32_aligned,
-    },
+    utils::{align_up, is_big_endian, read_bytes, read_u32_aligned, write_u32_aligned},
 };
 use alloy_primitives::{Address, Bytes, FixedBytes, Signed, Uint};
 use byteorder::ByteOrder;
@@ -80,17 +72,14 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     ///
     /// # ABI encoding differences:
     ///
-    /// - **Solidity ABI** (`SOL_MODE = true`):
-    ///   Encoded as `[offset → | length → data]`.
-    ///   `offset` (data_offset) points directly to the **length** field.
-    ///   The actual data immediately follows the length field. Therefore, we add `ALIGN` (32 bytes)
-    ///   to reach the data.
+    /// - **Solidity ABI** (`SOL_MODE = true`): Encoded as `[offset → | length → data]`. `offset`
+    ///   (data_offset) points directly to the **length** field. The actual data immediately follows
+    ///   the length field. Therefore, we add `ALIGN` (32 bytes) to reach the data.
     ///
-    /// - **Compact ABI** (`SOL_MODE = false`):
-    ///   Encoded as `[offset → length | data]`.
-    ///   `offset` (data_offset) points directly to the actual **data**.
-    ///   The length field is stored separately, immediately after the offset field itself.
-    ///   Thus, length is read directly after the offset.
+    /// - **Compact ABI** (`SOL_MODE = false`): Encoded as `[offset → length | data]`. `offset`
+    ///   (data_offset) points directly to the actual **data**. The length field is stored
+    ///   separately, immediately after the offset field itself. Thus, length is read directly after
+    ///   the offset.
     ///
     /// This function transparently handles these differences.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
@@ -110,7 +99,6 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
 
         Ok(Bytes::from(read_bytes(buf, data_offset, data_len)?))
     }
-
 
     #[inline]
     fn len(&self) -> usize {
@@ -493,6 +481,7 @@ impl<
 #[cfg(test)]
 mod tests {
     use crate::optimized::{
+        ctx::EncodingContext,
         encoder::Encoder,
         utils::test_utils::{
             assert_codec_compact,
@@ -503,6 +492,7 @@ mod tests {
     };
     use alloy_primitives::{Address, Bytes, FixedBytes, I128, I256, U128, U256};
     use byteorder::{BigEndian, LittleEndian};
+    use crate::optimized::utils::test_utils::assert_alloy_sol_roundtrip;
 
     mod bytes_compact {
         use super::*;
@@ -1010,5 +1000,65 @@ mod tests {
 
             assert_codec_sol(expected_header_hex, expected_tail_hex, &addr);
         }
+    }
+
+    #[test]
+    fn test_alloy_sol_compatibility() {
+        use alloy_sol_types::SolValue;
+        use crate::optimized::encoder::Encoder;
+
+
+        // Test Bytes - edge cases
+        assert_alloy_sol_roundtrip(&Bytes::new(), "Bytes::empty");
+        assert_alloy_sol_roundtrip(&Bytes::from(vec![0x00]), "Bytes::single_zero");
+        assert_alloy_sol_roundtrip(&Bytes::from(vec![0xff]), "Bytes::single_ff");
+        assert_alloy_sol_roundtrip(&Bytes::from(vec![0x01, 0x02, 0x03, 0x04, 0x05]), "Bytes::5_bytes");
+        assert_alloy_sol_roundtrip(&Bytes::from(vec![0xaa; 31]), "Bytes::31_bytes");
+        assert_alloy_sol_roundtrip(&Bytes::from(vec![0xbb; 32]), "Bytes::32_bytes");
+        assert_alloy_sol_roundtrip(&Bytes::from(vec![0xcc; 33]), "Bytes::33_bytes");
+        assert_alloy_sol_roundtrip(&Bytes::from(vec![0xdd; 64]), "Bytes::64_bytes");
+        assert_alloy_sol_roundtrip(&Bytes::from(vec![0xee; 100]), "Bytes::100_bytes");
+
+        // Test String - edge cases
+        assert_alloy_sol_roundtrip(&String::new(), "String::empty");
+        assert_alloy_sol_roundtrip(&String::from("a"), "String::single_char");
+        assert_alloy_sol_roundtrip(&String::from("hello"), "String::hello");
+        assert_alloy_sol_roundtrip(&String::from("0123456789abcdef0123456789abcde"), "String::31_chars");
+        assert_alloy_sol_roundtrip(&String::from("0123456789abcdef0123456789abcdef"), "String::32_chars");
+        assert_alloy_sol_roundtrip(&String::from("0123456789abcdef0123456789abcdef0"), "String::33_chars");
+        assert_alloy_sol_roundtrip(&String::from("🦀"), "String::unicode_emoji");
+        assert_alloy_sol_roundtrip(&String::from("Hello, 世界! 🌍"), "String::mixed_unicode");
+        assert_alloy_sol_roundtrip(&"a".repeat(100), "String::100_chars");
+
+        // Test FixedBytes - various sizes
+        assert_alloy_sol_roundtrip(&FixedBytes::<1>::from([0x42]), "FixedBytes<1>");
+        assert_alloy_sol_roundtrip(&FixedBytes::<4>::from([0x01, 0x02, 0x03, 0x04]), "FixedBytes<4>");
+        assert_alloy_sol_roundtrip(&FixedBytes::<8>::from([0xff; 8]), "FixedBytes<8>");
+        assert_alloy_sol_roundtrip(&FixedBytes::<16>::from([0xaa; 16]), "FixedBytes<16>");
+        assert_alloy_sol_roundtrip(&FixedBytes::<20>::from([0xbb; 20]), "FixedBytes<20>");
+        assert_alloy_sol_roundtrip(&FixedBytes::<32>::from([0xcc; 32]), "FixedBytes<32>");
+
+        // Test Address
+        assert_alloy_sol_roundtrip(&Address::ZERO, "Address::ZERO");
+        assert_alloy_sol_roundtrip(&Address::from([0xff; 20]), "Address::MAX");
+        assert_alloy_sol_roundtrip(&Address::from([
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+            0x01, 0x23, 0x45, 0x67
+        ]), "Address::pattern");
+
+        // Test U256 - edge cases
+        assert_alloy_sol_roundtrip(&U256::ZERO, "U256::ZERO");
+        assert_alloy_sol_roundtrip(&U256::from(1u64), "U256::ONE");
+        assert_alloy_sol_roundtrip(&U256::from(42u64), "U256::42");
+        assert_alloy_sol_roundtrip(&U256::from(u64::MAX), "U256::u64_max");
+        assert_alloy_sol_roundtrip(&U256::from(u128::MAX), "U256::u128_max");
+        assert_alloy_sol_roundtrip(&U256::MAX, "U256::MAX");
+        assert_alloy_sol_roundtrip(&U256::from_be_bytes([
+            0x80, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0
+        ]), "U256::high_bit");
     }
 }

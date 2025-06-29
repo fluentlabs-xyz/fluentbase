@@ -6,8 +6,8 @@ pub struct EncodingContext {
     pub hdr_size: u32,
     pub hdr_ptr: u32,
     pub data_ptr: u32,
-    
     pub depth: u8,
+
 }
 
 impl Default for EncodingContext {

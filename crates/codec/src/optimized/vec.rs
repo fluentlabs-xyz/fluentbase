@@ -4,7 +4,7 @@ use crate::optimized::{
     error::CodecError,
     utils::{align_up, read_u32_aligned, write_u32_aligned},
 };
-use byteorder::{BigEndian, ByteOrder};
+use byteorder::ByteOrder;
 use bytes::{Buf, BufMut};
 use core::mem::size_of;
 
@@ -156,9 +156,7 @@ where
         ctx.hdr_ptr += <Self as Encoder<B, ALIGN, true>>::HEADER_SIZE as u32;
 
         // actual data size
-        let mut temp_ctx = EncodingContext::new();
-        let data_size = self.tail_size(&mut temp_ctx)?;
-        ctx.data_ptr += data_size as u32;
+        ctx.data_ptr += self.tail_size(&mut EncodingContext::new())? as u32;
 
         Ok(<Self as Encoder<B, ALIGN, true>>::HEADER_SIZE)
     }
@@ -172,51 +170,40 @@ where
         let tail_start = buf.remaining_mut();
 
         // 1. Write the vector length (always 32 bytes in Solidity ABI)
-        write_u32_aligned::<B, 32>(buf, self.len() as u32);
+        write_u32_aligned::<B, ALIGN>(buf, self.len() as u32);
 
-        if !T::IS_DYNAMIC {
+        if T::IS_DYNAMIC {
+            // Create a local context for managing offsets and data of nested vectors
+            let mut local_ctx = EncodingContext {
+                hdr_size: (self.len() * 32) as u32, // 32 bytes per element offset
+                hdr_ptr: 0,                         // Header starts at 0 within the local context
+                data_ptr: 0,                        // Data starts at 0 within local context
+                depth: 0,
+            };
+
+            // Phase 1: Write offsets for each nested element
+            for element in self.iter() {
+                // Each element offset = local header size plus accumulated data size
+                write_u32_aligned::<B, 32>(buf, local_ctx.hdr_size + local_ctx.data_ptr);
+
+                // Temporary context to calculate data size of the current element
+                let element_data_size = element.tail_size(&mut EncodingContext::new())? as u32;
+
+                // Move local data pointer forward by the current element's data size
+                local_ctx.data_ptr += element_data_size;
+            }
+
+            // Phase 2: Write actual data for each nested element
+            for element in self.iter() {
+                // Recursively encode each element's tail
+                element.encode_tail(buf, &mut local_ctx)?;
+            }
+        } else {
             // For static elements (like u32), write them sequentially
             // Each element takes exactly 32 bytes in Solidity ABI
 
             for (i, element) in self.iter().enumerate() {
-                let before = buf.remaining_mut();
                 element.encode_header(buf, ctx)?;
-                let written = before - buf.remaining_mut();
-            }
-        } else {
-            // Dynamic elements require two-phase encoding:
-            // Phase 1: Write all offsets
-            // Phase 2: Write all data
-
-            // Create a local context for this vector's internal structure
-            // This isolates offset calculations from the parent context
-            let mut local_ctx = EncodingContext::new();
-            local_ctx.hdr_size = (self.len() * 32) as u32; // Space for all offsets
-            local_ctx.hdr_ptr = 0;
-            local_ctx.data_ptr = 0;
-
-            // Phase 1: Calculate sizes and write offsets
-
-            for (i, element) in self.iter().enumerate() {
-                // Calculate where this element's data will start
-                // Offset = space_for_all_offsets + accumulated_data_size
-                let element_offset = local_ctx.hdr_size + local_ctx.data_ptr;
-
-                // Write the offset (relative to the start of this vector's data)
-                write_u32_aligned::<B, 32>(buf, element_offset);
-
-                // Calculate how much space this element will need in the data section
-                let mut temp_ctx = EncodingContext::new();
-                let element_data_size = element.tail_size(&mut temp_ctx)?;
-
-                // Update data pointer for next element
-                local_ctx.data_ptr += element_data_size as u32;
-            }
-
-            // Phase 2: Write actual element data
-            for (i, element) in self.iter().enumerate() {
-                // For nested vectors, this will recursively call encode_tail
-                element.encode_tail(buf, &mut local_ctx)?;
             }
         }
 

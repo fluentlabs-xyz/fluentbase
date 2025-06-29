@@ -137,11 +137,13 @@ macro_rules! define_abi {
             pub fn encode(
                 value: &T,
                 buf: &mut impl BufMut,
-                ctx: &mut EncodingContext,
             ) -> Result<usize, CodecError> {
-                let header_bytes = Self::encode_header(value, buf, ctx)?;
+                let header_size = value.header_size();
+                let mut ctx = EncodingContext::default();
+                ctx.hdr_size = header_size as u32;
+                let header_bytes = Self::encode_header(value, buf, &mut ctx)?;
                 let tail_bytes = if T::IS_DYNAMIC {
-                    Self::encode_tail(value, buf, ctx)?
+                    Self::encode_tail(value, buf, &mut ctx)?
                 } else {
                     0
                 };
@@ -166,10 +168,10 @@ macro_rules! define_abi {
             pub fn encode(
                 value: &T,
                 buf: &mut impl BufMut,
-                ctx: &mut EncodingContext,
             ) -> Result<usize, CodecError> {
                 let _ = <T as PackedSafe>::ASSERT_STATIC;
-                value.encode(buf, ctx)
+                let mut ctx = EncodingContext::default();
+                value.encode(buf, &mut ctx)
             }
 
             #[inline]
@@ -197,21 +199,21 @@ mod tests {
         let mut ctx = EncodingContext::default();
         let value = 42u8;
         // TODO: remove ctx usage from SolidityABI and CompactABI and SolidityPackedABI
-        SolidityABI::encode(&value, &mut buf, &mut ctx).unwrap();
+        SolidityABI::encode(&value, &mut buf).unwrap();
         println!("buf: {:?}", hex::encode(&buf));
 
         // SolidityPackedABI
         let mut buf = Vec::new();
         let mut ctx = EncodingContext::default();
         let value = 42u8;
-        SolidityPackedABI::encode(&value, &mut buf, &mut ctx).unwrap();
+        SolidityPackedABI::encode(&value, &mut buf).unwrap();
         println!("buf: {:?}", hex::encode(&buf));
 
         // CompactABI
         let mut buf = Vec::new();
         let mut ctx = EncodingContext::default();
         let value = 42u8;
-        CompactABI::encode(&value, &mut buf, &mut ctx).unwrap();
+        CompactABI::encode(&value, &mut buf).unwrap();
         println!("buf: {:?}", hex::encode(&buf));
     }
 }

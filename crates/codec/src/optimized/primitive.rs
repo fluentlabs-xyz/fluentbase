@@ -90,13 +90,13 @@ macro_rules! impl_int {
         impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, SOL_MODE>
             for $typ
         {
-            const HEADER_SIZE: usize = core::mem::size_of::<$typ>();
+            const HEADER_SIZE: usize = align_up::<ALIGN>(core::mem::size_of::<$typ>());
             const IS_DYNAMIC: bool = false;
 
             fn encode_header(
                 &self,
                 buf: &mut impl BufMut,
-                _ctx: &mut EncodingContext,
+                ctx: &mut EncodingContext,
             ) -> Result<usize, CodecError> {
                 let alignment = ALIGN.max(size_of::<$typ>());
                 if is_big_endian::<B>() {
@@ -106,6 +106,9 @@ macro_rules! impl_int {
                     buf.$write_method_le(*self);
                     buf.put_bytes(0, alignment - size_of::<$typ>());
                 }
+                // TODO(d1r1): make the same for every primitive type
+                ctx.hdr_ptr += alignment as u32;
+
                 Ok(alignment)
             }
 
@@ -501,11 +504,11 @@ mod tests {
         let value2: u16 = 0x9ABC;
         let value3: u8 = 0xDE;
         let mut buf = BytesMut::new();
-        let mut ctx = EncodingContext::default();
 
-        SolidityPackedABI::<u32>::encode(&value1, &mut buf, &mut ctx).unwrap();
-        SolidityPackedABI::<u16>::encode(&value2, &mut buf, &mut ctx).unwrap();
-        SolidityPackedABI::<u8>::encode(&value3, &mut buf, &mut ctx).unwrap();
+
+        SolidityPackedABI::<u32>::encode(&value1, &mut buf).unwrap();
+        SolidityPackedABI::<u16>::encode(&value2, &mut buf).unwrap();
+        SolidityPackedABI::<u8>::encode(&value3, &mut buf).unwrap();
 
         assert_eq!(buf.to_vec(), vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE]);
     }
@@ -514,9 +517,8 @@ mod tests {
     fn test_packed_array() {
         let arr: [u16; 3] = [0x1234, 0x5678, 0x9ABC];
         let mut buf = BytesMut::new();
-        let mut ctx = EncodingContext::default();
 
-        SolidityPackedABI::<[u16; 3]>::encode(&arr, &mut buf, &mut ctx).unwrap();
+        SolidityPackedABI::<[u16; 3]>::encode(&arr, &mut buf).unwrap();
 
         assert_eq!(buf.to_vec(), vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]);
 
