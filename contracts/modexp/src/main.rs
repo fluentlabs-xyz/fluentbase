@@ -14,7 +14,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let input = Bytes::copy_from_slice(input);
     // call identity function
     let result = precompile::modexp::berlin_run(&input, gas_limit)
-        .unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
+        .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
     sdk.sync_evm_gas(result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());

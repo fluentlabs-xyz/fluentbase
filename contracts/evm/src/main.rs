@@ -114,7 +114,7 @@ fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult)
     let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
     sdk.charge_fuel_manually(consumed_diff, refund_diff);
     sdk.write(result.output.as_ref());
-    sdk.exit(if result.is_revert() {
+    sdk.native_exit(if result.is_revert() {
         ExitCode::Panic
     } else {
         ExitCode::Err
@@ -187,13 +187,13 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
 
     // EIP-3541 and EIP-170 checks
     if result.output.first() == Some(&0xEF) {
-        sdk.exit(ExitCode::PrecompileError);
+        sdk.native_exit(ExitCode::PrecompileError);
     } else if result.output.len() > EVM_MAX_CODE_SIZE {
-        sdk.exit(ExitCode::PrecompileError);
+        sdk.native_exit(ExitCode::PrecompileError);
     }
     let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
     if !result.gas.record_cost(gas_for_code) {
-        sdk.exit(ExitCode::OutOfFuel);
+        sdk.native_exit(ExitCode::OutOfFuel);
     }
 
     let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();

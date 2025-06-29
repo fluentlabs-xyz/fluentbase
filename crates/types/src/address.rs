@@ -33,7 +33,7 @@ pub fn calc_create2_address<API: NativeAPI>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BytecodeOrHash;
+    use crate::{BytecodeOrHash, ExitCode};
     use alloy_primitives::{address, b256, keccak256};
 
     struct TestContext;
@@ -71,7 +71,7 @@ mod tests {
             todo!()
         }
 
-        fn exit(&self, _exit_code: i32) -> ! {
+        fn exit(&self, _exit_code: ExitCode) -> ! {
             todo!()
         }
 
