@@ -287,7 +287,6 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
         );
     }
     if flush_result_accounts {
-        debug_log_ext!();
         flush_accounts(sdk, sapi, &result_accounts)?;
     }
 

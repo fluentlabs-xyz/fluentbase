@@ -222,13 +222,11 @@ impl MetadataAPI for MemStorage {
         if let Some(data) = data {
             let total_len = (/* offset + */length) as usize;
             if data.len() < total_len {
-                debug_log_ext!();
                 return SyscallResult::new(Default::default(), 0, 0, ExitCode::Err);
             }
             let chunk = &data[/*offset as usize*/..total_len];
             return SyscallResult::new(Bytes::copy_from_slice(chunk), 0, 0, ExitCode::Ok);
         }
-        debug_log_ext!();
         SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
     }
 }

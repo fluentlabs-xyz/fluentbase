@@ -714,12 +714,6 @@ pub fn storage_read_account_data<SAPI: MetadataAPI>(
         return Err(metadata_size_result.status.into());
     }
     let metadata_len = metadata_size_result.data.0;
-    debug_log_ext!(
-        "pubkey {} address {:x?} len {}",
-        pubkey,
-        address,
-        metadata_len
-    );
     let metadata_copy = sapi.metadata_copy(&address, 0, metadata_len);
     if !metadata_copy.status.is_ok() {
         return Err(metadata_copy.status.into());
@@ -743,12 +737,6 @@ pub fn storage_write_account_data<SAPI: MetadataAPI>(
     // let address = evm_address_from_pubkey::<false>(pubkey)?;
     let address = &keccak(pubkey.as_ref()).0[0..Address::len_bytes()];
     let address = Address::from_slice(address);
-    debug_log_ext!(
-        "pubkey {} address {:x?} len {}",
-        pubkey,
-        address,
-        buffer.len()
-    );
     sapi.metadata_write(&address, 0, buffer.into());
     Ok(())
 }

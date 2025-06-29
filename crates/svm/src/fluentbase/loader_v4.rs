@@ -128,7 +128,6 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    debug_log_ext!();
     let input = sdk.input();
     let preimage = read_protected_preimage(&sdk);
 
@@ -146,10 +145,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             .expect("balance for caller must exist")
             .data,
     );
-    debug_log_ext!();
     let mut caller_account_data =
         extract_account_data_or_default(&sdk, &pk_caller).expect("caller must exist");
-    debug_log_ext!();
     caller_account_data.set_lamports(caller_account_balance);
 
     let contract_account_data: Result<AccountSharedData, DecodeError> =
@@ -191,17 +188,14 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     )
     .expect("failed to write loader_v4");
 
-    debug_log_ext!();
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
     let (result_accounts, balance_changes): (
         HashMap<Pubkey, AccountSharedData>,
         HashMap<Pubkey, (u64, u64)>,
     ) = match process_svm_result(result) {
         Ok((result_accounts, balance_changes)) => {
-            debug_log_ext!();
             if result_accounts.len() > 0 {
                 let mut sapi: Option<&mut SDK> = None;
-                debug_log_ext!();
                 flush_accounts(&mut sdk, &mut sapi, &result_accounts)
                     .expect("failed to save result accounts");
             }
