@@ -174,8 +174,8 @@ impl SharedAPI for HostTestingContext {
         self.inner.borrow().native_sdk.write(output);
     }
 
-    fn exit(&self, exit_code: ExitCode) -> ! {
-        self.inner.borrow().native_sdk.exit(exit_code.into_i32());
+    fn native_exit(&self, exit_code: ExitCode) -> ! {
+        self.inner.borrow().native_sdk.exit(exit_code);
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {

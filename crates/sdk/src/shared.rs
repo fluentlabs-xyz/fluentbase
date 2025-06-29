@@ -80,7 +80,7 @@ impl<API: NativeAPI> SharedContextImpl<API> {
     }
 
     pub fn commit_changes_and_exit(&mut self) -> ! {
-        self.native_sdk.exit(0);
+        self.native_sdk.exit(ExitCode::Ok);
     }
 }
 
@@ -164,8 +164,8 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.write(output);
     }
 
-    fn exit(&self, exit_code: ExitCode) -> ! {
-        self.native_sdk.exit(exit_code.into_i32())
+    fn native_exit(&self, exit_code: ExitCode) -> ! {
+        self.native_sdk.exit(exit_code)
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {

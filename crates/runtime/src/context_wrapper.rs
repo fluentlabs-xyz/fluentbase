@@ -21,7 +21,14 @@ use crate::{
     },
     RuntimeContext,
 };
-use fluentbase_types::{native_api::NativeAPI, BytecodeOrHash, Bytes, UnwrapExitCode, B256};
+use fluentbase_types::{
+    native_api::NativeAPI,
+    BytecodeOrHash,
+    Bytes,
+    ExitCode,
+    UnwrapExitCode,
+    B256,
+};
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 #[derive(Default, Clone)]
@@ -72,7 +79,7 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallForwardOutput::fn_impl(&mut self.ctx.borrow_mut(), offset, len).unwrap_exit_code()
     }
 
-    fn exit(&self, exit_code: i32) -> ! {
+    fn exit(&self, exit_code: ExitCode) -> ! {
         SyscallExit::fn_impl(&mut self.ctx.borrow_mut(), exit_code).unwrap_exit_code();
         unreachable!("exit code: {}", exit_code)
     }

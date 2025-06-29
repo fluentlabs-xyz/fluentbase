@@ -38,8 +38,8 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         PRECOMPILE_BLS12_381_MAP_G2 => precompile::bls12_381::map_fp2_to_g2::map_fp2_to_g2,
         _ => unreachable!("bls12381: unsupported contract address"),
     };
-    let result =
-        precompile_func(&input, gas_limit).unwrap_or_else(|err| sdk.exit(ExitCode::from(err)));
+    let result = precompile_func(&input, gas_limit)
+        .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
     sdk.sync_evm_gas(result.gas_used, 0);
     // write output
     sdk.write(result.bytes.as_ref());
