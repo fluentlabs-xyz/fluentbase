@@ -176,11 +176,7 @@ pub mod test_utils {
         let mut tail_buf = BytesMut::new();
         let w = T::encode_tail(value, &mut tail_buf, &mut ctx);
         assert!(w.is_ok(), "encode_tail failed: {:?}", w);
-        assert_eq!(
-            expected_tail_hex,
-            encode(&tail_buf),
-            "tail bytes mismatch"
-        );
+        assert_eq!(expected_tail_hex, encode(&tail_buf), "tail bytes mismatch");
 
         let mut full_buf = header_buf.clone();
         full_buf.extend_from_slice(&tail_buf);
@@ -210,11 +206,7 @@ pub mod test_utils {
         let mut tail_buf = BytesMut::new();
         let w = T::encode_tail(value, &mut tail_buf, &mut ctx);
         assert!(w.is_ok(), "encode_tail failed: {:?}", w);
-        assert_eq!(
-            expected_tail_hex,
-            encode(&tail_buf),
-            "tail bytes mismatch"
-        );
+        assert_eq!(expected_tail_hex, encode(&tail_buf), "tail bytes mismatch");
 
         let mut full_buf = header_buf.clone();
         full_buf.extend_from_slice(&tail_buf);
@@ -271,13 +263,28 @@ pub mod test_utils {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn print_encoded<B: ByteOrder, const ALIGN: usize>(buf: &BytesMut) {
+    pub(crate) fn print_encoded<B: ByteOrder, const ALIGN: usize>(buf: impl AsRef<[u8]>) {
+        let bytes = buf.as_ref();
         println!("concat!(");
-        for chunk in buf.chunks_exact(ALIGN) {
+        for (i, chunk) in bytes.chunks_exact(ALIGN).enumerate() {
             let hex_chunk = encode(chunk);
             let decimal_value = read_u32_aligned::<B, ALIGN>(&chunk, 0).unwrap();
-            println!("    \"{}\", // {}", hex_chunk, decimal_value);
+            let offset = i * ALIGN;
+            println!(
+                "    \"{}\", // [0x{:04x}] {} = {}",
+                hex_chunk, offset, offset, decimal_value
+            );
         }
         println!(");");
+    }
+
+    pub fn encode_alloy_sol<T: alloy_sol_types::SolValue>(value: &T) -> Vec<u8> {
+        value.abi_encode()
+    }
+
+    pub fn decode_alloy_sol<T: alloy_sol_types::SolType>(
+        data: &[u8],
+    ) -> Result<T::RustType, alloy_sol_types::Error> {
+        T::abi_decode(data)
     }
 }

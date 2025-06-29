@@ -2,10 +2,10 @@ use crate::optimized::{
     ctx::EncodingContext,
     encoder::Encoder,
     error::CodecError,
-    utils::{align_up, read_u32_aligned, write_u32_aligned},
+    utils::{align_up, read_u32_aligned, test_utils::print_encoded, write_u32_aligned},
 };
 use alloc::vec::Vec;
-use byteorder::ByteOrder;
+use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
 use core::{fmt::Debug, hash::Hash, mem::size_of};
 use hashbrown::{HashMap, HashSet};
@@ -17,7 +17,7 @@ where
     V: Encoder<B, ALIGN, false, Ctx = EncodingContext> + Debug,
 {
     type Ctx = EncodingContext;
-    const HEADER_SIZE: usize = size_of::<u32>() * 5; // length (4) + keys_header (8) + values_header (8)
+    const HEADER_SIZE: usize = align_up::<ALIGN>(size_of::<u32>()) * 5; // length (4) + keys_header (8) + values_header (8)
     const IS_DYNAMIC: bool = true; // length
 
     fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
@@ -174,6 +174,189 @@ where
     #[inline]
     fn len(&self) -> usize {
         self.len()
+    }
+}
+
+/// HashMap implementation for Solidity ABI
+///
+/// Encoding structure:
+/// - header: offset (32 bytes)
+/// - tail:
+///   - length (32 bytes)
+///   - keys_offset (32 bytes, relative to tail start)
+///   - values_offset (32 bytes, relative to tail start)
+///   - keys data (encoded as Vec<K>)
+///   - values data (encoded as Vec<V>)
+impl<K, V, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for HashMap<K, V>
+where
+    K: Encoder<B, ALIGN, true, Ctx = EncodingContext> + Clone + Eq + Hash + Ord + core::fmt::Debug,
+    V: Encoder<B, ALIGN, true, Ctx = EncodingContext> + Clone + core::fmt::Debug,
+{
+    type Ctx = EncodingContext;
+    const HEADER_SIZE: usize = align_up::<ALIGN>(32); // Only offset in header
+    const IS_DYNAMIC: bool = true;
+
+    /// Adds the HashMap header size to the encoding context
+    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
+        ctx.hdr_size += Self::HEADER_SIZE as u32;
+        Ok(())
+    }
+
+    /// Encodes the header - writes only the offset to the HashMap data
+    /// Encodes the header - writes only the offset to the HashMap data
+    fn encode_header(
+        &self,
+        buf: &mut impl BufMut,
+        ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
+        // Calculate offset to HashMap data
+        let offset = (ctx.hdr_size - ctx.hdr_ptr) + ctx.data_ptr;
+        write_u32_aligned::<B, 32>(buf, offset);
+        ctx.hdr_ptr += 32;
+
+        // Reserve space for HashMap data in tail
+        let mut temp_ctx = EncodingContext::new();
+        let data_size = self.tail_size(&mut temp_ctx)?;
+        ctx.data_ptr += data_size as u32;
+
+        Ok(32)
+    }
+
+    /// Encodes the tail - writes the actual HashMap data
+    fn encode_tail(
+        &self,
+        buf: &mut impl BufMut,
+        ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
+        let tail_start = buf.remaining_mut();
+
+        // 1. Write HashMap length
+        write_u32_aligned::<B, 32>(buf, self.len() as u32);
+
+        if self.is_empty() {
+            // Empty HashMap only needs length field
+            return Ok(32);
+        }
+
+        // 2. Sort entries by key for deterministic encoding
+        let mut entries: Vec<_> = self.iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+
+        // 3. Prepare keys and values vectors
+        let keys: Vec<K> = entries.iter().map(|(k, _)| (*k).clone()).collect();
+        let values: Vec<V> = entries.iter().map(|(_, v)| (*v).clone()).collect();
+
+        // 4. Calculate sizes for proper offset values
+        // Keys start after: length (32) + keys_offset (32) + values_offset (32) = 96 bytes
+        let keys_start_offset = 96u32;
+
+        // Calculate size of keys vector (including its length field and data)
+        let mut temp_ctx = EncodingContext::new();
+        let keys_total_size = keys.tail_size(&mut temp_ctx)?;
+
+        // Values start after keys data
+        let values_start_offset = keys_start_offset + keys_total_size as u32;
+
+        // 5. Write offsets (relative to the start of HashMap tail)
+        write_u32_aligned::<B, 32>(buf, keys_start_offset);
+        write_u32_aligned::<B, 32>(buf, values_start_offset);
+
+        // 6. Write keys and values as vectors
+        // IMPORTANT: Vec<K> and Vec<V> are treated as dynamic elements of HashMap
+        // Therefore, we need a fresh context for them, similar to how Vec handles dynamic elements
+        let mut local_ctx = EncodingContext::new();
+
+        // Write keys vector (it will write its own length and elements)
+        keys.encode_tail(buf, &mut local_ctx)?;
+
+        // Write values vector (it will write its own length and elements)
+        values.encode_tail(buf, &mut local_ctx)?;
+
+        Ok(tail_start - buf.remaining_mut())
+    }
+
+    /// Decodes a HashMap from Solidity ABI encoded buffer
+    fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
+        println!("=== HashMap::decode START at offset {} ===", offset);
+
+        // Read offset to HashMap data
+        let data_offset = read_u32_aligned::<B, 32>(buf, offset)? as usize;
+        println!("Read data offset: {} from position {}", data_offset, offset);
+
+        // Read HashMap length
+        let length = read_u32_aligned::<B, 32>(buf, data_offset)? as usize;
+        println!(
+            "Read HashMap length: {} from position {}",
+            length, data_offset
+        );
+
+        if length == 0 {
+            return Ok(HashMap::new());
+        }
+
+        // Read offsets (relative to data_offset)
+        let keys_offset = read_u32_aligned::<B, 32>(buf, data_offset + 32)? as usize;
+        let values_offset = read_u32_aligned::<B, 32>(buf, data_offset + 64)? as usize;
+
+        println!("Keys offset: {} (relative to HashMap data)", keys_offset);
+        println!(
+            "Values offset: {} (relative to HashMap data)",
+            values_offset
+        );
+
+        // Create chunk starting from HashMap data (like Vec does)
+        let chunk = &buf.chunk()[..];
+
+        // Decode vectors using relative offsets
+        println!("\n--- Decoding keys vector ---");
+        // println!("Keys encoded {:?}", hex::encode(&chunk[keys_offset..]));
+        print_encoded::<BigEndian, 32>(&chunk[keys_offset..keys_offset + length * 32]);
+        let keys: Vec<K> = Vec::decode(&chunk, keys_offset)?;
+        println!("Decoded {} keys", keys.len());
+
+        println!("\n--- Decoding values vector ---");
+        let values: Vec<V> = Vec::decode(&chunk, values_offset)?;
+        println!("Decoded {} values", values.len());
+
+        // Build HashMap
+        let mut result = HashMap::with_capacity(length);
+        for (key, value) in keys.into_iter().zip(values.into_iter()) {
+            result.insert(key, value);
+        }
+
+        println!("=== HashMap::decode END ===");
+        Ok(result)
+    }
+
+    /// Calculates the size of tail data using ByteCounter
+    fn tail_size(&self, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+        // For empty HashMap, only length field
+        if self.is_empty() {
+            return Ok(32);
+        }
+
+        // Create temporary vectors for size calculation
+        let mut entries: Vec<_> = self.iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+
+        let keys: Vec<K> = entries.iter().map(|(k, _)| (*k).clone()).collect();
+        let values: Vec<V> = entries.iter().map(|(_, v)| (*v).clone()).collect();
+
+        // Calculate size: length + 2 offsets + keys data + values data
+        let mut size = 32 + 64; // length + offsets
+
+        let mut temp_ctx = EncodingContext::new();
+        size += keys.tail_size(&mut temp_ctx)?;
+        size += values.tail_size(&mut temp_ctx)?;
+
+        Ok(size)
+    }
+
+    /// Returns the number of bytes this HashMap would take when encoded
+    fn len(&self) -> usize {
+        // This is used for static size calculations
+        // For dynamic types like HashMap, this is just the header size
+        Self::HEADER_SIZE
     }
 }
 
@@ -491,6 +674,67 @@ mod tests {
                     "Tails mismatch, sorting inconsistency"
                 );
             }
+        }
+    }
+
+    mod sol {
+        use crate::optimized::utils::test_utils::{assert_codec_sol, print_encoded};
+        use byteorder::BigEndian;
+        use hashbrown::HashMap;
+
+        #[ignore]
+        #[test]
+        fn rnd() {
+            // let v = HashMap::from([(1u32, 2u32), (3u32, 4u32)]);
+
+            let expected = &hex::decode("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000003c").unwrap();
+            // println!("Expected:");
+            // print_encoded::<BigEndian, 32>(&expected);
+
+            println!("expected:");
+            print_encoded::<BigEndian, 32>(&expected);
+            assert!(false);
+            //
+            // concat!(
+            // "...00000020", /* [0x0000] 0 = 32 */
+            // ),
+            // concat!(
+            // "...00000003", /* [0x0000] 0 = 3 */
+            // "...00000060", /* [0x0020] 32 = 96 */
+            // "...000000e0", /* [0x0040] 64 = 224 */
+            // "...00000003", /* [0x0060] 96 = 3 */
+            // "...00000001", /* [0x0080] 128 = 1 */
+            // "...0000000a", /* [0x00a0] 160 = 10 */
+            // "...00000064", /* [0x00c0] 192 = 100 */
+            // "...00000003", /* [0x00e0] 224 = 3 */
+            // "...00000005", /* [0x0100] 256 = 5 */
+            // "...00000014", /* [0x0120] 288 = 20 */
+            // "...0000003c", /* [0x0140] 320 = 60 */
+            // )
+        }
+
+        #[test]
+        fn simple_map() {
+            let v = HashMap::from([(10, 20), (1, 5), (100, 60)]);
+            assert_codec_sol(
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000020", /* [0x0000] 0 = 32 */
+                ),
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0000] 0 = 3 */
+                    "0000000000000000000000000000000000000000000000000000000000000060", /* [0x0020] 32 = 96 */
+                    "00000000000000000000000000000000000000000000000000000000000000e0", /* [0x0040] 64 = 224 */
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0060] 96 = 3 */
+                    "0000000000000000000000000000000000000000000000000000000000000001", /* [0x0080] 128 = 1 */
+                    "000000000000000000000000000000000000000000000000000000000000000a", /* [0x00a0] 160 = 10 */
+                    "0000000000000000000000000000000000000000000000000000000000000064", /* [0x00c0] 192 = 100 */
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x00e0] 224 = 3 */
+                    "0000000000000000000000000000000000000000000000000000000000000005", /* [0x0100] 256 = 5 */
+                    "0000000000000000000000000000000000000000000000000000000000000014", /* [0x0120] 288 = 20 */
+                    "000000000000000000000000000000000000000000000000000000000000003c", /* [0x0140] 320 = 60 */
+                ),
+                &v,
+            );
         }
     }
 }

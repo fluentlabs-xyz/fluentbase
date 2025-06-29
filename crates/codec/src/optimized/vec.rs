@@ -1,38 +1,29 @@
-//! Compact ABI layout for vectors (and nested vectors)
-//!
-//! Each dynamic value (vector/string/bytes) has a 12-byte header of three little-endian u32:
-//! [len | offset | size]
-//! - len: number of elements
-//! - offset: relative offset to the data-zone or child headers
-//! - size: byte length of the data-zone; root is always 0
-//!
-//! For nested vectors: headers are written in pre-order, all data-zones (tails) are written after.
-//! Example for [[1,2,3],[4,5]]:
-//! 00: 02 00 00 00 0C 00 00 00 00 00 00 00    // root: len, off, size
-//! 0C: 03 00 00 00 24 00 00 00 0C 00 00 00    // child 0: len, off, size
-//! 18: 02 00 00 00 30 00 00 00 08 00 00 00    // child 1: len, off, size
-//! 30: 01 00 00 00 02 00 00 00 03 00 00 00    // child 0 data-zone
-//! 3C: 04 00 00 00 05 00 00 00                // child 1 data-zone
-
 use crate::optimized::{
-    counter::ByteCounter,
     ctx::EncodingContext,
     encoder::Encoder,
     error::CodecError,
     utils::{align_up, read_u32_aligned, write_u32_aligned},
 };
-use byteorder::{BigEndian, ByteOrder};
+use byteorder::ByteOrder;
 use bytes::{Buf, BufMut};
 use core::mem::size_of;
 
-/// Compact ABI encoder for Vec<T>
+/// Compact ABI layout for vectors (and nested vectors)
+///
+/// Each dynamic value (vector/string/bytes) has a 12-byte header of three little-endian u32:
+/// [len | offset | size]
+/// - len: number of elements
+/// - offset: relative offset to the data-zone or child headers
+/// - size: byte length of the data-zone; root is always 0
+///
+/// For nested vectors: headers are written in pre-order, all data-zones (tails) are written after.
 impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for Vec<T>
 where
     T: Encoder<B, ALIGN, false, Ctx = EncodingContext>,
 {
     type Ctx = EncodingContext;
-    const IS_DYNAMIC: bool = true;
     const HEADER_SIZE: usize = size_of::<u32>() * 3;
+    const IS_DYNAMIC: bool = true;
 
     fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
         // Base header size: len (u32), offset (u32), size (u32)
@@ -102,11 +93,6 @@ where
         Ok(bytes)
     }
 
-    #[inline]
-    fn len(&self) -> usize {
-        self.len()
-    }
-
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let word = align_up::<ALIGN>(4);
 
@@ -139,6 +125,11 @@ where
 
         Ok(out)
     }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
 }
 
 /// Vec implementation for Solidity ABI
@@ -148,36 +139,37 @@ where
 /// - body
 ///   - length
 ///   - raw bytes of the vector
-
 impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for Vec<T>
 where
     T: Encoder<B, ALIGN, true, Ctx = EncodingContext>,
 {
     type Ctx = EncodingContext;
-    const HEADER_SIZE: usize = 32; // offset pointer for top-level
+    const HEADER_SIZE: usize = align_up::<ALIGN>(32); // offset pointer for top-level
     const IS_DYNAMIC: bool = true;
 
     /// Calculates the size required for all headers (offset, length, sub-headers if dynamic).
     fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        ctx.hdr_size += Self::HEADER_SIZE as u32; // Offset for this vector
-        ctx.hdr_size += 32; // Length field for the data section
-        if T::IS_DYNAMIC {
-            ctx.hdr_size += (self.len() as u32) * 32; // Offsets for dynamic elements
-            for el in self {
-                el.header_size(ctx)?;
-            }
-        }
+        ctx.hdr_size += Self::HEADER_SIZE as u32;
         Ok(())
     }
 
     /// Encodes the header (offset, length, and sub-offsets for nested dynamic).
-
     fn encode_header(
         &self,
         buf: &mut impl BufMut,
         ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
-        todo!()
+        // offset
+        let offset = (ctx.hdr_size - ctx.hdr_ptr) + ctx.data_ptr;
+        write_u32_aligned::<B, ALIGN>(buf, offset);
+        ctx.hdr_ptr += <Self as Encoder<B, ALIGN, true>>::HEADER_SIZE as u32;
+
+        // actual data size
+        let mut temp_ctx = EncodingContext::new();
+        let data_size = self.tail_size(&mut temp_ctx)?;
+        ctx.data_ptr += data_size as u32;
+
+        Ok(<Self as Encoder<B, ALIGN, true>>::HEADER_SIZE)
     }
 
     /// Encodes the tail (actual data for each element).
@@ -186,117 +178,145 @@ where
         buf: &mut impl BufMut,
         ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
-        let mut written = 0;
-        if T::IS_DYNAMIC {
-            for el in self {
-                written += el.encode(buf, ctx)?;
+        let tail_start = buf.remaining_mut();
+        let start_position = tail_start; // for logging
+
+        println!("=== Vec::encode_tail START ===");
+        println!(
+            "Vector length: {}, IS_DYNAMIC: {}",
+            self.len(),
+            T::IS_DYNAMIC
+        );
+        println!(
+            "Context at start: hdr_ptr={}, hdr_size={}, data_ptr={}",
+            ctx.hdr_ptr, ctx.hdr_size, ctx.data_ptr
+        );
+        println!("Buffer position: {} bytes written so far", start_position);
+
+        // 1. Write the vector length (always 32 bytes in Solidity ABI)
+        write_u32_aligned::<B, 32>(buf, self.len() as u32);
+        println!(
+            "Written length: {} at position {}",
+            self.len(),
+            start_position - buf.remaining_mut()
+        );
+
+        if !T::IS_DYNAMIC {
+            // For static elements (like u32), write them sequentially
+            // Each element takes exactly 32 bytes in Solidity ABI
+            println!("Processing {} static elements", self.len());
+
+            for (i, element) in self.iter().enumerate() {
+                let before = buf.remaining_mut();
+                element.encode_header(buf, ctx)?;
+                let written = before - buf.remaining_mut();
+                println!("  Element[{}]: written {} bytes", i, written);
             }
         } else {
-            for el in self {
-                written += el.encode_header(buf, ctx)?;
+            // Dynamic elements require two-phase encoding:
+            // Phase 1: Write all offsets
+            // Phase 2: Write all data
+
+            println!(
+                "Processing {} dynamic elements - two-phase encoding",
+                self.len()
+            );
+
+            // Create a local context for this vector's internal structure
+            // This isolates offset calculations from the parent context
+            let mut local_ctx = EncodingContext::new();
+            local_ctx.hdr_size = (self.len() * 32) as u32; // Space for all offsets
+            local_ctx.hdr_ptr = 0;
+            local_ctx.data_ptr = 0;
+
+            println!(
+                "Local context created: hdr_size={} (for {} offsets)",
+                local_ctx.hdr_size,
+                self.len()
+            );
+
+            // Phase 1: Calculate sizes and write offsets
+            println!("\n--- Phase 1: Writing offsets ---");
+            for (i, element) in self.iter().enumerate() {
+                // Calculate where this element's data will start
+                // Offset = space_for_all_offsets + accumulated_data_size
+                let element_offset = local_ctx.hdr_size + local_ctx.data_ptr;
+
+                println!("  Element[{}]:", i);
+                println!(
+                    "    Offset calculation: {} (hdr_size) + {} (data_ptr) = {}",
+                    local_ctx.hdr_size, local_ctx.data_ptr, element_offset
+                );
+
+                // Write the offset (relative to the start of this vector's data)
+                write_u32_aligned::<B, 32>(buf, element_offset);
+
+                // Calculate how much space this element will need in the data section
+                let mut temp_ctx = EncodingContext::new();
+                let element_data_size = element.tail_size(&mut temp_ctx)?;
+                println!("    Element data size: {} bytes", element_data_size);
+
+                // Update data pointer for next element
+                local_ctx.data_ptr += element_data_size as u32;
+                println!("    Updated data_ptr to: {}", local_ctx.data_ptr);
             }
-        }
-        Ok(written)
-    }
 
-    fn encode(
-        &self,
-        out: &mut impl BufMut,
-        ctx: &mut EncodingContext,
-    ) -> Result<usize, CodecError> {
-        let mut written = 0;
+            // Phase 2: Write actual element data
+            println!("\n--- Phase 2: Writing element data ---");
+            for (i, element) in self.iter().enumerate() {
+                println!("  Writing data for element[{}]", i);
+                let before = buf.remaining_mut();
 
-        let word_size: u32 = align_up::<ALIGN>(T::HEADER_SIZE) as u32;
+                // For nested vectors, this will recursively call encode_tail
+                element.encode_tail(buf, &mut local_ctx)?;
 
-        // Write offset for outer container
-        if ctx.depth == 0 {
-            write_u32_aligned::<BigEndian, ALIGN>(out, word_size);
-            written += word_size;
-        }
-
-        ctx.depth += 1;
-
-        // write data len
-        write_u32_aligned::<BigEndian, ALIGN>(out, self.len() as u32);
-        written += word_size;
-
-        if self.is_empty() {
-            return Ok(written as usize);
-        }
-
-        if T::IS_DYNAMIC {
-            written += encode_dynamic_elements(self, out, ctx)? as u32;
-        } else {
-            for element in self.iter() {
-                written += element.encode(out, ctx)? as u32;
+                let written = before - buf.remaining_mut();
+                println!("    Written {} bytes for element[{}]", written, i);
             }
+
+            println!("\n--- Two-phase encoding complete ---");
         }
 
-        ctx.depth -= 1;
-        Ok(written as usize)
+        let total_written = tail_start - buf.remaining_mut();
+        println!(
+            "=== Vec::encode_tail END - wrote {} bytes total ===\n",
+            total_written
+        );
+
+        Ok(total_written)
     }
 
     /// Decodes a Solidity ABI vector from the buffer.
+    ///
+    /// This implementation follows Solidity ABI conventions where all offsets are relative
+    /// to the start of the encoded structure. The caller is responsible for ensuring the
+    /// buffer contains valid ABI-encoded data at the specified offset.
+    ///
+    /// # Note
+    ///
+    /// This decoder does not handle "dirty" buffers with garbage data before the encoded
+    /// content. For such cases, the caller must provide the correct starting offset where
+    /// the valid ABI encoding begins.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        let data_offset = read_u32_aligned::<BigEndian, 32>(buf, offset)?;
+        let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)?;
 
-        let len = read_u32_aligned::<BigEndian, 32>(buf, data_offset as usize)? as usize;
+        let len = read_u32_aligned::<B, ALIGN>(buf, data_offset as usize)? as usize;
 
         if len == 0 {
             return Ok(Vec::new());
         }
 
         let mut result = Vec::with_capacity(len);
-        let chunk = &buf.chunk()[(data_offset + 32) as usize..];
+        let chunk = &buf.chunk()[(data_offset + ALIGN as u32) as usize..];
 
         for i in 0..len {
-            let elem_offset = i * align_up::<32>(T::HEADER_SIZE);
+            let elem_offset = i * align_up::<ALIGN>(T::HEADER_SIZE);
             let value = T::decode(&chunk, elem_offset)?;
             result.push(value);
         }
 
         Ok(result)
     }
-}
-
-#[inline(always)]
-fn encode_dynamic_elements<T, B: ByteOrder, const ALIGN: usize>(
-    vec: &[T],
-    buf: &mut impl BufMut,
-    ctx: &mut EncodingContext,
-) -> Result<usize, CodecError>
-where
-    T: Encoder<B, ALIGN, true, Ctx = EncodingContext>,
-{
-    let len = vec.len();
-    if len == 0 {
-        return Ok(0);
-    }
-
-    let mut current_offset = len * 32;
-
-    for element in vec.iter() {
-        let size = if T::IS_DYNAMIC {
-            let mut counter = ByteCounter::new();
-            element.encode(&mut counter, ctx)?;
-            counter.count()
-        } else {
-            align_up::<32>(T::HEADER_SIZE)
-        };
-
-        write_u32_aligned::<BigEndian, 32>(buf, current_offset as u32);
-        current_offset += size;
-    }
-
-    // Write actual elements
-    let mut total_written = 0;
-    for element in vec.iter() {
-        let written = element.encode(buf, ctx)?;
-
-        total_written += written;
-    }
-
-    Ok(len * 32 + total_written)
 }
 
 #[cfg(test)]
@@ -400,67 +420,35 @@ mod tests {
     }
 
     mod solidity {
-        use crate::optimized::{ctx::EncodingContext, encoder::Encoder};
+        use crate::optimized::{
+            ctx::EncodingContext,
+            encoder::Encoder,
+            utils::test_utils::{assert_codec_sol, encode_alloy_sol, print_encoded},
+        };
+        use alloy_primitives::hex::encode;
         use byteorder::BigEndian;
         use bytes::BytesMut;
-
-        /// Checks Solidity ABI encode/decode roundtrip and encoded hex.
-        fn assert_solidity_codec<T>(value: &T, expected_hex: &str)
-        where
-            T: Encoder<BigEndian, 32, true> + PartialEq + std::fmt::Debug + Clone,
-        {
-            // Encode to buffer
-            let mut buf = BytesMut::new();
-            let encode_result = T::encode(value, &mut buf, &mut T::Ctx::default());
-            assert!(
-                encode_result.is_ok(),
-                "Solidity ABI encode failed: {:?}",
-                encode_result
-            );
-
-            let encoded = buf.freeze();
-            assert_eq!(
-                hex::encode(&encoded),
-                expected_hex,
-                "Solidity ABI encoded hex mismatch"
-            );
-
-            // Decode and check value roundtrip
-            let decode_result = T::decode(&encoded, 0);
-            assert!(
-                decode_result.is_ok(),
-                "Solidity ABI decode failed: {:?}",
-                decode_result
-            );
-            assert_eq!(
-                *value,
-                decode_result.unwrap(),
-                "Solidity ABI roundtrip value mismatch"
-            );
-        }
 
         #[test]
         fn test_empty_vec_u32() {
             let value: Vec<u32> = vec![];
-            assert_solidity_codec(
+            assert_codec_sol(
+                "0000000000000000000000000000000000000000000000000000000000000020",
+                // length = 0 (u32, 32 bytes padded)
+                "0000000000000000000000000000000000000000000000000000000000000000",
                 &value,
-                concat!(
-                    // offset (0x20 == 32 bytes, where data section starts)
-                    "0000000000000000000000000000000000000000000000000000000000000020",
-                    // length = 0 (u32, 32 bytes padded)
-                    "0000000000000000000000000000000000000000000000000000000000000000"
-                ),
             );
         }
 
         #[test]
         fn test_vec_u32() {
             let value = vec![1u32, 2, 3, 4, 5];
-            assert_solidity_codec(
-                &value,
+            assert_codec_sol(
                 concat!(
                     // offset to data (32)
                     "0000000000000000000000000000000000000000000000000000000000000020",
+                ),
+                concat!(
                     // length (5)
                     "0000000000000000000000000000000000000000000000000000000000000005",
                     // elements, each padded to 32 bytes
@@ -470,18 +458,23 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000004",
                     "0000000000000000000000000000000000000000000000000000000000000005"
                 ),
+                &value,
             );
         }
 
         #[test]
         fn test_nested_vec_u32() {
             let value = vec![vec![1u32, 2, 3], vec![4, 5]];
-            assert_solidity_codec(
-                &value,
+            let expected_encoded = encode_alloy_sol(&value);
+            print_encoded::<BigEndian, 32>(&expected_encoded);
+
+            assert_codec_sol(
                 concat!(
                     // main offset (0x20 = 32)
                     "0000000000000000000000000000000000000000000000000000000000000020",
                     // main array length (2)
+                ),
+                concat!(
                     "0000000000000000000000000000000000000000000000000000000000000002",
                     // offset to first subarray (0x40 = 64)
                     "0000000000000000000000000000000000000000000000000000000000000040",
@@ -502,6 +495,36 @@ mod tests {
                     // element 5
                     "0000000000000000000000000000000000000000000000000000000000000005"
                 ),
+                &value,
+            );
+        }
+
+        #[test]
+        fn test_deep_nested_u32() {
+            let value = vec![vec![vec![1u32, 2], vec![3], vec![4, 5, 6]]];
+
+            assert_codec_sol(
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000020", /* [0x0000] 0 = 32 */
+                ),
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000001", /* [0x0020] 32 = 1 */
+                    "0000000000000000000000000000000000000000000000000000000000000020", /* [0x0040] 64 = 32 */
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0060] 96 = 3 */
+                    "0000000000000000000000000000000000000000000000000000000000000060", /* [0x0080] 128 = 96 */
+                    "00000000000000000000000000000000000000000000000000000000000000c0", /* [0x00a0] 160 = 192 */
+                    "0000000000000000000000000000000000000000000000000000000000000100", /* [0x00c0] 192 = 256 */
+                    "0000000000000000000000000000000000000000000000000000000000000002", /* [0x00e0] 224 = 2 */
+                    "0000000000000000000000000000000000000000000000000000000000000001", /* [0x0100] 256 = 1 */
+                    "0000000000000000000000000000000000000000000000000000000000000002", /* [0x0120] 288 = 2 */
+                    "0000000000000000000000000000000000000000000000000000000000000001", /* [0x0140] 320 = 1 */
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0160] 352 = 3 */
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0180] 384 = 3 */
+                    "0000000000000000000000000000000000000000000000000000000000000004", /* [0x01a0] 416 = 4 */
+                    "0000000000000000000000000000000000000000000000000000000000000005", /* [0x01c0] 448 = 5 */
+                    "0000000000000000000000000000000000000000000000000000000000000006", /* [0x01e0] 480 = 6 */
+                ),
+                &value,
             );
         }
 
@@ -544,53 +567,67 @@ mod tests {
             assert_eq!(decoded, v, "Decoded value mismatch");
         }
 
-        // TODO: check do we actually need this use case
-        // TLDR: Decoding from dirty buffers with offset might be caller's responsibility to
-        // handle This test verifies decoding from a buffer with dirty/garbage data
-        // at the beginning. Current implementation expects clean buffers - decoding
-        // with offset into dirty buffer fails. This might be correct behavior: the
-        // caller should ensure proper buffer alignment/cleaning  rather than the
-        // decoder handling arbitrary offsets in dirty
-        #[test]
+        // For solidity we
         #[ignore]
+        #[test]
         fn vec_decoding_from_dirty_buf() {
-            todo!();
-            // let original: Vec<u32> = vec![1, 2, 3, 4, 5];
-            // let mut buf = BytesMut::new();
-            // buf.extend_from_slice(&[0xFF, 0xFF, 0xFF]); // Add some initial data
-            //
-            // // Encode at top-level (None context)
-            // <Vec<u32> as Encoder<BigEndian, 32, true>>::encode(&original, &mut buf,
-            // None).unwrap(); let encoded = buf.freeze();
-            //
-            // eprintln!("encoded: {:?}", hex::encode(&encoded));
-            //
-            // let expected_encoded = hex::decode(concat!(
-            //     "ffffff",                                                           //
-            // Initial data
-            //     "0000000000000000000000000000000000000000000000000000000000000020", // offset
-            //     "0000000000000000000000000000000000000000000000000000000000000005", // length
-            // = 5
-            //     "0000000000000000000000000000000000000000000000000000000000000001", // 1
-            //     "0000000000000000000000000000000000000000000000000000000000000002", // 2
-            //     "0000000000000000000000000000000000000000000000000000000000000003", // 3
-            //     "0000000000000000000000000000000000000000000000000000000000000004", // 4
-            //     "0000000000000000000000000000000000000000000000000000000000000005"  // 5
-            // ))
-            // .unwrap();
-            //
-            // if encoded != expected_encoded {
-            //     eprintln!("Encoded mismatch!");
-            //     eprintln!("Expected: {}", hex::encode(&expected_encoded));
-            //     eprintln!("Actual:   {}", hex::encode(&encoded));
-            // }
-            // assert_eq!(expected_encoded, encoded);
-            //
-            // // Decode starting from offset 3 (after the 0xFF bytes)
-            // let decoded = <Vec<u32> as Encoder<BigEndian, 32, true>>::decode(&encoded,
-            // 3).unwrap();
-            //
-            // assert_eq!(original, decoded);
+            let original: Vec<u32> = vec![1, 2, 3, 4, 5];
+
+            // Create context and calculate header size
+            let mut ctx = EncodingContext::default();
+            let _ = <Vec<u32> as Encoder<BigEndian, 32, true>>::header_size(&original, &mut ctx);
+
+            // Create header buffer with garbage
+            let mut header_buf = BytesMut::new();
+            header_buf.extend_from_slice(&[0xFF, 0xFF, 0xFF]); // Add garbage
+
+            // Encode header (offset)
+            let w = <Vec<u32> as Encoder<BigEndian, 32, true>>::encode_header(
+                &original,
+                &mut header_buf,
+                &mut ctx,
+            );
+            assert!(w.is_ok(), "encode_header failed: {:?}", w);
+
+            // Expected header: garbage + offset
+            let expected_header_hex = concat!(
+                "ffffff",                                                           // garbage
+                "0000000000000000000000000000000000000000000000000000000000000020"  // offset = 32
+            );
+            assert_eq!(
+                expected_header_hex,
+                encode(&header_buf),
+                "header bytes mismatch"
+            );
+
+            // Encode tail (actual data)
+            let mut tail_buf = BytesMut::new();
+            let w = <Vec<u32> as Encoder<BigEndian, 32, true>>::encode_tail(
+                &original,
+                &mut tail_buf,
+                &mut ctx,
+            );
+            assert!(w.is_ok(), "encode_tail failed: {:?}", w);
+
+            // Expected tail: length + elements
+            let expected_tail_hex = concat!(
+                "0000000000000000000000000000000000000000000000000000000000000005", // length = 5
+                "0000000000000000000000000000000000000000000000000000000000000001", // 1
+                "0000000000000000000000000000000000000000000000000000000000000002", // 2
+                "0000000000000000000000000000000000000000000000000000000000000003", // 3
+                "0000000000000000000000000000000000000000000000000000000000000004", // 4
+                "0000000000000000000000000000000000000000000000000000000000000005"  // 5
+            );
+            assert_eq!(expected_tail_hex, encode(&tail_buf), "tail bytes mismatch");
+
+            // Combine header and tail
+            let mut full_buf = header_buf.clone();
+            full_buf.extend_from_slice(&tail_buf);
+
+            // Decode from offset 3 (after garbage)
+            let decoded = <Vec<u32> as Encoder<BigEndian, 32, true>>::decode(&full_buf, 3)
+                .expect("decode failed");
+            assert_eq!(decoded, original, "decoded value mismatch");
         }
     }
 }
