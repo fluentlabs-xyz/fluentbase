@@ -3151,7 +3151,6 @@ dependencies = [
  "fluentbase-codec",
  "hashbrown 0.15.4",
  "hex-literal 1.0.0",
- "once_cell",
  "paste",
  "revm-precompile",
  "revm-primitives",
@@ -6017,7 +6016,6 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#ba67e868dfedf39cb89f14a0878b03ace5842fdd"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",

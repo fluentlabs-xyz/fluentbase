@@ -47,6 +47,7 @@ std = [
 ]
 rwasm = []
 debug-print = [
-    "dep:hex"
+    "dep:hex",
+    "rwasm/debug-print",
 ]
 wasmtime = ["dep:fluentbase-genesis", "rwasm/wasmtime"]
