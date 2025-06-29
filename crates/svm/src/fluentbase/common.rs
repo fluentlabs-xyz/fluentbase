@@ -186,11 +186,11 @@ impl MetadataAPI for MemStorage {
         metadata: Bytes,
     ) -> SyscallResult<()> {
         let entry = self.in_memory_metadata.entry(address.clone()).or_default();
-        let total_len = metadata.len()/* + offset as usize*/;
+        let total_len = metadata.len();
         if entry.len() < total_len {
             entry.resize(total_len, 0);
         }
-        entry[/*offset as usize*/..].copy_from_slice(metadata.as_ref());
+        entry[..metadata.len()].copy_from_slice(metadata.as_ref());
         let entry_len = entry.len();
         assert_eq!(
             self.in_memory_metadata
