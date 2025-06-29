@@ -20,7 +20,7 @@ use crate::{
 };
 use alloc::{vec, vec::Vec};
 use bincode::error::DecodeError;
-use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI};
+use fluentbase_sdk::{Bytes, ContextReader, SharedAPI};
 use hashbrown::HashMap;
 use solana_bincode::{deserialize, serialize};
 use solana_pubkey::Pubkey;
@@ -121,10 +121,6 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let preimage: Bytes = preimage.into();
     let _ = write_protected_preimage(&mut sdk, preimage);
     // TODO figure out balance changes and apply them to evm
-    debug_log_ext!("balance_changes.len={}", balance_changes.len());
-    for balance_change in balance_changes {
-        debug_log_ext!("balance_change={:?}", balance_change);
-    }
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
@@ -211,19 +207,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         exec_account_balance_before, exec_account_balance_after,
         "exec account balance shouldn't change"
     );
-    debug_log_ext!("pk_contract {}", pk_contract);
-    debug_log_ext!("pk_caller {}", pk_caller);
-    debug_log_ext!("result_accounts.len={}", result_accounts.len());
-    for result_account in result_accounts {
-        debug_log_ext!("result_account.key={}", result_account.0);
-    }
     // TODO figure out balance changes and apply them to evm
     // TODO need optimal balance sync logic
-    debug_log_ext!("balance_changes.len={}", balance_changes.len());
-    for balance_change in &balance_changes {
-        debug_log_ext!("balance_change={:?}", balance_change);
-    }
-
     // settle_balances(&mut sdk, balance_changes);
 
     let out = Bytes::new();

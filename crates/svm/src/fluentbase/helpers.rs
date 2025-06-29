@@ -32,7 +32,7 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{debug_log, debug_log_ext, ContextReader, MetadataAPI, SharedAPI};
+use fluentbase_sdk::{debug_log, ContextReader, MetadataAPI, SharedAPI};
 use hashbrown::HashMap;
 use itertools::Itertools;
 use solana_bincode::deserialize;
@@ -316,10 +316,6 @@ pub(crate) fn settle_balances<SDK: SharedAPI>(
         .iter()
         .fold(0u64, |accum, (_, next)| accum + next);
     assert_eq!(balance_to_receive, balance_to_send);
-    debug_log_ext!("balance_changes.len={}", balance_changes.len());
-    for balance_change_filtered in &balance_changes {
-        debug_log_ext!("balance_change={:?}", balance_change_filtered);
-    }
     let mut run = balance_receivers.len() > 0;
     if run {
         let mut receiver_idx = 0;

@@ -36,7 +36,7 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec::Vec};
-use fluentbase_sdk::{debug_log_ext, ContextReader, MetadataAPI, SharedAPI};
+use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;

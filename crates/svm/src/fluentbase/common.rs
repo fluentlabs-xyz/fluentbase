@@ -16,9 +16,7 @@ use fluentbase_sdk::{
     ExitCode,
     MetadataAPI,
     SharedAPI,
-    StorageAPI,
     SyscallResult,
-    U256,
 };
 use fluentbase_types::{IsAccountEmpty, IsColdAccess};
 use hashbrown::{HashMap, HashSet};
