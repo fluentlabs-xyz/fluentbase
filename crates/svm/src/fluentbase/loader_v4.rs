@@ -96,7 +96,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     batch_message.append_one(message);
 
     let result = exec_svm_batch_message(&mut sdk, batch_message, true, &mut Some(&mut mem_storage));
-    let (result_accounts, balance_changes) = match process_svm_result(result) {
+    let (result_accounts, _balance_changes) = match process_svm_result(result) {
         Ok(v) => v,
         Err(err_str) => {
             panic!("failed to execute svm batch message: {}", err_str);
@@ -185,7 +185,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     .expect("failed to write loader_v4");
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
-    let (result_accounts, balance_changes): (
+    let (result_accounts, _balance_changes): (
         HashMap<Pubkey, AccountSharedData>,
         HashMap<Pubkey, (u64, u64)>,
     ) = match process_svm_result(result) {

@@ -60,13 +60,11 @@ use crate::{
         InheritableAccountFields,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
-    common::evm_address_from_pubkey,
     context::BpfAllocator,
     error::SvmError,
     solana_program::sysvar::Sysvar,
     // storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
-use fluentbase_sdk::debug_log_ext;
 use fluentbase_types::{Address, MetadataAPI};
 use solana_rbpf::ebpf::MM_HEAP_START;
 

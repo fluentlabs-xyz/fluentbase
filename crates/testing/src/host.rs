@@ -1,8 +1,6 @@
 use core::cell::RefCell;
-use fluentbase_codec::byteorder::LittleEndian;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_sdk::{
-    byteorder::ByteOrder,
     bytes::Buf,
     native_api::NativeAPI,
     Address,
@@ -19,8 +17,6 @@ use fluentbase_sdk::{
     SyscallResult,
     B256,
     FUEL_DENOM_RATE,
-    STATE_MAIN,
-    SYSCALL_ID_METADATA_WRITE,
     U256,
 };
 use hashbrown::HashMap;
@@ -140,7 +136,7 @@ impl MetadataAPI for HostTestingContext {
     fn metadata_write(
         &mut self,
         address: &Address,
-        offset: u32,
+        _offset: u32,
         metadata: Bytes,
     ) -> SyscallResult<()> {
         let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
