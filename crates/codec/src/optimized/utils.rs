@@ -92,10 +92,12 @@ pub fn read_bytes_header_compact<B: ByteOrder, const ALIGN: usize>(
     buf: &impl Buf,
     offset: usize,
 ) -> Result<(usize, usize), CodecError> {
+    println!("read_bytes_header_compact");
+
     let word = align_up::<ALIGN>(4);
     let required_size = offset + word * 2;
 
-    if buf.remaining() < required_size {
+    if required_size > buf.remaining() {
         return Err(CodecError::BufferTooSmallMsg {
             expected: required_size,
             actual: buf.remaining(),
@@ -106,42 +108,37 @@ pub fn read_bytes_header_compact<B: ByteOrder, const ALIGN: usize>(
     let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
     let data_len = read_u32_aligned::<B, ALIGN>(buf, offset + word)? as usize;
 
-    Ok((data_offset, data_len))
+    // we need to add offset - since data_offset is relative to the start of the buffer (offset)
+    Ok((data_offset + offset, data_len))
 }
 
 pub fn read_bytes_header_solidity<B: ByteOrder, const ALIGN: usize>(
     buf: &impl Buf,
     offset: usize,
 ) -> Result<(usize, usize), CodecError> {
-    let word = align_up::<ALIGN>(4);
-    let offset_end = offset + word;
-
-    if buf.remaining() < offset_end {
-        return Err(CodecError::BufferTooSmallMsg {
-            expected: offset_end,
-            actual: buf.remaining(),
-            message: "Solidity header: insufficient buffer size for offset",
-        });
-    }
-
     // Data offset position
     let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
 
-    // Solidity length is stored exactly at data_offset position
-    let length_end = data_offset + word;
-    if buf.remaining() < length_end {
-        return Err(CodecError::BufferTooSmallMsg {
-            expected: length_end,
-            actual: buf.remaining(),
-            message: "Solidity header: insufficient buffer size for length",
-        });
-    }
-
-    let data_len = read_u32_aligned::<B, ALIGN>(buf, data_offset)? as usize;
+    let data_len = read_u32_aligned::<B, ALIGN>(buf, data_offset + offset)? as usize;
 
     // Data starts immediately after aligned length
-    Ok((data_offset + word, data_len))
+    Ok((data_offset + offset, data_len))
 }
+
+pub fn read_bytes_header_solidity2<B: ByteOrder, const ALIGN: usize>(
+    buf: &impl Buf,
+    offset: usize,
+) -> Result<(usize, usize), CodecError> {
+    // Offset is relative to the buffer start
+    let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
+
+    // Data length is located exactly at `data_offset` from buffer start
+    let data_len = read_u32_aligned::<B, ALIGN>(buf, data_offset)? as usize;
+
+    // Data starts immediately after the length field (ALIGN bytes)
+    Ok((data_offset, data_len))
+}
+
 
 #[cfg(test)]
 pub mod test_utils {
@@ -155,17 +152,16 @@ pub mod test_utils {
         expected_tail_hex: &str,
         value: &T,
     ) where
-        T: Encoder<LittleEndian, 4, false, Ctx = EncodingContext>
-            + PartialEq
-            + std::fmt::Debug
-            + Clone,
+        T: Encoder<LittleEndian, 4, false> + PartialEq + std::fmt::Debug + Clone,
     {
         let mut ctx = EncodingContext::default();
-        let _ = T::header_size(value, &mut ctx);
+        ctx.hdr_size = value.header_size() as u32;
+        println!("ctx: {:?}", ctx);
 
         let mut header_buf = BytesMut::new();
         let w = T::encode_header(value, &mut header_buf, &mut ctx);
         assert!(w.is_ok(), "encode_header failed: {:?}", w);
+        println!("ctx after header: {:?}", ctx);
 
         assert_eq!(
             expected_header_hex,
@@ -185,13 +181,12 @@ pub mod test_utils {
     }
     pub(crate) fn assert_codec_sol<T>(expected_header_hex: &str, expected_tail_hex: &str, value: &T)
     where
-        T: Encoder<BigEndian, 32, true, Ctx = EncodingContext>
-            + PartialEq
-            + std::fmt::Debug
-            + Clone,
+        T: Encoder<BigEndian, 32, true> + PartialEq + std::fmt::Debug + Clone,
     {
         let mut ctx = EncodingContext::default();
-        let _ = T::header_size(value, &mut ctx);
+        ctx.hdr_size = value.header_size() as u32;
+
+        println!("hdr_size: {}", ctx.hdr_size);
 
         let mut header_buf = BytesMut::new();
         let w = T::encode_header(value, &mut header_buf, &mut ctx);
@@ -216,20 +211,25 @@ pub mod test_utils {
 
     pub(crate) fn assert_roundtrip_compact<T>(value: &T)
     where
-        T: Encoder<LittleEndian, 4, false, Ctx = EncodingContext> + PartialEq + std::fmt::Debug,
+        T: Encoder<LittleEndian, 4, false> + PartialEq + std::fmt::Debug,
     {
         let mut ctx = EncodingContext::default();
-        value.header_size(&mut ctx).expect("header_size failed");
+        ctx.hdr_size = value.header_size() as u32;
 
         let mut header_buf = BytesMut::new();
         value
             .encode_header(&mut header_buf, &mut ctx)
             .expect("encode_header failed");
+        println!("header");
+        print_encoded::<LittleEndian, 4>(&header_buf);
 
         let mut tail_buf = BytesMut::new();
         value
             .encode_tail(&mut tail_buf, &mut ctx)
             .expect("encode_tail failed");
+
+        println!("tail");
+        print_encoded::<LittleEndian, 4>(&tail_buf);
 
         let mut full_buf = header_buf.clone();
         full_buf.extend_from_slice(&tail_buf);
@@ -240,10 +240,10 @@ pub mod test_utils {
 
     pub(crate) fn assert_roundtrip_sol<T>(value: &T)
     where
-        T: Encoder<BigEndian, 32, true, Ctx = EncodingContext> + PartialEq + std::fmt::Debug,
+        T: Encoder<BigEndian, 32, true> + PartialEq + std::fmt::Debug,
     {
         let mut ctx = EncodingContext::default();
-        value.header_size(&mut ctx).expect("header_size failed");
+        ctx.hdr_size = value.header_size() as u32;
 
         let mut header_buf = BytesMut::new();
         value

@@ -1,21 +1,24 @@
 use crate::optimized::{
+    ctx::EncodingContext,
     encoder::Encoder,
     error::CodecError,
     utils::{align_up, is_big_endian},
-    ctx::EncodingContext,
 };
 use byteorder::ByteOrder;
 use bytes::{Buf, BufMut};
 use core::{marker::PhantomData, mem::size_of};
 
 impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, SOL_MODE>
-for PhantomData<B>
+    for PhantomData<B>
 {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = 0;
     const IS_DYNAMIC: bool = false;
 
-    fn encode_header(&self, _buf: &mut impl BufMut, _ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_header(
+        &self,
+        _buf: &mut impl BufMut,
+        _ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
         Ok(0)
     }
 
@@ -25,11 +28,14 @@ for PhantomData<B>
 }
 
 impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, SOL_MODE> for u8 {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = size_of::<u8>();
     const IS_DYNAMIC: bool = false;
 
-    fn encode_header(&self, buf: &mut impl BufMut, _ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_header(
+        &self,
+        buf: &mut impl BufMut,
+        _ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
         let alignment = ALIGN.max(1);
         if is_big_endian::<B>() {
             buf.put_bytes(0, alignment - 1);
@@ -61,11 +67,14 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
 }
 
 impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, SOL_MODE> for bool {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = size_of::<u8>();
     const IS_DYNAMIC: bool = false;
 
-    fn encode_header(&self, buf: &mut impl BufMut, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_header(
+        &self,
+        buf: &mut impl BufMut,
+        ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
         let value: u8 = if *self { 1 } else { 0 };
         <u8 as Encoder<B, ALIGN, SOL_MODE>>::encode_header(&value, buf, ctx)
     }
@@ -81,11 +90,14 @@ macro_rules! impl_int {
         impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, SOL_MODE>
             for $typ
         {
-            type Ctx = EncodingContext;
             const HEADER_SIZE: usize = core::mem::size_of::<$typ>();
             const IS_DYNAMIC: bool = false;
 
-            fn encode_header(&self, buf: &mut impl BufMut, _ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+            fn encode_header(
+                &self,
+                buf: &mut impl BufMut,
+                _ctx: &mut EncodingContext,
+            ) -> Result<usize, CodecError> {
                 let alignment = ALIGN.max(size_of::<$typ>());
                 if is_big_endian::<B>() {
                     buf.put_bytes(0, alignment - size_of::<$typ>());
@@ -112,9 +124,7 @@ macro_rules! impl_int {
                 }
                 let chunk = &buf.chunk()[offset..];
                 let value = if is_big_endian::<B>() {
-                    B::$read_method(
-                        &chunk[word_size - size_of::<$typ>()..word_size]
-                    )
+                    B::$read_method(&chunk[word_size - size_of::<$typ>()..word_size])
                 } else {
                     B::$read_method(&chunk[..size_of::<$typ>()])
                 };
@@ -132,15 +142,18 @@ impl_int!(i32, read_i32, put_i32, put_i32_le);
 impl_int!(i64, read_i64, put_i64, put_i64_le);
 
 impl<T, B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, SOL_MODE>
-for Option<T>
+    for Option<T>
 where
     T: Encoder<B, ALIGN, SOL_MODE> + Default,
 {
-    type Ctx = T::Ctx;
     const HEADER_SIZE: usize = align_up::<ALIGN>(1) + T::HEADER_SIZE;
     const IS_DYNAMIC: bool = false;
 
-    fn encode_header(&self, buf: &mut impl BufMut, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_header(
+        &self,
+        buf: &mut impl BufMut,
+        ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
         let flag: u8 = if self.is_some() { 1 } else { 0 };
 
         // Align 1-byte flag
@@ -182,15 +195,18 @@ where
 }
 
 impl<T, B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const N: usize>
-Encoder<B, ALIGN, SOL_MODE> for [T; N]
+    Encoder<B, ALIGN, SOL_MODE> for [T; N]
 where
-    T: Encoder<B, ALIGN, SOL_MODE, Ctx = EncodingContext> + Default + Copy,
+    T: Encoder<B, ALIGN, SOL_MODE> + Default + Copy,
 {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = align_up::<ALIGN>(T::HEADER_SIZE) * N;
     const IS_DYNAMIC: bool = false;
 
-    fn encode_header(&self, buf: &mut impl BufMut, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_header(
+        &self,
+        buf: &mut impl BufMut,
+        ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
         let mut total = 0;
         for item in self.iter() {
             total += item.encode_header(buf, ctx)?;
@@ -222,8 +238,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::optimized::SolidityPackedABI;
-    use crate::optimized::ctx::EncodingContext;
+    use crate::optimized::{ctx::EncodingContext, SolidityPackedABI};
     use byteorder::{BigEndian, LittleEndian};
     use bytes::{Bytes, BytesMut};
 
@@ -261,8 +276,9 @@ mod tests {
 
         println!("Buffer capacity: {}", buf.capacity());
 
-        let encoding_result =
-            <u8 as Encoder<LittleEndian, { ALIGNMENT }, false>>::encode(&original, &mut buf, &mut ctx);
+        let encoding_result = <u8 as Encoder<LittleEndian, { ALIGNMENT }, false>>::encode(
+            &original, &mut buf, &mut ctx,
+        );
 
         assert!(encoding_result.is_ok());
 
@@ -287,8 +303,9 @@ mod tests {
         let mut buf = BytesMut::new();
         let mut ctx = EncodingContext::default();
 
-        let encoding_result =
-            <bool as Encoder<BigEndian, { ALIGNMENT }, false>>::encode(&original, &mut buf, &mut ctx);
+        let encoding_result = <bool as Encoder<BigEndian, { ALIGNMENT }, false>>::encode(
+            &original, &mut buf, &mut ctx,
+        );
 
         assert!(encoding_result.is_ok());
 
@@ -312,8 +329,9 @@ mod tests {
         let mut buf = BytesMut::new();
         let mut ctx = EncodingContext::default();
 
-        let encoding_result =
-            <bool as Encoder<LittleEndian, { ALIGNMENT }, false>>::encode(&original, &mut buf, &mut ctx);
+        let encoding_result = <bool as Encoder<LittleEndian, { ALIGNMENT }, false>>::encode(
+            &original, &mut buf, &mut ctx,
+        );
 
         assert!(encoding_result.is_ok());
 
@@ -430,7 +448,8 @@ mod tests {
         let mut buf = BytesMut::new();
         let mut ctx = EncodingContext::default();
 
-        let ok = <Option<u32> as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, &mut ctx);
+        let ok =
+            <Option<u32> as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, &mut ctx);
         assert!(ok.is_ok());
 
         let encoded = buf.freeze();
@@ -451,7 +470,8 @@ mod tests {
         let mut buf = BytesMut::new();
         let mut ctx = EncodingContext::default();
 
-        <[u8; 5] as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, &mut ctx).unwrap();
+        <[u8; 5] as Encoder<LittleEndian, 4, false>>::encode(&original, &mut buf, &mut ctx)
+            .unwrap();
 
         let encoded = buf.freeze();
         println!("Encoded: {:?}", hex::encode(&encoded));

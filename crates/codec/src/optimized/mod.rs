@@ -9,5 +9,6 @@ mod vec;
 
 mod evm;
 mod hash;
+mod tuple;
 
 pub use encoder::{CompactABI, SolidityABI, SolidityPackedABI};

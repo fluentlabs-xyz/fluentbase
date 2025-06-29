@@ -16,7 +16,12 @@
 //! * `CompactABI` – head pass for the whole tree, then tail pass.
 //! * `SolidityPackedABI` – single `encode` call, compile-time limited to non-dynamic types.
 
-use crate::optimized::{counter::ByteCounter, ctx::EncodingContext, error::CodecError};
+use crate::optimized::{
+    counter::ByteCounter,
+    ctx::EncodingContext,
+    error::CodecError,
+    utils::align_up,
+};
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
 use core::marker::PhantomData;
@@ -24,25 +29,27 @@ use core::marker::PhantomData;
 /// ABI Encoder trait. Encodes a type into ABI-compliant bytes in a zero-allocation, phase-based
 /// manner.
 pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized {
-    type Ctx: Default;
-
     const HEADER_SIZE: usize;
     const IS_DYNAMIC: bool;
 
-    fn header_size(&self, ctx: &mut Self::Ctx) -> Result<(), CodecError> {
+    fn header_size(&self) -> usize {
         const {
             assert!(!Self::IS_DYNAMIC, "dynamic type must override header_size");
         }
-        Ok(())
+        align_up::<ALIGN>(Self::HEADER_SIZE)
     }
 
     fn encode_header(
         &self,
         out: &mut impl BufMut,
-        ctx: &mut Self::Ctx,
+        ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError>;
 
-    fn encode_tail(&self, out: &mut impl BufMut, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+    fn encode_tail(
+        &self,
+        out: &mut impl BufMut,
+        ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
         if !Self::IS_DYNAMIC {
             Ok(0)
         } else {
@@ -50,8 +57,12 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
         }
     }
 
-    fn encode(&self, out: &mut impl BufMut, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
-        self.header_size(ctx)?;
+    fn encode(
+        &self,
+        out: &mut impl BufMut,
+        ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
+        ctx.hdr_size = self.header_size() as u32;
         let head = self.encode_header(out, ctx)?;
         let tail = if Self::IS_DYNAMIC {
             self.encode_tail(out, ctx)?
@@ -63,7 +74,7 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError>;
 
-    fn tail_size(&self, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+    fn tail_size(&self, ctx: &mut EncodingContext) -> Result<usize, CodecError> {
         let mut counter = ByteCounter::new();
         self.encode_tail(&mut counter, ctx)?;
         Ok(counter.count())
@@ -100,15 +111,15 @@ macro_rules! define_abi {
             T: Encoder<$byte_order, $align, $sol_mode>,
         {
             #[inline]
-            pub fn header_size(value: &T, ctx: &mut T::Ctx) -> Result<(), CodecError> {
-                value.header_size(ctx)
+            pub fn header_size(value: &T) -> usize {
+                value.header_size()
             }
 
             #[inline]
             pub fn encode_header(
                 value: &T,
                 buf: &mut impl BufMut,
-                ctx: &mut T::Ctx,
+                ctx: &mut EncodingContext,
             ) -> Result<usize, CodecError> {
                 value.encode_header(buf, ctx)
             }
@@ -117,7 +128,7 @@ macro_rules! define_abi {
             pub fn encode_tail(
                 value: &T,
                 buf: &mut impl BufMut,
-                ctx: &mut T::Ctx,
+                ctx: &mut EncodingContext,
             ) -> Result<usize, CodecError> {
                 value.encode_tail(buf, ctx)
             }
@@ -126,9 +137,8 @@ macro_rules! define_abi {
             pub fn encode(
                 value: &T,
                 buf: &mut impl BufMut,
-                ctx: &mut T::Ctx,
+                ctx: &mut EncodingContext,
             ) -> Result<usize, CodecError> {
-                Self::header_size(value, ctx)?;
                 let header_bytes = Self::encode_header(value, buf, ctx)?;
                 let tail_bytes = if T::IS_DYNAMIC {
                     Self::encode_tail(value, buf, ctx)?
@@ -156,7 +166,7 @@ macro_rules! define_abi {
             pub fn encode(
                 value: &T,
                 buf: &mut impl BufMut,
-                ctx: &mut T::Ctx,
+                ctx: &mut EncodingContext,
             ) -> Result<usize, CodecError> {
                 let _ = <T as PackedSafe>::ASSERT_STATIC;
                 value.encode(buf, ctx)
@@ -186,6 +196,7 @@ mod tests {
         let mut buf = Vec::new();
         let mut ctx = EncodingContext::default();
         let value = 42u8;
+        // TODO: remove ctx usage from SolidityABI and CompactABI and SolidityPackedABI
         SolidityABI::encode(&value, &mut buf, &mut ctx).unwrap();
         println!("buf: {:?}", hex::encode(&buf));
 

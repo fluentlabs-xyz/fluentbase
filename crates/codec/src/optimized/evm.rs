@@ -5,9 +5,10 @@ use crate::optimized::{
     utils::{
         align_up,
         is_big_endian,
-        read_bytes,
-        read_bytes_header_compact,
-        read_bytes_header_solidity,
+        read_bytes
+
+        ,
+        read_u32_aligned,
         write_u32_aligned,
     },
 };
@@ -16,7 +17,6 @@ use byteorder::ByteOrder;
 use bytes::{Buf, BufMut};
 
 impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, SOL_MODE> for Bytes {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = if SOL_MODE {
         align_up::<ALIGN>(32)
     } else {
@@ -25,9 +25,8 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     const IS_DYNAMIC: bool = true;
 
     #[allow(clippy::duplicate_code)]
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        ctx.hdr_size += <Self as Encoder<B, ALIGN, SOL_MODE>>::HEADER_SIZE as u32;
-        Ok(())
+    fn header_size(&self) -> usize {
+        <Self as Encoder<B, ALIGN, SOL_MODE>>::HEADER_SIZE
     }
 
     fn encode_header(
@@ -78,15 +77,27 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        if SOL_MODE {
-            // Solidity ABI decoding
-            let (data_offset, data_len) = read_bytes_header_solidity::<B, ALIGN>(buf, offset)?;
-            Ok(Bytes::from(read_bytes(buf, data_offset, data_len)?))
-        } else {
-            // Compact ABI decoding
-            let (data_offset, data_len) = read_bytes_header_compact::<B, ALIGN>(buf, offset)?;
-            Ok(Bytes::from(read_bytes(buf, data_offset, data_len)?))
-        }
+        println!("Bytes::decode(); offset: {}", offset);
+        // На текущей позиции всегда лежит offset до данных относительно текущей позиции (offset).
+        let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
+        println!("Bytes::decode(); data_offset: {}", data_offset);
+
+        // Теперь мы находимся в точке, где лежит сама длина и данные.
+        let data_start = data_offset;
+        println!("Bytes::decode(); data_start: {}", data_start);
+
+        // Далее нам НЕ нужен больше offset! Здесь уже лежит длина и данные.
+        let data_len = read_u32_aligned::<B, ALIGN>(buf, data_start)? as usize;
+        println!("Bytes::decode(); data_len: {}", data_len);
+        println!(
+            "Bytes::decode(); read_bytes at data_start + ALIGN: {}",
+            data_start + ALIGN
+        );
+
+        // Данные начинаются сразу после длины.
+        let data = read_bytes(buf, data_start + ALIGN, data_len)?;
+
+        Ok(Bytes::from(data))
     }
 
     #[inline]
@@ -94,10 +105,10 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
         self.0.len()
     }
 }
+
 impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, SOL_MODE>
     for String
 {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = if SOL_MODE {
         align_up::<ALIGN>(32)
     } else {
@@ -105,9 +116,8 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     };
     const IS_DYNAMIC: bool = true;
 
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        ctx.hdr_size += <Self as Encoder<B, ALIGN, SOL_MODE>>::HEADER_SIZE as u32;
-        Ok(())
+    fn header_size(&self) -> usize {
+        <Self as Encoder<B, ALIGN, SOL_MODE>>::HEADER_SIZE
     }
 
     fn encode_header(
@@ -156,15 +166,9 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        let (data_offset, data_len) = if SOL_MODE {
-            read_bytes_header_solidity::<B, ALIGN>(buf, offset)?
-        } else {
-            read_bytes_header_compact::<B, ALIGN>(buf, offset)?
-        };
+        let bytes = <Bytes as Encoder<B, ALIGN, SOL_MODE>>::decode(buf, offset)?;
 
-        let data = &buf.chunk()[data_offset..data_offset + data_len];
-
-        String::from_utf8(data.to_vec())
+        String::from_utf8(bytes.to_vec())
             .map_err(|_| CodecError::InvalidData("Invalid UTF-8 in string"))
     }
 
@@ -177,15 +181,12 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
 impl<const N: usize, B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>
     Encoder<B, ALIGN, SOL_MODE> for FixedBytes<N>
 {
-    type Ctx = EncodingContext;
-
     // Fixed-size byte array aligned appropriately
     const HEADER_SIZE: usize = if SOL_MODE { 32 } else { align_up::<ALIGN>(N) };
     const IS_DYNAMIC: bool = false;
 
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        ctx.hdr_size += <FixedBytes<N> as Encoder<B, ALIGN, SOL_MODE>>::HEADER_SIZE as u32;
-        Ok(())
+    fn header_size(&self) -> usize {
+        <FixedBytes<N> as Encoder<B, ALIGN, SOL_MODE>>::HEADER_SIZE
     }
 
     fn encode_header(
@@ -240,7 +241,6 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>
 macro_rules! impl_evm_fixed {
     ($type:ty) => {
         impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for $type {
-            type Ctx = EncodingContext;
             const HEADER_SIZE: usize = <$type>::len_bytes();
             const IS_DYNAMIC: bool = false;
 
@@ -281,7 +281,6 @@ macro_rules! impl_evm_fixed {
 
         // Solidity ABI mode: always padded to 32 bytes
         impl<B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for $type {
-            type Ctx = EncodingContext;
             const HEADER_SIZE: usize = 32;
             const IS_DYNAMIC: bool = false;
 
@@ -333,16 +332,11 @@ impl<
         const SOL_MODE: bool,
     > Encoder<B, ALIGN, SOL_MODE> for Signed<BITS, LIMBS>
 {
-    type Ctx = EncodingContext;
-
-    const HEADER_SIZE: usize = align_up::<ALIGN>(4);
+    const HEADER_SIZE: usize = align_up::<ALIGN>(Self::BYTES);
     const IS_DYNAMIC: bool = false;
 
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        ctx.hdr_size +=
-            align_up::<ALIGN>(<Self as Encoder<B, ALIGN, true>>::HEADER_SIZE.max(Self::BYTES))
-                as u32;
-        Ok(())
+    fn header_size(&self) -> usize {
+        align_up::<ALIGN>(Self::BYTES)
     }
 
     fn encode_header(
@@ -414,17 +408,12 @@ impl<
         const SOL_MODE: bool,
     > Encoder<B, ALIGN, SOL_MODE> for Uint<BITS, LIMBS>
 {
-    type Ctx = EncodingContext;
-
-    const HEADER_SIZE: usize = align_up::<ALIGN>(4);
+    const HEADER_SIZE: usize = align_up::<ALIGN>(Self::BYTES);
     const IS_DYNAMIC: bool = false;
 
     #[allow(clippy::duplicate_code)]
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        ctx.hdr_size +=
-            align_up::<ALIGN>(<Self as Encoder<B, ALIGN, true>>::HEADER_SIZE.max(Self::BYTES))
-                as u32;
-        Ok(())
+    fn header_size(&self) -> usize {
+        align_up::<ALIGN>(Self::BYTES)
     }
 
     fn encode_header(

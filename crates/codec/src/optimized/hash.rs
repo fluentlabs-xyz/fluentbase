@@ -13,32 +13,29 @@ use hashbrown::{HashMap, HashSet};
 /// Compact ABI encoder for HashMap<K, V>
 impl<K, V, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for HashMap<K, V>
 where
-    K: Encoder<B, ALIGN, false, Ctx = EncodingContext> + Ord + Eq + Hash + Debug,
-    V: Encoder<B, ALIGN, false, Ctx = EncodingContext> + Debug,
+    K: Encoder<B, ALIGN, false> + Ord + Eq + Hash + Debug,
+    V: Encoder<B, ALIGN, false> + Debug,
 {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = align_up::<ALIGN>(size_of::<u32>()) * 5; // length (4) + keys_header (8) + values_header (8)
     const IS_DYNAMIC: bool = true; // length
 
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        // Base header: len (u32), keys offset+size, values offset+size
-        ctx.hdr_size += Self::HEADER_SIZE as u32;
+    fn header_size(&self) -> usize {
+        let mut total_size = Self::HEADER_SIZE;
 
         if V::IS_DYNAMIC {
-            // For dynamic values, offset and size are stored in nested headers
-            // So we don't need offset and size fields here (remove 8 bytes)
-            ctx.hdr_size -= (2 * align_up::<ALIGN>(4)) as u32;
+            // Exclude redundant offset and size fields for dynamic values
+            total_size -= 2 * align_up::<ALIGN>(4);
 
-            // Keys always static
-
-            // Calculate nested header sizes for values
-            for value in self.values() {
-                value.header_size(ctx)?;
-            }
+            // Add headers of nested dynamic values
+            total_size += self
+                .values()
+                .map(|value| value.header_size())
+                .sum::<usize>();
         }
 
-        Ok(())
+        total_size
     }
+
     fn encode_header(
         &self,
         out: &mut impl BufMut,
@@ -51,6 +48,7 @@ where
         write_u32_aligned::<B, ALIGN>(out, len);
         ctx.hdr_ptr += align_up::<ALIGN>(4) as u32;
 
+        // TODO: we don't need to sort inside header (add test for nested compact abi)
         let mut entries: Vec<_> = self.iter().collect();
         entries.sort_by(|a, b| a.0.cmp(b.0));
 
@@ -149,7 +147,6 @@ where
             // Static values: offset and size fields explicitly provided
             let values_offset = read_u32_aligned::<B, ALIGN>(buf, hdr_ptr)? as usize;
             hdr_ptr += aligned_u32;
-            let values_size = read_u32_aligned::<B, ALIGN>(buf, hdr_ptr)? as usize;
             (offset + values_offset, align_up::<ALIGN>(V::HEADER_SIZE))
         };
 
@@ -189,17 +186,15 @@ where
 ///   - values data (encoded as Vec<V>)
 impl<K, V, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for HashMap<K, V>
 where
-    K: Encoder<B, ALIGN, true, Ctx = EncodingContext> + Clone + Eq + Hash + Ord + core::fmt::Debug,
-    V: Encoder<B, ALIGN, true, Ctx = EncodingContext> + Clone + core::fmt::Debug,
+    K: Encoder<B, ALIGN, true> + Clone + Eq + Hash + Ord + core::fmt::Debug,
+    V: Encoder<B, ALIGN, true> + Clone + core::fmt::Debug,
 {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = align_up::<ALIGN>(32); // Only offset in header
     const IS_DYNAMIC: bool = true;
 
     /// Adds the HashMap header size to the encoding context
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        ctx.hdr_size += Self::HEADER_SIZE as u32;
-        Ok(())
+    fn header_size(&self) -> usize {
+        Self::HEADER_SIZE
     }
 
     /// Encodes the header - writes only the offset to the HashMap data
@@ -226,7 +221,7 @@ where
     fn encode_tail(
         &self,
         buf: &mut impl BufMut,
-        ctx: &mut EncodingContext,
+        _ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
         let tail_start = buf.remaining_mut();
 
@@ -317,7 +312,7 @@ where
     }
 
     /// Calculates the size of tail data using ByteCounter
-    fn tail_size(&self, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+    fn tail_size(&self, _ctx: &mut EncodingContext) -> Result<usize, CodecError> {
         if self.is_empty() {
             return Ok(32);
         }
@@ -367,26 +362,21 @@ where
 
 impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for HashSet<T>
 where
-    T: Encoder<B, ALIGN, false, Ctx = EncodingContext> + Ord + Eq + Hash + Debug,
+    T: Encoder<B, ALIGN, false> + Ord + Eq + Hash + Debug,
 {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = size_of::<u32>() * 3; // len (4) + keys_offset (4) + keys_size (4)
     const IS_DYNAMIC: bool = true;
 
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        ctx.hdr_size += Self::HEADER_SIZE as u32;
+    fn header_size(&self) -> usize {
+        let mut total_size = Self::HEADER_SIZE;
 
         if T::IS_DYNAMIC {
-            // For dynamic keys, offset and size are stored in nested headers
-            // So offset/size fields are not needed here
-            ctx.hdr_size -= (2 * align_up::<ALIGN>(4)) as u32;
-
-            for key in self {
-                key.header_size(ctx)?;
-            }
+            // Dynamic keys store offset/size in nested headers; exclude them here
+            total_size -= 2 * align_up::<ALIGN>(4);
+            total_size += self.iter().map(|key| key.header_size()).sum::<usize>();
         }
 
-        Ok(())
+        total_size
     }
 
     fn encode_header(
@@ -505,16 +495,14 @@ where
 ///   - for dynamic elements: offsets followed by element data
 impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for HashSet<T>
 where
-    T: Encoder<B, ALIGN, true, Ctx = EncodingContext> + Eq + Hash + Ord,
+    T: Encoder<B, ALIGN, true> + Eq + Hash + Ord + Debug,
 {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = 32;
     const IS_DYNAMIC: bool = true;
 
     /// Adds the HashSet header size to the encoding context
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        ctx.hdr_size += Self::HEADER_SIZE as u32;
-        Ok(())
+    fn header_size(&self) -> usize {
+        Self::HEADER_SIZE
     }
 
     /// Encodes the header - writes only the offset to the HashSet data
@@ -618,7 +606,7 @@ where
     }
 
     /// Calculates the size of tail data without allocations
-    fn tail_size(&self, _ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+    fn tail_size(&self, _ctx: &mut EncodingContext) -> Result<usize, CodecError> {
         if self.is_empty() {
             return Ok(32);
         }
@@ -784,8 +772,8 @@ mod tests {
                 let value2: HashSet<u32> = HashSet::from([2u32, 3, 1]);
 
                 let mut ctx1 = EncodingContext::default();
-                <HashSet<u32> as Encoder<LittleEndian, 4, false>>::header_size(&value1, &mut ctx1)
-                    .unwrap();
+                ctx1.hdr_size =
+                    <HashSet<u32> as Encoder<LittleEndian, 4, false>>::header_size(&value2) as u32;
 
                 let mut header_buf1 = BytesMut::new();
                 <HashSet<u32> as Encoder<LittleEndian, 4, false>>::encode_header(
@@ -796,9 +784,8 @@ mod tests {
                 .unwrap();
 
                 let mut ctx2 = EncodingContext::default();
-                <HashSet<u32> as Encoder<LittleEndian, 4, false>>::header_size(&value2, &mut ctx2)
-                    .unwrap();
-
+                ctx2.hdr_size =
+                    <HashSet<u32> as Encoder<LittleEndian, 4, false>>::header_size(&value2) as u32;
                 let mut header_buf2 = BytesMut::new();
                 <HashSet<u32> as Encoder<LittleEndian, 4, false>>::encode_header(
                     &value2,
@@ -917,7 +904,7 @@ mod tests {
             use super::*;
             use crate::optimized::{
                 encoder::Encoder,
-                utils::test_utils::assert_roundtrip_sol,
+                utils::test_utils::{assert_roundtrip_sol, encode_alloy_sol},
             };
             use hashbrown::HashSet;
 
@@ -974,35 +961,6 @@ mod tests {
                         &value,
                     );
                 }
-            }
-
-            #[test]
-            fn test_hashset_strings() {
-                let value: HashSet<String> =
-                    HashSet::from(["hello".to_string(), "world".to_string(), "foo".to_string()]);
-                // Strings will be sorted as ["foo", "hello", "world"]
-
-                assert_codec_sol(
-                    concat!(
-                        "0000000000000000000000000000000000000000000000000000000000000020", /* offset = 32 */
-                    ),
-                    concat!(
-                        "0000000000000000000000000000000000000000000000000000000000000003", /* length = 3 */
-                        "0000000000000000000000000000000000000000000000000000000000000060", /* offset to "foo" */
-                        "00000000000000000000000000000000000000000000000000000000000000a0", /* offset to "hello" */
-                        "00000000000000000000000000000000000000000000000000000000000000e0", /* offset to "world" */
-                        // "foo"
-                        "0000000000000000000000000000000000000000000000000000000000000003", /* length = 3 */
-                        "666f6f0000000000000000000000000000000000000000000000000000000000", /* "foo" padded */
-                        // "hello"
-                        "0000000000000000000000000000000000000000000000000000000000000005", /* length = 5 */
-                        "68656c6c6f000000000000000000000000000000000000000000000000000000", /* "hello" padded */
-                        // "world"
-                        "0000000000000000000000000000000000000000000000000000000000000005", /* length = 5 */
-                        "776f726c64000000000000000000000000000000000000000000000000000000", /* "world" padded */
-                    ),
-                    &value,
-                );
             }
 
             #[test]

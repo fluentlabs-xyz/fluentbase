@@ -4,7 +4,7 @@ use crate::optimized::{
     error::CodecError,
     utils::{align_up, read_u32_aligned, write_u32_aligned},
 };
-use byteorder::ByteOrder;
+use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
 use core::mem::size_of;
 
@@ -19,27 +19,20 @@ use core::mem::size_of;
 /// For nested vectors: headers are written in pre-order, all data-zones (tails) are written after.
 impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, false> for Vec<T>
 where
-    T: Encoder<B, ALIGN, false, Ctx = EncodingContext>,
+    T: Encoder<B, ALIGN, false>,
 {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = size_of::<u32>() * 3;
     const IS_DYNAMIC: bool = true;
 
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        // Base header size: len (u32), offset (u32), size (u32)
-        ctx.hdr_size += Self::HEADER_SIZE as u32;
+    fn header_size(&self) -> usize {
+        let mut total_size = Self::HEADER_SIZE;
 
         if T::IS_DYNAMIC {
-            // Dynamic fields have their own headers pointing to data; offset and size fields aren't
-            // needed here
-            ctx.hdr_size -= (2 * align_up::<ALIGN>(4)) as u32;
-
-            for el in self {
-                el.header_size(ctx)?;
-            }
+            total_size -= 2 * align_up::<ALIGN>(4);
+            total_size += self.iter().map(|el| el.header_size()).sum::<usize>();
         }
 
-        Ok(())
+        total_size
     }
 
     fn encode_header(
@@ -141,16 +134,14 @@ where
 ///   - raw bytes of the vector
 impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for Vec<T>
 where
-    T: Encoder<B, ALIGN, true, Ctx = EncodingContext>,
+    T: Encoder<B, ALIGN, true> + core::fmt::Debug,
 {
-    type Ctx = EncodingContext;
     const HEADER_SIZE: usize = align_up::<ALIGN>(32); // offset pointer for top-level
     const IS_DYNAMIC: bool = true;
 
     /// Calculates the size required for all headers (offset, length, sub-headers if dynamic).
-    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
-        ctx.hdr_size += Self::HEADER_SIZE as u32;
-        Ok(())
+    fn header_size(&self) -> usize {
+        Self::HEADER_SIZE
     }
 
     /// Encodes the header (offset, length, and sub-offsets for nested dynamic).
@@ -254,9 +245,19 @@ where
 
         let mut result = Vec::with_capacity(len);
         let chunk = &buf.chunk()[(data_offset + ALIGN as u32) as usize..];
-
+        println!(
+            "Vec<T>::decode(); data_offset: {:?} + ALIGN: {:?} = {:?}",
+            data_offset,
+            ALIGN,
+            data_offset + ALIGN as u32
+        );
+        // print_encoded::<BigEndian, ALIGN>(&chunk);
         for i in 0..len {
             let elem_offset = i * align_up::<ALIGN>(T::HEADER_SIZE);
+            println!(
+                "Vec<T>::decode(); i: {:?}; elem_offset: {:?}",
+                i, elem_offset
+            );
             let value = T::decode(&chunk, elem_offset)?;
             result.push(value);
         }
@@ -415,31 +416,36 @@ mod tests {
             print_encoded::<BigEndian, 32>(&expected_encoded);
 
             assert_codec_sol(
+                // Main offset to array data: points to [0x20] (32 bytes from here)
+                "0000000000000000000000000000000000000000000000000000000000000020", /* [0x0000 =
+                                                                                     * 0] */
                 concat!(
-                    // main offset (0x20 = 32)
-                    "0000000000000000000000000000000000000000000000000000000000000020",
-                    // main array length (2)
-                ),
-                concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000002",
-                    // offset to first subarray (0x40 = 64)
-                    "0000000000000000000000000000000000000000000000000000000000000040",
-                    // offset to second subarray (0xc0 = 192)
-                    "00000000000000000000000000000000000000000000000000000000000000c0",
-                    // first subarray: length (3)
-                    "0000000000000000000000000000000000000000000000000000000000000003",
-                    // element 1
-                    "0000000000000000000000000000000000000000000000000000000000000001",
-                    // element 2
-                    "0000000000000000000000000000000000000000000000000000000000000002",
-                    // element 3
-                    "0000000000000000000000000000000000000000000000000000000000000003",
-                    // second subarray: length (2)
-                    "0000000000000000000000000000000000000000000000000000000000000002",
-                    // element 4
-                    "0000000000000000000000000000000000000000000000000000000000000004",
-                    // element 5
-                    "0000000000000000000000000000000000000000000000000000000000000005"
+                    // Array length: 2 elements
+                    "0000000000000000000000000000000000000000000000000000000000000002", /* [0x0020 = 32] */
+                    // Offset to first subarray data (relative to [0x0020]): points to [0x0080] =
+                    // 128 bytes
+                    "0000000000000000000000000000000000000000000000000000000000000040", /* [0x0040 = 64] */
+                    // Offset to second subarray data (relative to [0x0020]): points to [0x0100] =
+                    // 256 bytes
+                    "00000000000000000000000000000000000000000000000000000000000000c0", /* [0x0060 = 96] */
+                    // ----- First subarray starts here (at 0x0080 = 128) -----
+
+                    // First subarray length: 3 elements
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0080 = 128] */
+                    // First subarray element [0]: value = 1
+                    "0000000000000000000000000000000000000000000000000000000000000001", /* [0x00a0 = 160] */
+                    // First subarray element [1]: value = 2
+                    "0000000000000000000000000000000000000000000000000000000000000002", /* [0x00c0 = 192] */
+                    // First subarray element [2]: value = 3
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x00e0 = 224] */
+                    // ----- Second subarray starts here (at 0x0100 = 256) -----
+
+                    // Second subarray length: 2 elements
+                    "0000000000000000000000000000000000000000000000000000000000000002", /* [0x0100 = 256] */
+                    // Second subarray element [0]: value = 4
+                    "0000000000000000000000000000000000000000000000000000000000000004", /* [0x0120 = 288] */
+                    // Second subarray element [1]: value = 5
+                    "0000000000000000000000000000000000000000000000000000000000000005", /* [0x0140 = 320] */
                 ),
                 &value,
             );
@@ -474,6 +480,34 @@ mod tests {
             );
         }
 
+        // TODO: fix strings
+
+        #[test]
+        fn test_vec_strings() {
+            let value = vec!["foo".to_string(), "hello".to_string(), "world".to_string()];
+
+            // print_encoded::<BigEndian, 32>(&encode_alloy_sol(&v0));
+
+            assert_codec_sol(
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000020", /* offset = 32 */
+                ),
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0020] 32 = 3 */
+                    "0000000000000000000000000000000000000000000000000000000000000060", /* [0x0040] 64 = 96 */
+                    "00000000000000000000000000000000000000000000000000000000000000a0", /* [0x0060] 96 = 160 */
+                    "00000000000000000000000000000000000000000000000000000000000000e0", /* [0x0080] 128 = 224 */
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x00a0] 160 = 3 */
+                    "666f6f0000000000000000000000000000000000000000000000000000000000", /* [0x00c0] 192 = 0 */
+                    "0000000000000000000000000000000000000000000000000000000000000005", /* [0x00e0] 224 = 5 */
+                    "68656c6c6f000000000000000000000000000000000000000000000000000000", /* [0x0100] 256 = 0 */
+                    "0000000000000000000000000000000000000000000000000000000000000005", /* [0x0120] 288 = 5 */
+                    "776f726c64000000000000000000000000000000000000000000000000000000", /* [0x0140] 320 = 0 */
+                ),
+                &value,
+            );
+        }
+
         #[test]
         fn test_encode_large() {
             let large_vec1: Vec<u32> = (0..1000).collect();
@@ -500,7 +534,7 @@ mod tests {
                 encode_result
             );
             let encoded = buf.freeze();
-            println!("encoded: {:?}", hex::encode(&encoded));
+            // println!("encoded: {:?}", hex::encode(&encoded));
 
             let decode_result =
                 <Vec<Vec<Vec<u32>>> as Encoder<BigEndian, 32, true>>::decode(&encoded, 0);
@@ -521,7 +555,8 @@ mod tests {
 
             // Create context and calculate header size
             let mut ctx = EncodingContext::default();
-            let _ = <Vec<u32> as Encoder<BigEndian, 32, true>>::header_size(&original, &mut ctx);
+            ctx.hdr_size =
+                <Vec<u32> as Encoder<BigEndian, 32, true>>::header_size(&original) as u32;
 
             // Create header buffer with garbage
             let mut header_buf = BytesMut::new();
