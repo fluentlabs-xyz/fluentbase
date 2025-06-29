@@ -1,6 +1,6 @@
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
-    common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_address},
+    common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_evm_address},
     fluentbase::{
         common::{
             extract_account_data_or_default,
@@ -10,7 +10,7 @@ use crate::{
             MemStorage,
         },
         helpers_v2::{exec_encoded_svm_batch_message, exec_svm_batch_message},
-        loader_common::{read_protected_preimage, write_protected_preimage},
+        loader_common::{read_contract_executable, write_contract_executable},
     },
     helpers::storage_write_account_data,
     native_loader,
@@ -20,7 +20,7 @@ use crate::{
 };
 use alloc::{vec, vec::Vec};
 use bincode::error::DecodeError;
-use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI};
+use fluentbase_sdk::{Bytes, ContextReader, SharedAPI};
 use hashbrown::HashMap;
 use solana_bincode::{deserialize, serialize};
 use solana_pubkey::Pubkey;
@@ -40,8 +40,8 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     drop(ctx);
 
     // TODO generate inter-dependant pubkey
-    let pk_payer = pubkey_from_address(&contract_caller); // must exist // caller
-    let pk_exec = pubkey_from_address(&contract_address); // may not exist // contract_address
+    let pk_payer = pubkey_from_evm_address(&contract_caller); // must exist // caller
+    let pk_contract = pubkey_from_evm_address(&contract_address); // may not exist // contract_address
     let pk_authority = pk_payer.clone(); // must exist // caller
 
     let contract_caller_balance = sdk.balance(&contract_caller);
@@ -68,7 +68,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let balance_to_transfer = 0;
     let instructions = loader_v4::create_buffer(
         &pk_payer,
-        &pk_exec,
+        &pk_contract,
         balance_to_transfer,
         &pk_authority,
         program_len as u32,
@@ -78,7 +78,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     batch_message.append_one(message);
 
     let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let instruction = loader_v4::write(&pk_exec, &pk_authority, offset, bytes);
+        let instruction = loader_v4::write(&pk_contract, &pk_authority, offset, bytes);
         let instructions = vec![instruction];
         Message::new(&instructions, Some(&pk_payer))
     };
@@ -91,12 +91,12 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     }
     batch_message.append_many(write_messages);
 
-    let instruction = loader_v4::deploy(&pk_exec, &pk_authority);
+    let instruction = loader_v4::deploy(&pk_contract, &pk_authority);
     let message = Message::new(&[instruction], Some(&pk_payer));
     batch_message.append_one(message);
 
     let result = exec_svm_batch_message(&mut sdk, batch_message, true, &mut Some(&mut mem_storage));
-    let (result_accounts, balance_changes) = match process_svm_result(result) {
+    let (result_accounts, _balance_changes) = match process_svm_result(result) {
         Ok(v) => v,
         Err(err_str) => {
             panic!("failed to execute svm batch message: {}", err_str);
@@ -113,23 +113,19 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
         "payer_balance_before != payer_balance_after"
     );
     let exec_account_data = result_accounts
-        .get(&pk_exec)
-        .expect("exec account must exist");
+        .get(&pk_contract)
+        .expect("contract account must exist");
     assert_eq!(exec_account_data.lamports(), 0, "exec account balance != 0");
 
-    let preimage = serialize(&exec_account_data).expect("failed to serialize exec account data");
-    let preimage: Bytes = preimage.into();
-    let _ = write_protected_preimage(&mut sdk, preimage);
+    let exec_account_data =
+        serialize(&exec_account_data).expect("failed to serialize exec account data");
+    let exec_account_data: Bytes = exec_account_data.into();
+    let _ = write_contract_executable(&mut sdk, &pk_contract, exec_account_data);
     // TODO figure out balance changes and apply them to evm
-    debug_log_ext!("balance_changes.len={}", balance_changes.len());
-    for balance_change in balance_changes {
-        debug_log_ext!("balance_change={:?}", balance_change);
-    }
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input = sdk.input();
-    let preimage = read_protected_preimage(&sdk);
 
     let contract_caller = sdk.context().contract_caller();
     let contract_address = sdk.context().contract_address();
@@ -137,8 +133,10 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let mut mem_storage = MemStorage::new();
     let loader_v4 = loader_v4::id();
 
-    let pk_caller = pubkey_from_address(&contract_caller);
-    let pk_contract = pubkey_from_address(&contract_address);
+    let pk_caller = pubkey_from_evm_address(&contract_caller);
+    let pk_contract = pubkey_from_evm_address(&contract_address);
+
+    let preimage = read_contract_executable(&sdk, &pk_contract);
 
     let caller_account_balance = lamports_from_evm_balance(
         sdk.balance(&contract_caller)
@@ -189,7 +187,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     .expect("failed to write loader_v4");
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
-    let (result_accounts, balance_changes): (
+    let (result_accounts, _balance_changes): (
         HashMap<Pubkey, AccountSharedData>,
         HashMap<Pubkey, (u64, u64)>,
     ) = match process_svm_result(result) {
@@ -211,19 +209,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         exec_account_balance_before, exec_account_balance_after,
         "exec account balance shouldn't change"
     );
-    debug_log_ext!("pk_contract {}", pk_contract);
-    debug_log_ext!("pk_caller {}", pk_caller);
-    debug_log_ext!("result_accounts.len={}", result_accounts.len());
-    for result_account in result_accounts {
-        debug_log_ext!("result_account.key={}", result_account.0);
-    }
     // TODO figure out balance changes and apply them to evm
     // TODO need optimal balance sync logic
-    debug_log_ext!("balance_changes.len={}", balance_changes.len());
-    for balance_change in &balance_changes {
-        debug_log_ext!("balance_change={:?}", balance_change);
-    }
-
     // settle_balances(&mut sdk, balance_changes);
 
     let out = Bytes::new();

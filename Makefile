@@ -24,6 +24,10 @@ clean:
 test:
 	cargo test -q --no-fail-fast
 
+.PHONY: custom_test
+custom_test:
+	cargo test --lib svm_loader_v4::tests::test_svm_deploy_exec --profile test --manifest-path e2e/Cargo.toml -- --exact --show-output --nocapture
+
 .PHONY: check
 check:
 	cargo check

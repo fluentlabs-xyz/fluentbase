@@ -2,6 +2,7 @@ use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_sdk::{
     bytes::Buf,
+    calc_create4_address,
     native_api::NativeAPI,
     Address,
     Bytes,
@@ -10,6 +11,7 @@ use fluentbase_sdk::{
     ExitCode,
     IsAccountEmpty,
     IsColdAccess,
+    MetadataAPI,
     SharedAPI,
     SharedContextInputV1,
     StorageAPI,
@@ -54,6 +56,9 @@ impl HostTestingContext {
             .change_input(input.into());
         self
     }
+    pub fn set_ownable_account_address(&mut self, address: Address) {
+        self.inner.borrow_mut().ownable_account_address = Some(address);
+    }
     pub fn with_fuel_limit(self, fuel_limit: u64) -> Self {
         self.inner.borrow_mut().native_sdk.set_fuel(fuel_limit);
         self
@@ -77,6 +82,12 @@ impl HostTestingContext {
     pub fn visit_inner_storage_mut<F: FnMut(&mut HashMap<(Address, U256), U256>)>(&self, mut f: F) {
         f(&mut self.inner.borrow_mut().persistent_storage)
     }
+    pub fn visit_inner_metadata_mut<F: FnMut(&mut HashMap<(Address, Address), Vec<u8>>)>(
+        &self,
+        mut f: F,
+    ) {
+        f(&mut self.inner.borrow_mut().metadata)
+    }
     pub fn visit_inner_storage<F: Fn(&HashMap<(Address, U256), U256>)>(&self, f: F) {
         f(&self.inner.borrow_mut().persistent_storage)
     }
@@ -86,8 +97,10 @@ struct TestingContextInner {
     shared_context_input_v1: SharedContextInputV1,
     native_sdk: RuntimeContextWrapper,
     persistent_storage: HashMap<(Address, U256), U256>,
+    metadata: HashMap<(Address, Address), Vec<u8>>,
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
+    ownable_account_address: Option<Address>,
     preimages: HashMap<B256, Bytes>,
 }
 
@@ -98,8 +111,10 @@ impl Default for HostTestingContext {
                 shared_context_input_v1: SharedContextInputV1::default(),
                 native_sdk: RuntimeContextWrapper::new(RuntimeContext::root(0)),
                 persistent_storage: Default::default(),
+                metadata: Default::default(),
                 transient_storage: Default::default(),
                 logs: vec![],
+                ownable_account_address: None,
                 preimages: Default::default(),
             })),
         }
@@ -126,6 +141,80 @@ impl StorageAPI for HostTestingContext {
             .cloned()
             .unwrap_or_default();
         SyscallResult::new(value, 0, 0, 0)
+    }
+}
+
+impl MetadataAPI for HostTestingContext {
+    fn metadata_write(
+        &mut self,
+        address: &Address,
+        _offset: u32,
+        metadata: Bytes,
+    ) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx.metadata.get_mut(&(account_owner, *address));
+        if let Some(value) = value {
+            value.resize(metadata.len(), 0);
+            value.copy_from_slice(metadata.as_ref());
+        } else {
+            ctx.metadata
+                .insert((account_owner, address.clone()), metadata.to_vec());
+        }
+        SyscallResult::new((), 0, 0, ExitCode::Err)
+    }
+
+    fn metadata_size(
+        &self,
+        address: &Address,
+    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
+        let ctx = self.inner.borrow();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx.metadata.get(&(account_owner, *address));
+        if let Some(value) = value {
+            let len = value.len();
+            return SyscallResult::new((len as u32, false, false), 0, 0, ExitCode::Ok);
+        }
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
+    }
+
+    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("ownable account address should exist");
+        let derived_metadata_address =
+            calc_create4_address(&account_owner, salt, HostTestingContextNativeAPI::keccak256);
+        let target_address = ctx.shared_context_input_v1.contract.address;
+        ctx.metadata
+            .insert(
+                (target_address, derived_metadata_address),
+                metadata.to_vec(),
+            )
+            .expect("metadata account collision");
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::Ok)
+    }
+
+    fn metadata_copy(&self, address: &Address, _offset: u32, length: u32) -> SyscallResult<Bytes> {
+        let ctx = self.inner.borrow();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx.metadata.get(&(account_owner, *address));
+        if let Some(value) = value {
+            let length = length.min(value.len() as u32);
+            return SyscallResult::new(
+                Bytes::copy_from_slice(&value[0..length as usize]),
+                0,
+                0,
+                ExitCode::Ok,
+            );
+        }
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
     }
 }
 
@@ -323,31 +412,6 @@ impl SharedAPI for HostTestingContext {
     }
 
     fn destroy_account(&mut self, _address: Address) -> SyscallResult<()> {
-        unimplemented!("not supported for testing context")
-    }
-
-    fn metadata_write(
-        &mut self,
-        _address: &Address,
-        _offset: u32,
-        _metadata: Bytes,
-    ) -> SyscallResult<()> {
-        unimplemented!("not supported for testing context")
-    }
-
-    fn metadata_size(
-        &self,
-        _address: &Address,
-    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
-        unimplemented!("not supported for testing context")
-    }
-
-    fn metadata_copy(
-        &self,
-        _address: &Address,
-        _offset: u32,
-        _length: u32,
-    ) -> SyscallResult<Bytes> {
         unimplemented!("not supported for testing context")
     }
 }

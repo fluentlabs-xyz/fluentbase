@@ -5,26 +5,6 @@ use fluentbase_sdk::{ExitCode, StorageAPI, B256, U256};
 
 pub type Bytes32 = [u8; 32];
 
-#[cfg(target_arch = "wasm32")]
-#[inline(always)]
-pub fn keccak256(input: &[u8]) -> B256 {
-    #[link(wasm_import_module = "fluentbase_v1preview")]
-    extern "C" {
-        fn _keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    }
-    let mut result = B256::ZERO;
-    unsafe {
-        _keccak256(input.as_ptr(), input.len() as u32, result.as_mut_ptr());
-    }
-    result
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn keccak256(data: &[u8]) -> B256 {
-    use keccak_hash::keccak;
-    B256::new(keccak(data).0)
-}
-
 pub trait StorageSlotCalculator {
     fn storage_slot(&self, slot: u32) -> U256;
 }

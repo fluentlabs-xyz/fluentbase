@@ -28,7 +28,7 @@ use crate::{
 };
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_sdk::{Address, SharedAPI, U256};
+use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
 use solana_bincode::limited_deserialize;
 use solana_feature_set::{
     bpf_account_data_direct_mapping,
@@ -62,7 +62,6 @@ use crate::{
     error::{Error, RuntimeError, SvmError},
     loaded_programs::ProgramCacheEntry,
     solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
-    storage_helpers::keccak256,
 };
 #[cfg(test)]
 use fluentbase_sdk_testing::HostTestingContext;
@@ -265,8 +264,9 @@ pub fn create_program_runtime_environment_v1<'a, SDK: SharedAPI>(
     //     feature_set.is_active(&enable_partitioned_epoch_reward::id());
     // let disable_deploy_of_alloc_free_syscall = reject_deployment_of_broken_elfs
     //     && feature_set.is_active(&disable_deploy_of_alloc_free_syscall::id());
-    // let last_restart_slot_syscall_enabled = feature_set.is_active(&last_restart_slot_sysvar::id());
-    // let enable_poseidon_syscall = feature_set.is_active(&enable_poseidon_syscall::id());
+    // let last_restart_slot_syscall_enabled =
+    // feature_set.is_active(&last_restart_slot_sysvar::id()); let enable_poseidon_syscall =
+    // feature_set.is_active(&enable_poseidon_syscall::id());
     // let remaining_compute_units_syscall_enabled =
     //     feature_set.is_active(&remaining_compute_units_syscall_enabled::id());
     // !!! ATTENTION !!!
@@ -636,8 +636,8 @@ pub fn common_close_account(
 //     BINCODE_DEFAULT_CONFIG
 //         .with_limit::<LIMIT>()
 //         .with_fixint_encoding() // As per https://github.com/servo/bincode/issues/333, these two options are needed
-//         .allow_trailing_bytes() // to retain the behavior of bincode_deserialize with the new `options()` method
-//         .deserialize_from(instruction_data)
+//         .allow_trailing_bytes() // to retain the behavior of bincode_deserialize with the new
+// `options()` method         .deserialize_from(instruction_data)
 //         .map_err(|_| InstructionError::InvalidInstructionData)
 // }
 
@@ -721,17 +721,11 @@ pub fn compile_accounts_for_tx_ctx(
     (accounts, working_accounts_len)
 }
 
-pub fn pubkey_from_address(value: &Address) -> Pubkey {
+pub fn pubkey_from_evm_address(value: &Address) -> Pubkey {
     let mut new_pk = [0u8; 32];
     new_pk[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
     new_pk[SVM_ADDRESS_PREFIX.len()..].copy_from_slice(value.as_slice());
     Pubkey::new_from_array(new_pk)
-}
-
-pub fn pubkey_from_pubkey(value: &Pubkey) -> Pubkey {
-    pubkey_from_address(&Address::from_slice(
-        &value.as_ref()[SVM_ADDRESS_PREFIX.len()..],
-    ))
 }
 
 #[inline(always)]

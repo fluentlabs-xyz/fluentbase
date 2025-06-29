@@ -11,15 +11,15 @@ use crate::{
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::{slice, str::from_utf8};
-use fluentbase_types::SharedAPI;
+use fluentbase_sdk::SharedAPI;
 use solana_feature_set::bpf_account_data_direct_mapping;
 use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN};
 use solana_rbpf::{
     error::EbpfError,
     memory_region::{AccessType, MemoryMapping, MemoryRegion},
 };
-// fn mem_op_consume<SDK: SharedAPI>(invoke_context: &mut InvokeContext<SDK>, n: u64) -> Result<(), Error> {
-//     let compute_budget = invoke_context.get_compute_budget();
+// fn mem_op_consume<SDK: SharedAPI>(invoke_context: &mut InvokeContext<SDK>, n: u64) -> Result<(),
+// Error> {     let compute_budget = invoke_context.get_compute_budget();
 //     let cost = compute_budget.mem_op_base_cost.max(
 //         n.checked_div(compute_budget.cpi_bytes_per_unit)
 //             .unwrap_or(u64::MAX),
@@ -815,8 +815,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
 //                 .unwrap();
 //         assert_matches!(
 //             src_chunk_iter.next().unwrap().unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 42, "unknown") if *addr == MM_PROGRAM_START - 1
-//         );
+//             EbpfError::AccessViolation(AccessType::Load, addr, 42, "unknown") if *addr ==
+// MM_PROGRAM_START - 1         );
 //
 //         // check oob at the upper bound. Since the memory mapping isn't empty,
 //         // this always happens on the second next().
@@ -826,8 +826,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
 //         assert!(src_chunk_iter.next().unwrap().is_ok());
 //         assert_matches!(
 //             src_chunk_iter.next().unwrap().unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 43, "program") if *addr == MM_PROGRAM_START
-//         );
+//             EbpfError::AccessViolation(AccessType::Load, addr, 43, "program") if *addr ==
+// MM_PROGRAM_START         );
 //
 //         // check oob at the upper bound on the first next_back()
 //         let mut src_chunk_iter =
@@ -836,8 +836,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
 //                 .rev();
 //         assert_matches!(
 //             src_chunk_iter.next().unwrap().unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 43, "program") if *addr == MM_PROGRAM_START
-//         );
+//             EbpfError::AccessViolation(AccessType::Load, addr, 43, "program") if *addr ==
+// MM_PROGRAM_START         );
 //
 //         // check oob at the upper bound on the 2nd next_back()
 //         let mut src_chunk_iter =
@@ -847,8 +847,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
 //         assert!(src_chunk_iter.next().unwrap().is_ok());
 //         assert_matches!(
 //             src_chunk_iter.next().unwrap().unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 43, "unknown") if *addr == MM_PROGRAM_START - 1
-//         );
+//             EbpfError::AccessViolation(AccessType::Load, addr, 43, "unknown") if *addr ==
+// MM_PROGRAM_START - 1         );
 //     }
 //
 //     #[test]
@@ -975,8 +975,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
 //                 false,
 //                 |_src, _dst, _len| Ok::<_, Error>(0),
 //             ).unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 8, "program") if *addr == MM_PROGRAM_START + 8
-//         );
+//             EbpfError::AccessViolation(AccessType::Load, addr, 8, "program") if *addr ==
+// MM_PROGRAM_START + 8         );
 //
 //         // src is shorter than dst
 //         assert_matches!(
@@ -990,8 +990,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
 //                 false,
 //                 |_src, _dst, _len| Ok::<_, Error>(0),
 //             ).unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 3, "program") if *addr == MM_PROGRAM_START + 10
-//         );
+//             EbpfError::AccessViolation(AccessType::Load, addr, 3, "program") if *addr ==
+// MM_PROGRAM_START + 10         );
 //     }
 //
 //     #[test]
@@ -1013,8 +1013,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
 //         )
 //             .unwrap();
 //
-//         memmove_non_contiguous(MM_PROGRAM_START, MM_PROGRAM_START + 8, 4, &memory_mapping).unwrap();
-//     }
+//         memmove_non_contiguous(MM_PROGRAM_START, MM_PROGRAM_START + 8, 4,
+// &memory_mapping).unwrap();     }
 //
 //     #[test_case(&[], (0, 0, 0); "no regions")]
 //     #[test_case(&[10], (1, 10, 0); "single region 0 len")]
@@ -1030,8 +1030,8 @@ pub fn translate_and_check_program_address_inputs<'a>(
 //     #[test_case(&[3, 9], (1, 2, 5) ; "two regions partial overlap middle")]
 //     #[test_case(&[7, 3], (2, 6, 4) ; "two regions partial overlap end")]
 //     #[test_case(&[2, 6, 3, 4], (0, 10, 2) ; "many regions no overlap, single source region")]
-//     #[test_case(&[2, 1, 2, 5, 6], (2, 10, 4) ; "many regions no overlap, multiple source regions")]
-//     #[test_case(&[8, 1, 3, 6], (0, 0, 18) ; "many regions complete overlap")]
+//     #[test_case(&[2, 1, 2, 5, 6], (2, 10, 4) ; "many regions no overlap, multiple source
+// regions")]     #[test_case(&[8, 1, 3, 6], (0, 0, 18) ; "many regions complete overlap")]
 //     #[test_case(&[7, 3, 1, 4, 5], (5, 0, 8) ; "many regions overlap start")]
 //     #[test_case(&[1, 5, 2, 9, 3], (5, 4, 8) ; "many regions overlap middle")]
 //     #[test_case(&[3, 9, 1, 1, 2, 1], (2, 9, 8) ; "many regions overlap end")]

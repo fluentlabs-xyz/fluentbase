@@ -32,7 +32,7 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{debug_log, debug_log_ext, ContextReader, SharedAPI, StorageAPI};
+use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
 use hashbrown::HashMap;
 use itertools::Itertools;
 use solana_bincode::deserialize;
@@ -56,7 +56,7 @@ pub fn init_config() -> Config {
     }
 }
 
-pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
+pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     sdk: &mut SDK,
     batch_message: &[u8],
     flush_result_accounts: bool,
@@ -65,7 +65,7 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     let batch_message = deserialize::<BatchMessage>(batch_message)?;
     exec_svm_batch_message(sdk, batch_message, flush_result_accounts, sapi)
 }
-pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
+pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     sdk: &mut SDK,
     batch_message: BatchMessage,
     flush_result_accounts: bool,
@@ -79,7 +79,7 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     }
     Ok(result_accounts)
 }
-pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
+pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     sdk: &mut SDK,
     message: &[u8],
     flush_result_accounts: bool,
@@ -89,7 +89,7 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     exec_svm_message(sdk, message, flush_result_accounts, sapi)
 }
 
-pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
+pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     sdk: &mut SDK,
     message: legacy::Message,
     flush_result_accounts: bool,
@@ -177,7 +177,8 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
                         extract_account_data_or_default(s, &programdata_address)
                     })?;
                     // if !program_account.executable() {
-                    //     return Err(SvmError::TransactionError(TransactionError::InvalidProgramForExecution))
+                    //     return
+                    // Err(SvmError::TransactionError(TransactionError::InvalidProgramForExecution))
                     // }
                     let program_account_owner = program_account.owner().clone();
                     working_accounts.push((programdata_address, program_account));
@@ -186,7 +187,8 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
                         .unwrap()
                         .push(program_accounts.len() as IndexOfAccount);
                     load_program_account(sdk, sapi, &mut program_accounts, &program_account_owner)?;
-                    // load_program_account(sdk, &mut program_accounts, &bpf_loader_upgradeable_id)?;
+                    // load_program_account(sdk, &mut program_accounts,
+                    // &bpf_loader_upgradeable_id)?;
                 }
             }
             program_indices
@@ -314,10 +316,6 @@ pub(crate) fn settle_balances<SDK: SharedAPI>(
         .iter()
         .fold(0u64, |accum, (_, next)| accum + next);
     assert_eq!(balance_to_receive, balance_to_send);
-    debug_log_ext!("balance_changes.len={}", balance_changes.len());
-    for balance_change_filtered in &balance_changes {
-        debug_log_ext!("balance_change={:?}", balance_change_filtered);
-    }
     let mut run = balance_receivers.len() > 0;
     if run {
         let mut receiver_idx = 0;
@@ -327,13 +325,6 @@ pub(crate) fn settle_balances<SDK: SharedAPI>(
         assert!(is_evm_pubkey(sender_pk));
         assert!(is_evm_pubkey(receiver_pk));
         while run {
-            debug_log!(
-                "sender_pk {} receiver_pk {} amount {}",
-                sender_pk,
-                receiver_pk,
-                core::cmp::min(sender_delta, receiver_delta)
-            );
-
             // TODO can be optimised
             let evm_address_from = evm_address_from_pubkey::<true>(sender_pk)
                 .expect("sender pk must be evm compatible");
