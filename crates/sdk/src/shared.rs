@@ -151,7 +151,7 @@ impl<API: NativeAPI> MetadataAPI for SharedContextImpl<API> {
             STATE_MAIN,
         );
         let mut output: [u8; 6] = [0u8; 6];
-        if SyscallResult::is_ok(exit_code) {
+        if SyscallResult::<()>::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
         };
         let value = LittleEndian::read_u32(&output[0..4]);
@@ -246,7 +246,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             STATE_MAIN,
         );
         let mut output = [0u8; U256::BYTES];
-        if SyscallResult::is_ok(exit_code) {
+        if SyscallResult::<()>::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
         };
         let value = U256::from_le_slice(&output);

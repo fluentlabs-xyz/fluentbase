@@ -50,8 +50,8 @@ rand = { version = "0.9.1" }
 default = [
     "std",
     "wasmtime",
-    #    "debug-print",
-    #    "enable-svm",
+    "debug-print",
+    "enable-svm",
 ]
 enable-svm = [
     "fluentbase-runtime/enable-svm",

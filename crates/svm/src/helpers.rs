@@ -7,6 +7,7 @@ use core::{
     fmt,
     fmt::{Display, Formatter},
 };
+use keccak_hash::keccak;
 use solana_bincode::{deserialize, serialize, serialized_size};
 use solana_pubkey::{Pubkey, PubkeyError};
 use solana_rbpf::{
@@ -59,12 +60,14 @@ use crate::{
         InheritableAccountFields,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
+    common::evm_address_from_pubkey,
     context::BpfAllocator,
     error::SvmError,
     solana_program::sysvar::Sysvar,
-    storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
+    // storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
-use fluentbase_types::StorageAPI;
+use fluentbase_sdk::debug_log_ext;
+use fluentbase_types::{Address, MetadataAPI};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
@@ -168,7 +171,7 @@ macro_rules! ic_msg {
 
 /// Error definitions
 
-#[derive(Debug, /*ThisError,*/ PartialEq, Eq)]
+#[derive(Debug, /* ThisError, */ PartialEq, Eq)]
 pub enum SyscallError {
     // #[error("{0}: {1:?}")]
     InvalidString(Utf8Error, Vec<u8>),
@@ -200,7 +203,8 @@ pub enum SyscallError {
     TooManySlices,
     // #[error("InvalidLength")]
     InvalidLength,
-    // #[error("Invoked an instruction with data that is too large ({data_len} > {max_data_len})")]
+    // #[error("Invoked an instruction with data that is too large ({data_len} >
+    // {max_data_len})")]
     MaxInstructionDataLenExceeded {
         data_len: u64,
         max_data_len: u64,
@@ -210,8 +214,8 @@ pub enum SyscallError {
         num_accounts: u64,
         max_accounts: u64,
     },
-    // #[error("Invoked an instruction with too many account info's ({num_account_infos} > {max_account_infos})"
-    // )]
+    // #[error("Invoked an instruction with too many account info's ({num_account_infos} >
+    // {max_account_infos})" )]
     MaxInstructionAccountInfosExceeded {
         num_account_infos: u64,
         max_account_infos: u64,
@@ -295,8 +299,8 @@ impl core::error::Error for SyscallError {}
 //         //     file,
 //         //     len,
 //         //     invoke_context.get_check_aligned(),
-//         //     &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line, column).into()),
-//         // )
+//         //     &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line,
+// column).into()),         // )
 //         let error_message = "Dummy panic due to unimplemented syscall"; // Dummy error message
 //         Err(SyscallError::Panic(error_message.to_string(), line, column).into())
 //     }
@@ -384,8 +388,8 @@ pub struct SvmTransactResult {
     // pub changes: Changes,
 }
 
-// pub fn execute_generated_program<SDK: SharedAPI>(sdk: SDK, prog: &[u8], mem: &mut [u8]) -> Option<Vec<u8>> {
-//     let max_instruction_count = 1024;
+// pub fn execute_generated_program<SDK: SharedAPI>(sdk: SDK, prog: &[u8], mem: &mut [u8]) ->
+// Option<Vec<u8>> {     let max_instruction_count = 1024;
 //     let executable = Executable::<ExecContextObject<SDK>>::from_text_bytes(
 //         prog,
 //         Arc::new(BuiltinProgram::new_loader(
@@ -617,8 +621,8 @@ macro_rules! with_mock_invoke_context {
 // ) -> Vec<AccountSharedData> {
 //     let mut instruction_accounts: Vec<InstructionAccount> =
 //         Vec::with_capacity(instruction_account_metas.len());
-//     for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate() {
-//         let index_in_transaction = transaction_accounts
+//     for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate()
+// {         let index_in_transaction = transaction_accounts
 //             .iter()
 //             .position(|(key, _account)| *key == account_meta.pubkey)
 //             .unwrap_or(transaction_accounts.len())
@@ -692,31 +696,60 @@ macro_rules! select_sapi {
     };
 }
 
-pub fn storage_read_account_data<SAPI: StorageAPI>(
+pub fn storage_read_account_data<SAPI: MetadataAPI>(
     sapi: &SAPI,
     pubkey: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
-    let mut buffer = vec![];
-    let storage_writer = StorageChunksWriter {
-        slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
-        _phantom: Default::default(),
-    };
-    storage_writer.read_data(sapi, &mut buffer)?;
+    // let mut buffer = vec![];
+    // let storage_writer = StorageChunksWriter {
+    //     slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
+    //     _phantom: Default::default(),
+    // };
+    // storage_writer.read_data(sapi, &mut buffer)?;
+    let address = &keccak(pubkey.as_ref()).0[0..Address::len_bytes()];
+    let address = Address::from_slice(address);
+    // let address = evm_address_from_pubkey::<false>(pubkey)?;
+    let metadata_size_result = sapi.metadata_size(&address);
+    if !metadata_size_result.status.is_ok() {
+        return Err(metadata_size_result.status.into());
+    }
+    let metadata_len = metadata_size_result.data.0;
+    debug_log_ext!(
+        "pubkey {} address {:x?} len {}",
+        pubkey,
+        address,
+        metadata_len
+    );
+    let metadata_copy = sapi.metadata_copy(&address, 0, metadata_len);
+    if !metadata_copy.status.is_ok() {
+        return Err(metadata_copy.status.into());
+    }
+    let buffer = metadata_copy.data;
     let deserialize_result = deserialize(&buffer);
     Ok(deserialize_result?)
 }
 
-pub fn storage_write_account_data<SAPI: StorageAPI>(
+pub fn storage_write_account_data<SAPI: MetadataAPI>(
     sapi: &mut SAPI,
     pubkey: &Pubkey,
     account_data: &AccountSharedData,
 ) -> Result<(), SvmError> {
-    let storage_writer = StorageChunksWriter {
-        slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
-        _phantom: Default::default(),
-    };
+    // let storage_writer = StorageChunksWriter {
+    //     slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
+    //     _phantom: Default::default(),
+    // };
     let buffer = serialize(account_data)?;
-    storage_writer.write_data(sapi, &buffer);
+    // storage_writer.write_data(sapi, &buffer);
+    // let address = evm_address_from_pubkey::<false>(pubkey)?;
+    let address = &keccak(pubkey.as_ref()).0[0..Address::len_bytes()];
+    let address = Address::from_slice(address);
+    debug_log_ext!(
+        "pubkey {} address {:x?} len {}",
+        pubkey,
+        address,
+        buffer.len()
+    );
+    sapi.metadata_write(&address, 0, buffer.into());
     Ok(())
 }
 

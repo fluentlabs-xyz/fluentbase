@@ -1,6 +1,6 @@
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
-    common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_address},
+    common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_evm_address},
     fluentbase::{
         common::{
             extract_account_data_or_default,
@@ -40,8 +40,8 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     drop(ctx);
 
     // TODO generate inter-dependant pubkey
-    let pk_payer = pubkey_from_address(&contract_caller); // must exist // caller
-    let pk_exec = pubkey_from_address(&contract_address); // may not exist // contract_address
+    let pk_payer = pubkey_from_evm_address(&contract_caller); // must exist // caller
+    let pk_exec = pubkey_from_evm_address(&contract_address); // may not exist // contract_address
     let pk_authority = pk_payer.clone(); // must exist // caller
 
     let contract_caller_balance = sdk.balance(&contract_caller);
@@ -128,6 +128,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
+    debug_log_ext!();
     let input = sdk.input();
     let preimage = read_protected_preimage(&sdk);
 
@@ -137,16 +138,18 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let mut mem_storage = MemStorage::new();
     let loader_v4 = loader_v4::id();
 
-    let pk_caller = pubkey_from_address(&contract_caller);
-    let pk_contract = pubkey_from_address(&contract_address);
+    let pk_caller = pubkey_from_evm_address(&contract_caller);
+    let pk_contract = pubkey_from_evm_address(&contract_address);
 
     let caller_account_balance = lamports_from_evm_balance(
         sdk.balance(&contract_caller)
             .expect("balance for caller must exist")
             .data,
     );
+    debug_log_ext!();
     let mut caller_account_data =
         extract_account_data_or_default(&sdk, &pk_caller).expect("caller must exist");
+    debug_log_ext!();
     caller_account_data.set_lamports(caller_account_balance);
 
     let contract_account_data: Result<AccountSharedData, DecodeError> =
@@ -188,14 +191,17 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     )
     .expect("failed to write loader_v4");
 
+    debug_log_ext!();
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
     let (result_accounts, balance_changes): (
         HashMap<Pubkey, AccountSharedData>,
         HashMap<Pubkey, (u64, u64)>,
     ) = match process_svm_result(result) {
         Ok((result_accounts, balance_changes)) => {
+            debug_log_ext!();
             if result_accounts.len() > 0 {
                 let mut sapi: Option<&mut SDK> = None;
+                debug_log_ext!();
                 flush_accounts(&mut sdk, &mut sapi, &result_accounts)
                     .expect("failed to save result accounts");
             }

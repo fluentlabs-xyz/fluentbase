@@ -1,6 +1,8 @@
 use core::cell::RefCell;
+use fluentbase_codec::byteorder::LittleEndian;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_sdk::{
+    byteorder::ByteOrder,
     bytes::Buf,
     native_api::NativeAPI,
     Address,
@@ -17,6 +19,8 @@ use fluentbase_sdk::{
     SyscallResult,
     B256,
     FUEL_DENOM_RATE,
+    STATE_MAIN,
+    SYSCALL_ID_METADATA_WRITE,
     U256,
 };
 use hashbrown::HashMap;
@@ -87,6 +91,7 @@ struct TestingContextInner {
     shared_context_input_v1: SharedContextInputV1,
     native_sdk: RuntimeContextWrapper,
     persistent_storage: HashMap<(Address, U256), U256>,
+    metadata_storage: HashMap<(Address, Address), Vec<u8>>,
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     preimages: HashMap<B256, Bytes>,
@@ -99,6 +104,7 @@ impl Default for HostTestingContext {
                 shared_context_input_v1: SharedContextInputV1::default(),
                 native_sdk: RuntimeContextWrapper::new(RuntimeContext::root(0)),
                 persistent_storage: Default::default(),
+                metadata_storage: Default::default(),
                 transient_storage: Default::default(),
                 logs: vec![],
                 preimages: Default::default(),
@@ -133,27 +139,65 @@ impl StorageAPI for HostTestingContext {
 impl MetadataAPI for HostTestingContext {
     fn metadata_write(
         &mut self,
-        _address: &Address,
-        _offset: u32,
-        _metadata: Bytes,
+        address: &Address,
+        offset: u32,
+        metadata: Bytes,
     ) -> SyscallResult<()> {
-        unimplemented!("not supported for testing context")
+        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
+        let mut binding = self.inner.borrow_mut();
+        let value = binding
+            .metadata_storage
+            .get_mut(&(target_address, *address));
+        if let Some(value) = value {
+            if value.len() < metadata.len() {
+                value.resize(metadata.len(), 0);
+            }
+            value.copy_from_slice(metadata.as_ref());
+        } else {
+            self.inner
+                .borrow_mut()
+                .metadata_storage
+                .insert((target_address, address.clone()), metadata.to_vec());
+        }
+        SyscallResult::new((), 0, 0, ExitCode::Err)
+
+        // let mut buffer = vec![0u8; 20 + 4 + metadata.len()];
+        // buffer[0..20].copy_from_slice(address.as_slice());
+        // LittleEndian::write_u32(&mut buffer[20..24], offset);
+        // buffer[24..].copy_from_slice(&metadata);
+        // let (fuel_consumed, fuel_refunded, exit_code) =
+        //     self.native_sdk
+        //         .exec(SYSCALL_ID_METADATA_WRITE, &buffer, None, STATE_MAIN);
+        // SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn metadata_size(
         &self,
-        _address: &Address,
+        address: &Address,
     ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
-        unimplemented!("not supported for testing context")
+        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
+        let binding = self.inner.borrow();
+        let value = binding.metadata_storage.get(&(target_address, *address));
+        if let Some(value) = value {
+            let len = value.len();
+            return SyscallResult::new((len as u32, false, false), 0, 0, ExitCode::Ok);
+        }
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
     }
 
-    fn metadata_copy(
-        &self,
-        _address: &Address,
-        _offset: u32,
-        _length: u32,
-    ) -> SyscallResult<Bytes> {
-        unimplemented!("not supported for testing context")
+    fn metadata_copy(&self, address: &Address, _offset: u32, length: u32) -> SyscallResult<Bytes> {
+        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
+        let binding = self.inner.borrow();
+        let value = binding.metadata_storage.get(&(target_address, *address));
+        if let Some(value) = value {
+            return SyscallResult::new(
+                Bytes::copy_from_slice(&value[0..length as usize]),
+                0,
+                0,
+                ExitCode::Ok,
+            );
+        }
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
     }
 }
 

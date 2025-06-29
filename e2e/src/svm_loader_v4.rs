@@ -2,6 +2,7 @@ mod tests {
     use core::str::from_utf8;
     use fluentbase_sdk::{
         address,
+        debug_log_ext,
         Address,
         ContextReader,
         ContractContextV1,
@@ -12,7 +13,7 @@ mod tests {
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        common::{evm_address_from_pubkey, evm_balance_from_lamports, pubkey_from_address},
+        common::{evm_address_from_pubkey, evm_balance_from_lamports, pubkey_from_evm_address},
         fluentbase::common::BatchMessage,
         helpers::storage_read_account_data,
         pubkey::Pubkey,
@@ -87,7 +88,7 @@ mod tests {
         // setup initial accounts
 
         let payer_lamports = 101;
-        let pk_payer = pubkey_from_address(&DEPLOYER_ADDRESS);
+        let pk_payer = pubkey_from_evm_address(&DEPLOYER_ADDRESS);
         ctx.add_balance(DEPLOYER_ADDRESS, evm_balance_from_lamports(payer_lamports));
 
         // deploy and get exec contract
@@ -96,7 +97,7 @@ mod tests {
         let (contract_address, _gas) =
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
 
-        let pk_exec = pubkey_from_address(&contract_address);
+        let pk_exec = pubkey_from_evm_address(&contract_address);
 
         let seed1 = b"my_seed";
         let seed2 = pk_payer.as_ref();
@@ -153,6 +154,7 @@ mod tests {
             ..Default::default()
         });
 
+        debug_log_ext!();
         let exec_account: AccountSharedData = storage_read_account_data(&ctx.sdk, &pk_exec)
             .expect(format!("failed to read exec account data: {}", pk_exec).as_str());
         assert_eq!(exec_account.lamports(), 0);
@@ -165,6 +167,7 @@ mod tests {
             account_with_program.data()
         );
 
+        debug_log_ext!();
         let payer_account = storage_read_account_data(&ctx.sdk, &pk_payer).expect(
             format!(
                 "failed to read payer {} (address:{}) account data",
@@ -180,6 +183,7 @@ mod tests {
         );
         assert_eq!(payer_account.data().len(), 0);
 
+        debug_log_ext!();
         let new_account = storage_read_account_data(&ctx.sdk, &pk_new)
             .expect(format!("failed to read new account data: {}", pk_new).as_str());
         assert_eq!(new_account.lamports(), lamports_to_send);
