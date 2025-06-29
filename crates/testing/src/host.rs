@@ -10,6 +10,7 @@ use fluentbase_sdk::{
     ExitCode,
     IsAccountEmpty,
     IsColdAccess,
+    MetadataAPI,
     SharedAPI,
     SharedContextInputV1,
     StorageAPI,
@@ -126,6 +127,33 @@ impl StorageAPI for HostTestingContext {
             .cloned()
             .unwrap_or_default();
         SyscallResult::new(value, 0, 0, 0)
+    }
+}
+
+impl MetadataAPI for HostTestingContext {
+    fn metadata_write(
+        &mut self,
+        _address: &Address,
+        _offset: u32,
+        _metadata: Bytes,
+    ) -> SyscallResult<()> {
+        unimplemented!("not supported for testing context")
+    }
+
+    fn metadata_size(
+        &self,
+        _address: &Address,
+    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
+        unimplemented!("not supported for testing context")
+    }
+
+    fn metadata_copy(
+        &self,
+        _address: &Address,
+        _offset: u32,
+        _length: u32,
+    ) -> SyscallResult<Bytes> {
+        unimplemented!("not supported for testing context")
     }
 }
 
@@ -323,31 +351,6 @@ impl SharedAPI for HostTestingContext {
     }
 
     fn destroy_account(&mut self, _address: Address) -> SyscallResult<()> {
-        unimplemented!("not supported for testing context")
-    }
-
-    fn metadata_write(
-        &mut self,
-        _address: &Address,
-        _offset: u32,
-        _metadata: Bytes,
-    ) -> SyscallResult<()> {
-        unimplemented!("not supported for testing context")
-    }
-
-    fn metadata_size(
-        &self,
-        _address: &Address,
-    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
-        unimplemented!("not supported for testing context")
-    }
-
-    fn metadata_copy(
-        &self,
-        _address: &Address,
-        _offset: u32,
-        _length: u32,
-    ) -> SyscallResult<Bytes> {
         unimplemented!("not supported for testing context")
     }
 }

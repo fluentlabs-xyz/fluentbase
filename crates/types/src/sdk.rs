@@ -18,7 +18,21 @@ pub trait StorageAPI {
     fn storage(&self, slot: &U256) -> SyscallResult<U256>;
 }
 
-pub trait SharedAPI: StorageAPI {
+pub trait MetadataAPI {
+    fn metadata_write(
+        &mut self,
+        address: &Address,
+        offset: u32,
+        metadata: Bytes,
+    ) -> SyscallResult<()>;
+    fn metadata_size(
+        &self,
+        address: &Address,
+    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)>;
+    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
+}
+
+pub trait SharedAPI: StorageAPI + MetadataAPI {
     fn context(&self) -> impl ContextReader;
 
     fn keccak256(&self, data: &[u8]) -> B256;
@@ -145,16 +159,4 @@ pub trait SharedAPI: StorageAPI {
         fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes>;
     fn destroy_account(&mut self, address: Address) -> SyscallResult<()>;
-
-    fn metadata_write(
-        &mut self,
-        address: &Address,
-        offset: u32,
-        metadata: Bytes,
-    ) -> SyscallResult<()>;
-    fn metadata_size(
-        &self,
-        address: &Address,
-    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)>;
-    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
 }
