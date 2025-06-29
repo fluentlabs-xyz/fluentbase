@@ -46,9 +46,10 @@ mod tests {
     #[test]
     fn test_svm_deploy() {
         let mut ctx = EvmTestingContext::default();
+        ctx.sdk.set_ownable_account_address(PRECOMPILE_SVM_RUNTIME);
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
         ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
-            address: PRECOMPILE_SVM_RUNTIME,
+            // address: PRECOMPILE_SVM_RUNTIME,
             ..Default::default()
         });
 
@@ -71,6 +72,7 @@ mod tests {
     #[test]
     fn test_svm_deploy_exec() {
         let mut ctx = EvmTestingContext::default();
+        ctx.sdk.set_ownable_account_address(PRECOMPILE_SVM_RUNTIME);
         assert_eq!(ctx.sdk.context().block_number(), 0);
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
 

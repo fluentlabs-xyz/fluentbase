@@ -28,7 +28,7 @@ use crate::{
 };
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_sdk::{Address, SharedAPI, U256};
+use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
 use solana_bincode::limited_deserialize;
 use solana_feature_set::{
     bpf_account_data_direct_mapping,
@@ -52,26 +52,6 @@ pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 ///   8 bytes is the size of the fragment header
 pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
 
-#[cfg(target_arch = "wasm32")]
-#[inline(always)]
-pub fn keccak256(input: &[u8]) -> B256 {
-    #[link(wasm_import_module = "fluentbase_v1preview")]
-    extern "C" {
-        fn _keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    }
-    let mut result = B256::ZERO;
-    unsafe {
-        _keccak256(input.as_ptr(), input.len() as u32, result.as_mut_ptr());
-    }
-    result
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn keccak256(data: &[u8]) -> B256 {
-    use keccak_hash::keccak;
-    B256::new(keccak(data).0)
-}
-
 // #[cfg(target_pointer_width = "64")]
 // pub(crate) type PtrSizedType = u64;
 // #[cfg(target_pointer_width = "32")]
@@ -85,7 +65,6 @@ use crate::{
 };
 #[cfg(test)]
 use fluentbase_sdk_testing::HostTestingContext;
-use fluentbase_types::B256;
 
 #[cfg(test)]
 pub type TestSdkType = HostTestingContext;

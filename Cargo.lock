@@ -3091,7 +3091,6 @@ dependencies = [
  "byteorder",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
- "fluentbase-types",
  "hashbrown 0.15.4",
  "itertools 0.14.0",
  "keccak-hash",

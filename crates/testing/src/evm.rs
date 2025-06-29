@@ -10,6 +10,7 @@ use fluentbase_sdk::{
     Bytes,
     ContextReader,
     ExitCode,
+    MetadataAPI,
     SharedAPI,
     SharedContextInputV1,
     KECCAK_EMPTY,
@@ -89,12 +90,25 @@ impl EvmTestingContext {
     }
 
     pub fn db_storage_to_sdk(&mut self) {
-        for (address, db_account) in &self.db.cache.accounts {
+        for (address, db_account) in &mut self.db.cache.accounts {
             self.sdk.visit_inner_storage_mut(|storage| {
                 for (k, v) in &db_account.storage {
                     storage.insert((*address, *k), *v);
                 }
-            })
+            });
+            if let Some(code) = db_account.info.code.as_mut() {
+                match code {
+                    Bytecode::OwnableAccount(account) => {
+                        println!(
+                            "perekachak: address={address}, code={}",
+                            account.metadata.len()
+                        );
+                        self.sdk
+                            .metadata_write(address, 0, account.metadata.clone());
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 

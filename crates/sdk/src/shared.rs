@@ -35,6 +35,7 @@ use fluentbase_types::{
     SYSCALL_ID_DESTROY_ACCOUNT,
     SYSCALL_ID_EMIT_LOG,
     SYSCALL_ID_METADATA_COPY,
+    SYSCALL_ID_METADATA_CREATE,
     SYSCALL_ID_METADATA_SIZE,
     SYSCALL_ID_METADATA_WRITE,
     SYSCALL_ID_PREIMAGE_COPY,
@@ -163,6 +164,16 @@ impl<API: NativeAPI> MetadataAPI for SharedContextImpl<API> {
             fuel_refunded,
             exit_code,
         )
+    }
+
+    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
+        let mut buffer = vec![0u8; U256::BYTES + metadata.len()];
+        buffer[0..32].copy_from_slice(salt.to_be_bytes::<32>().as_slice());
+        buffer[32..].copy_from_slice(&metadata);
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk
+                .exec(SYSCALL_ID_METADATA_CREATE, &buffer, None, STATE_MAIN);
+        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes> {

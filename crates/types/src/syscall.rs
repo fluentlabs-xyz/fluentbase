@@ -159,6 +159,7 @@ pub const SYSCALL_ID_PREIMAGE_SIZE: B256 = B256::with_last_byte(0x32);
 // #[deprecated(note = "use metadata")]
 pub const SYSCALL_ID_DELEGATED_STORAGE: B256 = B256::with_last_byte(0x33);
 
-pub const SYSCALL_ID_METADATA_WRITE: B256 = B256::with_last_byte(0x34);
-pub const SYSCALL_ID_METADATA_SIZE: B256 = B256::with_last_byte(0x35);
-pub const SYSCALL_ID_METADATA_COPY: B256 = B256::with_last_byte(0x36);
+pub const SYSCALL_ID_METADATA_WRITE: B256 = B256::with_last_byte(0x40);
+pub const SYSCALL_ID_METADATA_SIZE: B256 = B256::with_last_byte(0x41);
+pub const SYSCALL_ID_METADATA_CREATE: B256 = B256::with_last_byte(0x42);
+pub const SYSCALL_ID_METADATA_COPY: B256 = B256::with_last_byte(0x43);

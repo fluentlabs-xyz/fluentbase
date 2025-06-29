@@ -2,6 +2,7 @@ use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_sdk::{
     bytes::Buf,
+    calc_create4_address,
     native_api::NativeAPI,
     Address,
     Bytes,
@@ -55,6 +56,9 @@ impl HostTestingContext {
             .change_input(input.into());
         self
     }
+    pub fn set_ownable_account_address(&mut self, address: Address) {
+        self.inner.borrow_mut().ownable_account_address = Some(address);
+    }
     pub fn with_fuel_limit(self, fuel_limit: u64) -> Self {
         self.inner.borrow_mut().native_sdk.set_fuel(fuel_limit);
         self
@@ -78,6 +82,12 @@ impl HostTestingContext {
     pub fn visit_inner_storage_mut<F: FnMut(&mut HashMap<(Address, U256), U256>)>(&self, mut f: F) {
         f(&mut self.inner.borrow_mut().persistent_storage)
     }
+    pub fn visit_inner_metadata_mut<F: FnMut(&mut HashMap<(Address, Address), Vec<u8>>)>(
+        &self,
+        mut f: F,
+    ) {
+        f(&mut self.inner.borrow_mut().metadata)
+    }
     pub fn visit_inner_storage<F: Fn(&HashMap<(Address, U256), U256>)>(&self, f: F) {
         f(&self.inner.borrow_mut().persistent_storage)
     }
@@ -87,9 +97,10 @@ struct TestingContextInner {
     shared_context_input_v1: SharedContextInputV1,
     native_sdk: RuntimeContextWrapper,
     persistent_storage: HashMap<(Address, U256), U256>,
-    metadata_storage: HashMap<(Address, Address), Vec<u8>>,
+    metadata: HashMap<(Address, Address), Vec<u8>>,
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
+    ownable_account_address: Option<Address>,
     preimages: HashMap<B256, Bytes>,
 }
 
@@ -100,9 +111,10 @@ impl Default for HostTestingContext {
                 shared_context_input_v1: SharedContextInputV1::default(),
                 native_sdk: RuntimeContextWrapper::new(RuntimeContext::root(0)),
                 persistent_storage: Default::default(),
-                metadata_storage: Default::default(),
+                metadata: Default::default(),
                 transient_storage: Default::default(),
                 logs: vec![],
+                ownable_account_address: None,
                 preimages: Default::default(),
             })),
         }
@@ -139,41 +151,30 @@ impl MetadataAPI for HostTestingContext {
         _offset: u32,
         metadata: Bytes,
     ) -> SyscallResult<()> {
-        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
-        let mut binding = self.inner.borrow_mut();
-        let value = binding
-            .metadata_storage
-            .get_mut(&(target_address, *address));
+        let mut ctx = self.inner.borrow_mut();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx.metadata.get_mut(&(account_owner, *address));
         if let Some(value) = value {
-            if value.len() < metadata.len() {
-                value.resize(metadata.len(), 0);
-            }
+            value.resize(metadata.len(), 0);
             value.copy_from_slice(metadata.as_ref());
         } else {
-            self.inner
-                .borrow_mut()
-                .metadata_storage
-                .insert((target_address, address.clone()), metadata.to_vec());
+            ctx.metadata
+                .insert((account_owner, address.clone()), metadata.to_vec());
         }
         SyscallResult::new((), 0, 0, ExitCode::Err)
-
-        // let mut buffer = vec![0u8; 20 + 4 + metadata.len()];
-        // buffer[0..20].copy_from_slice(address.as_slice());
-        // LittleEndian::write_u32(&mut buffer[20..24], offset);
-        // buffer[24..].copy_from_slice(&metadata);
-        // let (fuel_consumed, fuel_refunded, exit_code) =
-        //     self.native_sdk
-        //         .exec(SYSCALL_ID_METADATA_WRITE, &buffer, None, STATE_MAIN);
-        // SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn metadata_size(
         &self,
         address: &Address,
     ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
-        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
-        let binding = self.inner.borrow();
-        let value = binding.metadata_storage.get(&(target_address, *address));
+        let ctx = self.inner.borrow();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx.metadata.get(&(account_owner, *address));
         if let Some(value) = value {
             let len = value.len();
             return SyscallResult::new((len as u32, false, false), 0, 0, ExitCode::Ok);
@@ -181,11 +182,31 @@ impl MetadataAPI for HostTestingContext {
         SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
     }
 
+    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("ownable account address should exist");
+        let derived_metadata_address =
+            calc_create4_address(&account_owner, salt, HostTestingContextNativeAPI::keccak256);
+        let target_address = ctx.shared_context_input_v1.contract.address;
+        ctx.metadata
+            .insert(
+                (target_address, derived_metadata_address),
+                metadata.to_vec(),
+            )
+            .expect("metadata account collision");
+        SyscallResult::new(Default::default(), 0, 0, ExitCode::Ok)
+    }
+
     fn metadata_copy(&self, address: &Address, _offset: u32, length: u32) -> SyscallResult<Bytes> {
-        let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
-        let binding = self.inner.borrow();
-        let value = binding.metadata_storage.get(&(target_address, *address));
+        let ctx = self.inner.borrow();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx.metadata.get(&(account_owner, *address));
         if let Some(value) = value {
+            let length = length.min(value.len() as u32);
             return SyscallResult::new(
                 Bytes::copy_from_slice(&value[0..length as usize]),
                 0,

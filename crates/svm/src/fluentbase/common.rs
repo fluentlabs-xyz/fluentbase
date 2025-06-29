@@ -10,15 +10,20 @@ use crate::{
 use alloc::{string::String, vec::Vec};
 use core::fmt::{Display, Formatter};
 use fluentbase_sdk::{
+    calc_create4_address,
     debug_log_ext,
+    keccak256,
     Address,
     Bytes,
     ExitCode,
+    IsAccountEmpty,
+    IsColdAccess,
     MetadataAPI,
     SharedAPI,
     SyscallResult,
+    PRECOMPILE_SVM_RUNTIME,
+    U256,
 };
-use fluentbase_types::{IsAccountEmpty, IsColdAccess};
 use hashbrown::{HashMap, HashSet};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -210,6 +215,14 @@ impl MetadataAPI for MemStorage {
             .map_or_else(|| 0, |v| v.len()) as u32;
         // TODO check bool flags
         SyscallResult::new((len, false, false), 0, 0, ExitCode::Ok)
+    }
+
+    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
+        let derived_metadata_address =
+            calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &salt, |v| keccak256(v));
+        self.in_memory_metadata
+            .insert(derived_metadata_address, metadata.to_vec());
+        SyscallResult::new((), 0, 0, ExitCode::Ok)
     }
 
     fn metadata_copy(&self, address: &Address, _offset: u32, length: u32) -> SyscallResult<Bytes> {

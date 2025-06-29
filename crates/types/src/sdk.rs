@@ -29,6 +29,7 @@ pub trait MetadataAPI {
         &self,
         address: &Address,
     ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)>;
+    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()>;
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
 }
 

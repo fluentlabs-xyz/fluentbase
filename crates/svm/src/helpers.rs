@@ -7,7 +7,6 @@ use core::{
     fmt,
     fmt::{Display, Formatter},
 };
-use keccak_hash::keccak;
 use solana_bincode::{deserialize, serialize, serialized_size};
 use solana_pubkey::{Pubkey, PubkeyError};
 use solana_rbpf::{
@@ -63,9 +62,8 @@ use crate::{
     context::BpfAllocator,
     error::SvmError,
     solana_program::sysvar::Sysvar,
-    // storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
-use fluentbase_types::{Address, MetadataAPI};
+use fluentbase_sdk::{calc_create4_address, keccak256, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
@@ -698,21 +696,17 @@ pub fn storage_read_account_data<SAPI: MetadataAPI>(
     sapi: &SAPI,
     pubkey: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
-    // let mut buffer = vec![];
-    // let storage_writer = StorageChunksWriter {
-    //     slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
-    //     _phantom: Default::default(),
-    // };
-    // storage_writer.read_data(sapi, &mut buffer)?;
-    let address = &keccak(pubkey.as_ref()).0[0..Address::len_bytes()];
-    let address = Address::from_slice(address);
-    // let address = evm_address_from_pubkey::<false>(pubkey)?;
-    let metadata_size_result = sapi.metadata_size(&address);
+    let pubkey_hash = keccak256(pubkey.as_ref());
+    let derived_metadata_address =
+        calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
+            keccak256(v)
+        });
+    let metadata_size_result = sapi.metadata_size(&derived_metadata_address);
     if !metadata_size_result.status.is_ok() {
         return Err(metadata_size_result.status.into());
     }
     let metadata_len = metadata_size_result.data.0;
-    let metadata_copy = sapi.metadata_copy(&address, 0, metadata_len);
+    let metadata_copy = sapi.metadata_copy(&derived_metadata_address, 0, metadata_len);
     if !metadata_copy.status.is_ok() {
         return Err(metadata_copy.status.into());
     }
@@ -726,16 +720,23 @@ pub fn storage_write_account_data<SAPI: MetadataAPI>(
     pubkey: &Pubkey,
     account_data: &AccountSharedData,
 ) -> Result<(), SvmError> {
-    // let storage_writer = StorageChunksWriter {
-    //     slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
-    //     _phantom: Default::default(),
-    // };
-    let buffer = serialize(account_data)?;
-    // storage_writer.write_data(sapi, &buffer);
-    // let address = evm_address_from_pubkey::<false>(pubkey)?;
-    let address = &keccak(pubkey.as_ref()).0[0..Address::len_bytes()];
-    let address = Address::from_slice(address);
-    sapi.metadata_write(&address, 0, buffer.into());
+    let account_data = serialize(account_data)?;
+    let pubkey_hash = keccak256(pubkey.as_ref());
+    let derived_metadata_address =
+        calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
+            keccak256(v)
+        });
+    let (metadata_size, _, _) = sapi
+        .metadata_size(&derived_metadata_address)
+        .expect("metadata size")
+        .data;
+    if metadata_size == 0 {
+        sapi.metadata_create(&pubkey_hash.into(), account_data.into())
+            .expect("metadata creation failed");
+    } else {
+        sapi.metadata_write(&derived_metadata_address, 0, account_data.into())
+            .expect("metadata write failed");
+    }
     Ok(())
 }
 

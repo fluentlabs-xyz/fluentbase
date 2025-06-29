@@ -30,6 +30,16 @@ pub fn calc_create2_address<API: NativeAPI>(
     Address::from_word(hash)
 }
 
+#[inline(always)]
+pub fn calc_create4_address(owner: &Address, salt: &U256, hash_func: fn(&[u8]) -> B256) -> Address {
+    let mut bytes = [0; 53];
+    bytes[0] = 0x44;
+    bytes[1..21].copy_from_slice(owner.as_slice());
+    bytes[21..53].copy_from_slice(&salt.to_be_bytes::<32>());
+    let hash = hash_func(&bytes);
+    Address::from_word(hash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
