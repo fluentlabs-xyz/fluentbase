@@ -179,48 +179,23 @@ where
         ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
         let tail_start = buf.remaining_mut();
-        let start_position = tail_start; // for logging
-
-        println!("=== Vec::encode_tail START ===");
-        println!(
-            "Vector length: {}, IS_DYNAMIC: {}",
-            self.len(),
-            T::IS_DYNAMIC
-        );
-        println!(
-            "Context at start: hdr_ptr={}, hdr_size={}, data_ptr={}",
-            ctx.hdr_ptr, ctx.hdr_size, ctx.data_ptr
-        );
-        println!("Buffer position: {} bytes written so far", start_position);
 
         // 1. Write the vector length (always 32 bytes in Solidity ABI)
         write_u32_aligned::<B, 32>(buf, self.len() as u32);
-        println!(
-            "Written length: {} at position {}",
-            self.len(),
-            start_position - buf.remaining_mut()
-        );
 
         if !T::IS_DYNAMIC {
             // For static elements (like u32), write them sequentially
             // Each element takes exactly 32 bytes in Solidity ABI
-            println!("Processing {} static elements", self.len());
 
             for (i, element) in self.iter().enumerate() {
                 let before = buf.remaining_mut();
                 element.encode_header(buf, ctx)?;
                 let written = before - buf.remaining_mut();
-                println!("  Element[{}]: written {} bytes", i, written);
             }
         } else {
             // Dynamic elements require two-phase encoding:
             // Phase 1: Write all offsets
             // Phase 2: Write all data
-
-            println!(
-                "Processing {} dynamic elements - two-phase encoding",
-                self.len()
-            );
 
             // Create a local context for this vector's internal structure
             // This isolates offset calculations from the parent context
@@ -229,24 +204,12 @@ where
             local_ctx.hdr_ptr = 0;
             local_ctx.data_ptr = 0;
 
-            println!(
-                "Local context created: hdr_size={} (for {} offsets)",
-                local_ctx.hdr_size,
-                self.len()
-            );
-
             // Phase 1: Calculate sizes and write offsets
-            println!("\n--- Phase 1: Writing offsets ---");
+
             for (i, element) in self.iter().enumerate() {
                 // Calculate where this element's data will start
                 // Offset = space_for_all_offsets + accumulated_data_size
                 let element_offset = local_ctx.hdr_size + local_ctx.data_ptr;
-
-                println!("  Element[{}]:", i);
-                println!(
-                    "    Offset calculation: {} (hdr_size) + {} (data_ptr) = {}",
-                    local_ctx.hdr_size, local_ctx.data_ptr, element_offset
-                );
 
                 // Write the offset (relative to the start of this vector's data)
                 write_u32_aligned::<B, 32>(buf, element_offset);
@@ -254,34 +217,19 @@ where
                 // Calculate how much space this element will need in the data section
                 let mut temp_ctx = EncodingContext::new();
                 let element_data_size = element.tail_size(&mut temp_ctx)?;
-                println!("    Element data size: {} bytes", element_data_size);
 
                 // Update data pointer for next element
                 local_ctx.data_ptr += element_data_size as u32;
-                println!("    Updated data_ptr to: {}", local_ctx.data_ptr);
             }
 
             // Phase 2: Write actual element data
-            println!("\n--- Phase 2: Writing element data ---");
             for (i, element) in self.iter().enumerate() {
-                println!("  Writing data for element[{}]", i);
-                let before = buf.remaining_mut();
-
                 // For nested vectors, this will recursively call encode_tail
                 element.encode_tail(buf, &mut local_ctx)?;
-
-                let written = before - buf.remaining_mut();
-                println!("    Written {} bytes for element[{}]", written, i);
             }
-
-            println!("\n--- Two-phase encoding complete ---");
         }
 
         let total_written = tail_start - buf.remaining_mut();
-        println!(
-            "=== Vec::encode_tail END - wrote {} bytes total ===\n",
-            total_written
-        );
 
         Ok(total_written)
     }
@@ -299,9 +247,7 @@ where
     /// the valid ABI encoding begins.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)?;
-
         let len = read_u32_aligned::<B, ALIGN>(buf, data_offset as usize)? as usize;
-
         if len == 0 {
             return Ok(Vec::new());
         }

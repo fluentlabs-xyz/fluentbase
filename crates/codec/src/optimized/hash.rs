@@ -2,10 +2,10 @@ use crate::optimized::{
     ctx::EncodingContext,
     encoder::Encoder,
     error::CodecError,
-    utils::{align_up, read_u32_aligned, test_utils::print_encoded, write_u32_aligned},
+    utils::{align_up, read_u32_aligned, write_u32_aligned},
 };
 use alloc::vec::Vec;
-use byteorder::{BigEndian, ByteOrder};
+use byteorder::ByteOrder;
 use bytes::{Buf, BufMut};
 use core::{fmt::Debug, hash::Hash, mem::size_of};
 use hashbrown::{HashMap, HashSet};
@@ -294,28 +294,16 @@ where
             return Ok(HashMap::new());
         }
 
-        // Read offsets (relative to data_offset)
-        let keys_offset = read_u32_aligned::<B, 32>(buf, data_offset + 32)? as usize;
-        let values_offset = read_u32_aligned::<B, 32>(buf, data_offset + 64)? as usize;
-
-        println!("Keys offset: {} (relative to HashMap data)", keys_offset);
-        println!(
-            "Values offset: {} (relative to HashMap data)",
-            values_offset
-        );
-
         // Create chunk starting from HashMap data (like Vec does)
-        let chunk = &buf.chunk()[..];
-
+        let chunk = &buf.chunk()[data_offset..];
+        println!("Values chunk: {:?}", hex::encode(chunk));
         // Decode vectors using relative offsets
         println!("\n--- Decoding keys vector ---");
-        // println!("Keys encoded {:?}", hex::encode(&chunk[keys_offset..]));
-        print_encoded::<BigEndian, 32>(&chunk[keys_offset..keys_offset + length * 32]);
-        let keys: Vec<K> = Vec::decode(&chunk, keys_offset)?;
+        let keys: Vec<K> = Vec::decode(&chunk, 32)?;
         println!("Decoded {} keys", keys.len());
 
         println!("\n--- Decoding values vector ---");
-        let values: Vec<V> = Vec::decode(&chunk, values_offset)?;
+        let values: Vec<V> = Vec::decode(&chunk, 64)?;
         println!("Decoded {} values", values.len());
 
         // Build HashMap
@@ -330,24 +318,41 @@ where
 
     /// Calculates the size of tail data using ByteCounter
     fn tail_size(&self, ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
-        // For empty HashMap, only length field
         if self.is_empty() {
             return Ok(32);
         }
 
-        // Create temporary vectors for size calculation
-        let mut entries: Vec<_> = self.iter().collect();
-        entries.sort_by_key(|(k, _)| *k);
+        // Base size: length + 2 offsets + 2 vec lengths
+        let mut size = 96 + 64; // 160 bytes
 
-        let keys: Vec<K> = entries.iter().map(|(k, _)| (*k).clone()).collect();
-        let values: Vec<V> = entries.iter().map(|(_, v)| (*v).clone()).collect();
+        // Add size for all elements
+        let element_count = self.len();
 
-        // Calculate size: length + 2 offsets + keys data + values data
-        let mut size = 32 + 64; // length + offsets
+        // Keys size
+        if K::IS_DYNAMIC {
+            size += element_count * 32; // Offsets
+                                        // Need to iterate for dynamic sizes
+            for (key, _) in self.iter() {
+                let mut temp_ctx = EncodingContext::new();
+                size += key.tail_size(&mut temp_ctx)?;
+            }
+        } else {
+            // For static types: just count * 32
+            size += element_count * 32;
+        }
 
-        let mut temp_ctx = EncodingContext::new();
-        size += keys.tail_size(&mut temp_ctx)?;
-        size += values.tail_size(&mut temp_ctx)?;
+        // Values size
+        if V::IS_DYNAMIC {
+            size += element_count * 32; // Offsets
+                                        // Need to iterate for dynamic sizes
+            for (_, value) in self.iter() {
+                let mut temp_ctx = EncodingContext::new();
+                size += value.tail_size(&mut temp_ctx)?;
+            }
+        } else {
+            // For static types: just count * 32
+            size += element_count * 32;
+        }
 
         Ok(size)
     }
@@ -487,6 +492,160 @@ where
     #[inline]
     fn len(&self) -> usize {
         self.len()
+    }
+}
+
+/// HashSet implementation for Solidity ABI
+///
+/// Encoding structure (identical to Vec):
+/// - header: offset (32 bytes)
+/// - tail:
+///   - length (32 bytes)
+///   - for static elements: elements directly
+///   - for dynamic elements: offsets followed by element data
+impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true> for HashSet<T>
+where
+    T: Encoder<B, ALIGN, true, Ctx = EncodingContext> + Eq + Hash + Ord,
+{
+    type Ctx = EncodingContext;
+    const HEADER_SIZE: usize = 32;
+    const IS_DYNAMIC: bool = true;
+
+    /// Adds the HashSet header size to the encoding context
+    fn header_size(&self, ctx: &mut EncodingContext) -> Result<(), CodecError> {
+        ctx.hdr_size += Self::HEADER_SIZE as u32;
+        Ok(())
+    }
+
+    /// Encodes the header - writes only the offset to the HashSet data
+    fn encode_header(
+        &self,
+        buf: &mut impl BufMut,
+        ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
+        // Calculate offset to HashSet data
+        let offset = (ctx.hdr_size - ctx.hdr_ptr) + ctx.data_ptr;
+        write_u32_aligned::<B, 32>(buf, offset);
+        ctx.hdr_ptr += 32;
+
+        // Reserve space for HashSet data in tail
+        let data_size = self.tail_size(ctx)?;
+        ctx.data_ptr += data_size as u32;
+
+        Ok(32)
+    }
+
+    /// Encodes the tail - writes the actual HashSet data
+    fn encode_tail(
+        &self,
+        buf: &mut impl BufMut,
+        ctx: &mut EncodingContext,
+    ) -> Result<usize, CodecError> {
+        let tail_start = buf.remaining_mut();
+
+        // Write length
+        write_u32_aligned::<B, 32>(buf, self.len() as u32);
+
+        if self.is_empty() {
+            return Ok(32);
+        }
+
+        // Sort elements for deterministic encoding
+        // Only collect references to avoid cloning
+        let mut sorted_refs: Vec<&T> = self.iter().collect();
+        sorted_refs.sort();
+
+        if !T::IS_DYNAMIC {
+            // Static elements - write them directly
+            for element in sorted_refs {
+                element.encode_header(buf, ctx)?;
+            }
+        } else {
+            // Dynamic elements - two-phase encoding like Vec
+
+            // Save context and create local one
+            let old_hdr_ptr = ctx.hdr_ptr;
+            let old_hdr_size = ctx.hdr_size;
+            let old_data_ptr = ctx.data_ptr;
+
+            // Local context for offset calculations
+            ctx.hdr_ptr = 0;
+            ctx.hdr_size = (self.len() * 32) as u32;
+            ctx.data_ptr = 0;
+
+            // Phase 1: Write offsets
+            for element in &sorted_refs {
+                let element_offset = ctx.hdr_size + ctx.data_ptr;
+                write_u32_aligned::<B, 32>(buf, element_offset);
+
+                // Calculate element size without allocating temp context repeatedly
+                let element_size = if T::IS_DYNAMIC {
+                    let mut temp_ctx = EncodingContext::new();
+                    element.tail_size(&mut temp_ctx)?
+                } else {
+                    32
+                };
+
+                ctx.data_ptr += element_size as u32;
+            }
+
+            // Phase 2: Write element data
+            for element in sorted_refs {
+                element.encode_tail(buf, ctx)?;
+            }
+
+            // Restore context
+            ctx.hdr_ptr = old_hdr_ptr;
+            ctx.hdr_size = old_hdr_size;
+            ctx.data_ptr = old_data_ptr + (tail_start - buf.remaining_mut()) as u32;
+        }
+
+        Ok(tail_start - buf.remaining_mut())
+    }
+
+    /// Decodes a HashSet from Solidity ABI encoded buffer
+    fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
+        // Reuse Vec decoder since the encoding format is identical
+        let vec = Vec::<T>::decode(buf, offset)?;
+
+        // Convert to HashSet, which automatically handles uniqueness
+        let set: HashSet<T> = vec.into_iter().collect();
+
+        // Note: If the encoded data had duplicates, they will be removed
+        // This is not an error in HashSet context
+
+        Ok(set)
+    }
+
+    /// Calculates the size of tail data without allocations
+    fn tail_size(&self, _ctx: &mut Self::Ctx) -> Result<usize, CodecError> {
+        if self.is_empty() {
+            return Ok(32);
+        }
+
+        // Base size: length field
+        let mut size = 32;
+
+        if T::IS_DYNAMIC {
+            // Add space for offsets
+            size += self.len() * 32;
+
+            // Add space for each element's data
+            for element in self.iter() {
+                let mut temp_ctx = EncodingContext::new();
+                size += element.tail_size(&mut temp_ctx)?;
+            }
+        } else {
+            // Static elements: fixed size per element
+            size += self.len() * 32;
+        }
+
+        Ok(size)
+    }
+
+    /// Returns the header size for this HashSet
+    fn len(&self) -> usize {
+        Self::HEADER_SIZE
     }
 }
 
@@ -682,59 +841,203 @@ mod tests {
         use byteorder::BigEndian;
         use hashbrown::HashMap;
 
-        #[ignore]
-        #[test]
-        fn rnd() {
-            // let v = HashMap::from([(1u32, 2u32), (3u32, 4u32)]);
+        mod map {
+            use super::*;
+            #[test]
+            fn simple_map() {
+                let v = HashMap::from([(1, 5), (10u32, 20u32), (100, 60)]);
+                assert_codec_sol(
+                    concat!(
+                        "0000000000000000000000000000000000000000000000000000000000000020", /* [0x0000] 0 = 32 */
+                    ),
+                    concat!(
+                        "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0000] 0 = 3 */
+                        "0000000000000000000000000000000000000000000000000000000000000060", /* [0x0020] 32 = 96 */
+                        "00000000000000000000000000000000000000000000000000000000000000e0", /* [0x0040] 64 = 224 */
+                        "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0060] 96 = 3 */
+                        "0000000000000000000000000000000000000000000000000000000000000001", /* [0x0080] 128 = 1 */
+                        "000000000000000000000000000000000000000000000000000000000000000a", /* [0x00a0] 160 = 10 */
+                        "0000000000000000000000000000000000000000000000000000000000000064", /* [0x00c0] 192 = 100 */
+                        "0000000000000000000000000000000000000000000000000000000000000003", /* [0x00e0] 224 = 3 */
+                        "0000000000000000000000000000000000000000000000000000000000000005", /* [0x0100] 256 = 5 */
+                        "0000000000000000000000000000000000000000000000000000000000000014", /* [0x0120] 288 = 20 */
+                        "000000000000000000000000000000000000000000000000000000000000003c", /* [0x0140] 320 = 60 */
+                    ),
+                    &v,
+                );
+            }
 
-            let expected = &hex::decode("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000003c").unwrap();
-            // println!("Expected:");
-            // print_encoded::<BigEndian, 32>(&expected);
+            #[test]
+            fn nested_map() {
+                let test_value = HashMap::from([
+                    (100, HashMap::from([(1u32, 2u32), (3u32, 4u32)])),
+                    (1000, HashMap::from([(7u32, 8u32), (9u32, 4u32)])),
+                ]);
+                print_encoded::<BigEndian, 32>(hex::decode("0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000006400000000000000000000000000000000000000000000000000000000000003e80000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001600000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000009000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004").unwrap());
 
-            println!("expected:");
-            print_encoded::<BigEndian, 32>(&expected);
-            assert!(false);
-            //
-            // concat!(
-            // "...00000020", /* [0x0000] 0 = 32 */
-            // ),
-            // concat!(
-            // "...00000003", /* [0x0000] 0 = 3 */
-            // "...00000060", /* [0x0020] 32 = 96 */
-            // "...000000e0", /* [0x0040] 64 = 224 */
-            // "...00000003", /* [0x0060] 96 = 3 */
-            // "...00000001", /* [0x0080] 128 = 1 */
-            // "...0000000a", /* [0x00a0] 160 = 10 */
-            // "...00000064", /* [0x00c0] 192 = 100 */
-            // "...00000003", /* [0x00e0] 224 = 3 */
-            // "...00000005", /* [0x0100] 256 = 5 */
-            // "...00000014", /* [0x0120] 288 = 20 */
-            // "...0000003c", /* [0x0140] 320 = 60 */
-            // )
+                assert_codec_sol(
+                    concat!(
+                        "0000000000000000000000000000000000000000000000000000000000000020", /* offset = 32 */
+                    ),
+                    concat!(
+                        "0000000000000000000000000000000000000000000000000000000000000002", /* [0x0000] 0 = 2 */
+                        "0000000000000000000000000000000000000000000000000000000000000060", /* [0x0020] 32 = 96 */
+                        "00000000000000000000000000000000000000000000000000000000000000c0", /* [0x0040] 64 = 192 */
+                        "0000000000000000000000000000000000000000000000000000000000000002", /* [0x0060] 96 = 2 */
+                        "0000000000000000000000000000000000000000000000000000000000000064", /* [0x0080] 128 = 100 */
+                        "00000000000000000000000000000000000000000000000000000000000003e8", /* [0x00a0] 160 = 1000 */
+                        "0000000000000000000000000000000000000000000000000000000000000002", /* [0x00c0] 192 = 2 */
+                        "0000000000000000000000000000000000000000000000000000000000000040", /* [0x00e0] 224 = 64 */
+                        "0000000000000000000000000000000000000000000000000000000000000160", /* [0x0100] 256 = 352 */
+                        "0000000000000000000000000000000000000000000000000000000000000002", /* [0x0120] 288 = 2 */
+                        "0000000000000000000000000000000000000000000000000000000000000060", /* [0x0140] 320 = 96 */
+                        "00000000000000000000000000000000000000000000000000000000000000c0", /* [0x0160] 352 = 192 */
+                        "0000000000000000000000000000000000000000000000000000000000000002", /* [0x0180] 384 = 2 */
+                        "0000000000000000000000000000000000000000000000000000000000000001", /* [0x01a0] 416 = 1 */
+                        "0000000000000000000000000000000000000000000000000000000000000003", /* [0x01c0] 448 = 3 */
+                        "0000000000000000000000000000000000000000000000000000000000000002", /* [0x01e0] 480 = 2 */
+                        "0000000000000000000000000000000000000000000000000000000000000002", /* [0x0200] 512 = 2 */
+                        "0000000000000000000000000000000000000000000000000000000000000004", /* [0x0220] 544 = 4 */
+                        "0000000000000000000000000000000000000000000000000000000000000002", /* [0x0240] 576 = 2 */
+                        "0000000000000000000000000000000000000000000000000000000000000060", /* [0x0260] 608 = 96 */
+                        "00000000000000000000000000000000000000000000000000000000000000c0", /* [0x0280] 640 = 192 */
+                        "0000000000000000000000000000000000000000000000000000000000000002", /* [0x02a0] 672 = 2 */
+                        "0000000000000000000000000000000000000000000000000000000000000007", /* [0x02c0] 704 = 7 */
+                        "0000000000000000000000000000000000000000000000000000000000000009", /* [0x02e0] 736 = 9 */
+                        "0000000000000000000000000000000000000000000000000000000000000002", /* [0x0300] 768 = 2 */
+                        "0000000000000000000000000000000000000000000000000000000000000008", /* [0x0320] 800 = 8 */
+                        "0000000000000000000000000000000000000000000000000000000000000004", /* [0x0340] 832 = 4 */
+                    ),
+                    &test_value,
+                );
+            }
         }
 
-        #[test]
-        fn simple_map() {
-            let v = HashMap::from([(10, 20), (1, 5), (100, 60)]);
-            assert_codec_sol(
-                concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000020", /* [0x0000] 0 = 32 */
-                ),
-                concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0000] 0 = 3 */
-                    "0000000000000000000000000000000000000000000000000000000000000060", /* [0x0020] 32 = 96 */
-                    "00000000000000000000000000000000000000000000000000000000000000e0", /* [0x0040] 64 = 224 */
-                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x0060] 96 = 3 */
-                    "0000000000000000000000000000000000000000000000000000000000000001", /* [0x0080] 128 = 1 */
-                    "000000000000000000000000000000000000000000000000000000000000000a", /* [0x00a0] 160 = 10 */
-                    "0000000000000000000000000000000000000000000000000000000000000064", /* [0x00c0] 192 = 100 */
-                    "0000000000000000000000000000000000000000000000000000000000000003", /* [0x00e0] 224 = 3 */
-                    "0000000000000000000000000000000000000000000000000000000000000005", /* [0x0100] 256 = 5 */
-                    "0000000000000000000000000000000000000000000000000000000000000014", /* [0x0120] 288 = 20 */
-                    "000000000000000000000000000000000000000000000000000000000000003c", /* [0x0140] 320 = 60 */
-                ),
-                &v,
-            );
+        mod hash_set {
+            use super::*;
+            use crate::optimized::{
+                encoder::Encoder,
+                utils::test_utils::assert_roundtrip_sol,
+            };
+            use hashbrown::HashSet;
+
+            #[test]
+            fn test_empty_hashset() {
+                let value: HashSet<u32> = HashSet::new();
+                assert_codec_sol(
+                    "0000000000000000000000000000000000000000000000000000000000000020", /* offset = 32 */
+                    "0000000000000000000000000000000000000000000000000000000000000000", /* length = 0 */
+                    &value,
+                );
+            }
+
+            #[test]
+            fn test_hashset_u32() {
+                let value = HashSet::from([3u32, 1, 4, 5, 2]);
+                // HashSet will be sorted as [1, 2, 3, 4, 5]
+                assert_codec_sol(
+                    concat!(
+                        "0000000000000000000000000000000000000000000000000000000000000020", /* offset = 32 */
+                    ),
+                    concat!(
+                        "0000000000000000000000000000000000000000000000000000000000000005", /* length = 5 */
+                        "0000000000000000000000000000000000000000000000000000000000000001", // 1
+                        "0000000000000000000000000000000000000000000000000000000000000002", // 2
+                        "0000000000000000000000000000000000000000000000000000000000000003", // 3
+                        "0000000000000000000000000000000000000000000000000000000000000004", // 4
+                        "0000000000000000000000000000000000000000000000000000000000000005", // 5
+                    ),
+                    &value,
+                );
+            }
+
+            #[test]
+            fn test_hashset_sorting_deterministic() {
+                // Different insertion orders should produce same encoding
+                let value1: HashSet<u32> = HashSet::from([3u32, 1, 2]);
+                let value2: HashSet<u32> = HashSet::from([2u32, 3, 1]);
+                let value3: HashSet<u32> = HashSet::from([1u32, 3, 2]);
+
+                // All should encode to sorted order [1, 2, 3]
+                let expected_tail = concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000003", /* length = 3 */
+                    "0000000000000000000000000000000000000000000000000000000000000001", // 1
+                    "0000000000000000000000000000000000000000000000000000000000000002", // 2
+                    "0000000000000000000000000000000000000000000000000000000000000003", // 3
+                );
+
+                // Test all three produce same encoding
+                for value in [value1, value2, value3] {
+                    assert_codec_sol(
+                        "0000000000000000000000000000000000000000000000000000000000000020",
+                        expected_tail,
+                        &value,
+                    );
+                }
+            }
+
+            #[test]
+            fn test_hashset_strings() {
+                let value: HashSet<String> =
+                    HashSet::from(["hello".to_string(), "world".to_string(), "foo".to_string()]);
+                // Strings will be sorted as ["foo", "hello", "world"]
+
+                assert_codec_sol(
+                    concat!(
+                        "0000000000000000000000000000000000000000000000000000000000000020", /* offset = 32 */
+                    ),
+                    concat!(
+                        "0000000000000000000000000000000000000000000000000000000000000003", /* length = 3 */
+                        "0000000000000000000000000000000000000000000000000000000000000060", /* offset to "foo" */
+                        "00000000000000000000000000000000000000000000000000000000000000a0", /* offset to "hello" */
+                        "00000000000000000000000000000000000000000000000000000000000000e0", /* offset to "world" */
+                        // "foo"
+                        "0000000000000000000000000000000000000000000000000000000000000003", /* length = 3 */
+                        "666f6f0000000000000000000000000000000000000000000000000000000000", /* "foo" padded */
+                        // "hello"
+                        "0000000000000000000000000000000000000000000000000000000000000005", /* length = 5 */
+                        "68656c6c6f000000000000000000000000000000000000000000000000000000", /* "hello" padded */
+                        // "world"
+                        "0000000000000000000000000000000000000000000000000000000000000005", /* length = 5 */
+                        "776f726c64000000000000000000000000000000000000000000000000000000", /* "world" padded */
+                    ),
+                    &value,
+                );
+            }
+
+            #[test]
+            fn test_hashset_uniqueness() {
+                // Test that duplicate values are handled correctly
+                let vec_with_dups = vec![1u32, 2, 3, 2, 1, 3];
+                let set_from_vec: HashSet<u32> = vec_with_dups.into_iter().collect();
+
+                assert_eq!(set_from_vec.len(), 3); // Only unique values
+
+                assert_codec_sol(
+                    "0000000000000000000000000000000000000000000000000000000000000020",
+                    concat!(
+                        "0000000000000000000000000000000000000000000000000000000000000003", /* length = 3 */
+                        "0000000000000000000000000000000000000000000000000000000000000001", // 1
+                        "0000000000000000000000000000000000000000000000000000000000000002", // 2
+                        "0000000000000000000000000000000000000000000000000000000000000003", // 3
+                    ),
+                    &set_from_vec,
+                );
+            }
+            #[test]
+            fn test_hashset_roundtrip() {
+                // Test various types roundtrip correctly
+                let sets = vec![
+                    HashSet::from([1u32, 2, 3, 4, 5]),
+                    HashSet::from([100, 200, 300]),
+                    HashSet::from([u32::MAX, u32::MIN, 42]),
+                ];
+
+                for original in sets {
+                    // Full roundtrip test using assert_roundtrip_sol
+                    assert_roundtrip_sol(&original);
+                }
+            }
         }
     }
 }
