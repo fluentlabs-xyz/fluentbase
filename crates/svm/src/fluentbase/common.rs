@@ -11,7 +11,6 @@ use alloc::{string::String, vec::Vec};
 use core::fmt::{Display, Formatter};
 use fluentbase_sdk::{
     calc_create4_address,
-    debug_log_ext,
     keccak256,
     Address,
     Bytes,
@@ -107,7 +106,6 @@ pub(crate) fn flush_accounts<SDK: SharedAPI, SAPI: MetadataAPI>(
     accounts: &HashMap<Pubkey, AccountSharedData>,
 ) -> Result<(), SvmError> {
     for (pk, data) in accounts {
-        debug_log_ext!("flushing data (sapi={}) for pk {}", sapi.is_some(), pk);
         select_sapi!(sapi, sdk, |storage| {
             storage_write_account_data(storage, pk, data)
         })?;

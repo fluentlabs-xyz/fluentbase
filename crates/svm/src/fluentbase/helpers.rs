@@ -32,7 +32,7 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
-use fluentbase_sdk::{debug_log, ContextReader, MetadataAPI, SharedAPI};
+use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
 use hashbrown::HashMap;
 use itertools::Itertools;
 use solana_bincode::deserialize;
@@ -325,13 +325,6 @@ pub(crate) fn settle_balances<SDK: SharedAPI>(
         assert!(is_evm_pubkey(sender_pk));
         assert!(is_evm_pubkey(receiver_pk));
         while run {
-            debug_log!(
-                "sender_pk {} receiver_pk {} amount {}",
-                sender_pk,
-                receiver_pk,
-                core::cmp::min(sender_delta, receiver_delta)
-            );
-
             // TODO can be optimised
             let evm_address_from = evm_address_from_pubkey::<true>(sender_pk)
                 .expect("sender pk must be evm compatible");
