@@ -10,7 +10,7 @@ use crate::{
             MemStorage,
         },
         helpers_v2::{exec_encoded_svm_batch_message, exec_svm_batch_message},
-        loader_common::{read_protected_preimage, write_protected_preimage},
+        loader_common::{read_contract_executable, write_contract_executable},
     },
     helpers::storage_write_account_data,
     native_loader,
@@ -41,7 +41,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     // TODO generate inter-dependant pubkey
     let pk_payer = pubkey_from_evm_address(&contract_caller); // must exist // caller
-    let pk_exec = pubkey_from_evm_address(&contract_address); // may not exist // contract_address
+    let pk_contract = pubkey_from_evm_address(&contract_address); // may not exist // contract_address
     let pk_authority = pk_payer.clone(); // must exist // caller
 
     let contract_caller_balance = sdk.balance(&contract_caller);
@@ -68,7 +68,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let balance_to_transfer = 0;
     let instructions = loader_v4::create_buffer(
         &pk_payer,
-        &pk_exec,
+        &pk_contract,
         balance_to_transfer,
         &pk_authority,
         program_len as u32,
@@ -78,7 +78,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     batch_message.append_one(message);
 
     let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let instruction = loader_v4::write(&pk_exec, &pk_authority, offset, bytes);
+        let instruction = loader_v4::write(&pk_contract, &pk_authority, offset, bytes);
         let instructions = vec![instruction];
         Message::new(&instructions, Some(&pk_payer))
     };
@@ -91,7 +91,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     }
     batch_message.append_many(write_messages);
 
-    let instruction = loader_v4::deploy(&pk_exec, &pk_authority);
+    let instruction = loader_v4::deploy(&pk_contract, &pk_authority);
     let message = Message::new(&[instruction], Some(&pk_payer));
     batch_message.append_one(message);
 
@@ -113,19 +113,19 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
         "payer_balance_before != payer_balance_after"
     );
     let exec_account_data = result_accounts
-        .get(&pk_exec)
-        .expect("exec account must exist");
+        .get(&pk_contract)
+        .expect("contract account must exist");
     assert_eq!(exec_account_data.lamports(), 0, "exec account balance != 0");
 
-    let preimage = serialize(&exec_account_data).expect("failed to serialize exec account data");
-    let preimage: Bytes = preimage.into();
-    let _ = write_protected_preimage(&mut sdk, preimage);
+    let exec_account_data =
+        serialize(&exec_account_data).expect("failed to serialize exec account data");
+    let exec_account_data: Bytes = exec_account_data.into();
+    let _ = write_contract_executable(&mut sdk, &pk_contract, exec_account_data);
     // TODO figure out balance changes and apply them to evm
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input = sdk.input();
-    let preimage = read_protected_preimage(&sdk);
 
     let contract_caller = sdk.context().contract_caller();
     let contract_address = sdk.context().contract_address();
@@ -135,6 +135,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     let pk_caller = pubkey_from_evm_address(&contract_caller);
     let pk_contract = pubkey_from_evm_address(&contract_address);
+
+    let preimage = read_contract_executable(&sdk, &pk_contract);
 
     let caller_account_balance = lamports_from_evm_balance(
         sdk.balance(&contract_caller)

@@ -49,7 +49,6 @@ mod tests {
         ctx.sdk.set_ownable_account_address(PRECOMPILE_SVM_RUNTIME);
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
         ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
-            // address: PRECOMPILE_SVM_RUNTIME,
             ..Default::default()
         });
 
