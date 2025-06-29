@@ -76,29 +76,41 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
         Ok(start - out.remaining_mut())
     }
 
+    /// Decodes `Bytes` from ABI-encoded buffer, supporting Solidity and Compact ABIs.
+    ///
+    /// # ABI encoding differences:
+    ///
+    /// - **Solidity ABI** (`SOL_MODE = true`):
+    ///   Encoded as `[offset → | length → data]`.
+    ///   `offset` (data_offset) points directly to the **length** field.
+    ///   The actual data immediately follows the length field. Therefore, we add `ALIGN` (32 bytes)
+    ///   to reach the data.
+    ///
+    /// - **Compact ABI** (`SOL_MODE = false`):
+    ///   Encoded as `[offset → length | data]`.
+    ///   `offset` (data_offset) points directly to the actual **data**.
+    ///   The length field is stored separately, immediately after the offset field itself.
+    ///   Thus, length is read directly after the offset.
+    ///
+    /// This function transparently handles these differences.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        println!("Bytes::decode(); offset: {}", offset);
-        // На текущей позиции всегда лежит offset до данных относительно текущей позиции (offset).
-        let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
-        println!("Bytes::decode(); data_offset: {}", data_offset);
+        let (data_offset, data_len) = if SOL_MODE {
+            // Solidity ABI: offset → length → data
+            let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
+            let data_len = read_u32_aligned::<B, ALIGN>(buf, data_offset)? as usize;
+            (data_offset + ALIGN, data_len)
+        } else {
+            // Compact ABI: offset → data, length stored next to offset field
+            let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
+            let data_len =
+                read_u32_aligned::<B, ALIGN>(buf, offset + align_up::<ALIGN>(4))? as usize;
+            // Offset is relative; add current offset for absolute positioning
+            (data_offset + offset, data_len)
+        };
 
-        // Теперь мы находимся в точке, где лежит сама длина и данные.
-        let data_start = data_offset;
-        println!("Bytes::decode(); data_start: {}", data_start);
-
-        // Далее нам НЕ нужен больше offset! Здесь уже лежит длина и данные.
-        let data_len = read_u32_aligned::<B, ALIGN>(buf, data_start)? as usize;
-        println!("Bytes::decode(); data_len: {}", data_len);
-        println!(
-            "Bytes::decode(); read_bytes at data_start + ALIGN: {}",
-            data_start + ALIGN
-        );
-
-        // Данные начинаются сразу после длины.
-        let data = read_bytes(buf, data_start + ALIGN, data_len)?;
-
-        Ok(Bytes::from(data))
+        Ok(Bytes::from(read_bytes(buf, data_offset, data_len)?))
     }
+
 
     #[inline]
     fn len(&self) -> usize {
