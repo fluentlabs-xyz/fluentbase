@@ -27,3 +27,4 @@ revm/e2e/tests
 
 genesis-devnet.json
 node_modules
+**/target/**

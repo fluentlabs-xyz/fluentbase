@@ -289,7 +289,6 @@ where
 
         // Create chunk starting from HashMap data (like Vec does)
         let chunk = &buf.chunk()[data_offset..];
-        println!("Values chunk: {:?}", hex::encode(chunk));
         // Decode vectors using relative offsets
         println!("\n--- Decoding keys vector ---");
         let keys: Vec<K> = Vec::decode(&chunk, 32)?;
