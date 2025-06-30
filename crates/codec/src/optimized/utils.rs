@@ -146,6 +146,14 @@ pub mod test_utils {
 
         let mut tail_buf = BytesMut::new();
         let w = T::encode_tail(value, &mut tail_buf, &mut ctx);
+
+        println!("// actual tail");
+        print_encoded::<BigEndian, 32>(&tail_buf);
+
+
+        println!("// expected tail");
+        print_encoded::<BigEndian, 32>(&hex::decode(expected_tail_hex).unwrap());
+
         assert!(w.is_ok(), "encode_tail failed: {:?}", w);
         assert_eq!(expected_tail_hex, encode(&tail_buf), "tail bytes mismatch");
 

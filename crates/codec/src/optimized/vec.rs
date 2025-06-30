@@ -150,8 +150,13 @@ where
         buf: &mut impl BufMut,
         ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
+        println!("[Vec<T>::encode_header()]; ctx: {:?}", ctx);
         // offset
-        let offset = (ctx.hdr_size - ctx.hdr_ptr) + ctx.data_ptr;
+        if ctx.header_encoded {
+            // we already create offset, so we can skip it
+            return Ok(0);
+        };
+        let offset = (ctx.hdr_size + ctx.data_ptr - ctx.hdr_ptr);
         write_u32_aligned::<B, ALIGN>(buf, offset);
         ctx.hdr_ptr += <Self as Encoder<B, ALIGN, true>>::HEADER_SIZE as u32;
 
@@ -172,13 +177,15 @@ where
         // 1. Write the vector length (always 32 bytes in Solidity ABI)
         write_u32_aligned::<B, ALIGN>(buf, self.len() as u32);
 
+        // TODO: revise how we can use stack correctly
         if T::IS_DYNAMIC {
             // Create a local context for managing offsets and data of nested vectors
             let mut local_ctx = EncodingContext {
                 hdr_size: (self.len() * 32) as u32, // 32 bytes per element offset
                 hdr_ptr: 0,                         // Header starts at 0 within the local context
                 data_ptr: 0,                        // Data starts at 0 within local context
-                depth: 0,
+                depth: ctx.depth + 1,
+                header_encoded: false,
             };
 
             // Phase 1: Write offsets for each nested element

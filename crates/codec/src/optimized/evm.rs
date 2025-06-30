@@ -26,9 +26,13 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
         out: &mut impl BufMut,
         ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
+        if ctx.header_encoded {
+            // Header already encoded; skip writing offset.
+            return Ok(0);
+        }
         let hdr_ptr_start = ctx.hdr_ptr;
 
-        let offset = ctx.hdr_size - ctx.hdr_ptr + ctx.data_ptr;
+        let offset = ctx.hdr_size + ctx.data_ptr - ctx.hdr_ptr ;
 
         if SOL_MODE {
             write_u32_aligned::<B, ALIGN>(out, offset);
