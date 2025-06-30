@@ -39,17 +39,13 @@ pub fn write_contract_executable(
     };
     result.expect("failed to save contract executable")
 }
-pub fn read_contract_executable(sapi: &impl MetadataAPI, pk_exec: &Pubkey) -> Bytes {
+pub fn read_contract_executable(sapi: &impl MetadataAPI, pk_exec: &Pubkey) -> SyscallResult<Bytes> {
     let salt = derive_salt(pk_exec);
     let derived_metadata_address = derive_address(&salt);
-    let data_size = sapi
-        .metadata_size(&derived_metadata_address)
-        .expect("metadata size must exist")
-        .data
-        .0;
-    let executable_data = sapi
-        .metadata_copy(&derived_metadata_address, 0, data_size)
-        .expect("metadata must exist")
-        .data;
+    let data_size = sapi.metadata_size(&derived_metadata_address);
+    if !data_size.status.is_ok() {
+        return SyscallResult::from_old(data_size, Bytes::default());
+    }
+    let executable_data = sapi.metadata_copy(&derived_metadata_address, 0, data_size.data.0);
     executable_data
 }

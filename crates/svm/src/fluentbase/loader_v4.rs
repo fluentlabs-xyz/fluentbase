@@ -103,7 +103,6 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
         }
     };
 
-    // TODO save updated accounts (from result_accounts): payer, exec, program_data
     let payer_account_data = result_accounts
         .get(&pk_payer)
         .expect("payer account doesn't exist"); // caller
@@ -112,15 +111,20 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
         payer_balance_before, payer_balance_after,
         "payer_balance_before != payer_balance_after"
     );
-    let exec_account_data = result_accounts
+    let contract_account_data = result_accounts
         .get(&pk_contract)
         .expect("contract account must exist");
-    assert_eq!(exec_account_data.lamports(), 0, "exec account balance != 0");
+    assert_eq!(
+        contract_account_data.lamports(),
+        0,
+        "contract account balance != 0"
+    );
 
-    let exec_account_data =
-        serialize(&exec_account_data).expect("failed to serialize exec account data");
-    let exec_account_data: Bytes = exec_account_data.into();
-    let _ = write_contract_executable(&mut sdk, &pk_contract, exec_account_data);
+    let contract_account_data =
+        serialize(&contract_account_data).expect("failed to serialize contract account data");
+    let contract_account_data: Bytes = contract_account_data.into();
+    write_contract_executable(&mut sdk, &pk_contract, contract_account_data)
+        .expect("failed to save contract executable");
     // TODO figure out balance changes and apply them to evm
 }
 
@@ -136,7 +140,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let pk_caller = pubkey_from_evm_address(&contract_caller);
     let pk_contract = pubkey_from_evm_address(&contract_address);
 
-    let preimage = read_contract_executable(&sdk, &pk_contract);
+    let preimage =
+        read_contract_executable(&sdk, &pk_contract).expect("failed to read contract executable");
 
     let caller_account_balance = lamports_from_evm_balance(
         sdk.balance(&contract_caller)

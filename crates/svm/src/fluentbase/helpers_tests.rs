@@ -66,8 +66,6 @@ mod tests {
 
     #[test]
     fn test_create_fill_deploy_exec() {
-        // setup
-
         let system_program_id = system_program::id();
         let native_loader_id = native_loader::id();
         let loader_id = bpf_loader_upgradeable::id();

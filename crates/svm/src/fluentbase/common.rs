@@ -54,8 +54,8 @@ impl BatchMessage {
         self
     }
 
-    pub fn append_many(&mut self, msgs: Vec<legacy::Message>) -> &mut Self {
-        self.messages.extend(msgs);
+    pub fn append_many(&mut self, messages: Vec<legacy::Message>) -> &mut Self {
+        self.messages.extend(messages);
         self
     }
 }
@@ -155,29 +155,16 @@ pub fn process_svm_result<T>(result: Result<T, SvmError>) -> Result<T, String> {
 }
 
 pub struct MemStorage {
-    // in_memory_storage: HashMap<U256, U256>,
     in_memory_metadata: HashMap<Address, Vec<u8>>,
 }
 
 impl MemStorage {
     pub fn new() -> Self {
         Self {
-            // in_memory_storage: Default::default(),
             in_memory_metadata: Default::default(),
         }
     }
 }
-// impl StorageAPI for MemStorage {
-//     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
-//         self.in_memory_storage.insert(slot, value);
-//         SyscallResult::new((), 0, 0, ExitCode::Ok)
-//     }
-//
-//     fn storage(&self, slot: &U256) -> SyscallResult<U256> {
-//         let result = self.in_memory_storage.get(slot).cloned();
-//         SyscallResult::new(result.unwrap_or_default(), 0, 0, ExitCode::Ok)
-//     }
-// }
 impl MetadataAPI for MemStorage {
     fn metadata_write(
         &mut self,
