@@ -196,7 +196,6 @@ mod tests {
     fn test_example_usage() {
         // SolidityABI
         let mut buf = Vec::new();
-        let mut ctx = EncodingContext::default();
         let value = 42u8;
         // TODO: remove ctx usage from SolidityABI and CompactABI and SolidityPackedABI
         SolidityABI::encode(&value, &mut buf).unwrap();
@@ -204,14 +203,12 @@ mod tests {
 
         // SolidityPackedABI
         let mut buf = Vec::new();
-        let mut ctx = EncodingContext::default();
         let value = 42u8;
         SolidityPackedABI::encode(&value, &mut buf).unwrap();
         println!("buf: {:?}", hex::encode(&buf));
 
         // CompactABI
         let mut buf = Vec::new();
-        let mut ctx = EncodingContext::default();
         let value = 42u8;
         CompactABI::encode(&value, &mut buf).unwrap();
         println!("buf: {:?}", hex::encode(&buf));

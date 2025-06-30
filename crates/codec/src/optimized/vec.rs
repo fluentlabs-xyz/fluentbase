@@ -177,15 +177,15 @@ where
         // 1. Write the vector length (always 32 bytes in Solidity ABI)
         write_u32_aligned::<B, ALIGN>(buf, self.len() as u32);
 
-        // TODO: revise how we can use stack correctly
         if T::IS_DYNAMIC {
             // Create a local context for managing offsets and data of nested vectors
             let mut local_ctx = EncodingContext {
                 hdr_size: (self.len() * 32) as u32, // 32 bytes per element offset
                 hdr_ptr: 0,                         // Header starts at 0 within the local context
                 data_ptr: 0,                        // Data starts at 0 within local context
+                // TODO: depth and header_encoded needs only for structs
                 depth: ctx.depth + 1,
-                header_encoded: false,
+                header_encoded: ctx.header_encoded,
             };
 
             // Phase 1: Write offsets for each nested element
