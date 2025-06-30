@@ -80,7 +80,7 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
 
     fn encode(&self, buf: &mut impl BufMut, mut offset: usize) -> Result<usize, CodecError> {
         let offset_before = offset;
-        let alignment = ALIGN.checked_sub(1).unwrap_or(0);
+        let alignment = ALIGN.saturating_sub(1);
         let value: u8 = if *self { 1 } else { 0 };
         if is_big_endian::<B>() {
             // For big-endian, copy to the end of the aligned array

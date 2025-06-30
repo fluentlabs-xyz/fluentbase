@@ -601,7 +601,7 @@ mod tests {
                 padding
             );
 
-            assert_codec_sol(&expected_header_hex, &expected_tail_hex, &test_value);
+            assert_codec_sol(expected_header_hex, &expected_tail_hex, &test_value);
         }
 
         #[test]
@@ -718,7 +718,7 @@ mod tests {
                 padding
             );
 
-            assert_codec_sol(&expected_header_hex, &expected_tail_hex, &test_value);
+            assert_codec_sol(expected_header_hex, &expected_tail_hex, &test_value);
         }
 
         #[test]

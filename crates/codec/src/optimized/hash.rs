@@ -53,7 +53,7 @@ where
         entries.sort_by(|a, b| a.0.cmp(b.0));
 
         // Write keys offset and size (always static)
-        let keys_off = (ctx.hdr_size - hdr_ptr_start + ctx.data_ptr) as u32;
+        let keys_off = ctx.hdr_size - hdr_ptr_start + ctx.data_ptr;
         let keys_size = len * K::HEADER_SIZE as u32;
         write_u32_aligned::<B, ALIGN>(out, keys_off);
         write_u32_aligned::<B, ALIGN>(out, keys_size);
@@ -67,7 +67,7 @@ where
             }
         } else {
             // Write values offset and size (static case)
-            let values_off = (ctx.hdr_size - hdr_ptr_start + ctx.data_ptr) as u32;
+            let values_off = ctx.hdr_size - hdr_ptr_start + ctx.data_ptr;
             let values_size = len * V::HEADER_SIZE as u32;
             write_u32_aligned::<B, ALIGN>(out, values_off);
             write_u32_aligned::<B, ALIGN>(out, values_size);
@@ -163,7 +163,7 @@ where
         }
 
         // Combine keys and values into final hashmap
-        Ok(keys.into_iter().zip(values.into_iter()).collect())
+        Ok(keys.into_iter().zip(values).collect())
     }
 
     #[inline]
@@ -398,7 +398,7 @@ where
             }
         } else {
             // Write keys offset and size (static case)
-            let keys_off = (ctx.hdr_size - hdr_ptr_start + ctx.data_ptr) as u32;
+            let keys_off = ctx.hdr_size - hdr_ptr_start + ctx.data_ptr;
             let keys_size = len * T::HEADER_SIZE as u32;
             write_u32_aligned::<B, ALIGN>(out, keys_off);
             write_u32_aligned::<B, ALIGN>(out, keys_size);

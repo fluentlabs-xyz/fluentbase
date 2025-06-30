@@ -56,7 +56,7 @@ where
             }
         } else {
             // For static fields, offset points directly to data section
-            let off = (ctx.hdr_size - ctx.hdr_ptr + ctx.data_ptr) as u32;
+            let off = ctx.hdr_size - ctx.hdr_ptr + ctx.data_ptr;
             let size = len * T::HEADER_SIZE as u32;
 
             write_u32_aligned::<B, ALIGN>(out, off);
@@ -156,7 +156,7 @@ where
             // we already create offset, so we can skip it
             return Ok(0);
         };
-        let offset = (ctx.hdr_size + ctx.data_ptr - ctx.hdr_ptr);
+        let offset = ctx.hdr_size + ctx.data_ptr - ctx.hdr_ptr;
         write_u32_aligned::<B, ALIGN>(buf, offset);
         ctx.hdr_ptr += <Self as Encoder<B, ALIGN, true>>::HEADER_SIZE as u32;
 

@@ -116,7 +116,7 @@ macro_rules! impl_encoder_for_tuple {
                     )+
                 } else {
                     // WASM mode
-                    let mut current_offset = offset;
+                    let current_offset = offset;
                     let header_el_size = align_up::<ALIGN>(4);
 
                     if Self::IS_DYNAMIC {

@@ -37,7 +37,7 @@ where
             ctx.depth, ctx.hdr_size, ctx.data_ptr, ctx.hdr_ptr, offset
         );
 
-        write_u32_aligned::<B, ALIGN>(buf, offset as u32);
+        write_u32_aligned::<B, ALIGN>(buf, offset);
         println!("[encode_field_header] writing offset {:?}", offset);
         written += 32;
         // set headher encoded flag - to avoid extra heading writing (inside actual
@@ -48,7 +48,7 @@ where
         println!("[encode_field_header] tail_size: {:?}", tail_size);
         println!(
             "[encode_field_header] header_size: {:?}",
-            T::header_size(&field)
+            T::header_size(field)
         );
         println!("[encode_field_header] HEADER_SIZE: {:?}", T::HEADER_SIZE);
         // move data ptr tail + header - offset length (we already add it to the header)
