@@ -61,7 +61,6 @@ num-derive = { workspace = true }
 serde = { workspace = true, default-features = false }
 bincode = { workspace = true }
 lazy_static = { workspace = true, default-features = false }
-keccak-hash = { workspace = true, default-features = false }
 itertools = { workspace = true, default-features = false, features = ["use_alloc"] }
 
 [dev-dependencies]
@@ -69,7 +68,6 @@ rand = { version = "0.9.0", default-features = false, features = ["alloc", "thre
 memoffset = { workspace = true, default-features = false, features = [] }
 serial_test = { workspace = true }
 test-case = { workspace = true }
-bincode_v1_3_3 = { workspace = true }
 fluentbase-sdk-testing = { workspace = true }
 
 [features]

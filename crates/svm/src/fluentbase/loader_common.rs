@@ -9,12 +9,12 @@ use fluentbase_sdk::{
     SVM_EXECUTABLE_PREIMAGE,
     U256,
 };
-use keccak_hash::keccak;
+// use keccak_hash::keccak;
 use solana_pubkey::Pubkey;
 
 fn derive_salt(pk: &Pubkey) -> U256 {
     let data = [SVM_EXECUTABLE_PREIMAGE.as_slice(), pk.as_ref()].concat();
-    U256::from_be_slice(&keccak(data).0)
+    U256::from_be_slice(&keccak256(data).0)
 }
 
 fn derive_address(salt: &U256) -> Address {

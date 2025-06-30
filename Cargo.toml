@@ -129,7 +129,6 @@ byteorder = { version = "1.5.0", default-features = false }
 keccak-hash = { version = "0.11.0", default-features = false }
 itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
 
-bincode_v1_3_3 = { package = "bincode", git = "https://github.com/fluentlabs-xyz/bincode", tag = "v1.3.3" }
 num-derive = { version = "0.4" }
 num-traits = { version = "0.2", features = ["i128"], default-features = false }
 

@@ -459,40 +459,7 @@ mod tests {
         hash,
         solana_program::{instruction::AccountMeta, message::MESSAGE_HEADER_LENGTH},
     };
-    use solana_bincode::{deserialize, serialized_size};
-
-    #[test]
-    fn test_serialization_results_match() {
-        let program_id0 = Pubkey::from_str("4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM").unwrap();
-        let program_id1 = Pubkey::from_str("8opHzTAnfzRpPEx21XtnrVTX28YQuCpAjcn1PczScKh").unwrap();
-        let id0 = Pubkey::from_str("CiDwVBFgWV9E5MvXWoLgnEgn2hK7rJikbvfWavzAQz3").unwrap();
-        let id1 = Pubkey::from_str("GcdayuLaLyrdmUu324nahyv33G5poQdLUEZ1nEytDeP").unwrap();
-        let id2 = Pubkey::from_str("LX3EUdRUBUa3TbsYXLEUdj9J3prXkWXvLYSWyYyc2Jj").unwrap();
-        let id3 = Pubkey::from_str("QRSsyMWN1yHT9ir42bgNZUNZ4PdEhcSWCrL2AryKpy5").unwrap();
-        let instructions = vec![
-            Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id0, false)]),
-            Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id1, true)]),
-            Instruction::new_with_bincode(
-                program_id1,
-                &0,
-                vec![AccountMeta::new_readonly(id2, false)],
-            ),
-            Instruction::new_with_bincode(
-                program_id1,
-                &0,
-                vec![AccountMeta::new_readonly(id3, true)],
-            ),
-        ];
-
-        let message = Message::new(&instructions, Some(&id1));
-        let message_vec = serialize(&message).unwrap();
-        let message_vec_old = bincode_v1_3_3::serialize(&message).unwrap();
-        assert_eq!(message_vec, message_vec_old);
-        let message_recovered: Message = deserialize(&message_vec).unwrap();
-        let message_recovered_old: Message = bincode_v1_3_3::deserialize(&message_vec_old).unwrap();
-        assert_eq!(message_recovered, message);
-        assert_eq!(message_recovered_old, message);
-    }
+    use solana_bincode::serialized_size;
 
     #[test]
     fn test_builtin_program_keys() {

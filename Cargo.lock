@@ -1073,14 +1073,6 @@ dependencies = [
 
 [[package]]
 name = "bincode"
-version = "1.3.3"
-source = "git+https://github.com/fluentlabs-xyz/bincode?tag=v1.3.3#c44b5e364e7084cdbabf9f94b63a3c7f32b8fb68"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "bincode"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36eaf5d7b090263e8150820482d5d93cd964a81e4019913c972f4edcc6edb740"
@@ -3082,7 +3074,6 @@ dependencies = [
 name = "fluentbase-svm"
 version = "0.1.0"
 dependencies = [
- "bincode 1.3.3 (git+https://github.com/fluentlabs-xyz/bincode?tag=v1.3.3)",
  "bincode 2.0.1",
  "bitflags",
  "blake3",
@@ -3093,7 +3084,6 @@ dependencies = [
  "fluentbase-sdk-testing",
  "hashbrown 0.15.4",
  "itertools 0.14.0",
- "keccak-hash",
  "lazy_static",
  "memoffset",
  "num-derive",
@@ -5690,7 +5680,7 @@ dependencies = [
 name = "revm-interpreter"
 version = "20.0.0"
 dependencies = [
- "bincode 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bincode 1.3.3",
  "fluentbase-sdk",
  "revm-bytecode",
  "revm-context-interface",
@@ -6898,7 +6888,7 @@ version = "5.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0fd8bc101e5603ccf2dc1836ea06410f25ce2298755b2dac626add9be2424b4"
 dependencies = [
- "bincode 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bincode 1.3.3",
  "serde",
  "sp1-primitives",
 ]
@@ -6909,7 +6899,7 @@ version = "5.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "699935774a5131c1a8b371108d0666c0c80c43611045fb77fae43f2f242676d5"
 dependencies = [
- "bincode 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bincode 1.3.3",
  "blake3",
  "cfg-if",
  "hex",
