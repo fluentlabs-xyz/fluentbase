@@ -1,7 +1,7 @@
 mod tests {
     use crate::{
         account::{AccountSharedData, ReadableAccount},
-        common::{calculate_max_chunk_size, pubkey_from_address},
+        common::{calculate_max_chunk_size, pubkey_from_evm_address},
         fluentbase::{
             common::{process_svm_result, BatchMessage, MemStorage},
             helpers::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
@@ -25,9 +25,9 @@ mod tests {
         BlockContextV1,
         Bytes,
         ContractContextV1,
+        MetadataAPI,
         SharedAPI,
         SharedContextInputV1,
-        StorageAPI,
     };
     use fluentbase_sdk_testing::HostTestingContext;
     use solana_bincode::serialize;
@@ -35,7 +35,10 @@ mod tests {
     use solana_instruction::Instruction;
     use solana_pubkey::Pubkey;
 
-    fn main_single_message<SAPI: StorageAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
+    fn main_single_message<SAPI: MetadataAPI>(
+        mut sdk: impl SharedAPI,
+        mut sapi: Option<&mut SAPI>,
+    ) {
         let input = sdk.input();
 
         let result = exec_encoded_svm_message(&mut sdk, input, true, &mut sapi);
@@ -48,7 +51,7 @@ mod tests {
         sdk.write(out.as_ref());
     }
 
-    fn main_batch_message<SAPI: StorageAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
+    fn main_batch_message<SAPI: MetadataAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
         let input = sdk.input();
 
         let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut sapi);
@@ -325,12 +328,12 @@ mod tests {
         const CONTRACT_CALLER: Address = address!("1231238908230948230948209348203984029834");
         const CONTRACT_ADDRESS: Address = address!("0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5");
 
-        let pk_payer = pubkey_from_address(&CONTRACT_CALLER);
+        let pk_payer = pubkey_from_evm_address(&CONTRACT_CALLER);
         let account_payer = AccountSharedData::new(1000000000, 0, &system_program_id);
 
         let pk_buffer = Pubkey::new_unique();
 
-        let pk_exec = pubkey_from_address(&CONTRACT_ADDRESS);
+        let pk_exec = pubkey_from_evm_address(&CONTRACT_ADDRESS);
 
         // let pk_authority = pk_payer.clone();
         let pk_authority = Pubkey::from([9; 32]);
@@ -411,7 +414,8 @@ mod tests {
         main_batch_message(sdk.clone(), Some(&mut sapi));
 
         // exec
-        // recreate storage to test if we need only specific accounts (other accounts dropped from storage)
+        // recreate storage to test if we need only specific accounts (other accounts dropped from
+        // storage)
 
         let payer_account = storage_read_account_data(&mut sapi, &pk_payer).unwrap();
         let exec_account = storage_read_account_data(&mut sapi, &pk_exec).unwrap();

@@ -1,7 +1,7 @@
 mod tests {
     use crate::{
         account::{AccountSharedData, ReadableAccount},
-        common::{calculate_max_chunk_size, pubkey_from_address},
+        common::{calculate_max_chunk_size, pubkey_from_evm_address},
         fluentbase::{
             common::{BatchMessage, MemStorage},
             helpers_v2::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
@@ -26,9 +26,9 @@ mod tests {
         Address,
         BlockContextV1,
         ContractContextV1,
+        MetadataAPI,
         SharedAPI,
         SharedContextInputV1,
-        StorageAPI,
     };
     use fluentbase_sdk_testing::HostTestingContext;
     use hashbrown::HashMap;
@@ -36,7 +36,7 @@ mod tests {
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
 
-    fn main_single_message<SAPI: StorageAPI>(
+    fn main_single_message<SAPI: MetadataAPI>(
         mut sdk: impl SharedAPI,
         mut sapi: Option<&mut SAPI>,
     ) -> (
@@ -52,7 +52,7 @@ mod tests {
         result.unwrap()
     }
 
-    fn main_batch_message<SAPI: StorageAPI>(
+    fn main_batch_message<SAPI: MetadataAPI>(
         mut sdk: impl SharedAPI,
         mut sapi: Option<&mut SAPI>,
     ) -> (
@@ -318,13 +318,13 @@ mod tests {
 
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
         // let pk_payer = Pubkey::new_unique();
-        let pk_payer = pubkey_from_address(&DEPLOYER_ADDRESS);
+        let pk_payer = pubkey_from_evm_address(&DEPLOYER_ADDRESS);
         let pk_payer_account = AccountSharedData::new(101, 0, &system_program_id);
 
         // let pk_exec = Pubkey::from([8; 32]);
         const CONTRACT_ADDRESS: Address = address!("0xf91c20c0cafbfdc150adff51bbfc5808edde7cb5");
         // let pk_exec = pubkey_from_pubkey(&Pubkey::from([8; 32]));
-        let pk_exec = pubkey_from_address(&CONTRACT_ADDRESS);
+        let pk_exec = pubkey_from_evm_address(&CONTRACT_ADDRESS);
 
         // let pk_tmp = Pubkey::new_unique();
         // let pk_tmp_account = AccountSharedData::new(100, 0, &pk_exec);
@@ -547,13 +547,13 @@ mod tests {
         // assert_eq!(account_data.data()[0], 123);
         // assert_eq!(account_data.executable(), false);
         //
-        // // let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
-        // // assert_eq!(account_data.lamports(), 0);
+        // // let account_data: AccountSharedData = storage_read_account_data(&sapi,
+        // &pk_exec).unwrap(); // assert_eq!(account_data.lamports(), 0);
         // // assert_eq!(account_data.data().len(), buffer_len);
         // // assert_eq!(account_data.executable(), false);
         // //
-        // // let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
-        // // assert_eq!(account_data.lamports(), 100);
+        // // let account_data: AccountSharedData = storage_read_account_data(&sapi,
+        // &pk_payer).unwrap(); // assert_eq!(account_data.lamports(), 100);
         // // assert_eq!(account_data.data().len(), 0);
         // // assert_eq!(account_data.executable(), false);
 
@@ -617,13 +617,13 @@ mod tests {
         const CONTRACT_CALLER: Address = address!("1231238908230948230948209348203984029834");
         const CONTRACT_ADDRESS: Address = address!("0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5");
 
-        let pk_payer = pubkey_from_address(&CONTRACT_CALLER);
+        let pk_payer = pubkey_from_evm_address(&CONTRACT_CALLER);
         let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
 
         // let pk_tmp = Pubkey::new_unique();
         // let pk_tmp_account = AccountSharedData::new(100, 0, &system_program_id);
 
-        let pk_exec = pubkey_from_address(&CONTRACT_ADDRESS);
+        let pk_exec = pubkey_from_evm_address(&CONTRACT_ADDRESS);
 
         let seed1 = b"my_seed";
         let seed2 = pk_payer.as_ref();
@@ -707,7 +707,8 @@ mod tests {
         main_batch_message(sdk.clone(), Some(&mut sapi));
 
         // exec
-        // recreate storage to test if we need only specific accounts (other accounts dropped from storage)
+        // recreate storage to test if we need only specific accounts (other accounts dropped from
+        // storage)
 
         let pk_payer_account = storage_read_account_data(&mut sapi, &pk_payer).unwrap();
         let pk_exec_account = storage_read_account_data(&mut sapi, &pk_exec).unwrap();

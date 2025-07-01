@@ -1,23 +1,55 @@
-use fluentbase_sdk::{Bytes, ContextReader, SharedAPI, B256, PROTECTED_STORAGE_SLOT_0};
+use fluentbase_sdk::{
+    calc_create4_address,
+    keccak256,
+    Address,
+    Bytes,
+    MetadataAPI,
+    SyscallResult,
+    PRECOMPILE_SVM_RUNTIME,
+    SVM_EXECUTABLE_PREIMAGE,
+    U256,
+};
+use keccak_hash::keccak;
+use solana_pubkey::Pubkey;
 
-const SLOT: B256 = PROTECTED_STORAGE_SLOT_0;
-
-pub fn write_protected_preimage(sdk: &mut impl SharedAPI, preimage: Bytes) -> B256 {
-    let result = sdk.write_preimage(preimage);
-    let code_hash = result.data;
-    let result = sdk.write_storage(SLOT.into(), code_hash.into());
-    assert!(
-        result.status.is_ok(),
-        "write_protected_preimage failed with error"
-    );
-    code_hash
+fn derive_salt(pk: &Pubkey) -> U256 {
+    let data = [SVM_EXECUTABLE_PREIMAGE.as_slice(), pk.as_ref()].concat();
+    U256::from_be_slice(&keccak(data).0)
 }
-pub fn read_protected_preimage(sdk: &impl SharedAPI) -> Bytes {
-    let bytecode_address = sdk.context().contract_bytecode_address();
-    let code_hash: B256 = sdk
-        .delegated_storage(&bytecode_address, &SLOT.into())
+
+fn derive_address(salt: &U256) -> Address {
+    calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &salt, |v| keccak256(v))
+}
+
+pub fn write_contract_executable(
+    sapi: &mut impl MetadataAPI,
+    pk_exec: &Pubkey,
+    executable_data: Bytes,
+) -> SyscallResult<()> {
+    let salt = derive_salt(pk_exec);
+    let derived_metadata_address = derive_address(&salt);
+    let (metadata_size, _, _) = sapi
+        .metadata_size(&derived_metadata_address)
+        .expect("metadata size")
+        .data;
+    let result = if metadata_size == 0 {
+        sapi.metadata_create(&salt, executable_data)
+    } else {
+        sapi.metadata_write(&derived_metadata_address, 0, executable_data)
+    };
+    result.expect("failed to save contract executable")
+}
+pub fn read_contract_executable(sapi: &impl MetadataAPI, pk_exec: &Pubkey) -> Bytes {
+    let salt = derive_salt(pk_exec);
+    let derived_metadata_address = derive_address(&salt);
+    let data_size = sapi
+        .metadata_size(&derived_metadata_address)
+        .expect("metadata size must exist")
         .data
-        .0
-        .into();
-    sdk.preimage(&code_hash)
+        .0;
+    let executable_data = sapi
+        .metadata_copy(&derived_metadata_address, 0, data_size)
+        .expect("metadata must exist")
+        .data;
+    executable_data
 }

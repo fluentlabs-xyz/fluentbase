@@ -5,7 +5,7 @@ pub unsafe fn handle_panic_info(info: &core::panic::PanicInfo) -> ! {
     let panic_message = alloc::format!("{}", info.message());
     let native_sdk = RwasmContext {};
     native_sdk.write(panic_message.as_bytes());
-    native_sdk.exit(ExitCode::Panic.into_i32())
+    native_sdk.exit(ExitCode::Panic)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -18,5 +18,5 @@ pub unsafe fn handle_panic_info(info: &core::panic::PanicInfo) -> ! {
     };
     let native_sdk = RwasmContext {};
     native_sdk.write(message.as_bytes());
-    native_sdk.exit(ExitCode::Panic.into_i32())
+    native_sdk.exit(ExitCode::Panic)
 }

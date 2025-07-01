@@ -36,7 +36,7 @@ use crate::{
     sysvar_cache::SysvarCache,
 };
 use alloc::{sync::Arc, vec::Vec};
-use fluentbase_sdk::{ContextReader, SharedAPI, StorageAPI};
+use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;
@@ -56,13 +56,14 @@ pub fn init_config() -> Config {
         reject_broken_elfs: true,
         sanitize_user_provided_values: true,
         aligned_memory_mapping: true,
-        enable_address_translation: true, // To be deactivated once we have BTF inference and verification
+        enable_address_translation: true, /* To be deactivated once we have BTF inference and
+                                           * verification */
         enable_stack_frame_gaps: true,
         ..Default::default()
     }
 }
 
-pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
+pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     sdk: &mut SDK,
     batch_message: &[u8],
     flush_result_accounts: bool,
@@ -77,7 +78,7 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     let batch_message = deserialize(batch_message)?;
     exec_svm_batch_message(sdk, batch_message, flush_result_accounts, sapi)
 }
-pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
+pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     sdk: &mut SDK,
     batch_message: BatchMessage,
     do_flush: bool,
@@ -107,7 +108,7 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: StorageAPI>(
     }
     Ok((result_accounts, balance_changes))
 }
-pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
+pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     sdk: &mut SDK,
     message: &[u8],
     flush_result_accounts: bool,
@@ -123,7 +124,7 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
     exec_svm_message(sdk, sapi, message, flush_result_accounts)
 }
 
-// pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: StorageAPI>(
+// pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: MetadataAPI>(
 //     sdk: &mut SDK,
 //     message: &impl SVMMessage,
 //     sapi: &mut Option<&mut SAPI>,
@@ -135,14 +136,10 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
 //         Vec<Pubkey>,
 //     )),
 //     SvmError,
-// > {
-//     let mut sysvar_cache = SysvarCache::default();
-//     let rent = Rent::free();
-//     let clock = Clock::default();
-//     let epoch_schedule = EpochSchedule::default();
-//     sysvar_cache.set_rent(rent.clone());
-//     sysvar_cache.set_clock(clock);
-//     sysvar_cache.set_epoch_schedule(epoch_schedule);
+// > { let mut sysvar_cache = SysvarCache::default(); let rent = Rent::free(); let clock =
+// > Clock::default(); let epoch_schedule = EpochSchedule::default();
+// > sysvar_cache.set_rent(rent.clone()); sysvar_cache.set_clock(clock);
+// > sysvar_cache.set_epoch_schedule(epoch_schedule);
 //
 //     let mut working_accounts = vec![];
 //     let mut program_accounts = vec![];
@@ -173,9 +170,9 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
 //         if account_data.executable() {
 //             continue; // this is program account?
 //         }
-//         // loader-v4 doesn't mark account executable after deploy, so we need to check this condition
-//         let state: Result<&LoaderV4State, InstructionError> = get_state(account_data.data());
-//         if let Ok(state) = state {
+//         // loader-v4 doesn't mark account executable after deploy, so we need to check this
+// condition         let state: Result<&LoaderV4State, InstructionError> =
+// get_state(account_data.data());         if let Ok(state) = state {
 //             match state.status {
 //                 LoaderV4Status::Deployed | LoaderV4Status::Finalized => continue,
 //                 _ => {}
@@ -205,8 +202,8 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
 //             } else {
 //                 extract_account_data_or_default(sdk, account_key)?
 //             };
-//             let state: Result<&LoaderV4State, InstructionError> = get_state(program_account.data());
-//             if let Ok(state) = state {
+//             let state: Result<&LoaderV4State, InstructionError> =
+// get_state(program_account.data());             if let Ok(state) = state {
 //                 match state.status {
 //                     LoaderV4Status::Deployed | LoaderV4Status::Finalized => {
 //                         program_accounts_to_warmup.push(account_key);
@@ -299,7 +296,7 @@ fn account_shared_data_from_program(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn load_transaction_account<'a, SDK: SharedAPI, SAPI: StorageAPI>(
+fn load_transaction_account<'a, SDK: SharedAPI, SAPI: MetadataAPI>(
     // callbacks: &CB,
     sapi: &SAPI,
     message: &impl SVMMessage,
@@ -354,7 +351,8 @@ fn load_transaction_account<'a, SDK: SharedAPI, SAPI: StorageAPI>(
             .map(|account| {
                 // Inspect the account prior to collecting rent, since
                 // rent collection can modify the account.
-                // callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
+                // callbacks.inspect_account(account_key, AccountState::Alive(&account),
+                // is_writable);
 
                 // let rent_collected = if is_writable {
                 //     collect_rent_from_account(
@@ -380,9 +378,11 @@ fn load_transaction_account<'a, SDK: SharedAPI, SAPI: StorageAPI>(
                 account_found = false;
                 let mut default_account = AccountSharedData::default();
 
-                // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
-                // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
-                // with this field already set would allow us to skip rent collection for these accounts.
+                // All new accounts must be rent-exempt (enforced in
+                // Bank::execute_loaded_transaction). Currently, rent collection
+                // sets rent_epoch to u64::MAX, but initializing the account
+                // with this field already set would allow us to skip rent collection for these
+                // accounts.
                 default_account
                     .set_rent_epoch(solana_program::rent_collector::RENT_EXEMPT_RENT_EPOCH);
                 LoadedTransactionAccount {
@@ -396,7 +396,7 @@ fn load_transaction_account<'a, SDK: SharedAPI, SAPI: StorageAPI>(
     Ok((loaded_account, account_found))
 }
 
-pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
+pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: MetadataAPI>(
     sdk: &mut SDK,
     message: &impl SVMMessage,
     sapi: &mut Option<&mut SAPI>,
@@ -547,7 +547,7 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: StorageAPI>(
     Ok((accounts, program_indices))
 }
 
-fn filter_executable_program_accounts<'a, SDK: SharedAPI, SAPI: StorageAPI>(
+fn filter_executable_program_accounts<'a, SDK: SharedAPI, SAPI: MetadataAPI>(
     sdk: &SDK,
     sapi: &mut Option<&mut SAPI>,
     txs: &[&impl SVMMessage],
@@ -583,7 +583,7 @@ fn filter_executable_program_accounts<'a, SDK: SharedAPI, SAPI: StorageAPI>(
     result
 }
 
-pub fn exec_svm_message<SDK: SharedAPI, SAPI: StorageAPI>(
+pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     sdk: &mut SDK,
     sapi: &mut Option<&mut SAPI>,
     message: legacy::Message,

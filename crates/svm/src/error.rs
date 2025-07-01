@@ -1,7 +1,7 @@
 use crate::helpers::SyscallError;
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
-use fluentbase_types::ExitCode;
+use fluentbase_sdk::ExitCode;
 use solana_instruction::error::InstructionError;
 use solana_rbpf::{elf::ElfError, error::EbpfError};
 use solana_transaction_error::TransactionError;

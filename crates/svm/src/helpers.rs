@@ -62,9 +62,8 @@ use crate::{
     context::BpfAllocator,
     error::SvmError,
     solana_program::sysvar::Sysvar,
-    storage_helpers::{ContractPubkeyHelper, StorageChunksWriter, VariableLengthDataWriter},
 };
-use fluentbase_types::StorageAPI;
+use fluentbase_sdk::{calc_create4_address, keccak256, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
@@ -168,7 +167,7 @@ macro_rules! ic_msg {
 
 /// Error definitions
 
-#[derive(Debug, /*ThisError,*/ PartialEq, Eq)]
+#[derive(Debug, /* ThisError, */ PartialEq, Eq)]
 pub enum SyscallError {
     // #[error("{0}: {1:?}")]
     InvalidString(Utf8Error, Vec<u8>),
@@ -200,7 +199,8 @@ pub enum SyscallError {
     TooManySlices,
     // #[error("InvalidLength")]
     InvalidLength,
-    // #[error("Invoked an instruction with data that is too large ({data_len} > {max_data_len})")]
+    // #[error("Invoked an instruction with data that is too large ({data_len} >
+    // {max_data_len})")]
     MaxInstructionDataLenExceeded {
         data_len: u64,
         max_data_len: u64,
@@ -210,8 +210,8 @@ pub enum SyscallError {
         num_accounts: u64,
         max_accounts: u64,
     },
-    // #[error("Invoked an instruction with too many account info's ({num_account_infos} > {max_account_infos})"
-    // )]
+    // #[error("Invoked an instruction with too many account info's ({num_account_infos} >
+    // {max_account_infos})" )]
     MaxInstructionAccountInfosExceeded {
         num_account_infos: u64,
         max_account_infos: u64,
@@ -295,8 +295,8 @@ impl core::error::Error for SyscallError {}
 //         //     file,
 //         //     len,
 //         //     invoke_context.get_check_aligned(),
-//         //     &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line, column).into()),
-//         // )
+//         //     &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line,
+// column).into()),         // )
 //         let error_message = "Dummy panic due to unimplemented syscall"; // Dummy error message
 //         Err(SyscallError::Panic(error_message.to_string(), line, column).into())
 //     }
@@ -384,8 +384,8 @@ pub struct SvmTransactResult {
     // pub changes: Changes,
 }
 
-// pub fn execute_generated_program<SDK: SharedAPI>(sdk: SDK, prog: &[u8], mem: &mut [u8]) -> Option<Vec<u8>> {
-//     let max_instruction_count = 1024;
+// pub fn execute_generated_program<SDK: SharedAPI>(sdk: SDK, prog: &[u8], mem: &mut [u8]) ->
+// Option<Vec<u8>> {     let max_instruction_count = 1024;
 //     let executable = Executable::<ExecContextObject<SDK>>::from_text_bytes(
 //         prog,
 //         Arc::new(BuiltinProgram::new_loader(
@@ -617,8 +617,8 @@ macro_rules! with_mock_invoke_context {
 // ) -> Vec<AccountSharedData> {
 //     let mut instruction_accounts: Vec<InstructionAccount> =
 //         Vec::with_capacity(instruction_account_metas.len());
-//     for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate() {
-//         let index_in_transaction = transaction_accounts
+//     for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate()
+// {         let index_in_transaction = transaction_accounts
 //             .iter()
 //             .position(|(key, _account)| *key == account_meta.pubkey)
 //             .unwrap_or(transaction_accounts.len())
@@ -692,31 +692,51 @@ macro_rules! select_sapi {
     };
 }
 
-pub fn storage_read_account_data<SAPI: StorageAPI>(
+pub fn storage_read_account_data<SAPI: MetadataAPI>(
     sapi: &SAPI,
     pubkey: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
-    let mut buffer = vec![];
-    let storage_writer = StorageChunksWriter {
-        slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
-        _phantom: Default::default(),
-    };
-    storage_writer.read_data(sapi, &mut buffer)?;
+    let pubkey_hash = keccak256(pubkey.as_ref());
+    let derived_metadata_address =
+        calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
+            keccak256(v)
+        });
+    let metadata_size_result = sapi.metadata_size(&derived_metadata_address);
+    if !metadata_size_result.status.is_ok() {
+        return Err(metadata_size_result.status.into());
+    }
+    let metadata_len = metadata_size_result.data.0;
+    let metadata_copy = sapi.metadata_copy(&derived_metadata_address, 0, metadata_len);
+    if !metadata_copy.status.is_ok() {
+        return Err(metadata_copy.status.into());
+    }
+    let buffer = metadata_copy.data;
     let deserialize_result = deserialize(&buffer);
     Ok(deserialize_result?)
 }
 
-pub fn storage_write_account_data<SAPI: StorageAPI>(
+pub fn storage_write_account_data<SAPI: MetadataAPI>(
     sapi: &mut SAPI,
     pubkey: &Pubkey,
     account_data: &AccountSharedData,
 ) -> Result<(), SvmError> {
-    let storage_writer = StorageChunksWriter {
-        slot_calc: Rc::new(ContractPubkeyHelper { pubkey: &pubkey }),
-        _phantom: Default::default(),
-    };
-    let buffer = serialize(account_data)?;
-    storage_writer.write_data(sapi, &buffer);
+    let account_data = serialize(account_data)?;
+    let pubkey_hash = keccak256(pubkey.as_ref());
+    let derived_metadata_address =
+        calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
+            keccak256(v)
+        });
+    let (metadata_size, _, _) = sapi
+        .metadata_size(&derived_metadata_address)
+        .expect("metadata size")
+        .data;
+    if metadata_size == 0 {
+        sapi.metadata_create(&pubkey_hash.into(), account_data.into())
+            .expect("metadata creation failed");
+    } else {
+        sapi.metadata_write(&derived_metadata_address, 0, account_data.into())
+            .expect("metadata write failed");
+    }
     Ok(())
 }
 

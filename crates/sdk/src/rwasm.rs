@@ -21,7 +21,7 @@ pub use crate::{
     },
     B256,
 };
-use fluentbase_types::{native_api::NativeAPI, BytecodeOrHash};
+use fluentbase_types::{native_api::NativeAPI, BytecodeOrHash, ExitCode};
 
 #[derive(Default)]
 pub struct RwasmContext;
@@ -89,8 +89,8 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn exit(&self, exit_code: i32) -> ! {
-        unsafe { _exit(exit_code) }
+    fn exit(&self, exit_code: ExitCode) -> ! {
+        unsafe { _exit(exit_code.into_i32()) }
     }
 
     #[inline(always)]

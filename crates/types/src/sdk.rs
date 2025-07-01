@@ -18,7 +18,22 @@ pub trait StorageAPI {
     fn storage(&self, slot: &U256) -> SyscallResult<U256>;
 }
 
-pub trait SharedAPI: StorageAPI {
+pub trait MetadataAPI {
+    fn metadata_write(
+        &mut self,
+        address: &Address,
+        offset: u32,
+        metadata: Bytes,
+    ) -> SyscallResult<()>;
+    fn metadata_size(
+        &self,
+        address: &Address,
+    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)>;
+    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()>;
+    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
+}
+
+pub trait SharedAPI: StorageAPI + MetadataAPI {
     fn context(&self) -> impl ContextReader;
 
     fn keccak256(&self, data: &[u8]) -> B256;
@@ -58,18 +73,25 @@ pub trait SharedAPI: StorageAPI {
 
     fn evm_exit(&mut self, exit_code: u32) -> ! {
         // write an EVM-compatible exit message (only if exit code is not zero)
-        write_evm_exit_message(exit_code, |slice| {
-            self.write(slice);
-        });
-        // exit with the exit code specified
-        self.exit(if exit_code != 0 {
-            ExitCode::Panic
+        if exit_code != 0 {
+            write_evm_exit_message(exit_code, |slice| {
+                self.write(slice);
+            });
+            self.native_exit(ExitCode::Panic);
         } else {
-            ExitCode::Ok
-        })
+            self.native_exit(ExitCode::Ok)
+        }
     }
 
-    fn exit(&self, exit_code: ExitCode) -> !;
+    fn native_exit(&self, exit_code: ExitCode) -> !;
+
+    fn exit(&self) -> ! {
+        self.native_exit(ExitCode::Ok)
+    }
+
+    fn panic(&self) -> ! {
+        self.native_exit(ExitCode::Panic)
+    }
 
     fn evm_panic(&mut self, panic_message: &str) -> ! {
         // write an EVM-compatible panic message
@@ -77,7 +99,7 @@ pub trait SharedAPI: StorageAPI {
             self.write(slice);
         });
         // exit with panic exit code
-        self.exit(ExitCode::Panic)
+        self.native_exit(ExitCode::Panic)
     }
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;

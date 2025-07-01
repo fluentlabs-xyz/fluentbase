@@ -69,7 +69,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 B256::default()
             }
         }
-        Err(err) => sdk.exit(ExitCode::from(err)),
+        Err(err) => sdk.native_exit(ExitCode::from(err)),
     };
 
     // Write the result

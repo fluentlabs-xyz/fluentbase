@@ -1,4 +1,4 @@
-use crate::BytecodeOrHash;
+use crate::{BytecodeOrHash, ExitCode};
 use alloc::vec;
 use alloy_primitives::{Bytes, B256};
 
@@ -13,7 +13,7 @@ pub trait NativeAPI {
     fn input_size(&self) -> u32;
     fn write(&self, value: &[u8]);
     fn forward_output(&self, offset: u32, len: u32);
-    fn exit(&self, exit_code: i32) -> !;
+    fn exit(&self, exit_code: ExitCode) -> !;
     fn output_size(&self) -> u32;
     fn read_output(&self, target: &mut [u8], offset: u32);
     fn state(&self) -> u32;
