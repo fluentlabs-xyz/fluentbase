@@ -34,10 +34,7 @@ use std::{
     fmt::Debug,
     mem::take,
     rc::Rc,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 #[derive(Default, Clone, Debug)]
@@ -65,6 +62,7 @@ pub struct CachingRuntime {
     strategies: HashMap<B256, Arc<Strategy>>,
     recoverable_runtimes: HashMap<u32, Runtime>,
     import_linker: Rc<ImportLinker>,
+    call_id_counter: u32,
 }
 
 impl CachingRuntime {
@@ -74,6 +72,7 @@ impl CachingRuntime {
             strategies: HashMap::new(),
             recoverable_runtimes: HashMap::new(),
             import_linker: create_import_linker(),
+            call_id_counter: 1,
         }
     }
 
@@ -138,8 +137,6 @@ pub struct Runtime {
     pub strategy: Arc<Strategy>,
     pub store: TypedStore<RuntimeContext>,
 }
-
-pub(crate) static CALL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 impl Runtime {
     pub fn catch_trap(err: &TrapCode) -> i32 {
@@ -253,8 +250,8 @@ impl Runtime {
     pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
         // save the current runtime state for future recovery
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
-            // TODO(dmitry123): "don't use global call counter"
-            let call_id = CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let call_id = caching_runtime.call_id_counter;
+            caching_runtime.call_id_counter += 1;
             // root_ctx.call_counter += 1;
             // let call_id = root_ctx.call_counter;
             caching_runtime.recoverable_runtimes.insert(call_id, self);
@@ -347,4 +344,10 @@ impl Runtime {
         // the call
         execution_result.interrupted = true;
     }
+}
+
+pub fn reset_call_id_counter() {
+    CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+        caching_runtime.call_id_counter = 1;
+    });
 }
