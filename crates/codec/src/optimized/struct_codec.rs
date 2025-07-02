@@ -61,7 +61,7 @@ where
         // Reserve space in data pointer for the tail portion
         // tail size includes nested headers, but not for structs
         let tail_size = T::tail_size(field, &mut EncodingContext::new())?;
-        let elements_offsets = T::header_size(field); 
+        let elements_offsets = T::header_size(field);
         println!("[assert_codec_sol] // T::tail_size: {}", tail_size);
         println!(
             "[assert_codec_sol] // T::elements_offsets: {:?}",

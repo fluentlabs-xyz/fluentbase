@@ -10,6 +10,5 @@ mod vec;
 mod evm;
 mod hash;
 mod tuple;
-mod struct_codec_flat_ctx;
 
 pub use encoder::{CompactABI, SolidityABI, SolidityPackedABI};
