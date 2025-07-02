@@ -12,7 +12,7 @@ env:
 jobs:
   extract-version:
     name: extract version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-amd64-8core
     steps:
       - name: Extract version
         run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
@@ -22,7 +22,7 @@ jobs:
 
   check-version:
     name: check version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-amd64-8core
     needs: extract-version
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +81,7 @@ jobs:
   draft-release:
     name: draft release
     needs: [ build, extract-version ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-amd64-8core
     env:
       VERSION: ${{ needs.extract-version.outputs.VERSION }}
     permissions:
