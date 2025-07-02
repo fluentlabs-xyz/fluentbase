@@ -148,8 +148,8 @@ jobs:
           ENDBODY
           )
           assets=()
-          for asset in ./*reth-*.json*; do
+          for asset in ./*genesis-*.json*; do
               assets+=("$asset/$asset")
           done
           tag_name="${{ env.VERSION }}"
-          echo "$body" | gh release create --draft $prerelease_flag -t "Reth $tag_name" -F "-" "$tag_name" "${assets[@]}"
+          echo "$body" | gh release create --draft $prerelease_flag -t "Genesis $tag_name" -F "-" "$tag_name" "${assets[@]}"
