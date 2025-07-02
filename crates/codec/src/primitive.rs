@@ -1,3 +1,4 @@
+#![allow(warnings)]
 use crate::{
     alloc::string::ToString,
     encoder::{align_up, get_aligned_indices, is_big_endian, Encoder},

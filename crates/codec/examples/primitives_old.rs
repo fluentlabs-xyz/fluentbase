@@ -2,9 +2,6 @@
 
 extern crate fluentbase_codec_old as codec;
 
-use byteorder::{BigEndian, LittleEndian};
-use bytes::BytesMut;
-use codec::{encoder::Encoder, CompactABI, SolidityABI};
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]

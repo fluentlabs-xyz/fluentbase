@@ -240,18 +240,18 @@ mod solidity {
 
         let sol_nested_value = SmallNestedContract::Nested {
             nested_struct: SmallNestedContract::Small {
-                bool_val: nested_value.nested_struct.bool_val.clone(),
+                bool_val: nested_value.nested_struct.bool_val,
                 bytes_val: nested_value.nested_struct.bytes_val.clone(),
                 vec_val: nested_value.nested_struct.vec_val.clone(),
             },
-            fixed_bytes: nested_value.fixed_bytes.clone(),
-            uint_val: nested_value.uint_val.clone(),
+            fixed_bytes: nested_value.fixed_bytes,
+            uint_val: nested_value.uint_val,
             vec_val: nested_value.vec_val.clone(),
         };
         let sol_nested_encoded = sol_nested_value.abi_encode();
 
         let sol_small_value = SmallNestedContract::Small {
-            bool_val: small_value.bool_val.clone(),
+            bool_val: small_value.bool_val,
             bytes_val: small_value.bytes_val.clone(),
             vec_val: small_value.vec_val.clone(),
         };
@@ -328,7 +328,7 @@ mod solidity {
         };
 
         let point_sol = PointContract::Point {
-            x: complex_point.p.x.clone(),
+            x: complex_point.p.x,
             // y: test_value.p.y.clone(),
         };
 
@@ -337,10 +337,10 @@ mod solidity {
         // Create reference value using Solidity contract struct
         let complex_point_sol = PointContract::ComplexPoint {
             p: PointContract::Point {
-                x: complex_point.p.x.clone(),
+                x: complex_point.p.x,
                 // y: test_value.p.y.clone(),
             },
-            y: complex_point.y.clone(),
+            y: complex_point.y,
         };
 
         // Simple test case - check if point is encoded correctly

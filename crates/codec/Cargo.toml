@@ -43,11 +43,11 @@ name = "primitives_new"
 crate-type = ["cdylib"]
 
 [[example]]
-name = "nested_vec_old"
+name = "nested_vec_sol_old"
 crate-type = ["cdylib"]
 
 [[example]]
-name = "nested_vec_new"
+name = "nested_vec_sol_new"
 crate-type = ["cdylib"]
 
 

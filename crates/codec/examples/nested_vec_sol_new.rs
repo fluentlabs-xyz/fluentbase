@@ -2,10 +2,10 @@
 
 extern crate alloc;
 extern crate fluentbase_codec as codec;
-
 use alloc::{vec, vec::Vec};
 use byteorder::BigEndian;
 use codec::optimized::{encoder::Encoder, SolidityABI};
+
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]

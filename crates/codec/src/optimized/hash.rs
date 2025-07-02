@@ -144,7 +144,7 @@ where
         } else {
             // Static values: offset and size fields explicitly provided
             let values_offset = read_u32_aligned::<B, ALIGN>(buf, hdr_ptr)? as usize;
-            hdr_ptr += aligned_u32;
+            // hdr_ptr += aligned_u32;
             (offset + values_offset, align_up::<ALIGN>(V::HEADER_SIZE))
         };
 
@@ -196,14 +196,18 @@ where
     }
 
     /// Encodes the header - writes only the offset to the HashMap data
-    /// Encodes the header - writes only the offset to the HashMap data
     fn encode_header(
         &self,
         buf: &mut impl BufMut,
         ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
+        if ctx.offset_written {
+            // Offset already written; only advance data_ptr
+            ctx.data_ptr += self.tail_size(&mut EncodingContext::default())? as u32;
+            return Ok(0);
+        }
         // Calculate offset to HashMap data
-        let offset = (ctx.hdr_size - ctx.hdr_ptr) + ctx.data_ptr;
+        let offset = ctx.data_ptr - ctx.hdr_ptr;
         write_u32_aligned::<B, 32>(buf, offset);
         ctx.hdr_ptr += 32;
 
@@ -506,8 +510,13 @@ where
         buf: &mut impl BufMut,
         ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
+        if ctx.offset_written {
+            // Offset already written; only advance data_ptr
+            ctx.data_ptr += self.tail_size(&mut EncodingContext::default())? as u32;
+            return Ok(0);
+        }
         // Calculate offset to HashSet data
-        let offset = (ctx.hdr_size - ctx.hdr_ptr) + ctx.data_ptr;
+        let offset = ctx.data_ptr - ctx.hdr_ptr;
         write_u32_aligned::<B, 32>(buf, offset);
         ctx.hdr_ptr += 32;
 
@@ -897,10 +906,7 @@ mod tests {
 
         mod hash_set {
             use super::*;
-            use crate::optimized::{
-                encoder::Encoder,
-                utils::test_utils::assert_roundtrip_sol,
-            };
+            use crate::optimized::{encoder::Encoder, utils::test_utils::assert_roundtrip_sol};
             use hashbrown::HashSet;
 
             #[test]

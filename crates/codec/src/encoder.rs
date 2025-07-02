@@ -1,3 +1,4 @@
+#![allow(warnings)]
 use crate::{alloc::string::ToString, error::CodecError};
 use byteorder::{ByteOrder, BE, LE};
 use bytes::{Buf, BufMut, BytesMut};

@@ -1,3 +1,4 @@
+#![allow(warnings)]
 use crate::{
     alloc::string::ToString,
     bytes_codec::{read_bytes, read_bytes_header, write_bytes},

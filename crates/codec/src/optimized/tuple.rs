@@ -65,13 +65,13 @@ where
         let mut total_written = 0;
 
         // If this tuple is dynamic, write offset first
-        if Self::IS_DYNAMIC {
+        if Self::IS_DYNAMIC && !ctx.offset_written {
             let offset = if SOL_MODE { 32 } else { align_up::<ALIGN>(4) };
             write_u32_aligned::<B, ALIGN>(buf, offset as u32);
             total_written += offset;
 
-            // Adjust context for inner element
             ctx.hdr_ptr += offset as u32;
+            ctx.offset_written = true;
         }
 
         total_written += self.0.encode_header(buf, ctx)?;
@@ -152,15 +152,18 @@ macro_rules! impl_encoder_for_tuple {
                 ctx: &mut EncodingContext,
             ) -> Result<usize, CodecError> {
                 let mut total_written = 0;
-
+                println!("ctx already written for tuple?: {}", ctx.offset_written);
+                println!("ctx already written for tuple?: {}", Self::IS_DYNAMIC);
                 // If this tuple is dynamic, write offset first
-                if Self::IS_DYNAMIC {
+                if Self::IS_DYNAMIC && !ctx.offset_written {
+                    println!("need to write offset");
                     let offset = if SOL_MODE { 32 } else { align_up::<ALIGN>(4) };
                     write_u32_aligned::<B, ALIGN>(buf, offset as u32);
-                    total_written += if SOL_MODE { 32 } else { align_up::<ALIGN>(4) };
+                    total_written += offset;
 
-                    // Adjust context for inner elements
                     ctx.hdr_ptr += offset as u32;
+                    // we need it only for structs 
+                    // ctx.offset_written = true;
                 }
 
                 $(

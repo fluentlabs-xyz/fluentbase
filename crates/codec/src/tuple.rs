@@ -1,3 +1,4 @@
+#![allow(warnings)]
 use crate::{
     alloc::string::ToString,
     encoder::{align_up, read_u32_aligned, write_u32_aligned, Encoder},

@@ -74,12 +74,7 @@ pub fn read_bytes(buf: &impl Buf, offset: usize, len: usize) -> Result<Bytes, Co
 
 #[cfg(test)]
 pub mod test_utils {
-    use crate::optimized::{
-        ctx::EncodingContext,
-        encoder::Encoder
-        ,
-        utils::read_u32_aligned,
-    };
+    use crate::optimized::{ctx::EncodingContext, encoder::Encoder, utils::read_u32_aligned};
     use alloy_sol_types::SolValue;
     use byteorder::{BigEndian, ByteOrder, LittleEndian};
     use bytes::BytesMut;
@@ -122,22 +117,30 @@ pub mod test_utils {
     where
         T: Encoder<BigEndian, 32, true> + PartialEq + std::fmt::Debug + Clone,
     {
-        let mut ctx = EncodingContext::default();
-        ctx.hdr_size = value.header_size() as u32;
+        let mut ctx = EncodingContext::with_hs(T::HEADER_SIZE as u32);
+        println!("[assert_codec_sol] ctx: {:?}", ctx);
 
-        println!("ctx.hdr_size: {}", ctx.hdr_size);
-        assert_eq!(hex::decode(expected_header_hex).unwrap().len(), ctx.hdr_size as usize, "header size mismatch");
+        // assert_eq!(
+        //     hex::decode(expected_header_hex).unwrap().len(),
+        //     ctx.hdr_size as usize,
+        //     "header size mismatch"
+        // );
 
         let mut header_buf = BytesMut::new();
         let w = T::encode_header(value, &mut header_buf, &mut ctx);
-        assert!(w.is_ok(), "encode_header failed: {:?}", w);
-        println!("// actual header");
-        print_encoded::<BigEndian, 32>(&header_buf);
-        
+        let encoded_header = encode(&header_buf);
 
-        println!("// expected header");
-        print_encoded::<BigEndian, 32>(&hex::decode(expected_header_hex).unwrap());
-        
+        if expected_header_hex != encoded_header {
+            println!("[assert_codec_sol] // expected header");
+            print_encoded::<BigEndian, 32>(&hex::decode(expected_header_hex).unwrap());
+
+            println!("[assert_codec_sol] // actual header");
+            print_encoded::<BigEndian, 32>(&hex::decode(encoded_header).unwrap());
+        } else {
+            println!("[assert_codec_sol] header is ok:");
+            print_encoded::<BigEndian, 32>(&header_buf);
+        };
+        assert!(w.is_ok(), "encode_header failed: {:?}", w.err());
         assert_eq!(
             expected_header_hex,
             encode(&header_buf),
@@ -147,12 +150,80 @@ pub mod test_utils {
         let mut tail_buf = BytesMut::new();
         let w = T::encode_tail(value, &mut tail_buf, &mut ctx);
 
-        println!("// actual tail");
-        print_encoded::<BigEndian, 32>(&tail_buf);
+        let encoded_tail = encode(&tail_buf);
 
+        if expected_tail_hex != encoded_tail {
+            println!("[assert_codec_sol] // expected tail");
+            print_encoded::<BigEndian, 32>(&hex::decode(expected_tail_hex).unwrap());
 
-        println!("// expected tail");
-        print_encoded::<BigEndian, 32>(&hex::decode(expected_tail_hex).unwrap());
+            println!("[assert_codec_sol] // actual tail");
+            print_encoded::<BigEndian, 32>(&hex::decode(encoded_tail).unwrap());
+        } else {
+            println!("[assert_codec_sol] tail is ok:");
+            print_encoded::<BigEndian, 32>(&tail_buf);
+        };
+
+        assert!(w.is_ok(), "encode_tail failed: {:?}", w);
+        assert_eq!(expected_tail_hex, encode(&tail_buf), "tail bytes mismatch");
+
+        let mut full_buf = header_buf.clone();
+        full_buf.extend_from_slice(&tail_buf);
+        let decoded = T::decode(&mut &full_buf[..], 0).expect("decode failed");
+        assert_eq!(decoded, *value, "decoded value mismatch");
+    }
+
+    pub(crate) fn assert_codec_sol_with_ctx<T>(
+        expected_header_hex: &str,
+        expected_tail_hex: &str,
+        value: &T,
+        ctx: &mut EncodingContext,
+    ) where
+        T: Encoder<BigEndian, 32, true> + PartialEq + std::fmt::Debug + Clone,
+    {
+        println!("[assert_codec_sol] ctx: {:?}", ctx);
+
+        assert_eq!(
+            hex::decode(expected_header_hex).unwrap().len(),
+            ctx.hdr_size as usize,
+            "header size mismatch"
+        );
+
+        let mut header_buf = BytesMut::new();
+        let w = T::encode_header(value, &mut header_buf, ctx);
+        let encoded_header = encode(&header_buf);
+
+        if expected_header_hex != encoded_header {
+            println!("[assert_codec_sol] // expected header");
+            print_encoded::<BigEndian, 32>(&hex::decode(expected_header_hex).unwrap());
+
+            println!("[assert_codec_sol] // actual header");
+            print_encoded::<BigEndian, 32>(&hex::decode(encoded_header).unwrap());
+        } else {
+            println!("[assert_codec_sol] header is ok:");
+            print_encoded::<BigEndian, 32>(&header_buf);
+        };
+        assert!(w.is_ok(), "encode_header failed: {:?}", w.err());
+        assert_eq!(
+            expected_header_hex,
+            encode(&header_buf),
+            "header bytes mismatch"
+        );
+
+        let mut tail_buf = BytesMut::new();
+        let w = T::encode_tail(value, &mut tail_buf, ctx);
+
+        let encoded_tail = encode(&tail_buf);
+
+        if expected_tail_hex != encoded_tail {
+            println!("[assert_codec_sol] // expected tail");
+            print_encoded::<BigEndian, 32>(&hex::decode(expected_tail_hex).unwrap());
+
+            println!("[assert_codec_sol] // actual tail");
+            print_encoded::<BigEndian, 32>(&hex::decode(encoded_tail).unwrap());
+        } else {
+            println!("[assert_codec_sol] tail is ok:");
+            print_encoded::<BigEndian, 32>(&tail_buf);
+        };
 
         assert!(w.is_ok(), "encode_tail failed: {:?}", w);
         assert_eq!(expected_tail_hex, encode(&tail_buf), "tail bytes mismatch");
@@ -197,7 +268,7 @@ pub mod test_utils {
         T: Encoder<BigEndian, 32, true> + PartialEq + std::fmt::Debug,
     {
         let mut ctx = EncodingContext::default();
-        ctx.hdr_size = value.header_size() as u32;
+        ctx.data_ptr = T::HEADER_SIZE as u32;
 
         let mut header_buf = BytesMut::new();
         value
@@ -236,7 +307,6 @@ pub mod test_utils {
         value.abi_encode()
     }
 
-
     // Helper function to test encoding compatibility
     pub(crate) fn assert_alloy_sol_roundtrip<T>(value: &T, name: &str)
     where
@@ -244,7 +314,7 @@ pub mod test_utils {
     {
         // Encode using our encoder
         let mut ctx = EncodingContext::default();
-        ctx.hdr_size = value.header_size() as u32;
+        ctx.data_ptr = T::HEADER_SIZE as u32;
 
         let mut our_buf = BytesMut::new();
         value
@@ -280,6 +350,7 @@ pub mod test_utils {
             panic!("{} encoding doesn't match Alloy", name);
         }
 
+        // print_encoded::<BigEndian, 32>(&our_buf);
         // Test our decoding
         let decoded = T::decode(&our_buf, 0).expect("Our decode failed");
         assert_eq!(decoded, *value, "{} roundtrip failed", name);

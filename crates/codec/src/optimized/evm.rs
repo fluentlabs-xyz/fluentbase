@@ -26,18 +26,18 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
         out: &mut impl BufMut,
         ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
-        if ctx.header_encoded {
-            // Header already encoded; skip writing offset.
-            return Ok(0);
-        }
         let hdr_ptr_start = ctx.hdr_ptr;
 
-        let offset = ctx.hdr_size + ctx.data_ptr - ctx.hdr_ptr ;
-
         if SOL_MODE {
+            if ctx.offset_written {
+                // Header already encoded; skip writing offset.
+                return Ok(0);
+            }
+            let offset = ctx.data_ptr - ctx.hdr_ptr;
             write_u32_aligned::<B, ALIGN>(out, offset);
             ctx.data_ptr += ALIGN as u32 + align_up::<ALIGN>(self.0.len()) as u32;
         } else {
+            let offset = ctx.hdr_size + ctx.data_ptr - ctx.hdr_ptr;
             write_u32_aligned::<B, ALIGN>(out, offset);
             write_u32_aligned::<B, ALIGN>(out, self.0.len() as u32);
             ctx.data_ptr += self.0.len() as u32;
@@ -131,12 +131,19 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool> Encoder<B, ALIGN, S
     ) -> Result<usize, CodecError> {
         let hdr_ptr_start = ctx.hdr_ptr;
 
-        let offset = ctx.hdr_size - ctx.hdr_ptr + ctx.data_ptr;
-
         if SOL_MODE {
+            if ctx.offset_written {
+
+                // Offset already written; only advance data_ptr
+                // ctx.data_ptr += ALIGN as u32 + align_up::<ALIGN>(self.len()) as u32;
+                return Ok(0);
+            }
+            let offset = ctx.data_ptr - ctx.hdr_ptr;
             write_u32_aligned::<B, ALIGN>(out, offset);
+            // len + data in bytes aligned to ALIGN
             ctx.data_ptr += ALIGN as u32 + align_up::<ALIGN>(self.len()) as u32;
         } else {
+            let offset = ctx.hdr_size - ctx.hdr_ptr + ctx.data_ptr;
             write_u32_aligned::<B, ALIGN>(out, offset);
             write_u32_aligned::<B, ALIGN>(out, self.len() as u32);
             ctx.data_ptr += self.len() as u32;
@@ -485,9 +492,9 @@ impl<
 #[cfg(test)]
 mod tests {
     use crate::optimized::{
-        ctx::EncodingContext,
         encoder::Encoder,
         utils::test_utils::{
+            assert_alloy_sol_roundtrip,
             assert_codec_compact,
             assert_codec_sol,
             assert_roundtrip_compact,
@@ -496,7 +503,6 @@ mod tests {
     };
     use alloy_primitives::{Address, Bytes, FixedBytes, I128, I256, U128, U256};
     use byteorder::{BigEndian, LittleEndian};
-    use crate::optimized::utils::test_utils::assert_alloy_sol_roundtrip;
 
     mod bytes_compact {
         use super::*;
@@ -1008,15 +1014,17 @@ mod tests {
 
     #[test]
     fn test_alloy_sol_compatibility() {
-        use alloy_sol_types::SolValue;
         use crate::optimized::encoder::Encoder;
-
+        use alloy_sol_types::SolValue;
 
         // Test Bytes - edge cases
         assert_alloy_sol_roundtrip(&Bytes::new(), "Bytes::empty");
         assert_alloy_sol_roundtrip(&Bytes::from(vec![0x00]), "Bytes::single_zero");
         assert_alloy_sol_roundtrip(&Bytes::from(vec![0xff]), "Bytes::single_ff");
-        assert_alloy_sol_roundtrip(&Bytes::from(vec![0x01, 0x02, 0x03, 0x04, 0x05]), "Bytes::5_bytes");
+        assert_alloy_sol_roundtrip(
+            &Bytes::from(vec![0x01, 0x02, 0x03, 0x04, 0x05]),
+            "Bytes::5_bytes",
+        );
         assert_alloy_sol_roundtrip(&Bytes::from(vec![0xaa; 31]), "Bytes::31_bytes");
         assert_alloy_sol_roundtrip(&Bytes::from(vec![0xbb; 32]), "Bytes::32_bytes");
         assert_alloy_sol_roundtrip(&Bytes::from(vec![0xcc; 33]), "Bytes::33_bytes");
@@ -1027,16 +1035,28 @@ mod tests {
         assert_alloy_sol_roundtrip(&String::new(), "String::empty");
         assert_alloy_sol_roundtrip(&String::from("a"), "String::single_char");
         assert_alloy_sol_roundtrip(&String::from("hello"), "String::hello");
-        assert_alloy_sol_roundtrip(&String::from("0123456789abcdef0123456789abcde"), "String::31_chars");
-        assert_alloy_sol_roundtrip(&String::from("0123456789abcdef0123456789abcdef"), "String::32_chars");
-        assert_alloy_sol_roundtrip(&String::from("0123456789abcdef0123456789abcdef0"), "String::33_chars");
+        assert_alloy_sol_roundtrip(
+            &String::from("0123456789abcdef0123456789abcde"),
+            "String::31_chars",
+        );
+        assert_alloy_sol_roundtrip(
+            &String::from("0123456789abcdef0123456789abcdef"),
+            "String::32_chars",
+        );
+        assert_alloy_sol_roundtrip(
+            &String::from("0123456789abcdef0123456789abcdef0"),
+            "String::33_chars",
+        );
         assert_alloy_sol_roundtrip(&String::from("🦀"), "String::unicode_emoji");
         assert_alloy_sol_roundtrip(&String::from("Hello, 世界! 🌍"), "String::mixed_unicode");
         assert_alloy_sol_roundtrip(&"a".repeat(100), "String::100_chars");
 
         // Test FixedBytes - various sizes
         assert_alloy_sol_roundtrip(&FixedBytes::<1>::from([0x42]), "FixedBytes<1>");
-        assert_alloy_sol_roundtrip(&FixedBytes::<4>::from([0x01, 0x02, 0x03, 0x04]), "FixedBytes<4>");
+        assert_alloy_sol_roundtrip(
+            &FixedBytes::<4>::from([0x01, 0x02, 0x03, 0x04]),
+            "FixedBytes<4>",
+        );
         assert_alloy_sol_roundtrip(&FixedBytes::<8>::from([0xff; 8]), "FixedBytes<8>");
         assert_alloy_sol_roundtrip(&FixedBytes::<16>::from([0xaa; 16]), "FixedBytes<16>");
         assert_alloy_sol_roundtrip(&FixedBytes::<20>::from([0xbb; 20]), "FixedBytes<20>");
@@ -1045,11 +1065,13 @@ mod tests {
         // Test Address
         assert_alloy_sol_roundtrip(&Address::ZERO, "Address::ZERO");
         assert_alloy_sol_roundtrip(&Address::from([0xff; 20]), "Address::MAX");
-        assert_alloy_sol_roundtrip(&Address::from([
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
-            0x01, 0x23, 0x45, 0x67
-        ]), "Address::pattern");
+        assert_alloy_sol_roundtrip(
+            &Address::from([
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
+                0xcd, 0xef, 0x01, 0x23, 0x45, 0x67,
+            ]),
+            "Address::pattern",
+        );
 
         // Test U256 - edge cases
         assert_alloy_sol_roundtrip(&U256::ZERO, "U256::ZERO");
@@ -1058,11 +1080,12 @@ mod tests {
         assert_alloy_sol_roundtrip(&U256::from(u64::MAX), "U256::u64_max");
         assert_alloy_sol_roundtrip(&U256::from(u128::MAX), "U256::u128_max");
         assert_alloy_sol_roundtrip(&U256::MAX, "U256::MAX");
-        assert_alloy_sol_roundtrip(&U256::from_be_bytes([
-            0x80, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0
-        ]), "U256::high_bit");
+        assert_alloy_sol_roundtrip(
+            &U256::from_be_bytes([
+                0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0,
+            ]),
+            "U256::high_bit",
+        );
     }
 }

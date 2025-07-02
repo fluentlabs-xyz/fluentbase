@@ -32,13 +32,6 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
     const HEADER_SIZE: usize;
     const IS_DYNAMIC: bool;
 
-    fn header_size(&self) -> usize {
-        const {
-            assert!(!Self::IS_DYNAMIC, "dynamic type must override header_size");
-        }
-        align_up::<ALIGN>(Self::HEADER_SIZE)
-    }
-
     fn encode_header(
         &self,
         out: &mut impl BufMut,
@@ -47,8 +40,8 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
 
     fn encode_tail(
         &self,
-        out: &mut impl BufMut,
-        ctx: &mut EncodingContext,
+        _out: &mut impl BufMut,
+        _ctx: &mut EncodingContext,
     ) -> Result<usize, CodecError> {
         if !Self::IS_DYNAMIC {
             Ok(0)
@@ -74,6 +67,17 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>: Sized
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError>;
 
+    fn header_size(&self) -> usize {
+        if Self::IS_DYNAMIC {
+            let mut ctx = EncodingContext::default();
+            let mut cntr = ByteCounter::new();
+            self.encode_header(&mut cntr, &mut ctx)
+                .expect("encode header for header size error - return result later");
+            cntr.count()
+        } else {
+            align_up::<ALIGN>(Self::HEADER_SIZE)
+        }
+    }
     fn tail_size(&self, ctx: &mut EncodingContext) -> Result<usize, CodecError> {
         let mut counter = ByteCounter::new();
         self.encode_tail(&mut counter, ctx)?;
@@ -134,10 +138,7 @@ macro_rules! define_abi {
             }
 
             #[inline]
-            pub fn encode(
-                value: &T,
-                buf: &mut impl BufMut,
-            ) -> Result<usize, CodecError> {
+            pub fn encode(value: &T, buf: &mut impl BufMut) -> Result<usize, CodecError> {
                 let header_size = value.header_size();
                 let mut ctx = EncodingContext::default();
                 ctx.hdr_size = header_size as u32;
@@ -165,10 +166,7 @@ macro_rules! define_abi {
             T: Encoder<$byte_order, $align, $sol_mode> + PackedSafe,
         {
             #[inline]
-            pub fn encode(
-                value: &T,
-                buf: &mut impl BufMut,
-            ) -> Result<usize, CodecError> {
+            pub fn encode(value: &T, buf: &mut impl BufMut) -> Result<usize, CodecError> {
                 let _ = <T as PackedSafe>::ASSERT_STATIC;
                 let mut ctx = EncodingContext::default();
                 value.encode(buf, &mut ctx)
@@ -190,7 +188,6 @@ define_abi!(SolidityPackedABI, byteorder::BigEndian, 1, true, packed);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::optimized::ctx::EncodingContext;
 
     #[test]
     fn test_example_usage() {
