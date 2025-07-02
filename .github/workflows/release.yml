@@ -1,30 +1,15 @@
-name: release
+name: Release
 
 on:
   push:
     tags:
       - v*
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Enable dry run mode (builds artifacts but skips uploads and release creation)"
-        type: boolean
-        default: false
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
-  dry-run:
-    name: check dry run
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          echo "Dry run value: ${{ github.event.inputs.dry_run }}"
-          echo "Dry run enabled: ${{ github.event.inputs.dry_run == 'true'}}"
-          echo "Dry run disabled: ${{ github.event.inputs.dry_run != 'true'}}"
-
   extract-version:
     name: extract version
     runs-on: ubuntu-latest
@@ -82,14 +67,12 @@ jobs:
         shell: bash
 
       - name: Upload artifact
-        if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json
 
       - name: Upload signature
-        if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.asc
@@ -99,7 +82,6 @@ jobs:
     name: draft release
     needs: [ build, extract-version ]
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.dry_run != 'true' }}
     env:
       VERSION: ${{ needs.extract-version.outputs.VERSION }}
     permissions:
@@ -166,25 +148,3 @@ jobs:
           done
           tag_name="${{ env.VERSION }}"
           echo "$body" | gh release create --draft $prerelease_flag -t "Reth $tag_name" -F "-" "$tag_name" "${assets[@]}"
-
-  dry-run-summary:
-    name: dry run summary
-    needs: [ build, extract-version ]
-    runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.dry_run == 'true' }}
-    env:
-      VERSION: ${{ needs.extract-version.outputs.VERSION }}
-    steps:
-      - name: Summarize dry run
-        run: |
-          echo "## 🧪 Release Dry Run Summary"
-          echo ""
-          echo "✅ Successfully completed dry run for commit ${{ github.sha }}"
-          echo ""
-          echo "### What would happen in a real release:"
-          echo "- Binary artifacts would be uploaded to GitHub"
-          echo "- Docker images would be pushed to registry"
-          echo "- A draft release would be created"
-          echo ""
-          echo "### Next Steps"
-          echo "To perform a real release, push a git tag."
