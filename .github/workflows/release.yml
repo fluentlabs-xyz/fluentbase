@@ -35,7 +35,7 @@ jobs:
         run: |
           tag="${{ needs.extract-version.outputs.VERSION }}"
           tag=${tag#v}
-          cargo_ver=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          cargo_ver=$(grep -m1 '^version' Cargo.toml | awk -F'=' '{print $2}' | tr -d ' "')
           [[ "$tag" == "$cargo_ver"* ]] || { echo "Tag $tag doesn’t match the Cargo version $cargo_ver"; exit 1; }
 
   build:
@@ -57,7 +57,7 @@ jobs:
       - name: Move binary
         run: |
           mkdir artifacts
-          mv ./crates/genesis/genesis-devnet.json ./artifacts/genesis-$GITHUB_OUTPUT.json
+          mv ./crates/genesis/genesis-devnet.json ./artifacts/genesis-${{ needs.extract-version.outputs.VERSION }}.json
       - name: Configure GPG and create artifacts
         env:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
