@@ -1,4 +1,22 @@
 #[macro_export]
+macro_rules! this_function_path {
+    () => {{
+        fn f() {}
+        fn type_name_of<T>(_: T) -> &'static str {
+            core::any::type_name::<T>()
+        }
+        let name = type_name_of(f);
+        name.strip_suffix("::f").unwrap()
+    }};
+}
+#[macro_export]
+macro_rules! current_line_info {
+    () => {{
+        alloc::format!("{}:{}", $crate::this_function_path!(), core::line!())
+    }};
+}
+
+#[macro_export]
 macro_rules! debug_log {
     ($msg:tt) => {{
         #[cfg(target_arch = "wasm32")]
@@ -8,7 +26,27 @@ macro_rules! debug_log {
     }};
     ($($arg:tt)*) => {{
         let msg = alloc::format!($($arg)*);
-        debug_log!(msg);
+        $crate::debug_log!(msg);
+    }};
+}
+
+#[macro_export]
+macro_rules! debug_log_ext {
+    () => {{
+        $crate::debug_log_ext!("");
+    }};
+    ($msg:tt) => {{
+        extern crate alloc;
+        let msg = alloc::format!("{}: {}", $crate::current_line_info!(), $msg);
+        #[cfg(target_arch = "wasm32")]
+        unsafe { $crate::rwasm::_debug_log(msg.as_ptr(), msg.len() as u32) }
+        #[cfg(feature = "std")]
+        println!("{}", msg);
+    }};
+    ($($arg:tt)*) => {{
+        extern crate alloc;
+        let msg = alloc::format!($($arg)*);
+        $crate::debug_log_ext!(msg);
     }};
 }
 

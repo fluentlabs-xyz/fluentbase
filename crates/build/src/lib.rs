@@ -1,253 +1,280 @@
-mod config;
+mod build;
+mod docker;
+mod generators;
+mod internal;
+mod utils;
 
-use cargo_metadata::{CrateType, Metadata, MetadataCommand, TargetKind};
-pub use config::*;
-use fluentbase_types::{compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256};
-use std::{env, fs, path::PathBuf, process::Command, str::from_utf8};
+use crate::build::build_internal;
+pub use build::{execute_build, BuildResult};
+use clap::{Parser, ValueEnum};
+pub use internal::*;
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
-pub fn rust_to_wasm(config: RustToWasmConfig) -> PathBuf {
-    let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let cargo_manifest_path = PathBuf::from(cargo_manifest_dir.clone()).join("Cargo.toml");
-    let mut metadata_cmd = MetadataCommand::new();
-    let metadata = metadata_cmd
-        .manifest_path(cargo_manifest_path)
-        .exec()
-        .unwrap();
-    let target_dir: PathBuf = metadata.target_directory.clone().into();
-    let target2_dir = target_dir.join("target2");
+// Build configuration constants
+pub const DEFAULT_DOCKER_TAG: &str = concat!("v", env!("CARGO_PKG_VERSION"));
+pub const DEFAULT_STACK_SIZE: u32 = 128 * 1024;
+pub const BUILD_TARGET: &str = "wasm32-unknown-unknown";
+pub const HELPER_TARGET_SUBDIR: &str = "wasm-compilation";
 
-    let mut args = vec![
-        "build".to_string(),
-        "--target".to_string(),
-        "wasm32-unknown-unknown".to_string(),
-        "--release".to_string(),
-        "--manifest-path".to_string(),
-        format!("{}/Cargo.toml", cargo_manifest_dir.to_str().unwrap()),
-        "--target-dir".to_string(),
-        target2_dir.to_str().unwrap().to_string(),
-        "--color=always".to_string(),
-    ];
-    if config.no_default_features {
-        args.push("--no-default-features".to_string());
-    }
-    if !config.features.is_empty() {
-        args.push("--features".to_string());
-        args.extend_from_slice(&config.features);
-    }
-    let flags = [
-        "-C".to_string(),
-        format!("link-arg=-zstack-size={}", config.stack_size),
-        "-C".to_string(),
-        "panic=abort".to_string(),
-        "-C".to_string(),
-        "target-feature=+bulk-memory".to_string(),
-    ];
-    let flags = flags.join("\x1f");
-
-    let status = Command::new("cargo")
-        .env("CARGO_ENCODED_RUSTFLAGS", flags)
-        .args(args)
-        .status()
-        .expect("WASM compilation failure: failed to run cargo build");
-
-    if !status.success() {
-        panic!(
-            "WASM compilation failure: failed to run cargo build with code: {}",
-            status.code().unwrap_or(1)
-        );
-    }
-
-    let wasm_artifact_name = calc_wasm_artifact_name(&metadata);
-    let wasm_artifact_path = target2_dir
-        .join("wasm32-unknown-unknown")
-        .join("release")
-        .join(wasm_artifact_name);
-
-    wasm_artifact_path
+/// Build contract at specified path
+///
+/// Set `FLUENTBASE_SKIP_BUILD` environment variable to skip building.
+pub fn build(path: &str) {
+    build_internal(path, None)
 }
 
-pub fn wasm_to_wasmtime(wasm_path: &PathBuf) -> PathBuf {
-    let config = wasmtime::Config::new();
-    let engine = wasmtime::Engine::new(&config).unwrap();
-
-    let wasm_bytecode = fs::read(&wasm_path).unwrap();
-    let module =
-        wasmtime::Module::new(&engine, wasm_bytecode).expect("failed to compile wasmtime module");
-    let module_bytes = module
-        .serialize()
-        .expect("failed to serialize wasm bytecode");
-    let wasmtime_module_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib.cwasm");
-    fs::write(&wasmtime_module_path, module_bytes).unwrap();
-    wasmtime_module_path
+/// Build contract with custom configuration
+///
+/// Set `FLUENTBASE_SKIP_BUILD` environment variable to skip building.
+pub fn build_with_args(path: &str, args: BuildArgs) {
+    build_internal(path, Some(args))
 }
 
-pub fn go_to_wasm() -> PathBuf {
-    let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let wasm_artifact_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib.wasm");
-
-    let args: Vec<String> = vec![
-        "build".to_string(),
-        "-o".to_string(),
-        wasm_artifact_path.to_str().unwrap().to_string(),
-        "--target".to_string(),
-        "wasm-unknown".to_string(),
-    ];
-
-    let status = Command::new("tinygo")
-        .current_dir(&cargo_manifest_dir)
-        .args(args)
-        .status()
-        .expect("WASM compilation failed");
-
-    if !status.success() {
-        panic!("WASM compilation failure: failed to run \"tinygo build\"");
-    }
-    wasm_artifact_path
+/// Types of artifacts that can be generated
+#[derive(Clone, ValueEnum, Debug, PartialEq)]
+pub enum Artifact {
+    /// WebAssembly Text format
+    Wat,
+    /// Reduced WebAssembly
+    Rwasm,
+    /// Solidity ABI JSON
+    Abi,
+    /// Solidity interface file
+    Solidity,
+    /// Contract verification metadata
+    Metadata,
 }
 
-pub fn wasm_to_rwasm(wasm_path: &PathBuf, config: rwasm::legacy::Config) -> PathBuf {
-    let wasm = fs::read(&wasm_path).unwrap();
-    let rwasm: Vec<u8> = compile_wasm_to_rwasm_with_config(wasm.as_slice(), config.clone())
-        .unwrap()
-        .rwasm_bytecode
-        .to_vec();
-    let rwasm_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib.rwasm");
-    fs::write(&rwasm_path, &rwasm).unwrap();
-    rwasm_path
+/// Build configuration for Fluent smart contracts
+#[derive(Clone, Parser, Debug)]
+pub struct BuildArgs {
+    /// Custom contract name for output directory (defaults to package name)
+    #[arg(long)]
+    pub contract_name: Option<String>,
+
+    /// Run compilation in Docker for reproducible builds
+    #[arg(long)]
+    pub docker: bool,
+
+    /// Docker image tag to use
+    #[arg(long, default_value = DEFAULT_DOCKER_TAG)]
+    pub tag: String,
+
+    /// Root directory to mount in Docker (defaults to current directory)
+    #[arg(long)]
+    pub mount_dir: Option<PathBuf>,
+
+    /// Rust toolchain version (e.g., "1.85.0", "nightly-2024-01-01")
+    /// If not specified, will check rust-toolchain.toml, then use base image version
+    #[arg(long)]
+    pub rust_version: Option<String>,
+
+    /// Cargo features to activate (comma-separated)
+    #[arg(long, value_delimiter = ',')]
+    pub features: Vec<String>,
+
+    /// Do not activate default features
+    #[arg(long)]
+    pub no_default_features: bool,
+
+    /// Ensure Cargo.lock remains unchanged
+    #[arg(long)]
+    pub locked: bool,
+
+    /// Stack size for WASM module in bytes
+    #[arg(long, default_value_t = DEFAULT_STACK_SIZE)]
+    pub stack_size: u32,
+
+    /// Extra rustc flags (comma-separated)
+    #[arg(long, value_delimiter = ',')]
+    pub rustflags: Vec<String>,
+
+    /// Additional artifacts to generate
+    #[arg(short = 'g', long, value_enum, value_delimiter = ',')]
+    pub generate: Vec<Artifact>,
+
+    /// Output directory for artifacts
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    /// Post process wasm for size optimization
+    #[arg(long)]
+    pub wasm_opt: bool,
 }
 
-pub fn copy_wasm_and_wat(wasm_path: &PathBuf) {
-    let dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let wasm_output = dir.join("lib.wasm");
-    let wat_output = dir.join("lib.wat");
-    fs::copy(&wasm_path, &wasm_output).unwrap();
-    let wasm_to_wat = Command::new("wasm2wat").args([wasm_output]).output();
-    if wasm_to_wat.is_ok() {
-        fs::write(wat_output, from_utf8(&wasm_to_wat.unwrap().stdout).unwrap()).unwrap();
-    }
-}
-
-fn calc_wasm_artifact_name(metadata: &Metadata) -> String {
-    let mut result = vec![];
-    for program_crate in metadata.workspace_default_members.to_vec() {
-        let program = metadata
-            .packages
-            .iter()
-            .find(|p| p.id == program_crate)
-            .unwrap_or_else(|| panic!("cannot find package for {}", program_crate));
-        for bin_target in program.targets.iter() {
-            let is_bin = bin_target.kind.contains(&TargetKind::Bin)
-                && bin_target.crate_types.contains(&CrateType::Bin);
-            let is_cdylib = bin_target.kind.contains(&TargetKind::CDyLib)
-                && bin_target.crate_types.contains(&CrateType::CDyLib);
-            // Both `bin` and `cdylib` crates produce a `.wasm` file
-            if is_cdylib || is_bin {
-                let bin_name = bin_target.name.clone() + ".wasm";
-                result.push(bin_name);
-            }
+impl Default for BuildArgs {
+    fn default() -> Self {
+        Self {
+            contract_name: None,
+            docker: true,
+            tag: DEFAULT_DOCKER_TAG.to_string(),
+            mount_dir: None,
+            rust_version: None,
+            features: vec![],
+            no_default_features: true,
+            locked: true,
+            stack_size: DEFAULT_STACK_SIZE,
+            rustflags: vec![],
+            generate: vec![],
+            output: Some(PathBuf::from("./out")),
+            wasm_opt: true,
         }
     }
-    if result.is_empty() {
-        panic!(
-            "No WASM artifact found to build in package `{}`. Ensure the package defines exactly one `bin` or `cdylib` crate.",
-            metadata.workspace_members.first().unwrap()
-        );
-    } else if result.len() > 1 {
-        panic!(
-            "Multiple WASM artifacts found in package `{}`. Ensure the package defines exactly one `bin` or `cdylib` crate.",
-            metadata.workspace_members.first().unwrap()
-        );
-    }
-    result.first().unwrap().clone()
 }
 
-pub fn is_tinygo_installed() -> bool {
-    let output = Command::new("tinygo").arg("-v").output();
-    if output.is_err() {
-        false
-    } else {
-        true
+impl BuildArgs {
+    /// Get Rust version to use, checking multiple sources
+    pub fn toolchain_version(&self, contract_dir: &Path) -> Option<String> {
+        // 1. CLI argument takes precedence
+        if let Some(ref version) = self.rust_version {
+            return Self::normalize_toolchain(version);
+        }
+
+        // 2. Check rust-toolchain.toml
+        let toolchain_toml = contract_dir.join("rust-toolchain.toml");
+        if toolchain_toml.exists() {
+            if let Ok(content) = std::fs::read_to_string(&toolchain_toml) {
+                // Simple parsing for channel
+                // Format: [toolchain]\nchannel = "1.85.0"
+                for line in content.lines() {
+                    let line = line.trim();
+                    if line.starts_with("channel") && line.contains('=') {
+                        if let Some(version) = line.split('=').nth(1) {
+                            let version = version.trim().trim_matches('"').trim_matches('\'');
+                            if let Some(normalized) = Self::normalize_toolchain(version) {
+                                return Some(normalized);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Check legacy rust-toolchain file
+        let toolchain_file = contract_dir.join("rust-toolchain");
+        if toolchain_file.exists() {
+            if let Ok(version) = std::fs::read_to_string(&toolchain_file) {
+                let trimmed = version.trim();
+                if !trimmed.is_empty() {
+                    if let Some(normalized) = Self::normalize_toolchain(trimmed) {
+                        return Some(normalized);
+                    }
+                }
+            }
+        }
+
+        // 4. None - will use base image version
+        None
     }
-}
 
-/// Generates the `build_output.rs` file, which is included in the contract's `lib.rs`.
-pub fn generate_build_output_file(
-    wasm_path: &PathBuf,
-    rwasm_path: &PathBuf,
-    wasmtime_path: &PathBuf,
-) {
-    let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
-    let build_output_path = format!("{}/build_output.rs", out_dir);
+    /// Normalize toolchain by removing architecture suffix
+    fn normalize_toolchain(toolchain: &str) -> Option<String> {
+        // Remove any architecture/platform suffix
+        let normalized = toolchain
+            .split('-')
+            .take_while(|part| {
+                !matches!(
+                    *part,
+                    "x86_64"
+                        | "aarch64"
+                        | "i686"
+                        | "arm"
+                        | "windows"
+                        | "linux"
+                        | "darwin"
+                        | "apple"
+                        | "pc"
+                        | "unknown"
+                        | "gnu"
+                        | "msvc"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("-");
 
-    let package_name = env::var("CARGO_PKG_NAME").unwrap();
-    let rwasm_hash = keccak256(fs::read(rwasm_path).unwrap());
-    let rwasm_hash_hex = rwasm_hash.to_string();
-    let rwasm_hash = rwasm_hash.to_vec();
+        // Don't allow generic channels
+        if matches!(normalized.as_str(), "stable" | "nightly" | "beta") {
+            eprintln!("Error: Generic channel '{}' not allowed. Use specific version like '1.85.0' or 'nightly-2024-12-01'", normalized);
+            return None;
+        }
 
-    let wasm_path = wasm_path.to_str().unwrap();
-    let rwasm_path = rwasm_path.to_str().unwrap();
-    let wasmtime_path = wasmtime_path.to_str().unwrap();
-    let code = format!(
-        r#"use fluentbase_sdk::GenesisContractBuildOutput;
+        // Basic validation for nightly format
+        if normalized.starts_with("nightly-") {
+            let date_part = &normalized[8..];
+            if date_part.len() != 10 || date_part.matches('-').count() != 2 {
+                eprintln!(
+                    "Error: Invalid nightly format. Expected 'nightly-YYYY-MM-DD', got '{}'",
+                    normalized
+                );
+                return None;
+            }
+        }
 
-pub const BUILD_OUTPUT: GenesisContractBuildOutput =
-    GenesisContractBuildOutput {{
-        name: "{package_name}",
-        wasm_bytecode: include_bytes!(r"{wasm_path}"),
-        rwasm_bytecode: include_bytes!(r"{rwasm_path}"),
-        rwasm_bytecode_hash: {rwasm_hash:?}, // {rwasm_hash_hex}
-        wasmtime_module_bytes: include_bytes!(r"{wasmtime_path}"),
-    }};
-"#
-    );
-
-    fs::write(&build_output_path, code).unwrap();
-}
-
-/// Compiles the Genesis contract to WASM, RWASM, and Wasmtime module formats,
-/// and generates the corresponding `build_output.rs` file.
-/// For non-standard configurations (e.g. custom configurations, source code structure, etc.),
-/// it's recommended to copy this function into your own `build.rs` and modify as needed.
-pub fn build_default_genesis_contract() {
-    if env::var("TARGET").unwrap() == "wasm32-unknown-unknown" {
-        return;
+        Some(normalized)
     }
-    println!("cargo:rerun-if-changed=src");
-    println!("cargo:rerun-if-changed=Cargo.toml");
 
-    // Compile Rust to WASM
-    let wasm_path = rust_to_wasm(RustToWasmConfig::default());
-    copy_wasm_and_wat(&wasm_path);
+    /// Generate cargo build command
+    pub fn cargo_build_command(&self) -> Vec<String> {
+        let mut cmd = vec![
+            "cargo".to_string(),
+            "build".to_string(),
+            "--target".to_string(),
+            BUILD_TARGET.to_string(),
+            "--release".to_string(),
+        ];
 
-    // Compile WASM to RWASM
-    let mut rwasm_config = default_compilation_config();
-    rwasm_config.builtins_consume_fuel(false);
-    let rwasm_path = wasm_to_rwasm(&wasm_path, rwasm_config);
+        if self.docker {
+            let target_subdir = "docker";
+            cmd.push("--target-dir".to_string());
+            cmd.push(format!("target/{}/{}", HELPER_TARGET_SUBDIR, target_subdir));
+        }
 
-    // Compile WASM to WASMTIME module
-    let wasmtime_path = wasm_to_wasmtime(&wasm_path);
+        if self.no_default_features {
+            cmd.push("--no-default-features".to_string());
+        }
 
-    println!(
-        "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
-        wasm_path.to_str().unwrap()
-    );
+        if !self.features.is_empty() {
+            cmd.push("--features".to_string());
+            cmd.push(self.features.join(","));
+        }
 
-    generate_build_output_file(&wasm_path, &rwasm_path, &wasmtime_path);
-}
+        if self.locked {
+            cmd.push("--locked".to_string());
+        }
 
-pub fn build_default_example_contract() {
-    if env::var("TARGET").unwrap() == "wasm32-unknown-unknown" {
-        return;
+        cmd.push("--color=always".to_string());
+        cmd
     }
-    println!("cargo:rerun-if-changed=src");
-    println!("cargo:rerun-if-changed=Cargo.toml");
 
-    // Compile Rust to WASM
-    let wasm_path = rust_to_wasm(RustToWasmConfig::default());
-    copy_wasm_and_wat(&wasm_path);
+    /// Generate RUSTFLAGS for WASM compilation
+    pub fn rustflags(&self) -> String {
+        let mut flags = vec![
+            format!("-Clink-arg=-zstack-size={}", self.stack_size),
+            "-Cpanic=abort".to_string(),
+            "-Ctarget-feature=+bulk-memory".to_string(),
+        ];
 
-    println!(
-        "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
-        wasm_path.to_str().unwrap()
-    );
+        if self.wasm_opt {
+            flags.push("-Copt-level=z".to_string());
+            // TODO: should we actually use this optimizations?
+            flags.push("-Clto=fat".to_string());
+            flags.push("-Cstrip=symbols".to_string());
+        }
+
+        // Custom flags
+        for flag in &self.rustflags {
+            if flag.contains("panic=") && !flag.contains("panic=abort") {
+                eprintln!("Warning: Overriding panic=abort may cause issues with WASM");
+            }
+            if flag.contains("link-arg=-zstack-size") {
+                eprintln!("Warning: Stack size flag may override configured value");
+            }
+            flags.push(flag.to_string());
+        }
+
+        flags.join("\x1f")
+    }
 }

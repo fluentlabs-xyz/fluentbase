@@ -1,93 +1,311 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
+extern crate core;
 
-mod storage;
-
-use crate::storage::Balance;
-use fluentbase_sdk::{
-    byteorder::{ByteOrder, LittleEndian},
-    derive::{derive_evm_error, derive_keccak256, derive_keccak256_id},
-    entrypoint,
-    Address,
-    SharedAPI,
-    B256,
-    U256,
+use fluentbase_erc20::{
+    common::{
+        bytes_to_sig,
+        fixed_bytes_from_u256,
+        u256_from_bytes_slice_try,
+        u256_from_fixed_bytes,
+    },
+    consts::{
+        emit_approval_event,
+        emit_pause_event,
+        emit_transfer_event,
+        emit_unpause_event,
+        ERR_ALREADY_PAUSED,
+        ERR_ALREADY_UNPAUSED,
+        ERR_DECODE,
+        ERR_INSUFFICIENT_ALLOWANCE,
+        ERR_INVALID_META_NAME,
+        ERR_INVALID_META_SYMBOL,
+        ERR_INVALID_MINTER,
+        ERR_INVALID_PAUSER,
+        ERR_INVALID_RECIPIENT,
+        ERR_MALFORMED_INPUT,
+        ERR_MINTABLE_PLUGIN_NOT_ACTIVE,
+        ERR_OVERFLOW,
+        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE,
+        ERR_VALIDATION,
+        SIG_ALLOWANCE,
+        SIG_APPROVE,
+        SIG_BALANCE_OF,
+        SIG_DECIMALS,
+        SIG_MINT,
+        SIG_NAME,
+        SIG_PAUSE,
+        SIG_SYMBOL,
+        SIG_TOTAL_SUPPLY,
+        SIG_TRANSFER,
+        SIG_TRANSFER_FROM,
+        SIG_UNPAUSE,
+    },
+    storage::{
+        Allowance,
+        Balance,
+        Config,
+        Feature,
+        InitialSettings,
+        Settings,
+        ADDRESS_LEN_BYTES,
+        SIG_LEN_BYTES,
+        U256_LEN_BYTES,
+    },
 };
-
-pub fn deploy_entry(sdk: impl SharedAPI) {
-    sdk.input_size();
-}
-
-const ERR_MALFORMED_INPUT: u32 = derive_evm_error!("MalformedInput()");
-const ERR_INSUFFICIENT_BALANCE: u32 = derive_evm_error!("InsufficientBalance()");
-
-const SIG_SYMBOL: u32 = derive_keccak256_id!("symbol()");
-const SIG_NAME: u32 = derive_keccak256_id!("name()");
-const SIG_DECIMALS: u32 = derive_keccak256_id!("decimals()");
-const SIG_TOTAL_SUPPLY: u32 = derive_keccak256_id!("totalSupply()");
-const SIG_BALANCE_OF: u32 = derive_keccak256_id!("balanceOf(address)");
-const SIG_TRANSFER: u32 = derive_keccak256_id!("transfer(address,uint256)");
-const SIG_ALLOWANCE: u32 = derive_keccak256_id!("allowance(address)");
-const SIG_APPROVE: u32 = derive_keccak256_id!("approve(address,uint256)");
-const SIG_TRANSFER_FROM: u32 = derive_keccak256_id!("transferFrom(address,address,uint256)");
-
-const EVENT_TRANSFER: B256 = B256::new(derive_keccak256!("Transfer(address,address,uint256)"));
-const EVENT_APPROVAL: B256 = B256::new(derive_keccak256!("Approval(address,address,uint256)"));
+use fluentbase_sdk::{entrypoint, Address, ContextReader, SharedAPI, U256};
 
 fn symbol(mut sdk: impl SharedAPI, _input: &[u8]) {
-    sdk.write("Universal Token".as_bytes());
+    sdk.write(&Settings::symbol(&sdk));
 }
 fn name(mut sdk: impl SharedAPI, _input: &[u8]) {
-    sdk.write("UT".as_bytes());
+    sdk.write(&Settings::name(&sdk));
 }
 fn decimals(mut sdk: impl SharedAPI, _input: &[u8]) {
-    let output = U256::from(18).to_be_bytes::<32>();
+    let output = fixed_bytes_from_u256(&Settings::decimals_get(&sdk));
     sdk.write(&output);
 }
 
 fn transfer(mut sdk: impl SharedAPI, input: &[u8]) {
-    let Ok(recipient) = Address::try_from(&input[..20]) else {
+    let from = sdk.context().contract_caller();
+    const TO_OFFSET: usize = 0;
+    const AMOUNT_OFFSET: usize = TO_OFFSET + ADDRESS_LEN_BYTES;
+    let Ok(to) = Address::try_from(&input[TO_OFFSET..TO_OFFSET + ADDRESS_LEN_BYTES]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    let Some(amount) = U256::try_from_be_slice(&input[20..20 + 32]) else {
+    let Some(amount) =
+        u256_from_bytes_slice_try(&input[AMOUNT_OFFSET..AMOUNT_OFFSET + U256_LEN_BYTES])
+    else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    let mut from = Address::ZERO;
-    // TODO(dmitry123): "replace 321 constant"
-    sdk.read_context(from.as_mut_slice(), 321);
-    if !Balance::subtract(&mut sdk, from, amount) {
-        sdk.evm_exit(ERR_INSUFFICIENT_BALANCE);
-    }
-    Balance::add(&mut sdk, recipient, amount);
-    // sdk.emit_log(&[], &[]);
-    let result = U256::from(1).to_be_bytes::<32>();
+    Balance::send(&mut sdk, from, to, amount);
+    emit_transfer_event(&mut sdk, &from, &to, &amount);
+    let result = fixed_bytes_from_u256(&U256::from(1));
     sdk.write(&result);
+}
+
+fn transfer_from(mut sdk: impl SharedAPI, input: &[u8]) {
+    let spender = sdk.context().contract_caller();
+    const FROM_OFFSET: usize = 0;
+    const TO_OFFSET: usize = FROM_OFFSET + ADDRESS_LEN_BYTES;
+    const AMOUNT_OFFSET: usize = TO_OFFSET + ADDRESS_LEN_BYTES;
+    let Ok(to) = Address::try_from(&input[TO_OFFSET..TO_OFFSET + ADDRESS_LEN_BYTES]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Some(amount) =
+        u256_from_bytes_slice_try(&input[AMOUNT_OFFSET..AMOUNT_OFFSET + U256_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let from = {
+        let Ok(from) = Address::try_from(&input[FROM_OFFSET..FROM_OFFSET + ADDRESS_LEN_BYTES])
+        else {
+            sdk.evm_exit(ERR_MALFORMED_INPUT);
+        };
+        if !Allowance::subtract(&mut sdk, from, spender, amount) {
+            sdk.evm_exit(ERR_INSUFFICIENT_ALLOWANCE);
+        }
+        from
+    };
+    Balance::send(&mut sdk, from, to, amount);
+    emit_transfer_event(&mut sdk, &from, &to, &amount);
+    sdk.write(&fixed_bytes_from_u256(&U256::from(1)));
+}
+
+fn approve(mut sdk: impl SharedAPI, input: &[u8]) {
+    const OWNER_OFFSET: usize = 0;
+    const SPENDER_OFFSET: usize = OWNER_OFFSET + ADDRESS_LEN_BYTES;
+    const AMOUNT_OFFSET: usize = SPENDER_OFFSET + ADDRESS_LEN_BYTES;
+    let Ok(owner) = Address::try_from(&input[OWNER_OFFSET..OWNER_OFFSET + ADDRESS_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(spender) = Address::try_from(&input[SPENDER_OFFSET..SPENDER_OFFSET + ADDRESS_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Some(amount) =
+        u256_from_bytes_slice_try(&input[AMOUNT_OFFSET..AMOUNT_OFFSET + size_of::<U256>()])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    Allowance::update(&mut sdk, owner, spender, amount);
+    emit_approval_event(&mut sdk, &owner, &spender, &amount);
+    sdk.write(&fixed_bytes_from_u256(&U256::from(1)));
+}
+
+fn allow(mut sdk: impl SharedAPI, input: &[u8]) {
+    const OWNER_OFFSET: usize = 0;
+    const SPENDER_OFFSET: usize = OWNER_OFFSET + ADDRESS_LEN_BYTES;
+    let Ok(owner) = Address::try_from(&input[OWNER_OFFSET..OWNER_OFFSET + ADDRESS_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(spender) = Address::try_from(&input[SPENDER_OFFSET..SPENDER_OFFSET + ADDRESS_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let amount = Allowance::get_current(&mut sdk, owner, spender);
+    sdk.write(&fixed_bytes_from_u256(&amount));
+}
+
+fn total_supply(mut sdk: impl SharedAPI, _input: &[u8]) {
+    let result = Settings::total_supply_get(&sdk);
+    sdk.write(&fixed_bytes_from_u256(&result))
+}
+
+fn balance_of(mut sdk: impl SharedAPI, input: &[u8]) {
+    let Ok(owner) = Address::try_from(&input[..ADDRESS_LEN_BYTES]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let result = Balance::get_for(&sdk, owner);
+    sdk.write(&fixed_bytes_from_u256(&result))
+}
+
+fn mint(mut sdk: impl SharedAPI, input: &[u8]) {
+    let mut config = Config::new();
+    if !config.mintable_plugin_enabled(&mut sdk) {
+        sdk.evm_exit(ERR_MINTABLE_PLUGIN_NOT_ACTIVE);
+    }
+    let minter = sdk.context().contract_caller();
+    if minter != Settings::minter_get(&sdk) {
+        sdk.evm_exit(ERR_INVALID_MINTER);
+    }
+    if config.pausable_plugin_enabled(&mut sdk) && config.paused(&mut sdk) {
+        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
+    }
+    let Ok(to) = Address::try_from(&input[..ADDRESS_LEN_BYTES]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let zero_address = Address::ZERO;
+    if to == zero_address {
+        sdk.evm_exit(ERR_INVALID_RECIPIENT);
+    }
+    let Some(amount) =
+        u256_from_bytes_slice_try(&input[ADDRESS_LEN_BYTES..ADDRESS_LEN_BYTES + U256_LEN_BYTES])
+    else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let total_supply = Settings::total_supply_get(&sdk);
+    let (total_supply, overflow) = total_supply.overflowing_add(amount);
+    if overflow {
+        sdk.evm_exit(ERR_OVERFLOW);
+    }
+    Settings::total_supply_set(&mut sdk, total_supply);
+    Balance::add(&mut sdk, to, amount);
+    emit_transfer_event(&mut sdk, &zero_address, &to, &amount);
+    sdk.write(&fixed_bytes_from_u256(&U256::from(1)))
+}
+
+fn pause(mut sdk: impl SharedAPI, _input: &[u8]) {
+    let mut config = Config::new();
+    if !config.pausable_plugin_enabled(&mut sdk) {
+        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
+    }
+    let pauser = sdk.context().contract_caller();
+    if pauser != Settings::pauser_get(&sdk) {
+        sdk.evm_exit(ERR_INVALID_PAUSER);
+    }
+    if config.paused(&mut sdk) {
+        sdk.evm_exit(ERR_ALREADY_PAUSED);
+    }
+    config.pause(&mut sdk);
+    config.save_flags(&mut sdk);
+    emit_pause_event(&mut sdk, &pauser);
+    sdk.write(&fixed_bytes_from_u256(&U256::from(1)));
+}
+
+fn unpause(mut sdk: impl SharedAPI, _input: &[u8]) {
+    let mut config = Config::new();
+    if !config.pausable_plugin_enabled(&mut sdk) {
+        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
+    }
+    let pauser = sdk.context().contract_caller();
+    if pauser != Settings::pauser_get(&sdk) {
+        sdk.evm_exit(ERR_INVALID_PAUSER);
+    }
+    if !config.paused(&mut sdk) {
+        sdk.evm_exit(ERR_ALREADY_UNPAUSED);
+    }
+    config.unpause(&mut sdk);
+    config.save_flags(&mut sdk);
+    emit_unpause_event(&mut sdk, &pauser);
+    sdk.write(&fixed_bytes_from_u256(&U256::from(1)));
+}
+
+pub fn deploy_entry(mut sdk: impl SharedAPI) {
+    let input_size = sdk.input_size();
+    if input_size < SIG_LEN_BYTES as u32 {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    }
+    let (_sig, input) = sdk.input().split_at(SIG_LEN_BYTES);
+    let initial_settings = InitialSettings::try_decode_from_slice(&input);
+    let (initial_settings, _) = if let Ok(v) = initial_settings {
+        v
+    } else {
+        sdk.evm_exit(ERR_DECODE);
+    };
+    if !initial_settings.is_valid() {
+        sdk.evm_exit(ERR_VALIDATION);
+    }
+    let mut config = Config::new();
+    for feature in initial_settings.features() {
+        match feature {
+            Feature::Meta { name, symbol } => {
+                if !Settings::name_set(&mut sdk, name) {
+                    sdk.evm_exit(ERR_INVALID_META_NAME);
+                }
+                if !Settings::symbol_set(&mut sdk, symbol) {
+                    sdk.evm_exit(ERR_INVALID_META_SYMBOL);
+                }
+            }
+            Feature::InitialSupply {
+                amount,
+                owner,
+                decimals,
+            } => {
+                let amount = u256_from_fixed_bytes(&mut sdk, amount);
+                let owner = owner.into();
+                Settings::decimals_set(&mut sdk, U256::from(*decimals));
+                Settings::total_supply_set(&mut sdk, amount);
+                Balance::add(&mut sdk, owner, amount);
+            }
+            Feature::Mintable { minter } => {
+                config.enable_mintable_plugin(&mut sdk);
+                Settings::minter_set(&mut sdk, &Address::from(minter));
+            }
+            Feature::Pausable { pauser } => {
+                config.enable_pausable_plugin(&mut sdk);
+                Settings::pauser_set(&mut sdk, &Address::from(pauser));
+            }
+        }
+    }
+    config.save_flags(&mut sdk);
 }
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     let input_size = sdk.input_size();
-    if input_size < 4 {
-        sdk.evm_exit(ERR_INSUFFICIENT_BALANCE);
+    if input_size < SIG_LEN_BYTES as u32 {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
     }
-    let (sig, input) = sdk.input().split_at(4);
-    let signature = LittleEndian::read_u32(sig);
+    let (sig, input) = sdk.input().split_at(SIG_LEN_BYTES);
+    let signature = bytes_to_sig(sig);
     match signature {
         SIG_SYMBOL => symbol(sdk, input),
         SIG_NAME => name(sdk, input),
         SIG_TRANSFER => transfer(sdk, input),
+        SIG_TRANSFER_FROM => transfer_from(sdk, input),
+        SIG_APPROVE => approve(sdk, input),
         SIG_DECIMALS => decimals(sdk, input),
+        SIG_ALLOWANCE => allow(sdk, input),
+        SIG_TOTAL_SUPPLY => total_supply(sdk, input),
+        SIG_BALANCE_OF => balance_of(sdk, input),
+        SIG_MINT => mint(sdk, input),
+        SIG_PAUSE => pause(sdk, input),
+        SIG_UNPAUSE => unpause(sdk, input),
         _ => {
-            sdk.evm_exit(ERR_INSUFFICIENT_BALANCE);
+            sdk.evm_exit(ERR_MALFORMED_INPUT);
         }
     }
 }
 
 entrypoint!(main_entry, deploy_entry);
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}

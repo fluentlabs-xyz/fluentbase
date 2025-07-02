@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use tiny_keccak::keccakf;
 
 pub(crate) const STATE_SIZE: u32 = 25;
@@ -10,13 +10,16 @@ pub const STATE_NUM_WORDS: u32 = STATE_SIZE * 2;
 pub struct SyscallKeccak256Permute;
 
 impl SyscallKeccak256Permute {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let state_ptr: u32 = caller.stack_pop_as();
-        let state = caller.memory_read_fixed::<{ STATE_NUM_WORDS as usize }>(state_ptr as usize)?;
-
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let state_ptr = params[0].i32().unwrap() as u32;
+        let mut state = [0u8; STATE_NUM_WORDS as usize];
+        caller.memory_read(state_ptr as usize, &mut state)?;
         let result = Self::fn_impl(&state);
         caller.memory_write(state_ptr as usize, &result)?;
-
         Ok(())
     }
 

@@ -84,7 +84,7 @@ extern "C" {
         fuel16_ptr: *mut [i64; 2],
     ) -> i32;
 
-    /// Charges and refunds specified amount of fuel.
+    /// Charges and refunds a specified amount of fuel.
     /// Can be called only from trusted code because it can refund any amount of fuel.
     pub fn _charge_fuel_manually(fuel_consumed: u64, fuel_refunded: i64) -> u64;
 

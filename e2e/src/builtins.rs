@@ -7,10 +7,14 @@ use fluentbase_types::{
     COPY_WORD_FUEL_COST,
     KECCAK_BASE_FUEL_COST,
     KECCAK_WORD_FUEL_COST,
-    MINIMAL_BASE_FUEL_COST,
+    LOW_FUEL_COST,
     SECP256K1_RECOVER_BASE_FUEL_COST,
 };
-use revm::context::result::ExecutionResult;
+use revm::{
+    context::result::{ExecutionResult, HaltReason},
+    interpreter::gas::calculate_initial_tx_gas,
+    primitives::hardfork::SpecId,
+};
 
 const WAT_TEMPLATE: &str = r#"
     (module
@@ -41,19 +45,12 @@ const WAT_TEMPLATE: &str = r#"
     )
 "#;
 
-fn run_main(
-    main_function_wat: &str,
-    call_data_size: usize,
-    builtins_consume_fuel: bool,
-) -> ExecutionResult {
+fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult {
     let wat = WAT_TEMPLATE.replace("            {{MAIN_BODY}}", main_function_wat);
     let wasm = wat::parse_str(&wat).unwrap();
     let mut ctx = EvmTestingContext::default();
     let deployer: Address = Address::ZERO;
     let mut builder = TxBuilder::create(&mut ctx, deployer, wasm.into());
-    if builtins_consume_fuel {
-        builder = builder.disable_builtins_consume_fuel();
-    }
     let result = builder.exec();
     assert!(result.is_success(), "failed to deploy contract");
     let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, 0);
@@ -64,55 +61,73 @@ fn run_main(
         None,
         None,
     );
-    assert!(result.is_success());
+    println!("RESULT: {:?}", result);
     result
 }
 
 /// Calculates how much gas is consumed by the builtins
-fn measure_gas_used_by_builtins(wat: &str, call_data_size: usize) -> u64 {
+fn run_twice_and_find_gas_difference(wat: &str, call_data_size: usize) -> u64 {
     println!("Code: {}", wat);
     println!("-------------");
     println!("Running with builtins_consume_fuel=true");
-    let result1 = run_main(wat, call_data_size, true);
-    println!("RESULT: {:?}", result1);
-    println!("-------------");
-    println!("Running with builtins_consume_fuel=false");
-    let result2 = run_main(wat, call_data_size, false);
-    println!("RESULT: {:?}", result2);
-    println!("-------------");
-    assert!(result1.gas_used() >= result2.gas_used());
-    result1.gas_used() - result2.gas_used()
+    let result1 = run_main(wat, call_data_size);
+    assert!(result1.is_success());
+    let init_gas =
+        calculate_initial_tx_gas(SpecId::PRAGUE, &vec![0u8; call_data_size], false, 0, 0, 0);
+    result1.gas_used() - init_gas.initial_gas - 10 // 10 for 10 memory pages (1 page is 1024 fuel)
 }
 
 #[test]
-#[ignore]
 fn test_keccak_builtin() {
     let main = r#"
         i32.const 0        ;; data offset
-        i32.const 307200   ;; data length 300KiB
+        i32.const 123000   ;; data length
         i32.const 0        ;; output offset
         call $_keccak256
     "#;
-    let gas = measure_gas_used_by_builtins(main, 0);
-    let expected_fuel = KECCAK_BASE_FUEL_COST + KECCAK_WORD_FUEL_COST * ((307200 + 31) / 32);
-    assert_eq!(gas, expected_fuel / 1000);
+    let gas = run_twice_and_find_gas_difference(main, 0);
+    let expected_fuel = KECCAK_BASE_FUEL_COST + KECCAK_WORD_FUEL_COST * ((123000 + 31) / 32);
+    assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 
 #[test]
-#[ignore]
 fn test_write_builtin() {
     let main = r#"
         i32.const 0
-        i32.const 307200
+        i32.const 123000
         call $_write
     "#;
-    let gas = measure_gas_used_by_builtins(main, 0);
-    let expected_fuel = COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((307200 + 31) / 32);
-    assert_eq!(gas, expected_fuel / 1000);
+    let gas = run_twice_and_find_gas_difference(main, 0);
+    let expected_fuel = COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((123000 + 31) / 32);
+    assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 
 #[test]
-#[ignore]
+fn test_write_builtin_overflow() {
+    let main_without_overflow = r#"
+        i32.const 0
+        i32.const 100
+        call $_write
+    "#;
+    let main_with_overflow = r#" 
+        i32.const 0
+        i32.const 300000 
+        call $_write
+    "#; // excessively large data size argument
+    let result1 = run_main(main_without_overflow, 0);
+    let result2 = run_main(main_with_overflow, 0);
+
+    assert!(matches!(result1, ExecutionResult::Success { .. }));
+    assert!(matches!(
+        result2,
+        ExecutionResult::Halt {
+            reason: HaltReason::IntegerOverflow,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn test_read_builtin() {
     let main = r#"
         i64.const 30_000_000
@@ -122,75 +137,69 @@ fn test_read_builtin() {
         i32.const 800
         call $_read
     "#;
-    let gas = measure_gas_used_by_builtins(main, 1_000);
+    let gas = run_twice_and_find_gas_difference(main, 1_000) - 30_000;
     let expected_fuel =
         COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((800 + 31) / 32) + CHARGE_FUEL_BASE_COST;
-    assert_eq!(gas, expected_fuel / 1000);
+    assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 
 #[test]
-#[ignore]
 fn test_debug_log_builtin() {
     let main = r#"
         i32.const 0        ;; data_ptr
-        i32.const 307200   ;; len 300 KiB
+        i32.const 123000   ;; len 123KiB
         call $_debug_log
     "#;
-    let gas = measure_gas_used_by_builtins(main, 0);
-    let expected_fuel = COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((307200 + 31) / 32);
-    assert_eq!(gas, expected_fuel / 1000);
+    let gas = run_twice_and_find_gas_difference(main, 0);
+    let expected_fuel = COPY_BASE_FUEL_COST + COPY_WORD_FUEL_COST * ((123000 + 31) / 32);
+    assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 
 #[test]
-#[ignore]
 fn test_output_size_builtin() {
     let main = r#"
         call $_output_size
         drop
     "#;
-    let gas = measure_gas_used_by_builtins(main, 0);
-    let expected_fuel = MINIMAL_BASE_FUEL_COST;
-    assert_eq!(gas, expected_fuel / 1000);
+    let gas = run_twice_and_find_gas_difference(main, 0);
+    let expected_fuel = LOW_FUEL_COST;
+    assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 
 #[test]
-#[ignore]
 fn test_state_builtin() {
     let main = r#"
         call $_state
         drop
     "#;
-    let gas = measure_gas_used_by_builtins(main, 0);
-    let expected_fuel = MINIMAL_BASE_FUEL_COST;
-    assert_eq!(gas, expected_fuel / 1000);
+    let gas = run_twice_and_find_gas_difference(main, 0);
+    let expected_fuel = LOW_FUEL_COST;
+    assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 
 #[test]
-#[ignore]
 fn test_fuel_builtin() {
     let main = r#"
         call $_fuel
         drop
     "#;
-    let gas = measure_gas_used_by_builtins(main, 0);
-    let expected_fuel = MINIMAL_BASE_FUEL_COST;
-    assert_eq!(gas, expected_fuel / 1000);
+    let gas = run_twice_and_find_gas_difference(main, 0);
+    let expected_fuel = LOW_FUEL_COST;
+    assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 
 #[test]
-#[ignore]
 fn test_charge_fuel_builtin() {
     let main = r#"
         i64.const 0        ;; amount
         call $_charge_fuel
     "#;
-    let gas = measure_gas_used_by_builtins(main, 0);
-    let expected_fuel = MINIMAL_BASE_FUEL_COST;
-    assert_eq!(gas, expected_fuel / 1000);
+    let gas = run_twice_and_find_gas_difference(main, 0);
+    let expected_fuel = LOW_FUEL_COST;
+    assert_eq!(gas, expected_fuel as u64 / 1000);
 }
 
 #[test]
-#[ignore]
 fn test_secp256k1_recover_builtin() {
     let main = r#"
         i32.const 0        ;; digest_ptr
@@ -200,7 +209,17 @@ fn test_secp256k1_recover_builtin() {
         call $_secp256k1_recover
         drop
     "#;
-    let gas = measure_gas_used_by_builtins(main, 0);
+    let gas = run_twice_and_find_gas_difference(main, 0);
     let expected_fuel = SECP256K1_RECOVER_BASE_FUEL_COST;
-    assert_eq!(gas, expected_fuel / 1000);
+    assert_eq!(gas, expected_fuel as u64 / 1000);
+}
+
+#[test]
+fn test_exit_builtin() {
+    let main = r#"
+        i32.const 0        ;; output offset
+        call $_exit
+    "#;
+    let gas = run_twice_and_find_gas_difference(main, 0);
+    assert_eq!(gas, 0); // no gas consumed for exit binding
 }

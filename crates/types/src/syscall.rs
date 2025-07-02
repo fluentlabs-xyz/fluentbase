@@ -1,4 +1,5 @@
 use crate::{Bytes, ExitCode, B256};
+use alloc::string::String;
 use fluentbase_codec::Codec;
 
 #[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -79,7 +80,7 @@ impl SyscallResult<()> {
     }
 }
 
-impl<T> SyscallResult<T> {
+impl<T: Default> SyscallResult<T> {
     pub fn new<I: Into<ExitCode>>(
         data: T,
         fuel_consumed: u64,
@@ -91,6 +92,25 @@ impl<T> SyscallResult<T> {
             fuel_consumed,
             fuel_refunded,
             status: Into::<ExitCode>::into(status),
+        }
+    }
+    pub fn expect<I: Into<String>>(self, msg: I) -> Self {
+        if !self.status.is_ok() {
+            panic!("syscall failed with status {}: {}", self.status, msg.into());
+        }
+        self
+    }
+    pub fn unwrap(self) -> T {
+        if !self.status.is_ok() {
+            panic!("syscall failed with status ({})", self.status);
+        }
+        self.data
+    }
+    pub fn unwrap_or_default(self) -> T {
+        if self.status.is_ok() {
+            self.data
+        } else {
+            T::default()
         }
     }
 }
@@ -123,14 +143,10 @@ pub const SYSCALL_ID_SELF_BALANCE: B256 = B256::with_last_byte(0x0c);
 pub const SYSCALL_ID_CODE_SIZE: B256 = B256::with_last_byte(0x0d);
 pub const SYSCALL_ID_CODE_HASH: B256 = B256::with_last_byte(0x0e);
 pub const SYSCALL_ID_CODE_COPY: B256 = B256::with_last_byte(0x0f);
-
 pub const SYSCALL_ID_TRANSIENT_READ: B256 = B256::with_last_byte(0x11);
 pub const SYSCALL_ID_TRANSIENT_WRITE: B256 = B256::with_last_byte(0x12);
 
-// TODO(dmitry123): "rethink these syscalls"
-pub const SYSCALL_ID_WRITE_PREIMAGE: B256 = B256::with_last_byte(0x30);
-pub const SYSCALL_ID_PREIMAGE_COPY: B256 = B256::with_last_byte(0x31);
-pub const SYSCALL_ID_PREIMAGE_SIZE: B256 = B256::with_last_byte(0x32);
-
-// TODO(dmitry123): "rethink this syscall"
-pub const SYSCALL_ID_DELEGATED_STORAGE: B256 = B256::with_last_byte(0x33);
+pub const SYSCALL_ID_METADATA_WRITE: B256 = B256::with_last_byte(0x40);
+pub const SYSCALL_ID_METADATA_SIZE: B256 = B256::with_last_byte(0x41);
+pub const SYSCALL_ID_METADATA_CREATE: B256 = B256::with_last_byte(0x42);
+pub const SYSCALL_ID_METADATA_COPY: B256 = B256::with_last_byte(0x43);

@@ -1,8 +1,8 @@
 use crate::{
-    context::ContextReader,
     evm::{write_evm_exit_message, write_evm_panic_message},
     Address,
     Bytes,
+    ContextReader,
     ExitCode,
     SyscallResult,
     B256,
@@ -13,7 +13,27 @@ use crate::{
 pub type IsColdAccess = bool;
 pub type IsAccountEmpty = bool;
 
-pub trait SharedAPI {
+pub trait StorageAPI {
+    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
+    fn storage(&self, slot: &U256) -> SyscallResult<U256>;
+}
+
+pub trait MetadataAPI {
+    fn metadata_write(
+        &mut self,
+        address: &Address,
+        offset: u32,
+        metadata: Bytes,
+    ) -> SyscallResult<()>;
+    fn metadata_size(
+        &self,
+        address: &Address,
+    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)>;
+    fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()>;
+    fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
+}
+
+pub trait SharedAPI: StorageAPI + MetadataAPI {
     fn context(&self) -> impl ContextReader;
 
     fn keccak256(&self, data: &[u8]) -> B256;
@@ -53,18 +73,25 @@ pub trait SharedAPI {
 
     fn evm_exit(&mut self, exit_code: u32) -> ! {
         // write an EVM-compatible exit message (only if exit code is not zero)
-        write_evm_exit_message(exit_code, |slice| {
-            self.write(slice);
-        });
-        // exit with the exit code specified
-        self.exit(if exit_code != 0 {
-            ExitCode::Panic
+        if exit_code != 0 {
+            write_evm_exit_message(exit_code, |slice| {
+                self.write(slice);
+            });
+            self.native_exit(ExitCode::Panic);
         } else {
-            ExitCode::Ok
-        })
+            self.native_exit(ExitCode::Ok)
+        }
     }
 
-    fn exit(&self, exit_code: ExitCode) -> !;
+    fn native_exit(&self, exit_code: ExitCode) -> !;
+
+    fn exit(&self) -> ! {
+        self.native_exit(ExitCode::Ok)
+    }
+
+    fn panic(&self) -> ! {
+        self.native_exit(ExitCode::Panic)
+    }
 
     fn evm_panic(&mut self, panic_message: &str) -> ! {
         // write an EVM-compatible panic message
@@ -72,30 +99,10 @@ pub trait SharedAPI {
             self.write(slice);
         });
         // exit with panic exit code
-        self.exit(ExitCode::Panic)
+        self.native_exit(ExitCode::Panic)
     }
-
-    fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
-    fn storage(&self, slot: &U256) -> SyscallResult<U256>;
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;
-    fn delegated_storage(
-        &self,
-        address: &Address,
-        slot: &U256,
-    ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)>;
-
-    fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes>;
-    fn preimage_size(&self, hash: &B256) -> SyscallResult<u32>;
-
-    fn preimage(&self, hash: &B256) -> Bytes {
-        let result = self.preimage_copy(hash);
-        assert!(
-            SyscallResult::is_ok(result.status),
-            "sdk: failed reading preimage"
-        );
-        result.data
-    }
 
     fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()>;
 
@@ -109,7 +116,6 @@ pub trait SharedAPI {
         code_offset: u64,
         code_length: u64,
     ) -> SyscallResult<Bytes>;
-    fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256>;
     fn create(
         &mut self,
         salt: Option<U256>,

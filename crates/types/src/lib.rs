@@ -12,9 +12,7 @@ mod bytecode_type;
 mod context;
 pub mod evm;
 mod exit_code;
-mod fuel_procedures;
 pub mod genesis;
-mod linker;
 pub mod native_api;
 mod preimage;
 mod rwasm;
@@ -28,10 +26,8 @@ pub use bytecode_type::*;
 pub use byteorder;
 pub use context::*;
 pub use exit_code::*;
-pub use fuel_procedures::*;
 pub use genesis::*;
 pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
-pub use linker::*;
 pub use preimage::*;
 pub use rwasm::*;
 pub use sdk::*;
@@ -49,6 +45,8 @@ pub const NATIVE_TRANSFER_KECCAK: B256 =
     b256!("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
 pub const NATIVE_TRANSFER_ADDRESS: Address = address!("0000000000000000000000000000000000000000");
 
+pub const SYSTEM_ADDRESS: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
+
 pub const STATE_MAIN: u32 = 0;
 pub const STATE_DEPLOY: u32 = 1;
 
@@ -65,15 +63,11 @@ pub const FUEL_DENOM_RATE: u64 = 1000;
 /// A max rWasm call stack limit
 pub const CALL_STACK_LIMIT: u32 = 1024;
 
-/// EVM code hash slot: `hash=keccak256("_evm_code_hash")`
-pub const PROTECTED_STORAGE_SLOT_0: B256 =
-    b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113b");
-pub const PROTECTED_STORAGE_SLOT_1: B256 =
-    b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113c");
-
-pub fn is_protected_storage_slot<I: Into<B256>>(slot: I) -> bool {
-    let slot: B256 = slot.into();
-    slot == PROTECTED_STORAGE_SLOT_0 || slot == PROTECTED_STORAGE_SLOT_1
+pub fn is_delegated_runtime_address(address: &Address) -> bool {
+    address == &PRECOMPILE_EVM_RUNTIME
+        || address == &PRECOMPILE_SVM_RUNTIME
+        || address == &PRECOMPILE_ERC20_RUNTIME
+        || address == &PRECOMPILE_WASM_RUNTIME
 }
 
 /// rWASM max code size
@@ -81,11 +75,16 @@ pub fn is_protected_storage_slot<I: Into<B256>>(slot: I) -> bool {
 /// This value is temporary for testing purposes, requires recalculation.
 /// The limit is equal to 2Mb.
 pub const WASM_MAX_CODE_SIZE: usize = 0x200000;
+pub const SVM_MAX_CODE_SIZE: usize = 0x200000;
 
 /// WebAssembly magic bytes
 ///
 /// These values are equal to \0ASM
 pub const WASM_MAGIC_BYTES: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
+/// Solana magic bytes
+pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
+/// ERC20 magic bytes: as char codes for "ERC" and the number 0x20
+pub const ERC20_MAGIC_BYTES: [u8; 4] = [0x45, 0x52, 0x43, 0x20];
 
 /// EIP-170: Contract code size limit
 ///

@@ -1,21 +1,22 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 
 pub struct SyscallExit;
 
 impl SyscallExit {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let exit_code: i32 = caller.stack_pop_as();
-        let exit_code = Self::fn_impl(caller.context_mut(), exit_code).unwrap_err();
-        Err(RwasmError::ExecutionHalted(exit_code.into_i32()))
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let exit_code = params[0].i32().unwrap();
+        caller.context_mut(|ctx| Self::fn_impl(ctx, ExitCode::from(exit_code)).unwrap_err());
+        Err(TrapCode::ExecutionHalted)
     }
 
-    pub fn fn_impl(ctx: &mut RuntimeContext, exit_code: i32) -> Result<(), ExitCode> {
-        if exit_code > 0 {
-            return Err(ExitCode::NonNegativeExitCode);
-        }
-        ctx.execution_result.exit_code = exit_code;
+    pub fn fn_impl(ctx: &mut RuntimeContext, exit_code: ExitCode) -> Result<(), ExitCode> {
+        ctx.execution_result.exit_code = exit_code.into_i32();
         Err(ExitCode::Ok)
     }
 }

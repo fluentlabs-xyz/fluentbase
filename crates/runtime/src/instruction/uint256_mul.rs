@@ -1,20 +1,31 @@
 use crate::RuntimeContext;
 use num::{BigUint, One, Zero};
-use rwasm::{Caller, RwasmError};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::edwards::WORDS_FIELD_ELEMENT;
 
 pub struct SyscallUint256Mul;
 
 impl SyscallUint256Mul {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let [x_ptr, y_ptr, m_ptr] = caller.stack_pop_n();
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (x_ptr, y_ptr, m_ptr) = (
+            params[0].i32().unwrap() as usize,
+            params[1].i32().unwrap() as usize,
+            params[2].i32().unwrap() as usize,
+        );
 
-        let x = caller.memory_read_fixed::<WORDS_FIELD_ELEMENT>(x_ptr.as_usize())?;
-        let y = caller.memory_read_fixed::<WORDS_FIELD_ELEMENT>(y_ptr.as_usize())?;
-        let m = caller.memory_read_fixed::<WORDS_FIELD_ELEMENT>(m_ptr.as_usize())?;
+        let mut x = [0u8; WORDS_FIELD_ELEMENT];
+        caller.memory_read(x_ptr, &mut x)?;
+        let mut y = [0u8; WORDS_FIELD_ELEMENT];
+        caller.memory_read(y_ptr, &mut y)?;
+        let mut m = [0u8; WORDS_FIELD_ELEMENT];
+        caller.memory_read(m_ptr, &mut m)?;
 
         let result_vec = Self::fn_impl(&x, &y, &m);
-        caller.memory_write(x_ptr.as_usize(), &result_vec)
+        caller.memory_write(x_ptr, &result_vec)
     }
 
     pub fn fn_impl(x: &[u8], y: &[u8], m: &[u8]) -> Vec<u8> {

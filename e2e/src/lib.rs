@@ -15,6 +15,10 @@ mod constructor;
 #[cfg(test)]
 mod deployer;
 #[cfg(test)]
+mod erc20;
+#[cfg(test)]
+mod eip2935;
+#[cfg(test)]
 mod evm;
 #[cfg(test)]
 mod gas;
@@ -26,8 +30,12 @@ mod nitro;
 mod router;
 #[cfg(test)]
 mod stateless;
+#[cfg(all(test, feature = "enable-svm"))]
+pub mod svm_loader_v4;
 #[cfg(test)]
 mod wasm;
+#[cfg(test)]
+mod update_account;
 
 pub const EXAMPLE_ABI_SOLIDITY: &[u8] = fluentbase_examples_abi_solidity::WASM_BYTECODE;
 pub const EXAMPLE_CHECKMATE: &[u8] = fluentbase_examples_checkmate::WASM_BYTECODE;

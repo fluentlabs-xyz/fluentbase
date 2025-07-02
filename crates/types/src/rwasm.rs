@@ -1,56 +1,43 @@
-use crate::{create_import_linker, sys_func_idx::SysFuncIdx, Bytes, STATE_DEPLOY, STATE_MAIN};
-use alloc::{boxed::Box, string::ToString, vec};
-use rwasm::legacy::{
-    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
-    rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
-    Config,
-    Error,
-};
+use crate::{sys_func_idx::SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
+use alloc::{boxed::Box, vec::Vec};
+use rwasm::{CompilationConfig, CompilationError, Opcode, RwasmModule, StateRouterConfig};
+
+mod block_fuel;
+mod import_linker;
+
+pub use block_fuel::*;
+pub use import_linker::*;
 
 pub struct RwasmCompilationResult {
-    pub rwasm_bytecode: Bytes,
-    pub constructor_params: Bytes,
+    pub rwasm_module: RwasmModule,
+    pub constructor_params: Vec<u8>,
 }
 
-pub fn default_compilation_config() -> Config {
-    let mut config = RwasmModule::default_config(None);
-    config.rwasm_config(RwasmConfig {
-        state_router: Some(StateRouterConfig {
-            states: Box::new([
-                ("deploy".to_string(), STATE_DEPLOY),
-                ("main".to_string(), STATE_MAIN),
-            ]),
-            opcode: Instruction::Call(SysFuncIdx::STATE.into()),
-        }),
-        entrypoint_name: None,
-        import_linker: Some(create_import_linker()),
-        wrap_import_functions: true,
-        translate_drop_keep: false,
-        allow_malformed_entrypoint_func_type: false,
-        use_32bit_mode: false,
-        builtins_consume_fuel: true,
-    });
-    config
+pub fn default_compilation_config() -> CompilationConfig {
+    let linker = create_import_linker();
+    CompilationConfig::default()
+        .with_state_router(StateRouterConfig {
+            states: Box::new([("deploy".into(), STATE_DEPLOY), ("main".into(), STATE_MAIN)]),
+            opcode: Some(Opcode::Call(SysFuncIdx::STATE as u32)),
+        })
+        .with_import_linker(linker)
+        .with_allow_malformed_entrypoint_func_type(false)
+        .with_builtins_consume_fuel(true)
 }
 
 pub fn compile_wasm_to_rwasm_with_config(
     wasm_binary: &[u8],
-    config: Config,
-) -> Result<RwasmCompilationResult, Error> {
-    let (rwasm_module, constructor_params) =
-        RwasmModule::compile_and_retrieve_input(wasm_binary, &config)?;
-    let length = rwasm_module.encoded_length();
-    let mut rwasm_bytecode = vec![0u8; length];
-    let mut binary_format_writer = BinaryFormatWriter::new(&mut rwasm_bytecode);
-    rwasm_module
-        .write_binary(&mut binary_format_writer)
-        .expect("failed to encode rwasm bytecode");
+    config: CompilationConfig,
+) -> Result<RwasmCompilationResult, CompilationError> {
+    let (rwasm_module, constructor_params) = RwasmModule::compile(config, wasm_binary)?;
     Ok(RwasmCompilationResult {
-        rwasm_bytecode: rwasm_bytecode.into(),
+        rwasm_module,
         constructor_params: constructor_params.into(),
     })
 }
 
-pub fn compile_wasm_to_rwasm(wasm_binary: &[u8]) -> Result<RwasmCompilationResult, Error> {
+pub fn compile_wasm_to_rwasm(
+    wasm_binary: &[u8],
+) -> Result<RwasmCompilationResult, CompilationError> {
     compile_wasm_to_rwasm_with_config(wasm_binary, default_compilation_config())
 }

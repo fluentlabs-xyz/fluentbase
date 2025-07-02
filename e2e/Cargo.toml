@@ -16,8 +16,8 @@ fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
 fluentbase-sdk-testing = { workspace = true }
 fluentbase-types = { workspace = true }
-
-fluentbase-contracts-nitro = { path = "../contracts/nitro" }
+fluentbase-svm = { workspace = true, default-features = false }
+fluentbase-erc20 = { workspace = true }
 
 fluentbase-examples-abi-solidity = { path = "../examples/abi-solidity" }
 fluentbase-examples-checkmate = { path = "../examples/checkmate" }
@@ -43,9 +43,21 @@ hex-literal = { workspace = true }
 hex = { workspace = true }
 alloy-sol-types = { workspace = true }
 wat = { version = "1.223.0" }
+paste = { workspace = true }
+rand = { version = "0.9.1" }
 
 [features]
-default = ["std", "debug-print"]
+default = [
+    "std",
+    "wasmtime",
+    #    "debug-print",
+    #    "enable-svm",
+]
+enable-svm = [
+    "fluentbase-runtime/enable-svm",
+    "fluentbase-genesis/enable-svm",
+    "fluentbase-sdk-testing/enable-svm",
+]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
@@ -58,4 +70,10 @@ debug-print = [
     "fluentbase-runtime/debug-print",
     "revm/debug-print",
     "rwasm-revm/debug-print",
+    "fluentbase-svm/debug-print",
+    "rwasm/debug-print",
+]
+wasmtime = [
+    "fluentbase-runtime/wasmtime",
+    "rwasm-revm/wasmtime",
 ]

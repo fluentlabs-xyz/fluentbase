@@ -3,29 +3,23 @@ extern crate test;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{address, Address, U256};
 use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
+use fluentbase_types::PRECOMPILE_NITRO_VERIFIER;
 use revm::primitives::hardfork::SpecId;
 use std::time::Instant;
 
-#[ignore] // TODO(khasan) nitro has floats for some reason, investigate why and how to remove them
 #[test]
-fn test_nitro_verifier_wasm_version() {
+fn test_nitro_verifier_precompiled_version() {
     let caller = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    let bytecode = fluentbase_contracts_nitro::BUILD_OUTPUT
-        .wasm_bytecode
-        .to_vec();
     let mut ctx = EvmTestingContext::default();
     ctx.add_balance(caller, U256::from(500_000_000_000u128));
-    let address = ctx.deploy_evm_tx(caller, bytecode.into());
-
     let start = Instant::now();
     let mut total_gas = 0;
-
     let attestation_doc: Vec<u8> = hex::decode(include_bytes!(
         "../../contracts/nitro/attestation-example.hex"
     ))
     .unwrap()
     .into();
-    let result = TxBuilder::call(&mut ctx, caller, address, None)
+    let result = TxBuilder::call(&mut ctx, caller, PRECOMPILE_NITRO_VERIFIER, None)
         .input(attestation_doc.into())
         .gas_limit(1_000_000_000)
         .exec();
@@ -40,7 +34,6 @@ fn test_nitro_verifier_wasm_version() {
     );
 }
 
-#[ignore] // slow because it runs in the interpreter by default (wasmtime is not enabled by default)
 #[test]
 fn test_nitro_verifier_solidity_version() {
     let mut ctx = EvmTestingContext::default();

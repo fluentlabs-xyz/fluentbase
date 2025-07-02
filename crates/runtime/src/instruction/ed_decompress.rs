@@ -1,6 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::{
     curve25519_dalek::CompressedEdwardsY,
     edwards::{ed25519::decompress, EdwardsParameters, WORDS_FIELD_ELEMENT},
@@ -21,19 +21,24 @@ impl<E: EdwardsParameters> SyscallEdwardsDecompress<E> {
     }
 
     #[allow(clippy::many_single_char_names)]
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let (slice_ptr, sign) = caller.stack_pop2();
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (slice_ptr, sign) = (
+            params[0].i32().unwrap() as usize,
+            params[1].i32().unwrap() as u32,
+        );
         // Read the Y bytes from memory
-        let y_bytes = caller
-            .memory_read_fixed::<{ WORDS_FIELD_ELEMENT * 4 }>(
-                slice_ptr.as_usize() + COMPRESSED_POINT_BYTES,
-            )?
-            .try_into()
-            .unwrap();
-        let result_vec = Self::fn_impl(y_bytes, sign.as_u32())
-            .map_err(|err| RwasmError::ExecutionHalted(err.into_i32()))?;
+        let mut y_bytes = [0u8; WORDS_FIELD_ELEMENT * 4];
+        caller.memory_read(slice_ptr + COMPRESSED_POINT_BYTES, &mut y_bytes)?;
+        let result_vec = Self::fn_impl(y_bytes, sign).map_err(|err| {
+            caller.context_mut(|ctx| ctx.execution_result.exit_code = err.into());
+            TrapCode::ExecutionHalted
+        })?;
         // Write the decompressed X back to memory
-        caller.memory_write(slice_ptr.as_usize(), &result_vec)?;
+        caller.memory_write(slice_ptr, &result_vec)?;
         Ok(())
     }
 

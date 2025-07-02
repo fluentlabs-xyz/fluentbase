@@ -1,0 +1,64 @@
+name: Cleanup Old Docker Images
+
+on:
+   schedule:
+       - cron: "0 0 * * 0"
+   workflow_dispatch:
+       inputs:
+           min_versions_to_keep:
+               description: "Minimum versions to keep"
+               required: false
+               default: "20"
+               type: choice
+               options:
+                   - "10"
+                   - "20"
+                   - "30"
+                   - "50"
+           dry_run:
+               description: "Dry run (only show what would be deleted)"
+               required: false
+               default: false
+               type: boolean
+
+env:
+   PACKAGE_NAME: fluentbase-build
+
+jobs:
+   cleanup:
+       runs-on: ubuntu-amd64-8core
+       permissions:
+           packages: write
+
+       steps:
+           - name: Delete old package versions
+             uses: actions/delete-package-versions@v5
+             with:
+                 package-name: ${{ env.PACKAGE_NAME }}
+                 package-type: "container"
+                 min-versions-to-keep: ${{ github.event.inputs.min_versions_to_keep || '20' }}
+                 delete-only-untagged-versions: "false"
+                 ignore-versions: '^v[0-9]+\.[0-9]+\.[0-9]+.*|latest|devel$'
+                 token: ${{ secrets.GITHUB_TOKEN }}
+
+           - name: Delete old untagged versions
+             uses: actions/delete-package-versions@v5
+             with:
+                 package-name: ${{ env.PACKAGE_NAME }}
+                 package-type: "container"
+                 min-versions-to-keep: 5
+                 delete-only-untagged-versions: "true"
+                 token: ${{ secrets.GITHUB_TOKEN }}
+
+           - name: Print cleanup summary
+             run: |
+                 echo "### Docker Cleanup Completed 🧹" >> $GITHUB_STEP_SUMMARY
+                 echo "" >> $GITHUB_STEP_SUMMARY
+                 echo "**Package:** \`${{ env.PACKAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+                 echo "**Min Versions Kept:** ${{ github.event.inputs.min_versions_to_keep || '20' }}" >> $GITHUB_STEP_SUMMARY
+                 echo "" >> $GITHUB_STEP_SUMMARY
+                 echo "**Cleanup Strategy:**" >> $GITHUB_STEP_SUMMARY
+                 echo "- Kept minimum ${{ github.event.inputs.min_versions_to_keep || '20' }} versions" >> $GITHUB_STEP_SUMMARY
+                 echo "- Preserved all release tags (v*)" >> $GITHUB_STEP_SUMMARY
+                 echo "- Preserved latest and devel tags" >> $GITHUB_STEP_SUMMARY
+                 echo "- Cleaned up old untagged versions (kept minimum 5)" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,43 @@
+[package]
+name = "fluentbase-sdk-testing"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+fluentbase-codec = { workspace = true }
+fluentbase-genesis = { workspace = true }
+fluentbase-runtime = { workspace = true, features = ["std"] }
+fluentbase-sdk = { workspace = true }
+
+hashbrown = { workspace = true }
+revm = { workspace = true }
+rwasm-revm = { workspace = true }
+rwasm = { workspace = true }
+hex = { workspace = true }
+
+[features]
+default = ["std"]
+enable-svm = [
+    "fluentbase-runtime/enable-svm",
+]
+std = [
+    "fluentbase-codec/std",
+    "fluentbase-genesis/std",
+    "fluentbase-runtime/std",
+    "fluentbase-sdk/std",
+    "rwasm/std",
+    "revm/std",
+    "rwasm-revm/std",
+]
+debug-print = [
+    "fluentbase-sdk/debug-print",
+    "fluentbase-runtime/debug-print",
+    "revm/debug-print",
+    "rwasm-revm/debug-print",
+]

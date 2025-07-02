@@ -30,9 +30,12 @@ fluentbase-contracts-multicall = { path = "../../contracts/multicall" }
 fluentbase-contracts-nitro = { path = "../../contracts/nitro" }
 fluentbase-contracts-oauth2 = { path = "../../contracts/oauth2" }
 fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160" }
+fluentbase-contracts-wasm = { path = "../../contracts/wasm" }
 fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1" }
 fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
 fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
+fluentbase-contracts-svm = { path = "../../contracts/svm" }
+fluentbase-contracts-eip2935 = { path = "../../contracts/eip2935" }
 
 [build-dependencies]
 fluentbase-types = { workspace = true }
@@ -54,12 +57,19 @@ fluentbase-contracts-multicall = { path = "../../contracts/multicall" }
 fluentbase-contracts-nitro = { path = "../../contracts/nitro" }
 fluentbase-contracts-oauth2 = { path = "../../contracts/oauth2" }
 fluentbase-contracts-ripemd160 = { path = "../../contracts/ripemd160" }
+fluentbase-contracts-wasm = { path = "../../contracts/wasm" }
 fluentbase-contracts-secp256r1 = { path = "../../contracts/secp256r1" }
 fluentbase-contracts-sha256 = { path = "../../contracts/sha256" }
 fluentbase-contracts-webauthn = { path = "../../contracts/webauthn" }
+fluentbase-contracts-svm = { path = "../../contracts/svm" }
+fluentbase-contracts-eip2935 = { path = "../../contracts/eip2935" }
 
 [features]
-default = ["std"]
+default = [
+    "std",
+    #    "enable-svm"
+]
+enable-svm = []
 wasmtime = []
 std = [
     "fluentbase-types/std",

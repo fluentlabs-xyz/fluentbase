@@ -73,15 +73,15 @@ impl Gas {
     #[inline]
     #[must_use = "prefer using `gas!` instead to return an out-of-gas error on failure"]
     pub fn record_cost(&mut self, cost: u64) -> bool {
-        // #[cfg(target_arch = "wasm32")]
-        // unsafe {
-        //     let message = alloc::format!("record cost: {}, remaining={}", cost, self.remaining);
-        //     #[link(wasm_import_module = "fluentbase_v1preview")]
-        //     extern "C" {
-        //         fn _debug_log(msg_ptr: *const u8, msg_len: u32);
-        //     }
-        //     _debug_log(message.as_ptr(), message.len() as u32);
-        // }
+        #[cfg(target_arch = "wasm32")]
+        unsafe {
+            let message = alloc::format!("record cost: {}, remaining={}", cost, self.remaining);
+            #[link(wasm_import_module = "fluentbase_v1preview")]
+            extern "C" {
+                fn _debug_log(msg_ptr: *const u8, msg_len: u32);
+            }
+            _debug_log(message.as_ptr(), message.len() as u32);
+        }
         let (remaining, overflow) = self.remaining().overflowing_sub(cost);
         let success = !overflow;
         if success {

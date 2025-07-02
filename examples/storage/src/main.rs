@@ -5,7 +5,6 @@ use fluentbase_sdk::{
     entrypoint,
     Address,
     Bytes,
-    ExitCode,
     FixedBytes,
     SharedAPI,
     I256,
@@ -41,7 +40,7 @@ solidity_storage! {
 }
 
 pub fn main_entry(sdk: impl SharedAPI) {
-    sdk.exit(ExitCode::Ok);
+    sdk.exit();
 }
 
 entrypoint!(main_entry);

@@ -1,6 +1,6 @@
 use crate::{instruction::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use rwasm::{Caller, RwasmError};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::{edwards::EdwardsParameters, params::NumWords, AffinePoint, EllipticCurve};
 use std::marker::PhantomData;
 
@@ -18,13 +18,22 @@ impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
 }
 
 impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
-    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>) -> Result<(), RwasmError> {
-        let (p_ptr, q_ptr) = caller.stack_pop2_as::<u32>();
+    pub fn fn_handler(
+        caller: &mut TypedCaller<RuntimeContext>,
+        params: &[Value],
+        _result: &mut [Value],
+    ) -> Result<(), TrapCode> {
+        let (p_ptr, q_ptr) = (
+            params[0].i32().unwrap() as u32,
+            params[1].i32().unwrap() as u32,
+        );
 
         let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;
 
-        let p = caller.memory_read_vec(p_ptr as usize, num_words * 4)?;
-        let q = caller.memory_read_vec(q_ptr as usize, num_words * 4)?;
+        let mut p = vec![0; num_words * 4];
+        caller.memory_read(p_ptr as usize, &mut p)?;
+        let mut q = vec![0; num_words * 4];
+        caller.memory_read(q_ptr as usize, &mut q)?;
 
         let result_vec = Self::fn_impl(&p, &q);
 

@@ -6,14 +6,17 @@ members = [
     "revm/crates/*",
     "examples/*",
     "e2e",
+    "bins/cli"
 ]
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
+    "examples/svm",
 ]
 resolver = "2"
 
 [workspace.package]
+version = "0.2.1-dev"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
@@ -35,43 +38,127 @@ fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
-fluentbase-sdk-testing = { path = "./crates/sdk-testing" }
+fluentbase-sdk-testing = { path = "crates/testing" }
 fluentbase-types = { path = "./crates/types", default-features = false }
+fluentbase-svm = { path = "./crates/svm", default-features = false }
+fluentbase-erc20 = { path = "./crates/erc20", default-features = false }
+
+solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-instruction = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-account-info = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-clock = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-epoch-schedule = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-rent = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-sanitize = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-short-vec = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-hash = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-slot-hashes = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-fee-calculator = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-transaction-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-sysvar-id = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-sdk-macro = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-serialize-utils = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-last-restart-slot = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-slot-history = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-sha256-hasher = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-decode-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-program-entrypoint = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-feature-set = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-program-memory = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-stable-layout = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-precompile-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-native-token = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+#solana-pubkey = { path = "../agave/sdk/pubkey", default-features = false }
+#solana-instruction = { path = "../agave/sdk/instruction", default-features = false }
+#solana-account-info = { path = "../agave/sdk/account-info", default-features = false }
+#solana-clock = { path = "../agave/sdk/clock", default-features = false }
+#solana-epoch-schedule = { path = "../agave/sdk/epoch-schedule", default-features = false }
+#solana-rent = { path = "../agave/sdk/rent", default-features = false }
+#solana-sanitize = { path = "../agave/sdk/sanitize", default-features = false }
+#solana-short-vec = { path = "../agave/short-vec", default-features = false }
+#solana-hash = { path = "../agave/sdk/hash", default-features = false }
+#solana-slot-hashes = { path = "../agave/sdk/slot-hashes", default-features = false }
+#solana-fee-calculator = { path = "../agave/sdk/fee-calculator", default-features = false }
+#solana-program-error = { path = "../agave/sdk/program-error", default-features = false }
+#solana-transaction-error = { path = "../agave/sdk/transaction-error", default-features = false }
+#solana-sysvar-id = { path = "../agave/sdk/sysvar-id", default-features = false }
+#solana-sdk-macro = { path = "../agave/sdk/macro", default-features = false }
+#solana-serialize-utils = { path = "../agave/sdk/serialize-utils", default-features = false }
+#solana-last-restart-slot = { path = "../agave/sdk/last-restart-slot", default-features = false }
+#solana-slot-history = { path = "../agave/sdk/slot-history", default-features = false }
+#solana-sha256-hasher = { path = "../agave/sdk/sha256-hasher", default-features = false }
+#solana-decode-error = { path = "../agave/sdk/decode-error", default-features = false }
+#solana-program-entrypoint = { path = "../agave/sdk/program-entrypoint", default-features = false }
+#solana-feature-set = { path = "../agave/sdk/feature-set", default-features = false }
+#solana-program-memory = { path = "../agave/sdk/program-memory", default-features = false }
+#solana-stable-layout = { path = "../agave/sdk/stable-layout", default-features = false }
+#solana-bincode = { path = "../agave/sdk/bincode", default-features = false }
+#solana-precompile-error = { path = "../agave/sdk/precompile-error", default-features = false }
+#solana-native-token = { path = "../agave/sdk/native-token", default-features = false }
+#solana-atomic-u64 = { path = "../agave/sdk/atomic-u64", default-features = false }
+
+solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
+#solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.1.0-dev", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.2.0-dev", default-features = false }
+#rwasm = { path = "../rwasm", default-features = false }
+
+# alloy
+alloy-primitives = { version = "1.2.0", default-features = false, features = ["sha3-keccak"] }
+alloy-rlp = { version = "0.3.12", default-features = false }
+alloy-sol-types = { version = "1.2.0", default-features = false }
+alloy-consensus = { version = "1.0.12", default-features = false }
+alloy-eips = { version = "1.0.12", default-features = false }
+alloy-genesis = { version = "1.0.11", default-features = false }
+alloy-serde = { version = "1.0.12", default-features = false }
+alloy-provider = { version = "1.0.11", features = ["reqwest"], default-features = false }
+alloy-signer = { version = "1.0.11", default-features = false }
+alloy-signer-local = { version = "1.0.11", default-features = false }
+alloy-transport = { version = "1.0.11" }
 
 # misc
+scopeguard = { version = "1.2.0", default-features = false }
+bytemuck = { version = "1.19.0", default-features = false }
+bytemuck_derive = { version = ">=1.8.0, <1.9.0", default-features = false }
+blake3 = { version = "1.5.4", default-features = false }
+base64 = { version = "0.22.1", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
+keccak-hash = { version = "0.11.0", default-features = false }
+itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
 
-alloy-primitives = { version = "1.1.0", default-features = false, features = ["sha3-keccak"] }
-alloy-rlp = { version = "0.3.10", default-features = false }
-alloy-sol-types = { version = "1.1.0", default-features = false }
-alloy-consensus = { version = "1.0.5", default-features = false }
-alloy-eips = { version = "1.0.5", default-features = false }
-alloy-genesis = { version = "1.0.5", default-features = false }
-alloy-provider = { version = "1.0.5", features = ["reqwest"], default-features = false }
-alloy-signer = { version = "1.0.5", default-features = false }
-alloy-signer-local = { version = "1.0.5", default-features = false }
-alloy-transport = { version = "1.0.5" }
+bincode_v1_3_3 = { package = "bincode", git = "https://github.com/fluentlabs-xyz/bincode", tag = "v1.3.3" }
+num-derive = { version = "0.4" }
+num-traits = { version = "0.2", features = ["i128"], default-features = false }
 
 hashbrown = { version = "0.15.0", default-features = false, features = ["default-hasher", "inline-more"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false }
+serde_bytes = { version = "0.11.15", default-features = false }
+spin = { version = "0.10.0", default-features = false }
+static_assertions = { version = "1.1.0", default-features = false }
+memoffset = { version = "0.9.1", default-features = false }
+serial_test = { version = "3.2.0", default-features = false }
+test-case = { version = "3.3.1", default-features = false }
 paste = { version = "1.0", default-features = false }
 auto_impl = { version = "1.2", default-features = false }
 bytes = { version = "1.10.1", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 hex-literal = { version = "1.0.0" }
 strum_macros = { version = "0.27.1" }
-lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
+lazy_static = { version = "1.5.0", default-features = false, features = ["spin_no_std"] }
 anyhow = { version = "1.0.86", default-features = false }
 syn = "2.0"
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
-wasmtime = { version = "31.0.0" }
-
+wasmtime = { version = "33.0.0" }
+convert_case = "0.8.0"
+proc-macro2 = { version = "1.0", default-features = false }
+quote = { version = "1.0" }
 # revm
 revm = { path = "revm/crates/revm", default-features = false, features = ["secp256r1"] }
 primitives = { path = "revm/crates/primitives", package = "revm-primitives", default-features = false }
@@ -122,7 +209,7 @@ criterion = { package = "codspeed-criterion-compat", version = "2.7" }
 bitflags = { version = "2.6.0", default-features = false }
 cfg-if = { version = "1.0", default-features = false }
 derive-where = { version = "1.2.7", default-features = false }
-once_cell = { version = "1.19", default-features = false }
+once_cell = { version = "1.19", default-features = false, features = ["alloc"] }
 rand = "0.8"
 tokio = "1.44"
 either = { version = "1.15.0", default-features = false }
@@ -166,6 +253,7 @@ codegen-units = 1
 
 [profile.dev.build-override]
 debug = false # disable debug symbols for build.rs to avoid 200+MB build-script binaries
+opt-level = 3
 
 # Use the `--profile profiling` flag to show symbols in release mode.
 # e.g. `cargo build --profile profiling`
