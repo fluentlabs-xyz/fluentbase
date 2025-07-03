@@ -13,7 +13,6 @@ categories.workspace = true
 # fluentbase
 fluentbase-codec = { workspace = true }
 fluentbase-types = { workspace = true }
-fluentbase-genesis = { workspace = true, optional = true }
 
 rwasm = { workspace = true }
 
@@ -39,9 +38,6 @@ hex-literal = { workspace = true }
 
 [features]
 default = ["std"]
-enable-svm = [
-    "fluentbase-genesis/enable-svm",
-]
 std = [
     "rwasm/std",
 ]
@@ -50,4 +46,4 @@ debug-print = [
     "dep:hex",
     "rwasm/debug-print",
 ]
-wasmtime = ["dep:fluentbase-genesis", "rwasm/wasmtime"]
+wasmtime = ["rwasm/wasmtime"]

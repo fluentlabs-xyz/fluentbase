@@ -198,11 +198,7 @@ pub fn is_tinygo_installed() -> bool {
 }
 
 /// Generates the `build_output.rs` file, which is included in the contract's `lib.rs`.
-pub fn generate_build_output_file(
-    wasm_path: &PathBuf,
-    rwasm_path: &PathBuf,
-    wasmtime_path: &PathBuf,
-) {
+pub fn generate_build_output_file(wasm_path: &PathBuf, rwasm_path: &PathBuf) {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
     let build_output_path = format!("{}/build_output.rs", out_dir);
 
@@ -213,7 +209,6 @@ pub fn generate_build_output_file(
 
     let wasm_path = wasm_path.to_str().unwrap();
     let rwasm_path = rwasm_path.to_str().unwrap();
-    let wasmtime_path = wasmtime_path.to_str().unwrap();
     let code = format!(
         r#"use fluentbase_sdk::GenesisContractBuildOutput;
 
@@ -223,7 +218,6 @@ pub const BUILD_OUTPUT: GenesisContractBuildOutput =
         wasm_bytecode: include_bytes!(r"{wasm_path}"),
         rwasm_bytecode: include_bytes!(r"{rwasm_path}"),
         rwasm_bytecode_hash: {rwasm_hash:?}, // {rwasm_hash_hex}
-        wasmtime_module_bytes: include_bytes!(r"{wasmtime_path}"),
     }};
 "#
     );
@@ -256,15 +250,12 @@ pub fn build_default_genesis_contract_ext(paths: &[&str]) {
     let rwasm_config = default_compilation_config().with_builtins_consume_fuel(false);
     let rwasm_path = wasm_to_rwasm(&wasm_path, rwasm_config);
 
-    // Compile WASM to WASMTIME module
-    let wasmtime_path = wasm_to_wasmtime(&wasm_path);
-
     println!(
         "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
         wasm_path.to_str().unwrap()
     );
 
-    generate_build_output_file(&wasm_path, &rwasm_path, &wasmtime_path);
+    generate_build_output_file(&wasm_path, &rwasm_path);
 }
 
 pub fn build_default_example_contract() {

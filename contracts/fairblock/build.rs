@@ -3,8 +3,8 @@ use fluentbase_build::{
     generate_build_output_file,
     go_to_wasm,
     is_tinygo_installed,
-    wasm_to_rwasm,
-    wasm_to_wasmtime,
+    wasm_to_rwasm
+    ,
 };
 use fluentbase_sdk::default_compilation_config;
 use std::{env, fs};
@@ -30,12 +30,11 @@ fn main() {
     copy_wasm_and_wat(&wasm_path);
     let rwasm_config = default_compilation_config().with_builtins_consume_fuel(false);
     let rwasm_path = wasm_to_rwasm(&wasm_path, rwasm_config);
-    let wasmtime_path = wasm_to_wasmtime(&wasm_path);
 
     println!(
         "cargo:rustc-env=FLUENTBASE_WASM_ARTIFACT_PATH={}",
         wasm_path.to_str().unwrap()
     );
 
-    generate_build_output_file(&wasm_path, &rwasm_path, &wasmtime_path);
+    generate_build_output_file(&wasm_path, &rwasm_path);
 }

@@ -52,7 +52,6 @@ pub struct GenesisContract {
     pub address: Address,
     pub rwasm_bytecode: Bytes,
     pub wasm_bytecode: Bytes,
-    pub cranelift_binary: Bytes,
 }
 
 impl GenesisContract {
@@ -63,7 +62,6 @@ impl GenesisContract {
             address: address.clone(),
             rwasm_bytecode: Bytes::from_static(build_output.rwasm_bytecode),
             wasm_bytecode: Bytes::from_static(build_output.wasm_bytecode),
-            cranelift_binary: Bytes::from_static(build_output.wasmtime_module_bytes),
         }
     }
 }
@@ -73,10 +71,10 @@ lazy_static! {
         let mut map = HashMap::new();
         for (addr, contract_build_output) in GENESIS_CONTRACTS {
             let contract = GenesisContract::from_build_output(addr, contract_build_output);
-            println!(
-                "genesis contract address={} hash={} name={}",
-                contract.address, contract.rwasm_bytecode_hash, contract.contract_name
-            );
+            // println!(
+            //     "genesis contract address={} hash={} name={}",
+            //     contract.address, contract.rwasm_bytecode_hash, contract.contract_name
+            // );
             map.insert(addr.clone(), contract);
         }
         map

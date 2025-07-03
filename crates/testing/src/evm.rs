@@ -7,6 +7,7 @@ use fluentbase_sdk::{
     calc_create_address,
     compile_wasm_to_rwasm,
     Address,
+    BytecodeOrHash,
     Bytes,
     ContextReader,
     ExitCode,
@@ -377,7 +378,13 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
         buf.extend_from_slice(input_data);
         buf.freeze().to_vec()
     };
-    let ctx = RuntimeContext::new(Bytes::from(rwasm_binary))
+    let code_hash = keccak256(&rwasm_binary);
+    let bytecode_or_hash = BytecodeOrHash::Bytecode {
+        address: Address::ZERO,
+        rwasm_module: Bytes::from(rwasm_binary),
+        code_hash,
+    };
+    let ctx = RuntimeContext::new(bytecode_or_hash)
         .with_state(STATE_MAIN)
         .with_fuel_limit(100_000_000_000)
         .with_input(context_input);

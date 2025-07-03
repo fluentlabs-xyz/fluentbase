@@ -3,16 +3,16 @@ use crate::{
     instruction::{exec::SysExecResumable, invoke_runtime_handler},
 };
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
-#[cfg(feature = "wasmtime")]
-use fluentbase_genesis::{is_system_precompile_hash, GENESIS_CONTRACTS_BY_HASH};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     create_import_linker,
+    Address,
     BytecodeOrHash,
     Bytes,
     ExitCode,
     SysFuncIdx,
     B256,
+    PRECOMPILE_ADDRESSES,
     STATE_DEPLOY,
     STATE_MAIN,
 };
@@ -29,13 +29,7 @@ use rwasm::{
     TypedStore,
     Value,
 };
-use std::{
-    cell::RefCell,
-    fmt::Debug,
-    mem::take,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::RefCell, fmt::Debug, mem::take, rc::Rc, sync::Arc};
 
 #[derive(Default, Clone, Debug)]
 pub struct ExecutionResult {
@@ -57,8 +51,7 @@ impl ExecutionResult {
 }
 
 pub struct CachingRuntime {
-    // TODO(dmitry123): "add LRU cache to this map to avoid memory leak"
-    cached_bytecode: HashMap<B256, Bytes>,
+    // TODO(dmitry123): add LRU cache to this map to avoid memory leak (or remove HashMap?)
     strategies: HashMap<B256, Arc<Strategy>>,
     recoverable_runtimes: HashMap<u32, Runtime>,
     import_linker: Rc<ImportLinker>,
@@ -68,7 +61,6 @@ pub struct CachingRuntime {
 impl CachingRuntime {
     pub fn new() -> Self {
         Self {
-            cached_bytecode: HashMap::new(),
             strategies: HashMap::new(),
             recoverable_runtimes: HashMap::new(),
             import_linker: create_import_linker(),
@@ -76,29 +68,24 @@ impl CachingRuntime {
         }
     }
 
-    pub fn init_module(&mut self, rwasm_hash: B256) -> Arc<Strategy> {
-        let rwasm_bytecode = self
-            .cached_bytecode
-            .get(&rwasm_hash)
-            .expect("runtime: missing cached bytecode");
-        let entry = match self.strategies.entry(rwasm_hash) {
+    pub fn init_strategy(
+        &mut self,
+        address: Address,
+        rwasm_bytecode: Bytes,
+        code_hash: B256,
+    ) -> Arc<Strategy> {
+        let entry = match self.strategies.entry(code_hash) {
             Entry::Occupied(_) => unreachable!("runtime: unloaded module"),
             Entry::Vacant(entry) => entry,
         };
-        let rwasm_module = Rc::new(RwasmModule::new_or_empty(rwasm_bytecode).0);
+        let rwasm_module = Rc::new(RwasmModule::new_or_empty(rwasm_bytecode.as_ref()).0);
         #[cfg(feature = "wasmtime")]
-        if is_system_precompile_hash(&rwasm_hash) {
-            let wasmtime_module = GENESIS_CONTRACTS_BY_HASH
-                .get(&rwasm_hash)
-                .map(|genesis_contract| {
-                    rwasm::deserialize_wasmtime_module(genesis_contract.cranelift_binary.as_ref())
-                        .unwrap()
-                })
-                .unwrap_or_else(|| {
-                    rwasm::compile_wasmtime_module(&rwasm_module.wasm_section).unwrap()
-                });
+        if PRECOMPILE_ADDRESSES.contains(&address) {
+            let wasmtime_module =
+                rwasm::compile_wasmtime_module(&rwasm_module.wasm_section).unwrap();
             let strategy = Arc::new(Strategy::Wasmtime {
                 module: Rc::new(wasmtime_module),
+                resumable: true,
             });
             entry.insert(strategy.clone());
             return strategy;
@@ -111,7 +98,7 @@ impl CachingRuntime {
         strategy
     }
 
-    pub fn resolve_module(&self, rwasm_hash: &B256) -> Option<Arc<Strategy>> {
+    pub fn resolve_strategy(&self, rwasm_hash: &B256) -> Option<Arc<Strategy>> {
         self.strategies.get(rwasm_hash).cloned()
     }
 }
@@ -150,41 +137,32 @@ impl Runtime {
         Self::new(runtime_context).call()
     }
 
-    pub fn new(mut runtime_context: RuntimeContext) -> Self {
+    pub fn new(runtime_context: RuntimeContext) -> Self {
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
-            // make sure bytecode hash is resolved
-            runtime_context.bytecode = runtime_context.bytecode.with_resolved_hash();
-
-            let bytecode_repr = take(&mut runtime_context.bytecode);
-
             // resolve cached module or init it
-            let strategy = match &bytecode_repr {
-                BytecodeOrHash::Bytecode(bytecode, hash) => {
-                    let hash = hash.unwrap();
+            let strategy = match runtime_context.bytecode.clone() {
+                BytecodeOrHash::Bytecode {
+                    address,
+                    rwasm_module,
+                    code_hash,
+                } => {
                     // if we have a cached module, then use it, otherwise create a new one and cache
-                    if let Some(module) = caching_runtime.resolve_module(&hash) {
-                        module
+                    if let Some(existing_strategy) = caching_runtime.resolve_strategy(&code_hash) {
+                        existing_strategy
                     } else {
-                        caching_runtime
-                            .cached_bytecode
-                            .insert(hash, bytecode.clone());
-                        caching_runtime.init_module(hash)
+                        caching_runtime.init_strategy(
+                            address,
+                            rwasm_module.clone(),
+                            code_hash.clone(),
+                        )
                     }
                 }
-                BytecodeOrHash::Hash(hash) => {
-                    // if we have only hash, then try to load module or fail fast
-                    match caching_runtime.resolve_module(hash) {
-                        Some(module) => module,
-                        None => caching_runtime.init_module(*hash),
-                    }
+                BytecodeOrHash::Hash(_hash) => {
+                    panic!("runtime: can't run just by hash")
                 }
             };
 
-            // return bytecode
-            runtime_context.bytecode = bytecode_repr;
-
             let config = ExecutorConfig::new()
-                // .floats_enabled(true) // need to support solana ee
                 .fuel_limit(runtime_context.fuel_limit)
                 .fuel_enabled(!runtime_context.disable_fuel);
 
@@ -349,5 +327,6 @@ impl Runtime {
 pub fn reset_call_id_counter() {
     CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
         caching_runtime.call_id_counter = 1;
+        caching_runtime.recoverable_runtimes.clear();
     });
 }
