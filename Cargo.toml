@@ -105,7 +105,7 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 
 # rwasm
 #rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", tag = "v0.2.0-dev", default-features = false }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/invalidate-wasmtime-cache", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/invalidate-wasmtime-cache", default-features = false, features = ["cache-compiled-artifacts"] }
 #rwasm = { path = "../rwasm", default-features = false }
 
 # alloy
