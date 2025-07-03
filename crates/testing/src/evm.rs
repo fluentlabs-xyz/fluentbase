@@ -1,6 +1,6 @@
 use crate::{HostTestingContext, HostTestingContextNativeAPI};
 use core::{borrow::Borrow, mem::take, str::from_utf8};
-use fluentbase_genesis::{devnet_genesis_from_file, Genesis, GENESIS_CONTRACTS_BY_ADDRESS};
+use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
     bytes::BytesMut,
@@ -14,7 +14,6 @@ use fluentbase_sdk::{
     MetadataAPI,
     SharedAPI,
     SharedContextInputV1,
-    KECCAK_EMPTY,
     STATE_MAIN,
     U256,
 };
@@ -40,7 +39,6 @@ use rwasm_revm::{RwasmBuilder, RwasmContext};
 #[allow(dead_code)]
 pub struct EvmTestingContext {
     pub sdk: HostTestingContext,
-    pub genesis: Genesis,
     pub db: InMemoryDB,
     pub cfg: CfgEnv,
     pub disabled_rwasm: bool,
@@ -48,33 +46,28 @@ pub struct EvmTestingContext {
 
 impl Default for EvmTestingContext {
     fn default() -> Self {
-        Self::load_from_genesis(devnet_genesis_from_file())
+        Self::load_from_genesis()
     }
 }
 
 #[allow(dead_code)]
 impl EvmTestingContext {
-    fn load_from_genesis(genesis: Genesis) -> Self {
+    fn load_from_genesis() -> Self {
         // create jzkt and put it into a testing context
         let mut db = InMemoryDB::default();
         // convert all accounts from genesis into jzkt
-        for (k, v) in genesis.alloc.iter() {
-            let genesis_account = GENESIS_CONTRACTS_BY_ADDRESS.get(k);
-            let mut info: AccountInfo = AccountInfo {
-                balance: v.balance,
-                nonce: v.nonce.unwrap_or_default(),
-                code_hash: genesis_account
-                    .map(|v| v.rwasm_bytecode_hash)
-                    .unwrap_or(KECCAK_EMPTY),
-                code: None,
+        for (k, v) in GENESIS_CONTRACTS_BY_ADDRESS.iter() {
+            let info: AccountInfo = AccountInfo {
+                balance: U256::ZERO,
+                nonce: 0,
+                code_hash: v.rwasm_bytecode_hash,
+                code: Some(Bytecode::new_raw(v.rwasm_bytecode.clone())),
             };
-            info.code = v.code.clone().map(Bytecode::new_raw);
             db.insert_account_info(*k, info);
         }
         let cfg = CfgEnv::default();
         Self {
             sdk: HostTestingContext::default(),
-            genesis,
             db,
             cfg,
             disabled_rwasm: false,
