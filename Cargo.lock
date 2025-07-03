@@ -5996,6 +5996,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat%2Finvalidate-wasmtime-cache#77405b3fb1aff564c864ff32153279a9bc254d41"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
