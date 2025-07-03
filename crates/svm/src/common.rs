@@ -38,7 +38,7 @@ pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
 // pub(crate) type PtrSizedType = u32;
 
 use crate::{
-    compute_budget::compute_budget::ComputeBudget,
+    compute_budget::compute_budget::{ComputeBudget, MAX_CALL_DEPTH, STACK_FRAME_SIZE},
     error::{Error, RuntimeError, SvmError},
     loaded_programs::ProgramCacheEntry,
     solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
@@ -241,8 +241,8 @@ pub fn rbpf_config_default(compute_budget: Option<&ComputeBudget>) -> Config {
         reject_broken_elfs: true,
         sanitize_user_provided_values: true,
         enable_instruction_meter: true,
-        max_call_depth: compute_budget.map_or_else(Default::default, |v| v.max_call_depth),
-        stack_frame_size: compute_budget.map_or_else(Default::default, |v| v.stack_frame_size),
+        max_call_depth: compute_budget.map_or_else(|| MAX_CALL_DEPTH, |v| v.max_call_depth),
+        stack_frame_size: compute_budget.map_or_else(|| STACK_FRAME_SIZE, |v| v.stack_frame_size),
         ..Default::default()
     }
 }

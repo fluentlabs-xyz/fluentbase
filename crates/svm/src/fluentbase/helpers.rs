@@ -49,12 +49,7 @@ use solana_rbpf::{
 use solana_rent::Rent;
 
 pub fn init_config() -> Config {
-    Config {
-        enable_instruction_tracing: false,
-        reject_broken_elfs: true,
-        sanitize_user_provided_values: true,
-        ..Default::default()
-    }
+    rbpf_config_default(None)
 }
 
 pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
