@@ -85,6 +85,7 @@ impl CachingRuntime {
                 rwasm::compile_wasmtime_module(&rwasm_module.wasm_section).unwrap();
             let strategy = Arc::new(Strategy::Wasmtime {
                 module: Rc::new(wasmtime_module),
+                resumable: true,
             });
             entry.insert(strategy.clone());
             return strategy;
@@ -136,7 +137,7 @@ impl Runtime {
         Self::new(runtime_context).call()
     }
 
-    pub fn new(mut runtime_context: RuntimeContext) -> Self {
+    pub fn new(runtime_context: RuntimeContext) -> Self {
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             // resolve cached module or init it
             let strategy = match runtime_context.bytecode.clone() {
