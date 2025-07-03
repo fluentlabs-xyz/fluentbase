@@ -6,6 +6,7 @@ use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     create_import_linker,
+    is_resumable_precompile,
     Address,
     BytecodeOrHash,
     Bytes,
@@ -85,7 +86,7 @@ impl CachingRuntime {
                 rwasm::compile_wasmtime_module(&rwasm_module.wasm_section).unwrap();
             let strategy = Arc::new(Strategy::Wasmtime {
                 module: Rc::new(wasmtime_module),
-                resumable: true,
+                resumable: is_resumable_precompile(&address),
             });
             entry.insert(strategy.clone());
             return strategy;

@@ -78,6 +78,21 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
     SVM_EXECUTABLE_PREIMAGE,
 ];
 
+pub const fn is_resumable_precompile(address: &Address) -> bool {
+    match address {
+        &PRECOMPILE_EIP2935
+        | &PRECOMPILE_ERC20_RUNTIME
+        | &PRECOMPILE_EVM_RUNTIME
+        | &PRECOMPILE_FAIRBLOCK_VERIFIER
+        | &PRECOMPILE_SVM_RUNTIME
+        | &PRECOMPILE_WASM_RUNTIME
+        | &PRECOMPILE_WEBAUTHN_VERIFIER
+        | &PRECOMPILE_WRAPPED_ETH
+        | &SVM_EXECUTABLE_PREIMAGE => true,
+        _ => false,
+    }
+}
+
 pub struct GenesisContractBuildOutput {
     pub name: &'static str,
     pub wasm_bytecode: &'static [u8],
