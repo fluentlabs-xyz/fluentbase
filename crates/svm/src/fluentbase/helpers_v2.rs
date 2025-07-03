@@ -8,6 +8,7 @@ use crate::{
         PROGRAM_OWNERS,
     },
     builtins::register_builtins,
+    common::rbpf_config_default,
     compute_budget::compute_budget::ComputeBudget,
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
     error::SvmError,
@@ -56,8 +57,7 @@ pub fn init_config() -> Config {
         reject_broken_elfs: true,
         sanitize_user_provided_values: true,
         aligned_memory_mapping: true,
-        enable_address_translation: true, /* To be deactivated once we have BTF inference and
-                                           * verification */
+        enable_address_translation: true, // To be deactivated once we have BTF inference and verification
         enable_stack_frame_gaps: true,
         ..Default::default()
     }

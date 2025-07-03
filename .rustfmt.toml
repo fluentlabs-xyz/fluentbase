@@ -10,4 +10,4 @@ newline_style = "Unix"
 normalize_comments = false
 reorder_imports = true
 unstable_features = true
-wrap_comments = true
+wrap_comments = false

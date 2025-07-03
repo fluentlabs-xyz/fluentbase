@@ -5,7 +5,12 @@ pub mod tests {
         bpf_loader,
         builtins::register_builtins,
         clock::Clock,
-        common::{calculate_max_chunk_size, compile_accounts_for_tx_ctx, TestSdkType},
+        common::{
+            calculate_max_chunk_size,
+            compile_accounts_for_tx_ctx,
+            rbpf_config_default,
+            TestSdkType,
+        },
         compute_budget::compute_budget::ComputeBudget,
         context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
         declare_process_instruction,
@@ -40,16 +45,10 @@ pub mod tests {
         vm::Config,
     };
     use solana_transaction_error::TransactionError;
-    use std::assert_matches::assert_matches;
 
     #[test]
     fn test_process_message_readonly_handling_mocked() {
-        let config = Config {
-            enable_instruction_tracing: false,
-            reject_broken_elfs: true,
-            sanitize_user_provided_values: true,
-            ..Default::default()
-        };
+        let config = rbpf_config_default(None);
 
         let sdk = journal_state();
 
@@ -253,12 +252,7 @@ pub mod tests {
 
     #[test]
     fn test_process_message_duplicate_accounts_mocked() {
-        let config = Config {
-            enable_instruction_tracing: false,
-            reject_broken_elfs: true,
-            sanitize_user_provided_values: true,
-            ..Default::default()
-        };
+        let config = rbpf_config_default(None);
         let sdk = journal_state();
 
         let blockhash = Hash::default();
@@ -510,12 +504,7 @@ pub mod tests {
 
     #[test]
     fn test_create_account() {
-        let config = Config {
-            enable_instruction_tracing: false,
-            reject_broken_elfs: true,
-            sanitize_user_provided_values: true,
-            ..Default::default()
-        };
+        let config = rbpf_config_default(None);
 
         let blockhash = Hash::default();
 
@@ -640,12 +629,7 @@ pub mod tests {
 
     #[test]
     fn test_transfer_lamports() {
-        let config = Config {
-            enable_instruction_tracing: false,
-            reject_broken_elfs: true,
-            sanitize_user_provided_values: true,
-            ..Default::default()
-        };
+        let config = rbpf_config_default(None);
 
         let blockhash = Hash::default();
 
@@ -735,7 +719,9 @@ pub mod tests {
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             assert!(result.is_ok());
-            assert_matches!(result, Ok(_));
+            if let Err(_) = result {
+                panic!("unexpected result")
+            }
             let account1 = invoke_context
                 .transaction_context
                 .get_account_at_index(0)
@@ -777,7 +763,9 @@ pub mod tests {
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
         {
             assert!(result.is_ok());
-            assert_matches!(result, Ok(_));
+            if let Err(_) = result {
+                panic!("unexpected result")
+            }
             let account1 = invoke_context
                 .transaction_context
                 .get_account_at_index(0)
@@ -849,12 +837,7 @@ pub mod tests {
 
     #[test]
     fn test_create_account_extend_data_section_change_owner() {
-        let config = Config {
-            enable_instruction_tracing: false,
-            reject_broken_elfs: true,
-            sanitize_user_provided_values: true,
-            ..Default::default()
-        };
+        let config = rbpf_config_default(None);
 
         let blockhash = Hash::default();
 
@@ -1076,12 +1059,7 @@ pub mod tests {
 
     #[test]
     fn test_create_account_extend_data_section_change_owner_many_in_one() {
-        let config = Config {
-            enable_instruction_tracing: false,
-            reject_broken_elfs: true,
-            sanitize_user_provided_values: true,
-            ..Default::default()
-        };
+        let config = rbpf_config_default(None);
 
         let blockhash = Hash::default();
 

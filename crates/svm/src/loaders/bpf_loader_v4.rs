@@ -1,6 +1,6 @@
 use crate::{
     account::BorrowedAccount,
-    common::limited_deserialize_packet_size,
+    common::{limited_deserialize_packet_size, rbpf_config_default},
     compute_budget::compute_budget::ComputeBudget,
     context::{InstructionContext, InvokeContext},
     error::Error,
@@ -25,7 +25,7 @@ use solana_rbpf::{
     error::ProgramResult,
     memory_region::{MemoryMapping, MemoryRegion},
     program::{BuiltinProgram, FunctionRegistry},
-    vm::{Config, EbpfVm},
+    vm::EbpfVm,
 };
 
 pub const DEFAULT_COMPUTE_UNITS: u64 = 2_000;
@@ -62,26 +62,11 @@ pub fn create_program_runtime_environment_v2<'a, SDK: SharedAPI>(
     compute_budget: &ComputeBudget,
     debugging_features: bool,
 ) -> BuiltinProgram<InvokeContext<'a, SDK>> {
-    let config = Config {
-        max_call_depth: compute_budget.max_call_depth,
-        stack_frame_size: compute_budget.stack_frame_size,
-        enable_address_translation: true, // To be deactivated once we have BTF inference and verification
-        enable_stack_frame_gaps: false,
-        instruction_meter_checkpoint_distance: 10000,
-        enable_instruction_meter: true,
-        enable_instruction_tracing: debugging_features,
-        enable_symbol_and_section_labels: debugging_features,
-        reject_broken_elfs: true,
-        noop_instruction_rate: 256,
-        sanitize_user_provided_values: true,
-        external_internal_function_hash_collision: true,
-        reject_callx_r10: true,
-        enable_sbpf_v1: false,
-        enable_sbpf_v2: true,
-        optimize_rodata: true,
-        aligned_memory_mapping: true,
-        // Warning, do not use `Config::default()` so that configuration here is explicit.
-    };
+    let mut config = rbpf_config_default(Some(&compute_budget));
+    if debugging_features {
+        config.enable_instruction_tracing = debugging_features;
+        config.enable_symbol_and_section_labels = debugging_features;
+    }
     BuiltinProgram::new_loader(config, FunctionRegistry::default())
 }
 
@@ -396,9 +381,10 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
     )?;
     let current_slot = invoke_context.get_sysvar_cache().get_clock()?.slot;
 
-    // Slot = 0 indicates that the program hasn't been deployed yet. So no need to check for the cooldown slots.
-    // (Without this check, the program deployment is failing in freshly started test validators. That's
-    //  because at startup current_slot is 0, which is < DEPLOYMENT_COOLDOWN_IN_SLOTS).
+    // Slot = 0 indicates that the program hasn't been deployed yet. So no need to check for the
+    // cooldown slots. (Without this check, the program deployment is failing in freshly started
+    // test validators. That's  because at startup current_slot is 0, which is <
+    // DEPLOYMENT_COOLDOWN_IN_SLOTS).
     if state.slot != 0 && state.slot.saturating_add(DEPLOYMENT_COOLDOWN_IN_SLOTS) > current_slot {
         // ic_logger_msg!(
         //     log_collector,

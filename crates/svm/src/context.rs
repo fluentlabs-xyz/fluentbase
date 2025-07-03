@@ -163,15 +163,15 @@ pub struct InvokeContext<'a, SDK: SharedAPI> {
     pub program_cache_for_tx_batch: ProgramCacheForTxBatch<'a, SDK>,
     /// Runtime configurations used to provision the invocation environment.
     pub environment_config: EnvironmentConfig,
-    pub compute_budget: ComputeBudget,
-    pub compute_meter: RefCell<u64>,
+    compute_budget: ComputeBudget,
+    compute_meter: RefCell<u64>,
     // log_collector: Option<Rc<RefCell<LogCollector>>>,
     // pub trace_log: Vec<TraceLogEntry>,
     // pub execute_time: Option<Measure>,
     // pub timings: ExecuteDetailsTimings,
     pub syscall_context: Vec<Option<SyscallContext>>,
+    // TODO delete?
     traces: Vec<Vec<[u64; 12]>>,
-    // pub remaining: u64,
     // pub syscall_context: Vec<Option<SyscallContext>>,
     // pub feature_set: Arc<FeatureSet>,
     // pub blockhash: Hash,
@@ -622,6 +622,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     /// Set compute units
     ///
     /// Only use for tests and benchmarks
+    /// TODO delete?
     pub fn mock_set_remaining(&self, remaining: u64) {
         *self.compute_meter.borrow_mut() = remaining;
     }
@@ -683,7 +684,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     pub fn get_syscall_context(&self) -> Result<&SyscallContext, InstructionError> {
         self.syscall_context
             .last()
-            .and_then(core::option::Option::as_ref)
+            .and_then(Option::as_ref)
             .ok_or(InstructionError::CallDepth)
     }
 
@@ -818,10 +819,10 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     //             bpf_loader_v4::get_state(program_account.data())
     //                 .ok()
     //                 .and_then(|state| {
-    //                     (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
-    //                 })
-    //                 .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
-    //                 .unwrap_or(ProgramAccountLoadResult::InvalidAccountData),
+    //                     (!matches!(state.status,
+    // LoaderV4Status::Retracted)).then_some(state.slot)                 })
+    //                 .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account,
+    // slot))                 .unwrap_or(ProgramAccountLoadResult::InvalidAccountData),
     //         );
     //     }
     //
@@ -857,9 +858,10 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
 
     /// Loads the program with the given pubkey.
     ///
-    /// If the account doesn't exist it returns `None`. If the account does exist, it must be a program
-    /// account (belong to one of the program loaders). Returns `Some(InvalidAccountData)` if the program
-    /// account is `Closed`, contains invalid data or any of the programdata accounts are invalid.
+    /// If the account doesn't exist it returns `None`. If the account does exist, it must be a
+    /// program account (belong to one of the program loaders). Returns
+    /// `Some(InvalidAccountData)` if the program account is `Closed`, contains invalid data or
+    /// any of the programdata accounts are invalid.
     pub fn load_program_with_pubkey(
         &self,
         // callbacks: &CB,
@@ -1287,8 +1289,8 @@ impl TransactionContext {
 
     /// Returns the instruction trace length.
     ///
-    /// Not counting the last empty InstructionContext which is always pre-reserved for the next instruction.
-    /// See also `get_next_instruction_context()`.
+    /// Not counting the last empty InstructionContext which is always pre-reserved for the next
+    /// instruction. See also `get_next_instruction_context()`.
     pub fn get_instruction_trace_length(&self) -> usize {
         self.instruction_trace.len().saturating_sub(1)
     }
@@ -1394,7 +1396,8 @@ impl TransactionContext {
         if self.instruction_stack.is_empty() {
             return Err(InstructionError::CallDepth);
         }
-        // Verify (before we pop) that the total sum of all lamports in this instruction did not change
+        // Verify (before we pop) that the total sum of all lamports in this instruction did not
+        // change
         let detected_an_unbalanced_instruction =
             self.get_current_instruction_context()
                 .and_then(|instruction_context| {
@@ -1472,7 +1475,7 @@ impl TransactionContext {
 }
 
 /// Return data at the end of a transaction
-#[derive(Clone, Debug, Default, PartialEq, Eq /*, Deserialize, Serialize*/)]
+#[derive(Clone, Debug, Default, PartialEq, Eq /* , Deserialize, Serialize */)]
 pub struct TransactionReturnData {
     pub program_id: Pubkey,
     pub data: Vec<u8>,
@@ -1480,7 +1483,8 @@ pub struct TransactionReturnData {
 
 /// Loaded instruction shared between runtime and programs.
 ///
-/// This context is valid for the entire duration of a (possibly cross program) instruction being processed.
+/// This context is valid for the entire duration of a (possibly cross program) instruction being
+/// processed.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct InstructionContext {
     nesting_level: usize,
@@ -1583,7 +1587,8 @@ impl InstructionContext {
             .ok_or(InstructionError::NotEnoughAccountKeys)?)
     }
 
-    /// Translates the given instruction wide instruction_account_index into a transaction wide index
+    /// Translates the given instruction wide instruction_account_index into a transaction wide
+    /// index
     pub fn get_index_of_instruction_account_in_transaction(
         &self,
         instruction_account_index: IndexOfAccount,

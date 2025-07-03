@@ -1,8 +1,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![feature(new_range_api)]
-#![feature(assert_matches)]
+// #![feature(new_range_api)]
+// #![feature(assert_matches)]
 // #![feature(lazy_type_alias)]
-#![feature(trait_alias)]
+// #![feature(trait_alias)]
 
 extern crate alloc;
 extern crate core;
@@ -51,7 +51,7 @@ pub mod serialization;
 pub mod solana_program;
 // pub mod storage_helpers;
 // #[cfg(test)]
-// mod storage_helpers_tests;
+// mod ы;
 pub mod system_instruction;
 pub mod system_processor;
 #[cfg(test)]

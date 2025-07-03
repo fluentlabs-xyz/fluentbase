@@ -6,11 +6,11 @@ use crate::{
     word_size::{
         addr_type::AddrType,
         common::MemoryMappingHelper,
-        slice::{ElementConstraints, SliceFatPtr64},
+        slice::{SliceFatPtr64, SpecMethods},
     },
 };
 use alloc::{boxed::Box, vec::Vec};
-use core::{slice, str::from_utf8};
+use core::{fmt::Debug, slice, str::from_utf8};
 use fluentbase_sdk::SharedAPI;
 use solana_feature_set::bpf_account_data_direct_mapping;
 use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN};
@@ -592,7 +592,7 @@ pub fn translate_type<'a, T>(
     .map(|value| &*value)
 }
 
-fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
+fn translate_slice_inner<'a, T: Clone + SpecMethods<'a> + Debug>(
     memory_mapping: &'a MemoryMapping<'a>,
     access_type: AccessType,
     vm_addr: u64,
@@ -619,7 +619,7 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     Ok(result)
 }
 
-pub fn translate_slice<'a, T: ElementConstraints<'a>>(
+pub fn translate_slice<'a, T: Clone + SpecMethods<'a> + Debug>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,
@@ -635,7 +635,7 @@ pub fn translate_slice<'a, T: ElementConstraints<'a>>(
     // .map(|value| &*value)
 }
 
-pub fn translate_slice_mut<'a, T: ElementConstraints<'a>>(
+pub fn translate_slice_mut<'a, T: Clone + SpecMethods<'a> + Debug>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,

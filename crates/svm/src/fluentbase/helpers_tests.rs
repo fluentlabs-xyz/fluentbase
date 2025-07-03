@@ -412,8 +412,7 @@ mod tests {
         main_batch_message(sdk.clone(), Some(&mut sapi));
 
         // exec
-        // recreate storage to test if we need only specific accounts (other accounts dropped from
-        // storage)
+        // recreate storage to test if we need only specific accounts (other accounts dropped from storage)
 
         let payer_account = storage_read_account_data(&mut sapi, &pk_payer).unwrap();
         let exec_account = storage_read_account_data(&mut sapi, &pk_exec).unwrap();

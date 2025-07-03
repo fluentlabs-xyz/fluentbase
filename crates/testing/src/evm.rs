@@ -99,10 +99,6 @@ impl EvmTestingContext {
             if let Some(code) = db_account.info.code.as_mut() {
                 match code {
                     Bytecode::OwnableAccount(account) => {
-                        println!(
-                            "perekachak: address={address}, code={}",
-                            account.metadata.len()
-                        );
                         self.sdk
                             .metadata_write(address, 0, account.metadata.clone());
                     }

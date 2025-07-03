@@ -1,6 +1,7 @@
 use crate::{
     bpf_loader,
     bpf_loader_deprecated,
+    common::rbpf_config_default,
     context::{BuiltinFunctionWithContext, InvokeContext},
     native_loader,
     solana_program::{bpf_loader_upgradeable, loader_v4},
@@ -20,7 +21,6 @@ use solana_rbpf::{
     elf::Executable,
     program::{BuiltinProgram, FunctionRegistry},
     verifier::RequisiteVerifier,
-    vm::Config,
 };
 use spin::RwLock;
 
@@ -123,22 +123,27 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
 /// Actual payload of [ProgramCacheEntry].
 #[derive(Default)]
 pub enum ProgramCacheEntryType<'a, SDK: SharedAPI> {
-    /// Tombstone for programs which currently do not pass the verifier but could if the feature set changed.
+    /// Tombstone for programs which currently do not pass the verifier but could if the feature
+    /// set changed.
     FailedVerification(ProgramRuntimeEnvironment<'a, SDK>),
     /// Tombstone for programs that were either explicitly closed or never deployed.
     ///
-    /// It's also used for accounts belonging to program loaders, that don't actually contain program code (e.g. buffer accounts for LoaderV3 programs).
+    /// It's also used for accounts belonging to program loaders, that don't actually contain
+    /// program code (e.g. buffer accounts for LoaderV3 programs).
     #[default]
     Closed,
-    /// Tombstone for programs which have recently been modified but the new version is not visible yet.
+    /// Tombstone for programs which have recently been modified but the new version is not visible
+    /// yet.
     DelayVisibility,
     /// Successfully verified but not currently compiled.
     ///
-    /// It continues to track usage statistics even when the compiled executable of the program is evicted from memory.
+    /// It continues to track usage statistics even when the compiled executable of the program is
+    /// evicted from memory.
     Unloaded(ProgramRuntimeEnvironment<'a, SDK>),
     /// Verified and compiled program
     Loaded(Arc<Executable<InvokeContext<'a, SDK>>>),
-    /// A built-in program which is not stored on-chain but backed into and distributed with the validator
+    /// A built-in program which is not stored on-chain but backed into and distributed with the
+    /// validator
     Builtin(Arc<BuiltinProgram<InvokeContext<'a, SDK>>>),
 }
 
@@ -241,9 +246,11 @@ pub struct ProgramCacheEntry<'a, SDK: SharedAPI> {
 //         let empty_entries = self.empty_entries.load(Ordering::Relaxed);
 //         let water_level = self.water_level.load(Ordering::Relaxed);
 //         // debug!(
-//         //     "Loaded Programs Cache Stats -- Hits: {}, Misses: {}, Evictions: {}, Reloads: {}, Insertions: {}, Lost-Insertions: {}, Replacements: {}, One-Hit-Wonders: {}, Prunes-Orphan: {}, Prunes-Environment: {}, Empty: {}, Water-Level: {}",
-//         //     hits, misses, evictions, reloads, insertions, lost_insertions, replacements, one_hit_wonders, prunes_orphan, prunes_environment, empty_entries, water_level
-//         // );
+//         //     "Loaded Programs Cache Stats -- Hits: {}, Misses: {}, Evictions: {}, Reloads: {},
+// Insertions: {}, Lost-Insertions: {}, Replacements: {}, One-Hit-Wonders: {}, Prunes-Orphan: {},
+// Prunes-Environment: {}, Empty: {}, Water-Level: {}",         //     hits, misses, evictions,
+// reloads, insertions, lost_insertions, replacements, one_hit_wonders, prunes_orphan,
+// prunes_environment, empty_entries, water_level         // );
 //         if log_enabled!(log::Level::Trace) && !self.evictions.is_empty() {
 //             let mut evictions = self.evictions.iter().collect::<Vec<_>>();
 //             evictions.sort_by_key(|e| e.1);
@@ -514,8 +521,9 @@ pub struct ProgramRuntimeEnvironments<'a, SDK: SharedAPI> {
 
 impl<'a, SDK: SharedAPI> Default for ProgramRuntimeEnvironments<'a, SDK> {
     fn default() -> Self {
+        let config = rbpf_config_default(None);
         let empty_loader = Arc::new(BuiltinProgram::new_loader(
-            Config::default(),
+            config,
             FunctionRegistry::default(),
         ));
         Self {
@@ -584,11 +592,11 @@ enum IndexImplementation<'a, SDK: SharedAPI> {
         entries: HashMap<Pubkey, Vec<Arc<ProgramCacheEntry<'a, SDK>>>>,
         // /// The entries that are getting loaded and have not yet finished loading.
         // ///
-        // /// The key is the program address, the value is a tuple of the slot in which the program is
-        // /// being loaded and the thread ID doing the load.
+        // /// The key is the program address, the value is a tuple of the slot in which the
+        // program is /// being loaded and the thread ID doing the load.
         // ///
-        // /// It is possible that multiple TX batches from different slots need different versions of a
-        // /// program. The deployment slot of a program is only known after load tho,
+        // /// It is possible that multiple TX batches from different slots need different versions
+        // of a /// program. The deployment slot of a program is only known after load tho,
         // /// so all loads for a given program key are serialized.
         // loading_entries: Mutex<HashMap<Pubkey, (Slot, ThreadId)>>,
     },
@@ -604,9 +612,11 @@ enum IndexImplementation<'a, SDK: SharedAPI> {
 /// - also keeps the compiled executables around, but only for the most used programs.
 /// - supports various kinds of tombstones to avoid loading programs which can not be loaded.
 /// - cleans up entries on orphan branches when the block store is rerooted.
-/// - supports the cache preparation phase before feature activations which can change cached programs.
+/// - supports the cache preparation phase before feature activations which can change cached
+///   programs.
 /// - manages the environments of the programs and upcoming environments for the next epoch.
-/// - allows for cooperative loading of TX batches which hit the same missing programs simultaneously.
+/// - allows for cooperative loading of TX batches which hit the same missing programs
+///   simultaneously.
 /// - enforces that all programs used in a batch are eagerly loaded ahead of execution.
 /// - is not persisted to disk or a snapshot, so it needs to cold start and warm up first.
 pub struct ProgramCache<'a, FG: ForkGraph, SDK: SharedAPI> {
@@ -620,18 +630,20 @@ pub struct ProgramCache<'a, FG: ForkGraph, SDK: SharedAPI> {
     pub environments: Arc<ProgramRuntimeEnvironments<'a, SDK>>,
     /// Anticipated replacement for `environments` at the next epoch
     ///
-    /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end and beginning of an epoch).
-    /// More precisely, it starts with the cache preparation phase a few hundred slots before the epoch boundary,
-    /// and it ends with the first rerooting after the epoch boundary.
+    /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end
+    /// and beginning of an epoch). More precisely, it starts with the cache preparation phase
+    /// a few hundred slots before the epoch boundary, and it ends with the first rerooting
+    /// after the epoch boundary.
     pub upcoming_environments: Option<Arc<ProgramRuntimeEnvironments<'a, SDK>>>,
-    /// List of loaded programs which should be recompiled before the next epoch (but don't have to).
+    /// List of loaded programs which should be recompiled before the next epoch (but don't have
+    /// to).
     pub programs_to_recompile: Vec<(Pubkey, Arc<ProgramCacheEntry<'a, SDK>>)>,
     // /// Statistics counters
     // pub stats: ProgramCacheStats,
     /// Reference to the block store
     pub fork_graph: Option<Weak<RwLock<FG>>>,
-    // /// Coordinates TX batches waiting for others to complete their task during cooperative loading
-    // pub loading_task_waiter: Arc<LoadingTaskWaiter>,
+    // /// Coordinates TX batches waiting for others to complete their task during cooperative
+    // loading pub loading_task_waiter: Arc<LoadingTaskWaiter>,
 }
 
 impl<'a, FG: ForkGraph, SDK: SharedAPI> Debug for ProgramCache<'a, FG, SDK> {
@@ -649,11 +661,13 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> Debug for ProgramCache<'a, FG, SDK> {
 ///
 /// This isolation enables the global [ProgramCache] to continue to evolve (e.g. evictions),
 /// while the TX batch is guaranteed it will continue to find all the programs it requires.
-/// For program management instructions this also buffers them before they are merged back into the global [ProgramCache].
+/// For program management instructions this also buffers them before they are merged back into the
+/// global [ProgramCache].
 #[derive(Clone, Debug, Default)]
 pub struct ProgramCacheForTxBatch<'a, SDK: SharedAPI> {
     /// Pubkey is the address of a program.
-    /// ProgramCacheEntry is the corresponding program entry valid for the slot in which a transaction is being executed.
+    /// ProgramCacheEntry is the corresponding program entry valid for the slot in which a
+    /// transaction is being executed.
     entries: HashMap<Pubkey, Arc<ProgramCacheEntry<'a, SDK>>>,
     /// Program entries modified during the transaction batch.
     modified_entries: HashMap<Pubkey, Arc<ProgramCacheEntry<'a, SDK>>>,
@@ -661,11 +675,12 @@ pub struct ProgramCacheForTxBatch<'a, SDK: SharedAPI> {
     pub environments: ProgramRuntimeEnvironments<'a, SDK>,
     /// Anticipated replacement for `environments` at the next epoch.
     ///
-    /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end and beginning of an epoch).
-    /// More precisely, it starts with the cache preparation phase a few hundred slots before the epoch boundary,
-    /// and it ends with the first rerooting after the epoch boundary.
-    /// Needed when a program is deployed at the last slot of an epoch, becomes effective in the next epoch.
-    /// So needs to be compiled with the environment for the next epoch.
+    /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end
+    /// and beginning of an epoch). More precisely, it starts with the cache preparation phase
+    /// a few hundred slots before the epoch boundary, and it ends with the first rerooting
+    /// after the epoch boundary. Needed when a program is deployed at the last slot of an
+    /// epoch, becomes effective in the next epoch. So needs to be compiled with the
+    /// environment for the next epoch.
     pub upcoming_environments: Option<ProgramRuntimeEnvironments<'a, SDK>>,
     /// The epoch of the last rerooting
     pub latest_root_epoch: Epoch,
@@ -878,7 +893,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
                         .then(
                             // This `.then()` has no effect during normal operation.
                             // Only during the cache preparation phase this does allow entries
-                            // which only differ in their environment to be interleaved in `slot_versions`.
+                            // which only differ in their environment to be interleaved in
+                            // `slot_versions`.
                             is_current_env(
                                 self.environments.as_ref(),
                                 at.program.get_environment().as_ref(),
@@ -902,7 +918,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
                             ) => {}
                             _ => {
                                 // Something is wrong, I can feel it ...
-                                // error!("ProgramCache::assign_program() failed key={:?} existing={:?} entry={:?}", key, slot_versions, entry);
+                                // error!("ProgramCache::assign_program() failed key={:?}
+                                // existing={:?} entry={:?}", key, slot_versions, entry);
                                 debug_assert!(false, "Unexpected replacement of an entry");
                                 // self.stats.replacements.fetch_add(1, Ordering::Relaxed);
                                 return true;
@@ -974,25 +991,25 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
     //                         let relation =
     //                             fork_graph.relationship(entry.deployment_slot, new_root_slot);
     //                         if entry.deployment_slot >= new_root_slot {
-    //                             matches!(relation, BlockRelation::Equal | BlockRelation::Descendant)
-    //                         } else if matches!(relation, BlockRelation::Ancestor)
-    //                             || entry.deployment_slot <= self.latest_root_slot
-    //                         {
+    //                             matches!(relation, BlockRelation::Equal |
+    // BlockRelation::Descendant)                         } else if matches!(relation,
+    // BlockRelation::Ancestor)                             || entry.deployment_slot <=
+    // self.latest_root_slot                         {
     //                             if !first_ancestor_found {
     //                                 first_ancestor_found = true;
     //                                 first_ancestor_env = entry.program.get_environment();
     //                                 return true;
     //                             }
-    //                             // Do not prune the entry if the runtime environment of the entry is different
-    //                             // than the entry that was previously found (stored in first_ancestor_env).
-    //                             // Different environment indicates that this entry might belong to an older
-    //                             // epoch that had a different environment (e.g. different feature set).
-    //                             // Once the root moves to the new/current epoch, the entry will get pruned.
-    //                             // But, until then the entry might still be getting used by an older slot.
-    //                             if let Some(entry_env) = entry.program.get_environment() {
-    //                                 if let Some(env) = first_ancestor_env {
-    //                                     if !Arc::ptr_eq(entry_env, env) {
-    //                                         return true;
+    //                             // Do not prune the entry if the runtime environment of the entry
+    // is different                             // than the entry that was previously found
+    // (stored in first_ancestor_env).                             // Different environment
+    // indicates that this entry might belong to an older                             // epoch
+    // that had a different environment (e.g. different feature set).
+    // // Once the root moves to the new/current epoch, the entry will get pruned.
+    // // But, until then the entry might still be getting used by an older slot.
+    // if let Some(entry_env) = entry.program.get_environment() {
+    // if let Some(env) = first_ancestor_env {                                     if
+    // !Arc::ptr_eq(entry_env, env) {                                         return true;
     //                                     }
     //                                 }
     //                             }
@@ -1097,10 +1114,10 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
     //                             } else if entry.is_implicit_delay_visibility_tombstone(
     //                                 loaded_programs_for_tx_batch.slot,
     //                             ) {
-    //                                 // Found a program entry on the current fork, but it's not effective
-    //                                 // yet. It indicates that the program has delayed visibility. Return
-    //                                 // the tombstone to reflect that.
-    //                                 Arc::new(ProgramCacheEntry::new_tombstone(
+    //                                 // Found a program entry on the current fork, but it's not
+    // effective                                 // yet. It indicates that the program has
+    // delayed visibility. Return                                 // the tombstone to reflect
+    // that.                                 Arc::new(ProgramCacheEntry::new_tombstone(
     //                                     entry.deployment_slot,
     //                                     entry.account_owner,
     //                                     ProgramCacheEntryType::DelayVisibility,
@@ -1243,18 +1260,18 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
     // pub fn sort_and_unload(&mut self, shrink_to: PercentageInteger) {
     //     let mut sorted_candidates = self.get_flattened_entries(true, true);
     //     sorted_candidates
-    //         .sort_by_cached_key(|(_id, program)| program.tx_usage_counter.load(Ordering::Relaxed));
-    //     let num_to_unload = sorted_candidates
-    //         .len()
+    //         .sort_by_cached_key(|(_id, program)|
+    // program.tx_usage_counter.load(Ordering::Relaxed));     let num_to_unload =
+    // sorted_candidates         .len()
     //         .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
     //     self.unload_program_entries(sorted_candidates.iter().take(num_to_unload));
     // }
 
-    // /// Evicts programs using 2's random selection, choosing the least used program out of the two entries.
-    // /// The eviction is performed enough number of times to reduce the cache usage to the given percentage.
-    // pub fn evict_using_2s_random_selection(&mut self, shrink_to: PercentageInteger, now: Slot) {
-    //     let mut candidates = self.get_flattened_entries(true, true);
-    //     // self.stats
+    // /// Evicts programs using 2's random selection, choosing the least used program out of the
+    // two entries. /// The eviction is performed enough number of times to reduce the cache
+    // usage to the given percentage. pub fn evict_using_2s_random_selection(&mut self,
+    // shrink_to: PercentageInteger, now: Slot) {     let mut candidates =
+    // self.get_flattened_entries(true, true);     // self.stats
     //     //     .water_level
     //     //     .store(candidates.len() as u64, Ordering::Relaxed);
     //     let num_to_unload = candidates
@@ -1299,8 +1316,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
     }
 
     // /// This function removes the given entry for the given program from the cache.
-    // /// The function expects that the program and entry exists in the cache. Otherwise it'll panic.
-    // fn unload_program_entry(
+    // /// The function expects that the program and entry exists in the cache. Otherwise it'll
+    // panic. fn unload_program_entry(
     //     &mut self,
     //     program: &Pubkey,
     //     remove_entry: &Arc<ProgramCacheEntry<'a, SDK>>,
@@ -1313,8 +1330,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
     //                 .find(|entry| entry == &remove_entry)
     //                 .expect("Program entry not found");
     //
-    //             // Certain entry types cannot be unloaded, such as tombstones, or already unloaded entries.
-    //             // For such entries, `to_unloaded()` will return None.
+    //             // Certain entry types cannot be unloaded, such as tombstones, or already
+    // unloaded entries.             // For such entries, `to_unloaded()` will return None.
     //             // These entry types do not occupy much memory.
     //             if let Some(unloaded) = candidate.to_unloaded() {
     //                 // if candidate.tx_usage_counter.load(Ordering::Relaxed) == 1 {
@@ -1469,9 +1486,9 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //         key: Pubkey,
 //         slot: Slot,
 //     ) -> Arc<ProgramCacheEntry> {
-//         let loaded = new_test_entry_with_usage(slot, slot.saturating_add(1), AtomicU64::default());
-//         let unloaded = Arc::new(loaded.to_unloaded().expect("Failed to unload the program"));
-//         cache.assign_program(key, unloaded.clone());
+//         let loaded = new_test_entry_with_usage(slot, slot.saturating_add(1),
+// AtomicU64::default());         let unloaded = Arc::new(loaded.to_unloaded().expect("Failed to
+// unload the program"));         cache.assign_program(key, unloaded.clone());
 //         unloaded
 //     }
 //
@@ -1565,7 +1582,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //
 //         // This test adds different kind of entries to the cache.
 //         // Tombstones and unloaded entries are expected to not be evicted.
-//         // It also adds multiple entries for three programs as it tries to create a typical cache instance.
+//         // It also adds multiple entries for three programs as it tries to create a typical cache
+// instance.
 //
 //         // Program 1
 //         program_deploy_test_helper(
@@ -1627,7 +1645,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //         let eviction_pct = 1;
 //
 //         let num_loaded_expected =
-//             Percentage::from(eviction_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
+//
+// Percentage::from(eviction_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
 //         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
 //         cache.evict_using_2s_random_selection(Percentage::from(eviction_pct), 21);
 //
@@ -1710,7 +1729,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //         let eviction_pct = 1;
 //
 //         let num_loaded_expected =
-//             Percentage::from(eviction_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
+//
+// Percentage::from(eviction_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
 //         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
 //
 //         cache.sort_and_unload(Percentage::from(eviction_pct));
@@ -1765,7 +1785,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //         let program = Pubkey::new_unique();
 //         let evict_to_pct = 2;
 //         let cache_capacity_after_shrink =
-//             Percentage::from(evict_to_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
+//
+// Percentage::from(evict_to_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
 //         // Add enough programs to the cache to trigger 1 eviction after shrinking.
 //         let num_total_programs = (cache_capacity_after_shrink + 1) as u64;
 //         (0..num_total_programs).for_each(|i| {
@@ -1794,8 +1815,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //                 }
 //             });
 //
-//         // Replenish the program that was just unloaded. Use 0 as the usage counter. This should be
-//         // updated with the usage counter from the unloaded program.
+//         // Replenish the program that was just unloaded. Use 0 as the usage counter. This should
+// be         // updated with the usage counter from the unloaded program.
 //         cache.assign_program(program, new_test_entry_with_usage(0, 2, AtomicU64::new(0)));
 //
 //         cache
@@ -1825,8 +1846,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //             let mut cache = new_mock_cache::<TestForkGraph>();
 //             for (deployment_slot, effective_slot) in entries {
 //                 assert!(!cache
-//                     .assign_program(program_id, new_test_entry(deployment_slot, effective_slot)));
-//             }
+//                     .assign_program(program_id, new_test_entry(deployment_slot,
+// effective_slot)));             }
 //             for ((deployment_slot, effective_slot), entry) in EXPECTED_ENTRIES
 //                 .iter()
 //                 .zip(cache.get_slot_versions_for_tests(&program_id).iter())
@@ -2176,8 +2197,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //                     .find(|(program_id, entry)| {
 //                         program_id == key
 //                             && matches!(
-//                                 locked_fork_graph.relationship(entry.deployment_slot, loading_slot),
-//                                 BlockRelation::Equal | BlockRelation::Ancestor,
+//                                 locked_fork_graph.relationship(entry.deployment_slot,
+// loading_slot),                                 BlockRelation::Equal | BlockRelation::Ancestor,
 //                             )
 //                     })
 //                     .map(|(program_id, _entry)| {
@@ -2293,35 +2314,35 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //         cache.extract(&mut missing, &mut extracted, true);
 //         assert!(match_slot(&extracted, &program1, 0, 15));
 //         assert!(match_slot(&extracted, &program2, 11, 15));
-//         // The effective slot of program4 deployed in slot 15 is 19. So it should not be usable in slot 16.
-//         // A delay visibility tombstone should be returned here.
+//         // The effective slot of program4 deployed in slot 15 is 19. So it should not be usable
+// in slot 16.         // A delay visibility tombstone should be returned here.
 //         let tombstone = extracted
 //             .find(&program4)
 //             .expect("Failed to find the tombstone");
 //         assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
 //         assert_eq!(tombstone.deployment_slot, 15);
 //
-//         // Testing the same fork above, but current slot is now 18 (equal to effective slot of program4).
-//         let mut missing =
+//         // Testing the same fork above, but current slot is now 18 (equal to effective slot of
+// program4).         let mut missing =
 //             get_entries_to_load(&cache, 18, &[program1, program2, program3, program4]);
 //         assert!(match_missing(&missing, &program3, false));
 //         let mut extracted = ProgramCacheForTxBatch::new(18, cache.environments.clone(), None, 0);
 //         cache.extract(&mut missing, &mut extracted, true);
 //         assert!(match_slot(&extracted, &program1, 0, 18));
 //         assert!(match_slot(&extracted, &program2, 11, 18));
-//         // The effective slot of program4 deployed in slot 15 is 18. So it should be usable in slot 18.
-//         assert!(match_slot(&extracted, &program4, 15, 18));
+//         // The effective slot of program4 deployed in slot 15 is 18. So it should be usable in
+// slot 18.         assert!(match_slot(&extracted, &program4, 15, 18));
 //
-//         // Testing the same fork above, but current slot is now 23 (future slot than effective slot of program4).
-//         let mut missing =
+//         // Testing the same fork above, but current slot is now 23 (future slot than effective
+// slot of program4).         let mut missing =
 //             get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
 //         assert!(match_missing(&missing, &program3, false));
 //         let mut extracted = ProgramCacheForTxBatch::new(23, cache.environments.clone(), None, 0);
 //         cache.extract(&mut missing, &mut extracted, true);
 //         assert!(match_slot(&extracted, &program1, 0, 23));
 //         assert!(match_slot(&extracted, &program2, 11, 23));
-//         // The effective slot of program4 deployed in slot 15 is 19. So it should be usable in slot 23.
-//         assert!(match_slot(&extracted, &program4, 15, 23));
+//         // The effective slot of program4 deployed in slot 15 is 19. So it should be usable in
+// slot 23.         assert!(match_slot(&extracted, &program4, 15, 23));
 //
 //         // Testing fork 0 - 5 - 11 - 15 - 16 with current slot at 11
 //         let mut missing =
@@ -2330,8 +2351,8 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //         let mut extracted = ProgramCacheForTxBatch::new(11, cache.environments.clone(), None, 0);
 //         cache.extract(&mut missing, &mut extracted, true);
 //         assert!(match_slot(&extracted, &program1, 0, 11));
-//         // program2 was updated at slot 11, but is not effective till slot 12. The result should contain a tombstone.
-//         let tombstone = extracted
+//         // program2 was updated at slot 11, but is not effective till slot 12. The result should
+// contain a tombstone.         let tombstone = extracted
 //             .find(&program2)
 //             .expect("Failed to find the tombstone");
 //         assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
@@ -2450,13 +2471,13 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
 //         assert!(match_slot(&extracted, &program1, 0, 12));
 //         assert!(match_slot(&extracted, &program2, 11, 12));
 //
-//         // Test the same fork, but request the program modified at a later slot than what's in the cache.
-//         let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
-//         missing.get_mut(0).unwrap().1 .0 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
-//         missing.get_mut(1).unwrap().1 .0 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
-//         assert!(match_missing(&missing, &program3, false));
-//         let mut extracted = ProgramCacheForTxBatch::new(12, cache.environments.clone(), None, 0);
-//         cache.extract(&mut missing, &mut extracted, true);
+//         // Test the same fork, but request the program modified at a later slot than what's in
+// the cache.         let mut missing = get_entries_to_load(&cache, 12, &[program1, program2,
+// program3]);         missing.get_mut(0).unwrap().1 .0 =
+// ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);         missing.get_mut(1).unwrap().1 .0 =
+// ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);         assert!(match_missing(&missing,
+// &program3, false));         let mut extracted = ProgramCacheForTxBatch::new(12,
+// cache.environments.clone(), None, 0);         cache.extract(&mut missing, &mut extracted, true);
 //         assert!(match_missing(&missing, &program1, true));
 //         assert!(match_slot(&extracted, &program2, 11, 12));
 //     }

@@ -23,11 +23,11 @@ use crate::{
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
         primitives::RcRefCellMemLayout,
         ptr_type::PtrType,
-        slice::{reconstruct_slice, ElementConstraints, SliceFatPtr64, SliceFatPtr64Repr},
+        slice::{reconstruct_slice, SliceFatPtr64, SliceFatPtr64Repr, SpecMethods},
     },
 };
 use alloc::{boxed::Box, vec, vec::Vec};
-use core::{marker::PhantomData, ptr};
+use core::{fmt::Debug, marker::PhantomData, ptr};
 use fluentbase_sdk::SharedAPI;
 use scopeguard::defer;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
@@ -896,7 +896,7 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
 //     }
 // }
 
-fn translate_account_infos<'a, T: ElementConstraints<'a> + 'a, F, SDK: SharedAPI>(
+fn translate_account_infos<'a, T: Clone + SpecMethods<'a> + Debug + 'a, F, SDK: SharedAPI>(
     account_infos_addr: u64,
     account_infos_len: u64,
     key_addr: F,
@@ -942,7 +942,13 @@ where
 
 // Finish translating accounts, build CallerAccount values and update callee
 // accounts in preparation of executing the callee.
-fn translate_and_update_accounts<'a, 'b, T: ElementConstraints<'a> + 'a, F, SDK: SharedAPI>(
+fn translate_and_update_accounts<
+    'a,
+    'b,
+    T: Clone + SpecMethods<'a> + Debug + 'a,
+    F,
+    SDK: SharedAPI,
+>(
     instruction_accounts: &[InstructionAccount],
     program_indices: &[IndexOfAccount],
     account_info_keys: &[Pubkey],

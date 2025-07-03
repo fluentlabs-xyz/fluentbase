@@ -6,36 +6,16 @@ use crate::{
     account::AccountSharedData,
     bpf_loader,
     bpf_loader_deprecated,
-    builtins::{
-        SyscallAbort,
-        SyscallCreateProgramAddress,
-        SyscallHash,
-        SyscallLog,
-        SyscallMemcpy,
-        SyscallMemmove,
-        SyscallMemset,
-        SyscallPanic,
-        // SyscallPoseidon,
-        SyscallTryFindProgramAddress,
-    },
-    context::{InstructionContext, InvokeContext, TransactionContext},
-    loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-};
-use crate::{
     clock::Slot,
+    context::{InstructionContext, InvokeContext, TransactionContext},
     hash::{Hash, Hasher},
+    loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
     solana_program::loader_v4,
 };
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
 use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
 use solana_bincode::limited_deserialize;
-use solana_feature_set::{
-    bpf_account_data_direct_mapping,
-    error_on_syscall_bpf_function_hash_collisions,
-    reject_callx_r10,
-    FeatureSet,
-};
 use solana_instruction::error::InstructionError;
 use solana_pubkey::{Pubkey, SVM_ADDRESS_PREFIX};
 use solana_rbpf::{
@@ -247,227 +227,24 @@ pub fn morph_into_deployment_environment_v1<'a, SDK: SharedAPI>(
     Ok(BuiltinProgram::new_loader(config, result))
 }
 
-pub fn create_program_runtime_environment_v1<'a, SDK: SharedAPI>(
-    feature_set: &FeatureSet,
-    compute_budget: &ComputeBudget,
-    reject_deployment_of_broken_elfs: bool,
-    debugging_features: bool,
-) -> Result<BuiltinProgram<InvokeContext<'a, SDK>>, Error> {
-    // let enable_alt_bn128_syscall = feature_set.is_active(&enable_alt_bn128_syscall::id());
-    // let enable_alt_bn128_compression_syscall =
-    //     feature_set.is_active(&enable_alt_bn128_compression_syscall::id());
-    // let enable_big_mod_exp_syscall = feature_set.is_active(&enable_big_mod_exp_syscall::id());
-    // let blake3_syscall_enabled = feature_set.is_active(&blake3_syscall_enabled::id());
-    // let curve25519_syscall_enabled = feature_set.is_active(&curve25519_syscall_enabled::id());
-    // let disable_fees_sysvar = feature_set.is_active(&disable_fees_sysvar::id());
-    // let epoch_rewards_syscall_enabled =
-    //     feature_set.is_active(&enable_partitioned_epoch_reward::id());
-    // let disable_deploy_of_alloc_free_syscall = reject_deployment_of_broken_elfs
-    //     && feature_set.is_active(&disable_deploy_of_alloc_free_syscall::id());
-    // let last_restart_slot_syscall_enabled =
-    // feature_set.is_active(&last_restart_slot_sysvar::id()); let enable_poseidon_syscall =
-    // feature_set.is_active(&enable_poseidon_syscall::id());
-    // let remaining_compute_units_syscall_enabled =
-    //     feature_set.is_active(&remaining_compute_units_syscall_enabled::id());
-    // !!! ATTENTION !!!
-    // When adding new features for RBPF here,
-    // also add them to `Bank::apply_builtin_program_feature_transitions()`.
-
-    let config = Config {
-        max_call_depth: compute_budget.max_call_depth,
-        stack_frame_size: compute_budget.stack_frame_size,
-        enable_address_translation: true,
-        enable_stack_frame_gaps: !feature_set.is_active(&bpf_account_data_direct_mapping::id()),
-        instruction_meter_checkpoint_distance: 10000,
-        enable_instruction_meter: true,
-        enable_instruction_tracing: debugging_features,
-        enable_symbol_and_section_labels: debugging_features,
-        reject_broken_elfs: reject_deployment_of_broken_elfs,
-        noop_instruction_rate: 256,
-        sanitize_user_provided_values: true,
-        external_internal_function_hash_collision: feature_set
-            .is_active(&error_on_syscall_bpf_function_hash_collisions::id()),
-        reject_callx_r10: feature_set.is_active(&reject_callx_r10::id()),
-        enable_sbpf_v1: true,
-        enable_sbpf_v2: false,
-        optimize_rodata: false,
-        aligned_memory_mapping: !feature_set.is_active(&bpf_account_data_direct_mapping::id()),
-        // Warning, do not use `Config::default()` so that configuration here is explicit.
-    };
-    let mut result = FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
-
-    // Abort
-    result.register_function_hashed(*b"abort", SyscallAbort::vm)?;
-
-    // Panic
-    result.register_function_hashed(*b"sol_panic_", SyscallPanic::vm)?;
-
-    // Logging
-    result.register_function_hashed(*b"sol_log_", SyscallLog::vm)?;
-    // result.register_function_hashed(*b"sol_log_64_", SyscallLogU64::vm)?;
-    // result.register_function_hashed(*b"sol_log_compute_units_", SyscallLogBpfComputeUnits::vm)?;
-    // result.register_function_hashed(*b"sol_log_pubkey", SyscallLogPubkey::vm)?;
-
-    // Program defined addresses (PDA)
-    result.register_function_hashed(
-        *b"sol_create_program_address",
-        SyscallCreateProgramAddress::vm,
-    )?;
-    result.register_function_hashed(
-        *b"sol_try_find_program_address",
-        SyscallTryFindProgramAddress::vm,
-    )?;
-
-    // Sha256
-    result.register_function_hashed(*b"sol_sha256", SyscallHash::vm::<SDK, Sha256Hasher>)?;
-
-    // Keccak256
-    result.register_function_hashed(
-        *b"sol_keccak256",
-        SyscallHash::vm::<SDK, Keccak256Hasher<SDK>>,
-    )?;
-
-    // Secp256k1 Recover
-    // result.register_function_hashed(*b"sol_secp256k1_recover", SyscallSecp256k1Recover::vm)?;
-
-    // // Blake3
-    // register_feature_gated_function!(
-    //     result,
-    //     blake3_syscall_enabled,
-    //     *b"sol_blake3",
-    //     SyscallHash::vm::<SDK, Blake3Hasher>,
-    // )?;
-
-    // Elliptic Curve Operations
-    // register_feature_gated_function!(
-    //     result,
-    //     curve25519_syscall_enabled,
-    //     *b"sol_curve_validate_point",
-    //     SyscallCurvePointValidation::vm,
-    // )?;
-    // register_feature_gated_function!(
-    //     result,
-    //     curve25519_syscall_enabled,
-    //     *b"sol_curve_group_op",
-    //     SyscallCurveGroupOps::vm,
-    // )?;
-    // register_feature_gated_function!(
-    //     result,
-    //     curve25519_syscall_enabled,
-    //     *b"sol_curve_multiscalar_mul",
-    //     SyscallCurveMultiscalarMultiplication::vm,
-    // )?;
-
-    // Sysvars
-    // result.register_function_hashed(*b"sol_get_clock_sysvar", SyscallGetClockSysvar::vm)?;
-    // result.register_function_hashed(
-    //     *b"sol_get_epoch_schedule_sysvar",
-    //     SyscallGetEpochScheduleSysvar::vm,
-    // )?;
-    // register_feature_gated_function!(
-    //     result,
-    //     !disable_fees_sysvar,
-    //     *b"sol_get_fees_sysvar",
-    //     SyscallGetFeesSysvar::vm,
-    // )?;
-    // result.register_function_hashed(*b"sol_get_rent_sysvar", SyscallGetRentSysvar::vm)?;
-
-    // register_feature_gated_function!(
-    //     result,
-    //     last_restart_slot_syscall_enabled,
-    //     *b"sol_get_last_restart_slot",
-    //     SyscallGetLastRestartSlotSysvar::vm,
-    // )?;
-
-    // register_feature_gated_function!(
-    //     result,
-    //     epoch_rewards_syscall_enabled,
-    //     *b"sol_get_epoch_rewards_sysvar",
-    //     SyscallGetEpochRewardsSysvar::vm,
-    // )?;
-
-    // Memory ops
-    result.register_function_hashed(*b"sol_memcpy_", SyscallMemcpy::vm)?;
-    result.register_function_hashed(*b"sol_memmove_", SyscallMemmove::vm)?;
-    // result.register_function_hashed(*b"sol_memcmp_", SyscallMemcmp::vm)?;
-    result.register_function_hashed(*b"sol_memset_", SyscallMemset::vm)?;
-
-    // Processed sibling instructions
-    // result.register_function_hashed(
-    //     *b"sol_get_processed_sibling_instruction",
-    //     SyscallGetProcessedSiblingInstruction::vm,
-    // )?;
-
-    // Stack height
-    // result.register_function_hashed(*b"sol_get_stack_height", SyscallGetStackHeight::vm)?;
-
-    // Return data
-    // result.register_function_hashed(*b"sol_set_return_data", SyscallSetReturnData::vm)?;
-    // result.register_function_hashed(*b"sol_get_return_data", SyscallGetReturnData::vm)?;
-
-    // Cross-program invocation
-    // result.register_function_hashed(*b"sol_invoke_signed_c", SyscallInvokeSignedC::vm)?;
-    // result.register_function_hashed(*b"sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)?;
-
-    // Memory allocator
-    // register_feature_gated_function!(
-    //     result,
-    //     !disable_deploy_of_alloc_free_syscall,
-    //     *b"sol_alloc_free_",
-    //     SyscallAllocFree::vm,
-    // )?;
-
-    // Alt_bn128
-    // register_feature_gated_function!(
-    //     result,
-    //     enable_alt_bn128_syscall,
-    //     *b"sol_alt_bn128_group_op",
-    //     SyscallAltBn128::vm,
-    // )?;
-
-    // Big_mod_exp
-    // register_feature_gated_function!(
-    //     result,
-    //     enable_big_mod_exp_syscall,
-    //     *b"sol_big_mod_exp",
-    //     SyscallBigModExp::vm,
-    // )?;
-
-    // Poseidon
-    // register_feature_gated_function!(
-    //     result,
-    //     enable_poseidon_syscall,
-    //     *b"sol_poseidon",
-    //     SyscallPoseidon::vm,
-    // )?;
-
-    // Accessing remaining compute units
-    // register_feature_gated_function!(
-    //     result,
-    //     remaining_compute_units_syscall_enabled,
-    //     *b"sol_remaining_compute_units",
-    //     SyscallRemainingComputeUnits::vm
-    // )?;
-
-    // Alt_bn128_compression
-    // register_feature_gated_function!(
-    //     result,
-    //     enable_alt_bn128_compression_syscall,
-    //     *b"sol_alt_bn128_compression",
-    //     SyscallAltBn128Compression::vm,
-    // )?;
-
-    // Log data
-    // result.register_function_hashed(*b"sol_log_data", SyscallLogData::vm)?;
-
-    Ok(BuiltinProgram::new_loader(config, result))
-}
-
 pub fn check_loader_id(id: &Pubkey) -> bool {
     loader_v4::check_id(id)
         || bpf_loader::check_id(id)
         || bpf_loader_deprecated::check_id(id)
         || bpf_loader_upgradeable::check_id(id)
+}
+
+pub fn rbpf_config_default(compute_budget: Option<&ComputeBudget>) -> Config {
+    // TODO validate all config variables usages
+    Config {
+        enable_instruction_tracing: false,
+        reject_broken_elfs: true,
+        sanitize_user_provided_values: true,
+        enable_instruction_meter: true,
+        max_call_depth: compute_budget.map_or_else(Default::default, |v| v.max_call_depth),
+        stack_frame_size: compute_budget.map_or_else(Default::default, |v| v.stack_frame_size),
+        ..Default::default()
+    }
 }
 
 pub fn load_program_from_bytes<'a, SDK: SharedAPI>(

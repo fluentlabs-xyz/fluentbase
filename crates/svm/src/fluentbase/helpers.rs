@@ -7,6 +7,7 @@ use crate::{
         evm_address_from_pubkey,
         evm_balance_from_lamports,
         is_evm_pubkey,
+        rbpf_config_default,
     },
     compute_budget::compute_budget::ComputeBudget,
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},

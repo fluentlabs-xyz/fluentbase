@@ -5,7 +5,6 @@ use fluentbase_sdk::{
     entrypoint,
     Address,
     Bytes,
-    ExitCode,
     FixedBytes,
     SharedAPI,
     I256,

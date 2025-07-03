@@ -82,11 +82,13 @@ pub struct ComputeBudget {
     pub curve25519_ristretto_subtract_cost: u64,
     /// Number of compute units consumed to multiply a curve25519 ristretto point
     pub curve25519_ristretto_multiply_cost: u64,
-    /// Number of compute units consumed for a multiscalar multiplication (msm) of ristretto points.
-    /// The total cost is calculated as `msm_base_cost + (length - 1) * msm_incremental_cost`.
+    /// Number of compute units consumed for a multiscalar multiplication (msm) of ristretto
+    /// points. The total cost is calculated as `msm_base_cost + (length - 1) *
+    /// msm_incremental_cost`.
     pub curve25519_ristretto_msm_base_cost: u64,
-    /// Number of compute units consumed for a multiscalar multiplication (msm) of ristretto points.
-    /// The total cost is calculated as `msm_base_cost + (length - 1) * msm_incremental_cost`.
+    /// Number of compute units consumed for a multiscalar multiplication (msm) of ristretto
+    /// points. The total cost is calculated as `msm_base_cost + (length - 1) *
+    /// msm_incremental_cost`.
     pub curve25519_ristretto_msm_incremental_cost: u64,
     /// program heap region size, default: solana_sdk::entrypoint::HEAP_LENGTH
     pub heap_size: u32,
@@ -105,9 +107,10 @@ pub struct ComputeBudget {
     pub alt_bn128_pairing_one_pair_cost_other: u64,
     /// Big integer modular exponentiation base cost
     pub big_modular_exponentiation_base_cost: u64,
-    /// Big integer moduler exponentiation cost divisor
+    /// Big integer modular exponentiation cost divisor
     /// The modular exponentiation cost is computed as
-    /// `input_length`/`big_modular_exponentiation_cost_divisor` + `big_modular_exponentiation_base_cost`
+    /// `input_length`/`big_modular_exponentiation_cost_divisor` +
+    /// `big_modular_exponentiation_base_cost`
     pub big_modular_exponentiation_cost_divisor: u64,
     /// Coefficient `a` of the quadratic function which determines the number
     /// of compute units consumed to call poseidon syscall for a given number
@@ -201,7 +204,7 @@ impl ComputeBudget {
     ///
     /// 61*n^2 + 542
     ///
-    /// Which aproximates the results of benchmarks of light-posiedon
+    /// Which aproximates the results of benchmarks of light-poseidon
     /// library[0]. These results assume 1 CU per 33 ns. Examples:
     ///
     /// * 1 input
@@ -215,6 +218,7 @@ impl ComputeBudget {
     ///   * function; `61*3^2 + 542 = 1091`
     ///
     /// [0] https://github.com/Lightprotocol/light-poseidon#performance
+    /// TODO delete?
     pub fn poseidon_cost(&self, nr_inputs: u64) -> Option<u64> {
         let squared_inputs = nr_inputs.checked_pow(2)?;
         let mul_result = self

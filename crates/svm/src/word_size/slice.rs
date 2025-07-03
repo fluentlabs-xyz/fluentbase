@@ -25,7 +25,7 @@ use solana_rbpf::{
     memory_region::{AccessType, MemoryMapping},
 };
 
-pub trait ElementConstraints<'a> = Clone + SpecMethods<'a> + Debug;
+// pub trait ElementConstraints<'a> = Clone + SpecMethods<'a> + Debug;
 
 pub enum RetVal<'a, T: Sized> {
     Instance(T),
@@ -193,7 +193,7 @@ pub fn reconstruct_slice_mut<'a, T>(ptr: usize, len: usize) -> &'a mut [T] {
     unsafe { core::slice::from_raw_parts_mut::<'a>(ptr as *mut T, len) }
 }
 
-impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
+impl<'a, T: Clone + SpecMethods<'a> + Debug> SpecMethods<'a> for SliceFatPtr64<'a, T> {
     const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
 
     fn recover_from_bytes(
@@ -211,7 +211,7 @@ impl<'a, T: ElementConstraints<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
     }
 }
 
-impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
+impl<'a, T: Clone + SpecMethods<'a> + Debug> SliceFatPtr64<'a, T> {
     pub fn new(
         memory_mapping_helper: MemoryMappingHelper<'a>,
         first_item_addr: AddrType,
@@ -435,11 +435,11 @@ impl<'a, T: ElementConstraints<'a>> SliceFatPtr64<'a, T> {
     }
 }
 
-pub struct SliceFatPtr64Iterator<'a, T: ElementConstraints<'a>> {
+pub struct SliceFatPtr64Iterator<'a, T: Clone + SpecMethods<'a> + Debug> {
     instance: &'a SliceFatPtr64<'a, T>,
     idx: usize,
 }
-impl<'a, T: ElementConstraints<'a>> From<&'a SliceFatPtr64<'a, T>>
+impl<'a, T: Clone + SpecMethods<'a> + Debug> From<&'a SliceFatPtr64<'a, T>>
     for SliceFatPtr64Iterator<'a, T>
 {
     fn from(instance: &'a SliceFatPtr64<'a, T>) -> Self {
@@ -447,7 +447,7 @@ impl<'a, T: ElementConstraints<'a>> From<&'a SliceFatPtr64<'a, T>>
     }
 }
 
-impl<'a, T: ElementConstraints<'a>> Iterator for SliceFatPtr64Iterator<'a, T> {
+impl<'a, T: Clone + SpecMethods<'a> + Debug> Iterator for SliceFatPtr64Iterator<'a, T> {
     type Item = RetVal<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -460,7 +460,7 @@ impl<'a, T: ElementConstraints<'a>> Iterator for SliceFatPtr64Iterator<'a, T> {
     }
 }
 
-impl<'a, T: ElementConstraints<'a>> IntoIterator for &'a SliceFatPtr64<'a, T> {
+impl<'a, T: Clone + SpecMethods<'a> + Debug> IntoIterator for &'a SliceFatPtr64<'a, T> {
     type Item = RetVal<'a, T>;
     type IntoIter = SliceFatPtr64Iterator<'a, T>;
 

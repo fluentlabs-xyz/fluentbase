@@ -1,7 +1,7 @@
 use crate::{
     account::{AccountSharedData, WritableAccount},
     builtins::register_builtins,
-    common::TestSdkType,
+    common::{rbpf_config_default, TestSdkType},
     context::{
         BuiltinFunctionWithContext,
         IndexOfAccount,
@@ -41,12 +41,7 @@ pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> Acc
 }
 pub(crate) fn prepare_vars_for_tests<'a, SDK: SharedAPI>(
 ) -> (Config, Arc<BuiltinProgram<InvokeContext<'a, SDK>>>) {
-    let config = Config {
-        enable_instruction_tracing: false,
-        reject_broken_elfs: true,
-        sanitize_user_provided_values: true,
-        ..Default::default()
-    };
+    let config = rbpf_config_default(None);
     // Holds the function symbols of an Executable
     let mut function_registry: FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>> =
         FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
@@ -121,9 +116,10 @@ pub(crate) fn mock_process_instruction<
     //     ..Default::default()
     // };
     // // Holds the function symbols of an Executable
-    // let mut function_registry: FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>> = FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
-    // register_builtins(&mut function_registry);
-    // let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
+    // let mut function_registry: FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>> =
+    // FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default(); register_builtins(&
+    // mut function_registry); let loader = Arc::new(BuiltinProgram::new_loader(config,
+    // function_registry));
 
     with_mock_invoke_context!(
         invoke_context,
