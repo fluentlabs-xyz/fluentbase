@@ -191,7 +191,7 @@ mod tests {
                     .map(|slot| (slot as Slot, Hash::default()))
                     .collect::<SlotHashes>()
             )
-            .unwrap() as usize
+            .unwrap()
         );
     }
 

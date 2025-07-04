@@ -6,7 +6,6 @@ use crate::{
         compile_accounts_for_tx_ctx,
         evm_address_from_pubkey,
         evm_balance_from_lamports,
-        is_evm_pubkey,
         rbpf_config_default,
     },
     compute_budget::compute_budget::ComputeBudget,
@@ -21,7 +20,7 @@ use crate::{
     },
     loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     message_processor::MessageProcessor,
-    select_sapi,
+    select_api,
     solana_program::{
         bpf_loader_upgradeable,
         bpf_loader_upgradeable::UpgradeableLoaderState,
@@ -52,51 +51,50 @@ pub fn init_config() -> Config {
     rbpf_config_default(None)
 }
 
-pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
+pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,
     batch_message: &[u8],
     flush_result_accounts: bool,
-    sapi: &mut Option<&mut SAPI>,
+    api: &mut Option<&mut API>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let batch_message = deserialize::<BatchMessage>(batch_message)?;
-    exec_svm_batch_message(sdk, batch_message, flush_result_accounts, sapi)
+    exec_svm_batch_message(sdk, batch_message, flush_result_accounts, api)
 }
-pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
+pub fn exec_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,
     batch_message: BatchMessage,
     flush_result_accounts: bool,
-    sapi: &mut Option<&mut SAPI>,
+    api: &mut Option<&mut API>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let mut result_accounts = HashMap::new();
     for message in batch_message.messages() {
-        for acc in exec_svm_message(sdk, message.clone(), flush_result_accounts, sapi)? {
+        for acc in exec_svm_message(sdk, message.clone(), flush_result_accounts, api)? {
             result_accounts.insert(acc.0, acc.1);
         }
     }
     Ok(result_accounts)
 }
-pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
+pub fn exec_encoded_svm_message<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,
     message: &[u8],
     flush_result_accounts: bool,
-    sapi: &mut Option<&mut SAPI>,
+    api: &mut Option<&mut API>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let message = deserialize(message)?;
-    exec_svm_message(sdk, message, flush_result_accounts, sapi)
+    exec_svm_message(sdk, message, flush_result_accounts, api)
 }
 
-pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
+pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,
     message: legacy::Message,
     flush_result_accounts: bool,
-    sapi: &mut Option<&mut SAPI>,
+    api: &mut Option<&mut API>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let message: SanitizedMessage =
         SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
 
     let config = init_config();
 
-    // TODO validate blockhash?
     let block_number = sdk.context().block_number();
 
     let compute_budget = ComputeBudget::default();
@@ -131,11 +129,11 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
             program_account_found = true;
             continue;
         }
-        let account_data = select_sapi!(sapi, sdk, |s| {
+        let account_data = select_api!(api, sdk, |s| {
             extract_account_data_or_default(s, account_key)
         })?;
         if account_data.executable() {
-            continue; // this is program account?
+            continue;
         }
         working_accounts.push((account_key.clone(), account_data));
     }
@@ -156,8 +154,8 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
                 .unwrap()
                 .push(program_account_program_idx as IndexOfAccount);
         } else {
-            let program_account = if let Some(sapi) = sapi {
-                extract_account_data_or_default(*sapi, account_key)?
+            let program_account = if let Some(api) = api {
+                extract_account_data_or_default(*api, account_key)?
             } else {
                 extract_account_data_or_default(sdk, account_key)?
             };
@@ -169,7 +167,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
                 {
                     program_accounts_to_warmup.push(account_key);
                     // TODO it should be executable, should we validate?
-                    let program_account = select_sapi!(sapi, sdk, |s| {
+                    let program_account = select_api!(api, sdk, |s| {
                         extract_account_data_or_default(s, &programdata_address)
                     })?;
                     // if !program_account.executable() {
@@ -182,7 +180,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
                         .last_mut()
                         .unwrap()
                         .push(program_accounts.len() as IndexOfAccount);
-                    load_program_account(sdk, sapi, &mut program_accounts, &program_account_owner)?;
+                    load_program_account(sdk, api, &mut program_accounts, &program_account_owner)?;
                     // load_program_account(sdk, &mut program_accounts,
                     // &bpf_loader_upgradeable_id)?;
                 }
@@ -195,7 +193,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
         }
     }
     for program_account_key in program_accounts_to_load {
-        load_program_account(sdk, sapi, &mut program_accounts, program_account_key)?;
+        load_program_account(sdk, api, &mut program_accounts, program_account_key)?;
     }
 
     let (accounts, working_accounts_count) =
@@ -283,7 +281,7 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
         );
     }
     if flush_result_accounts {
-        flush_accounts(sdk, sapi, &result_accounts)?;
+        flush_accounts(sdk, api, &result_accounts)?;
     }
 
     Ok(result_accounts)
@@ -318,8 +316,6 @@ pub(crate) fn settle_balances<SDK: SharedAPI>(
         let mut sender_idx = 0;
         let (mut sender_pk, mut sender_delta) = balance_senders[sender_idx];
         let (mut receiver_pk, mut receiver_delta) = balance_receivers[receiver_idx];
-        assert!(is_evm_pubkey(sender_pk));
-        assert!(is_evm_pubkey(receiver_pk));
         while run {
             // TODO can be optimised
             let evm_address_from = evm_address_from_pubkey::<true>(sender_pk)
@@ -335,13 +331,11 @@ pub(crate) fn settle_balances<SDK: SharedAPI>(
                 sender_delta -= receiver_delta;
                 receiver_idx += 1;
                 (receiver_pk, receiver_delta) = balance_receivers[receiver_idx];
-                assert!(is_evm_pubkey(receiver_pk));
             } else if sender_delta < receiver_delta {
                 amount = sender_delta;
                 receiver_delta -= sender_delta;
                 sender_idx += 1;
                 (sender_pk, sender_delta) = balance_senders[sender_idx];
-                assert!(is_evm_pubkey(sender_pk));
             } else {
                 sender_idx += 1;
                 receiver_idx += 1;
@@ -349,8 +343,6 @@ pub(crate) fn settle_balances<SDK: SharedAPI>(
                 if sender_idx < balance_senders.len() {
                     (receiver_pk, receiver_delta) = balance_receivers[receiver_idx];
                     (sender_pk, sender_delta) = balance_senders[sender_idx];
-                    assert!(is_evm_pubkey(receiver_pk));
-                    assert!(is_evm_pubkey(sender_pk));
                 } else {
                     run = false;
                 }

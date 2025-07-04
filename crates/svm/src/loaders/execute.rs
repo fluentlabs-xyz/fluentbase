@@ -22,15 +22,6 @@ pub fn execute<'a, SDK: SharedAPI>(
     executable: Arc<Executable<InvokeContext<'a, SDK>>>,
     invoke_context: &mut InvokeContext<'a, SDK>,
 ) -> Result<(), Box<dyn core::error::Error>> {
-    // We dropped the lifetime tracking in the Executor by setting it to 'static,
-    // thus we need to reintroduce the correct lifetime of InvokeContext here again.
-    // let executable = unsafe {
-    //     mem::transmute::<&'a Executable<InvokeContext<'static>>, &'a Executable<InvokeContext<'b>>>(
-    //         executable,
-    //     )
-    // };
-    // let log_collector = invoke_context.get_log_collector();
-
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
 
@@ -42,21 +33,16 @@ pub fn execute<'a, SDK: SharedAPI>(
             *program_account.get_owner() == bpf_loader_deprecated::id(),
         )
     };
-    // #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
     let use_jit = false;
-    // #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-    // let use_jit = executable.get_compiled_program().is_some();
     let direct_mapping = invoke_context
         .get_feature_set()
         .is_active(&bpf_account_data_direct_mapping::id());
 
-    // let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
         &invoke_context.transaction_context,
         instruction_context,
         !direct_mapping,
     )?;
-    // serialize_time.stop();
 
     // save the account addresses so in case we hit an AccessViolation error we
     // can map to a more specific error
@@ -75,9 +61,7 @@ pub fn execute<'a, SDK: SharedAPI>(
         })
         .collect::<Vec<_>>();
 
-    // let mut create_vm_time = Measure::start("create_vm");
     let execution_result = {
-        // let compute_meter_prev = invoke_context.get_remaining();
         create_vm!(
             vm,
             executable.as_ref(),
@@ -86,15 +70,12 @@ pub fn execute<'a, SDK: SharedAPI>(
             invoke_context
         );
         let (mut vm, stack, heap) = match vm {
-            // let mut vm = match vm {
             Ok(info) => info,
             Err(_e) => {
                 return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
             }
         };
-        // create_vm_time.stop();
 
-        // vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         let (_compute_units_consumed, result) = vm.execute_program(executable.as_ref(), !use_jit);
         {
             let mut memory_pool = MEMORY_POOL.write();
@@ -103,54 +84,14 @@ pub fn execute<'a, SDK: SharedAPI>(
             debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH);
             debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
         }
-        // MEMORY_POOL.with_borrow_mut(|memory_pool| {
-        //     memory_pool.put_stack(stack);
-        //     memory_pool.put_heap(heap);
-        //     debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH);
-        //     debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
-        // });
         drop(vm);
-        // if let Some(execute_time) = invoke_context.execute_time.as_mut() {
-        //     execute_time.stop();
-        //     invoke_context.timings.execute_us += execute_time.as_us();
-        // }
 
-        // ic_logger_msg!(
-        //     log_collector,
-        //     "Program {} consumed {} of {} compute units",
-        //     &program_id,
-        //     compute_units_consumed,
-        //     compute_meter_prev
-        // );
-        // let (_returned_from_program_id, return_data) =
-        //     invoke_context.transaction_context.get_return_data();
-        // if !return_data.is_empty() {
-        //     stable_log::program_return(&log_collector, &program_id, return_data);
-        // }
         match result {
             ProgramResult::Ok(status) if status != SUCCESS => {
                 let error: InstructionError = status.into();
                 Err(Box::new(error) as Box<dyn core::error::Error>)
             }
             ProgramResult::Err(mut error) => {
-                // if invoke_context
-                //     .get_feature_set()
-                //     .is_active(&solana_feature_set::deplete_cu_meter_on_vm_failure::id())
-                //     && !matches!(error, EbpfError::SyscallError(_))
-                // {
-                //     // when an exception is thrown during the execution of a
-                //     // Basic Block (e.g., a null memory dereference or other
-                //     // faults), determining the exact number of CUs consumed
-                //     // up to the point of failure requires additional effort
-                //     // and is unnecessary since these cases are rare.
-                //     //
-                //     // In order to simplify CU tracking, simply consume all
-                //     // remaining compute units so that the block cost
-                //     // tracker uses the full requested compute unit cost for
-                //     // this failed transaction.
-                //     invoke_context.consume(invoke_context.get_remaining());
-                // }
-
                 if direct_mapping {
                     if let EbpfError::AccessViolation(
                         AccessType::Store,
@@ -212,17 +153,10 @@ pub fn execute<'a, SDK: SharedAPI>(
         )
     }
 
-    // let mut deserialize_time = Measure::start("deserialize");
     let execute_or_deserialize_result = execution_result.and_then(|_| {
         deserialize_parameters(invoke_context, parameter_bytes.as_slice(), !direct_mapping)
             .map_err(|error| Box::new(error) as Box<dyn core::error::Error>)
     });
-    // deserialize_time.stop();
-
-    // Update the timings
-    // invoke_context.timings.serialize_us += serialize_time.as_us();
-    // invoke_context.timings.create_vm_us += create_vm_time.as_us();
-    // invoke_context.timings.deserialize_us += deserialize_time.as_us();
 
     execute_or_deserialize_result
 }

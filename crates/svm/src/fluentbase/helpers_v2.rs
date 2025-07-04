@@ -19,7 +19,7 @@ use crate::{
     message_processor::MessageProcessor,
     native_loader,
     saturating_add_assign,
-    select_sapi,
+    select_api,
     solana_program,
     solana_program::{
         feature_set::feature_set_default,
@@ -52,23 +52,14 @@ use solana_rent::{sysvar, Rent};
 use solana_transaction_error::TransactionError;
 
 pub fn init_config() -> Config {
-    // Config {
-    //     enable_instruction_tracing: false,
-    //     reject_broken_elfs: true,
-    //     sanitize_user_provided_values: true,
-    //     aligned_memory_mapping: true,
-    //     enable_address_translation: true, // To be deactivated once we have BTF inference and verification
-    //     enable_stack_frame_gaps: true,
-    //     ..Default::default()
-    // }
     rbpf_config_default(None)
 }
 
-pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
+pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,
     batch_message: &[u8],
     flush_result_accounts: bool,
-    sapi: &mut Option<&mut SAPI>,
+    api: &mut Option<&mut API>,
 ) -> Result<
     (
         HashMap<Pubkey, AccountSharedData>,
@@ -77,13 +68,13 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     SvmError,
 > {
     let batch_message = deserialize(batch_message)?;
-    exec_svm_batch_message(sdk, batch_message, flush_result_accounts, sapi)
+    exec_svm_batch_message(sdk, batch_message, flush_result_accounts, api)
 }
-pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
+pub fn exec_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,
     batch_message: BatchMessage,
     do_flush: bool,
-    sapi: &mut Option<&mut SAPI>,
+    api: &mut Option<&mut API>,
 ) -> Result<
     (
         HashMap<Pubkey, AccountSharedData>,
@@ -94,7 +85,7 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     let mut result_accounts: HashMap<Pubkey, AccountSharedData> = Default::default();
     let mut balance_changes: HashMap<Pubkey, (u64, u64)> = Default::default();
     for message in batch_message.messages() {
-        let (ra, bhs) = exec_svm_message(sdk, sapi, message.clone(), do_flush)?;
+        let (ra, bhs) = exec_svm_message(sdk, api, message.clone(), do_flush)?;
         result_accounts.extend(ra);
         for (account_key, balance_change) in bhs {
             match balance_changes.entry(account_key) {
@@ -109,11 +100,11 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     }
     Ok((result_accounts, balance_changes))
 }
-pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
+pub fn exec_encoded_svm_message<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,
     message: &[u8],
     flush_result_accounts: bool,
-    sapi: &mut Option<&mut SAPI>,
+    api: &mut Option<&mut API>,
 ) -> Result<
     (
         HashMap<Pubkey, AccountSharedData>,
@@ -122,7 +113,7 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
     SvmError,
 > {
     let message = deserialize(message)?;
-    exec_svm_message(sdk, sapi, message, flush_result_accounts)
+    exec_svm_message(sdk, api, message, flush_result_accounts)
 }
 
 // pub fn prepare_data_for_tx_ctx1<SDK: SharedAPI, SAPI: MetadataAPI>(
@@ -297,9 +288,9 @@ fn account_shared_data_from_program(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn load_transaction_account<'a, SDK: SharedAPI, SAPI: MetadataAPI>(
+fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI>(
     // callbacks: &CB,
-    sapi: &SAPI,
+    api: &API,
     message: &impl SVMMessage,
     account_key: &Pubkey,
     account_index: usize,
@@ -348,7 +339,7 @@ fn load_transaction_account<'a, SDK: SharedAPI, SAPI: MetadataAPI>(
     } else {
         // callbacks
         //     .get_account_shared_data(account_key)
-        storage_read_account_data(sapi, account_key)
+        storage_read_account_data(api, account_key)
             .map(|account| {
                 // Inspect the account prior to collecting rent, since
                 // rent collection can modify the account.
@@ -397,10 +388,10 @@ fn load_transaction_account<'a, SDK: SharedAPI, SAPI: MetadataAPI>(
     Ok((loaded_account, account_found))
 }
 
-pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: MetadataAPI>(
+pub fn prepare_data_for_tx_ctx<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,
     message: &impl SVMMessage,
-    sapi: &mut Option<&mut SAPI>,
+    api: &mut Option<&mut API>,
     feature_set: &FeatureSet,
     program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
     loaded_programs: &ProgramCacheForTxBatch<SDK>,
@@ -447,10 +438,9 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: MetadataAPI>(
     // it's fine to use the fee payer directly here rather than checking account
     // overrides again.
     let fee_payer = message.fee_payer();
-    let loaded_fee_payer_account =
-        // select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, fee_payer) })
-        select_sapi!(sapi, sdk, |s| { extract_account_data_or_default(s, fee_payer) }) // TODO should we throw error?
-            .expect("fee payer expected");
+    let loaded_fee_payer_account = select_api!(api, sdk, |s| {
+        extract_account_data_or_default(s, fee_payer)
+    })?;
     collect_loaded_account(fee_payer, (loaded_fee_payer_account, true))?;
 
     // Attempt to load and collect remaining non-fee payer accounts
@@ -468,7 +458,7 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: MetadataAPI>(
         //     program_accounts,
         //     loaded_programs,
         // )?;
-        let (loaded_account, account_found) = select_sapi!(sapi, sdk, |s| {
+        let (loaded_account, account_found) = select_api!(api, sdk, |s| {
             load_transaction_account(
                 // callbacks,
                 s,
@@ -490,7 +480,7 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: MetadataAPI>(
     let program_indices = message
         .instructions_iter()
         .map(|instruction| {
-            let mut account_indices = Vec::with_capacity(2);
+            let mut account_indices = Vec::with_capacity(1);
             let program_index = instruction.program_id_index as usize;
             // This command may never return error, because the transaction is sanitized
             let (program_id, program_account) = accounts
@@ -523,7 +513,7 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: MetadataAPI>(
                 .any(|(key, _)| key == owner_id)
             {
                 if let Ok(owner_account) =
-                    select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, owner_id) })
+                    select_api!(api, sdk, |s| { storage_read_account_data(s, owner_id) })
                 {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
@@ -548,13 +538,14 @@ pub fn prepare_data_for_tx_ctx2<SDK: SharedAPI, SAPI: MetadataAPI>(
     Ok((accounts, program_indices))
 }
 
-fn filter_executable_program_accounts<'a, SDK: SharedAPI, SAPI: MetadataAPI>(
+fn filter_executable_program_accounts<'a, SDK: SharedAPI, API: MetadataAPI>(
     sdk: &SDK,
-    sapi: &mut Option<&mut SAPI>,
+    api: &mut Option<&mut API>,
     txs: &[&impl SVMMessage],
     program_owners: &'a [Pubkey],
 ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
-    let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> = HashMap::new();
+    let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> =
+        HashMap::with_capacity(txs.iter().fold(0usize, |a, v| a + v.account_keys().len()));
 
     txs.iter().for_each(|etx| {
         etx.account_keys()
@@ -566,8 +557,7 @@ fn filter_executable_program_accounts<'a, SDK: SharedAPI, SAPI: MetadataAPI>(
                 }
                 Entry::Vacant(entry) => {
                     // if let Some(index) = callbacks.account_matches_owners(key, program_owners) {
-                    let account =
-                        select_sapi!(sapi, sdk, |s| { storage_read_account_data(s, key) });
+                    let account = select_api!(api, sdk, |s| { storage_read_account_data(s, key) });
                     if let Ok(acc) = account {
                         // if acc.lamports() <= 0 {
                         //     return;
@@ -584,9 +574,9 @@ fn filter_executable_program_accounts<'a, SDK: SharedAPI, SAPI: MetadataAPI>(
     result
 }
 
-pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
+pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,
-    sapi: &mut Option<&mut SAPI>,
+    api: &mut Option<&mut API>,
     message: legacy::Message,
     flush_result_accounts: bool,
 ) -> Result<
@@ -644,11 +634,11 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
 
     let feature_set = feature_set_default();
     let program_accounts =
-        filter_executable_program_accounts(sdk, sapi, &[&message], &PROGRAM_OWNERS);
-    let result = prepare_data_for_tx_ctx2(
+        filter_executable_program_accounts(sdk, api, &[&message], &PROGRAM_OWNERS);
+    let result = prepare_data_for_tx_ctx(
         sdk,
         &message,
-        sapi,
+        api,
         &feature_set,
         &program_accounts,
         &program_cache_for_tx_batch,
@@ -698,16 +688,14 @@ pub fn exec_svm_message<SDK: SharedAPI, SAPI: MetadataAPI>(
 
     for account_idx in 0..transaction_context.get_number_of_accounts() {
         let account_key = transaction_context.get_key_of_account_at_index(account_idx)?;
-
         let account_data = transaction_context.get_account_at_index(account_idx)?;
-
         result_accounts.insert(
             account_key.clone(),
             account_data.borrow().to_account_shared_data(),
         );
     }
     if flush_result_accounts {
-        flush_accounts(sdk, sapi, &result_accounts)?;
+        flush_accounts(sdk, api, &result_accounts)?;
     }
 
     Ok((result_accounts, balance_changes))

@@ -8,7 +8,7 @@ mod tests {
         loaded_programs::ProgramCacheEntry,
         loaders::{
             bpf_loader_v4,
-            bpf_loader_v4::{create_program_runtime_environment_v2, get_state_mut},
+            bpf_loader_v4::{create_program_runtime_environment, get_state_mut},
         },
         rent,
         solana_program::{
@@ -104,7 +104,7 @@ mod tests {
                 invoke_context
                     .program_cache_for_tx_batch
                     .environments
-                    .program_runtime_v2 = Arc::new(create_program_runtime_environment_v2(
+                    .program_runtime_v2 = Arc::new(create_program_runtime_environment(
                     &ComputeBudget::default(),
                     false,
                 ));
@@ -148,10 +148,7 @@ mod tests {
         create_account_shared_data_for_test(&clock)
     }
 
-    fn test_loader_instruction_general_errors(
-        // sdk: &SDK,
-        instruction: LoaderV4Instruction,
-    ) {
+    fn test_loader_instruction_general_errors(instruction: LoaderV4Instruction) {
         let sdk = new_test_sdk();
 
         let instruction = serialize(&instruction).unwrap();

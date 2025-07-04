@@ -9,19 +9,19 @@ pub trait StorageSlotCalculator {
     fn storage_slot(&self, slot: u32) -> U256;
 }
 
-pub struct StorageChunksWriter<SAPI, SC> {
-    pub _phantom: PhantomData<SAPI>,
+pub struct StorageChunksWriter<API, SC> {
+    pub _phantom: PhantomData<API>,
     pub slot_calc: Rc<SC>,
 }
-impl<'a, SAPI: StorageAPI, SC: StorageSlotCalculator> FixedChunksWriter<'a, SAPI, SC>
-    for StorageChunksWriter<SAPI, SC>
+impl<'a, API: StorageAPI, SC: StorageSlotCalculator> FixedChunksWriter<'a, API, SC>
+    for StorageChunksWriter<API, SC>
 {
     fn slot_calc(&self) -> Rc<SC> {
         self.slot_calc.clone()
     }
 }
-impl<'a, SAPI: StorageAPI, SC: StorageSlotCalculator> VariableLengthDataWriter<'a, SAPI, SC>
-    for StorageChunksWriter<SAPI, SC>
+impl<'a, API: StorageAPI, SC: StorageSlotCalculator> VariableLengthDataWriter<'a, API, SC>
+    for StorageChunksWriter<API, SC>
 {
     fn set_slot_calc(&mut self, value: Rc<SC>) -> &mut Self {
         self.slot_calc = value.clone();
@@ -32,12 +32,12 @@ impl<'a, SAPI: StorageAPI, SC: StorageSlotCalculator> VariableLengthDataWriter<'
         self.slot_calc.clone()
     }
 }
-pub trait FixedChunksWriter<'a, SAPI: StorageAPI, SC: StorageSlotCalculator> {
+pub trait FixedChunksWriter<'a, API: StorageAPI, SC: StorageSlotCalculator> {
     fn slot_calc(&self) -> Rc<SC>;
 
     fn write_data_chunk_padded(
         &self,
-        sapi: &mut SAPI,
+        api: &mut API,
         data: &[u8],
         chunk_index: u32,
         force_write: bool,
@@ -47,54 +47,54 @@ pub trait FixedChunksWriter<'a, SAPI: StorageAPI, SC: StorageSlotCalculator> {
         let data_tail_index = data.len() as u32;
         if start_index >= data_tail_index {
             if force_write {
-                let _ = sapi.write_storage(self.slot_calc().storage_slot(chunk_index), U256::ZERO);
+                let _ = api.write_storage(self.slot_calc().storage_slot(chunk_index), U256::ZERO);
             }
             return 0;
         }
         let chunk =
             &data[start_index as usize..core::cmp::min(end_index, data_tail_index) as usize];
         let value = U256::from_le_slice(chunk);
-        let _ = sapi.write_storage(self.slot_calc().storage_slot(chunk_index), value);
+        let _ = api.write_storage(self.slot_calc().storage_slot(chunk_index), value);
         chunk.len()
     }
 
     fn write_data_in_padded_chunks(
         &self,
-        sapi: &mut SAPI,
+        api: &mut API,
         data: &[u8],
         tail_chunk_index: u32,
         force_write: bool,
     ) -> usize {
         let mut len_written = 0;
         for chunk_index in 0..=tail_chunk_index {
-            len_written += self.write_data_chunk_padded(sapi, data, chunk_index, force_write)
+            len_written += self.write_data_chunk_padded(api, data, chunk_index, force_write)
         }
         len_written
     }
 
-    fn read_data_chunk_padded(&self, sapi: &'a SAPI, chunk_index: u32, buf: &mut Vec<u8>) {
+    fn read_data_chunk_padded(&self, api: &'a API, chunk_index: u32, buf: &mut Vec<u8>) {
         let slot = self.slot_calc().storage_slot(chunk_index);
-        let value = sapi.storage(&slot);
+        let value = api.storage(&slot);
         buf.extend_from_slice(value.as_le_slice());
     }
 
-    fn read_data_in_padded_chunks(&self, sapi: &'a SAPI, tail_chunk_index: u32, buf: &mut Vec<u8>) {
+    fn read_data_in_padded_chunks(&self, api: &'a API, tail_chunk_index: u32, buf: &mut Vec<u8>) {
         for chunk_index in 0..=tail_chunk_index {
-            self.read_data_chunk_padded(sapi, chunk_index, buf)
+            self.read_data_chunk_padded(api, chunk_index, buf)
         }
     }
 }
-pub trait VariableLengthDataWriter<'a, SAPI: StorageAPI, SC: StorageSlotCalculator> {
+pub trait VariableLengthDataWriter<'a, API: StorageAPI, SC: StorageSlotCalculator> {
     fn set_slot_calc(&mut self, value: Rc<SC>) -> &mut Self;
     fn slot_calc(&self) -> Rc<SC>;
 
-    fn write_data(&self, sapi: &mut SAPI, data: &[u8]) -> usize {
+    fn write_data(&self, api: &mut API, data: &[u8]) -> usize {
         let data_len = data.len();
         if data_len <= 0 {
             return 0;
         }
         let slot = self.slot_calc().storage_slot(0);
-        let _ = sapi.write_storage(slot, U256::from(data_len));
+        let _ = api.write_storage(slot, U256::from(data_len));
         let chunks_count = (data_len - 1) / U256::BYTES + 1;
         for chunk_index in 0..chunks_count {
             let chunk_start_index = chunk_index * U256::BYTES;
@@ -102,19 +102,19 @@ pub trait VariableLengthDataWriter<'a, SAPI: StorageAPI, SC: StorageSlotCalculat
             let chunk = &data[chunk_start_index..chunk_end_index];
             let value = U256::from_le_slice(chunk);
             let slot = self.slot_calc().storage_slot(chunk_index as u32 + 1);
-            let _ = sapi.write_storage(slot, value);
+            let _ = api.write_storage(slot, value);
         }
         data_len
     }
 
-    fn clear_buf_read_data(&self, sapi: &SAPI, buf: &mut Vec<u8>) -> Result<(), ExitCode> {
+    fn clear_buf_read_data(&self, api: &API, buf: &mut Vec<u8>) -> Result<(), ExitCode> {
         buf.clear();
-        self.read_data(sapi, buf)
+        self.read_data(api, buf)
     }
 
-    fn read_data(&self, sapi: &SAPI, buf: &mut Vec<u8>) -> Result<(), ExitCode> {
+    fn read_data(&self, api: &API, buf: &mut Vec<u8>) -> Result<(), ExitCode> {
         let slot = self.slot_calc().storage_slot(0);
-        let data_len = sapi.storage(&slot);
+        let data_len = api.storage(&slot);
         if data_len.status != ExitCode::Ok {
             return Err(data_len.status);
         }
@@ -126,14 +126,14 @@ pub trait VariableLengthDataWriter<'a, SAPI: StorageAPI, SC: StorageSlotCalculat
         let chunks_count = (data_len - 1) / U256::BYTES + 1;
         for chunk_index in 0..chunks_count - 1 {
             let slot = self.slot_calc().storage_slot(chunk_index as u32 + 1);
-            let value = sapi.storage(&slot);
+            let value = api.storage(&slot);
             let value = value.as_le_slice();
             buf.extend_from_slice(value);
         }
         let chunk_index = chunks_count - 1;
         let last_chunk_len = data_len - U256::BYTES * chunk_index;
         let slot = self.slot_calc().storage_slot(chunk_index as u32 + 1);
-        let value = sapi.storage(&slot);
+        let value = api.storage(&slot);
         let value = &value.as_le_slice()[0..last_chunk_len];
         buf.extend_from_slice(value);
 

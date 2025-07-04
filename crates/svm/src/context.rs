@@ -14,7 +14,7 @@ use crate::{
     loaders::bpf_loader_v4,
     native_loader,
     solana_program::{
-        bpf_loader_upgradeable::UpgradeableLoaderState,
+        // bpf_loader_upgradeable::UpgradeableLoaderState,
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status},
     },
@@ -92,7 +92,7 @@ pub enum ProgramAccountLoadResult {
     InvalidAccountData(ProgramCacheEntryOwner),
     ProgramOfLoaderV1(AccountSharedData),
     ProgramOfLoaderV2(AccountSharedData),
-    ProgramOfLoaderV3(AccountSharedData, AccountSharedData, Slot),
+    // ProgramOfLoaderV3(AccountSharedData, AccountSharedData, Slot),
     ProgramOfLoaderV4(AccountSharedData, Slot),
 }
 
@@ -177,6 +177,7 @@ pub struct InvokeContext<'a, SDK: SharedAPI> {
     // pub blockhash: Hash,
     // pub lamports_per_signature: u64,
     // pub current_compute_budget: ComputeBudget,
+    // TODO is it still unused after all builtins integrations?
     pub sdk: &'a SDK,
 }
 
@@ -754,11 +755,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             .and_then(|v| Some(v.borrow().clone()))
     }
 
-    pub fn load_program_accounts(
-        // callbacks: &CB,
-        &self,
-        pubkey: &Pubkey,
-    ) -> Option<ProgramAccountLoadResult> {
+    pub fn load_program_accounts(&self, pubkey: &Pubkey) -> Option<ProgramAccountLoadResult> {
         // let program_account = callbacks.get_account_shared_data(pubkey)?;
         let program_account = self.get_account_with_fixed_root(pubkey)?;
 
@@ -784,28 +781,28 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
         }
 
-        if let Ok(UpgradeableLoaderState::Program {
-            programdata_address,
-        }) = program_account.state()
-        {
-            if let Some(programdata_account) =
-                self.get_account_with_fixed_root(&programdata_address)
-            {
-                if let Ok(UpgradeableLoaderState::ProgramData {
-                    slot,
-                    upgrade_authority_address: _,
-                }) = programdata_account.state()
-                {
-                    return Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
-                        program_account,
-                        programdata_account,
-                        slot,
-                    ));
-                }
-            }
-        }
+        // if let Ok(UpgradeableLoaderState::Program {
+        //     programdata_address,
+        // }) = program_account.state()
+        // {
+        //     if let Some(programdata_account) =
+        //         self.get_account_with_fixed_root(&programdata_address)
+        //     {
+        //         if let Ok(UpgradeableLoaderState::ProgramData {
+        //             slot,
+        //             upgrade_authority_address: _,
+        //         }) = programdata_account.state()
+        //         {
+        //             return Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
+        //                 program_account,
+        //                 programdata_account,
+        //                 slot,
+        //             ));
+        //         }
+        //     }
+        // }
         Some(ProgramAccountLoadResult::InvalidAccountData(
-            ProgramCacheEntryOwner::LoaderV3,
+            ProgramCacheEntryOwner::LoaderV4,
         ))
     }
 
@@ -871,11 +868,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // execute_timings: &mut ExecuteTimings,
         reload: bool,
     ) -> Option<Arc<ProgramCacheEntry<'a, SDK>>> {
-        // let mut load_program_metrics = LoadProgramMetrics {
-        //     program_id: pubkey.to_string(),
-        //     ..LoadProgramMetrics::default()
-        // };
-
         let loaded_program = match self.load_program_accounts(pubkey)? {
             ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
                 ProgramCacheEntry::new_tombstone(slot, owner, ProgramCacheEntryType::Closed),
@@ -907,30 +899,29 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 .map_err(|_| (0, ProgramCacheEntryOwner::LoaderV2))
             }
 
-            ProgramAccountLoadResult::ProgramOfLoaderV3(
-                program_account,
-                programdata_account,
-                slot,
-            ) => programdata_account
-                .data()
-                .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
-                .ok_or(InstructionError::InvalidAccountData)
-                .and_then(|programdata| {
-                    load_program_from_bytes(
-                        // &mut load_program_metrics,
-                        programdata,
-                        program_account.owner(),
-                        program_account
-                            .data()
-                            .len()
-                            .saturating_add(programdata_account.data().len()),
-                        slot,
-                        environments.program_runtime_v1.clone(),
-                        reload,
-                    )
-                })
-                .map_err(|_| (slot, ProgramCacheEntryOwner::LoaderV3)),
-
+            // ProgramAccountLoadResult::ProgramOfLoaderV3(
+            //     program_account,
+            //     programdata_account,
+            //     slot,
+            // ) => programdata_account
+            //     .data()
+            //     .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
+            //     .ok_or(InstructionError::InvalidAccountData)
+            //     .and_then(|programdata| {
+            //         load_program_from_bytes(
+            //             // &mut load_program_metrics,
+            //             programdata,
+            //             program_account.owner(),
+            //             program_account
+            //                 .data()
+            //                 .len()
+            //                 .saturating_add(programdata_account.data().len()),
+            //             slot,
+            //             environments.program_runtime_v1.clone(),
+            //             reload,
+            //         )
+            //     })
+            //     .map_err(|_| (slot, ProgramCacheEntryOwner::LoaderV3)),
             ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot) => program_account
                 .data()
                 .get(LoaderV4State::program_data_offset()..)

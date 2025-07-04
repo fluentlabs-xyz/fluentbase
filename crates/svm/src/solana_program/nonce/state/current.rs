@@ -11,26 +11,13 @@ use solana_sha256_hasher::hashv;
 
 const DURABLE_NONCE_HASH_PREFIX: &[u8] = "DURABLE_NONCE".as_bytes();
 
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    Eq,
-    PartialEq,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct DurableNonce(Hash);
 
 /// Initialized data of a durable transaction nonce account.
 ///
 /// This is stored within [`State`] for initialized nonce accounts.
-#[derive(
-    Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
-)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Data {
     /// Address of the account that signs transactions using the nonce account.
     pub authority: Pubkey,
@@ -82,9 +69,7 @@ impl DurableNonce {
 ///
 /// When created in memory with [`State::default`] or when deserialized from an
 /// uninitialized account, a nonce account will be [`State::Uninitialized`].
-#[derive(
-    Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
-)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum State {
     #[default]
     Uninitialized,

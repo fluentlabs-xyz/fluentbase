@@ -42,9 +42,7 @@ declare_deprecated_sysvar_id!(
     note = "Please do not use, will no longer be available in the future"
 )]
 #[repr(C)]
-#[derive(
-    Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq, bincode::Encode, bincode::Decode,
-)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Entry {
     pub blockhash: Hash,
     pub fee_calculator: FeeCalculator,
@@ -86,7 +84,7 @@ impl<'a> PartialOrd for IterItem<'a> {
 /// The entries are ordered by descending block height, so the first entry holds
 /// the most recent block hash, and the last entry holds an old block hash.
 #[repr(C)]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct RecentBlockhashes(Vec<Entry>);
 
 impl Default for RecentBlockhashes {

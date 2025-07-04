@@ -7,10 +7,10 @@ use crate::{
             flush_accounts,
             process_svm_result,
             BatchMessage,
-            MemStorage,
         },
         helpers_v2::{exec_encoded_svm_batch_message, exec_svm_batch_message},
         loader_common::{read_contract_executable, write_contract_executable},
+        mem_storage::MemStorage,
     },
     helpers::storage_write_account_data,
     native_loader,
@@ -198,8 +198,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     ) = match process_svm_result(result) {
         Ok((result_accounts, balance_changes)) => {
             if result_accounts.len() > 0 {
-                let mut sapi: Option<&mut SDK> = None;
-                flush_accounts(&mut sdk, &mut sapi, &result_accounts)
+                let mut api: Option<&mut SDK> = None;
+                flush_accounts(&mut sdk, &mut api, &result_accounts)
                     .expect("failed to save result accounts");
             }
             (result_accounts, balance_changes)

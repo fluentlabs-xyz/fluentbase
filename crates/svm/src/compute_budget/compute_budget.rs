@@ -1,5 +1,5 @@
 use crate::{
-    compute_budget::compute_budget_limits::ComputeBudgetLimits,
+    // compute_budget::compute_budget_limits::ComputeBudgetLimits,
     compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT,
 };
 use solana_program_entrypoint::HEAP_LENGTH;
@@ -138,15 +138,15 @@ impl Default for ComputeBudget {
     }
 }
 
-impl From<ComputeBudgetLimits> for ComputeBudget {
-    fn from(compute_budget_limits: ComputeBudgetLimits) -> Self {
-        ComputeBudget {
-            compute_unit_limit: u64::from(compute_budget_limits.compute_unit_limit),
-            heap_size: compute_budget_limits.updated_heap_bytes,
-            ..ComputeBudget::default()
-        }
-    }
-}
+// impl From<ComputeBudgetLimits> for ComputeBudget {
+//     fn from(compute_budget_limits: ComputeBudgetLimits) -> Self {
+//         ComputeBudget {
+//             compute_unit_limit: u64::from(compute_budget_limits.compute_unit_limit),
+//             heap_size: compute_budget_limits.updated_heap_bytes,
+//             ..ComputeBudget::default()
+//         }
+//     }
+// }
 
 impl ComputeBudget {
     pub fn new(compute_unit_limit: u64) -> Self {

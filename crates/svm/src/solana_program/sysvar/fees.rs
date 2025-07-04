@@ -33,17 +33,7 @@ declare_deprecated_sysvar_id!("SysvarFees111111111111111111111111111111111", Fee
 
 /// Transaction fees.
 #[repr(C)]
-#[derive(
-    Serialize,
-    Deserialize,
-    Debug,
-    CloneZeroed,
-    Default,
-    PartialEq,
-    Eq,
-    bincode::Encode,
-    bincode::Decode,
-)]
+#[derive(Serialize, Deserialize, Debug, CloneZeroed, Default, PartialEq, Eq)]
 pub struct Fees {
     pub fee_calculator: FeeCalculator,
 }

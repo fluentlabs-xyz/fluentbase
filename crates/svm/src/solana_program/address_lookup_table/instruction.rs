@@ -8,7 +8,7 @@ use solana_clock::Slot;
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 pub enum ProgramInstruction {
     /// Create an address lookup table
     ///

@@ -90,7 +90,7 @@ mod tests {
         }
 
         assert_eq!(
-            serialized_size(&stake_history).unwrap() as usize,
+            serialized_size(&stake_history).unwrap(),
             StakeHistory::size_of()
         );
 

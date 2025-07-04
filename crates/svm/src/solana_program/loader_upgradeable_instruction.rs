@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 #[repr(u8)]
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 pub enum UpgradeableLoaderInstruction {
     /// Initialize a Buffer account.
     ///

@@ -339,7 +339,7 @@ impl<'a, T: Clone + SpecMethods<'a> + Debug> SliceFatPtr64<'a, T> {
     pub fn item_at_idx(&self, idx: usize) -> RetVal<'a, T> {
         let byte_repr = reconstruct_slice::<'a, u8>(
             self.item_addr_at_idx(idx).inner() as usize,
-            T::ITEM_SIZE_BYTES as usize,
+            T::ITEM_SIZE_BYTES,
         );
         T::recover_from_bytes(byte_repr, self.memory_mapping_helper.clone())
     }

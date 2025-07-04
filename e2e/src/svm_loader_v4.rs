@@ -2,7 +2,6 @@ mod tests {
     use core::str::from_utf8;
     use fluentbase_sdk::{
         address,
-        debug_log_ext,
         Address,
         ContextReader,
         ContractContextV1,
@@ -155,7 +154,6 @@ mod tests {
             ..Default::default()
         });
 
-        debug_log_ext!();
         let exec_account: AccountSharedData = storage_read_account_data(&ctx.sdk, &pk_exec)
             .expect(format!("failed to read exec account data: {}", pk_exec).as_str());
         assert_eq!(exec_account.lamports(), 0);
@@ -168,7 +166,6 @@ mod tests {
             account_with_program.data()
         );
 
-        debug_log_ext!();
         let payer_account = storage_read_account_data(&ctx.sdk, &pk_payer).expect(
             format!(
                 "failed to read payer {} (address:{}) account data",
@@ -184,7 +181,6 @@ mod tests {
         );
         assert_eq!(payer_account.data().len(), 0);
 
-        debug_log_ext!();
         let new_account = storage_read_account_data(&ctx.sdk, &pk_new)
             .expect(format!("failed to read new account data: {}", pk_new).as_str());
         assert_eq!(new_account.lamports(), lamports_to_send);

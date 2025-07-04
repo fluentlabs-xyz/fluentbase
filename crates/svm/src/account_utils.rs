@@ -19,48 +19,32 @@ pub trait State<T> {
     fn set_state(&self, state: &T) -> Result<(), InstructionError>;
 }
 
-impl<T> StateMut<T> for Account
-where
-    T: serde::Serialize
-        + serde::de::DeserializeOwned
-        + bincode::enc::Encode
-        + bincode::de::Decode<()>,
-{
-    fn state(&self) -> Result<T, InstructionError> {
-        self.deserialize_data()
-            .map_err(|_| InstructionError::InvalidAccountData)
-    }
-    fn set_state(&mut self, state: &T) -> Result<(), InstructionError> {
-        self.serialize_data(state)
-            .map_err(|ref err| match err {
-                EncodeError::Other("account data size limit") => {
-                    InstructionError::AccountDataTooSmall
-                }
-                _ => InstructionError::GenericError,
-            })
-            .map(|_| ())
-    }
+macro_rules! impl_state_for {
+    ($typ:ty) => {
+        impl<T> StateMut<T> for $typ
+        where
+            T: serde::Serialize + serde::de::DeserializeOwned,
+        {
+            fn state(&self) -> Result<T, InstructionError> {
+                self.deserialize_data()
+                    .map_err(|_| InstructionError::InvalidAccountData)
+            }
+            fn set_state(&mut self, state: &T) -> Result<(), InstructionError> {
+                self.serialize_data(state)
+                    .map_err(|ref err| match err {
+                        EncodeError::Other("account data size limit") => {
+                            InstructionError::AccountDataTooSmall
+                        }
+                        _ => InstructionError::GenericError,
+                    })
+                    .map(|_| ())
+            }
+        }
+    };
 }
 
-impl<T> StateMut<T> for AccountSharedData
-where
-    T: serde::Serialize + serde::de::DeserializeOwned + bincode::enc::Encode + bincode::Decode<()>,
-{
-    fn state(&self) -> Result<T, InstructionError> {
-        self.deserialize_data()
-            .map_err(|_| InstructionError::InvalidAccountData)
-    }
-    fn set_state(&mut self, state: &T) -> Result<(), InstructionError> {
-        self.serialize_data(state)
-            .map_err(|ref err| match err {
-                EncodeError::Other("account data size limit") => {
-                    InstructionError::AccountDataTooSmall
-                }
-                _ => InstructionError::GenericError,
-            })
-            .map(|_| ())
-    }
-}
+impl_state_for!(Account);
+impl_state_for!(AccountSharedData);
 
 impl<T> StateMut<T> for Ref<'_, AccountSharedData>
 where
@@ -85,7 +69,7 @@ mod tests {
         let state = 42u64;
 
         assert!(AccountSharedData::default().set_state(&state).is_err());
-        let res = AccountSharedData::default().state() as Result<u64, InstructionError>;
+        let res: Result<u64, InstructionError> = AccountSharedData::default().state();
         assert!(res.is_err());
 
         let mut account = AccountSharedData::new(0, size_of::<u64>(), &Pubkey::default());

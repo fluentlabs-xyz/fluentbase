@@ -14,7 +14,7 @@
 use crate::{
     bpf_loader_deprecated,
     solana_program::{
-        bpf_loader_upgradeable,
+        // bpf_loader_upgradeable,
         instruction::CompiledInstruction,
         message::{compiled_keys::CompiledKeys, MessageHeader},
         sysvar,
@@ -47,7 +47,7 @@ mod builtins {
     use solana_pubkey::Pubkey;
 
     lazy_static! {
-        pub static ref BUILTIN_PROGRAMS_KEYS: [Pubkey; 10] = {
+        pub static ref BUILTIN_PROGRAMS_KEYS: [Pubkey; 9] = {
             let parse = |s| Pubkey::from_str(s).unwrap();
             [
                 parse("Config1111111111111111111111111111111111111"),
@@ -59,7 +59,7 @@ mod builtins {
                 system_program::id(),
                 bpf_loader::id(),
                 bpf_loader_deprecated::id(),
-                bpf_loader_upgradeable::id(),
+                // bpf_loader_upgradeable::id(),
             ]
         };
     }
@@ -130,9 +130,7 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
 // NOTE: Serialization-related changes must be paired with the custom serialization
 // for versioned messages in the `RemainingLegacyMessage` struct.
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(
-    bincode::Encode, bincode::Decode, Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone,
-)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     /// The message header, identifying signed and read-only `account_keys`.
@@ -156,9 +154,7 @@ pub struct Message {
 /// This duplication is required until https://github.com/rustwasm/wasm-bindgen/issues/3671
 /// is fixed. This must not diverge from the regular non-wasm Message struct.
 #[cfg(target_arch = "wasm32")]
-#[derive(
-    Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
-)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub header: MessageHeader,
@@ -174,7 +170,7 @@ pub struct Message {
 }
 
 impl Sanitize for Message {
-    fn sanitize(&self) -> core::result::Result<(), SanitizeError> {
+    fn sanitize(&self) -> Result<(), SanitizeError> {
         // signing area and read-only non-signing area should not overlap
         if self.header.num_required_signatures as usize
             + self.header.num_readonly_unsigned_accounts as usize
@@ -266,14 +262,14 @@ impl Message {
     }
 
     /// Compute the blake3 hash of this transaction's message.
-
+    #[cfg(test)]
     pub fn hash(&self) -> Hash {
         let message_bytes = self.serialize();
         Self::hash_raw_message(&message_bytes)
     }
 
     /// Compute the blake3 hash of a raw transaction message.
-
+    #[cfg(test)]
     pub fn hash_raw_message(message_bytes: &[u8]) -> Hash {
         use {
             // blake3::traits::digest::Digest,
@@ -311,11 +307,6 @@ impl Message {
             .collect()
     }
 
-    #[deprecated(since = "2.0.0", note = "Please use `is_instruction_account` instead")]
-    pub fn is_key_passed_to_program(&self, key_index: usize) -> bool {
-        self.is_instruction_account(key_index)
-    }
-
     /// Returns true if the account at the specified index is an account input
     /// to some program instruction in this message.
     pub fn is_instruction_account(&self, key_index: usize) -> bool {
@@ -342,6 +333,7 @@ impl Message {
         since = "2.0.0",
         note = "Please use `is_key_called_as_program` and `is_instruction_account` directly"
     )]
+    #[cfg(test)]
     pub fn is_non_loader_key(&self, key_index: usize) -> bool {
         !self.is_key_called_as_program(key_index) || self.is_instruction_account(key_index)
     }
@@ -358,7 +350,7 @@ impl Message {
     }
 
     pub fn demote_program_id(&self, i: usize) -> bool {
-        self.is_key_called_as_program(i) && !self.is_upgradeable_loader_present()
+        self.is_key_called_as_program(i) // && !self.is_upgradeable_loader_present()
     }
 
     /// Returns true if the account at the specified index was requested to be
@@ -377,6 +369,7 @@ impl Message {
     /// runtime.
     #[deprecated(since = "2.0.0", note = "Please use `is_maybe_writable` instead")]
     #[allow(deprecated)]
+    #[cfg(test)]
     pub fn is_writable(&self, i: usize) -> bool {
         (self.is_writable_index(i))
             && !is_builtin_key_or_sysvar(&self.account_keys[i])
@@ -442,12 +435,12 @@ impl Message {
         false
     }
 
-    /// Returns `true` if any account is the BPF upgradeable loader.
-    pub fn is_upgradeable_loader_present(&self) -> bool {
-        self.account_keys
-            .iter()
-            .any(|&key| key == bpf_loader_upgradeable::id())
-    }
+    // /// Returns `true` if any account is the BPF upgradeable loader.
+    // pub fn is_upgradeable_loader_present(&self) -> bool {
+    //     self.account_keys
+    //         .iter()
+    //         .any(|&key| key == bpf_loader_upgradeable::id())
+    // }
 }
 
 #[cfg(test)]
@@ -464,7 +457,7 @@ mod tests {
     #[test]
     fn test_builtin_program_keys() {
         let keys: HashSet<Pubkey> = BUILTIN_PROGRAMS_KEYS.iter().copied().collect();
-        assert_eq!(keys.len(), 10);
+        assert_eq!(keys.len(), 9);
         for k in keys {
             let k = format!("{k}");
             assert!(k.ends_with("11111111111111111111111"));
@@ -478,7 +471,7 @@ mod tests {
         let builtins = format!("{:?}", *BUILTIN_PROGRAMS_KEYS);
         assert_eq!(
             format!("{}", hash::hash(builtins.as_bytes())),
-            "ACqmMkYbo9eqK6QrRSrB3HLyR6uHhLf31SCfGUAJjiWj"
+            "3NR3Qmx9ynhQvZqvcFHutZ79Yjb6zyaGwLWvC8zU6kEB"
         );
     }
 
@@ -703,7 +696,7 @@ mod tests {
     #[test]
     fn test_message_header_len_constant() {
         assert_eq!(
-            serialized_size(&MessageHeader::default()).unwrap() as usize,
+            serialized_size(&MessageHeader::default()).unwrap(),
             MESSAGE_HEADER_LENGTH
         );
     }

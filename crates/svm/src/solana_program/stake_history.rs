@@ -14,9 +14,7 @@ pub use solana_clock::Epoch;
 pub const MAX_ENTRIES: usize = 512; // it should never take as many as 512 epochs to warm up or cool down
 
 #[repr(C)]
-#[derive(
-    Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone, bincode::Encode, bincode::Decode,
-)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone)]
 pub struct StakeHistoryEntry {
     pub effective: u64,    // effective stake at this epoch
     pub activating: u64,   // sum of portion of stakes not fully warmed up
@@ -60,9 +58,7 @@ impl core::ops::Add for StakeHistoryEntry {
 }
 
 #[repr(C)]
-#[derive(
-    Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone, bincode::Encode, bincode::Decode,
-)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone)]
 pub struct StakeHistory(Vec<(Epoch, StakeHistoryEntry)>);
 
 impl StakeHistory {
@@ -74,10 +70,10 @@ impl StakeHistory {
 
     pub fn add(&mut self, epoch: Epoch, entry: StakeHistoryEntry) {
         match self.binary_search_by(|probe| epoch.cmp(&probe.0)) {
-            Ok(index) => (self.0)[index] = (epoch, entry),
-            Err(index) => (self.0).insert(index, (epoch, entry)),
+            Ok(index) => self.0[index] = (epoch, entry),
+            Err(index) => self.0.insert(index, (epoch, entry)),
         }
-        (self.0).truncate(MAX_ENTRIES);
+        self.0.truncate(MAX_ENTRIES);
     }
 }
 

@@ -33,7 +33,7 @@ pub const MESSAGE_VERSION_PREFIX: u8 = 0x80;
 /// which message version is serialized starting from version `0`. If the first
 /// is bit is not set, all bytes are used to encode the legacy `Message`
 /// format.
-#[derive(Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum VersionedMessage {
     Legacy(LegacyMessage),
     V0(v0::Message),

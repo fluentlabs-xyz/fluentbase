@@ -37,7 +37,7 @@ pub enum LookupTableStatus {
 }
 
 /// Address lookup table metadata
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct LookupTableMeta {
     /// Lookup tables cannot be closed until the deactivation slot is
     /// no longer "recent" (not accessible in the `SlotHashes` sysvar).
@@ -114,7 +114,7 @@ impl LookupTableMeta {
 }
 
 /// Program account states
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum ProgramState {
     /// Account is not initialized.
@@ -270,13 +270,13 @@ mod tests {
     fn test_lookup_table_meta_size() {
         let lookup_table = ProgramState::LookupTable(LookupTableMeta::new_for_tests());
         let meta_size = serialized_size(&lookup_table).unwrap();
-        assert!(meta_size as usize <= LOOKUP_TABLE_META_SIZE);
-        assert_eq!(meta_size as usize, 56);
+        assert!(meta_size <= LOOKUP_TABLE_META_SIZE);
+        assert_eq!(meta_size, 56);
 
         let lookup_table = ProgramState::LookupTable(LookupTableMeta::default());
         let meta_size = serialized_size(&lookup_table).unwrap();
-        assert!(meta_size as usize <= LOOKUP_TABLE_META_SIZE);
-        assert_eq!(meta_size as usize, 24);
+        assert!(meta_size <= LOOKUP_TABLE_META_SIZE);
+        assert_eq!(meta_size, 24);
     }
 
     #[test]

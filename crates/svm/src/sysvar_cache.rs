@@ -10,8 +10,6 @@ use crate::{
             clock,
             epoch_rewards,
             epoch_schedule,
-            fees,
-            fees::Fees,
             last_restart_slot,
             recent_blockhashes,
             recent_blockhashes::RecentBlockhashes,
@@ -32,8 +30,8 @@ pub struct SysvarCache {
     clock: Option<Arc<Clock>>,
     epoch_schedule: Option<Arc<EpochSchedule>>,
     epoch_rewards: Option<Arc<EpochRewards>>,
-    #[allow(deprecated)]
-    fees: Option<Arc<Fees>>,
+    // #[allow(deprecated)]
+    // fees: Option<Arc<Fees>>,
     rent: Option<Arc<Rent>>,
     slot_hashes: Option<Arc<SlotHashes>>,
     #[allow(deprecated)]
@@ -73,17 +71,17 @@ impl SysvarCache {
         self.epoch_rewards = Some(Arc::new(epoch_rewards));
     }
 
-    #[deprecated]
-    #[allow(deprecated)]
-    pub fn get_fees(&self) -> Result<Arc<Fees>, InstructionError> {
-        self.fees.clone().ok_or(InstructionError::UnsupportedSysvar)
-    }
+    // #[deprecated]
+    // #[allow(deprecated)]
+    // pub fn get_fees(&self) -> Result<Arc<Fees>, InstructionError> {
+    //     self.fees.clone().ok_or(InstructionError::UnsupportedSysvar)
+    // }
 
-    #[deprecated]
-    #[allow(deprecated)]
-    pub fn set_fees(&mut self, fees: Fees) {
-        self.fees = Some(Arc::new(fees));
-    }
+    // #[deprecated]
+    // #[allow(deprecated)]
+    // pub fn set_fees(&mut self, fees: Fees) {
+    //     self.fees = Some(Arc::new(fees));
+    // }
 
     pub fn get_rent(&self) -> Result<Arc<Rent>, InstructionError> {
         self.rent.clone().ok_or(InstructionError::UnsupportedSysvar)
@@ -164,14 +162,14 @@ impl SysvarCache {
             });
         }
 
-        #[allow(deprecated)]
-        if self.fees.is_none() {
-            get_account_data(&fees::id(), &mut |data: &[u8]| {
-                if let Ok(fees) = deserialize(data) {
-                    self.set_fees(fees);
-                }
-            });
-        }
+        // #[allow(deprecated)]
+        // if self.fees.is_none() {
+        //     get_account_data(&fees::id(), &mut |data: &[u8]| {
+        //         if let Ok(fees) = deserialize(data) {
+        //             self.set_fees(fees);
+        //         }
+        //     });
+        // }
         if self.rent.is_none() {
             get_account_data(&rent::id(), &mut |data: &[u8]| {
                 if let Ok(rent) = deserialize(data) {

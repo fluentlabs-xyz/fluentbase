@@ -41,7 +41,7 @@ use crate::{
     compute_budget::compute_budget::{ComputeBudget, MAX_CALL_DEPTH, STACK_FRAME_SIZE},
     error::{Error, RuntimeError, SvmError},
     loaded_programs::ProgramCacheEntry,
-    solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
+    // solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
 };
 #[cfg(test)]
 use fluentbase_sdk_testing::HostTestingContext;
@@ -228,10 +228,8 @@ pub fn morph_into_deployment_environment_v1<'a, SDK: SharedAPI>(
 }
 
 pub fn check_loader_id(id: &Pubkey) -> bool {
-    loader_v4::check_id(id)
-        || bpf_loader::check_id(id)
-        || bpf_loader_deprecated::check_id(id)
-        || bpf_loader_upgradeable::check_id(id)
+    loader_v4::check_id(id) || bpf_loader::check_id(id) || bpf_loader_deprecated::check_id(id)
+    // || bpf_loader_upgradeable::check_id(id)
 }
 
 pub fn rbpf_config_default(compute_budget: Option<&ComputeBudget>) -> Config {
@@ -398,7 +396,7 @@ pub fn common_close_account(
 
     recipient_account.checked_add_lamports(close_account.get_lamports())?;
     close_account.set_lamports(0)?;
-    close_account.set_state(&UpgradeableLoaderState::Uninitialized)?;
+    // close_account.set_state(&UpgradeableLoaderState::Uninitialized)?;
     Ok(())
 }
 
@@ -420,9 +418,7 @@ pub fn common_close_account(
 
 /// Deserialize with a limit based the maximum amount of data a program can expect to get.
 /// This function should be used in place of direct deserialization to help prevent OOM errors
-pub fn limited_deserialize_packet_size<T: bincode::de::Decode<()>>(
-    instruction_data: &[u8],
-) -> Result<T, InstructionError>
+pub fn limited_deserialize_packet_size<T>(instruction_data: &[u8]) -> Result<T, InstructionError>
 where
     T: serde::de::DeserializeOwned,
 {

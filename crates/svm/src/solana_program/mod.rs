@@ -1,5 +1,5 @@
-pub mod address_lookup_table;
-pub mod bpf_loader_upgradeable;
+// pub mod address_lookup_table;
+// pub mod bpf_loader_upgradeable;
 pub mod ed25519_program;
 pub mod feature_set;
 pub mod instruction;

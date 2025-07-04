@@ -682,7 +682,7 @@ macro_rules! with_mock_invoke_context {
 // }
 
 #[macro_export]
-macro_rules! select_sapi {
+macro_rules! select_api {
     ($optional:expr, $alt:expr, $callback:expr) => {
         if let Some(v) = $optional {
             $callback(*v)
@@ -692,8 +692,8 @@ macro_rules! select_sapi {
     };
 }
 
-pub fn storage_read_account_data<SAPI: MetadataAPI>(
-    sapi: &SAPI,
+pub fn storage_read_account_data<API: MetadataAPI>(
+    api: &API,
     pubkey: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
     let pubkey_hash = keccak256(pubkey.as_ref());
@@ -701,12 +701,12 @@ pub fn storage_read_account_data<SAPI: MetadataAPI>(
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
             keccak256(v)
         });
-    let metadata_size_result = sapi.metadata_size(&derived_metadata_address);
+    let metadata_size_result = api.metadata_size(&derived_metadata_address);
     if !metadata_size_result.status.is_ok() {
         return Err(metadata_size_result.status.into());
     }
     let metadata_len = metadata_size_result.data.0;
-    let metadata_copy = sapi.metadata_copy(&derived_metadata_address, 0, metadata_len);
+    let metadata_copy = api.metadata_copy(&derived_metadata_address, 0, metadata_len);
     if !metadata_copy.status.is_ok() {
         return Err(metadata_copy.status.into());
     }
@@ -715,8 +715,8 @@ pub fn storage_read_account_data<SAPI: MetadataAPI>(
     Ok(deserialize_result?)
 }
 
-pub fn storage_write_account_data<SAPI: MetadataAPI>(
-    sapi: &mut SAPI,
+pub fn storage_write_account_data<API: MetadataAPI>(
+    api: &mut API,
     pubkey: &Pubkey,
     account_data: &AccountSharedData,
 ) -> Result<(), SvmError> {
@@ -726,15 +726,15 @@ pub fn storage_write_account_data<SAPI: MetadataAPI>(
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
             keccak256(v)
         });
-    let (metadata_size, _, _) = sapi
+    let (metadata_size, _, _) = api
         .metadata_size(&derived_metadata_address)
         .expect("metadata size")
         .data;
     if metadata_size == 0 {
-        sapi.metadata_create(&pubkey_hash.into(), account_data.into())
+        api.metadata_create(&pubkey_hash.into(), account_data.into())
             .expect("metadata creation failed");
     } else {
-        sapi.metadata_write(&derived_metadata_address, 0, account_data.into())
+        api.metadata_write(&derived_metadata_address, 0, account_data.into())
             .expect("metadata write failed");
     }
     Ok(())

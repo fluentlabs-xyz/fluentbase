@@ -4,7 +4,7 @@ use crate::{
     common::rbpf_config_default,
     context::{BuiltinFunctionWithContext, InvokeContext},
     native_loader,
-    solana_program::{bpf_loader_upgradeable, loader_v4},
+    solana_program::loader_v4,
 };
 use alloc::{
     boxed::Box,
@@ -57,7 +57,7 @@ pub enum ProgramCacheEntryOwner {
     NativeLoader,
     LoaderV1,
     LoaderV2,
-    LoaderV3,
+    // LoaderV3,
     LoaderV4,
 }
 
@@ -70,8 +70,8 @@ impl TryFrom<&Pubkey> for ProgramCacheEntryOwner {
             Ok(ProgramCacheEntryOwner::LoaderV1)
         } else if bpf_loader::check_id(loader_key) {
             Ok(ProgramCacheEntryOwner::LoaderV2)
-        } else if bpf_loader_upgradeable::check_id(loader_key) {
-            Ok(ProgramCacheEntryOwner::LoaderV3)
+        // } else if bpf_loader_upgradeable::check_id(loader_key) {
+        //     Ok(ProgramCacheEntryOwner::LoaderV3)
         } else if loader_v4::check_id(loader_key) {
             Ok(ProgramCacheEntryOwner::LoaderV4)
         } else {
@@ -86,7 +86,7 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
             ProgramCacheEntryOwner::NativeLoader => native_loader::id(),
             ProgramCacheEntryOwner::LoaderV1 => bpf_loader_deprecated::id(),
             ProgramCacheEntryOwner::LoaderV2 => bpf_loader::id(),
-            ProgramCacheEntryOwner::LoaderV3 => bpf_loader_upgradeable::id(),
+            // ProgramCacheEntryOwner::LoaderV3 => bpf_loader_upgradeable::id(),
             ProgramCacheEntryOwner::LoaderV4 => loader_v4::id(),
         }
     }

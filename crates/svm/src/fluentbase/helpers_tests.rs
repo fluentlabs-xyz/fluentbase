@@ -3,8 +3,9 @@ mod tests {
         account::{AccountSharedData, ReadableAccount},
         common::{calculate_max_chunk_size, pubkey_from_evm_address},
         fluentbase::{
-            common::{process_svm_result, BatchMessage, MemStorage},
+            common::{process_svm_result, BatchMessage},
             helpers::{exec_encoded_svm_batch_message, exec_encoded_svm_message},
+            mem_storage::MemStorage,
         },
         helpers::{storage_read_account_data, storage_write_account_data},
         native_loader,
@@ -35,13 +36,10 @@ mod tests {
     use solana_instruction::Instruction;
     use solana_pubkey::Pubkey;
 
-    fn main_single_message<SAPI: MetadataAPI>(
-        mut sdk: impl SharedAPI,
-        mut sapi: Option<&mut SAPI>,
-    ) {
+    fn main_single_message<API: MetadataAPI>(mut sdk: impl SharedAPI, mut api: Option<&mut API>) {
         let input = sdk.input();
 
-        let result = exec_encoded_svm_message(&mut sdk, input, true, &mut sapi);
+        let result = exec_encoded_svm_message(&mut sdk, input, true, &mut api);
         if let Err(err) = result {
             panic!("exec svm message error: {:?}", err);
         }
@@ -51,10 +49,10 @@ mod tests {
         sdk.write(out.as_ref());
     }
 
-    fn main_batch_message<SAPI: MetadataAPI>(mut sdk: impl SharedAPI, mut sapi: Option<&mut SAPI>) {
+    fn main_batch_message<API: MetadataAPI>(mut sdk: impl SharedAPI, mut api: Option<&mut API>) {
         let input = sdk.input();
 
-        let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut sapi);
+        let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut api);
         if let Err(err) = result {
             panic!("exec svm message error: {:?}", err);
         }
@@ -109,30 +107,30 @@ mod tests {
             },
         };
         let sdk = HostTestingContext::default().with_shared_context_input(shared_context);
-        let mut sapi = MemStorage::new();
+        let mut mem_storage = MemStorage::new();
 
-        storage_write_account_data(&mut sapi, &pk_payer, &pk_payer_account).unwrap();
-        storage_write_account_data(&mut sapi, &pk_authority, &pk_authority_account).unwrap();
+        storage_write_account_data(&mut mem_storage, &pk_payer, &pk_payer_account).unwrap();
+        storage_write_account_data(&mut mem_storage, &pk_authority, &pk_authority_account).unwrap();
         storage_write_account_data(
-            &mut sapi,
+            &mut mem_storage,
             &system_program_id,
             &create_loadable_account_for_test("system_program_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
-            &mut sapi,
+            &mut mem_storage,
             &loader_id,
             &create_loadable_account_for_test("loader_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
-            &mut sapi,
+            &mut mem_storage,
             &sysvar_clock_id,
             &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
         )
         .unwrap();
         storage_write_account_data(
-            &mut sapi,
+            &mut mem_storage,
             &sysvar_rent_id,
             &create_loadable_account_for_test("sysvar_rent_id", &system_program_id),
         )
@@ -150,33 +148,36 @@ mod tests {
         .unwrap();
         let message = Message::new_with_blockhash(&instructions, Some(&pk_payer), &blockhash);
         let mut sdk = sdk.with_input(serialize(&message).unwrap());
-        main_single_message(sdk.clone(), Some(&mut sapi));
+        main_single_message(sdk.clone(), Some(&mut mem_storage));
         let output = sdk.take_output();
         assert_eq!(from_utf8(&output).unwrap(), "");
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &pk_payer).unwrap();
         assert_eq!(account_data.lamports(), 100);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
         let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &pk_authority).unwrap();
+            storage_read_account_data(&mem_storage, &pk_authority).unwrap();
         assert_eq!(account_data.lamports(), 100);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_buffer).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &pk_buffer).unwrap();
         assert_eq!(account_data.lamports(), 0);
         assert_eq!(account_data.data().len(), buffer_len);
         assert_eq!(account_data.executable(), false);
 
         let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &system_program_id).unwrap();
+            storage_read_account_data(&mem_storage, &system_program_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &loader_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &loader_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), "loader_id".len());
         assert_eq!(account_data.executable(), true);
@@ -198,26 +199,29 @@ mod tests {
         }
         for (_, message) in write_messages.iter().enumerate() {
             sdk = sdk.with_input(serialize(&message).unwrap());
-            main_single_message(sdk.clone(), Some(&mut sapi));
+            main_single_message(sdk.clone(), Some(&mut mem_storage));
         }
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &pk_payer).unwrap();
         assert_eq!(account_data.lamports(), 100);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_buffer).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &pk_buffer).unwrap();
         assert_eq!(account_data.lamports(), 0);
         assert_eq!(account_data.data().len(), buffer_len);
         assert_eq!(account_data.executable(), false);
 
         let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &system_program_id).unwrap();
+            storage_read_account_data(&mem_storage, &system_program_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &loader_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &loader_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), "loader_id".len());
         assert_eq!(account_data.executable(), true);
@@ -236,54 +240,58 @@ mod tests {
         .unwrap();
         let message = Message::new(&instructions, Some(&pk_payer));
         sdk = sdk.with_input(serialize(&message).unwrap());
-        main_single_message(sdk.clone(), Some(&mut sapi));
+        main_single_message(sdk.clone(), Some(&mut mem_storage));
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_payer).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &pk_payer).unwrap();
         assert_eq!(account_data.lamports(), 89);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &pk_exec).unwrap();
         assert_eq!(account_data.lamports(), 10);
         assert_eq!(account_data.data().len(), 36);
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &pk_authority).unwrap();
+            storage_read_account_data(&mem_storage, &pk_authority).unwrap();
         assert_eq!(account_data.lamports(), 100);
         assert_eq!(account_data.data().len(), 0);
         assert_eq!(account_data.executable(), false);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_buffer).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &pk_buffer).unwrap();
         assert_eq!(account_data.lamports(), 0);
         assert_eq!(account_data.data().len(), 37);
         assert_eq!(account_data.executable(), false);
 
         let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &pk_program_data).unwrap();
+            storage_read_account_data(&mem_storage, &pk_program_data).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), programdata_len);
         assert_eq!(account_data.executable(), false);
 
         let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &system_program_id).unwrap();
+            storage_read_account_data(&mem_storage, &system_program_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &loader_id).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &loader_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), "loader_id".len());
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &sysvar_clock_id).unwrap();
+            storage_read_account_data(&mem_storage, &sysvar_clock_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), "sysvar_clock_id".len());
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &sysvar_rent_id).unwrap();
+            storage_read_account_data(&mem_storage, &sysvar_rent_id).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), "sysvar_rent_id".len());
         assert_eq!(account_data.executable(), true);
@@ -305,9 +313,10 @@ mod tests {
                 ..Default::default()
             })
             .with_input(serialize(&message).unwrap());
-        main_single_message(sdk.clone(), Some(&mut sapi));
+        main_single_message(sdk.clone(), Some(&mut mem_storage));
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &pk_exec).unwrap();
         assert_eq!(account_data.lamports(), 10);
         assert_eq!(account_data.data().len(), 36);
         assert_eq!(account_data.executable(), true);
@@ -317,7 +326,7 @@ mod tests {
     #[test]
     fn test_create_fill_deploy_exec_messages_batch() {
         let mut sdk = HostTestingContext::default();
-        let mut sapi = MemStorage::new();
+        let mut mem_storage = MemStorage::new();
 
         let system_program_id = system_program::id();
         let native_loader_id = native_loader::id();
@@ -350,16 +359,16 @@ mod tests {
         let program_len = account_with_program.data().len();
         let programdata_len = UpgradeableLoaderState::size_of_programdata(program_len);
 
-        storage_write_account_data(&mut sapi, &pk_payer, &account_payer).unwrap();
-        storage_write_account_data(&mut sapi, &pk_authority, &authority_account).unwrap();
+        storage_write_account_data(&mut mem_storage, &pk_payer, &account_payer).unwrap();
+        storage_write_account_data(&mut mem_storage, &pk_authority, &authority_account).unwrap();
         storage_write_account_data(
-            &mut sapi,
+            &mut mem_storage,
             &system_program_id,
             &create_loadable_account_for_test("system_program_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
-            &mut sapi,
+            &mut mem_storage,
             &loader_id,
             &create_loadable_account_for_test("loader_id", &native_loader_id),
         )
@@ -409,28 +418,30 @@ mod tests {
         batch_message.append_one(message);
 
         sdk = sdk.with_input(serialize(&batch_message).unwrap());
-        main_batch_message(sdk.clone(), Some(&mut sapi));
+        main_batch_message(sdk.clone(), Some(&mut mem_storage));
 
         // exec
         // recreate storage to test if we need only specific accounts (other accounts dropped from storage)
 
-        let payer_account = storage_read_account_data(&mut sapi, &pk_payer).unwrap();
-        let exec_account = storage_read_account_data(&mut sapi, &pk_exec).unwrap();
-        let programdata_account = storage_read_account_data(&mut sapi, &pk_programdata).unwrap();
+        let payer_account = storage_read_account_data(&mut mem_storage, &pk_payer).unwrap();
+        let exec_account = storage_read_account_data(&mut mem_storage, &pk_exec).unwrap();
+        let programdata_account =
+            storage_read_account_data(&mut mem_storage, &pk_programdata).unwrap();
 
-        let mut sapi = MemStorage::new();
+        mem_storage.clear();
 
-        storage_write_account_data(&mut sapi, &pk_payer, &payer_account).unwrap();
-        storage_write_account_data(&mut sapi, &pk_exec, &exec_account).unwrap();
-        storage_write_account_data(&mut sapi, &pk_programdata, &programdata_account).unwrap();
+        storage_write_account_data(&mut mem_storage, &pk_payer, &payer_account).unwrap();
+        storage_write_account_data(&mut mem_storage, &pk_exec, &exec_account).unwrap();
+        storage_write_account_data(&mut mem_storage, &pk_programdata, &programdata_account)
+            .unwrap();
         storage_write_account_data(
-            &mut sapi,
+            &mut mem_storage,
             &system_program_id,
             &create_loadable_account_for_test("system_program_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
-            &mut sapi,
+            &mut mem_storage,
             &loader_id,
             &create_loadable_account_for_test("loader_id", &native_loader_id),
         )
@@ -452,16 +463,17 @@ mod tests {
                 ..Default::default()
             })
             .with_input(serialize(&batch_message).unwrap());
-        main_batch_message(sdk.clone(), Some(&mut sapi));
+        main_batch_message(sdk.clone(), Some(&mut mem_storage));
 
-        let account_data: AccountSharedData = storage_read_account_data(&sapi, &pk_exec).unwrap();
+        let account_data: AccountSharedData =
+            storage_read_account_data(&mem_storage, &pk_exec).unwrap();
         assert_eq!(account_data.lamports(), lamports_to_transfer_on_deploy);
         assert_eq!(account_data.data().len(), 36);
         assert_eq!(account_data.executable(), true);
         assert_eq!(account_data.owner(), &loader_id);
 
         let account_data: AccountSharedData =
-            storage_read_account_data(&sapi, &pk_programdata).unwrap();
+            storage_read_account_data(&mem_storage, &pk_programdata).unwrap();
         assert_eq!(account_data.lamports(), 1);
         assert_eq!(account_data.data().len(), programdata_len);
         assert_eq!(account_data.executable(), false);

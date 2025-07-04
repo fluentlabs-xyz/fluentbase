@@ -18,7 +18,7 @@ use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_stable_layout::stable_instruction::StableInstruction;
 
-#[derive(Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Serialize, Deserialize)]
 enum MockInstruction {
     NoopSuccess,
     NoopFail,
@@ -105,8 +105,7 @@ declare_process_instruction!(
                     );
                     invoke_context
                         .transaction_context
-                        .get_next_instruction_context()
-                        .unwrap()
+                        .get_next_instruction_context()?
                         .configure(&[3], &instruction_accounts, &[]);
                     let result = invoke_context.push();
                     assert_eq!(result, Err(InstructionError::UnbalancedInstruction));

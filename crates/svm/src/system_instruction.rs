@@ -53,7 +53,7 @@ use {
     solana_instruction::Instruction,
 };
 
-#[derive(/*Error, */ Debug, Serialize, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive)]
 pub enum SystemError {
     // #[error("an account with the same address already exists")]
     AccountAlreadyInUse,
@@ -101,7 +101,7 @@ static_assertions::const_assert!(MAX_PERMITTED_DATA_LENGTH <= u32::MAX as u64);
 static_assertions::const_assert_eq!(MAX_PERMITTED_DATA_LENGTH, 10_485_760);
 
 /// An instruction to the system program.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum SystemInstruction {
     /// Create a new account
     ///

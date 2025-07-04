@@ -7,7 +7,7 @@ use solana_sysvar_id::declare_sysvar_id;
 declare_sysvar_id!("SysvarRewards111111111111111111111111111111", Rewards);
 
 #[repr(C)]
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct Rewards {
     pub validator_point_value: f64,
     pub unused: f64,

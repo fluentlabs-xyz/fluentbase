@@ -14,7 +14,7 @@ pub use sysvar_ids::ALL_IDS;
 pub mod clock;
 pub mod epoch_rewards;
 pub mod epoch_schedule;
-pub mod fees;
+// pub mod fees;
 pub mod instructions;
 pub mod last_restart_slot;
 pub mod recent_blockhashes;
@@ -24,7 +24,6 @@ pub mod slot_hashes;
 pub mod slot_history;
 pub mod stake_history;
 use crate::solana_program::program_stubs;
-use bincode::{de, enc};
 use solana_account_info::AccountInfo;
 use solana_bincode::{deserialize, serialize_into, serialized_size};
 use solana_pubkey::Pubkey;
@@ -44,8 +43,8 @@ mod sysvar_ids {
         pub static ref ALL_IDS: Vec<Pubkey> = vec![
             clock::id(),
             epoch_schedule::id(),
-            #[allow(deprecated)]
-            fees::id(),
+            // #[allow(deprecated)]
+            // fees::id(),
             #[allow(deprecated)]
             recent_blockhashes::id(),
             rent::id(),
@@ -70,13 +69,7 @@ pub fn is_sysvar_id(id: &Pubkey) -> bool {
 
 /// A type that holds sysvar data.
 pub trait Sysvar:
-    SysvarId
-    + Default
-    + Sized
-    + serde::Serialize
-    + serde::de::DeserializeOwned
-    + enc::Encode
-    + de::Decode<()>
+    SysvarId + Default + Sized + serde::Serialize + serde::de::DeserializeOwned
 {
     /// The size in bytes of the sysvar as serialized account data.
     fn size_of() -> usize {
@@ -176,14 +169,12 @@ mod tests {
     use solana_pubkey::{declare_id, Pubkey};
 
     #[repr(C)]
-    #[derive(
-        Serialize, Deserialize, Debug, Default, PartialEq, Eq, bincode::Encode, bincode::Decode,
-    )]
+    #[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
     struct TestSysvar {
         something: Pubkey,
     }
     declare_id!("TestSysvar111111111111111111111111111111111");
-    impl crate::solana_program::sysvar::SysvarId for TestSysvar {
+    impl SysvarId for TestSysvar {
         fn id() -> Pubkey {
             id()
         }
@@ -221,7 +212,7 @@ mod tests {
     #[test]
     fn test_sysvar_account_info_to_from() {
         let test_sysvar = TestSysvar::default();
-        let key = crate::solana_program::sysvar::tests::id();
+        let key = id();
         let wrong_key = Pubkey::new_unique();
         let owner = Pubkey::new_unique();
         let mut lamports = 42;

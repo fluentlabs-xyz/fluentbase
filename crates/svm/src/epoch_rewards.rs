@@ -10,17 +10,7 @@ use serde::{Deserialize, Serialize};
 use solana_sdk_macro::CloneZeroed;
 
 #[repr(C, align(16))]
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    Eq,
-    Default,
-    CloneZeroed,
-    bincode::Encode,
-    bincode::Decode,
-)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, CloneZeroed)]
 pub struct EpochRewards {
     /// The starting block height of the rewards distribution in the current
     /// epoch

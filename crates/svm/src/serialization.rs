@@ -9,7 +9,7 @@ use crate::{
 };
 use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
-use core::mem::{self, size_of};
+use core::mem::size_of;
 use solana_account_info::MAX_PERMITTED_DATA_INCREASE;
 use solana_instruction::error::InstructionError;
 use solana_program_entrypoint::{BPF_ALIGN_OF_U128, NON_DUP_MARKER};
@@ -182,7 +182,7 @@ impl Serializer {
                     .as_slice()
                     .as_ptr_range()
                     .end
-                    .align_offset(mem::align_of::<T>())
+                    .align_offset(align_of::<T>())
                     == 0
         );
     }
@@ -340,7 +340,7 @@ fn serialize_parameters_unaligned(
                 let vm_data_addr = s.write_account(&mut account)?;
                 let vm_owner_addr = s.write_all(account.get_owner().as_ref());
                 s.write::<u8>(account.is_executable() as u8);
-                s.write::<u64>((account.get_rent_epoch()).to_le());
+                s.write::<u64>(account.get_rent_epoch().to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
                     original_data_len: account.get_data().len(),
                     vm_key_addr,
@@ -475,7 +475,7 @@ fn serialize_parameters_aligned(
                 let vm_lamports_addr = s.write::<u64>(borrowed_account.get_lamports().to_le());
                 s.write::<u64>((borrowed_account.get_data().len() as u64).to_le());
                 let vm_data_addr = s.write_account(&mut borrowed_account)?;
-                s.write::<u64>((borrowed_account.get_rent_epoch()).to_le());
+                s.write::<u64>(borrowed_account.get_rent_epoch().to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
                     original_data_len: borrowed_account.get_data().len(),
                     vm_key_addr,

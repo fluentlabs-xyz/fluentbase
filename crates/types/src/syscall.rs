@@ -102,6 +102,9 @@ impl<T: Default> SyscallResult<T> {
             status: old.status,
         }
     }
+    pub fn from_old_empty(old: SyscallResult<T>) -> SyscallResult<()> {
+        SyscallResult::from_old(old, ())
+    }
     pub fn expect<I: Into<String>>(self, msg: I) -> Self {
         if !self.status.is_ok() {
             panic!("syscall failed with status {}: {}", self.status, msg.into());

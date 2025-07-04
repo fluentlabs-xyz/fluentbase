@@ -154,10 +154,10 @@ mod tests {
             .collect();
         unsorted_recent_blockhashes.sort();
         unsorted_recent_blockhashes.reverse();
-        let expected_recent_blockhashes: Vec<_> = (unsorted_recent_blockhashes
+        let expected_recent_blockhashes: Vec<_> = unsorted_recent_blockhashes
             .into_iter()
-            .map(|IterItem(_, b, f)| Entry::new(b, f)))
-        .collect();
+            .map(|IterItem(_, b, f)| Entry::new(b, f))
+            .collect();
 
         assert_eq!(*recent_blockhashes, expected_recent_blockhashes);
     }

@@ -8,17 +8,17 @@ use solana_pubkey::Pubkey;
 
 // Implement for the "reference" `SanitizedMessage` type.
 impl SVMMessage for SanitizedMessage {
-    fn num_total_signatures(&self) -> u64 {
-        SanitizedMessage::num_total_signatures(self)
-    }
+    // fn num_total_signatures(&self) -> u64 {
+    //     SanitizedMessage::num_total_signatures(self)
+    // }
 
-    fn num_write_locks(&self) -> u64 {
-        SanitizedMessage::num_write_locks(self)
-    }
+    // fn num_write_locks(&self) -> u64 {
+    //     SanitizedMessage::num_write_locks(self)
+    // }
 
-    fn recent_blockhash(&self) -> &Hash {
-        SanitizedMessage::recent_blockhash(self)
-    }
+    // fn recent_blockhash(&self) -> &Hash {
+    //     SanitizedMessage::recent_blockhash(self)
+    // }
 
     fn num_instructions(&self) -> usize {
         SanitizedMessage::instructions(self).len()
@@ -51,13 +51,13 @@ impl SVMMessage for SanitizedMessage {
         SanitizedMessage::is_signer(self, index)
     }
 
-    fn is_invoked(&self, key_index: usize) -> bool {
-        SanitizedMessage::is_invoked(self, key_index)
-    }
+    // fn is_invoked(&self, key_index: usize) -> bool {
+    //     SanitizedMessage::is_invoked(self, key_index)
+    // }
 
-    fn num_lookup_tables(&self) -> usize {
-        SanitizedMessage::message_address_table_lookups(self).len()
-    }
+    // fn num_lookup_tables(&self) -> usize {
+    //     SanitizedMessage::message_address_table_lookups(self).len()
+    // }
 
     // fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
     //     SanitizedMessage::message_address_table_lookups(self)

@@ -5,7 +5,7 @@ use crate::{
     declare_builtin_function,
     error::Error,
     helpers::SyscallError,
-    loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
+    loaders::syscalls::cpi::cpi_common,
     mem_ops::{
         is_nonoverlapping,
         memmove,
@@ -32,24 +32,24 @@ use solana_rbpf::{
 pub fn register_builtins<SDK: SharedAPI>(
     function_registry: &mut FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>>,
 ) {
-    function_registry
-        .register_function_hashed(
-            "solana_bpf_loader_deprecated_program",
-            bpf_loader_upgradeable::Entrypoint::vm,
-        )
-        .unwrap();
-    function_registry
-        .register_function_hashed(
-            "solana_bpf_loader_program",
-            bpf_loader_upgradeable::Entrypoint::vm,
-        )
-        .unwrap();
-    function_registry
-        .register_function_hashed(
-            "solana_bpf_loader_upgradeable_program",
-            bpf_loader_upgradeable::Entrypoint::vm,
-        )
-        .unwrap();
+    // function_registry
+    //     .register_function_hashed(
+    //         "solana_bpf_loader_deprecated_program",
+    //         bpf_loader_upgradeable::Entrypoint::vm,
+    //     )
+    //     .unwrap();
+    // function_registry
+    //     .register_function_hashed(
+    //         "solana_bpf_loader_program",
+    //         bpf_loader_upgradeable::Entrypoint::vm,
+    //     )
+    //     .unwrap();
+    // function_registry
+    //     .register_function_hashed(
+    //         "solana_bpf_loader_upgradeable_program",
+    //         bpf_loader_upgradeable::Entrypoint::vm,
+    //     )
+    //     .unwrap();
 
     function_registry
         .register_function_hashed("sol_log_", SyscallLog::vm)

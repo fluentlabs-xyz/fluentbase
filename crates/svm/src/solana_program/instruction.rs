@@ -20,7 +20,7 @@ use solana_short_vec as short_vec;
 /// construction of `Message`. Most users will not interact with it directly.
 ///
 /// [`Message`]: crate::message::Message
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CompiledInstruction {
     /// Index into the transaction keys array indicating the program account that executes this instruction.
@@ -36,11 +36,7 @@ pub struct CompiledInstruction {
 impl Sanitize for CompiledInstruction {}
 
 impl CompiledInstruction {
-    pub fn new<T: Serialize + bincode::enc::Encode>(
-        program_ids_index: u8,
-        data: &T,
-        accounts: Vec<u8>,
-    ) -> Self {
+    pub fn new<T: Serialize>(program_ids_index: u8, data: &T, accounts: Vec<u8>) -> Self {
         let buf = serialize(data).unwrap();
         Self {
             program_id_index: program_ids_index,

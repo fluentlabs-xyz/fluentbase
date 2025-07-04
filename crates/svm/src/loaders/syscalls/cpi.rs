@@ -17,7 +17,7 @@ use crate::{
     native_loader,
     precompiles::is_precompile,
     serialization::account_data_region_memory_state,
-    solana_program::bpf_loader_upgradeable,
+    // solana_program::bpf_loader_upgradeable,
     word_size::{
         addr_type::AddrType,
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
@@ -48,13 +48,6 @@ fn check_account_info_pointer<SDK: SharedAPI>(
     _field: &str,
 ) -> Result<(), SvmError> {
     if vm_addr != expected_vm_addr {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Invalid account info pointer `{}': {:#x} != {:#x}",
-        //     field,
-        //     vm_addr,
-        //     expected_vm_addr
-        // );
         return Err(SyscallError::InvalidPointer.into());
     }
     Ok(())
@@ -542,9 +535,8 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
         // }
 
         let mut accounts: Vec<AccountMeta> = Vec::with_capacity(account_metas.len());
-        #[allow(clippy::needless_range_loop)]
+        // #[allow(clippy::needless_range_loop)]
         for account_index in 0..account_metas.len() {
-            #[allow(clippy::indexing_slicing)]
             let account_meta_ret_val = account_metas.item_at_idx(account_index);
             let account_meta = account_meta_ret_val.as_ref();
             if unsafe {
@@ -646,7 +638,6 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
                     .collect::<Vec<_>>();
                 // let seeds: Vec<Vec<u8>> = seeds.iter().map(|v| v.to_vec()).collect();
                 let signer = Pubkey::create_program_address(
-                    // TODO check for problem with unstable memory layout
                     &seeds.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>(),
                     program_id,
                 );
@@ -980,10 +971,7 @@ where
 
     // unwrapping here is fine: we're in a syscall and the method below fails
     // only outside syscalls
-    let accounts_metadata = &invoke_context
-        .get_syscall_context()
-        .unwrap()
-        .accounts_metadata;
+    let accounts_metadata = &invoke_context.get_syscall_context()?.accounts_metadata;
 
     let direct_mapping = invoke_context
         .get_feature_set()
@@ -1068,11 +1056,6 @@ where
             };
             accounts.push((instruction_account.index_in_caller, caller_account));
         } else {
-            // ic_msg!(
-            //     invoke_context,
-            //     "Instruction references an unknown account {}",
-            //     account_key
-            // );
             return Err(InstructionError::MissingAccount.into());
         }
     }
@@ -1159,22 +1142,22 @@ fn check_account_infos<SDK: SharedAPI>(
 
 fn check_authorized_program<SDK: SharedAPI>(
     program_id: &Pubkey,
-    instruction_data: &[u8],
+    _instruction_data: &[u8],
     invoke_context: &InvokeContext<SDK>,
 ) -> Result<(), Error> {
     if native_loader::check_id(program_id)
         || bpf_loader::check_id(program_id)
         || bpf_loader_deprecated::check_id(program_id)
-        || (bpf_loader_upgradeable::check_id(program_id)
-            && !(bpf_loader_upgradeable::is_upgrade_instruction(instruction_data)
-                || bpf_loader_upgradeable::is_set_authority_instruction(instruction_data)
-                || (invoke_context
-                    .get_feature_set()
-                    .is_active(&enable_bpf_loader_set_authority_checked_ix::id())
-                    && bpf_loader_upgradeable::is_set_authority_checked_instruction(
-                        instruction_data,
-                    ))
-                || bpf_loader_upgradeable::is_close_instruction(instruction_data)))
+        // || (bpf_loader_upgradeable::check_id(program_id)
+        //     && !(bpf_loader_upgradeable::is_upgrade_instruction(instruction_data)
+        //         || bpf_loader_upgradeable::is_set_authority_instruction(instruction_data)
+        //         || (invoke_context
+        //             .get_feature_set()
+        //             .is_active(&enable_bpf_loader_set_authority_checked_ix::id())
+        //             && bpf_loader_upgradeable::is_set_authority_checked_instruction(
+        //                 instruction_data,
+        //             ))
+        //         || bpf_loader_upgradeable::is_close_instruction(instruction_data)))
         || is_precompile(program_id, |feature_id: &Pubkey| {
             invoke_context.get_feature_set().is_active(feature_id)
         })
@@ -1292,7 +1275,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
         }
     }
 
-    // invoke_context.execute_time = Some(Measure::start("execute"));
     Ok(SUCCESS)
 }
 
@@ -1321,6 +1303,7 @@ fn update_callee_account<SDK: SharedAPI>(
         callee_account.set_lamports(*caller_account.lamports)?;
     }
 
+    // TODO this flag must be always false so maybe we can get rid of the other branch?
     if direct_mapping {
         let prev_len = callee_account.get_data().len();
         let post_len = *caller_account.ref_to_len_in_vm.get()? as usize;
@@ -1331,6 +1314,7 @@ fn update_callee_account<SDK: SharedAPI>(
             Ok(()) => {
                 let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
                 // bpf_loader_deprecated programs don't have a realloc region
+                // TODO get rid of this check and prevent of using deprecated loader?
                 if is_loader_deprecated && realloc_bytes_used > 0 {
                     return Err(InstructionError::InvalidRealloc.into());
                 }
@@ -1624,7 +1608,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
             //
             // The extra capacity up to original data length is
             // accessible from the vm and since it's uninitialized
-            // memory, it could be a source of non determinism.
+            // memory, it could be a source of non-determinism.
             caller_account.original_data_len
         } else {
             // If the allocation has not changed, we only zero the

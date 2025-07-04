@@ -4,7 +4,7 @@ use crate::{
     clock::{Epoch, INITIAL_RENT_EPOCH},
     context::{IndexOfAccount, InstructionContext, TransactionContext},
     helpers::is_zeroed,
-    solana_program::{bpf_loader_upgradeable, loader_v4, sysvar::Sysvar},
+    solana_program::{loader_v4, sysvar::Sysvar},
     system_instruction::{
         MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         MAX_PERMITTED_DATA_LENGTH,
@@ -26,7 +26,7 @@ pub type InheritableAccountFields = (u64, Epoch);
 pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITIAL_RENT_EPOCH);
 /// Replacement for the executable flag: An account being owned by one of these contains a program.
 pub const PROGRAM_OWNERS: &[Pubkey] = &[
-    bpf_loader_upgradeable::id(),
+    // bpf_loader_upgradeable::id(),
     bpf_loader::id(),
     bpf_loader_deprecated::id(),
     loader_v4::id(),
@@ -280,7 +280,7 @@ fn shared_new_ref<T: WritableAccount>(
     Rc::new(RefCell::new(shared_new::<T>(lamports, space, owner)))
 }
 
-fn shared_new_data<T: serde::Serialize + bincode::Encode, U: WritableAccount>(
+fn shared_new_data<T: serde::Serialize, U: WritableAccount>(
     lamports: u64,
     state: &T,
     owner: &Pubkey,
@@ -322,17 +322,7 @@ fn shared_new_data_with_space<T: serde::Serialize, U: WritableAccount>(
 /// An Account with data that is stored on chain
 /// This will be the in-memory representation of the 'Account' struct data.
 /// The existing 'Account' structure cannot easily change due to downstream projects.
-#[derive(
-    PartialEq,
-    Eq,
-    Clone,
-    Default,
-    Debug,
-    /*AbiExample,*/ Serialize,
-    Deserialize,
-    bincode::Encode,
-    bincode::Decode,
-)]
+#[derive(PartialEq, Eq, Clone, Default, Debug, /*AbiExample,*/ Serialize, Deserialize)]
 // #[serde(from = "Account")]
 pub struct AccountSharedData {
     /// lamports in the account
@@ -354,7 +344,7 @@ impl AccountSharedData {
     pub fn new_ref(lamports: u64, space: usize, owner: &Pubkey) -> Rc<RefCell<Self>> {
         shared_new_ref(lamports, space, owner)
     }
-    pub fn new_data<T: serde::Serialize + bincode::Encode>(
+    pub fn new_data<T: serde::Serialize>(
         lamports: u64,
         state: &T,
         owner: &Pubkey,

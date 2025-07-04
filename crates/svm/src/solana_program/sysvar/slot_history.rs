@@ -25,7 +25,7 @@ mod tests {
     fn test_size_of() {
         assert_eq!(
             SlotHistory::size_of(),
-            serialized_size(&SlotHistory::default()).unwrap() as usize
+            serialized_size(&SlotHistory::default()).unwrap()
         );
     }
 }

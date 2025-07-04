@@ -36,9 +36,7 @@ use solana_short_vec as short_vec;
 
 /// Address table lookups describe an on-chain address lookup table to use
 /// for loading more readonly and writable accounts in a single tx.
-#[derive(
-    Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
-)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageAddressTableLookup {
     /// Address lookup table account key
@@ -59,9 +57,7 @@ pub struct MessageAddressTableLookup {
 /// See the [`message`] module documentation for further description.
 ///
 /// [`message`]: crate::message
-#[derive(
-    Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode,
-)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     /// The message header, identifying signed and read-only `account_keys`.
@@ -91,7 +87,6 @@ pub struct Message {
     ///   3) ordered list of keys loaded from `readable` lookup table indexes
     #[serde(with = "short_vec")]
     pub instructions: Vec<CompiledInstruction>,
-
     /// List of address table lookups used to load additional accounts
     /// for this transaction.
     #[serde(with = "short_vec")]
@@ -152,7 +147,9 @@ impl Message {
         // `num_static_account_keys` is non-zero
         let max_account_ix = total_account_keys
             .checked_sub(1)
-            .expect("message doesn't contain any account keys");
+            .ok_or_else(|| SanitizeError::InvalidValue)?
+            // .expect("message doesn't contain any account keys")
+            ;
 
         // reject program ids loaded from lookup tables so that
         // static analysis on program instructions can be performed
@@ -162,7 +159,9 @@ impl Message {
             // `num_static_account_keys` is non-zero
             num_static_account_keys
                 .checked_sub(1)
-                .expect("message doesn't contain any static account keys");
+                .ok_or_else(|| SanitizeError::InvalidValue)?
+                // .expect("message doesn't contain any static account keys")
+            ;
 
         for ci in &self.instructions {
             if usize::from(ci.program_id_index) > max_program_id_ix {
@@ -190,7 +189,7 @@ impl Message {
         address_lookup_table_accounts: &[AddressLookupTableAccount],
         recent_blockhash: Hash,
     ) -> Result<Self, CompileError> {
-        let mut compiled_keys = CompiledKeys::compile(instructions, Some(*payer));
+        let compiled_keys = CompiledKeys::compile(instructions, Some(*payer));
 
         let mut address_table_lookups = Vec::with_capacity(address_lookup_table_accounts.len());
         let mut loaded_addresses_list = Vec::with_capacity(address_lookup_table_accounts.len());
