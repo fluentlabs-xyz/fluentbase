@@ -20,7 +20,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 use core::cmp::min;
-use fluentbase_sdk::{debug_log, ContextReader, SharedAPI, B256, KECCAK_EMPTY, U256};
+use fluentbase_sdk::{Bytes, ContextReader, SharedAPI, B256, KECCAK_EMPTY, U256};
 
 pub fn balance<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
@@ -36,15 +36,11 @@ pub fn selfbalance<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
 
 pub fn extcodesize<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
-    let (metadata_size, is_cold_access, _is_account_empty) =
+    let (metadata_size, is_account_ownable, is_cold_access, _is_account_empty) =
         evm.sdk.metadata_size(&address).unwrap_or_default();
-    debug_log!(
-        "extcodesize: address={}, metadata_size={metadata_size}, is_cold_access={is_cold_access}",
-        address
-    );
-    let evm_code_size = if metadata_size > 0 {
+    let evm_code_size = if is_account_ownable {
         // 32 is a size of code hash
-        metadata_size - 32
+        metadata_size.checked_sub(32).unwrap_or(0)
     } else {
         unwrap_syscall!(@gasless evm, evm.sdk.code_size(&address))
     };
@@ -55,19 +51,28 @@ pub fn extcodesize<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
 /// EIP-1052: EXTCODEHASH opcode
 pub fn extcodehash<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
-    let (metadata_size, is_cold_access, is_account_empty) =
+    let (metadata_size, is_account_ownable, is_cold_access, is_account_empty) =
         evm.sdk.metadata_size(&address).unwrap_or_default();
     // for delegated accounts, we can instantly return code hash
     // since the account is managed by the same runtime and store EVM code hash in this field
-    let evm_code_hash = if metadata_size > 0 {
-        let evm_code_hash = unwrap_syscall!(@gasless evm, evm.sdk.metadata_copy(&address, 0, 32));
-        let mut evm_code_hash = B256::from_slice(evm_code_hash.as_ref());
-        // if the delegated code hash is zero, then it might be a contract deployment stage,
-        // for non-empty account return KECCAK_EMPTY
-        if evm_code_hash == B256::ZERO && !is_account_empty {
-            evm_code_hash = KECCAK_EMPTY;
+    let evm_code_hash = if is_account_ownable {
+        if metadata_size > 0 {
+            let evm_code_hash =
+                unwrap_syscall!(@gasless evm, evm.sdk.metadata_copy(&address, 0, 32));
+            assert!(
+                evm_code_hash.len() == 32,
+                "metadata too small: code hash must be 32 bytes"
+            );
+            let mut evm_code_hash = B256::from_slice(evm_code_hash.as_ref());
+            // if the delegated code hash is zero, then it might be a contract deployment stage,
+            // for non-empty account return KECCAK_EMPTY
+            if evm_code_hash == B256::ZERO && !is_account_empty {
+                evm_code_hash = KECCAK_EMPTY;
+            }
+            evm_code_hash
+        } else {
+            KECCAK_EMPTY
         }
-        evm_code_hash
     } else {
         let evm_code_hash = evm.sdk.code_hash(&address);
         if !evm_code_hash.status.is_ok() {
@@ -84,12 +89,8 @@ pub fn extcodecopy<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     pop_address!(evm, address);
     pop!(evm, memory_offset, code_offset, len_u256);
     // load metadata info
-    let (metadata_size, is_cold_access, _is_account_empty) =
+    let (metadata_size, is_account_ownable, is_cold_access, _is_account_empty) =
         evm.sdk.metadata_size(&address).unwrap_or_default();
-    debug_log!(
-        "extcodecopy: address={}, metadata_size={metadata_size}, is_cold_access={is_cold_access}",
-        address
-    );
     // charge gas
     let code_length = as_usize_or_fail!(evm, len_u256);
     gas_or_fail!(
@@ -102,8 +103,12 @@ pub fn extcodecopy<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     let memory_offset = as_usize_or_fail!(evm, memory_offset);
     let code_offset = as_usize_saturated!(code_offset);
     // get evm bytecode (32 is EVM code hash size)
-    let code = if metadata_size > 0 {
-        unwrap_syscall!(@gasless evm, evm.sdk.metadata_copy(&address, 32, metadata_size - 32))
+    let code = if is_account_ownable {
+        if metadata_size > 0 {
+            unwrap_syscall!(@gasless evm, evm.sdk.metadata_copy(&address, 32, metadata_size - 32))
+        } else {
+            Bytes::new()
+        }
     } else {
         unwrap_syscall!(@gasless evm, evm.sdk.code_copy(&address, code_offset as u64, code_length as u64))
     };

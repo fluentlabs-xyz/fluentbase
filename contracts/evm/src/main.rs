@@ -70,13 +70,17 @@ pub(crate) fn load_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
     // we use bytecode address because contract can be called using DELEGATECALL
     let bytecode_address = sdk.context().contract_bytecode_address();
     // read metadata size, if it's zero, then an account is not assigned to the EVM runtime
-    let (metadata_size, _, _) = sdk.metadata_size(&bytecode_address).unwrap();
+    let (metadata_size, _, _, _) = sdk.metadata_size(&bytecode_address).unwrap();
     if metadata_size == 0 {
         return None;
     }
     let mut metadata = sdk
         .metadata_copy(&bytecode_address, 0, metadata_size)
         .unwrap();
+    assert!(
+        metadata.len() >= 32,
+        "can't load EVM bytecode: metadata is too small"
+    );
     // load EVM bytecode hash and exit if the code hash is empty
     let evm_code_hash = B256::from_slice(&metadata[0..32]);
     // TODO(dmitry123): "do we want to have this optimized during the creation of the frame?"

@@ -16,6 +16,7 @@ use fluentbase_sdk::{
     Bytes,
     ExitCode,
     IsAccountEmpty,
+    IsAccountOwnable,
     IsColdAccess,
     MetadataAPI,
     SharedAPI,
@@ -206,13 +207,13 @@ impl MetadataAPI for MemStorage {
     fn metadata_size(
         &self,
         address: &Address,
-    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
+    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
         let len = self
             .in_memory_metadata
             .get(address)
             .map_or_else(|| 0, |v| v.len()) as u32;
         // TODO check bool flags
-        SyscallResult::new((len, false, false), 0, 0, ExitCode::Ok)
+        SyscallResult::new((len, false, false, false), 0, 0, ExitCode::Ok)
     }
 
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
