@@ -726,11 +726,11 @@ pub fn storage_write_account_data<SAPI: MetadataAPI>(
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
             keccak256(v)
         });
-    let (metadata_size, _, _) = sapi
+    let (_, is_account_ownable, _, _) = sapi
         .metadata_size(&derived_metadata_address)
         .expect("metadata size")
         .data;
-    if metadata_size == 0 {
+    if !is_account_ownable {
         sapi.metadata_create(&pubkey_hash.into(), account_data.into())
             .expect("metadata creation failed");
     } else {

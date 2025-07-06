@@ -28,11 +28,11 @@ pub fn write_contract_executable(
 ) -> SyscallResult<()> {
     let salt = derive_salt(pk_exec);
     let derived_metadata_address = derive_address(&salt);
-    let (metadata_size, _, _) = sapi
+    let (_, is_account_ownable, _, _) = sapi
         .metadata_size(&derived_metadata_address)
         .expect("metadata size")
         .data;
-    let result = if metadata_size == 0 {
+    let result = if !is_account_ownable {
         sapi.metadata_create(&salt, executable_data)
     } else {
         sapi.metadata_write(&derived_metadata_address, 0, executable_data)

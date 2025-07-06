@@ -10,6 +10,7 @@ use fluentbase_sdk::{
     ContractContextV1,
     ExitCode,
     IsAccountEmpty,
+    IsAccountOwnable,
     IsColdAccess,
     MetadataAPI,
     SharedAPI,
@@ -167,7 +168,7 @@ impl MetadataAPI for HostTestingContext {
     fn metadata_size(
         &self,
         address: &Address,
-    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
+    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
         let ctx = self.inner.borrow();
         let account_owner = ctx
             .ownable_account_address
@@ -175,7 +176,7 @@ impl MetadataAPI for HostTestingContext {
         let value = ctx.metadata.get(&(account_owner, *address));
         if let Some(value) = value {
             let len = value.len();
-            return SyscallResult::new((len as u32, false, false), 0, 0, ExitCode::Ok);
+            return SyscallResult::new((len as u32, false, false, false), 0, 0, ExitCode::Ok);
         }
         SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
     }
