@@ -65,7 +65,7 @@ use crate::{
 use fluentbase_sdk::{calc_create4_address, keccak256, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
-const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
+// const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
 
 // pub struct LogCollector {
 //     messages: Vec<String>,

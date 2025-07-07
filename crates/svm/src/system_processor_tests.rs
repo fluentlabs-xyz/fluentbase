@@ -9,7 +9,6 @@ mod tests {
         nonce_account,
         pubkey::Pubkey,
         recent_blockhashes_account,
-        recent_blockhashes_account::create_account_with_data_for_test,
         rent::Rent,
         solana_program::{
             instruction::{AccountMeta, Instruction},
@@ -1109,7 +1108,8 @@ mod tests {
         );
         let blockhash = hash(&serialize(&0).unwrap());
         #[allow(deprecated)]
-        let new_recent_blockhashes_account = create_account_with_data_for_test(vec![
+        let new_recent_blockhashes_account =
+            recent_blockhashes_account::create_account_with_data_for_test(vec![
                 IterItem(0u64, &blockhash, 0);
                 recent_blockhashes::MAX_ENTRIES
             ]);
@@ -1426,7 +1426,8 @@ mod tests {
         #[allow(deprecated)]
         let blockhash_id = recent_blockhashes::id();
         #[allow(deprecated)]
-        let new_recent_blockhashes_account = create_account_with_data_for_test(vec![]);
+        let new_recent_blockhashes_account =
+            recent_blockhashes_account::create_account_with_data_for_test(vec![]);
         process_instruction(
             &sdk,
             &serialize(&SystemInstruction::InitializeNonceAccount(nonce_address)).unwrap(),
@@ -1492,7 +1493,8 @@ mod tests {
             Ok(()),
         );
         #[allow(deprecated)]
-        let new_recent_blockhashes_account = create_account_with_data_for_test(vec![]);
+        let new_recent_blockhashes_account =
+            recent_blockhashes_account::create_account_with_data_for_test(vec![]);
         mock_process_instruction(
             &sdk,
             &system_program::id(),
@@ -1530,7 +1532,7 @@ mod tests {
         let nonce_address = Pubkey::new_unique();
         let versions = NonceVersions::Legacy(Box::new(NonceState::Uninitialized));
         let nonce_account = AccountSharedData::new_data(
-            1_000_000,             // lamports
+            1_000_000,     // lamports
             &versions,             // state
             &Pubkey::new_unique(), // owner
         )

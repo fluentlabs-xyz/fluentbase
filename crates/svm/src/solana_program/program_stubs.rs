@@ -1,8 +1,8 @@
 //! Implementations of syscalls used when `solana-program` is built for non-SBF targets.
 
-use crate::{account_info::AccountInfo, program_error::UNSUPPORTED_SYSVAR};
+use crate::account_info::AccountInfo;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use solana_instruction::Instruction;
+use solana_instruction::{error::UNSUPPORTED_SYSVAR, Instruction};
 use solana_program_error::ProgramResult;
 use solana_program_memory::stubs;
 use solana_pubkey::Pubkey;

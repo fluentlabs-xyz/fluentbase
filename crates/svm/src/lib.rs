@@ -33,7 +33,7 @@ pub mod nonce_account;
 pub mod precompiles;
 #[cfg(test)]
 mod process_instruction_tests;
-pub mod program_error;
+// pub mod program_error;
 pub mod recent_blockhashes_account;
 // #[cfg(test)]
 // pub mod secp256k1_instruction;
@@ -57,7 +57,6 @@ pub mod system_program;
 pub mod sysvar_cache;
 #[cfg(test)]
 pub mod test_helpers;
-pub mod types;
 pub mod word_size;
 // mod test_macroses;
 

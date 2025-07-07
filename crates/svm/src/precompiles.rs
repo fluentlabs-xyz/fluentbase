@@ -8,7 +8,7 @@ use solana_precompile_error::PrecompileError;
 use solana_pubkey::Pubkey;
 
 /// All precompiled programs must implement the `Verify` function
-pub type Verify = fn(&[u8], &[&[u8]], &FeatureSet) -> core::result::Result<(), PrecompileError>;
+pub type Verify = fn(&[u8], &[&[u8]], &FeatureSet) -> Result<(), PrecompileError>;
 
 /// Information on a precompiled program
 pub struct Precompile {
@@ -44,7 +44,7 @@ impl Precompile {
         data: &[u8],
         instruction_datas: &[&[u8]],
         feature_set: &FeatureSet,
-    ) -> core::result::Result<(), PrecompileError> {
+    ) -> Result<(), PrecompileError> {
         (self.verify_fn)(data, instruction_datas, feature_set)
     }
 }

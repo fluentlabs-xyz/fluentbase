@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn test_verify_bad_account_owner_fails() {
         let program_id = Pubkey::new_unique();
-        assert_ne!(program_id, crate::system_program::id());
+        assert_ne!(program_id, system_program::id());
         let account = AccountSharedData::new_data_with_space(
             42,
             &Versions::new(State::Uninitialized),

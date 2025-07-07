@@ -15,8 +15,7 @@ use fluentbase_sdk::SharedAPI;
 use hashbrown::HashSet;
 use solana_instruction::error::InstructionError;
 
-// represents an address that may or may not have been generated
-//  from a seed
+// represents an address that may or may not have been generated from a seed
 #[derive(PartialEq, Eq, Default, Debug)]
 pub struct Address {
     address: Pubkey,
@@ -308,7 +307,6 @@ fn transfer_with_seed<SDK: SharedAPI>(
 pub const DEFAULT_COMPUTE_UNITS: u64 = 150;
 
 declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, |invoke_context| {
-
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
@@ -573,8 +571,8 @@ pub fn get_system_account_kind(account: &AccountSharedData) -> Option<SystemAcco
     if system_program::check_id(account.owner()) {
         if account.data().is_empty() {
             Some(SystemAccountKind::System)
-        } else if account.data().len() == crate::solana_program::nonce::state::State::size() {
-            let nonce_versions: nonce::state::Versions = account.state().ok()?;
+        } else if account.data().len() == nonce::state::State::size() {
+            let nonce_versions: Versions = account.state().ok()?;
             match nonce_versions.state() {
                 nonce::state::State::Uninitialized => None,
                 nonce::state::State::Initialized(_) => Some(SystemAccountKind::Nonce),
