@@ -19,7 +19,7 @@ pub mod instructions;
 // pub mod last_restart_slot;
 pub mod recent_blockhashes;
 pub mod rent;
-pub mod rewards;
+// pub mod rewards;
 pub mod slot_hashes;
 pub mod slot_history;
 pub mod stake_history;
@@ -48,7 +48,7 @@ mod sysvar_ids {
             #[allow(deprecated)]
             recent_blockhashes::id(),
             rent::id(),
-            rewards::id(),
+            // rewards::id(),
             slot_hashes::id(),
             slot_history::id(),
             stake_history::id(),

@@ -11,7 +11,7 @@ use bytemuck_derive::{Pod, Zeroable};
 use solana_clock::Slot;
 use solana_slot_hashes::MAX_ENTRIES;
 
-const U64_SIZE: usize = core::mem::size_of::<u64>();
+const U64_SIZE: usize = size_of::<u64>();
 
 pub use solana_slot_hashes::{
     sysvar::{check_id, id, ID},
