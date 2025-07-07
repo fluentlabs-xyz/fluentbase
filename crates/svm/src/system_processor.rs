@@ -435,7 +435,7 @@ declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, 
                 // );
                 return Err(SystemError::NonceNoRecentBlockhashes.into());
             }
-            let result = crate::system_program::advance_nonce_account(&mut me, &signers, invoke_context);
+            let result = system_program::advance_nonce_account(&mut me, &signers, invoke_context);
             result
         }
         SystemInstruction::WithdrawNonceAccount(lamports) => {
@@ -447,7 +447,7 @@ declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, 
                 2,
             )?;
             let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 3)?;
-            let result = crate::system_program::withdraw_nonce_account(
+            let result = system_program::withdraw_nonce_account(
                 0,
                 lamports,
                 1,
@@ -477,14 +477,14 @@ declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, 
                 return Err(SystemError::NonceNoRecentBlockhashes.into());
             }
             let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 2)?;
-            let result = crate::system_program::initialize_nonce_account(&mut me, &authorized, &rent, invoke_context);
+            let result = system_program::initialize_nonce_account(&mut me, &authorized, &rent, invoke_context);
             result
         }
         SystemInstruction::AuthorizeNonceAccount(nonce_authority) => {
             instruction_context.check_number_of_instruction_accounts(1)?;
             let mut me =
                 instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-            let result = crate::system_program::authorize_nonce_account(&mut me, &nonce_authority, &signers, invoke_context);
+            let result = system_program::authorize_nonce_account(&mut me, &nonce_authority, &signers, invoke_context);
             result
         }
         SystemInstruction::UpgradeNonceAccount => {

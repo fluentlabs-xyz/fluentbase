@@ -645,7 +645,7 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
     );
     let (accounts, program_indices) = result?;
 
-    // TODO compute hardcoded parameters
+    // TODO how to compute hardcoded parameters?
     let transaction_context = TransactionContext::new(accounts, rent.clone(), 100, 200);
 
     let (transaction_context, balance_changes) = {
