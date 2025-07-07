@@ -21,7 +21,7 @@ pub mod recent_blockhashes;
 pub mod rent;
 // pub mod rewards;
 // pub mod slot_hashes;
-pub mod slot_history;
+// pub mod slot_history;
 pub mod stake_history;
 use crate::solana_program::program_stubs;
 use solana_account_info::AccountInfo;
@@ -50,7 +50,7 @@ mod sysvar_ids {
             rent::id(),
             // rewards::id(),
             // slot_hashes::id(),
-            slot_history::id(),
+            // slot_history::id(),
             stake_history::id(),
             instructions::id(),
         ];
