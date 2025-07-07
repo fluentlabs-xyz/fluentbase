@@ -10,7 +10,6 @@ use crate::{
             clock,
             epoch_rewards,
             epoch_schedule,
-            last_restart_slot,
             recent_blockhashes,
             recent_blockhashes::RecentBlockhashes,
             rent,
@@ -22,7 +21,6 @@ use crate::{
 use alloc::sync::Arc;
 use solana_bincode::deserialize;
 use solana_instruction::error::InstructionError;
-use solana_last_restart_slot::LastRestartSlot;
 use solana_slot_hashes::SlotHashes;
 
 #[derive(Default, Clone, Debug)]
@@ -37,7 +35,7 @@ pub struct SysvarCache {
     #[allow(deprecated)]
     recent_blockhashes: Option<Arc<RecentBlockhashes>>,
     stake_history: Option<Arc<StakeHistory>>,
-    last_restart_slot: Option<Arc<LastRestartSlot>>,
+    // last_restart_slot: Option<Arc<LastRestartSlot>>,
 }
 
 impl SysvarCache {
@@ -91,15 +89,15 @@ impl SysvarCache {
         self.rent = Some(Arc::new(rent));
     }
 
-    pub fn get_last_restart_slot(&self) -> Result<Arc<LastRestartSlot>, InstructionError> {
-        self.last_restart_slot
-            .clone()
-            .ok_or(InstructionError::UnsupportedSysvar)
-    }
-
-    pub fn set_last_restart_slot(&mut self, last_restart_slot: LastRestartSlot) {
-        self.last_restart_slot = Some(Arc::new(last_restart_slot));
-    }
+    // pub fn get_last_restart_slot(&self) -> Result<Arc<LastRestartSlot>, InstructionError> {
+    //     self.last_restart_slot
+    //         .clone()
+    //         .ok_or(InstructionError::UnsupportedSysvar)
+    // }
+    //
+    // pub fn set_last_restart_slot(&mut self, last_restart_slot: LastRestartSlot) {
+    //     self.last_restart_slot = Some(Arc::new(last_restart_slot));
+    // }
 
     pub fn get_slot_hashes(&self) -> Result<Arc<SlotHashes>, InstructionError> {
         self.slot_hashes
@@ -199,13 +197,13 @@ impl SysvarCache {
                 }
             });
         }
-        if self.last_restart_slot.is_none() {
-            get_account_data(&last_restart_slot::id(), &mut |data: &[u8]| {
-                if let Ok(last_restart_slot) = deserialize(data) {
-                    self.set_last_restart_slot(last_restart_slot);
-                }
-            });
-        }
+        // if self.last_restart_slot.is_none() {
+        //     get_account_data(&last_restart_slot::id(), &mut |data: &[u8]| {
+        //         if let Ok(last_restart_slot) = deserialize(data) {
+        //             self.set_last_restart_slot(last_restart_slot);
+        //         }
+        //     });
+        // }
     }
 
     pub fn reset(&mut self) {

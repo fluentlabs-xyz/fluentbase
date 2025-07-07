@@ -16,7 +16,7 @@ pub mod epoch_rewards;
 pub mod epoch_schedule;
 // pub mod fees;
 pub mod instructions;
-pub mod last_restart_slot;
+// pub mod last_restart_slot;
 pub mod recent_blockhashes;
 pub mod rent;
 pub mod rewards;
