@@ -22,7 +22,7 @@ pub mod rent;
 // pub mod rewards;
 // pub mod slot_hashes;
 // pub mod slot_history;
-pub mod stake_history;
+// pub mod stake_history;
 use crate::solana_program::program_stubs;
 use solana_account_info::AccountInfo;
 use solana_bincode::{deserialize, serialize_into, serialized_size};
@@ -51,7 +51,7 @@ mod sysvar_ids {
             // rewards::id(),
             // slot_hashes::id(),
             // slot_history::id(),
-            stake_history::id(),
+            // stake_history::id(),
             instructions::id(),
         ];
     }

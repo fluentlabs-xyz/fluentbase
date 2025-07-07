@@ -4,24 +4,20 @@ use crate::{
     epoch_schedule::EpochSchedule,
     pubkey::Pubkey,
     rent::Rent,
-    solana_program::{
-        stake_history::StakeHistory,
-        sysvar::{
-            clock,
-            epoch_rewards,
-            epoch_schedule,
-            recent_blockhashes,
-            recent_blockhashes::RecentBlockhashes,
-            rent,
-            // slot_hashes,
-            stake_history,
-        },
+    solana_program::sysvar::{
+        clock,
+        epoch_rewards,
+        epoch_schedule,
+        recent_blockhashes,
+        recent_blockhashes::RecentBlockhashes,
+        rent,
+        // slot_hashes,
+        // stake_history,
     },
 };
 use alloc::sync::Arc;
 use solana_bincode::deserialize;
 use solana_instruction::error::InstructionError;
-use solana_slot_hashes::SlotHashes;
 
 #[derive(Default, Clone, Debug)]
 pub struct SysvarCache {
@@ -34,7 +30,7 @@ pub struct SysvarCache {
     // slot_hashes: Option<Arc<SlotHashes>>,
     #[allow(deprecated)]
     recent_blockhashes: Option<Arc<RecentBlockhashes>>,
-    stake_history: Option<Arc<StakeHistory>>,
+    // stake_history: Option<Arc<StakeHistory>>,
     // last_restart_slot: Option<Arc<LastRestartSlot>>,
 }
 
@@ -123,15 +119,15 @@ impl SysvarCache {
         self.recent_blockhashes = Some(Arc::new(recent_blockhashes));
     }
 
-    pub fn get_stake_history(&self) -> Result<Arc<StakeHistory>, InstructionError> {
-        self.stake_history
-            .clone()
-            .ok_or(InstructionError::UnsupportedSysvar)
-    }
-
-    pub fn set_stake_history(&mut self, stake_history: StakeHistory) {
-        self.stake_history = Some(Arc::new(stake_history));
-    }
+    // pub fn get_stake_history(&self) -> Result<Arc<StakeHistory>, InstructionError> {
+    //     self.stake_history
+    //         .clone()
+    //         .ok_or(InstructionError::UnsupportedSysvar)
+    // }
+    //
+    // pub fn set_stake_history(&mut self, stake_history: StakeHistory) {
+    //     self.stake_history = Some(Arc::new(stake_history));
+    // }
 
     pub fn fill_missing_entries<F: FnMut(&Pubkey, &mut dyn FnMut(&[u8]))>(
         &mut self,
@@ -190,13 +186,13 @@ impl SysvarCache {
                 }
             });
         }
-        if self.stake_history.is_none() {
-            get_account_data(&stake_history::id(), &mut |data: &[u8]| {
-                if let Ok(stake_history) = deserialize(data) {
-                    self.set_stake_history(stake_history);
-                }
-            });
-        }
+        // if self.stake_history.is_none() {
+        //     get_account_data(&stake_history::id(), &mut |data: &[u8]| {
+        //         if let Ok(stake_history) = deserialize(data) {
+        //             self.set_stake_history(stake_history);
+        //         }
+        //     });
+        // }
         // if self.last_restart_slot.is_none() {
         //     get_account_data(&last_restart_slot::id(), &mut |data: &[u8]| {
         //         if let Ok(last_restart_slot) = deserialize(data) {
