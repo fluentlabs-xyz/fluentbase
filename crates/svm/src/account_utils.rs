@@ -48,7 +48,7 @@ impl_state_for!(AccountSharedData);
 
 impl<T> StateMut<T> for Ref<'_, AccountSharedData>
 where
-    T: serde::Serialize + serde::de::DeserializeOwned + bincode::Decode<()>,
+    T: serde::Serialize + serde::de::DeserializeOwned,
 {
     fn state(&self) -> Result<T, InstructionError> {
         self.deserialize_data()

@@ -1,6 +1,6 @@
 use crate::{
     account::{
-        is_executable_account,
+        is_executable_by_account,
         Account,
         AccountSharedData,
         ReadableAccount,
@@ -497,7 +497,7 @@ pub fn prepare_data_for_tx_ctx<SDK: SharedAPI, API: MetadataAPI>(
             }
 
             // if !program_account.executable() {
-            if !is_executable_account(&program_account) && !program_account.executable() {
+            if !is_executable_by_account(&program_account) && !program_account.executable() {
                 // error_metrics.invalid_program_for_execution += 1;
                 return Err(TransactionError::InvalidProgramForExecution);
             }

@@ -104,31 +104,31 @@ impl Display for SvmError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             SvmError::TransactionError(e) => {
-                write!(f, "transaction error: {}", e)
+                write!(f, "SvmError::TransactionError:{}", e)
             }
             SvmError::BincodeEncodeError(e) => {
-                write!(f, "bincode encode error: {}", e)
+                write!(f, "SvmError::BincodeEncodeError:{}", e)
             }
             SvmError::BincodeDecodeError(e) => {
-                write!(f, "bincode decode error: {}", e)
+                write!(f, "SvmError::BincodeDecodeError:{}", e)
             }
             SvmError::InstructionError(e) => {
-                write!(f, "instruction error: {}", e)
+                write!(f, "SvmError::InstructionError:{}", e)
             }
             SvmError::ElfError(e) => {
-                write!(f, "elf error: {}", e)
+                write!(f, "SvmError::ElfError:{}", e)
             }
             SvmError::EbpfError(e) => {
-                write!(f, "ebpf error: {}", e)
+                write!(f, "SvmError::EbpfError:{}", e)
             }
             SvmError::SyscallError(e) => {
-                write!(f, "syscall error: {}", e)
+                write!(f, "SvmError::SyscallError:{}", e)
             }
             SvmError::RuntimeError(e) => {
-                write!(f, "runtime error: {}", e)
+                write!(f, "SvmError::RuntimeError:{}", e)
             }
             SvmError::ExitCode(e) => {
-                write!(f, "exit code: {}", e)
+                write!(f, "SvmError::ExitCode:{}", e)
             }
         }
     }

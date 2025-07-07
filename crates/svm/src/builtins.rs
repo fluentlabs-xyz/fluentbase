@@ -93,8 +93,7 @@ pub fn register_builtins<SDK: SharedAPI>(
 
     // TODO: doesn't call hash computation handle/function, returns default value (zeroes)
     // function_registry
-    //     .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK,
-    // PoseidonHasher<SDK>>)     .unwrap();
+    //     .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK, PoseidonHasher<SDK>>).unwrap();
     // function_registry
     //     .register_function_hashed("sol_poseidon", SyscallPoseidonSDK::vm)
     //     .unwrap();

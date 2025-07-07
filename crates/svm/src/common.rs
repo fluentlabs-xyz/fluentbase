@@ -32,11 +32,6 @@ pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 ///   8 bytes is the size of the fragment header
 pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
 
-// #[cfg(target_pointer_width = "64")]
-// pub(crate) type PtrSizedType = u64;
-// #[cfg(target_pointer_width = "32")]
-// pub(crate) type PtrSizedType = u32;
-
 use crate::{
     compute_budget::compute_budget::{ComputeBudget, MAX_CALL_DEPTH, STACK_FRAME_SIZE},
     error::{Error, RuntimeError, SvmError},

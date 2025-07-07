@@ -266,7 +266,7 @@ enum MemcmpError {
 impl core::fmt::Display for MemcmpError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            MemcmpError::Diff(diff) => write!(f, "memcmp diff: {diff}"),
+            MemcmpError::Diff(diff) => write!(f, "MemcmpError::Diff({diff})"),
         }
     }
 }

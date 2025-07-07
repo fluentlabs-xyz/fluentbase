@@ -62,7 +62,7 @@ pub type IndexOfAccount = u16;
 
 pub type BuiltinFunctionWithContext<'a, SDK> = BuiltinFunction<InvokeContext<'a, SDK>>;
 
-/// Contains account meta data which varies between instruction.
+/// Contains account metadata which varies between instruction.
 ///
 /// It also contains indices to other structures for faster lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -519,7 +519,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
 
         let builtin_id = {
-            // TODO (stas): do we need this check
+            // TODO: do we need this check?
             // debug_assert!(instruction_context.get_number_of_program_accounts() <= 1);
             let borrowed_root_account = instruction_context
                 .try_borrow_program_account(&self.transaction_context, 0)

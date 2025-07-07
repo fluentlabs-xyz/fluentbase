@@ -1,9 +1,8 @@
 extern crate solana_rbpf;
 
-use crate::{alloc::string::ToString, solana_program};
-use alloc::{boxed::Box, rc::Rc, str::Utf8Error, string::String, vec, vec::Vec};
+use crate::solana_program;
+use alloc::{boxed::Box, str::Utf8Error, string::String, vec, vec::Vec};
 use core::{
-    cell::RefCell,
     fmt,
     fmt::{Display, Formatter},
 };
@@ -68,192 +67,175 @@ use solana_rbpf::ebpf::MM_HEAP_START;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
 
-pub struct LogCollector {
-    messages: Vec<String>,
-    bytes_written: usize,
-    bytes_limit: Option<usize>,
-    limit_warning: bool,
-}
+// pub struct LogCollector {
+//     messages: Vec<String>,
+//     bytes_written: usize,
+//     bytes_limit: Option<usize>,
+//     limit_warning: bool,
+// }
+//
+// impl Default for LogCollector {
+//     fn default() -> Self {
+//         Self {
+//             messages: Vec::new(),
+//             bytes_written: 0,
+//             bytes_limit: Some(LOG_MESSAGES_BYTES_LIMIT),
+//             limit_warning: false,
+//         }
+//     }
+// }
+//
+// impl LogCollector {
+//     pub fn log(&mut self, message: &str) {
+//         let Some(limit) = self.bytes_limit else {
+//             self.messages.push(message.to_string());
+//             return;
+//         };
+//
+//         let bytes_written = self.bytes_written.saturating_add(message.len());
+//         if bytes_written >= limit {
+//             if !self.limit_warning {
+//                 self.limit_warning = true;
+//                 self.messages.push(String::from("Log truncated"));
+//             }
+//         } else {
+//             self.bytes_written = bytes_written;
+//             self.messages.push(message.to_string());
+//         }
+//     }
+//
+//     pub fn get_recorded_content(&self) -> &[String] {
+//         self.messages.as_slice()
+//     }
+//
+//     pub fn new_ref() -> Rc<RefCell<Self>> {
+//         Rc::new(RefCell::new(Self::default()))
+//     }
+//
+//     pub fn new_ref_with_limit(bytes_limit: Option<usize>) -> Rc<RefCell<Self>> {
+//         Rc::new(RefCell::new(Self {
+//             bytes_limit,
+//             ..Self::default()
+//         }))
+//     }
+//
+//     pub fn into_messages(self) -> Vec<String> {
+//         self.messages
+//     }
+// }
 
-impl Default for LogCollector {
-    fn default() -> Self {
-        Self {
-            messages: Vec::new(),
-            bytes_written: 0,
-            bytes_limit: Some(LOG_MESSAGES_BYTES_LIMIT),
-            limit_warning: false,
-        }
-    }
-}
+// /// Convenience macro to log a message with an `Option<Rc<RefCell<LogCollector>>>`
+// #[macro_export]
+// macro_rules! ic_logger_msg {
+//     ($log_collector:expr, $message:expr) => {
+//         $crate::log_collector::log::debug!(
+//             target: "solana_runtime::message_processor::stable_log",
+//             "{}",
+//             $message
+//         );
+//         if let Some(log_collector) = $log_collector.as_ref() {
+//             if let Ok(mut log_collector) = log_collector.try_borrow_mut() {
+//                 log_collector.log($message);
+//             }
+//         }
+//     };
+//     ($log_collector:expr, $fmt:expr, $($arg:tt)*) => {
+//         $crate::log_collector::log::debug!(
+//             target: "solana_runtime::message_processor::stable_log",
+//             $fmt,
+//             $($arg)*
+//         );
+//         if let Some(log_collector) = $log_collector.as_ref() {
+//             if let Ok(mut log_collector) = log_collector.try_borrow_mut() {
+//                 log_collector.log(&format!($fmt, $($arg)*));
+//             }
+//         }
+//     };
+// }
 
-impl LogCollector {
-    pub fn log(&mut self, message: &str) {
-        let Some(limit) = self.bytes_limit else {
-            self.messages.push(message.to_string());
-            return;
-        };
-
-        let bytes_written = self.bytes_written.saturating_add(message.len());
-        if bytes_written >= limit {
-            if !self.limit_warning {
-                self.limit_warning = true;
-                self.messages.push(String::from("Log truncated"));
-            }
-        } else {
-            self.bytes_written = bytes_written;
-            self.messages.push(message.to_string());
-        }
-    }
-
-    pub fn get_recorded_content(&self) -> &[String] {
-        self.messages.as_slice()
-    }
-
-    pub fn new_ref() -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self::default()))
-    }
-
-    pub fn new_ref_with_limit(bytes_limit: Option<usize>) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
-            bytes_limit,
-            ..Self::default()
-        }))
-    }
-
-    pub fn into_messages(self) -> Vec<String> {
-        self.messages
-    }
-}
-
-/// Convenience macro to log a message with an `Option<Rc<RefCell<LogCollector>>>`
-#[macro_export]
-macro_rules! ic_logger_msg {
-    ($log_collector:expr, $message:expr) => {
-        $crate::log_collector::log::debug!(
-            target: "solana_runtime::message_processor::stable_log",
-            "{}",
-            $message
-        );
-        if let Some(log_collector) = $log_collector.as_ref() {
-            if let Ok(mut log_collector) = log_collector.try_borrow_mut() {
-                log_collector.log($message);
-            }
-        }
-    };
-    ($log_collector:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::log_collector::log::debug!(
-            target: "solana_runtime::message_processor::stable_log",
-            $fmt,
-            $($arg)*
-        );
-        if let Some(log_collector) = $log_collector.as_ref() {
-            if let Ok(mut log_collector) = log_collector.try_borrow_mut() {
-                log_collector.log(&format!($fmt, $($arg)*));
-            }
-        }
-    };
-}
-
-/// Convenience macro to log a message with an `InvokeContext`
-#[macro_export]
-macro_rules! ic_msg {
-    ($invoke_context:expr, $message:expr) => {
-        $crate::ic_logger_msg!($invoke_context.get_log_collector(), $message)
-    };
-    ($invoke_context:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::ic_logger_msg!($invoke_context.get_log_collector(), $fmt, $($arg)*)
-    };
-}
+// /// Convenience macro to log a message with an `InvokeContext`
+// #[macro_export]
+// macro_rules! ic_msg {
+//     ($invoke_context:expr, $message:expr) => {
+//         $crate::ic_logger_msg!($invoke_context.get_log_collector(), $message)
+//     };
+//     ($invoke_context:expr, $fmt:expr, $($arg:tt)*) => {
+//         $crate::ic_logger_msg!($invoke_context.get_log_collector(), $fmt, $($arg)*)
+//     };
+// }
 
 /// Error definitions
 
-#[derive(Debug, /* ThisError, */ PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum SyscallError {
-    // #[error("{0}: {1:?}")]
     InvalidString(Utf8Error, Vec<u8>),
-    // #[error("SBF program panicked")]
     Abort,
-    // #[error("SBF program Panicked in {0} at {1}:{2}")]
     Panic(String, u64, u64),
-    // #[error("Cannot borrow invoke context")]
     InvokeContextBorrowFailed,
-    // #[error("Malformed signer seed: {0}: {1:?}")]
     MalformedSignerSeed(Utf8Error, Vec<u8>),
-    // #[error("Could not create program address with signer seeds: {0}")]
     BadSeeds(PubkeyError),
-    // #[error("Program {0} not supported by inner instructions")]
     ProgramNotSupported(Pubkey),
-    // #[error("Unaligned pointer")]
     UnalignedPointer,
-    // #[error("Too many signers")]
     TooManySigners,
-    // #[error("Instruction passed to inner instruction is too large ({0} > {1})")]
     InstructionTooLarge(usize, usize),
-    // #[error("Too many accounts passed to inner instruction")]
     TooManyAccounts,
-    // #[error("Overlapping copy")]
     CopyOverlapping,
-    // #[error("Return data too large ({0} > {1})")]
     ReturnDataTooLarge(u64, u64),
-    // #[error("Hashing too many sequences")]
     TooManySlices,
-    // #[error("InvalidLength")]
     InvalidLength,
-    // #[error("Invoked an instruction with data that is too large ({data_len} >
-    // {max_data_len})")]
     MaxInstructionDataLenExceeded {
         data_len: u64,
         max_data_len: u64,
     },
-    // #[error("Invoked an instruction with too many accounts ({num_accounts} > {max_accounts})")]
     MaxInstructionAccountsExceeded {
         num_accounts: u64,
         max_accounts: u64,
     },
-    // #[error("Invoked an instruction with too many account info's ({num_account_infos} >
-    // {max_account_infos})" )]
     MaxInstructionAccountInfosExceeded {
         num_account_infos: u64,
         max_account_infos: u64,
     },
-    // #[error("InvalidAttribute")]
     InvalidAttribute,
-    // #[error("Invalid pointer")]
     InvalidPointer,
-    // #[error("Arithmetic overflow")]
     ArithmeticOverflow,
 }
 
 impl Display for SyscallError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            SyscallError::InvalidString(_, _) => write!(f, "InvalidString"),
-            SyscallError::Abort => write!(f, "Abort"),
-            SyscallError::Panic(_, _, _) => write!(f, "Panic"),
-            SyscallError::InvokeContextBorrowFailed => write!(f, "InvokeContextBorrowFailed"),
-            SyscallError::MalformedSignerSeed(_, _) => write!(f, "MalformedSignerSeed"),
-            SyscallError::BadSeeds(_) => write!(f, "BadSeeds"),
-            SyscallError::ProgramNotSupported(_) => write!(f, "ProgramNotSupported"),
-            SyscallError::UnalignedPointer => write!(f, "UnalignedPointer"),
-            SyscallError::TooManySigners => write!(f, "TooManySigners"),
-            SyscallError::InstructionTooLarge(_, _) => write!(f, "InstructionTooLarge"),
-            SyscallError::TooManyAccounts => write!(f, "TooManyAccounts"),
-            SyscallError::CopyOverlapping => write!(f, "CopyOverlapping"),
-            SyscallError::ReturnDataTooLarge(_, _) => write!(f, "ReturnDataTooLarge"),
-            SyscallError::TooManySlices => write!(f, "TooManySlices"),
-            SyscallError::InvalidLength => write!(f, "InvalidLength"),
+            SyscallError::InvalidString(_, _) => write!(f, "SyscallError::InvalidString"),
+            SyscallError::Abort => write!(f, "SyscallError::Abort"),
+            SyscallError::Panic(_, _, _) => write!(f, "SyscallError::Panic"),
+            SyscallError::InvokeContextBorrowFailed => {
+                write!(f, "SyscallError::InvokeContextBorrowFailed")
+            }
+            SyscallError::MalformedSignerSeed(_, _) => {
+                write!(f, "SyscallError::MalformedSignerSeed")
+            }
+            SyscallError::BadSeeds(_) => write!(f, "SyscallError::BadSeeds"),
+            SyscallError::ProgramNotSupported(_) => write!(f, "SyscallError::ProgramNotSupported"),
+            SyscallError::UnalignedPointer => write!(f, "SyscallError::UnalignedPointer"),
+            SyscallError::TooManySigners => write!(f, "SyscallError::TooManySigners"),
+            SyscallError::InstructionTooLarge(_, _) => {
+                write!(f, "SyscallError::InstructionTooLarge")
+            }
+            SyscallError::TooManyAccounts => write!(f, "SyscallError::TooManyAccounts"),
+            SyscallError::CopyOverlapping => write!(f, "SyscallError::CopyOverlapping"),
+            SyscallError::ReturnDataTooLarge(_, _) => write!(f, "SyscallError::ReturnDataTooLarge"),
+            SyscallError::TooManySlices => write!(f, "SyscallError::TooManySlices"),
+            SyscallError::InvalidLength => write!(f, "SyscallError::InvalidLength"),
             SyscallError::MaxInstructionDataLenExceeded { .. } => {
-                write!(f, "MaxInstructionDataLenExceeded")
+                write!(f, "SyscallError::MaxInstructionDataLenExceeded")
             }
             SyscallError::MaxInstructionAccountsExceeded { .. } => {
-                write!(f, "MaxInstructionAccountsExceeded")
+                write!(f, "SyscallError::MaxInstructionAccountsExceeded")
             }
             SyscallError::MaxInstructionAccountInfosExceeded { .. } => {
-                write!(f, "MaxInstructionAccountInfosExceeded")
+                write!(f, "SyscallError::MaxInstructionAccountInfosExceeded")
             }
-            SyscallError::InvalidAttribute => write!(f, "InvalidAttribute"),
-            SyscallError::InvalidPointer => write!(f, "InvalidPointer"),
-            SyscallError::ArithmeticOverflow => write!(f, "ArithmeticOverflow"),
+            SyscallError::InvalidAttribute => write!(f, "SyscallError::InvalidAttribute"),
+            SyscallError::InvalidPointer => write!(f, "SyscallError::InvalidPointer"),
+            SyscallError::ArithmeticOverflow => write!(f, "SyscallError::ArithmeticOverflow"),
         }
     }
 }
@@ -375,14 +357,14 @@ pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
 //     })
 // }
 
-#[derive(Debug, Clone)]
-pub struct SvmTransactResult {
-    pub reverted: bool,
-    // pub program_state: ProgramState,
-    // pub tx: Tx,
-    // pub receipts: Vec<Receipt>,
-    // pub changes: Changes,
-}
+// #[derive(Debug, Clone)]
+// pub struct SvmTransactResult {
+//     pub reverted: bool,
+//     // pub program_state: ProgramState,
+//     // pub tx: Tx,
+//     // pub receipts: Vec<Receipt>,
+//     // pub changes: Changes,
+// }
 
 // pub fn execute_generated_program<SDK: SharedAPI>(sdk: SDK, prog: &[u8], mem: &mut [u8]) ->
 // Option<Vec<u8>> {     let max_instruction_count = 1024;

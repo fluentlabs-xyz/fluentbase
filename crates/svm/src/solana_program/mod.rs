@@ -13,7 +13,7 @@ pub mod program_stubs;
 pub mod rent_collector;
 pub mod runtime;
 pub mod secp256k1_program;
-pub mod stake_history;
+// pub mod stake_history;
 pub mod svm_message;
 pub mod sysvar;
 pub mod transaction_processing_callback;

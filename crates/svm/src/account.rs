@@ -34,7 +34,7 @@ pub const PROGRAM_OWNERS: &[Pubkey] = &[
 pub fn is_executable_by_owner(pk: &Pubkey) -> bool {
     PROGRAM_OWNERS.contains(pk)
 }
-pub fn is_executable_account(account: &AccountSharedData) -> bool {
+pub fn is_executable_by_account(account: &AccountSharedData) -> bool {
     is_executable_by_owner(account.owner())
 }
 
@@ -48,7 +48,6 @@ fn shared_serialize_data<T: serde::Serialize, U: WritableAccount>(
     account: &mut U,
     state: &T,
 ) -> Result<usize, bincode::error::EncodeError> {
-    // TODO need more efficient way to validate ser size
     if serialized_size(state)? > account.data().len() {
         return Err(bincode::error::EncodeError::Other(
             "account data size limit",
@@ -776,7 +775,6 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Reserves capacity for at least additional more elements to be inserted
     /// in the given account. Does nothing if capacity is already sufficient.
-
     pub fn reserve(&mut self, additional: usize) -> Result<(), InstructionError> {
         // Note that we don't need to call can_data_be_changed() here nor
         // touch() the account. reserve() only changes the capacity of the
@@ -789,7 +787,6 @@ impl<'a> BorrowedAccount<'a> {
     }
 
     /// Returns the number of bytes the account can hold without reallocating.
-
     pub fn capacity(&self) -> usize {
         self.account.capacity()
     }
@@ -801,7 +798,6 @@ impl<'a> BorrowedAccount<'a> {
     ///
     /// During account serialization, if an account is shared it'll get mapped as CoW, else it'll
     /// get mapped directly as writable.
-
     pub fn is_shared(&self) -> bool {
         self.account.is_shared()
     }
@@ -821,7 +817,6 @@ impl<'a> BorrowedAccount<'a> {
     }
 
     /// Deserializes the account data into a state
-
     pub fn get_state<T: serde::de::DeserializeOwned>(&self) -> Result<T, InstructionError> {
         self.account
             .deserialize_data()

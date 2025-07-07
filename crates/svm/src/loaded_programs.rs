@@ -947,16 +947,16 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
         false
     }
 
-    pub fn prune_by_deployment_slot(&mut self, slot: Slot) {
-        match &mut self.index {
-            IndexImplementation::V1 { entries, .. } => {
-                for second_level in entries.values_mut() {
-                    second_level.retain(|entry| entry.deployment_slot != slot);
-                }
-                self.remove_programs_with_no_entries();
-            }
-        }
-    }
+    // pub fn prune_by_deployment_slot(&mut self, slot: Slot) {
+    //     match &mut self.index {
+    //         IndexImplementation::V1 { entries, .. } => {
+    //             for second_level in entries.values_mut() {
+    //                 second_level.retain(|entry| entry.deployment_slot != slot);
+    //             }
+    //             self.remove_programs_with_no_entries();
+    //         }
+    //     }
+    // }
 
     // /// Before rerooting the blockstore this removes all superfluous entries
     // pub fn prune(&mut self, new_root_slot: Slot, new_root_epoch: Epoch) {
@@ -1201,11 +1201,11 @@ impl<'a, FG: ForkGraph, SDK: SharedAPI> ProgramCache<'a, FG, SDK> {
     //     }
     // }
 
-    pub fn merge(&mut self, modified_entries: &HashMap<Pubkey, Arc<ProgramCacheEntry<'a, SDK>>>) {
-        modified_entries.iter().for_each(|(key, entry)| {
-            self.assign_program(*key, entry.clone());
-        })
-    }
+    // pub fn merge(&mut self, modified_entries: &HashMap<Pubkey, Arc<ProgramCacheEntry<'a, SDK>>>) {
+    //     modified_entries.iter().for_each(|(key, entry)| {
+    //         self.assign_program(*key, entry.clone());
+    //     })
+    // }
 
     /// Returns the list of entries which are verified and compiled.
     pub fn get_flattened_entries(
