@@ -9,7 +9,6 @@ pub use solana_instruction::{
     ProcessedSiblingInstruction,
     TRANSACTION_LEVEL_STACK_HEIGHT,
 };
-use solana_pubkey::Pubkey;
 use solana_sanitize::Sanitize;
 use solana_short_vec as short_vec;
 
@@ -45,9 +44,9 @@ impl CompiledInstruction {
         }
     }
 
-    pub fn program_id<'a>(&self, program_ids: &'a [Pubkey]) -> &'a Pubkey {
-        &program_ids[self.program_id_index as usize]
-    }
+    // pub fn program_id<'a>(&self, program_ids: &'a [Pubkey]) -> &'a Pubkey {
+    //     &program_ids[self.program_id_index as usize]
+    // }
 }
 
 /// Returns a sibling instruction from the processed sibling instruction list.
