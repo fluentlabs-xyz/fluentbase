@@ -20,7 +20,7 @@ pub mod instructions;
 pub mod recent_blockhashes;
 pub mod rent;
 // pub mod rewards;
-pub mod slot_hashes;
+// pub mod slot_hashes;
 pub mod slot_history;
 pub mod stake_history;
 use crate::solana_program::program_stubs;
@@ -49,7 +49,7 @@ mod sysvar_ids {
             recent_blockhashes::id(),
             rent::id(),
             // rewards::id(),
-            slot_hashes::id(),
+            // slot_hashes::id(),
             slot_history::id(),
             stake_history::id(),
             instructions::id(),

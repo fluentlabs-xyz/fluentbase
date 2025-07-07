@@ -13,7 +13,7 @@ use crate::{
             recent_blockhashes,
             recent_blockhashes::RecentBlockhashes,
             rent,
-            slot_hashes,
+            // slot_hashes,
             stake_history,
         },
     },
@@ -31,7 +31,7 @@ pub struct SysvarCache {
     // #[allow(deprecated)]
     // fees: Option<Arc<Fees>>,
     rent: Option<Arc<Rent>>,
-    slot_hashes: Option<Arc<SlotHashes>>,
+    // slot_hashes: Option<Arc<SlotHashes>>,
     #[allow(deprecated)]
     recent_blockhashes: Option<Arc<RecentBlockhashes>>,
     stake_history: Option<Arc<StakeHistory>>,
@@ -99,15 +99,15 @@ impl SysvarCache {
     //     self.last_restart_slot = Some(Arc::new(last_restart_slot));
     // }
 
-    pub fn get_slot_hashes(&self) -> Result<Arc<SlotHashes>, InstructionError> {
-        self.slot_hashes
-            .clone()
-            .ok_or(InstructionError::UnsupportedSysvar)
-    }
-
-    pub fn set_slot_hashes(&mut self, slot_hashes: SlotHashes) {
-        self.slot_hashes = Some(Arc::new(slot_hashes));
-    }
+    // pub fn get_slot_hashes(&self) -> Result<Arc<SlotHashes>, InstructionError> {
+    //     self.slot_hashes
+    //         .clone()
+    //         .ok_or(InstructionError::UnsupportedSysvar)
+    // }
+    //
+    // pub fn set_slot_hashes(&mut self, slot_hashes: SlotHashes) {
+    //     self.slot_hashes = Some(Arc::new(slot_hashes));
+    // }
 
     #[deprecated]
     #[allow(deprecated)]
@@ -175,13 +175,13 @@ impl SysvarCache {
                 }
             });
         }
-        if self.slot_hashes.is_none() {
-            get_account_data(&slot_hashes::id(), &mut |data: &[u8]| {
-                if let Ok(slot_hashes) = deserialize(data) {
-                    self.set_slot_hashes(slot_hashes);
-                }
-            });
-        }
+        // if self.slot_hashes.is_none() {
+        //     get_account_data(&slot_hashes::id(), &mut |data: &[u8]| {
+        //         if let Ok(slot_hashes) = deserialize(data) {
+        //             self.set_slot_hashes(slot_hashes);
+        //         }
+        //     });
+        // }
         #[allow(deprecated)]
         if self.recent_blockhashes.is_none() {
             get_account_data(&recent_blockhashes::id(), &mut |data: &[u8]| {
