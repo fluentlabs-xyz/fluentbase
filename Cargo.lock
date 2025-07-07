@@ -1225,16 +1225,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bv"
-version = "0.11.1"
-source = "git+https://github.com/fluentlabs-xyz/bv-rs?branch=feat%2Fsvm-0.11.1#fbcc9c75fbb2c393a5c8cdf0540eba938e144bcd"
-dependencies = [
- "bincode 2.0.1",
- "feature-probe",
- "serde",
-]
-
-[[package]]
 name = "byte-slice-cast"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2399,12 +2389,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "feature-probe"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "835a3dc7d1ec9e75e2b5fb4ba75396837112d2060b03f7d43bc1897c7f7211da"
-
-[[package]]
 name = "ff"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3077,8 +3061,6 @@ dependencies = [
  "bincode 2.0.1",
  "bitflags",
  "blake3",
- "bytemuck",
- "bytemuck_derive",
  "byteorder",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
@@ -3093,8 +3075,6 @@ dependencies = [
  "scopeguard",
  "serde",
  "serde_bytes",
- "serde_json",
- "serial_test",
  "solana-account-info",
  "solana-bincode",
  "solana-clock",
@@ -3104,8 +3084,6 @@ dependencies = [
  "solana-fee-calculator",
  "solana-hash",
  "solana-instruction",
- "solana-last-restart-slot",
- "solana-native-token",
  "solana-precompile-error",
  "solana-program-entrypoint",
  "solana-program-error",
@@ -3117,15 +3095,12 @@ dependencies = [
  "solana-serialize-utils",
  "solana-sha256-hasher",
  "solana-short-vec",
- "solana-slot-hashes",
- "solana-slot-history",
  "solana-stable-layout",
  "solana-sysvar-id",
  "solana-transaction-error",
  "solana_rbpf",
  "spin 0.10.0",
  "static_assertions",
- "test-case",
 ]
 
 [[package]]
@@ -6634,29 +6609,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-last-restart-slot"
-version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#5fb3e19ee5688ea43ad4f505a409149dc830aa3a"
-dependencies = [
- "bincode 2.0.1",
- "serde",
- "serde_derive",
- "solana-sdk-macro",
- "solana-sysvar-id",
-]
-
-[[package]]
 name = "solana-msg"
 version = "2.1.18"
 source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#5fb3e19ee5688ea43ad4f505a409149dc830aa3a"
 dependencies = [
  "solana-define-syscall",
 ]
-
-[[package]]
-name = "solana-native-token"
-version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#5fb3e19ee5688ea43ad4f505a409149dc830aa3a"
 
 [[package]]
 name = "solana-precompile-error"
@@ -6780,30 +6738,6 @@ version = "2.1.18"
 source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#5fb3e19ee5688ea43ad4f505a409149dc830aa3a"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "solana-slot-hashes"
-version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#5fb3e19ee5688ea43ad4f505a409149dc830aa3a"
-dependencies = [
- "bincode 2.0.1",
- "serde",
- "serde_derive",
- "solana-hash",
- "solana-sysvar-id",
-]
-
-[[package]]
-name = "solana-slot-history"
-version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#5fb3e19ee5688ea43ad4f505a409149dc830aa3a"
-dependencies = [
- "bincode 2.0.1",
- "bv",
- "serde",
- "serde_derive",
- "solana-sysvar-id",
 ]
 
 [[package]]
@@ -7209,39 +7143,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
-]
-
-[[package]]
-name = "test-case"
-version = "3.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb2550dd13afcd286853192af8601920d959b14c401fcece38071d53bf0768a8"
-dependencies = [
- "test-case-macros",
-]
-
-[[package]]
-name = "test-case-core"
-version = "3.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adcb7fd841cd518e279be3d5a3eb0636409487998a4aff22f3de87b81e88384f"
-dependencies = [
- "cfg-if",
- "proc-macro2",
- "quote",
- "syn 2.0.103",
-]
-
-[[package]]
-name = "test-case-macros"
-version = "3.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c89e72a01ed4c579669add59014b9a524d609c0c88c6a585ce37485879f6ffb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.103",
- "test-case-core",
 ]
 
 [[package]]

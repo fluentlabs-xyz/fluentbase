@@ -2,7 +2,7 @@
 pub mod tests {
     use crate::{
         account::{AccountSharedData, ReadableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS},
-        common::{rbpf_config_default, TestSdkType},
+        common::rbpf_config_default,
         compute_budget::compute_budget::ComputeBudget,
         context::{EnvironmentConfig, InvokeContext, TransactionContext},
         declare_process_instruction,
@@ -24,6 +24,7 @@ pub mod tests {
     };
     use alloc::{sync::Arc, vec, vec::Vec};
     use fluentbase_sdk::SharedAPI;
+    use fluentbase_sdk_testing::HostTestingContext;
     use serde::{Deserialize, Serialize};
     use solana_bincode::deserialize;
     use solana_instruction::{error::InstructionError, AccountMeta, Instruction};
@@ -73,7 +74,7 @@ pub mod tests {
         ];
 
         let function_registry =
-            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+            FunctionRegistry::<BuiltinFunction<InvokeContext<HostTestingContext>>>::default();
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
         #[derive(Serialize, Deserialize)]
@@ -242,7 +243,7 @@ pub mod tests {
         let blockhash = Hash::default();
 
         let function_registry =
-            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+            FunctionRegistry::<BuiltinFunction<InvokeContext<HostTestingContext>>>::default();
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -526,7 +527,7 @@ pub mod tests {
         let account_metas = vec![AccountMeta::new(from, true), AccountMeta::new(to, true)];
 
         let function_registry =
-            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+            FunctionRegistry::<BuiltinFunction<InvokeContext<HostTestingContext>>>::default();
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -645,7 +646,7 @@ pub mod tests {
         let account_metas = vec![AccountMeta::new(from, true), AccountMeta::new(to, false)];
 
         let function_registry =
-            FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+            FunctionRegistry::<BuiltinFunction<InvokeContext<HostTestingContext>>>::default();
         // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
@@ -851,7 +852,7 @@ pub mod tests {
     //     let program_indices = vec![vec![2]];
     //
     //     let function_registry =
-    //         FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+    //         FunctionRegistry::<BuiltinFunction<InvokeContext<HostTestingContext>>>::default();
     //     // register_builtins(&mut function_registry);
     //     let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
     //
@@ -1074,7 +1075,7 @@ pub mod tests {
     //     let mut program_indices = vec![];
     //
     //     let function_registry =
-    //         FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+    //         FunctionRegistry::<BuiltinFunction<InvokeContext<HostTestingContext>>>::default();
     //     // register_builtins(&mut function_registry);
     //     let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
     //
@@ -1258,7 +1259,7 @@ pub mod tests {
     //     let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
     //
     //     let mut function_registry =
-    //         FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+    //         FunctionRegistry::<BuiltinFunction<InvokeContext<HostTestingContext>>>::default();
     //     register_builtins(&mut function_registry);
     //     let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
     //     let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
@@ -1334,7 +1335,7 @@ pub mod tests {
     //     let transaction_context = TransactionContext::new(accounts, rent.clone(), 10, 200);
     //
     //     let mut function_registry =
-    //         FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
+    //         FunctionRegistry::<BuiltinFunction<InvokeContext<HostTestingContext>>>::default();
     //     register_builtins(&mut function_registry);
     //     let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
     //     let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(

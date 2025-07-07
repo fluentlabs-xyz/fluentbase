@@ -1,7 +1,7 @@
 use crate::{
     account::{AccountSharedData, WritableAccount},
     builtins::register_builtins,
-    common::{rbpf_config_default, TestSdkType},
+    common::rbpf_config_default,
     context::{
         BuiltinFunctionWithContext,
         IndexOfAccount,
@@ -171,6 +171,6 @@ pub(crate) fn journal_state() -> HostTestingContext {
     tc.with_contract_context(cc)
 }
 
-pub(crate) fn new_test_sdk() -> TestSdkType {
+pub(crate) fn new_test_sdk() -> HostTestingContext {
     journal_state()
 }

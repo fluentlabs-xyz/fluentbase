@@ -2,7 +2,6 @@
 mod tests {
     use crate::{
         account::{Account, AccountSharedData, ReadableAccount},
-        common::TestSdkType,
         context::InvokeContext,
         hash::{hash, Hash},
         helpers::create_account_shared_data_for_test,
@@ -32,6 +31,7 @@ mod tests {
         with_mock_invoke_context,
     };
     use fluentbase_sdk::SharedAPI;
+    use fluentbase_sdk_testing::HostTestingContext;
     use solana_bincode::serialize;
     use solana_fee_calculator::FeeCalculator;
     use solana_instruction::error::InstructionError;
@@ -1136,7 +1136,7 @@ mod tests {
             ],
             Ok(()),
             Entrypoint::vm,
-            |invoke_context: &mut InvokeContext<TestSdkType>| {
+            |invoke_context: &mut InvokeContext<HostTestingContext>| {
                 invoke_context.environment_config.blockhash = hash(&serialize(&0).unwrap());
             },
             |_invoke_context| {},
@@ -1516,7 +1516,7 @@ mod tests {
             ],
             Err(SystemError::NonceNoRecentBlockhashes.into()),
             Entrypoint::vm,
-            |invoke_context: &mut InvokeContext<TestSdkType>| {
+            |invoke_context: &mut InvokeContext<HostTestingContext>| {
                 invoke_context.environment_config.blockhash = hash(&serialize(&0).unwrap());
             },
             |_invoke_context| {},
