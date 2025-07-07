@@ -1532,7 +1532,7 @@ mod tests {
         let nonce_address = Pubkey::new_unique();
         let versions = NonceVersions::Legacy(Box::new(NonceState::Uninitialized));
         let nonce_account = AccountSharedData::new_data(
-            1_000_000,     // lamports
+            1_000_000,             // lamports
             &versions,             // state
             &Pubkey::new_unique(), // owner
         )
