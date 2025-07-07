@@ -16,14 +16,8 @@ pub mod epoch_rewards;
 pub mod epoch_schedule;
 // pub mod fees;
 pub mod instructions;
-// pub mod last_restart_slot;
 pub mod recent_blockhashes;
 pub mod rent;
-// pub mod rewards;
-// pub mod slot_hashes;
-// pub mod slot_history;
-// pub mod stake_history;
-use crate::solana_program::program_stubs;
 use solana_account_info::AccountInfo;
 use solana_bincode::{deserialize, serialize_into, serialized_size};
 use solana_pubkey::Pubkey;
@@ -129,30 +123,30 @@ macro_rules! impl_sysvar_get {
     };
 }
 
-/// Handler for retrieving a slice of sysvar data from the `sol_get_sysvar`
-/// syscall.
-fn get_sysvar(
-    dst: &mut [u8],
-    sysvar_id: &Pubkey,
-    offset: u64,
-    length: u64,
-) -> Result<(), ProgramError> {
-    // Check that the provided destination buffer is large enough to hold the
-    // requested data.
-    if dst.len() < length as usize {
-        return Err(ProgramError::InvalidArgument);
-    }
-
-    let sysvar_id = sysvar_id as *const _ as *const u8;
-    let var_addr = dst as *mut _ as *mut u8;
-
-    let result = program_stubs::sol_get_sysvar(sysvar_id, var_addr, offset, length);
-
-    match result {
-        solana_program_entrypoint::SUCCESS => Ok(()),
-        e => Err(e.into()),
-    }
-}
+// /// Handler for retrieving a slice of sysvar data from the `sol_get_sysvar`
+// /// syscall.
+// fn get_sysvar(
+//     dst: &mut [u8],
+//     sysvar_id: &Pubkey,
+//     offset: u64,
+//     length: u64,
+// ) -> Result<(), ProgramError> {
+//     // Check that the provided destination buffer is large enough to hold the
+//     // requested data.
+//     if dst.len() < length as usize {
+//         return Err(ProgramError::InvalidArgument);
+//     }
+//
+//     let sysvar_id = sysvar_id as *const _ as *const u8;
+//     let var_addr = dst as *mut _ as *mut u8;
+//
+//     let result = program_stubs::sol_get_sysvar(sysvar_id, var_addr, offset, length);
+//
+//     match result {
+//         solana_program_entrypoint::SUCCESS => Ok(()),
+//         e => Err(e.into()),
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

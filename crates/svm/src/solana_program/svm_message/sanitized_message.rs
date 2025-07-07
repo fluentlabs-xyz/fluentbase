@@ -3,7 +3,6 @@ use crate::solana_program::{
     message::{AccountKeys, SanitizedMessage},
     svm_message::SVMMessage,
 };
-use solana_hash::Hash;
 use solana_pubkey::Pubkey;
 
 // Implement for the "reference" `SanitizedMessage` type.

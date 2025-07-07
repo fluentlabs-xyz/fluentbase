@@ -1,6 +1,5 @@
 use crate::{
     account::{AccountSharedData, BorrowedAccount, ReadableAccount},
-    account_utils::StateMut,
     bpf_loader,
     bpf_loader_deprecated,
     common::load_program_from_bytes,

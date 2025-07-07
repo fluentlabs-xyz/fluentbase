@@ -132,11 +132,13 @@ impl SanitizedMessage {
 
     /// Returns a legacy message if this sanitized message wraps one
     pub fn legacy_message(&self) -> Option<&legacy::Message> {
-        if let Self::Legacy(legacy_message) = &self {
-            Some(&legacy_message.message)
-        } else {
-            None
-        }
+        // if let Self::Legacy(legacy_message) = &self {
+        //     Some(&legacy_message.message)
+        // } else {
+        //     None
+        // }
+        let Self::Legacy(legacy_message) = &self;
+        Some(&legacy_message.message)
     }
 
     /// Returns the fee payer for the transaction

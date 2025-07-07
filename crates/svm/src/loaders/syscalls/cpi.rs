@@ -31,7 +31,6 @@ use core::{fmt::Debug, marker::PhantomData, ptr};
 use fluentbase_sdk::SharedAPI;
 use scopeguard::defer;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
-use solana_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix};
 use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS};
 use solana_pubkey::{Pubkey, MAX_SEEDS, PUBKEY_BYTES};
@@ -126,7 +125,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
     ) -> Result<CallerAccount<'a, 'b, SDK>, SvmError> {
         let direct_mapping = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+            .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id());
 
         let account_info_first_item_addr = account_info.first_item_addr().inner();
         let addr_to_key_addr = account_info_first_item_addr;
@@ -900,7 +899,7 @@ where
 {
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+        .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id());
 
     // In the same vein as the other check_account_info_pointer() checks, we don't lock
     // this pointer to a specific address but we don't want it to be inside accounts, or
@@ -975,7 +974,7 @@ where
 
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+        .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id());
 
     for (instruction_account_index, instruction_account) in instruction_accounts.iter().enumerate()
     {
@@ -1070,7 +1069,7 @@ fn check_instruction_size<SDK: SharedAPI>(
 ) -> Result<(), SvmError> {
     if invoke_context
         .get_feature_set()
-        .is_active(&feature_set::loosen_cpi_size_restriction::id())
+        .is_active(&solana_feature_set::loosen_cpi_size_restriction::id())
     {
         let data_len = data_len as u64;
         let max_data_len = MAX_CPI_INSTRUCTION_DATA_LEN;
@@ -1109,11 +1108,11 @@ fn check_account_infos<SDK: SharedAPI>(
 ) -> Result<(), SvmError> {
     if invoke_context
         .get_feature_set()
-        .is_active(&feature_set::loosen_cpi_size_restriction::id())
+        .is_active(&solana_feature_set::loosen_cpi_size_restriction::id())
     {
         let max_cpi_account_infos = if invoke_context
             .get_feature_set()
-            .is_active(&feature_set::increase_tx_account_lock_limit::id())
+            .is_active(&solana_feature_set::increase_tx_account_lock_limit::id())
         {
             MAX_CPI_ACCOUNT_INFOS
         } else {
@@ -1239,7 +1238,7 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     // Synchronize the callee's account changes so the caller can see them.
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+        .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id());
 
     if direct_mapping {
         // Update all perms at once before doing account data updates. This

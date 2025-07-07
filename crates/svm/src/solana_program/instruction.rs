@@ -45,14 +45,6 @@ impl CompiledInstruction {
         }
     }
 
-    pub fn new_from_raw_parts(program_id_index: u8, data: Vec<u8>, accounts: Vec<u8>) -> Self {
-        Self {
-            program_id_index,
-            accounts,
-            data,
-        }
-    }
-
     pub fn program_id<'a>(&self, program_ids: &'a [Pubkey]) -> &'a Pubkey {
         &program_ids[self.program_id_index as usize]
     }
