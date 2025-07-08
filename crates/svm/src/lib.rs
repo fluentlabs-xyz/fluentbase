@@ -47,7 +47,6 @@ pub mod sysvar_cache;
 #[cfg(test)]
 pub mod test_helpers;
 pub mod word_size;
-// mod test_macroses;
 
 pub use bincode;
 pub use solana_account_info::{self as account_info, debug_account_data};

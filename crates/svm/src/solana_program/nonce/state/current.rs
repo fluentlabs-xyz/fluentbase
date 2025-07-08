@@ -83,6 +83,6 @@ impl State {
 
     /// Get the serialized size of the nonce state.
     pub const fn size() -> usize {
-        80 // see test_nonce_state_size.
+        80 // see test_nonce_state_size
     }
 }

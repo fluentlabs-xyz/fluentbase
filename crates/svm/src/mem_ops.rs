@@ -18,14 +18,6 @@ use solana_rbpf::{
     error::EbpfError,
     memory_region::{AccessType, MemoryMapping, MemoryRegion},
 };
-// fn mem_op_consume<SDK: SharedAPI>(invoke_context: &mut InvokeContext<SDK>, n: u64) -> Result<(),
-// Error> {     let compute_budget = invoke_context.get_compute_budget();
-//     let cost = compute_budget.mem_op_base_cost.max(
-//         n.checked_div(compute_budget.cpi_bytes_per_unit)
-//             .unwrap_or(u64::MAX),
-//     );
-//     consume_compute_meter(invoke_context, cost)
-// }
 
 // declare_builtin_function!(
 //     /// memcpy

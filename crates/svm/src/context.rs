@@ -860,18 +860,6 @@ impl TransactionContext {
         &self.accounts
     }
 
-    // /// Stores the signature of the current transaction
-    // #[cfg(all(not(target_os = "solana"), debug_assertions))]
-    // pub fn set_signature(&mut self, signature: &Signature) {
-    //     self.signature = *signature;
-    // }
-
-    // /// Returns the signature of the current transaction
-    // #[cfg(all(not(target_os = "solana"), debug_assertions))]
-    // pub fn get_signature(&self) -> &Signature {
-    //     &self.signature
-    // }
-
     /// Returns the total number of accounts loaded in this Transaction
     pub fn get_number_of_accounts(&self) -> IndexOfAccount {
         self.accounts.len() as IndexOfAccount

@@ -58,7 +58,6 @@ mod builtins {
                 system_program::id(),
                 bpf_loader::id(),
                 bpf_loader_deprecated::id(),
-                // bpf_loader_upgradeable::id(),
             ]
         };
     }

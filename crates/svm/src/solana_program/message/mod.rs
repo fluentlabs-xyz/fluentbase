@@ -43,7 +43,6 @@ pub mod legacy;
 #[path = ""]
 mod non_bpf_modules {
     mod account_keys;
-    // mod address_loader;
     mod sanitized;
 
     pub use account_keys::*;

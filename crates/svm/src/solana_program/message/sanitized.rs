@@ -94,7 +94,6 @@ impl SanitizedMessage {
     pub fn header(&self) -> &MessageHeader {
         match self {
             Self::Legacy(legacy_message) => &legacy_message.message.header,
-            // Self::V0(loaded_msg) => &loaded_msg.message.header,
         }
     }
 
@@ -115,7 +114,6 @@ impl SanitizedMessage {
     pub fn recent_blockhash(&self) -> &Hash {
         match self {
             Self::Legacy(legacy_message) => &legacy_message.message.recent_blockhash,
-            // Self::V0(loaded_msg) => &loaded_msg.message.recent_blockhash,
         }
     }
 
@@ -166,7 +164,6 @@ impl SanitizedMessage {
     pub fn is_invoked(&self, key_index: usize) -> bool {
         match self {
             Self::Legacy(message) => message.is_key_called_as_program(key_index),
-            // Self::V0(message) => message.is_key_called_as_program(key_index),
         }
     }
 

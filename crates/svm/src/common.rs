@@ -145,21 +145,6 @@ impl<SDK: SharedAPI> HasherImpl for PoseidonHasher<SDK> {
 // }
 
 // declare_id!("NativeLoader1111111111111111111111111111111");
-//
-// pub fn create_loadable_account_with_fields(
-//     name: &str,
-//     owner: Pubkey,
-//     (lamports, rent_epoch): InheritableAccountFields,
-// ) -> AccountSharedData {
-//     Account {
-//         lamports,
-//         owner,
-//         data: name.as_bytes().to_vec(),
-//         executable: true,
-//         rent_epoch,
-//     }
-//         .into()
-// }
 
 pub fn morph_into_deployment_environment_v1<'a, SDK: SharedAPI>(
     from: Arc<BuiltinProgram<InvokeContext<'a, SDK>>>,

@@ -1372,10 +1372,6 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                 .original_data_len
                 .saturating_add(max_increase);
         if data_overflow {
-            // ic_msg!(
-            //     invoke_context,
-            //     "Account data size realloc limited to {max_increase} in inner instructions",
-            // );
             return Err(Box::new(InstructionError::InvalidRealloc));
         }
 

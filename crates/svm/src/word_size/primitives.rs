@@ -307,7 +307,6 @@ mod tests {
 
     #[test]
     fn stable_vec_of_account_infos_mutations_test() {
-        // type ItemType = u64;
         type ItemType<'a> = AccountInfo<'a>;
         type VecOfItemsType<'a> = StableVec<ItemType<'a>>;
 

@@ -67,8 +67,6 @@ impl TryFrom<&Pubkey> for ProgramCacheEntryOwner {
             Ok(ProgramCacheEntryOwner::LoaderV1)
         } else if bpf_loader::check_id(loader_key) {
             Ok(ProgramCacheEntryOwner::LoaderV2)
-        // } else if bpf_loader_upgradeable::check_id(loader_key) {
-        //     Ok(ProgramCacheEntryOwner::LoaderV3)
         } else if loader_v4::check_id(loader_key) {
             Ok(ProgramCacheEntryOwner::LoaderV4)
         } else {
