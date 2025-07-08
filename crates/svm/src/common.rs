@@ -27,8 +27,18 @@ pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 ///   8 bytes is the size of the fragment header
 pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
 
+/// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
+/// a transaction.
+pub const MAX_INSTRUCTION_STACK_DEPTH: usize = 5;
+
+/// Max call depth. This is the maximum nesting of SBF to SBF call that can happen within a program.
+pub const MAX_CALL_DEPTH: usize = 64;
+
+/// The size of one SBF stack frame.
+pub const STACK_FRAME_SIZE: usize = 4096;
+
 use crate::{
-    compute_budget::compute_budget::{ComputeBudget, MAX_CALL_DEPTH, STACK_FRAME_SIZE},
+    compute_budget::compute_budget::ComputeBudget,
     error::{Error, RuntimeError, SvmError},
     loaded_programs::ProgramCacheEntry,
 };

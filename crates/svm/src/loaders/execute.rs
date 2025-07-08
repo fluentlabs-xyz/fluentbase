@@ -1,5 +1,5 @@
 use crate::{
-    compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
+    common::MAX_INSTRUCTION_STACK_DEPTH,
     context::{IndexOfAccount, InvokeContext},
     create_vm,
     macros::MEMORY_POOL,
