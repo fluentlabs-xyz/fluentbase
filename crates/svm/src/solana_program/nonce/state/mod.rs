@@ -18,7 +18,7 @@ pub enum Versions {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum AuthorizeNonceError {
-    MissingRequiredSignature(/*account authority:*/ Pubkey),
+    MissingRequiredSignature(Pubkey),
     Uninitialized,
 }
 
@@ -41,8 +41,7 @@ impl Versions {
         recent_blockhash: &Hash, // Transaction.message.recent_blockhash
     ) -> Option<&Data> {
         match self {
-            // Legacy durable nonces are invalid and should not
-            // allow durable transactions.
+            // Legacy durable nonces are invalid and should not allow durable transactions.
             Self::Legacy(_) => None,
             Self::Current(state) => match **state {
                 State::Uninitialized => None,

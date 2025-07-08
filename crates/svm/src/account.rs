@@ -26,7 +26,6 @@ pub type InheritableAccountFields = (u64, Epoch);
 pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITIAL_RENT_EPOCH);
 /// Replacement for the executable flag: An account being owned by one of these contains a program.
 pub const PROGRAM_OWNERS: &[Pubkey] = &[
-    // bpf_loader_upgradeable::id(),
     bpf_loader::id(),
     bpf_loader_deprecated::id(),
     loader_v4::id(),
@@ -81,39 +80,6 @@ impl Account {
     pub fn new_ref(lamports: u64, space: usize, owner: &Pubkey) -> Rc<RefCell<Self>> {
         shared_new_ref(lamports, space, owner)
     }
-    // pub fn new_data<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     owner: &Pubkey,
-    // ) -> Result<Self, bincode::Error> {
-    //     shared_new_data(lamports, state, owner)
-    // }
-    // pub fn new_ref_data<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     owner: &Pubkey,
-    // ) -> Result<RefCell<Self>, bincode::Error> {
-    //     shared_new_ref_data(lamports, state, owner)
-    // }
-    // pub fn new_data_with_space<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     space: usize,
-    //     owner: &Pubkey,
-    // ) -> Result<Self, bincode::Error> {
-    //     shared_new_data_with_space(lamports, state, space, owner)
-    // }
-    // pub fn new_ref_data_with_space<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     space: usize,
-    //     owner: &Pubkey,
-    // ) -> Result<RefCell<Self>, bincode::Error> {
-    //     shared_new_ref_data_with_space(lamports, state, space, owner)
-    // }
-    // pub fn new_rent_epoch(lamports: u64, space: usize, owner: &Pubkey, rent_epoch: Epoch) -> Self {
-    //     shared_new_rent_epoch(lamports, space, owner, rent_epoch)
-    // }
     pub fn deserialize_data<T: serde::de::DeserializeOwned>(
         &self,
     ) -> Result<T, bincode::error::DecodeError> {
@@ -307,22 +273,10 @@ fn shared_new_data_with_space<T: serde::Serialize, U: WritableAccount>(
     Ok(account)
 }
 
-// fn shared_new_ref_data_with_space<T: serde::Serialize, U: WritableAccount>(
-//     lamports: u64,
-//     state: &T,
-//     space: usize,
-//     owner: &Pubkey,
-// ) -> Result<RefCell<U>, bincode::error::EncodeError> {
-//     Ok(RefCell::new(shared_new_data_with_space::<T, U>(
-//         lamports, state, space, owner,
-//     )?))
-// }
-
 /// An Account with data that is stored on chain
 /// This will be the in-memory representation of the 'Account' struct data.
 /// The existing 'Account' structure cannot easily change due to downstream projects.
 #[derive(PartialEq, Eq, Clone, Default, Debug, /*AbiExample,*/ Serialize, Deserialize)]
-// #[serde(from = "Account")]
 pub struct AccountSharedData {
     /// lamports in the account
     lamports: u64,
@@ -396,8 +350,7 @@ impl AccountSharedData {
         // update the allocation metadata without moving.
         //
         // Shrinking and copying in place is always faster than making
-        // `new_data` owned, since shrinking boils down to updating the Vec's
-        // length.
+        // `new_data` owned, since shrinking boils down to updating the Vec's length.
 
         data.reserve(new_len.saturating_sub(data.len()));
 
@@ -422,26 +375,6 @@ impl AccountSharedData {
         self.data_mut().spare_capacity_mut()
     }
 
-    // pub fn new(lamports: u64, space: usize, owner: &Pubkey) -> Self {
-    //     shared_new(lamports, space, owner)
-    // }
-    // pub fn new_ref(lamports: u64, space: usize, owner: &Pubkey) -> Rc<RefCell<Self>> {
-    //     shared_new_ref(lamports, space, owner)
-    // }
-    // pub fn new_data<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     owner: &Pubkey,
-    // ) -> Result<Self, bincode::Error> {
-    //     shared_new_data(lamports, state, owner)
-    // }
-    // pub fn new_ref_data<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     owner: &Pubkey,
-    // ) -> Result<RefCell<Self>, bincode::Error> {
-    //     shared_new_ref_data(lamports, state, owner)
-    // }
     pub fn new_data_with_space<T: serde::Serialize>(
         lamports: u64,
         state: &T,
@@ -450,17 +383,7 @@ impl AccountSharedData {
     ) -> Result<Self, bincode::error::EncodeError> {
         shared_new_data_with_space(lamports, state, space, owner)
     }
-    // pub fn new_ref_data_with_space<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     space: usize,
-    //     owner: &Pubkey,
-    // ) -> Result<RefCell<Self>, bincode::Error> {
-    //     shared_new_ref_data_with_space(lamports, state, space, owner)
-    // }
-    // pub fn new_rent_epoch(lamports: u64, space: usize, owner: &Pubkey, rent_epoch: Epoch) -> Self {
-    //     shared_new_rent_epoch(lamports, space, owner, rent_epoch)
-    // }
+
     pub fn deserialize_data<T: serde::de::DeserializeOwned>(
         &self,
     ) -> Result<T, bincode::error::DecodeError> {
@@ -551,7 +474,6 @@ impl ReadableAccount for Ref<'_, AccountSharedData> {
     fn to_account_shared_data(&self) -> AccountSharedData {
         AccountSharedData {
             lamports: self.lamports(),
-            // avoid data copy here
             data: Arc::clone(&self.data),
             owner: *self.owner(),
             executable: self.executable(),

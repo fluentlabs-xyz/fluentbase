@@ -2,40 +2,27 @@ use crate::{
     account::{AccountSharedData, BorrowedAccount, ReadableAccount},
     bpf_loader,
     bpf_loader_deprecated,
-    common::load_program_from_bytes,
-    helpers::SyscallContext,
-    loaded_programs::{
-        // LoadedProgram,
-        // LoadedProgramType,
-        // LoadedProgramsForTxBatch,
-        ProgramRuntimeEnvironments,
-    },
-    loaders::bpf_loader_v4,
-    native_loader,
-    solana_program::{
-        // bpf_loader_upgradeable::UpgradeableLoaderState,
-        loader_v4,
-        loader_v4::{LoaderV4State, LoaderV4Status},
-    },
-    sysvar_cache::SysvarCache,
-};
-use crate::{
-    // bpf_loader_upgradeable,
-    // bpf_loader_upgradeable::UpgradeableLoaderState,
     clock::Slot,
-    hash::Hash,
-    rent::Rent,
-};
-use crate::{
+    common::load_program_from_bytes,
     compute_budget::compute_budget::ComputeBudget,
-    helpers::AllocErr,
+    hash::Hash,
+    helpers::{AllocErr, SyscallContext},
     loaded_programs::{
         ProgramCacheEntry,
         ProgramCacheEntryOwner,
         ProgramCacheEntryType,
         ProgramCacheForTxBatch,
+        ProgramRuntimeEnvironments,
     },
+    loaders::bpf_loader_v4,
+    native_loader,
     precompiles::Precompile,
+    rent::Rent,
+    solana_program::{
+        loader_v4,
+        loader_v4::{LoaderV4State, LoaderV4Status},
+    },
+    sysvar_cache::SysvarCache,
 };
 use alloc::{boxed::Box, rc::Rc, sync::Arc, vec, vec::Vec};
 use core::{
@@ -86,12 +73,10 @@ pub struct InstructionAccount {
 /// An account key and the matching account
 pub type TransactionAccount = (Pubkey, AccountSharedData);
 
-// #[derive(Debug)]
 pub enum ProgramAccountLoadResult {
     InvalidAccountData(ProgramCacheEntryOwner),
     ProgramOfLoaderV1(AccountSharedData),
     ProgramOfLoaderV2(AccountSharedData),
-    // ProgramOfLoaderV3(AccountSharedData, AccountSharedData, Slot),
     ProgramOfLoaderV4(AccountSharedData, Slot),
 }
 
@@ -127,7 +112,6 @@ impl BpfAllocator {
 pub struct EnvironmentConfig {
     pub blockhash: Hash,
     epoch_total_stake: Option<u64>,
-    // epoch_vote_accounts: Option<&'a VoteAccountsHashMap>,
     pub feature_set: Arc<FeatureSet>,
     pub lamports_per_signature: u64,
     sysvar_cache: SysvarCache,
@@ -136,7 +120,6 @@ impl<'a> EnvironmentConfig {
     pub fn new(
         blockhash: Hash,
         epoch_total_stake: Option<u64>,
-        // epoch_vote_accounts: Option<&'a VoteAccountsHashMap>,
         feature_set: Arc<FeatureSet>,
         lamports_per_signature: u64,
         sysvar_cache: SysvarCache,
@@ -144,7 +127,6 @@ impl<'a> EnvironmentConfig {
         Self {
             blockhash,
             epoch_total_stake,
-            // epoch_vote_accounts,
             feature_set,
             lamports_per_signature,
             sysvar_cache,
@@ -152,88 +134,37 @@ impl<'a> EnvironmentConfig {
     }
 }
 
-// #[derive(Debug)]
 pub struct InvokeContext<'a, SDK: SharedAPI> {
     pub transaction_context: TransactionContext,
-    // sysvar_cache: SysvarCache,
-    // pub programs_loaded_for_tx_batch: LoadedProgramsForTxBatch<'a, SDK>,
-    // pub programs_modified_by_tx: LoadedProgramsForTxBatch<'a, SDK>,
     /// The local program cache for the transaction batch.
     pub program_cache_for_tx_batch: ProgramCacheForTxBatch<'a, SDK>,
     /// Runtime configurations used to provision the invocation environment.
     pub environment_config: EnvironmentConfig,
     compute_budget: ComputeBudget,
     compute_meter: RefCell<u64>,
-    // log_collector: Option<Rc<RefCell<LogCollector>>>,
-    // pub trace_log: Vec<TraceLogEntry>,
-    // pub execute_time: Option<Measure>,
-    // pub timings: ExecuteDetailsTimings,
     pub syscall_context: Vec<Option<SyscallContext>>,
-    // TODO delete?
     traces: Vec<Vec<[u64; 12]>>,
-    // pub syscall_context: Vec<Option<SyscallContext>>,
-    // pub feature_set: Arc<FeatureSet>,
-    // pub blockhash: Hash,
-    // pub lamports_per_signature: u64,
-    // pub current_compute_budget: ComputeBudget,
-    // TODO is it still unused after all builtins integrations?
     pub sdk: &'a SDK,
 }
 
 impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
-    // /// Initialize with instruction meter
-    // pub fn new(
-    //     transaction_context: TransactionContext,
-    //     sysvar_cache: SysvarCache,
-    //     sdk: &'a SDK,
-    //     compute_budget: ComputeBudget,
-    //     programs_loaded_for_tx_batch: LoadedProgramsForTxBatch<'a, SDK>,
-    //     programs_modified_by_tx: LoadedProgramsForTxBatch<'a, SDK>,
-    //     feature_set: Arc<FeatureSet>,
-    //     blockhash: Hash,
-    //     lamports_per_signature: u64,
-    // ) -> Self {
-    //     Self {
-    //         transaction_context,
-    //         sysvar_cache,
-    //         sdk,
-    //         programs_loaded_for_tx_batch,
-    //         programs_modified_by_tx,
-    //         feature_set,
-    //         compute_budget,
-    //         blockhash,
-    //         lamports_per_signature,
-    //         compute_meter: RefCell::new(compute_budget.compute_unit_limit),
-    //         current_compute_budget: compute_budget,
-    //         syscall_context: Default::default(),
-    //         trace_log: Default::default(),
-    //     }
-    // }
-
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         transaction_context: TransactionContext,
         program_cache_for_tx_batch: ProgramCacheForTxBatch<'a, SDK>,
         environment_config: EnvironmentConfig,
-        // log_collector: Option<Rc<RefCell<LogCollector>>>,
         compute_budget: ComputeBudget,
-        // sysvar_cache: SysvarCache,
         sdk: &'a SDK,
     ) -> Self {
         Self {
             transaction_context,
             program_cache_for_tx_batch,
             environment_config,
-            // log_collector,
             compute_budget,
             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
-            // execute_time: None,
-            // timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
             traces: Vec::new(),
             sdk,
-            // sysvar_cache,
-            // trace_log,
         }
     }
 
@@ -247,17 +178,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             .program_cache_for_tx_batch
             .get_environments_for_epoch(epoch))
     }
-
-    // pub fn get_environments_for_slot(
-    //     &self,
-    //     effective_slot: Slot,
-    // ) -> Result<&ProgramRuntimeEnvironments<'a, SDK>, InstructionError> {
-    //     let epoch_schedule = self.sysvar_cache.get_epoch_schedule()?;
-    //     let epoch = epoch_schedule.get_epoch(effective_slot);
-    //     Ok(self
-    //         .programs_loaded_for_tx_batch
-    //         .get_environments_for_epoch(epoch))
-    // }
 
     /// Push a stack frame onto the invocation stack
     pub fn push(&mut self) -> Result<(), InstructionError> {
@@ -320,25 +240,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             .get_instruction_context_stack_height()
     }
 
-    // /// Entrypoint for a cross-program invocation from a builtin program
-    // pub fn native_invoke(
-    //     &mut self,
-    //     instruction: StableInstruction,
-    //     signers: &[Pubkey],
-    // ) -> Result<(), InstructionError> {
-    //     let (instruction_accounts, program_indices) =
-    //         self.prepare_instruction(&instruction, signers)?;
-    //     let mut compute_units_consumed = 0;
-    //     self.process_instruction(
-    //         &instruction.data,
-    //         &instruction_accounts,
-    //         &program_indices,
-    //         &mut compute_units_consumed,
-    //         // &mut ExecuteTimings::default(),
-    //     )?;
-    //     Ok(())
-    // }
-
     /// Helper to prepare for process_instruction()
     #[allow(clippy::type_complexity)]
     pub fn prepare_instruction(
@@ -357,14 +258,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             let index_in_transaction = self
                 .transaction_context
                 .find_index_of_account(&account_meta.pubkey)
-                .ok_or_else(|| {
-                    // ic_msg!(
-                    //     self,
-                    //     "Instruction references an unknown account {}",
-                    //     account_meta.pubkey,
-                    // );
-                    InstructionError::MissingAccount
-                })?;
+                .ok_or_else(|| InstructionError::MissingAccount)?;
             if let Some(duplicate_index) =
                 deduplicated_instruction_accounts
                     .iter()
@@ -384,14 +278,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                         &self.transaction_context,
                         &account_meta.pubkey,
                     )
-                    .ok_or_else(|| {
-                        // ic_msg!(
-                        //     self,
-                        //     "Instruction references an unknown account {}",
-                        //     account_meta.pubkey,
-                        // );
-                        InstructionError::MissingAccount
-                    })?;
+                    .ok_or_else(|| InstructionError::MissingAccount)?;
                 duplicate_indicies.push(deduplicated_instruction_accounts.len());
                 deduplicated_instruction_accounts.push(InstructionAccount {
                     index_in_transaction,
@@ -410,11 +297,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
 
             // Readonly in caller cannot become writable in callee
             if instruction_account.is_writable && !borrowed_account.is_writable() {
-                // ic_msg!(
-                //     self,
-                //     "{}'s writable privilege escalated",
-                //     borrowed_account.get_key(),
-                // );
                 return Err(InstructionError::PrivilegeEscalation);
             }
 
@@ -423,11 +305,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             if instruction_account.is_signer
                 && !(borrowed_account.is_signer() || signers.contains(borrowed_account.get_key()))
             {
-                // ic_msg!(
-                //     self,
-                //     "{}'s signer privilege escalated",
-                //     borrowed_account.get_key()
-                // );
                 return Err(InstructionError::PrivilegeEscalation);
             }
         }
@@ -445,14 +322,10 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         let callee_program_id = instruction.program_id;
         let program_account_index = instruction_context
             .find_index_of_instruction_account(&self.transaction_context, &callee_program_id)
-            .ok_or_else(|| {
-                // ic_msg!(self, "Unknown program {}", callee_program_id);
-                InstructionError::MissingAccount
-            })?;
+            .ok_or_else(|| InstructionError::MissingAccount)?;
         let borrowed_program_account = instruction_context
             .try_borrow_instruction_account(&self.transaction_context, program_account_index)?;
         if !borrowed_program_account.is_executable() {
-            // ic_msg!(self, "Account {} is not executable", callee_program_id);
             return Err(InstructionError::AccountNotExecutable);
         }
 
@@ -468,18 +341,15 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         instruction_data: &[u8],
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
-        // compute_units_consumed: &mut u64,
-        // timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
-        // *compute_units_consumed = 0;
-
         self.transaction_context
             .get_next_instruction_context()?
             .configure(program_indices, instruction_accounts, instruction_data);
 
         self.push()?;
 
-        let result = self.process_executable_chain(/*compute_units_consumed , timings*/)
+        let result = self
+            .process_executable_chain()
             // MUST pop if and only if `push` succeeded, independent of `result`.
             // Thus, the `.and()` instead of an `.and_then()`.
             .and(self.pop());
@@ -561,9 +431,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         self.transaction_context
             .set_return_data(program_id, Vec::new())?;
 
-        // let logger = self.get_log_collector();
-        // stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
-        // let pre_remaining_units = self.get_remaining();
         // In program-runtime v2 we will create this VM instance only once per transaction.
         // `program_runtime_environment_v2.get_config()` will be used instead of `mock_config`.
         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
@@ -588,10 +455,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         vm.invoke_function(function);
 
         let result = match vm.program_result {
-            ProgramResult::Ok(_) => {
-                // stable_log::program_success(&logger, &program_id);
-                Ok(())
-            }
+            ProgramResult::Ok(_) => Ok(()),
             ProgramResult::Err(ref err) => {
                 if let EbpfError::SyscallError(syscall_error) = err {
                     if let Some(instruction_err) = syscall_error.downcast_ref::<InstructionError>()
@@ -718,14 +582,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     ) -> Result<(), InstructionError> {
         let (instruction_accounts, program_indices) =
             self.prepare_instruction(&instruction, signers)?;
-        // let mut compute_units_consumed = 0;
-        self.process_instruction(
-            &instruction.data,
-            &instruction_accounts,
-            &program_indices,
-            // &mut compute_units_consumed,
-            // &mut ExecuteTimings::default(),
-        )?;
+        self.process_instruction(&instruction.data, &instruction_accounts, &program_indices)?;
         Ok(())
     }
 }
@@ -745,8 +602,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     }
 
     pub fn get_account_with_fixed_root(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-        // self.load_slow_with_fixed_root(&self.ancestors, pubkey)
-        //     .map(|(acc, _slot)| acc)
         let idx = self.transaction_context.find_index_of_account(pubkey)?;
         self.transaction_context
             .accounts
@@ -755,7 +610,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     }
 
     pub fn load_program_accounts(&self, pubkey: &Pubkey) -> Option<ProgramAccountLoadResult> {
-        // let program_account = callbacks.get_account_shared_data(pubkey)?;
         let program_account = self.get_account_with_fixed_root(pubkey)?;
 
         if loader_v4::check_id(program_account.owner()) {
@@ -780,77 +634,10 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
         }
 
-        // if let Ok(UpgradeableLoaderState::Program {
-        //     programdata_address,
-        // }) = program_account.state()
-        // {
-        //     if let Some(programdata_account) =
-        //         self.get_account_with_fixed_root(&programdata_address)
-        //     {
-        //         if let Ok(UpgradeableLoaderState::ProgramData {
-        //             slot,
-        //             upgrade_authority_address: _,
-        //         }) = programdata_account.state()
-        //         {
-        //             return Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
-        //                 program_account,
-        //                 programdata_account,
-        //                 slot,
-        //             ));
-        //         }
-        //     }
-        // }
         Some(ProgramAccountLoadResult::InvalidAccountData(
             ProgramCacheEntryOwner::LoaderV4,
         ))
     }
-
-    // fn load_program_accounts(&self, pubkey: &Pubkey) -> Option<ProgramAccountLoadResult> {
-    //     let program_account: AccountSharedData = self.get_account_with_fixed_root(pubkey)?;
-    //
-    //     debug_assert!(check_loader_id(program_account.owner()));
-    //
-    //     if loader_v4::check_id(program_account.owner()) {
-    //         return Some(
-    //             bpf_loader_v4::get_state(program_account.data())
-    //                 .ok()
-    //                 .and_then(|state| {
-    //                     (!matches!(state.status,
-    // LoaderV4Status::Retracted)).then_some(state.slot)                 })
-    //                 .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account,
-    // slot))                 .unwrap_or(ProgramAccountLoadResult::InvalidAccountData),
-    //         );
-    //     }
-    //
-    //     if !bpf_loader_upgradeable::check_id(program_account.owner()) {
-    //         return Some(ProgramAccountLoadResult::ProgramOfLoaderV1orV2(
-    //             program_account,
-    //         ));
-    //     }
-    //
-    //     if let Ok(UpgradeableLoaderState::Program {
-    //         programdata_address,
-    //     }) = program_account.state()
-    //     {
-    //         if let Some(programdata_account) =
-    //             self.get_account_with_fixed_root(&programdata_address)
-    //         {
-    //             if let Ok(UpgradeableLoaderState::ProgramData {
-    //                 slot,
-    //                 upgrade_authority_address: _,
-    //             }) = programdata_account.state()
-    //             {
-    //                 return Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
-    //                     program_account,
-    //                     programdata_account,
-    //                     slot,
-    //                 ));
-    //             }
-    //         }
-    //     }
-    //
-    //     Some(ProgramAccountLoadResult::InvalidAccountData)
-    // }
 
     /// Loads the program with the given pubkey.
     ///
@@ -860,11 +647,9 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     /// any of the programdata accounts are invalid.
     pub fn load_program_with_pubkey(
         &self,
-        // callbacks: &CB,
         environments: &ProgramRuntimeEnvironments<'a, SDK>,
         pubkey: &Pubkey,
         slot: Slot,
-        // execute_timings: &mut ExecuteTimings,
         reload: bool,
     ) -> Option<Arc<ProgramCacheEntry<'a, SDK>>> {
         let loaded_program = match self.load_program_accounts(pubkey)? {
@@ -897,30 +682,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 )
                 .map_err(|_| (0, ProgramCacheEntryOwner::LoaderV2))
             }
-
-            // ProgramAccountLoadResult::ProgramOfLoaderV3(
-            //     program_account,
-            //     programdata_account,
-            //     slot,
-            // ) => programdata_account
-            //     .data()
-            //     .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
-            //     .ok_or(InstructionError::InvalidAccountData)
-            //     .and_then(|programdata| {
-            //         load_program_from_bytes(
-            //             // &mut load_program_metrics,
-            //             programdata,
-            //             program_account.owner(),
-            //             program_account
-            //                 .data()
-            //                 .len()
-            //                 .saturating_add(programdata_account.data().len()),
-            //             slot,
-            //             environments.program_runtime_v1.clone(),
-            //             reload,
-            //         )
-            //     })
-            //     .map_err(|_| (slot, ProgramCacheEntryOwner::LoaderV3)),
             ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot) => program_account
                 .data()
                 .get(LoaderV4State::program_data_offset()..)
@@ -951,7 +712,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             )
         });
 
-        // load_program_metrics.submit_datapoint(&mut execute_timings.details);
         loaded_program.update_access_slot(slot);
         Some(Arc::new(loaded_program))
     }
@@ -960,104 +720,12 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         &self,
         pubkey: &Pubkey,
         reload: bool,
-        // recompile: Option<Arc<LoadedProgram<'a, SDK>>>,
     ) -> Option<Arc<ProgramCacheEntry<'a, SDK>>> {
-        // let loaded_programs_cache = self.loaded_programs_cache.read().unwrap();
-        // let effective_epoch = if recompile.is_some() {
-        //     loaded_programs_cache.latest_root_epoch.saturating_add(1)
-        // } else {
-        //     self.epoch
-        // };
-        // let environments = loaded_programs_cache.get_environments_for_epoch(effective_epoch);
-        // let mut load_program_metrics = LoadProgramMetrics {
-        //     program_id: pubkey.to_string(),
-        //     ..LoadProgramMetrics::default()
-        // };
-
         // TODO is it correct to mock slot here
         let slot = Slot::default();
         let envs_for_slot = self.get_environments_for_slot(slot).unwrap();
 
         self.load_program_with_pubkey(envs_for_slot, pubkey, slot, reload)
-
-        // let load_result = self.load_program_accounts(pubkey);
-        // let loaded_program = match load_result? {
-        //     ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
-        //         ProgramCacheEntry::new_tombstone(slot, owner, ProgramCacheEntryType::Closed),
-        //     ),
-        //
-        //     ProgramAccountLoadResult::ProgramOfLoaderV1orV2(program_account) => {
-        //         load_program_from_bytes(
-        //             // &mut load_program_metrics,
-        //             program_account.data(),
-        //             program_account.owner(),
-        //             program_account.data().len(),
-        //             0,
-        //             // environments.program_runtime_v1.clone(),
-        //             pre_v1.clone(),
-        //             reload,
-        //         )
-        //         .map_err(|_| (0, pre_v1.clone()))
-        //     }
-        //
-        //     ProgramAccountLoadResult::ProgramOfLoaderV3(
-        //         program_account,
-        //         programdata_account,
-        //         slot,
-        //     ) => programdata_account
-        //         .data()
-        //         .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
-        //         // .ok_or(Box::new(InstructionError::InvalidAccountData).into())
-        //         .ok_or(InstructionError::InvalidAccountData)
-        //         .and_then(|programdata| {
-        //             /*Self::*/
-        //             load_program_from_bytes(
-        //                 // &mut load_program_metrics,
-        //                 programdata,
-        //                 program_account.owner(),
-        //                 program_account
-        //                     .data()
-        //                     .len()
-        //                     .saturating_add(programdata_account.data().len()),
-        //                 slot,
-        //                 pre_v1.clone(),
-        //                 reload,
-        //             )
-        //         })
-        //         .map_err(|_| (slot, pre_v1.clone())),
-        //
-        //     ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot) => program_account
-        //         .data()
-        //         .get(LoaderV4State::program_data_offset()..)
-        //         .ok_or(InstructionError::InvalidAccountData)
-        //         .and_then(|elf_bytes| {
-        //             /*Self::*/
-        //             load_program_from_bytes(
-        //                 // &mut load_program_metrics,
-        //                 elf_bytes,
-        //                 &loader_v4::id(),
-        //                 program_account.data().len(),
-        //                 slot,
-        //                 pre_v2.clone(),
-        //                 reload,
-        //             )
-        //         })
-        //         .map_err(|_| (slot, pre_v2.clone())),
-        // }
-        // .unwrap_or_else(|(slot, env)| {
-        //     ProgramCacheEntry::new_tombstone(slot, LoadedProgramType::FailedVerification(env))
-        // });
-
-        // let mut timings = ExecuteDetailsTimings::default();
-        // load_program_metrics.submit_datapoint(&mut timings);
-        // if let Some(recompile) = recompile {
-        //     loaded_program.tx_usage_counter =
-        //         AtomicU64::new(recompile.tx_usage_counter.load(Ordering::Relaxed));
-        //     loaded_program.ix_usage_counter =
-        //         AtomicU64::new(recompile.ix_usage_counter.load(Ordering::Relaxed));
-        // }
-        // loaded_program.update_access_slot(self.slot());
-        // Some(Arc::new(loaded_program))
     }
 }
 

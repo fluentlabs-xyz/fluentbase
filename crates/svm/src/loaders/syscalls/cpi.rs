@@ -17,7 +17,6 @@ use crate::{
     native_loader,
     precompiles::is_precompile,
     serialization::account_data_region_memory_state,
-    // solana_program::bpf_loader_upgradeable,
     word_size::{
         addr_type::AddrType,
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
@@ -58,8 +57,7 @@ enum VmValue<'a, 'b, T> {
         memory_mapping: &'b MemoryMapping<'a>,
         check_aligned: bool,
     },
-    // Once direct mapping is activated, this variant can be removed and the
-    // enum can be made a struct.
+    // Once direct mapping is activated, this variant can be removed and the enum can be made a struct.
     Translated(&'a mut T),
 }
 
@@ -100,8 +98,7 @@ pub struct CallerAccount<'a, 'b, SDK: SharedAPI> {
     // region.
     original_data_len: usize,
     // This points to the data section for this account, as serialized and
-    // mapped inside the vm (see serialize_parameters() in
-    // BpfExecutor::execute).
+    // mapped inside the vm (see serialize_parameters() in BpfExecutor::execute).
     //
     // This is only set when direct mapping is off (see the relevant comment in
     // CallerAccount::from_account_info).
@@ -119,7 +116,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
         invoke_context: &InvokeContext<SDK>,
         memory_mapping: &'b MemoryMapping<'a>,
         _vm_addr: u64,
-        // account_info: &AccountInfo,
         account_info: SliceFatPtr64<'a, AccountInfo<'b>>,
         account_metadata: &SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a, 'b, SDK>, SvmError> {
@@ -138,7 +134,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
         if direct_mapping {
             check_account_info_pointer(
                 invoke_context,
-                // account_info.key as *const _ as u64,
                 addr_to_key_addr,
                 account_metadata.vm_key_addr,
                 "key",
@@ -146,7 +141,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
 
             check_account_info_pointer(
                 invoke_context,
-                // account_info.owner as *const _ as u64,
                 addr_to_owner_addr,
                 account_metadata.vm_owner_addr,
                 "owner",
@@ -161,23 +155,14 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 mmh.clone(),
                 PtrType::RcStartPtr(addr_to_lamports_rc_addr),
             );
-            // let ptr = translate_type::<u64>(
-            //     memory_mapping,
-            //     // account_info.lamports.as_ptr() as u64,
-            //     lamports_ptr,
-            //     invoke_context.get_check_aligned(),
-            //     false,
-            // )?;
 
             if direct_mapping {
-                // if account_info.lamports.as_ptr() as u64 >= ebpf::MM_INPUT_START {
                 if addr_to_lamports_rc_addr >= ebpf::MM_INPUT_START {
                     return Err(SyscallError::InvalidPointer.into());
                 }
 
                 check_account_info_pointer(
                     invoke_context,
-                    // *ptr,
                     lamports_mem_layout_ptr.value_addr::<false, false>(),
                     account_metadata.vm_lamports_addr,
                     "lamports",
@@ -185,7 +170,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             }
             translate_type_mut::<u64>(
                 memory_mapping,
-                // *ptr,
                 lamports_mem_layout_ptr.value_addr::<false, false>(),
                 invoke_context.get_check_aligned(),
                 false,
@@ -195,14 +179,12 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
         let owner_addr = SliceFatPtr64Repr::ptr_elem_from_addr(addr_to_owner_addr);
         let owner = translate_type_mut::<Pubkey>(
             memory_mapping,
-            // account_info.owner as *const _ as u64,
             owner_addr,
             invoke_context.get_check_aligned(),
             false,
         )?;
 
         let (serialized_data, vm_data_addr, ref_to_len_in_vm) = {
-            // if direct_mapping && account_info.data.as_ptr() as u64 >= ebpf::MM_INPUT_START {
             if direct_mapping && addr_to_data_addr >= ebpf::MM_INPUT_START {
                 return Err(SyscallError::InvalidPointer.into());
             }
@@ -220,19 +202,11 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             if direct_mapping {
                 check_account_info_pointer(
                     invoke_context,
-                    // data.as_ptr() as u64,
                     data.first_item_addr().inner(),
                     account_metadata.vm_data_addr,
                     "data",
                 )?;
             }
-
-            // consume_compute_meter(
-            //     invoke_context,
-            //     (data.len() as u64)
-            //         .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
-            //         .unwrap_or(u64::MAX),
-            // )?;
 
             let ref_to_len_in_vm = if direct_mapping {
                 // let vm_addr = (account_info.data.as_ptr() as *const u64 as u64)
@@ -257,14 +231,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             } else {
                 let data_len_fat_ptr_addr =
                     data_fat_ptr_addr.saturating_add(size_of::<u64>() as u64);
-                // let translated = translate(
-                //     memory_mapping,
-                //     AccessType::Store,
-                //     // (account_info.data.as_ptr() as *const u64 as u64)
-                //     //     .saturating_add(size_of::<u64>() as u64),
-                //     data_ptr.saturating_add(size_of::<u64>() as u64),
-                //     8,
-                // )? as *mut u64;
                 let translated = data_len_fat_ptr_addr as *mut u64;
 
                 let val = unsafe { &mut *translated };
@@ -462,30 +428,6 @@ pub trait SyscallInvokeSigned<SDK: SharedAPI> {
     ) -> Result<Vec<Pubkey>, SvmError>;
 }
 
-// declare_builtin_function!(
-//     /// Cross-program invocation called from Rust
-//     SyscallInvokeSignedRust,
-//     fn rust(
-//         invoke_context: &mut InvokeContext,
-//         instruction_addr: u64,
-//         account_infos_addr: u64,
-//         account_infos_len: u64,
-//         signers_seeds_addr: u64,
-//         signers_seeds_len: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//         cpi_common::<Self>(
-//             invoke_context,
-//             instruction_addr,
-//             account_infos_addr,
-//             account_infos_len,
-//             signers_seeds_addr,
-//             signers_seeds_len,
-//             memory_mapping,
-//         )
-//     }
-// );
-
 impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
     fn translate_instruction(
         addr: u64,
@@ -520,18 +462,6 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
         )?;
 
         check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
-
-        // if invoke_context
-        //     .get_feature_set()
-        //     .is_active(&feature_set::loosen_cpi_size_restriction::id())
-        // {
-        //     consume_compute_meter(
-        //         invoke_context,
-        //         (data.len() as u64)
-        //             .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
-        //             .unwrap_or(u64::MAX),
-        //     )?;
-        // }
 
         let mut accounts: Vec<AccountMeta> = Vec::with_capacity(account_metas.len());
         // #[allow(clippy::needless_range_loop)]
@@ -613,29 +543,14 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
                 return Err(SyscallError::TooManySigners.into());
             }
             for signer_seeds in signers_seeds.iter() {
-                // let untranslated_seeds = mem_ops_original::translate_slice::<&[u8]>(
-                //     memory_mapping,
-                //     signer_seeds.as_ptr() as u64,
-                //     signer_seeds.len() as u64,
-                //     invoke_context.get_check_aligned(),
-                // )?;
                 let untranslated_seeds = signer_seeds.as_ref();
                 if untranslated_seeds.len() > MAX_SEEDS {
                     return Err(InstructionError::MaxSeedLengthExceeded.into());
                 }
                 let seeds = untranslated_seeds
                     .iter()
-                    .map(|untranslated_seed| {
-                        // mem_ops_original::translate_slice::<u8>(
-                        //     memory_mapping,
-                        //     untranslated_seed.as_ptr() as u64,
-                        //     untranslated_seed.len() as u64,
-                        //     invoke_context.get_check_aligned(),
-                        // )
-                        untranslated_seed.as_ref().to_vec_cloned()
-                    })
+                    .map(|untranslated_seed| untranslated_seed.as_ref().to_vec_cloned())
                     .collect::<Vec<_>>();
-                // let seeds: Vec<Vec<u8>> = seeds.iter().map(|v| v.to_vec()).collect();
                 let signer = Pubkey::create_program_address(
                     &seeds.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>(),
                     program_id,
@@ -894,7 +809,6 @@ fn translate_account_infos<'a, T: Clone + SpecMethods<'a> + Debug + 'a, F, SDK: 
     invoke_context: &mut InvokeContext<SDK>,
 ) -> Result<(SliceFatPtr64<'a, T>, Vec<Pubkey>), SvmError>
 where
-    // F: Fn(&T) -> u64,
     F: Fn(SliceFatPtr64<'a, T>, usize, usize) -> u64,
 {
     let direct_mapping = invoke_context
@@ -954,7 +868,6 @@ where
         &InvokeContext<SDK>,
         &'b MemoryMapping<'a>,
         u64,
-        // &T,
         SliceFatPtr64<'a, T>,
         &SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a, 'b, SDK>, SvmError>,
@@ -1005,14 +918,7 @@ where
         {
             let serialized_metadata = accounts_metadata
                 .get(instruction_account.index_in_caller as usize)
-                .ok_or_else(|| {
-                    // ic_msg!(
-                    //     invoke_context,
-                    //     "Internal error: index mismatch for account {}",
-                    //     account_key
-                    // );
-                    InstructionError::MissingAccount
-                })?;
+                .ok_or_else(|| InstructionError::MissingAccount)?;
 
             // build the CallerAccount corresponding to this account.
             if caller_account_index >= account_infos.len() {
@@ -1037,8 +943,7 @@ where
 
             // before initiating CPI, the caller may have modified the
             // account (caller_account). We need to update the corresponding
-            // BorrowedAccount (callee_account) so the callee can see the
-            // changes.
+            // BorrowedAccount (callee_account) so the callee can see the changes.
             let update_caller = update_callee_account(
                 invoke_context,
                 memory_mapping,
@@ -1147,16 +1052,6 @@ fn check_authorized_program<SDK: SharedAPI>(
     if native_loader::check_id(program_id)
         || bpf_loader::check_id(program_id)
         || bpf_loader_deprecated::check_id(program_id)
-        // || (bpf_loader_upgradeable::check_id(program_id)
-        //     && !(bpf_loader_upgradeable::is_upgrade_instruction(instruction_data)
-        //         || bpf_loader_upgradeable::is_set_authority_instruction(instruction_data)
-        //         || (invoke_context
-        //             .get_feature_set()
-        //             .is_active(&enable_bpf_loader_set_authority_checked_ix::id())
-        //             && bpf_loader_upgradeable::is_set_authority_checked_instruction(
-        //                 instruction_data,
-        //             ))
-        //         || bpf_loader_upgradeable::is_close_instruction(instruction_data)))
         || is_precompile(program_id, |feature_id: &Pubkey| {
             invoke_context.get_feature_set().is_active(feature_id)
         })
@@ -1180,15 +1075,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     //
     // Translate the inputs to the syscall and synchronize the caller's account
     // changes so the callee can see them.
-    // consume_compute_meter(
-    //     invoke_context,
-    //     invoke_context.get_compute_budget().invoke_units,
-    // )?;
-    // if let Some(execute_time) = invoke_context.execute_time.as_mut() {
-    //     execute_time.stop();
-    //     saturating_add_assign!(invoke_context.timings.execute_us, execute_time.as_us());
-    // }
-
     let instruction: StableInstruction =
         S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
     let transaction_context = &invoke_context.transaction_context;
@@ -1225,8 +1111,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
         &instruction.data,
         &instruction_accounts,
         &program_indices,
-        // &mut compute_units_consumed,
-        // &mut ExecuteTimings::default(),
     )?;
 
     // re-bind to please the borrow checker

@@ -1,11 +1,8 @@
-use crate::{
-    // compute_budget::compute_budget_limits::ComputeBudgetLimits,
-    compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT,
-};
+use crate::compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT;
 use solana_program_entrypoint::HEAP_LENGTH;
 
-// /// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
-// /// default heap page cost = 0.5 * 15 ~= 8CU/page
+/// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
+/// default heap page cost = 0.5 * 15 ~= 8CU/page
 pub const DEFAULT_HEAP_COST: u64 = 8;
 
 /// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
@@ -137,16 +134,6 @@ impl Default for ComputeBudget {
         Self::new(MAX_COMPUTE_UNIT_LIMIT as u64)
     }
 }
-
-// impl From<ComputeBudgetLimits> for ComputeBudget {
-//     fn from(compute_budget_limits: ComputeBudgetLimits) -> Self {
-//         ComputeBudget {
-//             compute_unit_limit: u64::from(compute_budget_limits.compute_unit_limit),
-//             heap_size: compute_budget_limits.updated_heap_bytes,
-//             ..ComputeBudget::default()
-//         }
-//     }
-// }
 
 impl ComputeBudget {
     pub fn new(compute_unit_limit: u64) -> Self {

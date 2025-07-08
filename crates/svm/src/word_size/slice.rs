@@ -25,8 +25,6 @@ use solana_rbpf::{
     memory_region::{AccessType, MemoryMapping},
 };
 
-// pub trait ElementConstraints<'a> = Clone + SpecMethods<'a> + Debug;
-
 pub enum RetVal<'a, T: Sized> {
     Instance(T),
     Reference(&'a T),
@@ -745,7 +743,6 @@ mod tests {
 
     #[test]
     fn stable_vec_of_account_meta_items_mutations_test() {
-        // type ItemType = u64;
         type ItemType = AccountMeta;
         type VecOfItemsType = StableVec<ItemType>;
         let items_original_fixed = VecOfItemsType::from(

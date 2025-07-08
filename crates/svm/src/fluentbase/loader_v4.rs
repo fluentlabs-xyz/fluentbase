@@ -8,7 +8,7 @@ use crate::{
             process_svm_result,
             BatchMessage,
         },
-        helpers_v2::{exec_encoded_svm_batch_message, exec_svm_batch_message},
+        helpers::{exec_encoded_svm_batch_message, exec_svm_batch_message},
         loader_common::{read_contract_executable, write_contract_executable},
         mem_storage::MemStorage,
     },
@@ -216,6 +216,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     );
     // TODO figure out balance changes and apply them to evm
     // TODO need optimal balance sync logic
+    // TODO to make this work - need implementations for accounts based on OwnableAccount
     // settle_balances(&mut sdk, balance_changes);
 
     let out = Bytes::new();

@@ -52,11 +52,6 @@ impl<'a> LegacyMessage<'a> {
         self.message.is_key_called_as_program(key_index)
     }
 
-    // /// Inspect all message keys for the bpf upgradeable loader
-    // pub fn is_upgradeable_loader_present(&self) -> bool {
-    //     self.message.is_upgradeable_loader_present()
-    // }
-
     /// Returns the full list of account keys.
     pub fn account_keys(&self) -> AccountKeys {
         AccountKeys::new(&self.message.account_keys)
@@ -72,35 +67,9 @@ impl<'a> LegacyMessage<'a> {
 pub enum SanitizedMessage {
     /// Sanitized legacy message
     Legacy(LegacyMessage<'static>),
-    // /// Sanitized version #0 message with dynamically loaded addresses
-    // V0(v0::LoadedMessage<'static>),
 }
 
 impl SanitizedMessage {
-    // /// Create a sanitized message from a sanitized versioned message.
-    // /// If the input message uses address tables, attempt to look up the
-    // /// address for each table index.
-    // pub fn try_new(
-    //     sanitized_msg: SanitizedVersionedMessage,
-    //     address_loader: impl AddressLoader,
-    //     reserved_account_keys: &HashSet<Pubkey>,
-    // ) -> Result<Self, SanitizeMessageError> {
-    //     Ok(match sanitized_msg.message {
-    //         VersionedMessage::Legacy(message) => {
-    //             SanitizedMessage::Legacy(LegacyMessage::new(message, reserved_account_keys))
-    //         }
-    //         VersionedMessage::V0(message) => {
-    //             let loaded_addresses =
-    //                 address_loader.load_addresses(&message.address_table_lookups)?;
-    //             SanitizedMessage::V0(v0::LoadedMessage::new(
-    //                 message,
-    //                 loaded_addresses,
-    //                 reserved_account_keys,
-    //             ))
-    //         }
-    //     })
-    // }
-
     /// Create a sanitized legacy message
     pub fn try_from_legacy_message(
         message: legacy::Message,
@@ -117,7 +86,6 @@ impl SanitizedMessage {
     pub fn has_duplicates(&self) -> bool {
         match self {
             SanitizedMessage::Legacy(message) => message.has_duplicates(),
-            // SanitizedMessage::V0(message) => message.has_duplicates(),
         }
     }
 
@@ -132,11 +100,6 @@ impl SanitizedMessage {
 
     /// Returns a legacy message if this sanitized message wraps one
     pub fn legacy_message(&self) -> Option<&legacy::Message> {
-        // if let Self::Legacy(legacy_message) = &self {
-        //     Some(&legacy_message.message)
-        // } else {
-        //     None
-        // }
         let Self::Legacy(legacy_message) = &self;
         Some(&legacy_message.message)
     }
@@ -161,7 +124,6 @@ impl SanitizedMessage {
     pub fn instructions(&self) -> &[CompiledInstruction] {
         match self {
             Self::Legacy(legacy_message) => &legacy_message.message.instructions,
-            // Self::V0(loaded_msg) => &loaded_msg.message.instructions,
         }
     }
 
@@ -184,17 +146,8 @@ impl SanitizedMessage {
     pub fn account_keys(&self) -> AccountKeys {
         match self {
             Self::Legacy(message) => message.account_keys(),
-            // Self::V0(message) => message.account_keys(),
         }
     }
-
-    // /// Returns the list of account keys used for account lookup tables.
-    // pub fn message_address_table_lookups(&self) -> &[v0::MessageAddressTableLookup] {
-    //     match self {
-    //         Self::Legacy(_message) => &[],
-    //         Self::V0(message) => &message.message.address_table_lookups,
-    //     }
-    // }
 
     /// Returns true if the account at the specified index is an input to some
     /// program instruction in this message.
@@ -233,7 +186,6 @@ impl SanitizedMessage {
     pub fn is_writable(&self, index: usize) -> bool {
         match self {
             Self::Legacy(message) => message.is_writable(index),
-            // Self::V0(message) => message.is_writable(index),
         }
     }
 
@@ -243,20 +195,8 @@ impl SanitizedMessage {
         index < usize::from(self.header().num_required_signatures)
     }
 
-    // /// Return the resolved addresses for this message if it has any.
-    // fn loaded_lookup_table_addresses(&self) -> Option<&LoadedAddresses> {
-    //     match &self {
-    //         SanitizedMessage::V0(message) => Some(&message.loaded_addresses),
-    //         _ => None,
-    //     }
-    // }
-
     /// Return the number of readonly accounts loaded by this message.
     pub fn num_readonly_accounts(&self) -> usize {
-        // let loaded_readonly_addresses = self
-        //     .loaded_lookup_table_addresses()
-        //     .map(|keys| keys.readonly.len())
-        //     .unwrap_or_default();
         let loaded_readonly_addresses: usize = 0;
         loaded_readonly_addresses
             .saturating_add(usize::from(self.header().num_readonly_signed_accounts))
@@ -289,14 +229,6 @@ impl SanitizedMessage {
             })
             .collect()
     }
-
-    // /// Inspect all message keys for the bpf upgradeable loader
-    // pub fn is_upgradeable_loader_present(&self) -> bool {
-    //     match self {
-    //         Self::Legacy(message) => message.is_upgradeable_loader_present(),
-    //         // Self::V0(message) => message.is_upgradeable_loader_present(),
-    //     }
-    // }
 
     /// Get a list of signers for the instruction at the given index
     pub fn get_ix_signers(&self, ix_index: usize) -> impl Iterator<Item = &Pubkey> {
@@ -407,7 +339,6 @@ impl TransactionSignatureDetails {
 mod tests {
     use super::*;
     use crate::solana_program::{ed25519_program, secp256k1_program};
-    // use crate::message::v0;
 
     #[test]
     fn test_try_from_legacy_message() {
@@ -455,51 +386,6 @@ mod tests {
         assert!(!message.is_non_loader_key(2));
     }
 
-    // #[test]
-    // fn test_num_readonly_accounts() {
-    //     let key0 = Pubkey::new_unique();
-    //     let key1 = Pubkey::new_unique();
-    //     let key2 = Pubkey::new_unique();
-    //     let key3 = Pubkey::new_unique();
-    //     let key4 = Pubkey::new_unique();
-    //     let key5 = Pubkey::new_unique();
-    //
-    //     let legacy_message = SanitizedMessage::try_from_legacy_message(
-    //         legacy::Message {
-    //             header: MessageHeader {
-    //                 num_required_signatures: 2,
-    //                 num_readonly_signed_accounts: 1,
-    //                 num_readonly_unsigned_accounts: 1,
-    //             },
-    //             account_keys: vec![key0, key1, key2, key3],
-    //             ..legacy::Message::default()
-    //         },
-    //         &HashSet::default(),
-    //     )
-    //     .unwrap();
-    //
-    //     assert_eq!(legacy_message.num_readonly_accounts(), 2);
-    //
-    //     let v0_message = SanitizedMessage::V0(v0::LoadedMessage::new(
-    //         v0::Message {
-    //             header: MessageHeader {
-    //                 num_required_signatures: 2,
-    //                 num_readonly_signed_accounts: 1,
-    //                 num_readonly_unsigned_accounts: 1,
-    //             },
-    //             account_keys: vec![key0, key1, key2, key3],
-    //             ..v0::Message::default()
-    //         },
-    //         LoadedAddresses {
-    //             writable: vec![key4],
-    //             readonly: vec![key5],
-    //         },
-    //         &HashSet::default(),
-    //     ));
-    //
-    //     assert_eq!(v0_message.num_readonly_accounts(), 3);
-    // }
-
     #[test]
     fn test_get_ix_signers() {
         let signer0 = Pubkey::new_unique();
@@ -542,80 +428,6 @@ mod tests {
             HashSet::default()
         );
     }
-
-    // #[test]
-    // #[allow(clippy::get_first)]
-    // fn test_is_writable_account_cache() {
-    //     let key0 = Pubkey::new_unique();
-    //     let key1 = Pubkey::new_unique();
-    //     let key2 = Pubkey::new_unique();
-    //     let key3 = Pubkey::new_unique();
-    //     let key4 = Pubkey::new_unique();
-    //     let key5 = Pubkey::new_unique();
-    //
-    //     let legacy_message = SanitizedMessage::try_from_legacy_message(
-    //         legacy::Message {
-    //             header: MessageHeader {
-    //                 num_required_signatures: 2,
-    //                 num_readonly_signed_accounts: 1,
-    //                 num_readonly_unsigned_accounts: 1,
-    //             },
-    //             account_keys: vec![key0, key1, key2, key3],
-    //             ..legacy::Message::default()
-    //         },
-    //         &HashSet::default(),
-    //     )
-    //     .unwrap();
-    //     match legacy_message {
-    //         SanitizedMessage::Legacy(message) => {
-    //             assert_eq!(
-    //                 message.is_writable_account_cache.len(),
-    //                 message.account_keys().len()
-    //             );
-    //             assert!(message.is_writable_account_cache.get(0).unwrap());
-    //             assert!(!message.is_writable_account_cache.get(1).unwrap());
-    //             assert!(message.is_writable_account_cache.get(2).unwrap());
-    //             assert!(!message.is_writable_account_cache.get(3).unwrap());
-    //         }
-    //         _ => {
-    //             panic!("Expect to be SanitizedMessage::LegacyMessage")
-    //         }
-    //     }
-    //
-    //     let v0_message = SanitizedMessage::V0(v0::LoadedMessage::new(
-    //         v0::Message {
-    //             header: MessageHeader {
-    //                 num_required_signatures: 2,
-    //                 num_readonly_signed_accounts: 1,
-    //                 num_readonly_unsigned_accounts: 1,
-    //             },
-    //             account_keys: vec![key0, key1, key2, key3],
-    //             ..v0::Message::default()
-    //         },
-    //         LoadedAddresses {
-    //             writable: vec![key4],
-    //             readonly: vec![key5],
-    //         },
-    //         &HashSet::default(),
-    //     ));
-    //     match v0_message {
-    //         SanitizedMessage::V0(message) => {
-    //             assert_eq!(
-    //                 message.is_writable_account_cache.len(),
-    //                 message.account_keys().len()
-    //             );
-    //             assert!(message.is_writable_account_cache.get(0).unwrap());
-    //             assert!(!message.is_writable_account_cache.get(1).unwrap());
-    //             assert!(message.is_writable_account_cache.get(2).unwrap());
-    //             assert!(!message.is_writable_account_cache.get(3).unwrap());
-    //             assert!(message.is_writable_account_cache.get(4).unwrap());
-    //             assert!(!message.is_writable_account_cache.get(5).unwrap());
-    //         }
-    //         _ => {
-    //             panic!("Expect to be SanitizedMessage::V0")
-    //         }
-    //     }
-    // }
 
     #[test]
     fn test_get_signature_details() {

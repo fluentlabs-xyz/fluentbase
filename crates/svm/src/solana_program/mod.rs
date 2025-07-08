@@ -1,9 +1,6 @@
-// pub mod address_lookup_table;
-// pub mod bpf_loader_upgradeable;
 pub mod ed25519_program;
 pub mod feature_set;
 pub mod instruction;
-// pub mod loader_upgradeable_instruction;
 pub mod loader_v4;
 pub mod loader_v4_instruction;
 pub mod message;
@@ -13,7 +10,6 @@ pub mod program_stubs;
 pub mod rent_collector;
 pub mod runtime;
 pub mod secp256k1_program;
-// pub mod stake_history;
 pub mod svm_message;
 pub mod sysvar;
 pub mod transaction_processing_callback;

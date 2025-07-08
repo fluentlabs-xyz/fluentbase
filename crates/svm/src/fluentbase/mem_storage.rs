@@ -82,11 +82,11 @@ impl MetadataAPI for MemStorage {
         }
         let data = self.in_memory_metadata.get(address);
         if let Some(data) = data {
-            let total_len = /* offset + */length as usize;
+            let total_len = length as usize;
             if data.len() < total_len {
                 return SyscallResult::new(Default::default(), 0, 0, ExitCode::Err);
             }
-            let chunk = &data[/*offset as usize*/..total_len];
+            let chunk = &data[..total_len];
             return SyscallResult::new(Bytes::copy_from_slice(chunk), 0, 0, ExitCode::Ok);
         }
         SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)

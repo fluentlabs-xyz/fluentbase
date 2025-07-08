@@ -43,10 +43,6 @@ impl CompiledInstruction {
             data: buf,
         }
     }
-
-    // pub fn program_id<'a>(&self, program_ids: &'a [Pubkey]) -> &'a Pubkey {
-    //     &program_ids[self.program_id_index as usize]
-    // }
 }
 
 /// Returns a sibling instruction from the processed sibling instruction list.
@@ -85,7 +81,6 @@ pub fn checked_add(a: u64, b: u64) -> Result<u64, InstructionError> {
 
 /// A non-owning version of [`CompiledInstruction`] that references
 /// slices of account indexes and data.
-// `program_id_index` is still owned, as it is a simple u8.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SVMInstruction<'a> {
     /// Index into the transaction keys array indicating the program account that executes this instruction.

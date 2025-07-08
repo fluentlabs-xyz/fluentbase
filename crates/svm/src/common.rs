@@ -1,7 +1,3 @@
-// use crate::builtins::SyscallSecp256k1Recover;
-// use crate::solana_program::bpf_loader;
-// use crate::solana_program::blake3;
-// use crate::solana_program::bpf_loader_deprecated;
 use crate::{
     account::AccountSharedData,
     bpf_loader,
@@ -36,7 +32,6 @@ use crate::{
     compute_budget::compute_budget::{ComputeBudget, MAX_CALL_DEPTH, STACK_FRAME_SIZE},
     error::{Error, RuntimeError, SvmError},
     loaded_programs::ProgramCacheEntry,
-    // solana_program::{bpf_loader_upgradeable, bpf_loader_upgradeable::UpgradeableLoaderState},
 };
 
 pub trait HasherImpl {
@@ -65,25 +60,6 @@ impl HasherImpl for Sha256Hasher {
         self.0.result()
     }
 }
-
-// pub struct Keccak256Hasher(keccak::Hasher);
-//
-// impl HasherImpl for Keccak256Hasher {
-//     const NAME: &'static str = "Keccak256";
-//     type Output = keccak::Hash;
-//
-//     fn create_hasher() -> Self {
-//         Keccak256Hasher(keccak::Hasher::default())
-//     }
-//
-//     fn hash(&mut self, val: &[u8]) {
-//         self.0.hash(val);
-//     }
-//
-//     fn result(self) -> Self::Output {
-//         self.0.result()
-//     }
-// }
 
 pub struct Keccak256Hasher<SDK: SharedAPI> {
     initiated: bool,
@@ -184,20 +160,6 @@ impl<SDK: SharedAPI> HasherImpl for PoseidonHasher<SDK> {
 //     }
 //         .into()
 // }
-//
-// pub fn create_loadable_account_for_test(name: &str, owner: Pubkey) -> AccountSharedData {
-//     create_loadable_account_with_fields(name, owner, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
-// }
-
-// macro_rules! register_feature_gated_function {
-//     ($result:expr, $is_feature_active:expr, $name:expr, $call:expr $(,)?) => {
-//         if $is_feature_active {
-//             $result.register_function_hashed($name, $call)
-//         } else {
-//             Ok(0)
-//         }
-//     };
-// }
 
 pub fn morph_into_deployment_environment_v1<'a, SDK: SharedAPI>(
     from: Arc<BuiltinProgram<InvokeContext<'a, SDK>>>,
@@ -219,7 +181,6 @@ pub fn morph_into_deployment_environment_v1<'a, SDK: SharedAPI>(
 
 pub fn check_loader_id(id: &Pubkey) -> bool {
     loader_v4::check_id(id) || bpf_loader::check_id(id) || bpf_loader_deprecated::check_id(id)
-    // || bpf_loader_upgradeable::check_id(id)
 }
 
 pub fn rbpf_config_default(compute_budget: Option<&ComputeBudget>) -> Config {
@@ -236,8 +197,6 @@ pub fn rbpf_config_default(compute_budget: Option<&ComputeBudget>) -> Config {
 }
 
 pub fn load_program_from_bytes<'a, SDK: SharedAPI>(
-    // log_collector: Option<Rc<RefCell<LogCollector>>>,
-    // load_program_metrics: &mut LoadProgramMetrics,
     programdata: &[u8],
     loader_key: &Pubkey,
     account_size: usize,
@@ -254,10 +213,8 @@ pub fn load_program_from_bytes<'a, SDK: SharedAPI>(
                 program_runtime_environment,
                 deployment_slot,
                 effective_slot,
-                // None,
                 programdata,
                 account_size,
-                // load_program_metrics,
             )
         }
     } else {
@@ -266,16 +223,11 @@ pub fn load_program_from_bytes<'a, SDK: SharedAPI>(
             program_runtime_environment,
             deployment_slot,
             effective_slot,
-            // None,
             programdata,
             account_size,
-            // load_program_metrics,
         )
     }
-    .map_err(|_err| {
-        // ic_logger_msg!(log_collector, "{}", err);
-        InstructionError::InvalidAccountData
-    })?;
+    .map_err(|_err| InstructionError::InvalidAccountData)?;
     Ok(loaded_program)
 }
 
@@ -291,47 +243,31 @@ macro_rules! deploy_program {
         use core::sync::atomic::Ordering;
         use crate::clock::Slot;
 
-        // let mut load_program_metrics = LoadProgramMetrics::default();
-        // let mut register_syscalls_time = Measure::start("register_syscalls_time");
         let deployment_slot: Slot = $slot;
         let environments = $invoke_context.get_environments_for_slot(
             deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET)
         ).map_err(|_e| {
             // This will never fail since the epoch schedule is already configured.
-            // ic_msg!($invoke_context, "Failed to get runtime environment: {}", e);
             InstructionError::ProgramEnvironmentSetupFailure
         })?;
         let deployment_program_runtime_environment = morph_into_deployment_environment_v1(
             environments.program_runtime_v1.clone(),
         ).map_err(|_e| {
-            // ic_msg!($invoke_context, "Failed to register syscalls: {}", e);
             InstructionError::ProgramEnvironmentSetupFailure
         })?;
-        // register_syscalls_time.stop();
-        // load_program_metrics.register_syscalls_us = register_syscalls_time.as_us();
         // Verify using stricter deployment_program_runtime_environment
-        // let mut load_elf_time = Measure::start("load_elf_time");
         let executable = Executable::<InvokeContext<_>>::load(
             $new_programdata,
             Arc::new(deployment_program_runtime_environment),
         ).map_err(|_err| {
-            // ic_logger_msg!($invoke_context.get_log_collector(), "{}", err);
             InstructionError::InvalidAccountData
         });
         let executable = executable?;
-        // load_elf_time.stop();
-        // load_program_metrics.load_elf_us = load_elf_time.as_us();
-        // let mut verify_code_time = Measure::start("verify_code_time");
         executable.verify::<RequisiteVerifier>().map_err(|_err| {
-            // ic_logger_msg!($invoke_context.get_log_collector(), "{}", err);
             InstructionError::InvalidAccountData
         })?;
-        // verify_code_time.stop();
-        // load_program_metrics.verify_code_us = verify_code_time.as_us();
         // Reload but with environments.program_runtime_v1
         let executor = load_program_from_bytes(
-            // $invoke_context.get_log_collector(),
-            // &mut load_program_metrics,
             $new_programdata,
             $loader_key,
             $account_size,
@@ -350,8 +286,6 @@ macro_rules! deploy_program {
             );
         }
         $drop
-        // load_program_metrics.program_id = $program_id.to_string();
-        // load_program_metrics.submit_datapoint(&mut $invoke_context.timings);
         $invoke_context.program_cache_for_tx_batch.replenish($program_id, Arc::new(executor));
     }};
 }
@@ -360,10 +294,8 @@ pub fn common_close_account(
     authority_address: &Option<Pubkey>,
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
-    // log_collector: &Option<Rc<RefCell<LogCollector>>>,
 ) -> Result<(), InstructionError> {
     if authority_address.is_none() {
-        // ic_logger_msg!(log_collector, "Account is immutable");
         return Err(InstructionError::Immutable);
     }
     if *authority_address
@@ -371,11 +303,9 @@ pub fn common_close_account(
             instruction_context.get_index_of_instruction_account_in_transaction(2)?,
         )?)
     {
-        // ic_logger_msg!(log_collector, "Incorrect authority provided");
         return Err(InstructionError::IncorrectAuthority);
     }
     if !instruction_context.is_instruction_account_signer(2)? {
-        // ic_logger_msg!(log_collector, "Authority did not sign");
         return Err(InstructionError::MissingRequiredSignature);
     }
 
@@ -386,25 +316,8 @@ pub fn common_close_account(
 
     recipient_account.checked_add_lamports(close_account.get_lamports())?;
     close_account.set_lamports(0)?;
-    // close_account.set_state(&UpgradeableLoaderState::Uninitialized)?;
     Ok(())
 }
-
-// /// Deserialize with a limit based the maximum amount of data a program can expect to get.
-// /// This function should be used in place of direct deserialization to help prevent OOM errors
-// pub fn limited_deserialize<T, const LIMIT: usize>(
-//     instruction_data: &[u8],
-// ) -> Result<T, InstructionError>
-// where
-//     T: serde::de::DeserializeOwned,
-// {
-//     BINCODE_DEFAULT_CONFIG
-//         .with_limit::<LIMIT>()
-//         .with_fixint_encoding() // As per https://github.com/servo/bincode/issues/333, these two options are needed
-//         .allow_trailing_bytes() // to retain the behavior of bincode_deserialize with the new
-// `options()` method         .deserialize_from(instruction_data)
-//         .map_err(|_| InstructionError::InvalidInstructionData)
-// }
 
 /// Deserialize with a limit based the maximum amount of data a program can expect to get.
 /// This function should be used in place of direct deserialization to help prevent OOM errors
@@ -427,12 +340,6 @@ pub fn write_program_data<SDK: SharedAPI>(
     let data = program.get_data_mut()?;
     let write_offset = program_data_offset.saturating_add(bytes.len());
     if data.len() < write_offset {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Write overflow: {} < {}",
-        //     data.len(),
-        //     write_offset,
-        // );
         return Err(InstructionError::AccountDataTooSmall);
     }
     data.get_mut(program_data_offset..write_offset)
@@ -453,22 +360,8 @@ pub fn calculate_max_chunk_size<F>(_create_msg: &F) -> usize
 where
     F: Fn(u32, Vec<u8>) -> crate::solana_program::message::legacy::Message,
 {
-    // let baseline_msg = create_msg(0, Vec::new());
-    // let tx_size = bincode_serialized_size(&Transaction {
-    //     signatures: vec![
-    //         solana_sdk::Signature::default();
-    //         baseline_msg.header.num_required_signatures as usize
-    //     ],
-    //     message: baseline_msg,
-    // })
-    //     .unwrap() as usize;
-    // add 1 byte buffer to account for shortvec encoding
-    // PACKET_DATA_SIZE
-    //     .saturating_sub(tx_size)
-    //     .saturating_sub(1)
-    // heuristic calculation
     PACKET_DATA_SIZE
-        // .saturating_sub(tx_size)
+        // TODO fix magic constant
         .saturating_sub(16)
 }
 

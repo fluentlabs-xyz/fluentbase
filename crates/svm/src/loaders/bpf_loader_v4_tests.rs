@@ -28,7 +28,6 @@ mod tests {
     use std::{fs::File, io::Read, path::Path, sync::Arc};
 
     pub fn load_all_invoked_programs<SDK: SharedAPI>(invoke_context: &mut InvokeContext<SDK>) {
-        // let mut load_program_metrics = LoadProgramMetrics::default();
         let num_accounts = invoke_context.transaction_context.get_number_of_accounts();
         for index in 0..num_accounts {
             let account = invoke_context
@@ -59,7 +58,6 @@ mod tests {
                         0,
                         programdata,
                         account.data().len(),
-                        // &mut load_program_metrics,
                     ) {
                         invoke_context
                             .program_cache_for_tx_batch
@@ -352,13 +350,10 @@ mod tests {
             Err(InstructionError::AccountDataTooSmall),
         );
 
-        test_loader_instruction_general_errors(
-            // &sdk,
-            LoaderV4Instruction::Write {
-                offset: 0,
-                bytes: Vec::new(),
-            },
-        );
+        test_loader_instruction_general_errors(LoaderV4Instruction::Write {
+            offset: 0,
+            bytes: Vec::new(),
+        });
     }
 
     #[test]
@@ -631,10 +626,7 @@ mod tests {
             Err(InstructionError::InsufficientFunds),
         );
 
-        test_loader_instruction_general_errors(
-            // &sdk,
-            LoaderV4Instruction::Truncate { new_size: 0 },
-        );
+        test_loader_instruction_general_errors(LoaderV4Instruction::Truncate { new_size: 0 });
     }
 
     #[test]
@@ -793,10 +785,7 @@ mod tests {
             Err(InstructionError::InvalidArgument),
         );
 
-        test_loader_instruction_general_errors(
-            // &sdk,
-            LoaderV4Instruction::Deploy,
-        );
+        test_loader_instruction_general_errors(LoaderV4Instruction::Deploy);
     }
 
     #[test]
@@ -989,9 +978,7 @@ mod tests {
             Err(InstructionError::MissingRequiredSignature),
         );
 
-        test_loader_instruction_general_errors(
-            /*&sdk, */ LoaderV4Instruction::TransferAuthority,
-        );
+        test_loader_instruction_general_errors(LoaderV4Instruction::TransferAuthority);
     }
 
     #[test]

@@ -52,7 +52,6 @@ lazy_static! {
         let mut set = HashSet::new();
         set.insert(system_program::id());
         set.insert(native_loader::id());
-        // set.insert(bpf_loader_upgradeable::id());
         set.insert(loader_v4::id());
         set.insert(sysvar::clock::id());
         set.insert(sysvar::rent::id());
@@ -67,25 +66,6 @@ pub(crate) fn extract_account_data_or_default<API: MetadataAPI>(
     Ok(storage_read_account_data(api, account_key)
         .unwrap_or_else(|_e| AccountSharedData::new(0, 0, &system_program::id())))
 }
-
-// pub(crate) fn load_program_account<SDK: SharedAPI, API: MetadataAPI>(
-//     sdk: &SDK,
-//     api: &Option<&mut API>,
-//     program_accounts: &mut Vec<(Pubkey, AccountSharedData)>,
-//     account_key: &Pubkey,
-// ) -> Result<bool, SvmError> {
-//     let program_account_idx = program_accounts
-//         .iter()
-//         .position(|(pk, _)| pk == account_key);
-//     if program_account_idx.is_some() {
-//         return Ok(false);
-//     }
-//     let program_account = select_api!(api, sdk, |s| {
-//         extract_account_data_or_default(s, account_key)
-//     })?;
-//     program_accounts.push((account_key.clone(), program_account));
-//     Ok(true)
-// }
 
 pub(crate) fn flush_accounts<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,

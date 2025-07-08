@@ -65,139 +65,6 @@ pub fn create_program_runtime_environment<'a, SDK: SharedAPI>(
     BuiltinProgram::new_loader(config, FunctionRegistry::default())
 }
 
-// fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
-//     const KIBIBYTE: u64 = 1024;
-//     const PAGE_SIZE_KB: u64 = 32;
-//     u64::from(heap_size)
-//         .saturating_add(PAGE_SIZE_KB.saturating_mul(KIBIBYTE).saturating_sub(1))
-//         .checked_div(PAGE_SIZE_KB.saturating_mul(KIBIBYTE))
-//         .expect("PAGE_SIZE_KB * KIBIBYTE > 0")
-//         .saturating_sub(1)
-//         .saturating_mul(heap_cost)
-// }
-
-// /// Create the SBF virtual machine
-// pub fn create_vm<'a, SDK: SharedAPI>(
-//     invoke_context: &mut InvokeContext<'a, SDK>,
-//     program: Arc<Executable<InvokeContext<'a, SDK>>>,
-// ) -> Result<EbpfVm<'a, InvokeContext<'a, SDK>>, Box<dyn std::error::Error>> {
-//     let config = program.get_config();
-//     let sbpf_version = program.get_sbpf_version();
-//     let compute_budget = invoke_context.get_compute_budget();
-//     let heap_size = compute_budget.heap_size;
-//     invoke_context.consume_checked(calculate_heap_cost(heap_size, compute_budget.heap_cost))?;
-//     let mut stack = AlignedMemory::<{ ebpf::HOST_ALIGN }>::zero_filled(config.stack_size());
-//     let mut heap = AlignedMemory::<{ ebpf::HOST_ALIGN }>::zero_filled(
-//         usize::try_from(compute_budget.heap_size).unwrap(),
-//     );
-//     let stack_len = stack.len();
-//     let regions: Vec<MemoryRegion> = vec![
-//         program.get_ro_region(),
-//         MemoryRegion::new_writable_gapped(stack.as_slice_mut(), ebpf::MM_STACK_START, 0),
-//         MemoryRegion::new_writable(heap.as_slice_mut(), ebpf::MM_HEAP_START),
-//     ];
-//     // let log_collector = invoke_context.get_log_collector();
-//     let memory_mapping = MemoryMapping::new(regions, config, sbpf_version).map_err(|err| {
-//         // ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", err);
-//         Box::new(InstructionError::ProgramEnvironmentSetupFailure)
-//     })?;
-//     Ok(EbpfVm::new(
-//         program.get_loader().clone(),
-//         sbpf_version,
-//         invoke_context,
-//         memory_mapping,
-//         stack_len,
-//     ))
-// }
-
-// /// Create the SBF virtual machine
-// pub fn create_vm_exec_program<'a, SDK: SharedAPI>(
-//     invoke_context: &mut InvokeContext<'a, SDK>,
-//     program: Arc<Executable<InvokeContext<'a, SDK>>>,
-// ) -> Result<(u64, ProgramResult), Error> {
-//     let config = program.get_config();
-//     let sbpf_version = program.get_sbpf_version();
-//     let compute_budget = invoke_context.get_compute_budget();
-//     let heap_size = compute_budget.heap_size;
-//     invoke_context.consume_checked(calculate_heap_cost(heap_size, compute_budget.heap_cost))?;
-//     let mut stack = AlignedMemory::<{ ebpf::HOST_ALIGN }>::zero_filled(config.stack_size());
-//     let mut heap = AlignedMemory::<{ ebpf::HOST_ALIGN }>::zero_filled(
-//         usize::try_from(compute_budget.heap_size).unwrap(),
-//     );
-//     let stack_len = stack.len();
-//     let regions: Vec<MemoryRegion> = vec![
-//         program.get_ro_region(),
-//         MemoryRegion::new_writable_gapped(stack.as_slice_mut(), ebpf::MM_STACK_START, 0),
-//         MemoryRegion::new_writable(heap.as_slice_mut(), ebpf::MM_HEAP_START),
-//     ];
-//     // let log_collector = invoke_context.get_log_collector();
-//     let memory_mapping = MemoryMapping::new(regions, config, sbpf_version).map_err(|_err| {
-//         // ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", err);
-//         Box::new(InstructionError::ProgramEnvironmentSetupFailure)
-//     })?;
-//     let mut vm = EbpfVm::new(
-//         program.get_loader().clone(),
-//         sbpf_version,
-//         invoke_context,
-//         memory_mapping,
-//         stack_len,
-//     );
-//     let res: (u64, ProgramResult) = vm.execute_program(&program, true);
-//     Ok(res)
-// }
-
-/*fn execute<'a, SDK: SharedAPI>(
-    invoke_context: &mut InvokeContext<'a, SDK>,
-    executable: Arc<Executable<InvokeContext<'a, SDK>>>,
-) -> Result<(), Error> {
-    // We dropped the lifetime tracking in the Executor by setting it to 'static,
-    // thus we need to reintroduce the correct lifetime of InvokeContext here again.
-    // let executable =
-    //     unsafe { std::mem::transmute::<_, &'a Executable<InvokeContext<'b>>>(executable) };
-    // let log_collector = invoke_context.get_log_collector();
-    // let stack_height = invoke_context.get_stack_height();
-    // let transaction_context = &invoke_context.transaction_context;
-    // let instruction_context = transaction_context.get_current_instruction_context()?;
-    // let program_id = *instruction_context.get_last_program_key(transaction_context)?;
-    #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
-    let use_jit = false;
-    // #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-    // let use_jit = executable.get_compiled_program().is_some();
-
-    // let compute_meter_prev = invoke_context.get_remaining();
-    // let mut create_vm_time = Measure::start("create_vm");
-    // let mut vm = create_vm(invoke_context, executable.clone())?;
-    // let (_, result) = create_vm_exec(invoke_context, executable.clone())?;
-    // create_vm_time.stop();
-
-    // let mut execute_time = Measure::start("execute");
-    // stable_log::program_invoke(&log_collector, &program_id, stack_height);
-    let (_compute_units_consumed, result) =
-        create_vm_exec_program(invoke_context, executable.clone())?;
-    // drop(vm);
-    // ic_logger_msg!(
-    //     log_collector,
-    //     "Program {} consumed {} of {} compute units",
-    //     &program_id,
-    //     compute_units_consumed,
-    //     compute_meter_prev
-    // );
-    // execute_time.stop();
-
-    // let timings = &mut invoke_context.timings;
-    // timings.create_vm_us = timings.create_vm_us.saturating_add(create_vm_time.as_us());
-    // timings.execute_us = timings.execute_us.saturating_add(execute_time.as_us());
-
-    match result {
-        ProgramResult::Ok(status) if status != SUCCESS => {
-            let error: InstructionError = status.into();
-            Err(error.into())
-        }
-        ProgramResult::Err(error) => Err(error.into()),
-        _ => Ok(()),
-    }
-}*/
-
 fn check_program_account(
     instruction_context: &InstructionContext,
     program: &BorrowedAccount,
@@ -338,8 +205,7 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
 
     // Slot = 0 indicates that the program hasn't been deployed yet. So no need to check for the
     // cooldown slots. (Without this check, the program deployment is failing in freshly started
-    // test validators. That's  because at startup current_slot is 0, which is <
-    // DEPLOYMENT_COOLDOWN_IN_SLOTS).
+    // test validators. That's  because at startup current_slot is 0, which is < DEPLOYMENT_COOLDOWN_IN_SLOTS).
     if state.slot != 0 && state.slot.saturating_add(DEPLOYMENT_COOLDOWN_IN_SLOTS) > current_slot {
         return Err(InstructionError::InvalidArgument);
     }

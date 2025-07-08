@@ -39,7 +39,6 @@
 
 pub mod compiled_keys;
 pub mod legacy;
-// pub mod versions;
 
 #[path = ""]
 mod non_bpf_modules {
