@@ -73,6 +73,7 @@ lazy_static! {
         let mut map = HashMap::new();
         for (addr, contract_build_output) in GENESIS_CONTRACTS {
             let contract = GenesisContract::from_build_output(addr, contract_build_output);
+            #[cfg(feature = "debug-print")]
             println!(
                 "genesis contract address={} hash={} name={}",
                 contract.address, contract.rwasm_bytecode_hash, contract.contract_name
