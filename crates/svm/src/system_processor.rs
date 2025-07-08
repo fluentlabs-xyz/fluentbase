@@ -419,90 +419,19 @@ declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, 
             result
         }
         SystemInstruction::AdvanceNonceAccount => {
-            instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut me =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-            #[allow(deprecated)]
-            let recent_blockhashes = get_sysvar_with_account_check::recent_blockhashes(
-                invoke_context,
-                instruction_context,
-                1,
-            )?;
-            if recent_blockhashes.is_empty() {
-                // ic_msg!(
-                //     invoke_context,
-                //     "Advance nonce account: recent blockhash list is empty",
-                // );
-                return Err(SystemError::NonceNoRecentBlockhashes.into());
-            }
-            let result = system_program::advance_nonce_account(&mut me, &signers, invoke_context);
-            result
+            panic!("not supported")
         }
-        SystemInstruction::WithdrawNonceAccount(lamports) => {
-            instruction_context.check_number_of_instruction_accounts(2)?;
-            #[allow(deprecated)]
-            let _recent_blockhashes = get_sysvar_with_account_check::recent_blockhashes(
-                invoke_context,
-                instruction_context,
-                2,
-            )?;
-            let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 3)?;
-            let result = system_program::withdraw_nonce_account(
-                0,
-                lamports,
-                1,
-                &rent,
-                &signers,
-                invoke_context,
-                transaction_context,
-                instruction_context,
-            );
-            result
+        SystemInstruction::WithdrawNonceAccount(_lamports) => {
+            panic!("not supported")
         }
-        SystemInstruction::InitializeNonceAccount(authorized) => {
-            instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut me =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-            #[allow(deprecated)]
-            let recent_blockhashes = get_sysvar_with_account_check::recent_blockhashes(
-                invoke_context,
-                instruction_context,
-                1,
-            )?;
-            if recent_blockhashes.is_empty() {
-                // ic_msg!(
-                //     invoke_context,
-                //     "Initialize nonce account: recent blockhash list is empty",
-                // );
-                return Err(SystemError::NonceNoRecentBlockhashes.into());
-            }
-            let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 2)?;
-            let result = system_program::initialize_nonce_account(&mut me, &authorized, &rent, invoke_context);
-            result
+        SystemInstruction::InitializeNonceAccount(_authorized) => {
+            panic!("not supported")
         }
-        SystemInstruction::AuthorizeNonceAccount(nonce_authority) => {
-            instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut me =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-            let result = system_program::authorize_nonce_account(&mut me, &nonce_authority, &signers, invoke_context);
-            result
+        SystemInstruction::AuthorizeNonceAccount(_nonce_authority) => {
+            panic!("not supported")
         }
         SystemInstruction::UpgradeNonceAccount => {
-            instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut nonce_account =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-            if !system_program::check_id(nonce_account.get_owner()) {
-                return Err(InstructionError::InvalidAccountOwner);
-            }
-            if !nonce_account.is_writable() {
-                return Err(InstructionError::InvalidArgument);
-            }
-            let nonce_versions: Versions = nonce_account.get_state()?;
-            let result = match nonce_versions.upgrade() {
-                None => Err(InstructionError::InvalidArgument),
-                Some(nonce_versions) => nonce_account.set_state(&nonce_versions),
-            };
-            result
+            panic!("not supported")
         }
         SystemInstruction::Allocate { space } => {
             instruction_context.check_number_of_instruction_accounts(1)?;

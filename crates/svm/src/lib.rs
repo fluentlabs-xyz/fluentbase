@@ -22,11 +22,9 @@ pub mod message_processor;
 #[cfg(test)]
 mod message_processor_tests;
 pub mod native_loader;
-pub mod nonce_account;
 pub mod precompiles;
 #[cfg(test)]
 mod process_instruction_tests;
-pub mod recent_blockhashes_account;
 // #[cfg(test)]
 // pub mod secp256k1_instruction;
 // pub mod bpf_loader;

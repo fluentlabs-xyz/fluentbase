@@ -17,7 +17,6 @@ use crate::{
         message::{compiled_keys::CompiledKeys, MessageHeader},
         sysvar,
     },
-    system_instruction,
     system_program,
 };
 use alloc::vec::Vec;
@@ -223,18 +222,6 @@ impl Message {
             *blockhash,
             instructions,
         )
-    }
-
-    pub fn new_with_nonce(
-        mut instructions: Vec<Instruction>,
-        payer: Option<&Pubkey>,
-        nonce_account_pubkey: &Pubkey,
-        nonce_authority_pubkey: &Pubkey,
-    ) -> Self {
-        let nonce_ix =
-            system_instruction::advance_nonce_account(nonce_account_pubkey, nonce_authority_pubkey);
-        instructions.insert(0, nonce_ix);
-        Self::new(&instructions, payer)
     }
 
     pub fn new_with_compiled_instructions(

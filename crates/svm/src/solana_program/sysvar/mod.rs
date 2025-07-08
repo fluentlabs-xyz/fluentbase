@@ -15,7 +15,6 @@ pub mod clock;
 pub mod epoch_rewards;
 pub mod epoch_schedule;
 pub mod instructions;
-pub mod recent_blockhashes;
 pub mod rent;
 use solana_account_info::AccountInfo;
 use solana_bincode::{deserialize, serialize_into, serialized_size};
@@ -37,7 +36,6 @@ mod sysvar_ids {
             clock::id(),
             epoch_schedule::id(),
             #[allow(deprecated)]
-            recent_blockhashes::id(),
             rent::id(),
             instructions::id(),
         ];

@@ -4,14 +4,7 @@ use crate::{
     epoch_schedule::EpochSchedule,
     pubkey::Pubkey,
     rent::Rent,
-    solana_program::sysvar::{
-        clock,
-        epoch_rewards,
-        epoch_schedule,
-        recent_blockhashes,
-        recent_blockhashes::RecentBlockhashes,
-        rent,
-    },
+    solana_program::sysvar::{clock, epoch_rewards, epoch_schedule, rent},
 };
 use alloc::sync::Arc;
 use solana_bincode::deserialize;
@@ -23,8 +16,6 @@ pub struct SysvarCache {
     epoch_schedule: Option<Arc<EpochSchedule>>,
     epoch_rewards: Option<Arc<EpochRewards>>,
     rent: Option<Arc<Rent>>,
-    #[allow(deprecated)] // TODO delete?
-    recent_blockhashes: Option<Arc<RecentBlockhashes>>,
 }
 
 impl SysvarCache {
@@ -66,20 +57,6 @@ impl SysvarCache {
         self.rent = Some(Arc::new(rent));
     }
 
-    #[deprecated]
-    #[allow(deprecated)]
-    pub fn get_recent_blockhashes(&self) -> Result<Arc<RecentBlockhashes>, InstructionError> {
-        self.recent_blockhashes
-            .clone()
-            .ok_or(InstructionError::UnsupportedSysvar)
-    }
-
-    #[deprecated]
-    #[allow(deprecated)]
-    pub fn set_recent_blockhashes(&mut self, recent_blockhashes: RecentBlockhashes) {
-        self.recent_blockhashes = Some(Arc::new(recent_blockhashes));
-    }
-
     pub fn fill_missing_entries<F: FnMut(&Pubkey, &mut dyn FnMut(&[u8]))>(
         &mut self,
         mut get_account_data: F,
@@ -111,14 +88,6 @@ impl SysvarCache {
             get_account_data(&rent::id(), &mut |data: &[u8]| {
                 if let Ok(rent) = deserialize(data) {
                     self.set_rent(rent);
-                }
-            });
-        }
-        #[allow(deprecated)]
-        if self.recent_blockhashes.is_none() {
-            get_account_data(&recent_blockhashes::id(), &mut |data: &[u8]| {
-                if let Ok(recent_blockhashes) = deserialize(data) {
-                    self.set_recent_blockhashes(recent_blockhashes);
                 }
             });
         }
@@ -165,7 +134,7 @@ pub mod get_sysvar_with_account_check {
         clock::Clock,
         context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
         rent::Rent,
-        solana_program::sysvar::{recent_blockhashes::RecentBlockhashes, Sysvar},
+        solana_program::sysvar::Sysvar,
     };
     use alloc::sync::Arc;
     use fluentbase_sdk::SharedAPI;
@@ -182,19 +151,5 @@ pub mod get_sysvar_with_account_check {
             instruction_account_index,
         )?;
         invoke_context.get_sysvar_cache().get_rent()
-    }
-
-    #[allow(deprecated)]
-    pub fn recent_blockhashes<SDK: SharedAPI>(
-        invoke_context: &InvokeContext<SDK>,
-        instruction_context: &InstructionContext,
-        instruction_account_index: IndexOfAccount,
-    ) -> Result<Arc<RecentBlockhashes>, InstructionError> {
-        check_sysvar_account::<RecentBlockhashes>(
-            &invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
-        invoke_context.get_sysvar_cache().get_recent_blockhashes()
     }
 }
