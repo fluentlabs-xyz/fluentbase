@@ -59,7 +59,7 @@ pub const DEVELOPER_PREVIEW_CHAIN_ID: u64 = 20993;
 pub const FUEL_DENOM_RATE: u64 = 1000;
 
 /// A max rWasm call stack limit
-pub const CALL_STACK_LIMIT: u32 = 1024;
+pub const CALL_STACK_LIMIT: u32 = 99024;
 
 pub fn is_delegated_runtime_address(address: &Address) -> bool {
     address == &PRECOMPILE_EVM_RUNTIME
