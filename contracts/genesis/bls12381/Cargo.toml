@@ -1,0 +1,12 @@
+[package]
+name = "fluentbase-contracts-bls12381"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+precompile = { workspace = true, features = ["blst"] }
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std", "precompile/std"]

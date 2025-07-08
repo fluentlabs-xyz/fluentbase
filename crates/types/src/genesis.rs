@@ -1,4 +1,4 @@
-use alloy_primitives::{address, Address};
+use alloy_primitives::{address, hex, Address};
 
 /// An address of EVM runtime that is used to execute EVM program
 pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0000000000000000000000000000000000520001");
@@ -78,6 +78,10 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
     SVM_EXECUTABLE_PREIMAGE,
 ];
 
+pub fn is_system_precompile(address: &Address) -> bool {
+    PRECOMPILE_ADDRESSES.contains(address)
+}
+
 pub const fn is_resumable_precompile(address: &Address) -> bool {
     match address {
         &PRECOMPILE_EIP2935
@@ -93,9 +97,31 @@ pub const fn is_resumable_precompile(address: &Address) -> bool {
     }
 }
 
-pub struct GenesisContractBuildOutput {
-    pub name: &'static str,
-    pub wasm_bytecode: &'static [u8],
-    pub rwasm_bytecode: &'static [u8],
-    pub rwasm_bytecode_hash: [u8; 32],
+/// Checks if the function call should be redirected to a native precompiled contract.
+///
+/// When the first four bytes of the input (function selector) match a precompile's address
+/// prefix, returns the corresponding precompiled account that should handle the call.
+///
+/// # Arguments
+/// * `input` - The complete calldata for the function call
+///
+/// # Returns
+/// * `Some(Account)` - The precompiled account if a match is found
+/// * `None` - If no matching precompile is found or input is too short
+pub fn try_resolve_precompile_account_from_input(input: &[u8]) -> Option<Address> {
+    if input.len() < 4 {
+        return None;
+    };
+    if input[..4] == PRECOMPILE_NATIVE_MULTICALL[16..] {
+        Some(PRECOMPILE_NATIVE_MULTICALL)
+    } else {
+        None
+    }
 }
+
+/// The authority address that is allowed to update the code of arbitrary accounts
+pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
+
+/// The prefix that must appear at the beginning of the transaction `call data`
+/// to signal that the transaction is intended to perform an account update.
+pub const UPDATE_GENESIS_PREFIX: [u8; 4] = hex!("0x69bc6f64");

@@ -12,7 +12,6 @@ shakmaty = { git = "https://github.com/niklasf/shakmaty", default-features = fal
 ] }
 
 [dev-dependencies]
-fluentbase-sdk-testing = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }

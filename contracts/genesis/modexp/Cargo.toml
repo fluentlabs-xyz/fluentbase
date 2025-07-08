@@ -1,19 +1,19 @@
 [package]
-name = "fluentbase-examples-abi-solidity"
+name = "fluentbase-contracts-modexp"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-hex-literal = { workspace = true }
+precompile = { workspace = true }
 
 [dev-dependencies]
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
 fluentbase-sdk = { workspace = true }
-hex-literal = { workspace = true }
+precompile = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std"]
+std = ["fluentbase-sdk/std", "precompile/std"]

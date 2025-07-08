@@ -1,5 +1,6 @@
 
 /target/
+/contracts/target/
 **/*.rs.bk
 crates/rwasm/Cargo.lock
 crates/rwasm/spec/target

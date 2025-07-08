@@ -1,0 +1,30 @@
+[package]
+name = "fluentbase-contracts-nitro"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+coset = { version = "0.3.8", default-features = false }
+ciborium = { version = "^0.2.1", default-features = false }
+x509-cert = { version = "0.2.5", default-features = false, features = ["pem"] }
+der = { version = "0.7.9", default-features = false, features = ["alloc"] }
+ecdsa = { version = "0.16.9", default-features = false, features = [
+    "digest",
+    "alloc",
+    "der",
+] }
+p384 = { version = "0.13.0", default-features = false, features = [
+    "ecdsa-core",
+    "ecdsa",
+] }
+
+[dev-dependencies]
+
+[build-dependencies]
+fluentbase-build = { workspace = true }
+fluentbase-sdk = { workspace = true }
+
+[features]
+default = ["std", "fluentbase-sdk/debug-print"]
+std = ["fluentbase-sdk/std"]

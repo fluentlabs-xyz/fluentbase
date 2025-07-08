@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-genesis"
+name = "fluentbase-contracts"
 version.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -11,17 +11,16 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-types = { workspace = true }
-serde = { workspace = true, default-features = false }
-serde_json = { version = "1.0", default-features = false }
-alloy-genesis = { workspace = true, default-features = false }
-lazy_static = { workspace = true }
+
+[lib]
+path = "lib.rs"
 
 [build-dependencies]
 fluentbase-types = { workspace = true }
 alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-fluentbase-contracts = { workspace = true }
+cargo_metadata = "0.19.1"
 
 [features]
 default = [

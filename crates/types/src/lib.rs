@@ -5,8 +5,6 @@
 extern crate alloc;
 extern crate core;
 
-use primitives as _;
-
 mod address;
 mod bytecode_type;
 mod context;
