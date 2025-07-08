@@ -1,22 +1,28 @@
-#[cfg(test)]
+#[cfg(test)] // TODO recover this tests?
 pub(crate) mod tests {
     use crate::{
         account::{AccountSharedData, WritableAccount},
         builtins::register_builtins,
         common::TestSdkType,
-        compute_budget::ComputeBudget,
-        context::{InvokeContext, TransactionContext},
+        compute_budget::{compute_budget::ComputeBudget, ComputeBudget},
+        context::{EnvironmentConfig, InvokeContext, TransactionContext},
         declare_process_instruction,
         error::{InstructionError, TransactionError},
         feature_set::FeatureSet,
         helpers::INSTRUCTION_METER_BUDGET,
-        loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments},
+        loaded_programs::{
+            LoadedProgram,
+            LoadedProgramsForTxBatch,
+            ProgramCacheForTxBatch,
+            ProgramRuntimeEnvironments,
+        },
         message_processor::MessageProcessor,
         native_loader,
         native_loader::create_loadable_account_for_test,
         secp256k1_instruction::new_secp256k1_instruction,
         serialization::serialize_parameters_aligned_custom,
-        solana_program::sysvar_cache::SysvarCache,
+        solana_program::{feature_set::feature_set_default, sysvar_cache::SysvarCache},
+        sysvar_cache::SysvarCache,
         test_helpers::journal_state,
     };
     use alloc::{format, sync::Arc, vec, vec::Vec};
@@ -134,33 +140,29 @@ pub(crate) mod tests {
         let executable_elf =
             Executable::<InvokeContext<TestSdkType>>::from_elf(&elf_bytes, loader.clone()).unwrap();
 
-        let programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::partial_default2(
-            Slot::default(),
+        let programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
+            Default::default(),
             ProgramRuntimeEnvironments {
                 program_runtime_v1: loader.clone(),
                 program_runtime_v2: loader.clone(),
             },
         );
-        let programs_modified_by_tx = LoadedProgramsForTxBatch::partial_default2(
-            Slot::default(),
-            ProgramRuntimeEnvironments {
-                program_runtime_v1: loader.clone(),
-                program_runtime_v2: loader.clone(),
-            },
+        let compute_budget = ComputeBudget::default();
+        let sysvar_cache = SysvarCache::default();
+        let environment_config = EnvironmentConfig::new(
+            blockhash,
+            None,
+            Arc::new(feature_set_default()),
+            0,
+            sysvar_cache,
         );
 
-        let compute_budget = crate::compute_budget::ComputeBudget::default();
-        let sysvar_cache = SysvarCache::default();
         let mut invoke_context = InvokeContext::new(
             transaction_context,
-            sysvar_cache,
-            &sdk,
+            programs_cache_for_tx_batch,
+            environment_config,
             compute_budget,
-            programs_loaded_for_tx_batch,
-            programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
-            Hash::default(),
-            0,
+            &sdk,
         );
 
         let expected_result = format!("{:?}", ProgramResult::Ok(0x0));
@@ -198,15 +200,7 @@ pub(crate) mod tests {
 
             let mem_region = MemoryRegion::new_writable(&mut mem, ebpf::MM_INPUT_START);
 
-            crate::create_vm!(
-                vm,
-                &executable_elf,
-                &mut invoke_context,
-                stack,
-                heap,
-                vec![mem_region],
-                None
-            );
+            crate::create_vm!(vm, &executable_elf, mem_region, &mut invoke_context,);
             vm.registers;
 
             let (interpreter_instruction_count, result) = vm.execute_program(&executable_elf, true);
@@ -218,12 +212,6 @@ pub(crate) mod tests {
             );
             (interpreter_instruction_count, vm.registers[11])
         };
-        // if executable_elf.get_config().enable_instruction_meter {
-        //     assert_eq!(
-        //         instruction_count, instruction_count_interpreter,
-        //         "Instruction meter did not consume expected amount"
-        //     );
-        // }
     }
 
     #[test]
@@ -239,7 +227,6 @@ pub(crate) mod tests {
 
         let function_registry =
             FunctionRegistry::<BuiltinFunction<InvokeContext<TestSdkType>>>::default();
-        // register_builtins(&mut function_registry);
         let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
 
         let mock_program_id = Pubkey::new_unique();

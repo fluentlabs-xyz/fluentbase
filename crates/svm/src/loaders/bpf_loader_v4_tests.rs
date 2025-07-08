@@ -871,7 +871,7 @@ mod tests {
             Err(InstructionError::InvalidArgument),
         );
 
-        test_loader_instruction_general_errors(/*&sdk, */ LoaderV4Instruction::Retract);
+        test_loader_instruction_general_errors(LoaderV4Instruction::Retract);
     }
 
     #[test]

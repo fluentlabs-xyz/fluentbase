@@ -109,18 +109,6 @@ pub(crate) fn mock_process_instruction<
 
     let (_config, loader) = prepare_vars_for_tests();
 
-    // let config = Config {
-    //     enable_instruction_tracing: false,
-    //     reject_broken_elfs: true,
-    //     sanitize_user_provided_values: true,
-    //     ..Default::default()
-    // };
-    // // Holds the function symbols of an Executable
-    // let mut function_registry: FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>> =
-    // FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default(); register_builtins(&
-    // mut function_registry); let loader = Arc::new(BuiltinProgram::new_loader(config,
-    // function_registry));
-
     with_mock_invoke_context!(
         invoke_context,
         transaction_context,
@@ -139,8 +127,6 @@ pub(crate) fn mock_process_instruction<
         instruction_data,
         &instruction_accounts,
         &program_indices,
-        // &mut 0,
-        // &mut ExecuteTimings::default(),
     );
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);

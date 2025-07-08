@@ -346,7 +346,7 @@ impl Message {
     }
 
     pub fn demote_program_id(&self, i: usize) -> bool {
-        self.is_key_called_as_program(i) // && !self.is_upgradeable_loader_present()
+        self.is_key_called_as_program(i)
     }
 
     /// Returns true if the account at the specified index was requested to be

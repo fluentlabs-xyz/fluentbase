@@ -22,11 +22,6 @@ pub fn advance_nonce_account<SDK: SharedAPI>(
     invoke_context: &InvokeContext<SDK>,
 ) -> Result<(), InstructionError> {
     if !account.is_writable() {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Advance nonce account: Account {} must be writeable",
-        //     account.get_key()
-        // );
         return Err(InstructionError::InvalidArgument);
     }
 
@@ -34,20 +29,11 @@ pub fn advance_nonce_account<SDK: SharedAPI>(
     match state.state() {
         State::Initialized(data) => {
             if !signers.contains(&data.authority) {
-                // ic_msg!(
-                //     invoke_context,
-                //     "Advance nonce account: Account {} must be a signer",
-                //     data.authority
-                // );
                 return Err(InstructionError::MissingRequiredSignature);
             }
             let next_durable_nonce =
                 DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash);
             if data.durable_nonce == next_durable_nonce {
-                // ic_msg!(
-                //     invoke_context,
-                //     "Advance nonce account: nonce can only advance once per slot"
-                // );
                 return Err(SystemError::NonceBlockhashNotExpired.into());
             }
 
@@ -58,14 +44,7 @@ pub fn advance_nonce_account<SDK: SharedAPI>(
             );
             account.set_state(&Versions::new(State::Initialized(new_data)))
         }
-        State::Uninitialized => {
-            // ic_msg!(
-            //     invoke_context,
-            //     "Advance nonce account: Account {} state is invalid",
-            //     account.get_key()
-            // );
-            Err(InstructionError::InvalidAccountData)
-        }
+        State::Uninitialized => Err(InstructionError::InvalidAccountData),
     }
 }
 
@@ -82,11 +61,6 @@ pub fn withdraw_nonce_account<SDK: SharedAPI>(
     let mut from = instruction_context
         .try_borrow_instruction_account(transaction_context, from_account_index)?;
     if !from.is_writable() {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Withdraw nonce account: Account {} must be writeable",
-        //     from.get_key()
-        // );
         return Err(InstructionError::InvalidArgument);
     }
 
@@ -94,12 +68,6 @@ pub fn withdraw_nonce_account<SDK: SharedAPI>(
     let signer = match state.state() {
         State::Uninitialized => {
             if lamports > from.get_lamports() {
-                // ic_msg!(
-                //     invoke_context,
-                //     "Withdraw nonce account: insufficient lamports {}, need {}",
-                //     from.get_lamports(),
-                //     lamports,
-                // );
                 return Err(InstructionError::InsufficientFunds);
             }
             *from.get_key()
@@ -109,10 +77,6 @@ pub fn withdraw_nonce_account<SDK: SharedAPI>(
                 let durable_nonce =
                     DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash);
                 if data.durable_nonce == durable_nonce {
-                    // ic_msg!(
-                    //     invoke_context,
-                    //     "Withdraw nonce account: nonce can only advance once per slot"
-                    // );
                     return Err(SystemError::NonceBlockhashNotExpired.into());
                 }
                 from.set_state(&Versions::new(State::Uninitialized))?;
@@ -120,12 +84,6 @@ pub fn withdraw_nonce_account<SDK: SharedAPI>(
                 let min_balance = rent.minimum_balance(from.get_data().len());
                 let amount = checked_add(lamports, min_balance)?;
                 if amount > from.get_lamports() {
-                    // ic_msg!(
-                    //     invoke_context,
-                    //     "Withdraw nonce account: insufficient lamports {}, need {}",
-                    //     from.get_lamports(),
-                    //     amount,
-                    // );
                     return Err(InstructionError::InsufficientFunds);
                 }
             }
@@ -134,11 +92,6 @@ pub fn withdraw_nonce_account<SDK: SharedAPI>(
     };
 
     if !signers.contains(&signer) {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Withdraw nonce account: Account {} must sign",
-        //     signer
-        // );
         return Err(InstructionError::MissingRequiredSignature);
     }
 
@@ -158,11 +111,6 @@ pub fn initialize_nonce_account<SDK: SharedAPI>(
     invoke_context: &InvokeContext<SDK>,
 ) -> Result<(), InstructionError> {
     if !account.is_writable() {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Initialize nonce account: Account {} must be writeable",
-        //     account.get_key()
-        // );
         return Err(InstructionError::InvalidArgument);
     }
 
@@ -170,12 +118,6 @@ pub fn initialize_nonce_account<SDK: SharedAPI>(
         State::Uninitialized => {
             let min_balance = rent.minimum_balance(account.get_data().len());
             if account.get_lamports() < min_balance {
-                // ic_msg!(
-                //     invoke_context,
-                //     "Initialize nonce account: insufficient lamports {}, need {}",
-                //     account.get_lamports(),
-                //     min_balance
-                // );
                 return Err(InstructionError::InsufficientFunds);
             }
             let durable_nonce =
@@ -188,14 +130,7 @@ pub fn initialize_nonce_account<SDK: SharedAPI>(
             let state = State::Initialized(data);
             account.set_state(&Versions::new(state))
         }
-        State::Initialized(_) => {
-            // ic_msg!(
-            //     invoke_context,
-            //     "Initialize nonce account: Account {} state is invalid",
-            //     account.get_key()
-            // );
-            Err(InstructionError::InvalidAccountData)
-        }
+        State::Initialized(_) => Err(InstructionError::InvalidAccountData),
     }
 }
 
@@ -206,11 +141,6 @@ pub fn authorize_nonce_account<SDK: SharedAPI>(
     _invoke_context: &InvokeContext<SDK>,
 ) -> Result<(), InstructionError> {
     if !account.is_writable() {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Authorize nonce account: Account {} must be writeable",
-        //     account.get_key()
-        // );
         return Err(InstructionError::InvalidArgument);
     }
     match account
@@ -218,20 +148,8 @@ pub fn authorize_nonce_account<SDK: SharedAPI>(
         .authorize(signers, *nonce_authority)
     {
         Ok(versions) => account.set_state(&versions),
-        Err(AuthorizeNonceError::Uninitialized) => {
-            // ic_msg!(
-            //     invoke_context,
-            //     "Authorize nonce account: Account {} state is invalid",
-            //     account.get_key()
-            // );
-            Err(InstructionError::InvalidAccountData)
-        }
+        Err(AuthorizeNonceError::Uninitialized) => Err(InstructionError::InvalidAccountData),
         Err(AuthorizeNonceError::MissingRequiredSignature(_account_authority)) => {
-            // ic_msg!(
-            //     invoke_context,
-            //     "Authorize nonce account: Account {} must sign",
-            //     account_authority
-            // );
             Err(InstructionError::MissingRequiredSignature)
         }
     }
