@@ -2,9 +2,6 @@
 mod tests {
     use crate::{
         account::{Account, AccountSharedData, ReadableAccount},
-        context::InvokeContext,
-        hash::Hash,
-        helpers::create_account_shared_data_for_test,
         native_loader,
         pubkey::Pubkey,
         rent::Rent,
@@ -16,7 +13,6 @@ mod tests {
         with_mock_invoke_context,
     };
     use fluentbase_sdk::SharedAPI;
-    use fluentbase_sdk_testing::HostTestingContext;
     use solana_bincode::serialize;
     use solana_instruction::error::InstructionError;
 
@@ -39,13 +35,6 @@ mod tests {
             |_invoke_context| {},
             |_invoke_context| {},
         )
-    }
-
-    fn create_default_account() -> AccountSharedData {
-        AccountSharedData::new(0, 0, &Pubkey::new_unique())
-    }
-    fn create_default_rent_account() -> AccountSharedData {
-        create_account_shared_data_for_test(&Rent::free())
     }
 
     #[test]

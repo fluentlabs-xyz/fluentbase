@@ -1,14 +1,11 @@
 use crate::{
     account::{AccountSharedData, BorrowedAccount, ReadableAccount},
-    account_utils::StateMut,
     common::limited_deserialize_packet_size,
     context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
     declare_process_instruction,
     pubkey::Pubkey,
-    solana_program::{nonce, nonce::state::Versions},
     system_instruction::{SystemError, SystemInstruction, MAX_PERMITTED_DATA_LENGTH},
     system_program,
-    sysvar_cache::get_sysvar_with_account_check,
 };
 use alloc::boxed::Box;
 use fluentbase_sdk::SharedAPI;
@@ -45,12 +42,6 @@ impl Address {
             };
             // re-derive the address, must match the supplied address
             if *address != address_with_seed {
-                // ic_msg!(
-                //     invoke_context,
-                //     "Create: address {} does not match derived address {}",
-                //     address,
-                //     address_with_seed
-                // );
                 return Err(SystemError::AddressWithSeedMismatch.into());
             }
             Some(*base)
@@ -493,19 +484,19 @@ declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SystemAccountKind {
     System,
-    Nonce,
+    // Nonce,
 }
 
 pub fn get_system_account_kind(account: &AccountSharedData) -> Option<SystemAccountKind> {
     if system_program::check_id(account.owner()) {
         if account.data().is_empty() {
             Some(SystemAccountKind::System)
-        } else if account.data().len() == nonce::state::State::size() {
-            let nonce_versions: Versions = account.state().ok()?;
-            match nonce_versions.state() {
-                nonce::state::State::Uninitialized => None,
-                nonce::state::State::Initialized(_) => Some(SystemAccountKind::Nonce),
-            }
+        // } else if account.data().len() == nonce::state::State::size() {
+        //     let nonce_versions: Versions = account.state().ok()?;
+        //     match nonce_versions.state() {
+        //         nonce::state::State::Uninitialized => None,
+        //         nonce::state::State::Initialized(_) => Some(SystemAccountKind::Nonce),
+        //     }
         } else {
             None
         }
