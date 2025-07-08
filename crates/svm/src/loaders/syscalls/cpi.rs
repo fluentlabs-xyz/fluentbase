@@ -332,14 +332,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
     //         false,
     //     )?;
     //
-    //     // consume_compute_meter(
-    //     //     invoke_context,
-    //     //     account_info
-    //     //         .data_len
-    //     //         .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
-    //     //         .unwrap_or(u64::MAX),
-    //     // )?;
-    //
     //     let serialized_data = if direct_mapping {
     //         // See comment in CallerAccount::from_account_info()
     //         Default::default()
@@ -464,7 +456,6 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
         check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
 
         let mut accounts: Vec<AccountMeta> = Vec::with_capacity(account_metas.len());
-        // #[allow(clippy::needless_range_loop)]
         for account_index in 0..account_metas.len() {
             let account_meta_ret_val = account_metas.item_at_idx(account_index);
             let account_meta = account_meta_ret_val.as_ref();
@@ -905,13 +896,6 @@ where
 
         if callee_account.is_executable() {
             // Use the known account
-            // consume_compute_meter(
-            //     invoke_context,
-            //     (callee_account.get_data().len() as u64)
-            //         .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
-            //         .unwrap_or(u64::MAX),
-            // )?;
-
             accounts.push((instruction_account.index_in_caller, None));
         } else if let Some(caller_account_index) =
             account_info_keys.iter().position(|key| key == account_key)

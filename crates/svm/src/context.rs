@@ -638,7 +638,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
 
             ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => {
                 load_program_from_bytes(
-                    // &mut load_program_metrics,
                     program_account.data(),
                     program_account.owner(),
                     program_account.data().len(),
@@ -651,7 +650,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
 
             ProgramAccountLoadResult::ProgramOfLoaderV2(program_account) => {
                 load_program_from_bytes(
-                    // &mut load_program_metrics,
                     program_account.data(),
                     program_account.owner(),
                     program_account.data().len(),
@@ -667,7 +665,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 .ok_or(InstructionError::InvalidAccountData)
                 .and_then(|elf_bytes| {
                     load_program_from_bytes(
-                        // &mut load_program_metrics,
                         elf_bytes,
                         &loader_v4::id(),
                         program_account.data().len(),
@@ -811,9 +808,6 @@ pub struct TransactionContext {
     pub(crate) accounts_resize_delta: RefCell<i64>,
 
     pub(crate) rent: Rent,
-    // /// Useful for debugging to filter by or to look it up on the explorer
-    // #[cfg(all(not(target_os = "solana"), debug_assertions))]
-    // signature: Signature,
 }
 
 impl TransactionContext {
@@ -839,8 +833,6 @@ impl TransactionContext {
             return_data: TransactionReturnData::default(),
             accounts_resize_delta: RefCell::new(0),
             rent,
-            // #[cfg(all(not(target_os = "solana"), debug_assertions))]
-            // signature: Signature::default(),
         }
     }
 

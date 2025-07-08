@@ -580,11 +580,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // let cost = invoke_context
-        //     .get_compute_budget()
-        //     .create_program_address_units;
-        // consume_compute_meter(invoke_context, cost)?;
-
         let (seeds, program_id) = translate_and_check_program_address_inputs(
             seeds_addr,
             seeds_len,

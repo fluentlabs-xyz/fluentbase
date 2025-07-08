@@ -1048,10 +1048,6 @@ pub mod tests {
         let to = Pubkey::new_unique();
         let account_from = AccountSharedData::new(100, 0, &system_program_id);
         let account_to = AccountSharedData::new(0, 0, &system_program_id);
-        // let mut account_with_elf =
-        //     load_program_account_from_elf(&bpf_loader_id,
-        // "../examples/solana-program/assets/solana_program.so"); account_with_elf.
-        // set_lamports(0);
 
         let accounts = vec![
             (from, account_from),
