@@ -30,7 +30,6 @@ pub mod recent_blockhashes_account;
 // #[cfg(test)]
 // pub mod secp256k1_instruction;
 pub mod bpf_loader;
-pub mod bpf_loader_deprecated;
 pub mod epoch_rewards;
 pub mod epoch_schedule;
 pub mod fluentbase;

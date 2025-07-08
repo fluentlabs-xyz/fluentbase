@@ -1,6 +1,5 @@
 use crate::{
     bpf_loader,
-    bpf_loader_deprecated,
     common::rbpf_config_default,
     context::{BuiltinFunctionWithContext, InvokeContext},
     native_loader,
@@ -53,7 +52,6 @@ pub trait ForkGraph {
 pub enum ProgramCacheEntryOwner {
     #[default]
     NativeLoader,
-    LoaderV1,
     LoaderV2,
     LoaderV4,
 }
@@ -63,8 +61,6 @@ impl TryFrom<&Pubkey> for ProgramCacheEntryOwner {
     fn try_from(loader_key: &Pubkey) -> Result<Self, ()> {
         if native_loader::check_id(loader_key) {
             Ok(ProgramCacheEntryOwner::NativeLoader)
-        } else if bpf_loader_deprecated::check_id(loader_key) {
-            Ok(ProgramCacheEntryOwner::LoaderV1)
         } else if bpf_loader::check_id(loader_key) {
             Ok(ProgramCacheEntryOwner::LoaderV2)
         } else if loader_v4::check_id(loader_key) {
@@ -79,7 +75,6 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
     fn from(program_cache_entry_owner: ProgramCacheEntryOwner) -> Self {
         match program_cache_entry_owner {
             ProgramCacheEntryOwner::NativeLoader => native_loader::id(),
-            ProgramCacheEntryOwner::LoaderV1 => bpf_loader_deprecated::id(),
             ProgramCacheEntryOwner::LoaderV2 => bpf_loader::id(),
             ProgramCacheEntryOwner::LoaderV4 => loader_v4::id(),
         }

@@ -12,7 +12,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use crate::{
-    bpf_loader_deprecated,
     solana_program::{
         instruction::CompiledInstruction,
         message::{compiled_keys::CompiledKeys, MessageHeader},
@@ -46,7 +45,7 @@ mod builtins {
     use solana_pubkey::Pubkey;
 
     lazy_static! {
-        pub static ref BUILTIN_PROGRAMS_KEYS: [Pubkey; 9] = {
+        pub static ref BUILTIN_PROGRAMS_KEYS: [Pubkey; 8] = {
             let parse = |s| Pubkey::from_str(s).unwrap();
             [
                 parse("Config1111111111111111111111111111111111111"),
@@ -57,7 +56,6 @@ mod builtins {
                 parse("Vote111111111111111111111111111111111111111"),
                 system_program::id(),
                 bpf_loader::id(),
-                bpf_loader_deprecated::id(),
             ]
         };
     }
@@ -445,7 +443,7 @@ mod tests {
     #[test]
     fn test_builtin_program_keys() {
         let keys: HashSet<Pubkey> = BUILTIN_PROGRAMS_KEYS.iter().copied().collect();
-        assert_eq!(keys.len(), 9);
+        assert_eq!(keys.len(), 8);
         for k in keys {
             let k = format!("{k}");
             assert!(k.ends_with("11111111111111111111111"));
@@ -459,7 +457,7 @@ mod tests {
         let builtins = format!("{:?}", *BUILTIN_PROGRAMS_KEYS);
         assert_eq!(
             format!("{}", hash::hash(builtins.as_bytes())),
-            "3NR3Qmx9ynhQvZqvcFHutZ79Yjb6zyaGwLWvC8zU6kEB"
+            "BeaWR2esVJpJhHKiGyqedJtd6TwAaeA5nUNZHpjhim6m"
         );
     }
 

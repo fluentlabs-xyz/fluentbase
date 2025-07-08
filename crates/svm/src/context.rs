@@ -1,7 +1,6 @@
 use crate::{
     account::{AccountSharedData, BorrowedAccount, ReadableAccount},
     bpf_loader,
-    bpf_loader_deprecated,
     clock::Slot,
     common::load_program_from_bytes,
     compute_budget::compute_budget::ComputeBudget,
@@ -44,7 +43,7 @@ use solana_rbpf::{
 };
 use solana_stable_layout::stable_instruction::StableInstruction;
 
-/// Index of an account inside of the TransactionContext or an InstructionContext.
+/// Index of an account inside the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
 
 pub type BuiltinFunctionWithContext<'a, SDK> = BuiltinFunction<InvokeContext<'a, SDK>>;
@@ -75,7 +74,6 @@ pub type TransactionAccount = (Pubkey, AccountSharedData);
 
 pub enum ProgramAccountLoadResult {
     InvalidAccountData(ProgramCacheEntryOwner),
-    ProgramOfLoaderV1(AccountSharedData),
     ProgramOfLoaderV2(AccountSharedData),
     ProgramOfLoaderV4(AccountSharedData, Slot),
 }
@@ -251,7 +249,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         // but performed on a very small slice and requires no heap allocations.
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
         let mut deduplicated_instruction_accounts: Vec<InstructionAccount> = Vec::new();
-        let mut duplicate_indicies = Vec::with_capacity(instruction.accounts.len());
+        let mut duplicate_indexes = Vec::with_capacity(instruction.accounts.len());
         for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
             let index_in_transaction = self
                 .transaction_context
@@ -264,7 +262,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                         instruction_account.index_in_transaction == index_in_transaction
                     })
             {
-                duplicate_indicies.push(duplicate_index);
+                duplicate_indexes.push(duplicate_index);
                 let instruction_account = deduplicated_instruction_accounts
                     .get_mut(duplicate_index)
                     .ok_or(InstructionError::NotEnoughAccountKeys)?;
@@ -277,7 +275,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                         &account_meta.pubkey,
                     )
                     .ok_or_else(|| InstructionError::MissingAccount)?;
-                duplicate_indicies.push(deduplicated_instruction_accounts.len());
+                duplicate_indexes.push(deduplicated_instruction_accounts.len());
                 deduplicated_instruction_accounts.push(InstructionAccount {
                     index_in_transaction,
                     index_in_caller,
@@ -306,7 +304,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 return Err(InstructionError::PrivilegeEscalation);
             }
         }
-        let instruction_accounts = duplicate_indicies
+        let instruction_accounts = duplicate_indexes
             .into_iter()
             .map(|duplicate_index| {
                 deduplicated_instruction_accounts
@@ -499,16 +497,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
 
     // Should alignment be enforced during user pointer translation
     pub fn get_check_aligned(&self) -> bool {
-        self.transaction_context
-            .get_current_instruction_context()
-            .and_then(|instruction_context| {
-                let program_account =
-                    instruction_context.try_borrow_last_program_account(&self.transaction_context);
-                debug_assert!(program_account.is_ok());
-                program_account
-            })
-            .map(|program_account| *program_account.get_owner() != bpf_loader_deprecated::id())
-            .unwrap_or(true)
+        true
     }
 
     // Set this instruction syscall context
@@ -605,10 +594,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             );
         }
 
-        if bpf_loader_deprecated::check_id(program_account.owner()) {
-            return Some(ProgramAccountLoadResult::ProgramOfLoaderV1(program_account));
-        }
-
         if bpf_loader::check_id(program_account.owner()) {
             return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
         }
@@ -635,18 +620,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
                 ProgramCacheEntry::new_tombstone(slot, owner, ProgramCacheEntryType::Closed),
             ),
-
-            ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => {
-                load_program_from_bytes(
-                    program_account.data(),
-                    program_account.owner(),
-                    program_account.data().len(),
-                    0,
-                    environments.program_runtime_v1.clone(),
-                    reload,
-                )
-                .map_err(|_| (0, ProgramCacheEntryOwner::LoaderV1))
-            }
 
             ProgramAccountLoadResult::ProgramOfLoaderV2(program_account) => {
                 load_program_from_bytes(

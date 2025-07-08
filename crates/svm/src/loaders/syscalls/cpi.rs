@@ -2,7 +2,6 @@ use super::*;
 use crate::{
     account::BorrowedAccount,
     bpf_loader,
-    bpf_loader_deprecated,
     builtins::SyscallInvokeSignedRust,
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     error::{Error, SvmError},
@@ -382,14 +381,8 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
     fn realloc_region(
         &self,
         memory_mapping: &'b MemoryMapping<'_>,
-        is_loader_deprecated: bool,
     ) -> Result<Option<&'a MemoryRegion>, Error> {
-        account_realloc_region(
-            memory_mapping,
-            self.vm_data_addr,
-            self.original_data_len,
-            is_loader_deprecated,
-        )
+        account_realloc_region(memory_mapping, self.vm_data_addr, self.original_data_len)
     }
 }
 
@@ -407,7 +400,6 @@ pub trait SyscallInvokeSigned<SDK: SharedAPI> {
         program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
-        is_loader_deprecated: bool,
         memory_mapping: &'b MemoryMapping<'a>,
         invoke_context: &mut InvokeContext<SDK>,
     ) -> Result<TranslatedAccounts<'a, 'b, SDK>, SvmError>;
@@ -484,7 +476,6 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
         program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
-        is_loader_deprecated: bool,
         memory_mapping: &'b MemoryMapping<'a>,
         invoke_context: &mut InvokeContext<SDK>,
     ) -> Result<TranslatedAccounts<'a, 'b, SDK>, SvmError> {
@@ -508,7 +499,6 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
             &account_info_keys,
             account_infos,
             account_infos_addr,
-            is_loader_deprecated,
             invoke_context,
             memory_mapping,
             CallerAccount::from_account_info,
@@ -849,7 +839,6 @@ fn translate_and_update_accounts<
     account_info_keys: &[Pubkey],
     account_infos: SliceFatPtr64<'a, T>,
     _vm_addr: u64,
-    is_loader_deprecated: bool,
     invoke_context: &mut InvokeContext<SDK>,
     memory_mapping: &'b MemoryMapping<'a>,
     do_translate: F,
@@ -931,7 +920,6 @@ where
             let update_caller = update_callee_account(
                 invoke_context,
                 memory_mapping,
-                is_loader_deprecated,
                 &caller_account,
                 callee_account,
                 direct_mapping,
@@ -1035,7 +1023,6 @@ fn check_authorized_program<SDK: SharedAPI>(
 ) -> Result<(), Error> {
     if native_loader::check_id(program_id)
         || bpf_loader::check_id(program_id)
-        || bpf_loader_deprecated::check_id(program_id)
         || is_precompile(program_id, |feature_id: &Pubkey| {
             invoke_context.get_feature_set().is_active(feature_id)
         })
@@ -1071,10 +1058,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
         memory_mapping,
         invoke_context,
     )?;
-    let is_loader_deprecated = *instruction_context
-        .try_borrow_last_program_account(transaction_context)?
-        .get_owner()
-        == bpf_loader_deprecated::id();
     let (instruction_accounts, program_indices): (Vec<InstructionAccount>, Vec<IndexOfAccount>) =
         invoke_context.prepare_instruction(&instruction, &signers)?;
     check_authorized_program(&instruction.program_id, &instruction.data, invoke_context)?;
@@ -1084,7 +1067,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
         &program_indices,
         account_infos_addr,
         account_infos_len,
-        is_loader_deprecated,
         memory_mapping,
         invoke_context,
     )?;
@@ -1117,12 +1099,7 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
             if let Some(caller_account) = caller_account {
                 let callee_account = instruction_context
                     .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
-                update_caller_account_perms(
-                    memory_mapping,
-                    caller_account,
-                    &callee_account,
-                    is_loader_deprecated,
-                )?;
+                update_caller_account_perms(memory_mapping, caller_account, &callee_account)?;
             }
         }
     }
@@ -1134,7 +1111,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
             update_caller_account(
                 invoke_context,
                 memory_mapping,
-                is_loader_deprecated,
                 caller_account,
                 &mut callee_account,
                 direct_mapping,
@@ -1159,7 +1135,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
 fn update_callee_account<SDK: SharedAPI>(
     invoke_context: &InvokeContext<SDK>,
     memory_mapping: &MemoryMapping,
-    is_loader_deprecated: bool,
     caller_account: &CallerAccount<SDK>,
     mut callee_account: BorrowedAccount<'_>,
     direct_mapping: bool,
@@ -1180,12 +1155,6 @@ fn update_callee_account<SDK: SharedAPI>(
         {
             Ok(()) => {
                 let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
-                // bpf_loader_deprecated programs don't have a realloc region
-                // TODO get rid of this check and prevent of using deprecated loader?
-                if is_loader_deprecated && realloc_bytes_used > 0 {
-                    return Err(InstructionError::InvalidRealloc.into());
-                }
-
                 if prev_len != post_len {
                     callee_account.set_data_length(post_len)?;
                     // pointer to data may have changed, so caller must be updated
@@ -1253,7 +1222,6 @@ fn update_caller_account_perms<SDK: SharedAPI>(
     memory_mapping: &MemoryMapping,
     caller_account: &CallerAccount<SDK>,
     callee_account: &BorrowedAccount<'_>,
-    is_loader_deprecated: bool,
 ) -> Result<(), Error> {
     let CallerAccount {
         original_data_len,
@@ -1267,12 +1235,7 @@ fn update_caller_account_perms<SDK: SharedAPI>(
             .state
             .set(account_data_region_memory_state(callee_account));
     }
-    let realloc_region = account_realloc_region(
-        memory_mapping,
-        *vm_data_addr,
-        *original_data_len,
-        is_loader_deprecated,
-    )?;
+    let realloc_region = account_realloc_region(memory_mapping, *vm_data_addr, *original_data_len)?;
     if let Some(region) = realloc_region {
         region
             .state
@@ -1297,7 +1260,6 @@ fn update_caller_account_perms<SDK: SharedAPI>(
 fn update_caller_account<'a, 'b, SDK: SharedAPI>(
     invoke_context: &InvokeContext<SDK>,
     memory_mapping: &'a MemoryMapping,
-    is_loader_deprecated: bool,
     caller_account: &mut CallerAccount<'a, 'b, SDK>,
     callee_account: &mut BorrowedAccount<'_>,
     direct_mapping: bool,
@@ -1385,16 +1347,9 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                 // or it must zero the account data, therefore making the
                 // zeroing we do here redundant.
                 if prev_len > caller_account.original_data_len {
-                    // If we get here and prev_len > original_data_len, then
-                    // we've already returned InvalidRealloc for the
-                    // bpf_loader_deprecated case.
-                    debug_assert!(!is_loader_deprecated);
-
                     // Temporarily configure the realloc region as writable then set it back to
                     // whatever state it had.
-                    let realloc_region = caller_account
-                        .realloc_region(memory_mapping, is_loader_deprecated)?
-                        .unwrap(); // unwrapping here is fine, we already asserted !is_loader_deprecated
+                    let realloc_region = caller_account.realloc_region(memory_mapping)?.unwrap(); // unwrapping here is fine, we already asserted !is_loader_deprecated
                     let original_state = realloc_region.state.replace(MemoryState::Writable);
                     defer! {
                         realloc_region.state.set(original_state);
@@ -1493,10 +1448,6 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
         // Propagate changes to the realloc region in the callee up to the caller.
         let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
         if realloc_bytes_used > 0 {
-            // In the is_loader_deprecated case, we must have failed with
-            // InvalidRealloc by now.
-            debug_assert!(!is_loader_deprecated);
-
             let mut to_slice = {
                 // If a callee reallocs an account, we write into the caller's
                 // realloc region regardless of whether the caller has write
@@ -1506,9 +1457,7 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
                 //
                 // Therefore we temporarily configure the realloc region as writable
                 // then set it back to whatever state it had.
-                let realloc_region = caller_account
-                    .realloc_region(memory_mapping, is_loader_deprecated)?
-                    .unwrap(); // unwrapping here is fine, we asserted !is_loader_deprecated
+                let realloc_region = caller_account.realloc_region(memory_mapping)?.unwrap(); // unwrapping here is fine, we asserted !is_loader_deprecated
                 let original_state = realloc_region.state.replace(MemoryState::Writable);
                 defer! {
                     realloc_region.state.set(original_state);
@@ -1568,12 +1517,7 @@ fn account_realloc_region<'a>(
     memory_mapping: &'a MemoryMapping<'_>,
     vm_data_addr: u64,
     original_data_len: usize,
-    is_loader_deprecated: bool,
 ) -> Result<Option<&'a MemoryRegion>, Error> {
-    if is_loader_deprecated {
-        return Ok(None);
-    }
-
     let realloc_vm_addr = vm_data_addr.saturating_add(original_data_len as u64);
     let realloc_region = memory_mapping.region(AccessType::Load, realloc_vm_addr)?;
     debug_assert_eq!(realloc_region.vm_addr, realloc_vm_addr);

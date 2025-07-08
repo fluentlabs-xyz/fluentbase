@@ -1,5 +1,4 @@
 use crate::{
-    bpf_loader_deprecated,
     compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
     context::{IndexOfAccount, InvokeContext},
     create_vm,
@@ -25,14 +24,6 @@ pub fn execute<'a, SDK: SharedAPI>(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
 
-    let (_program_id, is_loader_deprecated) = {
-        let program_account =
-            instruction_context.try_borrow_last_program_account(transaction_context)?;
-        (
-            *program_account.get_key(),
-            *program_account.get_owner() == bpf_loader_deprecated::id(),
-        )
-    };
     let use_jit = false;
     let direct_mapping = invoke_context
         .get_feature_set()
@@ -52,11 +43,7 @@ pub fn execute<'a, SDK: SharedAPI>(
             let vm_end = m
                 .vm_data_addr
                 .saturating_add(m.original_data_len as u64)
-                .saturating_add(if !is_loader_deprecated {
-                    MAX_PERMITTED_DATA_INCREASE as u64
-                } else {
-                    0
-                });
+                .saturating_add(MAX_PERMITTED_DATA_INCREASE as u64);
             m.vm_data_addr..vm_end
         })
         .collect::<Vec<_>>();
