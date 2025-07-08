@@ -1,11 +1,12 @@
 error: Function ID mismatch: Expected 0xf8194e48 for 'greeting(string)', but got 0xdeadbeef
+
+         = note: You're seeing this error because you have validation enabled (validate(true))
+         = help: To fix this, you can either:
+         = help: 1. Use the expected function ID: #[function_id("greeting(string)")]
+         = help: 2. Remove the validate parameter entirely: #[function_id("your_signature")]
+         = help: 3. Or explicitly disable validation: #[function_id("your_signature", validate(false))]
+
   --> tests/ui/router/fail/invalid_selector_validation.rs:24:19
    |
 24 |     #[function_id("0xDEADBEEF", validate(true))]
-   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: You're seeing this error because you have validation enabled (validate(true))
-   = help: To fix this, you can either:
-   = help: 1. Use the expected function ID: #[function_id("greeting(string)")]
-   = help: 2. Remove the validate parameter entirely: #[function_id("your_signature")]
-   = help: 3. Or explicitly disable validation: #[function_id("your_signature", validate(false))]
+   |                   ^^^^^^^^^^^^

@@ -1,5 +1,3 @@
-extern crate test;
-
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{address, Address, U256};
 use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};

@@ -2,7 +2,7 @@ error: fallback method must have signature 'fn fallback(&self)' with no paramete
   --> tests/ui/router/fail/incorrect_fallback_signature.rs:25:5
    |
 25 |     fn fallback(&self, data: u64) -> bool {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |     ^^
 
 error: Failed to process router implementation due to method parsing errors
   --> tests/ui/router/fail/incorrect_fallback_signature.rs:23:1
