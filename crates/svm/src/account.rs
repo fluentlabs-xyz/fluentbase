@@ -1,5 +1,5 @@
 use crate::{
-    bpf_loader,
+    // bpf_loader,
     clock::{Epoch, INITIAL_RENT_EPOCH},
     context::{IndexOfAccount, InstructionContext, TransactionContext},
     helpers::is_zeroed,
@@ -24,7 +24,10 @@ use solana_pubkey::Pubkey;
 pub type InheritableAccountFields = (u64, Epoch);
 pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITIAL_RENT_EPOCH);
 /// Replacement for the executable flag: An account being owned by one of these contains a program.
-pub const PROGRAM_OWNERS: &[Pubkey] = &[bpf_loader::id(), loader_v4::id()];
+pub const PROGRAM_OWNERS: &[Pubkey] = &[
+    // bpf_loader::id(),
+    loader_v4::id(),
+];
 pub fn is_executable_by_owner(pk: &Pubkey) -> bool {
     PROGRAM_OWNERS.contains(pk)
 }

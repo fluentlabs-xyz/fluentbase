@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     account::BorrowedAccount,
-    bpf_loader,
+    // bpf_loader,
     builtins::SyscallInvokeSignedRust,
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     error::{Error, SvmError},
@@ -1022,7 +1022,7 @@ fn check_authorized_program<SDK: SharedAPI>(
     invoke_context: &InvokeContext<SDK>,
 ) -> Result<(), Error> {
     if native_loader::check_id(program_id)
-        || bpf_loader::check_id(program_id)
+        // || bpf_loader::check_id(program_id)
         || is_precompile(program_id, |feature_id: &Pubkey| {
             invoke_context.get_feature_set().is_active(feature_id)
         })

@@ -1,6 +1,6 @@
 use crate::{
     account::AccountSharedData,
-    bpf_loader,
+    // bpf_loader,
     clock::Slot,
     context::{InstructionContext, InvokeContext, TransactionContext},
     hash::{Hash, Hasher},
@@ -164,7 +164,7 @@ pub fn morph_into_deployment_environment_v1<'a, SDK: SharedAPI>(
 }
 
 pub fn check_loader_id(id: &Pubkey) -> bool {
-    loader_v4::check_id(id) || bpf_loader::check_id(id)
+    loader_v4::check_id(id) // || bpf_loader::check_id(id)
 }
 
 pub fn rbpf_config_default(compute_budget: Option<&ComputeBudget>) -> Config {

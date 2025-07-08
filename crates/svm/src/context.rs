@@ -1,6 +1,6 @@
 use crate::{
     account::{AccountSharedData, BorrowedAccount, ReadableAccount},
-    bpf_loader,
+    // bpf_loader,
     clock::Slot,
     common::load_program_from_bytes,
     compute_budget::compute_budget::ComputeBudget,
@@ -74,7 +74,7 @@ pub type TransactionAccount = (Pubkey, AccountSharedData);
 
 pub enum ProgramAccountLoadResult {
     InvalidAccountData(ProgramCacheEntryOwner),
-    ProgramOfLoaderV2(AccountSharedData),
+    // ProgramOfLoaderV2(AccountSharedData),
     ProgramOfLoaderV4(AccountSharedData, Slot),
 }
 
@@ -594,9 +594,9 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             );
         }
 
-        if bpf_loader::check_id(program_account.owner()) {
-            return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
-        }
+        // if bpf_loader::check_id(program_account.owner()) {
+        //     return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
+        // }
 
         Some(ProgramAccountLoadResult::InvalidAccountData(
             ProgramCacheEntryOwner::LoaderV4,
@@ -621,17 +621,17 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
                 ProgramCacheEntry::new_tombstone(slot, owner, ProgramCacheEntryType::Closed),
             ),
 
-            ProgramAccountLoadResult::ProgramOfLoaderV2(program_account) => {
-                load_program_from_bytes(
-                    program_account.data(),
-                    program_account.owner(),
-                    program_account.data().len(),
-                    0,
-                    environments.program_runtime_v1.clone(),
-                    reload,
-                )
-                .map_err(|_| (0, ProgramCacheEntryOwner::LoaderV2))
-            }
+            // ProgramAccountLoadResult::ProgramOfLoaderV2(program_account) => {
+            //     load_program_from_bytes(
+            //         program_account.data(),
+            //         program_account.owner(),
+            //         program_account.data().len(),
+            //         0,
+            //         environments.program_runtime_v1.clone(),
+            //         reload,
+            //     )
+            //     .map_err(|_| (0, ProgramCacheEntryOwner::LoaderV2))
+            // }
             ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot) => program_account
                 .data()
                 .get(LoaderV4State::program_data_offset()..)
