@@ -389,7 +389,6 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_last_program_key(transaction_context)?;
     if loader_v4::check_id(program_id) {
-        invoke_context.consume_checked(DEFAULT_COMPUTE_UNITS)?;
         match limited_deserialize_packet_size(instruction_data)? {
             LoaderV4Instruction::Write { offset, bytes } => {
                 process_instruction_write(invoke_context, offset, bytes)

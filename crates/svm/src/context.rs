@@ -141,7 +141,6 @@ pub struct InvokeContext<'a, SDK: SharedAPI> {
     /// Runtime configurations used to provision the invocation environment.
     pub environment_config: EnvironmentConfig,
     compute_budget: ComputeBudget,
-    compute_meter: RefCell<u64>,
     pub syscall_context: Vec<Option<SyscallContext>>,
     traces: Vec<Vec<[u64; 12]>>,
     pub sdk: &'a SDK,
@@ -161,7 +160,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             program_cache_for_tx_batch,
             environment_config,
             compute_budget,
-            compute_meter: RefCell::new(compute_budget.compute_unit_limit),
             syscall_context: Vec::new(),
             traces: Vec::new(),
             sdk,
@@ -472,25 +470,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         result
     }
 
-    /// Consume compute units
-    pub fn consume_checked(&self, amount: u64) -> Result<(), Box<dyn core::error::Error>> {
-        let mut compute_meter = self.compute_meter.borrow_mut();
-        let exceeded = *compute_meter < amount;
-        *compute_meter = compute_meter.saturating_sub(amount);
-        if exceeded {
-            return Err(Box::new(InstructionError::ComputationalBudgetExceeded));
-        }
-        Ok(())
-    }
-
-    /// Set compute units
-    ///
-    /// Only use for tests and benchmarks
-    /// TODO delete?
-    pub fn mock_set_remaining(&self, remaining: u64) {
-        *self.compute_meter.borrow_mut() = remaining;
-    }
-
     /// Get this invocation's compute budget
     pub fn get_compute_budget(&self) -> &ComputeBudget {
         &self.compute_budget
@@ -740,15 +719,10 @@ impl<'a, SDK: SharedAPI> ContextObject for InvokeContext<'a, SDK> {
             .push(state);
     }
 
-    fn consume(&mut self, amount: u64) {
-        // 1 to 1 instruction to compute unit mapping
-        // ignore overflow, Ebpf will bail if exceeded
-        let mut compute_meter = self.compute_meter.borrow_mut();
-        *compute_meter = compute_meter.saturating_sub(amount);
-    }
+    fn consume(&mut self, _amount: u64) {}
 
     fn get_remaining(&self) -> u64 {
-        *self.compute_meter.borrow()
+        u64::MAX
     }
 }
 

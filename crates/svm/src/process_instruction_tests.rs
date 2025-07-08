@@ -36,8 +36,6 @@ enum MockInstruction {
     },
 }
 
-const MOCK_BUILTIN_COMPUTE_UNIT_COST: u64 = 1;
-
 declare_process_instruction!(
     MockBuiltin<SDK: SharedAPI>,
     MOCK_BUILTIN_COMPUTE_UNIT_COST,
@@ -118,12 +116,9 @@ declare_process_instruction!(
                     .try_borrow_instruction_account(transaction_context, 0)?
                     .checked_add_lamports(1)?,
                 MockInstruction::ConsumeComputeUnits {
-                    compute_units_to_consume,
+                    compute_units_to_consume: _,
                     desired_result,
                 } => {
-                    invoke_context
-                        .consume_checked(compute_units_to_consume)
-                        .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
                     return desired_result;
                 }
                 MockInstruction::Resize { new_len } => instruction_context

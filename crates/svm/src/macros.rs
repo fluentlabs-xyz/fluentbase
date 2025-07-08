@@ -71,18 +71,11 @@ macro_rules! create_vm {
     ($vm:ident, $program:expr, $regions:expr, $accounts_metadata:expr, $invoke_context:expr $(,)?) => {
         let stack_size = $program.get_config().stack_size();
         let heap_size = $invoke_context.get_compute_budget().heap_size;
-        let heap_cost_result =
-            $invoke_context.consume_checked($crate::helpers::calculate_heap_cost(
-                heap_size,
-                $invoke_context.get_compute_budget().heap_cost,
-            ));
-        let $vm = heap_cost_result.and_then(|_| {
+        let $vm = {
             let (mut stack, mut heap) = {
                 let mut pool = crate::macros::MEMORY_POOL.write();
                 (pool.get_stack(stack_size), pool.get_heap(heap_size))
             };
-            // let (mut stack, mut heap) = crate::macros::MEMORY_POOL
-            //     .with_borrow_mut(|pool| (pool.get_stack(stack_size), pool.get_heap(heap_size)));
             let vm = $crate::macros::create_vm(
                 $program,
                 $regions,
@@ -96,10 +89,8 @@ macro_rules! create_vm {
                     .get_mut(..heap_size as usize)
                     .expect("invalid heap size"),
             );
-            // allocations = Some((stack, heap));
-            // vm
             vm.map(|vm| (vm, stack, heap))
-        });
+        };
     };
 }
 
@@ -180,21 +171,9 @@ macro_rules! declare_process_instruction {
                 ) -> core::result::Result<(), solana_instruction::error::InstructionError>
                     $inner
 
-                let consumption_result = if $cu_to_consume > 0
-                {
-                    invoke_context.consume_checked($cu_to_consume)
-                    // Ok(())
-                } else {
-                    Ok(())
-                };
-                consumption_result
-                    .and_then(|_| {
-                        process_instruction_inner(invoke_context)
-                            .map(|_| 0)
-                            .map_err(|err| Box::new(err) as Box<dyn core::error::Error>)
-                    })
-                    .into()
-                // Ok(0)
+                process_instruction_inner(invoke_context)
+                    .map(|_| 0)
+                    .map_err(|err| Box::new(err) as Box<dyn core::error::Error>).into()
             }
         );
     };
