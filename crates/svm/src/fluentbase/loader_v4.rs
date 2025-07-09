@@ -1,31 +1,97 @@
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
-    common::{calculate_max_chunk_size, lamports_from_evm_balance, pubkey_from_evm_address},
+    common::{lamports_from_evm_balance, pubkey_from_evm_address},
     fluentbase::{
-        common::{
-            extract_account_data_or_default,
-            flush_accounts,
-            process_svm_result,
-            BatchMessage,
-        },
-        helpers::{exec_encoded_svm_batch_message, exec_svm_batch_message},
+        common::{extract_account_data_or_default, flush_accounts, process_svm_result},
+        helpers::exec_encoded_svm_batch_message,
         loader_common::{read_contract_executable, write_contract_executable},
         mem_storage::MemStorage,
     },
     helpers::storage_write_account_data,
     native_loader,
     native_loader::create_loadable_account_for_test,
-    solana_program::{loader_v4, message::Message},
+    solana_program::loader_v4,
     system_program,
 };
-use alloc::{vec, vec::Vec};
 use bincode::error::DecodeError;
+// pub use deploy_entry_original as deploy_entry;
+pub use deploy_entry_simplified as deploy_entry;
 use fluentbase_sdk::{Bytes, ContextReader, SharedAPI};
 use hashbrown::HashMap;
 use solana_bincode::{deserialize, serialize};
 use solana_pubkey::Pubkey;
+use solana_rbpf::{
+    aligned_memory::{is_memory_aligned, AlignedMemory},
+    ebpf::HOST_ALIGN,
+    elf_parser::Elf64,
+};
 
-pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
+pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
+    use crate::{
+        loaders::bpf_loader_v4::get_state_mut,
+        solana_program::loader_v4::{LoaderV4State, LoaderV4Status},
+    };
+    use solana_clock::Epoch;
+
+    let elf_program_slice = sdk.input();
+    let elf_program_bytes: Bytes = elf_program_slice.into();
+    let program_len = elf_program_bytes.len();
+    let block_number = sdk.context().block_number();
+    let loader_id = loader_v4::id();
+
+    let ctx = sdk.context();
+    let contract_caller = ctx.contract_caller();
+    let contract_address = ctx.contract_address();
+
+    drop(ctx);
+
+    #[cfg(not(feature = "do-not-validate-elf-on-deploy"))]
+    {
+        let aligned;
+        let bytes = if is_memory_aligned(elf_program_slice.as_ptr() as usize, HOST_ALIGN) {
+            elf_program_slice
+        } else {
+            aligned = AlignedMemory::<{ HOST_ALIGN }>::from_slice(elf_program_slice);
+            aligned.as_slice()
+        };
+        Elf64::parse(bytes).expect("invalid elf executable");
+    }
+
+    let pk_payer = pubkey_from_evm_address(&contract_caller); // must exist // caller
+    let pk_contract = pubkey_from_evm_address(&contract_address); // may not exist // contract_address
+    let pk_authority = pk_payer.clone(); // must exist // caller
+
+    let mut contract_account_data = AccountSharedData::new(
+        0, // TODO set from input value?
+        LoaderV4State::program_data_offset().saturating_add(program_len),
+        &loader_id,
+    );
+    contract_account_data.set_rent_epoch(Epoch::MAX);
+    let state = get_state_mut(contract_account_data.data_as_mut_slice())
+        .expect("contract account has not enough data len");
+    state.slot = block_number;
+    state.authority_address_or_next_version = pk_authority;
+    state.status = LoaderV4Status::Deployed;
+
+    contract_account_data.data_as_mut_slice()[LoaderV4State::program_data_offset()..]
+        .copy_from_slice(elf_program_bytes.as_ref());
+
+    let contract_account_data =
+        serialize(&contract_account_data).expect("failed to serialize contract account data");
+    let contract_account_data: Bytes = contract_account_data.into();
+    write_contract_executable(&mut sdk, &pk_contract, contract_account_data)
+        .expect("failed to save contract");
+    // TODO figure out balance changes and apply them to evm
+}
+
+pub fn deploy_entry_original<SDK: SharedAPI>(mut sdk: SDK) {
+    use crate::{
+        common::calculate_max_chunk_size,
+        fluentbase::{common::BatchMessage, helpers::exec_svm_batch_message},
+        solana_program::message::Message,
+    };
+    use alloc::{vec, vec::Vec};
+
     let mut mem_storage = MemStorage::new();
 
     let elf_program_bytes: Bytes = sdk.input().into();
@@ -35,11 +101,9 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let ctx = sdk.context();
     let contract_caller = ctx.contract_caller();
     let contract_address = ctx.contract_address();
-    ctx.contract_value();
 
     drop(ctx);
 
-    // TODO generate inter-dependant pubkey
     let pk_payer = pubkey_from_evm_address(&contract_caller); // must exist // caller
     let pk_contract = pubkey_from_evm_address(&contract_address); // may not exist // contract_address
     let pk_authority = pk_payer.clone(); // must exist // caller
@@ -64,7 +128,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     let mut batch_message = BatchMessage::new(None);
 
-    // TODO do we need this to have some specific value?
+    // TODO need specific value?
     let balance_to_transfer = 0;
     let instructions = loader_v4::create_buffer(
         &pk_payer,
@@ -124,7 +188,7 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
         serialize(&contract_account_data).expect("failed to serialize contract account data");
     let contract_account_data: Bytes = contract_account_data.into();
     write_contract_executable(&mut sdk, &pk_contract, contract_account_data)
-        .expect("failed to save contract executable");
+        .expect("failed to save contract");
     // TODO figure out balance changes and apply them to evm
 }
 

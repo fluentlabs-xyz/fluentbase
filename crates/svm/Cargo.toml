@@ -69,3 +69,4 @@ std = [
     "solana_rbpf/std",
 ]
 debug-print = []
+do-not-validate-elf-on-deploy = []

@@ -16,7 +16,7 @@ fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
 fluentbase-sdk-testing = { workspace = true }
 fluentbase-types = { workspace = true }
-fluentbase-svm = { workspace = true, default-features = false }
+fluentbase-svm = { workspace = true }
 fluentbase-erc20 = { workspace = true }
 
 fluentbase-examples-abi-solidity = { path = "../examples/abi-solidity" }

@@ -12,6 +12,7 @@ use crate::{
 use alloc::{rc::Rc, sync::Arc, vec, vec::Vec};
 use core::{
     cell::{Ref, RefCell, RefMut},
+    fmt::{Debug, Formatter},
     mem::MaybeUninit,
     ptr,
 };
@@ -271,7 +272,7 @@ fn shared_new_data_with_space<T: serde::Serialize, U: WritableAccount>(
 /// An Account with data that is stored on chain
 /// This will be the in-memory representation of the 'Account' struct data.
 /// The existing 'Account' structure cannot easily change due to downstream projects.
-#[derive(PartialEq, Eq, Clone, Default, Debug, /*AbiExample,*/ Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Default, /*Debug,*/ Serialize, Deserialize)]
 pub struct AccountSharedData {
     /// lamports in the account
     lamports: u64,
@@ -285,12 +286,21 @@ pub struct AccountSharedData {
     rent_epoch: Epoch,
 }
 
+impl Debug for AccountSharedData {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AccountSharedData")
+            .field("lamports", &self.lamports)
+            .field("owner", &self.owner)
+            .field("executable", &self.executable)
+            .field("rent_epoch", &self.rent_epoch)
+            // .field("data", &self.data)
+            .finish()
+    }
+}
+
 impl AccountSharedData {
     pub fn new(lamports: u64, space: usize, owner: &Pubkey) -> Self {
         shared_new(lamports, space, owner)
-    }
-    pub fn new_ref(lamports: u64, space: usize, owner: &Pubkey) -> Rc<RefCell<Self>> {
-        shared_new_ref(lamports, space, owner)
     }
     pub fn new_data<T: serde::Serialize>(
         lamports: u64,

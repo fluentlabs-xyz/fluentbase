@@ -27,6 +27,8 @@ pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 ///   8 bytes is the size of the fragment header
 pub const PACKET_DATA_SIZE: usize = 1280 - 40 - 8;
 
+// pub const PACKET_DATA_SIZE: usize = usize::MAX;
+
 /// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
 /// a transaction.
 pub const MAX_INSTRUCTION_STACK_DEPTH: usize = 5;

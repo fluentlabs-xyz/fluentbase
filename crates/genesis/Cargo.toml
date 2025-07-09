@@ -67,7 +67,7 @@ fluentbase-contracts-eip2935 = { path = "../../contracts/eip2935" }
 [features]
 default = [
     "std",
-    #    "enable-svm"
+    "enable-svm"
 ]
 debug-print = []
 enable-svm = []

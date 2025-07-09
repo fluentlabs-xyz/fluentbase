@@ -27,7 +27,7 @@ mod tests {
     };
     use hex_literal::hex;
     use rand::random_range;
-    use std::{fs::File, io::Read};
+    use std::{fs::File, io::Read, time::Instant};
 
     pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
         let mut file = File::open(path).expect("file open failed");
@@ -60,8 +60,11 @@ mod tests {
 
         let program_bytes = account_with_program.data().to_vec();
         ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1e18));
+
+        let measure = Instant::now();
         let (_contract_address, _gas_used) =
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
+        println!("elapsed: {:.2?}", measure.elapsed());
     }
 
     #[test]
@@ -130,8 +133,10 @@ mod tests {
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
+        let measure = Instant::now();
         let result =
             ctx.call_evm_tx_simple(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
+        println!("elapsed: {:.2?}", measure.elapsed());
         let output = result.output().unwrap();
         if output.len() > 0 {
             let out_text = from_utf8(output).unwrap();
