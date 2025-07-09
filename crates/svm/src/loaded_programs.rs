@@ -349,13 +349,13 @@ impl<'a, SDK: SharedAPI> ProgramCacheEntry<'a, SDK> {
         )
     }
 
-    fn is_implicit_delay_visibility_tombstone(&self, slot: Slot) -> bool {
-        !matches!(self.program, ProgramCacheEntryType::Builtin(_))
-            && self.effective_slot.saturating_sub(self.deployment_slot)
-                == DELAY_VISIBILITY_SLOT_OFFSET
-            && slot >= self.deployment_slot
-            && slot < self.effective_slot
-    }
+    // fn is_implicit_delay_visibility_tombstone(&self, slot: Slot) -> bool {
+    //     !matches!(self.program, ProgramCacheEntryType::Builtin(_))
+    //         && self.effective_slot.saturating_sub(self.deployment_slot)
+    //             == DELAY_VISIBILITY_SLOT_OFFSET
+    //         && slot >= self.deployment_slot
+    //         && slot < self.effective_slot
+    // }
 
     pub fn update_access_slot(&self, slot: Slot) {
         let _ = self.latest_access_slot.fetch_max(slot, Ordering::Relaxed);
@@ -489,25 +489,22 @@ impl<'a, SDK: SharedAPI> ProgramCacheForTxBatch<'a, SDK> {
     }
 
     pub fn find(&self, key: &Pubkey) -> Option<Arc<ProgramCacheEntry<'a, SDK>>> {
-        // First lookup the cache of the programs modified by the current
-        // transaction. If not found, lookup the cache of the cache of the
-        // programs that are loaded for the transaction batch.
         self.modified_entries
             .get(key)
             .or(self.entries.get(key))
             .map(|entry| {
-                if entry.is_implicit_delay_visibility_tombstone(self.slot) {
-                    // Found a program entry on the current fork, but it's not effective
-                    // yet. It indicates that the program has delayed visibility. Return
-                    // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_tombstone(
-                        entry.deployment_slot,
-                        entry.account_owner,
-                        ProgramCacheEntryType::DelayVisibility,
-                    ))
-                } else {
-                    entry.clone()
-                }
+                // if entry.is_implicit_delay_visibility_tombstone(self.slot) {
+                //     // Found a program entry on the current fork, but it's not effective
+                //     // yet. It indicates that the program has delayed visibility. Return
+                //     // the tombstone to reflect that.
+                //     Arc::new(ProgramCacheEntry::new_tombstone(
+                //         entry.deployment_slot,
+                //         entry.account_owner,
+                //         ProgramCacheEntryType::DelayVisibility,
+                //     ))
+                // } else {
+                entry.clone()
+                // }
             })
     }
 

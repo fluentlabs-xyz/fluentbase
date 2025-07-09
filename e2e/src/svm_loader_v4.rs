@@ -130,8 +130,6 @@ mod tests {
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
-        ctx.sdk = ctx.sdk.with_block_number(1);
-        assert_eq!(ctx.sdk.context().block_number(), 1);
         let result =
             ctx.call_evm_tx_simple(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
         let output = result.output().unwrap();
