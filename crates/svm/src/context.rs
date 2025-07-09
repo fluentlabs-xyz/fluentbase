@@ -109,20 +109,13 @@ impl BpfAllocator {
 pub struct EnvironmentConfig {
     pub blockhash: Hash,
     pub feature_set: Arc<FeatureSet>,
-    pub lamports_per_signature: u64,
     sysvar_cache: SysvarCache,
 }
 impl<'a> EnvironmentConfig {
-    pub fn new(
-        blockhash: Hash,
-        feature_set: Arc<FeatureSet>,
-        lamports_per_signature: u64,
-        sysvar_cache: SysvarCache,
-    ) -> Self {
+    pub fn new(blockhash: Hash, feature_set: Arc<FeatureSet>, sysvar_cache: SysvarCache) -> Self {
         Self {
             blockhash,
             feature_set,
-            lamports_per_signature,
             sysvar_cache,
         }
     }

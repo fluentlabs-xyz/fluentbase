@@ -463,7 +463,6 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
         let environment_config = EnvironmentConfig::new(
             *message.recent_blockhash(),
             Arc::new(feature_set),
-            0,
             sysvar_cache,
         );
 

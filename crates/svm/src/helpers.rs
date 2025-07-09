@@ -284,7 +284,6 @@ macro_rules! with_mock_invoke_context {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             Arc::new(feature_set_default()),
-            0,
             sysvar_cache,
         );
         let program_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
