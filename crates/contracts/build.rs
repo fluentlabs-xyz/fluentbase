@@ -12,7 +12,7 @@ fn main() {
     let contracts_dir = fluentbase_root_dir.join("contracts");
     println!("cargo:rerun-if-changed={}", contracts_dir.to_str().unwrap());
     let contracts_manifest_path = contracts_dir.join("Cargo.toml");
-    // Test is failing when compiling WASM contract in debug
+    // TODO(khasan): why router::test_client_solidity is failing with WASM compiled in debug profile
     // test router::test_client_solidity ... FAILED
     // Caused by:
     //   process didn't exit successfully:
