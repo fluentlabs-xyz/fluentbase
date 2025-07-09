@@ -10,6 +10,7 @@ use crate::{
     U256,
 };
 
+pub type IsAccountOwnable = bool;
 pub type IsColdAccess = bool;
 pub type IsAccountEmpty = bool;
 
@@ -28,7 +29,7 @@ pub trait MetadataAPI {
     fn metadata_size(
         &self,
         address: &Address,
-    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)>;
+    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)>;
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()>;
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
 }
@@ -103,23 +104,6 @@ pub trait SharedAPI: StorageAPI + MetadataAPI {
     }
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()>;
     fn transient_storage(&self, slot: &U256) -> SyscallResult<U256>;
-    fn delegated_storage(
-        &self,
-        address: &Address,
-        slot: &U256,
-    ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)>;
-
-    fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes>;
-    fn preimage_size(&self, hash: &B256) -> SyscallResult<u32>;
-
-    fn preimage(&self, hash: &B256) -> Bytes {
-        let result = self.preimage_copy(hash);
-        assert!(
-            SyscallResult::is_ok(result.status),
-            "sdk: failed reading preimage"
-        );
-        result.data
-    }
 
     fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()>;
 
@@ -133,7 +117,6 @@ pub trait SharedAPI: StorageAPI + MetadataAPI {
         code_offset: u64,
         code_length: u64,
     ) -> SyscallResult<Bytes>;
-    fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256>;
     fn create(
         &mut self,
         salt: Option<U256>,

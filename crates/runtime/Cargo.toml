@@ -1,6 +1,6 @@
 [package]
 name = "fluentbase-runtime"
-version = "0.1.0"
+version.workspace = true
 authors.workspace = true
 repository.workspace = true
 edition.workspace = true
@@ -13,7 +13,6 @@ categories.workspace = true
 # fluentbase
 fluentbase-codec = { workspace = true }
 fluentbase-types = { workspace = true }
-fluentbase-genesis = { workspace = true, optional = true }
 
 rwasm = { workspace = true }
 
@@ -39,14 +38,12 @@ hex-literal = { workspace = true }
 
 [features]
 default = ["std"]
-enable-svm = [
-    "fluentbase-genesis/enable-svm",
-]
 std = [
     "rwasm/std",
 ]
 rwasm = []
 debug-print = [
-    "dep:hex"
+    "dep:hex",
+    "rwasm/debug-print",
 ]
-wasmtime = ["dep:fluentbase-genesis", "rwasm/wasmtime"]
+wasmtime = ["rwasm/wasmtime"]

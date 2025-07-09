@@ -135,7 +135,7 @@ impl NativeAPI for RwasmContext {
         unsafe {
             let mut fuel_info: [i64; 2] = [fuel_limit.unwrap_or(u64::MAX) as i64, 0];
             let exit_code = _exec(
-                code_hash.resolve_hash().as_ptr(),
+                code_hash.hash().as_ptr(),
                 input.as_ptr(),
                 input.len() as u32,
                 &mut fuel_info as *mut [i64; 2],

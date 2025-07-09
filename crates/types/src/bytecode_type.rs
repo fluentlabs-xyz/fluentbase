@@ -1,5 +1,5 @@
 use crate::KECCAK_EMPTY;
-use alloy_primitives::{keccak256, Bytes, B256};
+use alloy_primitives::{Address, Bytes, B256};
 
 pub const EIP7702_SIG_LEN: usize = 2;
 /// rWASM binary format signature:
@@ -41,51 +41,46 @@ impl BytecodeType {
 
 #[derive(Clone, Debug)]
 pub enum BytecodeOrHash {
-    Bytecode(Bytes, Option<B256>),
+    Bytecode {
+        address: Address,
+        rwasm_module: Bytes,
+        code_hash: B256,
+    },
     Hash(B256),
 }
 
-impl From<Bytes> for BytecodeOrHash {
-    #[inline(always)]
-    fn from(value: Bytes) -> Self {
-        Self::Bytecode(value, None)
-    }
-}
 impl From<B256> for BytecodeOrHash {
     #[inline(always)]
     fn from(value: B256) -> Self {
         Self::Hash(value)
     }
 }
-impl From<(Bytes, B256)> for BytecodeOrHash {
+impl From<(Address, Bytes, B256)> for BytecodeOrHash {
     #[inline(always)]
-    fn from(value: (Bytes, B256)) -> Self {
-        Self::Bytecode(value.0, Some(value.1))
+    fn from(value: (Address, Bytes, B256)) -> Self {
+        Self::Bytecode {
+            address: value.0,
+            rwasm_module: value.1,
+            code_hash: value.2,
+        }
     }
 }
 
 impl Default for BytecodeOrHash {
     #[inline(always)]
     fn default() -> Self {
-        Self::Bytecode(Bytes::new(), Some(KECCAK_EMPTY))
+        Self::Bytecode {
+            address: Address::ZERO,
+            rwasm_module: Bytes::new(),
+            code_hash: KECCAK_EMPTY,
+        }
     }
 }
 
 impl BytecodeOrHash {
-    pub fn with_resolved_hash(self) -> Self {
+    pub fn hash(&self) -> B256 {
         match self {
-            BytecodeOrHash::Bytecode(_, Some(_)) => self,
-            BytecodeOrHash::Bytecode(bytecode, None) => {
-                let hash = keccak256(bytecode.as_ref());
-                BytecodeOrHash::Bytecode(bytecode, Some(hash))
-            }
-            BytecodeOrHash::Hash(_) => self,
-        }
-    }
-
-    pub fn resolve_hash(&self) -> B256 {
-        match self {
-            BytecodeOrHash::Bytecode(_, hash) => hash.expect("hash must be resolved"),
+            BytecodeOrHash::Bytecode { code_hash, .. } => *code_hash,
             BytecodeOrHash::Hash(hash) => *hash,
         }
     }

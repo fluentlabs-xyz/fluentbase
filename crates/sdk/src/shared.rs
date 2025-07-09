@@ -14,6 +14,7 @@ use fluentbase_types::{
     ContextReader,
     ExitCode,
     IsAccountEmpty,
+    IsAccountOwnable,
     IsColdAccess,
     MetadataAPI,
     SharedAPI,
@@ -30,7 +31,6 @@ use fluentbase_types::{
     SYSCALL_ID_CODE_SIZE,
     SYSCALL_ID_CREATE,
     SYSCALL_ID_CREATE2,
-    SYSCALL_ID_DELEGATED_STORAGE,
     SYSCALL_ID_DELEGATE_CALL,
     SYSCALL_ID_DESTROY_ACCOUNT,
     SYSCALL_ID_EMIT_LOG,
@@ -38,15 +38,12 @@ use fluentbase_types::{
     SYSCALL_ID_METADATA_CREATE,
     SYSCALL_ID_METADATA_SIZE,
     SYSCALL_ID_METADATA_WRITE,
-    SYSCALL_ID_PREIMAGE_COPY,
-    SYSCALL_ID_PREIMAGE_SIZE,
     SYSCALL_ID_SELF_BALANCE,
     SYSCALL_ID_STATIC_CALL,
     SYSCALL_ID_STORAGE_READ,
     SYSCALL_ID_STORAGE_WRITE,
     SYSCALL_ID_TRANSIENT_READ,
     SYSCALL_ID_TRANSIENT_WRITE,
-    SYSCALL_ID_WRITE_PREIMAGE,
     U256,
 };
 
@@ -144,22 +141,23 @@ impl<API: NativeAPI> MetadataAPI for SharedContextImpl<API> {
     fn metadata_size(
         &self,
         address: &Address,
-    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
+    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
         let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
             SYSCALL_ID_METADATA_SIZE,
             address.as_slice(),
             None,
             STATE_MAIN,
         );
-        let mut output: [u8; 6] = [0u8; 6];
+        let mut output: [u8; 7] = [0u8; 7];
         if SyscallResult::<()>::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
         };
         let value = LittleEndian::read_u32(&output[0..4]);
-        let is_cold_access = output[4] != 0x00;
-        let is_account_empty = output[5] != 0x00;
+        let is_account_ownable = output[4] != 0x00;
+        let is_cold_access = output[5] != 0x00;
+        let is_account_empty = output[6] != 0x00;
         SyscallResult::new(
-            (value, is_cold_access, is_account_empty),
+            (value, is_account_ownable, is_cold_access, is_account_empty),
             fuel_consumed,
             fuel_refunded,
             exit_code,
@@ -264,56 +262,6 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
-    fn delegated_storage(
-        &self,
-        address: &Address,
-        slot: &U256,
-    ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)> {
-        let mut input = [0u8; 20 + 32];
-        input[..20].copy_from_slice(address.as_slice());
-        input[20..].copy_from_slice(slot.as_le_slice());
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk
-                .exec(SYSCALL_ID_DELEGATED_STORAGE, &input, None, STATE_MAIN);
-        let mut output = [0u8; U256::BYTES + 1 + 1];
-        if !SyscallResult::is_err(exit_code) {
-            self.native_sdk.read_output(&mut output, 0);
-        };
-        let value = U256::from_le_slice(&output[..32]);
-        let is_cold_access = output[32] != 0x0;
-        let is_empty = output[33] != 0x0;
-        SyscallResult::new(
-            (value, is_cold_access, is_empty),
-            fuel_consumed,
-            fuel_refunded,
-            exit_code,
-        )
-    }
-
-    fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk
-                .exec(SYSCALL_ID_PREIMAGE_COPY, hash.as_ref(), None, STATE_MAIN);
-        let value = if SyscallResult::is_ok(exit_code) {
-            self.native_sdk.return_data()
-        } else {
-            Bytes::new()
-        };
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn preimage_size(&self, hash: &B256) -> SyscallResult<u32> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk
-                .exec(SYSCALL_ID_PREIMAGE_SIZE, hash.as_ref(), None, STATE_MAIN);
-        let mut output: [u8; 4] = [0u8; 4];
-        if SyscallResult::is_ok(exit_code) {
-            self.native_sdk.read_output(&mut output, 0);
-        }
-        let value = LittleEndian::read_u32(&output);
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
-    }
-
     fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()> {
         let mut buffer = vec![0u8; 1 + topics.len() * B256::len_bytes()];
         assert!(topics.len() <= 4);
@@ -398,21 +346,6 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         } else {
             Bytes::new()
         };
-        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256> {
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
-            SYSCALL_ID_WRITE_PREIMAGE,
-            preimage.as_ref(),
-            None,
-            STATE_MAIN,
-        );
-        let mut output = [0u8; B256::len_bytes()];
-        if SyscallResult::is_ok(exit_code) {
-            self.native_sdk.read_output(&mut output, 0);
-        };
-        let value = B256::from_slice(&output);
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 

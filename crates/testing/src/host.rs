@@ -10,6 +10,7 @@ use fluentbase_sdk::{
     ContractContextV1,
     ExitCode,
     IsAccountEmpty,
+    IsAccountOwnable,
     IsColdAccess,
     MetadataAPI,
     SharedAPI,
@@ -101,7 +102,6 @@ struct TestingContextInner {
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     ownable_account_address: Option<Address>,
-    preimages: HashMap<B256, Bytes>,
 }
 
 impl Default for HostTestingContext {
@@ -115,7 +115,6 @@ impl Default for HostTestingContext {
                 transient_storage: Default::default(),
                 logs: vec![],
                 ownable_account_address: None,
-                preimages: Default::default(),
             })),
         }
     }
@@ -169,7 +168,7 @@ impl MetadataAPI for HostTestingContext {
     fn metadata_size(
         &self,
         address: &Address,
-    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
+    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
         let ctx = self.inner.borrow();
         let account_owner = ctx
             .ownable_account_address
@@ -177,7 +176,7 @@ impl MetadataAPI for HostTestingContext {
         let value = ctx.metadata.get(&(account_owner, *address));
         if let Some(value) = value {
             let len = value.len();
-            return SyscallResult::new((len as u32, false, false), 0, 0, ExitCode::Ok);
+            return SyscallResult::new((len as u32, false, false, false), 0, 0, ExitCode::Ok);
         }
         SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
     }
@@ -288,43 +287,6 @@ impl SharedAPI for HostTestingContext {
         SyscallResult::new(value, 0, 0, 0)
     }
 
-    fn delegated_storage(
-        &self,
-        address: &Address,
-        slot: &U256,
-    ) -> SyscallResult<(U256, IsColdAccess, IsAccountEmpty)> {
-        let value = self
-            .inner
-            .borrow()
-            .persistent_storage
-            .get(&(*address, *slot))
-            .cloned()
-            .unwrap_or_default();
-        SyscallResult::new((value, false, false), 0, 0, 0)
-    }
-
-    fn preimage_copy(&self, hash: &B256) -> SyscallResult<Bytes> {
-        let value = self
-            .inner
-            .borrow()
-            .preimages
-            .get(hash)
-            .cloned()
-            .unwrap_or_default();
-        SyscallResult::new(value, 0, 0, 0)
-    }
-
-    fn preimage_size(&self, hash: &B256) -> SyscallResult<u32> {
-        let preimage_size = self
-            .inner
-            .borrow()
-            .preimages
-            .get(hash)
-            .map(|v| v.len() as u32)
-            .unwrap_or_default();
-        SyscallResult::new(preimage_size, 0, 0, 0)
-    }
-
     fn emit_log(&mut self, topics: &[B256], data: &[u8]) -> SyscallResult<()> {
         self.inner
             .borrow_mut()
@@ -356,12 +318,6 @@ impl SharedAPI for HostTestingContext {
         _code_length: u64,
     ) -> SyscallResult<Bytes> {
         unimplemented!("not supported for testing context")
-    }
-
-    fn write_preimage(&mut self, preimage: Bytes) -> SyscallResult<B256> {
-        let hash = self.keccak256(preimage.as_ref());
-        self.inner.borrow_mut().preimages.insert(hash, preimage);
-        SyscallResult::new(hash, 0, 0, 0)
     }
 
     fn create(

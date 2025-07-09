@@ -7,7 +7,7 @@ license.workspace = true
 name = "fluentbase-sdk-derive"
 readme.workspace = true
 repository.workspace = true
-version = "0.1.0"
+version.workspace = true
 
 [dependencies]
 crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }

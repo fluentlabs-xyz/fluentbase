@@ -63,22 +63,11 @@ pub const FUEL_DENOM_RATE: u64 = 1000;
 /// A max rWasm call stack limit
 pub const CALL_STACK_LIMIT: u32 = 1024;
 
-/// EVM code hash slot: `hash=keccak256("_evm_code_hash")`
-pub const PROTECTED_STORAGE_SLOT_0: B256 =
-    b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113b");
-pub const PROTECTED_STORAGE_SLOT_1: B256 =
-    b256!("575bdaed2313333f49ce8fccd329e40d2042d950450ea7045276ef8f6b18113c");
-
 pub fn is_delegated_runtime_address(address: &Address) -> bool {
     address == &PRECOMPILE_EVM_RUNTIME
         || address == &PRECOMPILE_SVM_RUNTIME
         || address == &PRECOMPILE_ERC20_RUNTIME
         || address == &PRECOMPILE_WASM_RUNTIME
-}
-
-pub fn is_protected_storage_slot<I: Into<B256>>(slot: I) -> bool {
-    let slot: B256 = slot.into();
-    slot == PROTECTED_STORAGE_SLOT_0 || slot == PROTECTED_STORAGE_SLOT_1
 }
 
 /// rWASM max code size

@@ -41,7 +41,7 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Run tests
-        run: cargo test --no-fail-fast
+        run: cargo test --release --no-fail-fast
 
   coverage:
     name: Coverage

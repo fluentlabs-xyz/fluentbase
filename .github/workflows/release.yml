@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  extract-version:
+    name: extract version
+    runs-on: ubuntu-amd64-8core
+    steps:
+      - name: Extract version
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+        id: extract_version
+    outputs:
+      VERSION: ${{ steps.extract_version.outputs.VERSION }}
+
+  check-version:
+    name: check version
+    runs-on: ubuntu-amd64-8core
+    needs: extract-version
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify crate version matches tag
+        # Check that the Cargo version starts with the tag,
+        # so that Cargo version 1.4.8 can be matched against both v1.4.8 and v1.4.8-rc.1
+        run: |
+          tag="${{ needs.extract-version.outputs.VERSION }}"
+          tag=${tag#v}
+          cargo_ver=$(grep -m1 '^version' Cargo.toml | awk -F'=' '{print $2}' | tr -d ' "')
+          [[ "$tag" == "$cargo_ver"* ]] || { echo "Tag $tag doesn’t match the Cargo version $cargo_ver"; exit 1; }
+
+  build:
+    name: build release
+    runs-on: ubuntu-amd64-8core
+    needs: extract-version
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+      - uses: rui314/setup-mold@v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Build genesis
+        run: cargo b
+      - name: Move binary
+        run: |
+          mkdir artifacts
+          gzip ./crates/genesis/genesis-devnet.json 
+          mv ./crates/genesis/genesis-devnet.json.gz ./artifacts/genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
+      - name: Configure GPG and create artifacts
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          export GPG_TTY=$(tty)
+          echo -n "$GPG_SIGNING_KEY" | base64 --decode | gpg --batch --import
+          cd artifacts
+          echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
+          mv *json* ..
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
+          path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
+
+      - name: Upload signature
+        uses: actions/upload-artifact@v4
+        with:
+          name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
+          path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
+
+  draft-release:
+    name: draft release
+    needs: [ build, extract-version ]
+    runs-on: ubuntu-amd64-8core
+    env:
+      VERSION: ${{ needs.extract-version.outputs.VERSION }}
+    permissions:
+      # Required to post the release
+      contents: write
+    steps:
+      # This is necessary for generating the changelog.
+      # It has to come before "Download Artifacts" or else it deletes the artifacts.
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+          fetch-depth: 0
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+      - name: Generate full changelog
+        id: changelog
+        run: |
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "$(git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 ${{ env.VERSION }}^)..${{ env.VERSION }})" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Create release draft
+        env:
+          GITHUB_USER: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The formatting here is borrowed from Lighthouse (which is borrowed from OpenEthereum):
+        # https://github.com/openethereum/openethereum/blob/6c2d392d867b058ff867c4373e40850ca3f96969/.github/workflows/build.yml
+        run: |
+          prerelease_flag=""
+          if [[ "${GITHUB_REF}" == *-rc* ]]; then
+            prerelease_flag="--prerelease"
+          fi
+
+          body=$(cat <<- "ENDBODY"
+          ## Testing Checklist (DELETE ME)
+
+          - [ ] Run on testnet for 1-3 days.
+          - [ ] Resync a mainnet node.
+          - [ ] Ensure all CI checks pass.
+
+          ## Release Checklist (DELETE ME)
+
+          - [ ] Ensure all crates have had their versions bumped.
+          - [ ] Write the summary.
+          - [ ] Fill out the update priority.
+          - [ ] Ensure all binaries have been added.
+          - [ ] Prepare release posts (Twitter, ...).
+
+          ## Summary
+
+          Add a summary, including:
+
+          - Critical bug fixes
+          - New features
+          - Any breaking changes (and what to expect)
+
+          ## All Changes
+
+          ${{ steps.changelog.outputs.CHANGELOG }}
+
+          ENDBODY
+          )
+          assets=()
+          for asset in ./*genesis-*.json*; do
+              assets+=("$asset/$asset")
+          done
+          tag_name="${{ env.VERSION }}"
+          echo "$body" | gh release create --draft $prerelease_flag -t "Genesis $tag_name" -F "-" "$tag_name" "${assets[@]}"

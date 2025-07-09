@@ -120,7 +120,7 @@ impl SyscallExec {
             return (fuel_limit, 0, ExitCode::CallDepthOverflow.into_i32());
         }
 
-        let bytecode_or_hash = code_hash.into().with_resolved_hash();
+        let bytecode_or_hash: BytecodeOrHash = code_hash.into();
 
         // create a new runtime instance with the context
         let ctx2 = RuntimeContext::new(bytecode_or_hash)

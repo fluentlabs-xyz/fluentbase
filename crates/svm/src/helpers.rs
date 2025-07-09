@@ -348,7 +348,7 @@ pub fn storage_write_account_data<API: MetadataAPI>(
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
             keccak256(v)
         });
-    let (metadata_size, _, _) = api
+    let (metadata_size, _, _, _) = api
         .metadata_size(&derived_metadata_address)
         .expect("metadata size")
         .data;
