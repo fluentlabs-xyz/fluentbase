@@ -1,3 +1,4 @@
+use crate::EvmTestingContextWithGenesis;
 use fluentbase_sdk::{Address, Bytes};
 use fluentbase_sdk_testing::{EvmTestingContext, HostTestingContextNativeAPI, TxBuilder};
 use fluentbase_types::{
@@ -48,7 +49,7 @@ const WAT_TEMPLATE: &str = r#"
 fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult {
     let wat = WAT_TEMPLATE.replace("            {{MAIN_BODY}}", main_function_wat);
     let wasm = wat::parse_str(&wat).unwrap();
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     let deployer: Address = Address::ZERO;
     let mut builder = TxBuilder::create(&mut ctx, deployer, wasm.into());
     let result = builder.exec();

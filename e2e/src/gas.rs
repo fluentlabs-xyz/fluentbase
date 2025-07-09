@@ -1,3 +1,4 @@
+use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
 use fluentbase_codec::byteorder::LittleEndian;
 use fluentbase_sdk::{
@@ -17,7 +18,7 @@ use rwasm::{instruction_set, RwasmModule};
 
 #[test]
 fn test_simple_nested_call() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const ACCOUNT1_ADDRESS: Address = address!("1111111111111111111111111111111111111111");
     const ACCOUNT2_ADDRESS: Address = address!("1111111111111111111111111111111111111112");
     const ACCOUNT3_ADDRESS: Address = address!("1111111111111111111111111111111111111113");
@@ -161,7 +162,7 @@ fn test_simple_nested_call() {
 #[ignore]
 fn test_deploy_gas_spend() {
     // deploy greeting WASM contract
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
 
     let result =
@@ -182,7 +183,7 @@ fn test_deploy_gas_spend() {
 #[test]
 #[ignore]
 fn test_blended_gas_spend_wasm_from_evm() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const ACCOUNT1_ADDRESS: Address = address!("1111111111111111111111111111111111111111");
     const ACCOUNT2_ADDRESS: Address = address!("1111111111111111111111111111111111111112");
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
@@ -244,7 +245,7 @@ fn test_blended_gas_spend_wasm_from_evm() {
 
 #[test]
 fn test_blended_gas_spend_evm_from_wasm() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
 
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     const ACCOUNT3_ADDRESS: Address = address!("1111111111111111111111111111111111111113");

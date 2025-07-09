@@ -2495,9 +2495,39 @@ version = "0.3.0-dev"
 dependencies = [
  "alloy-genesis",
  "cargo_metadata",
+ "fluentbase-erc20",
+ "fluentbase-evm",
+ "fluentbase-sdk",
+ "fluentbase-svm",
  "fluentbase-types",
+ "revm-precompile",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "fluentbase-e2e"
+version = "0.1.0"
+dependencies = [
+ "alloy-sol-types",
+ "fluentbase-codec",
+ "fluentbase-contracts",
+ "fluentbase-erc20",
+ "fluentbase-genesis",
+ "fluentbase-runtime",
+ "fluentbase-sdk",
+ "fluentbase-sdk-testing",
+ "fluentbase-svm",
+ "fluentbase-types",
+ "hex",
+ "hex-literal",
+ "op-revm",
+ "paste",
+ "rand 0.9.1",
+ "revm",
+ "rwasm",
+ "rwasm-revm",
+ "wat",
 ]
 
 [[package]]
@@ -2605,7 +2635,6 @@ name = "fluentbase-sdk-testing"
 version = "0.3.0-dev"
 dependencies = [
  "fluentbase-codec",
- "fluentbase-genesis",
  "fluentbase-runtime",
  "fluentbase-sdk",
  "hashbrown 0.15.4",
@@ -2689,7 +2718,6 @@ dependencies = [
  "hex-literal",
  "paste",
  "revm-precompile",
- "revm-primitives",
  "rwasm",
  "serde",
  "strum_macros 0.27.1",

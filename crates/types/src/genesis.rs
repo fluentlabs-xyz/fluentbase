@@ -1,4 +1,4 @@
-use alloy_primitives::{address, hex, Address};
+use alloy_primitives::{address, hex, Address, Bytes, B256};
 
 /// An address of EVM runtime that is used to execute EVM program
 pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0000000000000000000000000000000000520001");
@@ -125,3 +125,11 @@ pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8
 /// The prefix that must appear at the beginning of the transaction `call data`
 /// to signal that the transaction is intended to perform an account update.
 pub const UPDATE_GENESIS_PREFIX: [u8; 4] = hex!("0x69bc6f64");
+
+#[derive(Clone)]
+pub struct GenesisContract {
+    pub name: &'static str,
+    pub rwasm_bytecode: Bytes,
+    pub rwasm_bytecode_hash: B256,
+    pub address: Address,
+}

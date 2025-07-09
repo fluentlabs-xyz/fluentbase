@@ -7,10 +7,12 @@ edition = "2021"
 fluentbase-sdk = { workspace = true }
 rwasm = { workspace = true }
 
-[build-dependencies]
-fluentbase-build = { workspace = true }
-fluentbase-sdk = { workspace = true }
-rwasm = { workspace = true }
+[dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
 
 [features]
 default = ["std"]

@@ -1,3 +1,4 @@
+use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use fluentbase_sdk::{address, Address, Bytes, U256};
 use fluentbase_sdk_testing::EvmTestingContext;
@@ -31,7 +32,7 @@ fn call_revert(ctx: &mut EvmTestingContext, input: Bytes, caller: &Address, call
 
 #[test]
 fn eip2935_test() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
         address: PRECOMPILE_ERC20_RUNTIME,
         ..Default::default()

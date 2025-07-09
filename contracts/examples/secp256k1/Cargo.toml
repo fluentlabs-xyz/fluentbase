@@ -19,10 +19,11 @@ secp256k1-sys = { version = "0.10.1", default-features = false, features = [
 tiny-keccak = { workspace = true }
 hex = "0.4.3"
 hex-literal = "1.0.0"
+fluentbase-sdk-testing = { workspace = true }
 
-[build-dependencies]
-fluentbase-build = { workspace = true }
-fluentbase-sdk = { workspace = true }
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
 
 [features]
 default = ["std"]

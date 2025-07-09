@@ -26,7 +26,7 @@ mod tests {
     fn test_nitro_attestation_verification() {
         // Example of valid attestation document
         // https://github.com/evervault/attestation-doc-validation/blob/main/test-data/valid-attestation-doc-base64
-        let data: Vec<u8> = hex::decode(include_bytes!("../attestation-example.hex"))
+        let data: Vec<u8> = hex::decode(include_bytes!("attestation-example.hex"))
             .unwrap()
             .into();
         let doc = attestation::parse_and_verify(&data);

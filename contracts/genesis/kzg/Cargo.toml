@@ -8,11 +8,11 @@ fluentbase-sdk = { workspace = true }
 precompile = { workspace = true, features = ["kzg-rs"] }
 
 [dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
 
-[build-dependencies]
-fluentbase-build = { workspace = true }
-fluentbase-sdk = { workspace = true }
-precompile = { workspace = true, features = ["kzg-rs"] }
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
 
 [features]
 default = ["std"]

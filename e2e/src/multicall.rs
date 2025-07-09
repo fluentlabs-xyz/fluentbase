@@ -1,3 +1,4 @@
+use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use core::str::from_utf8;
 use fluentbase_codec::SolidityABI;
@@ -7,7 +8,7 @@ use hex_literal::hex;
 
 #[test]
 fn test_multicall_greeting() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const EXAMPLE_GREETING_ADDRESS: Address = address!("2222222222222222222222222222222222222222");
     let greeting_rwasm = compile_wasm_to_rwasm(crate::EXAMPLE_GREETING).unwrap();
     ctx.add_bytecode(
@@ -34,7 +35,7 @@ fn test_multicall_greeting() {
 
 #[test]
 fn test_multicall() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
 
     // Deploy contract that we'll call through multicall
@@ -111,7 +112,7 @@ fn decode_output() {
 #[test]
 #[should_panic(expected = "Multicall failed")]
 fn test_multicall_invalid_method() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
 
     // Deploy contract that we'll call through multicall

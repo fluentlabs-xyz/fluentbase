@@ -20,10 +20,12 @@ p384 = { version = "0.13.0", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
+hex = { workspace = true }
 
-[build-dependencies]
-fluentbase-build = { workspace = true }
-fluentbase-sdk = { workspace = true }
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
 
 [features]
 default = ["std", "fluentbase-sdk/debug-print"]

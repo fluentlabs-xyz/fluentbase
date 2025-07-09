@@ -14,7 +14,6 @@ use std::{
     collections::{BTreeMap, HashMap},
     env,
     fs,
-    io::Write,
     path::PathBuf,
     time::Instant,
 };

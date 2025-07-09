@@ -3,7 +3,7 @@ members = [
     "crates/*",
     "revm/bins/revme",
     "revm/crates/*",
-    #    "e2e",
+    "e2e",
     "bins/cli"
 ]
 exclude = [

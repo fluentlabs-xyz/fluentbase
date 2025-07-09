@@ -5,17 +5,16 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-
-# shakmaty
 shakmaty = { git = "https://github.com/niklasf/shakmaty", default-features = false, features = [
     "alloc",
 ] }
 
 [dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
 
-[build-dependencies]
-fluentbase-build = { workspace = true }
-fluentbase-sdk = { workspace = true }
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
 
 [features]
 default = ["std"]

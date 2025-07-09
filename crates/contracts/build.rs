@@ -1,16 +1,23 @@
 use cargo_metadata::{CrateType, MetadataCommand, TargetKind};
-use std::{env, fs, hash::Hash, path::PathBuf, process::Command};
+use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
-    let contracts_dir =
-        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../contracts");
+    let fluentbase_root_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+    let root_metadata = MetadataCommand::new()
+        .manifest_path(&fluentbase_root_dir.join("Cargo.toml"))
+        .exec()
+        .unwrap();
+    let target2_dir: PathBuf = root_metadata.target_directory.join("target2").into();
+
+    let contracts_dir = fluentbase_root_dir.join("contracts");
+    println!("cargo:rerun-if-changed={}", contracts_dir.to_str().unwrap());
     let contracts_manifest_path = contracts_dir.join("Cargo.toml");
-    let is_debug_profile = env::var("PROFILE").unwrap() == "debug";
+    // let is_debug_profile = env::var("PROFILE").unwrap() == "debug";
+    let is_debug_profile = false;
     let metadata = MetadataCommand::new()
         .manifest_path(&contracts_manifest_path)
         .exec()
         .unwrap();
-    let target_dir: PathBuf = metadata.target_directory.clone().into();
 
     let mut args = vec![
         "build".to_string(),
@@ -19,7 +26,7 @@ fn main() {
         "--manifest-path".to_string(),
         contracts_manifest_path.to_str().unwrap().to_string(),
         "--target-dir".to_string(),
-        target_dir.to_str().unwrap().to_string(),
+        target2_dir.to_str().unwrap().to_string(),
         "--color=always".to_string(),
         "--no-default-features".to_string(),
     ];
@@ -28,7 +35,7 @@ fn main() {
         args.push("--release".to_string());
     }
 
-    let mut flags = vec![
+    let flags = vec![
         "-C".to_string(),
         format!("link-arg=-zstack-size={}", 128 * 1024),
         "-C".to_string(),
@@ -36,7 +43,6 @@ fn main() {
         "-C".to_string(),
         "target-feature=+bulk-memory".to_string(),
     ];
-
     let encoded_flags = flags.join("\x1f");
 
     let status = Command::new("cargo")
@@ -52,7 +58,7 @@ fn main() {
         );
     }
 
-    let artifacts_dir = target_dir
+    let artifacts_dir = target2_dir
         .join("wasm32-unknown-unknown")
         .join(if is_debug_profile { "debug" } else { "release" });
 
@@ -102,5 +108,6 @@ fn main() {
     }
     let code = code.join("\n");
     let build_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("build_output.rs");
+
     fs::write(&build_output_path, code).unwrap();
 }

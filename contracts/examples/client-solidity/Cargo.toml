@@ -7,11 +7,12 @@ version = "0.1.0"
 fluentbase-sdk = { workspace = true }
 
 [dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
 hex = "0.4.3"
 
-[build-dependencies]
-fluentbase-build = { workspace = true }
-fluentbase-sdk = { workspace = true }
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
 
 [features]
 default = ["std"]

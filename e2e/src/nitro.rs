@@ -1,5 +1,6 @@
 extern crate test;
 
+use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{address, Address, U256};
 use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
@@ -7,18 +8,17 @@ use fluentbase_types::PRECOMPILE_NITRO_VERIFIER;
 use revm::primitives::hardfork::SpecId;
 use std::time::Instant;
 
+const ATTESTATION_EXAMPLE: &[u8] =
+    include_bytes!("../../contracts/genesis/nitro/attestation-example.hex");
+
 #[test]
 fn test_nitro_verifier_precompiled_version() {
     let caller = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.add_balance(caller, U256::from(500_000_000_000u128));
     let start = Instant::now();
     let mut total_gas = 0;
-    let attestation_doc: Vec<u8> = hex::decode(include_bytes!(
-        "../../contracts/nitro/attestation-example.hex"
-    ))
-    .unwrap()
-    .into();
+    let attestation_doc: Vec<u8> = hex::decode(ATTESTATION_EXAMPLE).unwrap().into();
     let result = TxBuilder::call(&mut ctx, caller, PRECOMPILE_NITRO_VERIFIER, None)
         .input(attestation_doc.into())
         .gas_limit(1_000_000_000)
@@ -36,7 +36,7 @@ fn test_nitro_verifier_precompiled_version() {
 
 #[test]
 fn test_nitro_verifier_solidity_version() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.cfg.spec = SpecId::PRAGUE;
 
     const OWNER_ADDRESS: Address = Address::ZERO;
@@ -71,10 +71,7 @@ fn test_nitro_verifier_solidity_version() {
     sol! {
         function decodeAttestationTbs(bytes memory attestation) external pure returns (bytes memory attestationTbs, bytes memory signature);
     }
-    let attestation_bytes = hex::decode(include_bytes!(
-        "../../contracts/nitro/attestation-example.hex"
-    ))
-    .unwrap();
+    let attestation_bytes: Vec<u8> = hex::decode(ATTESTATION_EXAMPLE).unwrap().into();
     let input = decodeAttestationTbsCall {
         attestation: attestation_bytes.into(),
     }

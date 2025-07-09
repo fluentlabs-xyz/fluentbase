@@ -14,10 +14,11 @@ fluentbase-sdk = { workspace = true }
 
 [dev-dependencies]
 serial_test = "3.0.0"
+fluentbase-sdk-testing = { workspace = true }
 
-[build-dependencies]
-fluentbase-build = { workspace = true }
-fluentbase-sdk = { workspace = true }
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
 
 [features]
 default = ["std"]
