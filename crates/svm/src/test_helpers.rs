@@ -29,7 +29,8 @@ use solana_rent::Rent;
 use std::{fs::File, io::Read};
 
 pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
-    let mut file = File::open(path).expect("file open failed");
+    let mut file =
+        File::open(path).unwrap_or_else(|_| panic!("failed to open file at path: \"{}\"", path));
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
     let rent = Rent::default();
@@ -121,9 +122,10 @@ pub(crate) fn mock_process_instruction<
     //     ..Default::default()
     // };
     // // Holds the function symbols of an Executable
-    // let mut function_registry: FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>> = FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
-    // register_builtins(&mut function_registry);
-    // let loader = Arc::new(BuiltinProgram::new_loader(config, function_registry));
+    // let mut function_registry: FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>> =
+    // FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default(); register_builtins(&
+    // mut function_registry); let loader = Arc::new(BuiltinProgram::new_loader(config,
+    // function_registry));
 
     with_mock_invoke_context!(
         invoke_context,

@@ -1270,7 +1270,7 @@ pub mod tests {
         let account_buffer = AccountSharedData::new(0, 0, &system_program_id);
         let account_with_program = load_program_account_from_elf_file(
             &bpf_loader_upgradeable_id,
-            "../../examples/svm/solana-program/assets/solana_program.so",
+            "../../contracts/examples/svm/solana-program/assets/solana_program.so",
         );
         let program_len = account_with_program.data().len();
         let programdata_len = UpgradeableLoaderState::size_of_programdata(program_len);
