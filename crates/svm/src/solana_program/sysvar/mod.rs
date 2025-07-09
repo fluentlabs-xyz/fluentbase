@@ -12,7 +12,6 @@ pub use solana_sysvar_id::{
 pub use sysvar_ids::ALL_IDS;
 
 pub mod clock;
-pub mod epoch_rewards;
 pub mod epoch_schedule;
 pub mod instructions;
 use solana_account_info::AccountInfo;

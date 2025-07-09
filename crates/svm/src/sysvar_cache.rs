@@ -1,9 +1,8 @@
 use crate::{
     clock::Clock,
-    epoch_rewards::EpochRewards,
     epoch_schedule::EpochSchedule,
     pubkey::Pubkey,
-    solana_program::sysvar::{clock, epoch_rewards, epoch_schedule},
+    solana_program::sysvar::{clock, epoch_schedule},
 };
 use alloc::sync::Arc;
 use solana_bincode::deserialize;
@@ -13,7 +12,6 @@ use solana_instruction::error::InstructionError;
 pub struct SysvarCache {
     clock: Option<Arc<Clock>>,
     epoch_schedule: Option<Arc<EpochSchedule>>,
-    epoch_rewards: Option<Arc<EpochRewards>>,
 }
 
 impl SysvarCache {
@@ -37,16 +35,6 @@ impl SysvarCache {
         self.epoch_schedule = Some(Arc::new(epoch_schedule));
     }
 
-    pub fn get_epoch_rewards(&self) -> Result<Arc<EpochRewards>, InstructionError> {
-        self.epoch_rewards
-            .clone()
-            .ok_or(InstructionError::UnsupportedSysvar)
-    }
-
-    pub fn set_epoch_rewards(&mut self, epoch_rewards: EpochRewards) {
-        self.epoch_rewards = Some(Arc::new(epoch_rewards));
-    }
-
     pub fn fill_missing_entries<F: FnMut(&Pubkey, &mut dyn FnMut(&[u8]))>(
         &mut self,
         mut get_account_data: F,
@@ -62,14 +50,6 @@ impl SysvarCache {
             get_account_data(&epoch_schedule::id(), &mut |data: &[u8]| {
                 if let Ok(epoch_schedule) = deserialize(data) {
                     self.set_epoch_schedule(epoch_schedule);
-                }
-            });
-        }
-
-        if self.epoch_rewards.is_none() {
-            get_account_data(&epoch_rewards::id(), &mut |data: &[u8]| {
-                if let Ok(epoch_rewards) = deserialize(data) {
-                    self.set_epoch_rewards(epoch_rewards);
                 }
             });
         }

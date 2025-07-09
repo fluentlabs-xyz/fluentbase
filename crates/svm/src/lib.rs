@@ -28,7 +28,6 @@ mod process_instruction_tests;
 // #[cfg(test)]
 // pub mod secp256k1_instruction;
 // pub mod bpf_loader;
-pub mod epoch_rewards;
 pub mod epoch_schedule;
 pub mod fluentbase;
 pub mod hash;

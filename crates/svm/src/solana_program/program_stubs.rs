@@ -121,7 +121,3 @@ pub(crate) fn sol_get_clock_sysvar(var_addr: *mut u8) -> u64 {
 pub(crate) fn sol_get_epoch_schedule_sysvar(var_addr: *mut u8) -> u64 {
     SYSCALL_STUBS.read().sol_get_epoch_schedule_sysvar(var_addr)
 }
-
-pub(crate) fn sol_get_epoch_rewards_sysvar(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS.read().sol_get_epoch_rewards_sysvar(var_addr)
-}
