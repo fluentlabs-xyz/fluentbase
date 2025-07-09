@@ -21,11 +21,8 @@ pub fn process_instruction(
     }
 
     // simple transfer
-    let transfer_amount = u64::from_be_bytes(
-        instruction_data[0..core::mem::size_of::<u64>()]
-            .try_into()
-            .unwrap(),
-    );
+    let transfer_amount =
+        u64::from_be_bytes(instruction_data[0..size_of::<u64>()].try_into().unwrap());
     __msg!("transfer_amount is {}", transfer_amount);
     let accounts_iter = &mut accounts.iter();
     let payer = next_account_info(accounts_iter)?;
