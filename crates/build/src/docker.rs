@@ -39,10 +39,6 @@ pub fn run_in_docker(
         DOCKER_PLATFORM,
         "-v",
         &format!("{}:/workspace", mount_dir.display()),
-        "-v",
-        "cargo-registry:/usr/local/cargo/registry",
-        "-v",
-        "cargo-git:/usr/local/cargo/git",
         "-w",
         &format!("/workspace/{}", relative_dir.display()),
     ]);
@@ -52,7 +48,7 @@ pub fn run_in_docker(
         cmd.args(["-e", &format!("{}={}", key, value)]);
     }
 
-    
+
 
     // Set the rust toolchain ONLY if it's explicitly provided.
     // If it's None, the container's default toolchain will be used.
