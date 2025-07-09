@@ -145,7 +145,8 @@ pub fn process_instruction_truncate<SDK: SharedAPI>(
             return Err(InstructionError::MissingRequiredSignature);
         }
     } else {
-        let state = check_program_account(instruction_context, &program, authority_address)?;
+        let state = check_program_account(instruction_context, &program, authority_address);
+        let state = state?;
         if !matches!(state.status, LoaderV4Status::Retracted) {
             return Err(InstructionError::InvalidArgument);
         }
