@@ -162,8 +162,9 @@ pub fn process_instruction_truncate<SDK: SharedAPI>(
             return Err(InstructionError::InsufficientFunds);
         }
         core::cmp::Ordering::Greater => {
-            let mut recipient =
-                instruction_context.try_borrow_instruction_account(transaction_context, 2)?;
+            let recipient =
+                instruction_context.try_borrow_instruction_account(transaction_context, 2);
+            let mut recipient = recipient?;
             if !instruction_context.is_instruction_account_writable(2)? {
                 return Err(InstructionError::InvalidArgument);
             }
