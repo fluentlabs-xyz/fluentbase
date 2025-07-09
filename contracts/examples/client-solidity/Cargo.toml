@@ -1,0 +1,19 @@
+[package]
+edition = "2021"
+name = "fluentbase-examples-client-solidity"
+version = "0.1.0"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+
+[dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
+hex = "0.4.3"
+
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std"]

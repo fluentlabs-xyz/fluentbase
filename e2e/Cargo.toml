@@ -18,22 +18,7 @@ fluentbase-sdk-testing = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-svm = { workspace = true, default-features = false }
 fluentbase-erc20 = { workspace = true }
-
-fluentbase-examples-abi-solidity = { path = "../examples/abi-solidity" }
-fluentbase-examples-checkmate = { path = "../examples/checkmate" }
-fluentbase-examples-client-solidity = { path = "../examples/client-solidity" }
-fluentbase-examples-constructor-params = { path = "../examples/constructor-params" }
-fluentbase-examples-erc20 = { path = "../examples/erc20" }
-fluentbase-examples-greeting = { path = "../examples/greeting" }
-fluentbase-examples-json = { path = "../examples/json" }
-fluentbase-examples-keccak = { path = "../examples/keccak" }
-fluentbase-examples-panic = { path = "../examples/panic" }
-fluentbase-examples-router-solidity = { path = "../examples/router-solidity" }
-fluentbase-examples-rwasm = { path = "../examples/rwasm" }
-fluentbase-examples-secp256k1 = { path = "../examples/secp256k1" }
-fluentbase-examples-simple-storage = { path = "../examples/simple-storage" }
-fluentbase-examples-storage = { path = "../examples/storage" }
-fluentbase-examples-tiny-keccak = { path = "../examples/tiny-keccak" }
+fluentbase-contracts = { workspace = true }
 
 rwasm = { workspace = true }
 revm = { workspace = true }
@@ -53,10 +38,7 @@ default = [
     #    "debug-print",
     #    "enable-svm",
 ]
-enable-svm = [
-    "fluentbase-genesis/enable-svm",
-    "fluentbase-sdk-testing/enable-svm",
-]
+enable-svm = []
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",

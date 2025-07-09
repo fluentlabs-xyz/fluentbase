@@ -1,4 +1,5 @@
 use crate::{
+    EvmTestingContextWithGenesis,
     EXAMPLE_CHECKMATE,
     EXAMPLE_ERC20,
     EXAMPLE_GREETING,
@@ -22,7 +23,7 @@ use std::str::from_utf8_unchecked;
 #[test]
 fn test_wasm_greeting() {
     // deploy greeting WASM contract
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_GREETING.into());
     // call greeting WASM contract
@@ -42,7 +43,7 @@ fn test_wasm_greeting() {
 #[test]
 fn test_wasm_tiny_keccak256() {
     // deploy greeting WASM contract
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_TINY_KECCAK256.into());
     // call greeting WASM contract
@@ -67,7 +68,7 @@ fn test_wasm_tiny_keccak256() {
 #[test]
 fn test_wasm_secp256k1() {
     // deploy greeting WASM contract
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_SECP256K1.into());
     // call greeting WASM contract
@@ -85,7 +86,7 @@ fn test_wasm_secp256k1() {
 #[test]
 fn test_wasm_checkmate() {
     // deploy greeting WASM contract
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_CHECKMATE.into());
     // call greeting WASM contract
@@ -109,7 +110,7 @@ fn test_wasm_checkmate() {
 #[test]
 fn test_wasm_json() {
     // deploy greeting WASM contract
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_JSON.into());
     // call greeting WASM contract
@@ -126,7 +127,7 @@ fn test_wasm_json() {
 #[test]
 fn test_wasm_panic() {
     // deploy greeting WASM contract
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_PANIC.into());
     // call greeting WASM contract
@@ -144,7 +145,7 @@ fn test_wasm_panic() {
 
 #[test]
 fn test_wasm_erc20() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const OWNER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
     // call with empty input (should fail)
@@ -192,7 +193,7 @@ fn test_wasm_erc20() {
 #[test]
 fn test_wasm_simple_storage() {
     // deploy greeting WASM contract
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_SIMPLE_STORAGE.into());
     // call greeting WASM contract
@@ -209,7 +210,7 @@ fn test_wasm_simple_storage() {
 
 #[test]
 fn test_wasm_rwasm() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_RWASM.into());
     let result = ctx.call_evm_tx(
@@ -230,7 +231,7 @@ fn test_wasm_rwasm() {
 
 #[test]
 fn test_wasm_keccak256_gas_price() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     let contract_address = ctx.deploy_evm_tx(Address::ZERO, EXAMPLE_KECCAK256.into());
     let result = ctx.call_evm_tx(
         Address::ZERO,
@@ -251,7 +252,7 @@ fn test_wasm_keccak256_gas_price() {
 
 #[test]
 fn deploy_and_load_wasm_contract() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let deployer_account = ctx.db.load_account(DEPLOYER_ADDRESS).unwrap();
     assert_eq!(deployer_account.info.nonce, 0);

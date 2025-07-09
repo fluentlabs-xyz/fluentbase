@@ -1,6 +1,6 @@
 extern crate test;
 
-use crate::EXAMPLE_ERC20;
+use crate::{EvmTestingContextWithGenesis, EXAMPLE_ERC20};
 use fluentbase_erc20::{
     common::fixed_bytes_from_u256,
     consts::SIG_TRANSFER,
@@ -14,7 +14,7 @@ use test::Bencher;
 
 #[bench]
 fn bench_original_evm_erc20(b: &mut Bencher) {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.disabled_rwasm = true;
     const OWNER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(
@@ -39,7 +39,7 @@ fn bench_original_evm_erc20(b: &mut Bencher) {
 
 #[bench]
 fn bench_emulated_evm_erc20(b: &mut Bencher) {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const OWNER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(
         OWNER_ADDRESS,
@@ -63,7 +63,7 @@ fn bench_emulated_evm_erc20(b: &mut Bencher) {
 
 #[bench]
 fn bench_rwasm_contract_erc20(b: &mut Bencher) {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const OWNER_ADDRESS: Address = Address::ZERO;
     let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
     let transfer_coin = |ctx: &mut EvmTestingContext| {
@@ -82,7 +82,7 @@ fn bench_rwasm_contract_erc20(b: &mut Bencher) {
 
 #[bench]
 fn bench_precompiled_erc20(b: &mut Bencher) {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
         address: PRECOMPILE_ERC20_RUNTIME,

@@ -4,8 +4,7 @@
 
 extern crate alloc;
 extern crate core;
-
-use primitives as _;
+pub extern crate rwasm as rwasm_core;
 
 mod address;
 mod bytecode_type;
@@ -53,7 +52,7 @@ pub const STATE_DEPLOY: u32 = 1;
 /// A chain id for Fluent Developer Preview, where value hex is equal to 0x5201 where:
 /// - 0x52 - is ASCII of R
 /// - 0x01 - is a version of developer preview
-pub const DEVELOPER_PREVIEW_CHAIN_ID: u64 = 20993;
+pub const DEVELOPER_PREVIEW_CHAIN_ID: u64 = 10993;
 
 /// A relation between fuel and gas,
 /// according to our benchmarks, average WebAssembly instruction is ~1000 faster than average EVM

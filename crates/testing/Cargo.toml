@@ -11,7 +11,6 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-codec = { workspace = true }
-fluentbase-genesis = { workspace = true }
 fluentbase-runtime = { workspace = true, features = ["std"] }
 fluentbase-sdk = { workspace = true }
 
@@ -23,12 +22,8 @@ hex = { workspace = true }
 
 [features]
 default = ["std"]
-enable-svm = [
-    "fluentbase-genesis/enable-svm",
-]
 std = [
     "fluentbase-codec/std",
-    "fluentbase-genesis/std",
     "fluentbase-runtime/std",
     "fluentbase-sdk/std",
     "rwasm/std",

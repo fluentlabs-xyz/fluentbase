@@ -28,7 +28,7 @@ mod tests {
 
     #[test]
     fn test_svm_deploy() {
-        let mut ctx = EvmTestingContext::default();
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
         ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
             address: PRECOMPILE_SVM_RUNTIME,
@@ -55,7 +55,7 @@ mod tests {
 
     #[test]
     fn test_svm_deploy_exec() {
-        let mut ctx = EvmTestingContext::default();
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
         assert_eq!(ctx.sdk.context().block_number(), 0);
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
 
