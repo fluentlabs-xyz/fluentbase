@@ -10,6 +10,7 @@ use crate::{
     U256,
 };
 
+pub type IsAccountOwnable = bool;
 pub type IsColdAccess = bool;
 pub type IsAccountEmpty = bool;
 
@@ -28,7 +29,7 @@ pub trait MetadataAPI {
     fn metadata_size(
         &self,
         address: &Address,
-    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)>;
+    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)>;
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()>;
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
 }

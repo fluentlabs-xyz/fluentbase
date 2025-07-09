@@ -14,6 +14,7 @@ use fluentbase_types::{
     ContextReader,
     ExitCode,
     IsAccountEmpty,
+    IsAccountOwnable,
     IsColdAccess,
     MetadataAPI,
     SharedAPI,
@@ -140,22 +141,23 @@ impl<API: NativeAPI> MetadataAPI for SharedContextImpl<API> {
     fn metadata_size(
         &self,
         address: &Address,
-    ) -> SyscallResult<(u32, IsColdAccess, IsAccountEmpty)> {
+    ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
         let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
             SYSCALL_ID_METADATA_SIZE,
             address.as_slice(),
             None,
             STATE_MAIN,
         );
-        let mut output: [u8; 6] = [0u8; 6];
+        let mut output: [u8; 7] = [0u8; 7];
         if SyscallResult::<()>::is_ok(exit_code) {
             self.native_sdk.read_output(&mut output, 0);
         };
         let value = LittleEndian::read_u32(&output[0..4]);
-        let is_cold_access = output[4] != 0x00;
-        let is_account_empty = output[5] != 0x00;
+        let is_account_ownable = output[4] != 0x00;
+        let is_cold_access = output[5] != 0x00;
+        let is_account_empty = output[6] != 0x00;
         SyscallResult::new(
-            (value, is_cold_access, is_account_empty),
+            (value, is_account_ownable, is_cold_access, is_account_empty),
             fuel_consumed,
             fuel_refunded,
             exit_code,

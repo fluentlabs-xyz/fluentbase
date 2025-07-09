@@ -57,7 +57,8 @@ jobs:
       - name: Move binary
         run: |
           mkdir artifacts
-          mv ./crates/genesis/genesis-devnet.json ./artifacts/genesis-${{ needs.extract-version.outputs.VERSION }}.json
+          gzip ./crates/genesis/genesis-devnet.json 
+          mv ./crates/genesis/genesis-devnet.json.gz ./artifacts/genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
       - name: Configure GPG and create artifacts
         env:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
@@ -66,21 +67,21 @@ jobs:
           export GPG_TTY=$(tty)
           echo -n "$GPG_SIGNING_KEY" | base64 --decode | gpg --batch --import
           cd artifacts
-          echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab genesis-${{ needs.extract-version.outputs.VERSION }}.json
+          echo "$GPG_PASSPHRASE" | gpg --passphrase-fd 0 --pinentry-mode loopback --batch -ab genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
           mv *json* ..
         shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: genesis-${{ needs.extract-version.outputs.VERSION }}.json
-          path: genesis-${{ needs.extract-version.outputs.VERSION }}.json
+          name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
+          path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
 
       - name: Upload signature
         uses: actions/upload-artifact@v4
         with:
-          name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.asc
-          path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.asc
+          name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
+          path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
 
   draft-release:
     name: draft release
