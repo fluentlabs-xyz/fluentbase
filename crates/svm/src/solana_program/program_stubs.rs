@@ -63,9 +63,6 @@ pub trait SyscallStubs: Sync + Send {
     fn sol_get_last_restart_slot(&self, _var_addr: *mut u8) -> u64 {
         UNSUPPORTED_SYSVAR
     }
-    fn sol_get_epoch_stake(&self, _vote_address: *const u8) -> u64 {
-        0
-    }
     /// # Safety
     unsafe fn sol_memcpy(&self, dst: *mut u8, src: *const u8, n: usize) {
         stubs::sol_memcpy(dst, src, n)

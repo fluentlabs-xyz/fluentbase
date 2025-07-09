@@ -462,7 +462,6 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
         // TODO need specific blockhash?
         let environment_config = EnvironmentConfig::new(
             *message.recent_blockhash(),
-            None,
             Arc::new(feature_set),
             0,
             sysvar_cache,

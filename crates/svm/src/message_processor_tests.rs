@@ -143,13 +143,8 @@ pub mod tests {
 
         let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            None,
-            Arc::new(feature_set_default()),
-            0,
-            sysvar_cache,
-        );
+        let environment_config =
+            EnvironmentConfig::new(blockhash, Arc::new(feature_set_default()), 0, sysvar_cache);
         let mut invoke_context = InvokeContext::new(
             transaction_context,
             programs_cache_for_tx_batch,
@@ -368,13 +363,8 @@ pub mod tests {
         );
         let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            None,
-            Arc::new(feature_set_default()),
-            0,
-            sysvar_cache,
-        );
+        let environment_config =
+            EnvironmentConfig::new(blockhash, Arc::new(feature_set_default()), 0, sysvar_cache);
         let mut invoke_context = InvokeContext::new(
             transaction_context,
             programs_cache_for_tx_batch,
@@ -547,13 +537,8 @@ pub mod tests {
 
         let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            None,
-            Arc::new(feature_set_default()),
-            0,
-            sysvar_cache,
-        );
+        let environment_config =
+            EnvironmentConfig::new(blockhash, Arc::new(feature_set_default()), 0, sysvar_cache);
         let mut invoke_context = InvokeContext::new(
             transaction_context,
             programs_cache_for_tx_batch,
@@ -665,13 +650,8 @@ pub mod tests {
 
         let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            None,
-            Arc::new(feature_set_default()),
-            0,
-            sysvar_cache,
-        );
+        let environment_config =
+            EnvironmentConfig::new(blockhash, Arc::new(feature_set_default()), 0, sysvar_cache);
         let mut invoke_context = InvokeContext::new(
             transaction_context,
             programs_cache_for_tx_batch,
@@ -867,13 +847,8 @@ pub mod tests {
 
         let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            None,
-            Arc::new(feature_set_default()),
-            0,
-            sysvar_cache,
-        );
+        let environment_config =
+            EnvironmentConfig::new(blockhash, Arc::new(feature_set_default()), 0, sysvar_cache);
         let mut invoke_context = InvokeContext::new(
             transaction_context,
             programs_cache_for_tx_batch,
@@ -1082,13 +1057,8 @@ pub mod tests {
 
         let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            None,
-            Arc::new(feature_set_default()),
-            0,
-            sysvar_cache,
-        );
+        let environment_config =
+            EnvironmentConfig::new(blockhash, Arc::new(feature_set_default()), 0, sysvar_cache);
         let mut invoke_context = InvokeContext::new(
             transaction_context,
             programs_cache_for_tx_batch,

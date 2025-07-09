@@ -108,7 +108,6 @@ impl BpfAllocator {
 
 pub struct EnvironmentConfig {
     pub blockhash: Hash,
-    epoch_total_stake: Option<u64>,
     pub feature_set: Arc<FeatureSet>,
     pub lamports_per_signature: u64,
     sysvar_cache: SysvarCache,
@@ -116,14 +115,12 @@ pub struct EnvironmentConfig {
 impl<'a> EnvironmentConfig {
     pub fn new(
         blockhash: Hash,
-        epoch_total_stake: Option<u64>,
         feature_set: Arc<FeatureSet>,
         lamports_per_signature: u64,
         sysvar_cache: SysvarCache,
     ) -> Self {
         Self {
             blockhash,
-            epoch_total_stake,
             feature_set,
             lamports_per_signature,
             sysvar_cache,
@@ -487,11 +484,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
     /// Get cached sysvars
     pub fn get_sysvar_cache(&self) -> &SysvarCache {
         &self.environment_config.sysvar_cache
-    }
-
-    /// Get cached epoch total stake.
-    pub fn get_epoch_total_stake(&self) -> Option<u64> {
-        self.environment_config.epoch_total_stake
     }
 
     // Should alignment be enforced during user pointer translation
