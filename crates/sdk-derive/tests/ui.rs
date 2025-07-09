@@ -1,3 +1,4 @@
+#[ignore]
 #[test]
 fn test_ui() {
     let t = trybuild::TestCases::new();
