@@ -151,12 +151,7 @@ pub fn process_instruction_truncate<SDK: SharedAPI>(
             return Err(InstructionError::InvalidArgument);
         }
     }
-    let required_lamports = if new_size == 0 {
-        0
-    } else {
-        let rent = invoke_context.get_sysvar_cache().get_rent()?;
-        rent.minimum_balance(LoaderV4State::program_data_offset().saturating_add(new_size as usize))
-    };
+    let required_lamports = 0;
     match program.get_lamports().cmp(&required_lamports) {
         core::cmp::Ordering::Less => {
             return Err(InstructionError::InsufficientFunds);
@@ -250,8 +245,7 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
     )
     .map_err(|_err| InstructionError::InvalidAccountData)?;
     if let Some(mut source_program) = source_program {
-        let rent = invoke_context.get_sysvar_cache().get_rent()?;
-        let required_lamports = rent.minimum_balance(source_program.get_data().len());
+        let required_lamports: u64 = 0;
         let transfer_lamports = required_lamports.saturating_sub(program.get_lamports());
         program.set_data_from_slice(source_program.get_data())?;
         source_program.set_data_length(0)?;

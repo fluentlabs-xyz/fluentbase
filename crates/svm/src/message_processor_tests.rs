@@ -11,7 +11,6 @@ pub mod tests {
         message_processor::MessageProcessor,
         native_loader,
         native_loader::create_loadable_account_for_test,
-        rent::Rent,
         solana_program::{
             feature_set::feature_set_default,
             message::{AccountKeys, LegacyMessage, Message, SanitizedMessage},
@@ -58,7 +57,7 @@ pub mod tests {
                 create_loadable_account_for_test("mock_system_program", &native_loader::id()),
             ),
         ];
-        let transaction_context = TransactionContext::new(accounts, Default::default(), 1, 3);
+        let transaction_context = TransactionContext::new(accounts, 1, 3);
         let program_indices = vec![vec![2]];
 
         let account_keys = (0..transaction_context.get_number_of_accounts())
@@ -316,7 +315,7 @@ pub mod tests {
                 create_loadable_account_for_test("mock_system_program", &native_loader::id()),
             ),
         ];
-        let transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3);
+        let transaction_context = TransactionContext::new(accounts, 1, 3);
         let program_indices = vec![vec![2]];
         let mut programs_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
             Default::default(),
@@ -513,7 +512,7 @@ pub mod tests {
                 create_loadable_account_for_test("system_program_id", &native_loader_id),
             ),
         ];
-        let transaction_context = TransactionContext::new(accounts, Default::default(), 1, 3);
+        let transaction_context = TransactionContext::new(accounts, 1, 3);
         let program_indices = vec![vec![non_program_accounts_count]];
 
         let account_keys = (0..transaction_context.get_number_of_accounts())
@@ -632,7 +631,7 @@ pub mod tests {
                 create_loadable_account_for_test("system_program_id", &native_loader_id),
             ),
         ];
-        let transaction_context = TransactionContext::new(accounts, Default::default(), 1, 3);
+        let transaction_context = TransactionContext::new(accounts, 1, 3);
         let program_indices = vec![vec![2]];
 
         let account_keys = (0..transaction_context.get_number_of_accounts())
@@ -842,7 +841,7 @@ pub mod tests {
                 create_loadable_account_for_test("system_program_id", &native_loader_id),
             ),
         ];
-        let transaction_context = TransactionContext::new(accounts, Default::default(), 1, 3);
+        let transaction_context = TransactionContext::new(accounts, 1, 3);
         let program_indices = vec![vec![2]];
 
         let function_registry =
@@ -1057,7 +1056,7 @@ pub mod tests {
                 create_loadable_account_for_test("system_program_id", &native_loader_id),
             ),
         ];
-        let transaction_context = TransactionContext::new(accounts, Default::default(), 1, 3);
+        let transaction_context = TransactionContext::new(accounts, 1, 3);
         let mut program_indices = vec![];
 
         let function_registry =

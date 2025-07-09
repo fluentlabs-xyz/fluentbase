@@ -24,10 +24,7 @@ use solana_pubkey::Pubkey;
 pub type InheritableAccountFields = (u64, Epoch);
 pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITIAL_RENT_EPOCH);
 /// Replacement for the executable flag: An account being owned by one of these contains a program.
-pub const PROGRAM_OWNERS: &[Pubkey] = &[
-    // bpf_loader::id(),
-    loader_v4::id(),
-];
+pub const PROGRAM_OWNERS: &[Pubkey] = &[loader_v4::id()];
 pub fn is_executable_by_owner(pk: &Pubkey) -> bool {
     PROGRAM_OWNERS.contains(pk)
 }
@@ -755,15 +752,6 @@ impl<'a> BorrowedAccount<'a> {
         Ok(())
     }
 
-    // Returns whether or the lamports currently in the account is sufficient for rent exemption should the
-    // data be resized to the given size
-
-    pub fn is_rent_exempt_at_data_length(&self, data_length: usize) -> bool {
-        self.transaction_context
-            .rent
-            .is_exempt(self.get_lamports(), data_length)
-    }
-
     /// Returns whether this account is executable (transaction wide)
     #[inline]
     pub fn is_executable(&self) -> bool {
@@ -773,14 +761,6 @@ impl<'a> BorrowedAccount<'a> {
     /// Configures whether this account is executable (transaction wide)
 
     pub fn set_executable(&mut self, is_executable: bool) -> Result<(), InstructionError> {
-        // To become executable an account must be rent exempt
-        if !self
-            .transaction_context
-            .rent
-            .is_exempt(self.get_lamports(), self.get_data().len())
-        {
-            return Err(InstructionError::ExecutableAccountNotRentExempt);
-        }
         // Only the owner can set the executable flag
         if !self.is_owned_by_current_program() {
             return Err(InstructionError::ExecutableModified);

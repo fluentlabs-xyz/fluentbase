@@ -36,7 +36,6 @@ pub(crate) mod tests {
         instruction::Instruction,
         message::{LegacyMessage, Message, SanitizedMessage},
         pubkey::Pubkey,
-        rent::Rent,
         secp256k1_program,
     };
     use solana_rbpf::{
@@ -243,7 +242,7 @@ pub(crate) mod tests {
             (secp256k1_program::id(), secp256k1_account),
             (mock_program_id, mock_program_account),
         ];
-        let transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 2);
+        let transaction_context = TransactionContext::new(accounts, 1, 2);
 
         // Since libsecp256k1 is still using the old version of rand, this test
         // copies the `random` implementation at:

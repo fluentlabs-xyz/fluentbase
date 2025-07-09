@@ -16,7 +16,6 @@ mod tests {
         fluentbase::common::BatchMessage,
         helpers::storage_read_account_data,
         pubkey::Pubkey,
-        rent::Rent,
         solana_bincode::serialize,
         solana_program::{
             instruction::{AccountMeta, Instruction},
@@ -34,9 +33,7 @@ mod tests {
         let mut file = File::open(path).expect("file open failed");
         let mut elf = Vec::new();
         file.read_to_end(&mut elf).unwrap();
-        let rent = Rent::default();
-        let minimum_balance = rent.minimum_balance(elf.len());
-        let mut program_account = AccountSharedData::new(minimum_balance, 0, loader_id);
+        let mut program_account = AccountSharedData::new(0, 0, loader_id);
         program_account.set_data(elf);
         program_account.set_executable(true);
         program_account

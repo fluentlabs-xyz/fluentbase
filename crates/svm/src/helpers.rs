@@ -248,7 +248,6 @@ macro_rules! with_mock_invoke_context {
         $transaction_accounts:expr $(,)?
     ) => {
         use alloc::sync::Arc;
-        use solana_rent::Rent;
         use $crate::{
             account::ReadableAccount,
             compute_budget::compute_budget::ComputeBudget,
@@ -261,7 +260,6 @@ macro_rules! with_mock_invoke_context {
         let compute_budget = ComputeBudget::default();
         let $transaction_context = TransactionContext::new(
             $transaction_accounts,
-            Rent::default(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
         );

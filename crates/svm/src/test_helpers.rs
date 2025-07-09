@@ -25,16 +25,13 @@ use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
 };
-use solana_rent::Rent;
 use std::{fs::File, io::Read};
 
 pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
     let mut file = File::open(path).expect("file open failed");
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
-    let rent = Rent::default();
-    let minimum_balance = rent.minimum_balance(elf.len());
-    let mut program_account = AccountSharedData::new(minimum_balance, 0, loader_id);
+    let mut program_account = AccountSharedData::new(0, 0, loader_id);
     program_account.set_data(elf);
     program_account.set_executable(true);
     program_account

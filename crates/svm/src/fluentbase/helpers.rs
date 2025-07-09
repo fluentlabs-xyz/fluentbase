@@ -48,7 +48,6 @@ use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
 };
-use solana_rent::{sysvar, Rent};
 use solana_transaction_error::TransactionError;
 
 const INSTRUCTION_STACK_CAPACITY: usize = 100;
@@ -123,7 +122,6 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, API: MetadataAPI>(
 pub struct LoadedTransactionAccount {
     pub(crate) account: AccountSharedData,
     pub(crate) loaded_size: usize,
-    pub(crate) rent_collected: u64,
 }
 
 fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedData {
@@ -152,7 +150,7 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
 
     AccountSharedData::from(Account {
         data: construct_instructions_data(&decompiled_instructions),
-        owner: sysvar::id(),
+        owner: solana_rent::sysvar::id(),
         ..Account::default()
     })
 }
@@ -197,7 +195,6 @@ fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI>(
         LoadedTransactionAccount {
             loaded_size: 0,
             account: construct_instructions_account(message),
-            rent_collected: 0,
         }
     } else if let Some(program) =
         (!disable_account_loader_special_case && !is_instruction_account && !is_writable)
@@ -209,7 +206,6 @@ fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI>(
         LoadedTransactionAccount {
             loaded_size: program.account_size,
             account: account_shared_data_from_program(account_key, program_accounts)?,
-            rent_collected: 0,
         }
     } else {
         storage_read_account_data(api, account_key)
@@ -220,7 +216,6 @@ fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI>(
                 LoadedTransactionAccount {
                     loaded_size: account.data().len(),
                     account,
-                    rent_collected: 0,
                 }
             })
             .unwrap_or_else(|_| {
@@ -237,7 +232,6 @@ fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI>(
                 LoadedTransactionAccount {
                     loaded_size: default_account.data().len(),
                     account: default_account,
-                    rent_collected: 0,
                 }
             })
     };
@@ -404,10 +398,8 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
 
     let compute_budget = ComputeBudget::default();
     let mut sysvar_cache = SysvarCache::default();
-    let rent = Rent::free();
     let clock = Clock::default();
     let epoch_schedule = EpochSchedule::default();
-    sysvar_cache.set_rent(rent.clone());
     sysvar_cache.set_clock(clock);
     sysvar_cache.set_epoch_schedule(epoch_schedule);
 
@@ -460,7 +452,6 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
     // TODO fill hardcoded parameters?
     let transaction_context = TransactionContext::new(
         accounts,
-        rent.clone(),
         INSTRUCTION_STACK_CAPACITY,
         INSTRUCTION_TRACE_CAPACITY,
     );

@@ -50,4 +50,3 @@ pub use solana_account_info::{self as account_info, debug_account_data};
 pub use solana_bincode;
 pub use solana_clock as clock;
 pub use solana_pubkey as pubkey;
-pub use solana_rent as rent;

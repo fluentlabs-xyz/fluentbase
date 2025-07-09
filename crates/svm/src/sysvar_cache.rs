@@ -3,8 +3,7 @@ use crate::{
     epoch_rewards::EpochRewards,
     epoch_schedule::EpochSchedule,
     pubkey::Pubkey,
-    rent::Rent,
-    solana_program::sysvar::{clock, epoch_rewards, epoch_schedule, rent},
+    solana_program::sysvar::{clock, epoch_rewards, epoch_schedule},
 };
 use alloc::sync::Arc;
 use solana_bincode::deserialize;
@@ -15,7 +14,6 @@ pub struct SysvarCache {
     clock: Option<Arc<Clock>>,
     epoch_schedule: Option<Arc<EpochSchedule>>,
     epoch_rewards: Option<Arc<EpochRewards>>,
-    rent: Option<Arc<Rent>>,
 }
 
 impl SysvarCache {
@@ -49,14 +47,6 @@ impl SysvarCache {
         self.epoch_rewards = Some(Arc::new(epoch_rewards));
     }
 
-    pub fn get_rent(&self) -> Result<Arc<Rent>, InstructionError> {
-        self.rent.clone().ok_or(InstructionError::UnsupportedSysvar)
-    }
-
-    pub fn set_rent(&mut self, rent: Rent) {
-        self.rent = Some(Arc::new(rent));
-    }
-
     pub fn fill_missing_entries<F: FnMut(&Pubkey, &mut dyn FnMut(&[u8]))>(
         &mut self,
         mut get_account_data: F,
@@ -83,14 +73,6 @@ impl SysvarCache {
                 }
             });
         }
-
-        if self.rent.is_none() {
-            get_account_data(&rent::id(), &mut |data: &[u8]| {
-                if let Ok(rent) = deserialize(data) {
-                    self.set_rent(rent);
-                }
-            });
-        }
     }
 
     pub fn reset(&mut self) {
@@ -104,6 +86,15 @@ impl SysvarCache {
 /// as `solana_sdk::keyed_account::from_keyed_account` despite dynamically
 /// loading them instead of deserializing from account data.
 pub mod get_sysvar_with_account_check {
+    use crate::{
+        clock::Clock,
+        context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
+        solana_program::sysvar::Sysvar,
+    };
+    use alloc::sync::Arc;
+    use fluentbase_sdk::SharedAPI;
+    use solana_instruction::error::InstructionError;
+
     fn check_sysvar_account<S: Sysvar>(
         transaction_context: &TransactionContext,
         instruction_context: &InstructionContext,
@@ -128,28 +119,5 @@ pub mod get_sysvar_with_account_check {
             instruction_account_index,
         )?;
         invoke_context.get_sysvar_cache().get_clock()
-    }
-
-    use crate::{
-        clock::Clock,
-        context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
-        rent::Rent,
-        solana_program::sysvar::Sysvar,
-    };
-    use alloc::sync::Arc;
-    use fluentbase_sdk::SharedAPI;
-    use solana_instruction::error::InstructionError;
-
-    pub fn rent<SDK: SharedAPI>(
-        invoke_context: &InvokeContext<SDK>,
-        instruction_context: &InstructionContext,
-        instruction_account_index: IndexOfAccount,
-    ) -> Result<Arc<Rent>, InstructionError> {
-        check_sysvar_account::<Rent>(
-            &invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
-        invoke_context.get_sysvar_cache().get_rent()
     }
 }

@@ -54,7 +54,6 @@ lazy_static! {
         set.insert(native_loader::id());
         set.insert(loader_v4::id());
         set.insert(sysvar::clock::id());
-        set.insert(sysvar::rent::id());
         set
     };
 }

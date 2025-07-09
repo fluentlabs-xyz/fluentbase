@@ -4,7 +4,6 @@ mod tests {
         account::{Account, AccountSharedData, ReadableAccount},
         native_loader,
         pubkey::Pubkey,
-        rent::Rent,
         solana_program::{instruction::AccountMeta, sysvar},
         system_instruction::{SystemError, SystemInstruction, MAX_PERMITTED_DATA_LENGTH},
         system_processor::{get_system_account_kind, Address, Entrypoint, SystemAccountKind},

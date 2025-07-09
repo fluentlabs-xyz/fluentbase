@@ -75,7 +75,6 @@ mod tests {
         let native_loader_id = native_loader::id();
         let loader_id = loader_v4::id();
         let sysvar_clock_id = sysvar::clock::id();
-        let sysvar_rent_id = sysvar::rent::id();
 
         let pk_payer = Pubkey::new_unique();
         let pk_payer_account = AccountSharedData::new(100, 0, &system_program_id);
@@ -129,12 +128,6 @@ mod tests {
             &mut mem_storage,
             &sysvar_clock_id,
             &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
-        )
-        .unwrap();
-        storage_write_account_data(
-            &mut mem_storage,
-            &sysvar_rent_id,
-            &create_loadable_account_for_test("sysvar_rent_id", &system_program_id),
         )
         .unwrap();
 
@@ -258,12 +251,6 @@ mod tests {
         assert_eq!(account_data.data().len(), "sysvar_clock_id".len());
         assert_eq!(account_data.executable(), true);
 
-        let account_data: AccountSharedData =
-            storage_read_account_data(&mem_storage, &sysvar_rent_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
-        assert_eq!(account_data.data().len(), "sysvar_rent_id".len());
-        assert_eq!(account_data.executable(), true);
-
         // exec
 
         let amount = 12u64;
@@ -307,7 +294,6 @@ mod tests {
         let native_loader_id = native_loader::id();
         let loader_id = loader_v4::id();
         let sysvar_clock_id = sysvar::clock::id();
-        let sysvar_rent_id = sysvar::rent::id();
 
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
         let pk_payer = pubkey_from_evm_address(&DEPLOYER_ADDRESS);
@@ -367,12 +353,6 @@ mod tests {
             &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
         )
         .unwrap();
-        storage_write_account_data(
-            &mut mem_storage,
-            &sysvar_rent_id,
-            &create_loadable_account_for_test("sysvar_rent_id", &system_program_id),
-        )
-        .unwrap();
 
         // init buffer
 
@@ -494,12 +474,6 @@ mod tests {
         assert_eq!(account_data.data().len(), "sysvar_clock_id".len());
         assert_eq!(account_data.executable(), true);
 
-        let account_data: AccountSharedData =
-            storage_read_account_data(&mem_storage, &sysvar_rent_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
-        assert_eq!(account_data.data().len(), "sysvar_rent_id".len());
-        assert_eq!(account_data.executable(), true);
-
         // create new account
 
         let mut instruction_data = Vec::<u8>::new();
@@ -555,7 +529,6 @@ mod tests {
         let native_loader_id = native_loader::id();
         let loader_id = loader_v4::id();
         let sysvar_clock_id = sysvar::clock::id();
-        let sysvar_rent_id = sysvar::rent::id();
 
         const CONTRACT_CALLER: Address = address!("1231238908230948230948209348203984029834");
         const CONTRACT_ADDRESS: Address = address!("0xF91c20C0Cafbfdc150adFf51BBfC5808EdDE7CB5");
@@ -599,12 +572,6 @@ mod tests {
             &mut mem_storage,
             &sysvar_clock_id,
             &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
-        )
-        .unwrap();
-        storage_write_account_data(
-            &mut mem_storage,
-            &sysvar_rent_id,
-            &create_loadable_account_for_test("sysvar_rent_id", &system_program_id),
         )
         .unwrap();
 

@@ -16,7 +16,6 @@ use crate::{
     loaders::bpf_loader_v4,
     native_loader,
     precompiles::Precompile,
-    rent::Rent,
     solana_program::{
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status},
@@ -779,8 +778,6 @@ pub struct TransactionContext {
     instruction_trace: Vec<InstructionContext>,
     return_data: TransactionReturnData,
     pub(crate) accounts_resize_delta: RefCell<i64>,
-
-    pub(crate) rent: Rent,
 }
 
 impl TransactionContext {
@@ -788,7 +785,6 @@ impl TransactionContext {
 
     pub fn new(
         transaction_accounts: Vec<TransactionAccount>,
-        rent: Rent,
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
     ) -> Self {
@@ -805,7 +801,6 @@ impl TransactionContext {
             instruction_trace: vec![InstructionContext::default()],
             return_data: TransactionReturnData::default(),
             accounts_resize_delta: RefCell::new(0),
-            rent,
         }
     }
 
