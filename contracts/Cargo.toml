@@ -17,9 +17,7 @@ readme = "README.md"
 [workspace.dependencies]
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 precompile = { path = "../revm/crates/precompile", package = "revm-precompile", default-features = false }
-fluentbase-build = { path = "../crates/build" }
 fluentbase-erc20 = { path = "../crates/erc20", default-features = false }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false, features = ["cache-compiled-artifacts"] }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 fluentbase-svm = { path = "../crates/svm", default-features = false, features = [] }
 hex-literal = { version = "0.4.1", default-features = false }

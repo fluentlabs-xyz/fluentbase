@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-rwasm = { workspace = true }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
@@ -16,4 +15,4 @@ path = "lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "rwasm/std"]
+std = ["fluentbase-sdk/std"]

@@ -4,6 +4,7 @@
 
 extern crate alloc;
 extern crate core;
+pub extern crate rwasm as rwasm_core;
 
 mod address;
 mod bytecode_type;
