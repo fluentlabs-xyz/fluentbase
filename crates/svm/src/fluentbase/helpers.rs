@@ -150,7 +150,7 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
 
     AccountSharedData::from(Account {
         data: construct_instructions_data(&decompiled_instructions),
-        owner: solana_rent::sysvar::id(),
+        owner: system_program::id(),
         ..Account::default()
     })
 }

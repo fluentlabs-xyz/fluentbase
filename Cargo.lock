@@ -3105,7 +3105,6 @@ dependencies = [
  "solana-decode-error",
  "solana-epoch-schedule",
  "solana-feature-set",
- "solana-fee-calculator",
  "solana-hash",
  "solana-instruction",
  "solana-precompile-error",
@@ -3113,7 +3112,6 @@ dependencies = [
  "solana-program-error",
  "solana-program-memory",
  "solana-pubkey",
- "solana-rent",
  "solana-sanitize",
  "solana-sdk-macro",
  "solana-serialize-utils",
@@ -6593,17 +6591,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-fee-calculator"
-version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#5fb3e19ee5688ea43ad4f505a409149dc830aa3a"
-dependencies = [
- "bincode 2.0.1",
- "log",
- "serde",
- "serde_derive",
-]
-
-[[package]]
 name = "solana-hash"
 version = "2.1.18"
 source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#5fb3e19ee5688ea43ad4f505a409149dc830aa3a"
@@ -6706,18 +6693,6 @@ dependencies = [
  "solana-sanitize",
  "solana-sha256-hasher",
  "tiny-keccak",
-]
-
-[[package]]
-name = "solana-rent"
-version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#5fb3e19ee5688ea43ad4f505a409149dc830aa3a"
-dependencies = [
- "bincode 2.0.1",
- "serde",
- "serde_derive",
- "solana-sdk-macro",
- "solana-sysvar-id",
 ]
 
 [[package]]

@@ -23,20 +23,15 @@ solana-instruction = { workspace = true, default-features = false, features = ["
 solana-account-info = { workspace = true, default-features = false, features = ["bincode"] }
 solana-clock = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
 solana-epoch-schedule = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
-solana-rent = { workspace = true, default-features = false, features = ["serde", "sysvar"] }
 solana-sanitize = { workspace = true, default-features = false, features = [] }
 solana-short-vec = { workspace = true, default-features = false, features = [] }
 solana-sha256-hasher = { workspace = true, default-features = false, features = [] }
-solana-fee-calculator = { workspace = true, default-features = false, features = ["serde"] }
 solana-program-error = { workspace = true, default-features = false, features = ["serde"] }
 solana-transaction-error = { workspace = true, default-features = false, features = ["serde"] }
 solana-sysvar-id = { workspace = true, default-features = false, features = [] }
 solana-sdk-macro = { workspace = true, default-features = false, features = [] }
 solana-serialize-utils = { workspace = true, default-features = false, features = [] }
-#solana-last-restart-slot = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
 solana-hash = { workspace = true, default-features = false, features = ["serde", "bytemuck"] }
-#solana-slot-hashes = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
-#solana-slot-history = { workspace = true, default-features = false, features = ["sysvar", "serde"] }
 solana-decode-error = { workspace = true, default-features = false, features = [] }
 solana-program-entrypoint = { workspace = true, default-features = false, features = [] }
 solana-feature-set = { workspace = true, default-features = false, features = [] }
@@ -45,16 +40,12 @@ static_assertions = { workspace = true, default-features = false, features = [] 
 solana-stable-layout = { workspace = true, default-features = false, features = [] }
 solana-bincode = { workspace = true, default-features = false, features = [] }
 solana-precompile-error = { workspace = true, default-features = false, features = [] }
-#solana-native-token = { workspace = true, default-features = false, features = [] }
 
 paste = { workspace = true }
 scopeguard = { workspace = true, default-features = false, features = [] }
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
-#serde_json = { workspace = true, default-features = false, features = ["alloc"] }
 blake3 = { workspace = true, default-features = false, features = ["serde"] }
 bitflags = { workspace = true, default-features = false, features = ["serde"] }
-#bytemuck = { workspace = true, default-features = false, features = [] }
-#bytemuck_derive = { workspace = true, default-features = false, features = [] }
 spin = { workspace = true, default-features = false, features = ["spin_mutex", "rwlock"] }
 
 num-derive = { workspace = true }
@@ -66,8 +57,6 @@ itertools = { workspace = true, default-features = false, features = ["use_alloc
 [dev-dependencies]
 rand = { version = "0.9.0", default-features = false, features = ["alloc", "thread_rng"] }
 memoffset = { workspace = true, default-features = false, features = [] }
-#serial_test = { workspace = true }
-#test-case = { workspace = true }
 fluentbase-sdk-testing = { workspace = true }
 
 [features]
