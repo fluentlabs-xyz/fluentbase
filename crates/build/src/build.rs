@@ -320,12 +320,13 @@ fn run_command<S: AsRef<str>>(
     work_dir: &Path,
     docker_config: Option<(&str, &Path)>,
     env_vars: &[(String, String)],
+    rust_toolchain: &Option<String>,
 ) -> Result<()> {
     let args: Vec<String> = args.iter().map(|s| s.as_ref().to_string()).collect();
 
     match docker_config {
         Some((image, mount_dir)) => {
-            docker::run_in_docker(image, &args, mount_dir, work_dir, env_vars)
+            docker::run_in_docker(image, &args, mount_dir, work_dir, env_vars, rust_toolchain)
         }
         None => {
             // Local execution

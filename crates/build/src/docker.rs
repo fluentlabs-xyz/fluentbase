@@ -14,6 +14,7 @@ pub fn run_in_docker(
     mount_dir: &Path,
     work_dir: &Path,
     env_vars: &[(String, String)],
+    rust_toolchain: &Option<String>,
 ) -> Result<()> {
     let mount_dir = mount_dir
         .canonicalize()
@@ -52,11 +53,11 @@ pub fn run_in_docker(
         cmd.args(["-e", &format!("{}={}", key, value)]);
     }
 
-    // Always force use of pre-installed toolchain
-    cmd.args([
-        "-e",
-        &format!("RUSTUP_TOOLCHAIN={}", DEFAULT_RUST_TOOLCHAIN),
-    ]);
+    // Set the rust toolchain ONLY if it's explicitly provided.
+    // If it's None, the container's default toolchain will be used.
+    if let Some(toolchain) = rust_toolchain {
+        cmd.args(["-e", &format!("RUSTUP_TOOLCHAIN={}", toolchain)]);
+    }
 
     cmd.arg(image);
     cmd.args(args);

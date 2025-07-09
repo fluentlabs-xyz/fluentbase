@@ -72,6 +72,10 @@ pub struct BuildArgs {
     #[arg(long)]
     pub rust_version: Option<String>,
 
+    /// Explicitly use the rust-toolchain.toml file from the contract's directory.
+    #[arg(long)]
+    pub use_toolchain_file: bool,
+
     /// Cargo features to activate (comma-separated)
     #[arg(long, value_delimiter = ',')]
     pub features: Vec<String>,
@@ -113,6 +117,7 @@ impl Default for BuildArgs {
             tag: DEFAULT_DOCKER_TAG.to_string(),
             mount_dir: None,
             rust_version: None,
+            use_toolchain_file: false, // by default use rust version from image
             features: vec![],
             no_default_features: true,
             locked: true,

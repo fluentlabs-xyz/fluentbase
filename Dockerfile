@@ -1,103 +1,123 @@
-# Global build arguments
+# Global build arguments for version control
+ARG RUST_VERSION=1.78.0
+ARG SDK_VERSION=0.1.0-dev
 ARG BINARYEN_VERSION=120
+ARG WABT_VERSION=1.0.36
+# The OS-specific part of the WABT release asset name
+ARG WABT_OS=ubuntu-20.04
 
-# Stage 1: Base dependencies (most stable)
-FROM rust:1.87-slim AS base-deps
+# ==============================================================================
+# Stage 1: Base
+# Purpose: Sets up the base OS and installs the specified Rust toolchain.
+# ==============================================================================
+FROM debian:bookworm-slim AS base
 
-# Install only essential runtime dependencies
+ARG RUST_VERSION
+
+# Install essential dependencies for building and for rustup
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
+    curl \
     ca-certificates \
-    # Required for building C dependencies
     build-essential \
-    # Required for cargo dependencies with native code
     pkg-config \
     libssl-dev \
-    # Tool for downloading
-    curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Rust target for WASM and rust-src component
+# Install Rust using rustup for version flexibility
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${RUST_VERSION}
 RUN rustup target add wasm32-unknown-unknown && \
     rustup component add rust-src
 
-# Stage 2: Tools (changes infrequently)
+# ==============================================================================
+# Stage 2: Tools
+# Purpose: Downloads and unpacks external binary tools in an isolated stage.
+# ==============================================================================
 FROM alpine:3.19 AS tools
 
 ARG BINARYEN_VERSION
+ARG WABT_VERSION
+ARG WABT_OS
 
-# Install curl and download tools
 RUN apk add --no-cache curl && \
-    # Download binaryen
     curl -L https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz | \
-    tar xzf - -C /tmp && \
-    # Download wabt
-    curl -L https://github.com/WebAssembly/wabt/releases/download/1.0.36/wabt-1.0.36-ubuntu-20.04.tar.gz | \
-    tar xzf - -C /tmp
+      tar xzf - -C /tmp && \
+    curl -L https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_OS}.tar.gz | \
+      tar xzf - -C /tmp
 
-# Stage 3: Build and cache dependencies
-FROM base-deps AS builder
+# ==============================================================================
+# Stage 3: Builder
+# Purpose: Compiles the project using cargo-chef and Docker BuildKit caching
+# for maximum performance and optimal layer size.
+# ==============================================================================
+FROM base AS builder
 
-# Copy the entire workspace
+# Install cargo-chef. The --mount cache will speed up this download on subsequent runs.
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    cargo install cargo-chef --locked
+
 WORKDIR /build
-COPY . .
 
-# Fetch all workspace dependencies and build only the CLI
-RUN cargo fetch && \
-    # Build and install the CLI (it's small and needed)
-    cargo install --path ./bins/cli
+# 1. Prepare the recipe.
+# For complex workspaces, we copy the entire directories of workspace members.
+# This ensures all Cargo.toml files and their associated src folders are present,
+# which is required for `cargo metadata` to parse the project structure correctly.
+COPY Cargo.toml Cargo.lock ./
+COPY bins/ ./bins/
+COPY contracts/ ./contracts/
+COPY crates/ ./crates/
+COPY e2e/ ./e2e/
+COPY examples/ ./examples/
+COPY revm/ ./revm/
 
-# Stage 4: Final image
-FROM base-deps AS final
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Copy tools from tools stage
-COPY --from=tools /tmp/binaryen-version_*/bin/wasm-opt /usr/local/bin/
-COPY --from=tools /tmp/wabt-*/bin/wasm2wat /usr/local/bin/
-COPY --from=tools /tmp/wabt-*/bin/wasm-strip /usr/local/bin/
+# 2. Cook dependencies using the BuildKit cache mounts.
+# This keeps the resulting image layer small and speeds up builds dramatically.
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/target \
+    cargo chef cook --recipe-path recipe.json --target-dir /target
 
-# Copy CLI from builder stage
-COPY --from=builder /usr/local/cargo/bin/fluentbase* /usr/local/bin/
+# 3. Build the application, re-using the same caches.
+# The full source code is already present from the previous COPY steps.
+# This final build step will be very fast.
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/target \
+    cargo install --path ./bins/cli --target-dir /target
 
-# Copy cached dependencies from builder stage
-COPY --from=builder /usr/local/cargo/registry /usr/local/cargo/registry
-COPY --from=builder /usr/local/cargo/git /usr/local/cargo/git
+# ==============================================================================
+# Stage 4: Final SDK Image
+# Purpose: A distributable SDK image containing the Rust toolchain and all
+# necessary binaries. Defaults to an interactive shell.
+# ==============================================================================
+FROM base AS final
 
-# Make binaries executable
-RUN chmod +x /usr/local/bin/wasm* && \
-    chmod +x /usr/local/bin/fluentbase*
+ARG SDK_VERSION
+ARG RUST_VERSION
+ARG BINARYEN_VERSION
+ARG WABT_VERSION
 
-# Set environment variables
-ENV CARGO_NET_RETRY=10 \
-    CARGO_HTTP_TIMEOUT=120 \
-    RUST_BACKTRACE=1 \
-    CARGO_TARGET_DIR=/target
+# Copy pre-built tools and the main application binary
+COPY --from=tools /tmp/binaryen-version_*/bin/* /usr/local/bin/
+COPY --from=tools /tmp/wabt-*/bin/* /usr/local/bin/
+COPY --from=builder /root/.cargo/bin/fluentbase* /usr/local/bin/
 
-# Create workspace directory
+RUN chmod +x /usr/local/bin/*
+
 WORKDIR /workspace
 
-# Configure cargo for better caching
-RUN mkdir -p $CARGO_HOME && \
-    echo '[build]' > $CARGO_HOME/config.toml && \
-    echo 'target-dir = "/target"' >> $CARGO_HOME/config.toml && \
-    echo '' >> $CARGO_HOME/config.toml && \
-    echo '[net]' >> $CARGO_HOME/config.toml && \
-    echo 'retry = 10' >> $CARGO_HOME/config.toml && \
-    echo '' >> $CARGO_HOME/config.toml && \
-    echo '[registries.crates-io]' >> $CARGO_HOME/config.toml && \
-    echo 'protocol = "sparse"' >> $CARGO_HOME/config.toml
-
-# Verify installations
-RUN rustc --version && \
-    cargo --version && \
-    wasm-opt --version && \
-    wasm2wat --version && \
-    fluentbase --version && \
-    rustup component list --installed
-
-# Labels
 LABEL maintainer="Fluent Labs" \
-      description="Fluent smart contract build environment" \
-      org.opencontainers.image.source="https://github.com/fluentlabs-xyz/fluentbase"
+      org.opencontainers.image.title="Fluentbase SDK" \
+      org.opencontainers.image.description="A complete SDK containing the Fluentbase CLI, Rust toolchain, and WASM tools" \
+      org.opencontainers.image.source="https://github.com/fluentlabs-xyz/fluentbase" \
+      org.opencontainers.image.version="${SDK_VERSION}" \
+      io.fluentbase.sdk.version="${SDK_VERSION}" \
+      io.fluentbase.rust.version="${RUST_VERSION}" \
+      io.fluentbase.binaryen.version="${BINARYEN_VERSION}" \
+      io.fluentbase.wabt.version="${WABT_VERSION}"
 
+# Provide an interactive shell by default
 CMD ["/bin/bash"]
