@@ -5,7 +5,6 @@ use std::{path::Path, process::Command};
 const DOCKER_IMAGE_REGISTRY: &str = "ghcr.io/fluentlabs-xyz/fluentbase-build";
 const DOCKER_IMAGE_ENV_VAR: &str = "FLUENT_DOCKER_IMAGE";
 const DOCKER_PLATFORM: &str = "linux/amd64";
-const DEFAULT_RUST_TOOLCHAIN: &str = "1.87.0-x86_64-unknown-linux-gnu";
 
 /// Run command in Docker container
 pub fn run_in_docker(
@@ -52,6 +51,8 @@ pub fn run_in_docker(
     for (key, value) in env_vars {
         cmd.args(["-e", &format!("{}={}", key, value)]);
     }
+
+    
 
     // Set the rust toolchain ONLY if it's explicitly provided.
     // If it's None, the container's default toolchain will be used.
