@@ -39,12 +39,10 @@
 
 pub mod compiled_keys;
 pub mod legacy;
-pub mod versions;
 
 #[path = ""]
 mod non_bpf_modules {
     mod account_keys;
-    mod address_loader;
     mod sanitized;
 
     pub use account_keys::*;
@@ -92,18 +90,7 @@ pub const MESSAGE_HEADER_LENGTH: usize = 3;
 /// access the same read-write accounts are processed sequentially.
 ///
 /// [PoH]: https://docs.solanalabs.com/consensus/synchronization
-#[derive(
-    Serialize,
-    Deserialize,
-    Default,
-    Debug,
-    PartialEq,
-    Eq,
-    Clone,
-    Copy,
-    bincode::Encode,
-    bincode::Decode,
-)]
+#[derive(Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageHeader {
     /// The number of signatures required for this message to be considered

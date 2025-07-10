@@ -2,20 +2,10 @@
 //!
 //! [np]: https://docs.solanalabs.com/runtime/programs#ed25519-program
 
-// #![cfg(feature = "full")]
-
-// use {
-//     crate::{feature_set::FeatureSet, instruction::Instruction, precompiles::PrecompileError},
-//     bytemuck::{bytes_of, Pod, Zeroable},
-//     ed25519_dalek::{ed25519::signature::Signature, Signer, Verifier},
-// };
-
-use crate::feature_set::FeatureSet;
-use crate::precompiles::PrecompileError;
+use crate::{feature_set::FeatureSet, precompiles::PrecompileError};
 use bytemuck::{bytes_of, Pod, Zeroable};
 use signature::{Signer, Verifier};
-use solana_program::ed25519_program;
-use solana_program::instruction::Instruction;
+use solana_program::{ed25519_program, instruction::Instruction};
 
 pub const PUBKEY_SERIALIZED_SIZE: usize = 32;
 pub const SIGNATURE_SERIALIZED_SIZE: usize = 64;
@@ -127,8 +117,8 @@ pub fn verify(
             SIGNATURE_SERIALIZED_SIZE,
         )?;
 
-        let signature =
-            signature::Signature::from_bytes(signature).map_err(|_| PrecompileError::InvalidSignature)?;
+        let signature = signature::Signature::from_bytes(signature)
+            .map_err(|_| PrecompileError::InvalidSignature)?;
 
         // Parse out pubkey
         let pubkey = get_data_slice(
@@ -183,4 +173,3 @@ fn get_data_slice<'a>(
 
     Ok(&instruction[start..end])
 }
-

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 #[repr(u8)]
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 pub enum LoaderV4Instruction {
     /// Write ELF data into an undeployed program account.
     ///

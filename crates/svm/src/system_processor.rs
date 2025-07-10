@@ -1,22 +1,18 @@
 use crate::{
     account::{AccountSharedData, BorrowedAccount, ReadableAccount},
-    account_utils::StateMut,
     common::limited_deserialize_packet_size,
     context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
     declare_process_instruction,
     pubkey::Pubkey,
-    solana_program::{nonce, nonce::state::Versions},
     system_instruction::{SystemError, SystemInstruction, MAX_PERMITTED_DATA_LENGTH},
     system_program,
-    sysvar_cache::get_sysvar_with_account_check,
 };
 use alloc::boxed::Box;
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashSet;
 use solana_instruction::error::InstructionError;
 
-// represents an address that may or may not have been generated
-//  from a seed
+// represents an address that may or may not have been generated from a seed
 #[derive(PartialEq, Eq, Default, Debug)]
 pub struct Address {
     address: Pubkey,
@@ -46,12 +42,6 @@ impl Address {
             };
             // re-derive the address, must match the supplied address
             if *address != address_with_seed {
-                // ic_msg!(
-                //     invoke_context,
-                //     "Create: address {} does not match derived address {}",
-                //     address,
-                //     address_with_seed
-                // );
                 return Err(SystemError::AddressWithSeedMismatch.into());
             }
             Some(*base)
@@ -308,7 +298,6 @@ fn transfer_with_seed<SDK: SharedAPI>(
 pub const DEFAULT_COMPUTE_UNITS: u64 = 150;
 
 declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, |invoke_context| {
-
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
@@ -421,90 +410,19 @@ declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, 
             result
         }
         SystemInstruction::AdvanceNonceAccount => {
-            instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut me =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-            #[allow(deprecated)]
-            let recent_blockhashes = get_sysvar_with_account_check::recent_blockhashes(
-                invoke_context,
-                instruction_context,
-                1,
-            )?;
-            if recent_blockhashes.is_empty() {
-                // ic_msg!(
-                //     invoke_context,
-                //     "Advance nonce account: recent blockhash list is empty",
-                // );
-                return Err(SystemError::NonceNoRecentBlockhashes.into());
-            }
-            let result = crate::system_program::advance_nonce_account(&mut me, &signers, invoke_context);
-            result
+            panic!("not supported")
         }
-        SystemInstruction::WithdrawNonceAccount(lamports) => {
-            instruction_context.check_number_of_instruction_accounts(2)?;
-            #[allow(deprecated)]
-            let _recent_blockhashes = get_sysvar_with_account_check::recent_blockhashes(
-                invoke_context,
-                instruction_context,
-                2,
-            )?;
-            let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 3)?;
-            let result = crate::system_program::withdraw_nonce_account(
-                0,
-                lamports,
-                1,
-                &rent,
-                &signers,
-                invoke_context,
-                transaction_context,
-                instruction_context,
-            );
-            result
+        SystemInstruction::WithdrawNonceAccount(_lamports) => {
+            panic!("not supported")
         }
-        SystemInstruction::InitializeNonceAccount(authorized) => {
-            instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut me =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-            #[allow(deprecated)]
-            let recent_blockhashes = get_sysvar_with_account_check::recent_blockhashes(
-                invoke_context,
-                instruction_context,
-                1,
-            )?;
-            if recent_blockhashes.is_empty() {
-                // ic_msg!(
-                //     invoke_context,
-                //     "Initialize nonce account: recent blockhash list is empty",
-                // );
-                return Err(SystemError::NonceNoRecentBlockhashes.into());
-            }
-            let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 2)?;
-            let result = crate::system_program::initialize_nonce_account(&mut me, &authorized, &rent, invoke_context);
-            result
+        SystemInstruction::InitializeNonceAccount(_authorized) => {
+            panic!("not supported")
         }
-        SystemInstruction::AuthorizeNonceAccount(nonce_authority) => {
-            instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut me =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-            let result = crate::system_program::authorize_nonce_account(&mut me, &nonce_authority, &signers, invoke_context);
-            result
+        SystemInstruction::AuthorizeNonceAccount(_nonce_authority) => {
+            panic!("not supported")
         }
         SystemInstruction::UpgradeNonceAccount => {
-            instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut nonce_account =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-            if !system_program::check_id(nonce_account.get_owner()) {
-                return Err(InstructionError::InvalidAccountOwner);
-            }
-            if !nonce_account.is_writable() {
-                return Err(InstructionError::InvalidArgument);
-            }
-            let nonce_versions: Versions = nonce_account.get_state()?;
-            let result = match nonce_versions.upgrade() {
-                None => Err(InstructionError::InvalidArgument),
-                Some(nonce_versions) => nonce_account.set_state(&nonce_versions),
-            };
-            result
+            panic!("not supported")
         }
         SystemInstruction::Allocate { space } => {
             instruction_context.check_number_of_instruction_accounts(1)?;
@@ -566,19 +484,19 @@ declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SystemAccountKind {
     System,
-    Nonce,
+    // Nonce,
 }
 
 pub fn get_system_account_kind(account: &AccountSharedData) -> Option<SystemAccountKind> {
     if system_program::check_id(account.owner()) {
         if account.data().is_empty() {
             Some(SystemAccountKind::System)
-        } else if account.data().len() == crate::solana_program::nonce::state::State::size() {
-            let nonce_versions: nonce::state::Versions = account.state().ok()?;
-            match nonce_versions.state() {
-                nonce::state::State::Uninitialized => None,
-                nonce::state::State::Initialized(_) => Some(SystemAccountKind::Nonce),
-            }
+        // } else if account.data().len() == nonce::state::State::size() {
+        //     let nonce_versions: Versions = account.state().ok()?;
+        //     match nonce_versions.state() {
+        //         nonce::state::State::Uninitialized => None,
+        //         nonce::state::State::Initialized(_) => Some(SystemAccountKind::Nonce),
+        //     }
         } else {
             None
         }

@@ -1,5 +1,3 @@
-extern crate test;
-
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{address, Address, U256};

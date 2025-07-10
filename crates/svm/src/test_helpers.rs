@@ -1,7 +1,7 @@
 use crate::{
     account::{AccountSharedData, WritableAccount},
     builtins::register_builtins,
-    common::TestSdkType,
+    common::rbpf_config_default,
     context::{
         BuiltinFunctionWithContext,
         IndexOfAccount,
@@ -25,29 +25,20 @@ use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
 };
-use solana_rent::Rent;
 use std::{fs::File, io::Read};
 
 pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
-    let mut file =
-        File::open(path).unwrap_or_else(|_| panic!("failed to open file at path: \"{}\"", path));
+    let mut file = File::open(path).expect("file open failed");
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
-    let rent = Rent::default();
-    let minimum_balance = rent.minimum_balance(elf.len());
-    let mut program_account = AccountSharedData::new(minimum_balance, 0, loader_id);
+    let mut program_account = AccountSharedData::new(0, 0, loader_id);
     program_account.set_data(elf);
     program_account.set_executable(true);
     program_account
 }
 pub(crate) fn prepare_vars_for_tests<'a, SDK: SharedAPI>(
 ) -> (Config, Arc<BuiltinProgram<InvokeContext<'a, SDK>>>) {
-    let config = Config {
-        enable_instruction_tracing: false,
-        reject_broken_elfs: true,
-        sanitize_user_provided_values: true,
-        ..Default::default()
-    };
+    let config = rbpf_config_default(None);
     // Holds the function symbols of an Executable
     let mut function_registry: FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>> =
         FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
@@ -115,18 +106,6 @@ pub(crate) fn mock_process_instruction<
 
     let (_config, loader) = prepare_vars_for_tests();
 
-    // let config = Config {
-    //     enable_instruction_tracing: false,
-    //     reject_broken_elfs: true,
-    //     sanitize_user_provided_values: true,
-    //     ..Default::default()
-    // };
-    // // Holds the function symbols of an Executable
-    // let mut function_registry: FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>> =
-    // FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default(); register_builtins(&
-    // mut function_registry); let loader = Arc::new(BuiltinProgram::new_loader(config,
-    // function_registry));
-
     with_mock_invoke_context!(
         invoke_context,
         transaction_context,
@@ -145,8 +124,6 @@ pub(crate) fn mock_process_instruction<
         instruction_data,
         &instruction_accounts,
         &program_indices,
-        // &mut 0,
-        // &mut ExecuteTimings::default(),
     );
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
@@ -177,6 +154,6 @@ pub(crate) fn journal_state() -> HostTestingContext {
     tc.with_contract_context(cc)
 }
 
-pub(crate) fn new_test_sdk() -> TestSdkType {
+pub(crate) fn new_test_sdk() -> HostTestingContext {
     journal_state()
 }

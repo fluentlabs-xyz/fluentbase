@@ -1,11 +1,12 @@
 error: Function ID mismatch: Expected 0xf8194e48 for 'greeting(string)', but got 0xa21d05d9
+
+         = note: You're seeing this error because you have validation enabled (validate(true))
+         = help: To fix this, you can either:
+         = help: 1. Use the expected function ID: #[function_id("greeting(string)")]
+         = help: 2. Remove the validate parameter entirely: #[function_id("greeting(address)")]
+         = help: 3. Or explicitly disable validation: #[function_id("greeting(address)", validate(false))]
+
   --> tests/ui/router/fail/function_id_type_mismatch.rs:25:19
    |
 25 |     #[function_id("greeting(address)", validate(true))]
-   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: You're seeing this error because you have validation enabled (validate(true))
-   = help: To fix this, you can either:
-   = help: 1. Use the expected function ID: #[function_id("greeting(string)")]
-   = help: 2. Remove the validate parameter entirely: #[function_id("greeting(address)")]
-   = help: 3. Or explicitly disable validation: #[function_id("greeting(address)", validate(false))]
+   |                   ^^^^^^^^^^^^^^^^^^^

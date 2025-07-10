@@ -94,6 +94,17 @@ impl<T: Default> SyscallResult<T> {
             status: Into::<ExitCode>::into(status),
         }
     }
+    pub fn from_old<U>(old: SyscallResult<T>, data: U) -> SyscallResult<U> {
+        SyscallResult {
+            data,
+            fuel_consumed: old.fuel_consumed,
+            fuel_refunded: old.fuel_refunded,
+            status: old.status,
+        }
+    }
+    pub fn from_old_empty(old: SyscallResult<T>) -> SyscallResult<()> {
+        SyscallResult::from_old(old, ())
+    }
     pub fn expect<I: Into<String>>(self, msg: I) -> Self {
         if !self.status.is_ok() {
             panic!("syscall failed with status {}: {}", self.status, msg.into());
@@ -112,6 +123,13 @@ impl<T: Default> SyscallResult<T> {
         } else {
             T::default()
         }
+    }
+
+    pub fn map<U: Default>(
+        self,
+        f: impl FnOnce(SyscallResult<T>) -> SyscallResult<U>,
+    ) -> SyscallResult<U> {
+        f(self)
     }
 }
 

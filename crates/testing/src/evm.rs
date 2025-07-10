@@ -100,10 +100,6 @@ impl EvmTestingContext {
             if let Some(code) = db_account.info.code.as_mut() {
                 match code {
                     Bytecode::OwnableAccount(account) => {
-                        println!(
-                            "perekachak: address={address}, code={}",
-                            account.metadata.len()
-                        );
                         self.sdk
                             .metadata_write(address, 0, account.metadata.clone());
                     }
@@ -194,6 +190,7 @@ impl EvmTestingContext {
         if !result.is_success() {
             try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref())
         }
+        #[cfg(feature = "debug-print")]
         println!("deployment gas used: {}", result.gas_used());
         assert!(result.is_success());
         let contract_address = calc_create_address::<HostTestingContextNativeAPI>(&deployer, nonce);
@@ -236,10 +233,6 @@ impl EvmTestingContext {
 
     pub fn nonce(&mut self, caller: Address) -> u64 {
         let account = self.db.load_account(caller).unwrap();
-        println!(
-            "current nonce for {}: {} ({:?})",
-            caller, account.info.nonce, account.account_state
-        );
         account.info.nonce
     }
 }

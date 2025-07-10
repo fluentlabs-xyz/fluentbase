@@ -1,8 +1,8 @@
 mod tests {
+    use crate::EvmTestingContextWithGenesis;
     use core::str::from_utf8;
     use fluentbase_sdk::{
         address,
-        debug_log_ext,
         Address,
         ContextReader,
         ContractContextV1,
@@ -17,7 +17,6 @@ mod tests {
         fluentbase::common::BatchMessage,
         helpers::storage_read_account_data,
         pubkey::Pubkey,
-        rent::Rent,
         solana_bincode::serialize,
         solana_program::{
             instruction::{AccountMeta, Instruction},
@@ -29,15 +28,13 @@ mod tests {
     };
     use hex_literal::hex;
     use rand::random_range;
-    use std::{fs::File, io::Read};
+    use std::{fs::File, io::Read, time::Instant};
 
     pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
         let mut file = File::open(path).expect("file open failed");
         let mut elf = Vec::new();
         file.read_to_end(&mut elf).unwrap();
-        let rent = Rent::default();
-        let minimum_balance = rent.minimum_balance(elf.len());
-        let mut program_account = AccountSharedData::new(minimum_balance, 0, loader_id);
+        let mut program_account = AccountSharedData::new(0, 0, loader_id);
         program_account.set_data(elf);
         program_account.set_executable(true);
         program_account
@@ -59,13 +56,16 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../examples/svm/solana-program-state-usage/assets/solana_program.so",
+            "../contracts/examples/svm/solana-program-state-usage/assets/solana_program.so",
         );
 
         let program_bytes = account_with_program.data().to_vec();
         ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1e18));
+
+        let measure = Instant::now();
         let (_contract_address, _gas_used) =
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
+        println!("elapsed: {:.2?}", measure.elapsed());
     }
 
     #[test]
@@ -83,7 +83,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../examples/svm/solana-program-state-usage/assets/solana_program.so",
+            "../contracts/examples/svm/solana-program-state-usage/assets/solana_program.so",
         );
 
         // setup initial accounts
@@ -134,10 +134,10 @@ mod tests {
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
-        ctx.sdk = ctx.sdk.with_block_number(1);
-        assert_eq!(ctx.sdk.context().block_number(), 1);
+        let measure = Instant::now();
         let result =
             ctx.call_evm_tx_simple(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
+        println!("elapsed: {:.2?}", measure.elapsed());
         let output = result.output().unwrap();
         if output.len() > 0 {
             let out_text = from_utf8(output).unwrap();
@@ -155,7 +155,6 @@ mod tests {
             ..Default::default()
         });
 
-        debug_log_ext!();
         let exec_account: AccountSharedData = storage_read_account_data(&ctx.sdk, &pk_exec)
             .expect(format!("failed to read exec account data: {}", pk_exec).as_str());
         assert_eq!(exec_account.lamports(), 0);
@@ -168,7 +167,6 @@ mod tests {
             account_with_program.data()
         );
 
-        debug_log_ext!();
         let payer_account = storage_read_account_data(&ctx.sdk, &pk_payer).expect(
             format!(
                 "failed to read payer {} (address:{}) account data",
@@ -184,7 +182,6 @@ mod tests {
         );
         assert_eq!(payer_account.data().len(), 0);
 
-        debug_log_ext!();
         let new_account = storage_read_account_data(&ctx.sdk, &pk_new)
             .expect(format!("failed to read new account data: {}", pk_new).as_str());
         assert_eq!(new_account.lamports(), lamports_to_send);

@@ -1,5 +1,4 @@
 #![allow(soft_unstable)]
-#![feature(test)]
 
 extern crate alloc;
 extern crate core;
@@ -8,8 +7,6 @@ use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk_testing::EvmTestingContext;
 use fluentbase_types::{GenesisContract, PRECOMPILE_WASM_RUNTIME};
 
-#[cfg(test)]
-mod bench;
 #[cfg(test)]
 mod bridge;
 #[cfg(test)]

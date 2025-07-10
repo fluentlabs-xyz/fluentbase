@@ -16,7 +16,7 @@ fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
 fluentbase-sdk-testing = { workspace = true }
 fluentbase-types = { workspace = true }
-fluentbase-svm = { workspace = true, default-features = false }
+fluentbase-svm = { workspace = true }
 fluentbase-erc20 = { workspace = true }
 fluentbase-contracts = { workspace = true }
 
@@ -31,14 +31,19 @@ wat = { version = "1.223.0" }
 paste = { workspace = true }
 rand = { version = "0.9.1" }
 
+[dev-dependencies]
+criterion = "0.6.0"
+
 [features]
 default = [
     "std",
     "wasmtime",
     #    "debug-print",
-    #    "enable-svm",
+    "enable-svm",
 ]
-enable-svm = []
+enable-svm = [
+    "fluentbase-genesis/enable-svm"
+]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",
@@ -58,3 +63,16 @@ wasmtime = [
     "fluentbase-runtime/wasmtime",
     "rwasm-revm/wasmtime",
 ]
+
+
+[[bench]]
+name = "erc20"
+harness = false
+
+[[bench]]
+name = "greeting"
+harness = false
+
+[[bench]]
+name = "multicall"
+harness = false

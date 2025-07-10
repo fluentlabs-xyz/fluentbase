@@ -23,7 +23,6 @@ impl MessageProcessor {
         debug_assert_eq!(program_indices.len(), message.instructions().len());
         // TODO replace pubkey with index in transaction?
         let mut balances_history: HashMap<Pubkey, (u64, u64)> = Default::default();
-        // let mut instruction_account_keys: HashSet<Pubkey> = Default::default();
         for (instruction_index, ((program_id, instruction), program_indices)) in message
             .program_instructions_iter()
             .zip(program_indices.iter())
@@ -78,7 +77,6 @@ impl MessageProcessor {
                     .transaction_context
                     .get_key_of_account_at_index(instruction_account.index_in_transaction)
                     .expect("instruction account key must always exist");
-                // instruction_account_keys.insert(instruction_account_key.clone());
                 let account_data = invoke_context
                     .transaction_context
                     .get_account_at_index(instruction_account.index_in_transaction)
@@ -103,32 +101,11 @@ impl MessageProcessor {
                         invoke_context.transaction_context.pop()
                     })
             } else {
-                // let mut time = Measure::start("execute_instruction");
-                // let mut compute_units_consumed = 0;
                 let result = invoke_context.process_instruction(
                     &instruction.data,
                     &instruction_accounts,
                     program_indices,
-                    // &mut compute_units_consumed,
-                    // timings,
                 );
-                // time.stop();
-                // *accumulated_consumed_units =
-                //     accumulated_consumed_units.saturating_add(compute_units_consumed);
-                // timings.details.accumulate_program(
-                //     program_id,
-                //     time.as_us(),
-                //     compute_units_consumed,
-                //     result.is_err(),
-                // );
-                // invoke_context.timings = {
-                //     timings.details.accumulate(&invoke_context.timings);
-                //     ExecuteDetailsTimings::default()
-                // };
-                // saturating_add_assign!(
-                //     timings.execute_accessories.process_instructions.total_us,
-                //     time.as_us()
-                // );
                 result
             };
 

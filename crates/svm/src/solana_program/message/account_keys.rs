@@ -1,7 +1,4 @@
-use crate::solana_program::{
-    instruction::CompiledInstruction,
-    message::{versions::v0::LoadedAddresses, CompileError},
-};
+use crate::solana_program::{instruction::CompiledInstruction, message::CompileError};
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::{iter::zip, ops::Index};
 use solana_instruction::Instruction;
@@ -12,7 +9,6 @@ use solana_pubkey::Pubkey;
 #[derive(Clone, Default, Debug, Eq)]
 pub struct AccountKeys<'a> {
     static_keys: &'a [Pubkey],
-    dynamic_keys: Option<&'a LoadedAddresses>,
 }
 
 impl Index<usize> for AccountKeys<'_> {
@@ -24,11 +20,8 @@ impl Index<usize> for AccountKeys<'_> {
 }
 
 impl<'a> AccountKeys<'a> {
-    pub fn new(static_keys: &'a [Pubkey], dynamic_keys: Option<&'a LoadedAddresses>) -> Self {
-        Self {
-            static_keys,
-            dynamic_keys,
-        }
+    pub fn new(static_keys: &'a [Pubkey]) -> Self {
+        Self { static_keys }
     }
 
     /// Returns an iterator of account key segments. The ordering of segments
@@ -36,17 +29,7 @@ impl<'a> AccountKeys<'a> {
     /// so should not be changed.
     #[inline]
     fn key_segment_iter(&self) -> impl Iterator<Item = &'a [Pubkey]> + Clone {
-        if let Some(dynamic_keys) = self.dynamic_keys {
-            [
-                self.static_keys,
-                &dynamic_keys.writable,
-                &dynamic_keys.readonly,
-            ]
-            .into_iter()
-        } else {
-            // empty segments added for branch type compatibility
-            [self.static_keys, &[], &[]].into_iter()
-        }
+        [self.static_keys, &[], &[]].into_iter()
     }
 
     /// Returns the address of the account at the specified index of the list of
@@ -167,45 +150,11 @@ mod tests {
     }
 
     #[test]
-    fn test_key_segment_iter() {
-        let keys = test_account_keys();
-
-        let static_keys = vec![keys[0], keys[1], keys[2]];
-        let dynamic_keys = LoadedAddresses {
-            writable: vec![keys[3], keys[4]],
-            readonly: vec![keys[5]],
-        };
-        let account_keys = AccountKeys::new(&static_keys, Some(&dynamic_keys));
-
-        let expected_segments = [
-            vec![keys[0], keys[1], keys[2]],
-            vec![keys[3], keys[4]],
-            vec![keys[5]],
-        ];
-
-        assert!(account_keys.key_segment_iter().eq(expected_segments.iter()));
-    }
-
-    #[test]
     fn test_len() {
         let keys = test_account_keys();
 
         let static_keys = vec![keys[0], keys[1], keys[2], keys[3], keys[4], keys[5]];
-        let account_keys = AccountKeys::new(&static_keys, None);
-
-        assert_eq!(account_keys.len(), keys.len());
-    }
-
-    #[test]
-    fn test_len_with_dynamic_keys() {
-        let keys = test_account_keys();
-
-        let static_keys = vec![keys[0], keys[1], keys[2]];
-        let dynamic_keys = LoadedAddresses {
-            writable: vec![keys[3], keys[4]],
-            readonly: vec![keys[5]],
-        };
-        let account_keys = AccountKeys::new(&static_keys, Some(&dynamic_keys));
+        let account_keys = AccountKeys::new(&static_keys);
 
         assert_eq!(account_keys.len(), keys.len());
     }
@@ -215,21 +164,7 @@ mod tests {
         let keys = test_account_keys();
 
         let static_keys = vec![keys[0], keys[1], keys[2], keys[3], keys[4], keys[5]];
-        let account_keys = AccountKeys::new(&static_keys, None);
-
-        assert!(account_keys.iter().eq(keys.iter()));
-    }
-
-    #[test]
-    fn test_iter_with_dynamic_keys() {
-        let keys = test_account_keys();
-
-        let static_keys = vec![keys[0], keys[1], keys[2]];
-        let dynamic_keys = LoadedAddresses {
-            writable: vec![keys[3], keys[4]],
-            readonly: vec![keys[5]],
-        };
-        let account_keys = AccountKeys::new(&static_keys, Some(&dynamic_keys));
+        let account_keys = AccountKeys::new(&static_keys);
 
         assert!(account_keys.iter().eq(keys.iter()));
     }
@@ -239,7 +174,7 @@ mod tests {
         let keys = test_account_keys();
 
         let static_keys = vec![keys[0], keys[1], keys[2], keys[3]];
-        let account_keys = AccountKeys::new(&static_keys, None);
+        let account_keys = AccountKeys::new(&static_keys);
 
         assert_eq!(account_keys.get(0), Some(&keys[0]));
         assert_eq!(account_keys.get(1), Some(&keys[1]));
@@ -250,58 +185,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_with_dynamic_keys() {
-        let keys = test_account_keys();
-
-        let static_keys = vec![keys[0], keys[1], keys[2]];
-        let dynamic_keys = LoadedAddresses {
-            writable: vec![keys[3], keys[4]],
-            readonly: vec![keys[5]],
-        };
-        let account_keys = AccountKeys::new(&static_keys, Some(&dynamic_keys));
-
-        assert_eq!(account_keys.get(0), Some(&keys[0]));
-        assert_eq!(account_keys.get(1), Some(&keys[1]));
-        assert_eq!(account_keys.get(2), Some(&keys[2]));
-        assert_eq!(account_keys.get(3), Some(&keys[3]));
-        assert_eq!(account_keys.get(4), Some(&keys[4]));
-        assert_eq!(account_keys.get(5), Some(&keys[5]));
-    }
-
-    #[test]
-    fn test_try_compile_instructions() {
-        let keys = test_account_keys();
-
-        let static_keys = vec![keys[0]];
-        let dynamic_keys = LoadedAddresses {
-            writable: vec![keys[1]],
-            readonly: vec![keys[2]],
-        };
-        let account_keys = AccountKeys::new(&static_keys, Some(&dynamic_keys));
-
-        let instruction = Instruction {
-            program_id: keys[0],
-            accounts: vec![
-                AccountMeta::new(keys[1], true),
-                AccountMeta::new(keys[2], true),
-            ],
-            data: vec![0],
-        };
-
-        assert_eq!(
-            account_keys.try_compile_instructions(&[instruction]),
-            Ok(vec![CompiledInstruction {
-                program_id_index: 0,
-                accounts: vec![1, 2],
-                data: vec![0],
-            }]),
-        );
-    }
-
-    #[test]
     fn test_try_compile_instructions_with_unknown_key() {
         let static_keys = test_account_keys();
-        let account_keys = AccountKeys::new(&static_keys, None);
+        let account_keys = AccountKeys::new(&static_keys);
 
         let unknown_key = Pubkey::new_unique();
         let test_instructions = [
@@ -326,20 +212,5 @@ mod tests {
                 Err(CompileError::UnknownInstructionKey(unknown_key))
             );
         }
-    }
-
-    #[test]
-    fn test_try_compile_instructions_with_too_many_account_keys() {
-        const MAX_LENGTH_WITHOUT_OVERFLOW: usize = u8::MAX as usize + 1;
-        let static_keys = vec![Pubkey::default(); MAX_LENGTH_WITHOUT_OVERFLOW];
-        let dynamic_keys = LoadedAddresses {
-            writable: vec![Pubkey::default()],
-            readonly: vec![],
-        };
-        let account_keys = AccountKeys::new(&static_keys, Some(&dynamic_keys));
-        assert_eq!(
-            account_keys.try_compile_instructions(&[]),
-            Err(CompileError::AccountIndexOverflow)
-        );
     }
 }

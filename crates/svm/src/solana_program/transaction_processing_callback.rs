@@ -14,7 +14,7 @@ pub trait TransactionProcessingCallback {
 }
 
 /// The state the account is in initially, before transaction processing
-#[derive(Debug)]
+#[cfg_attr(test, derive(Debug))]
 pub enum AccountState<'a> {
     /// This account is dead, and will be created by this transaction
     Dead,

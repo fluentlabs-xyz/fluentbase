@@ -34,14 +34,13 @@ pub struct LoaderV4State {
     pub authority_address_or_next_version: Pubkey,
     /// Deployment status.
     pub status: LoaderV4Status,
-    // The raw program data follows this serialized structure in the
-    // account's data.
+    // The raw program data follows this serialized structure in the account's data.
 }
 
 impl LoaderV4State {
     /// Size of a serialized program account.
     pub const fn program_data_offset() -> usize {
-        core::mem::size_of::<Self>()
+        size_of::<Self>()
     }
 }
 

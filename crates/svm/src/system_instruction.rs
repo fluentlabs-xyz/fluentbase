@@ -42,9 +42,6 @@ use serde::{Deserialize, Serialize};
 #[allow(deprecated)]
 use {
     crate::pubkey::Pubkey,
-    crate::solana_program::nonce,
-    crate::solana_program::sysvar::recent_blockhashes,
-    crate::solana_program::sysvar::rent,
     crate::system_program,
     alloc::{string::String, string::ToString, vec, vec::Vec},
     num_derive::{FromPrimitive, ToPrimitive},
@@ -53,25 +50,16 @@ use {
     solana_instruction::Instruction,
 };
 
-#[derive(/*Error, */ Debug, Serialize, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive)]
 pub enum SystemError {
-    // #[error("an account with the same address already exists")]
     AccountAlreadyInUse,
-    // #[error("account does not have enough SOL to perform the operation")]
     ResultWithNegativeLamports,
-    // #[error("cannot assign account to this program id")]
     InvalidProgramId,
-    // #[error("cannot allocate account data of this length")]
     InvalidAccountDataLength,
-    // #[error("length of requested seed is too long")]
     MaxSeedLengthExceeded,
-    // #[error("provided address does not match addressed derived from seed")]
     AddressWithSeedMismatch,
-    // #[error("advancing stored nonce requires a populated RecentBlockhashes sysvar")]
     NonceNoRecentBlockhashes,
-    // #[error("stored nonce is still in recent_blockhashes")]
     NonceBlockhashNotExpired,
-    // #[error("specified nonce does not match stored nonce")]
     NonceUnexpectedBlockhashValue,
 }
 
@@ -101,7 +89,7 @@ static_assertions::const_assert!(MAX_PERMITTED_DATA_LENGTH <= u32::MAX as u64);
 static_assertions::const_assert_eq!(MAX_PERMITTED_DATA_LENGTH, 10_485_760);
 
 /// An instruction to the system program.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum SystemInstruction {
     /// Create a new account
     ///
@@ -431,119 +419,10 @@ pub fn transfer_many(from_pubkey: &Pubkey, to_lamports: &[(Pubkey, u64)]) -> Vec
         .collect()
 }
 
-pub fn create_nonce_account_with_seed(
-    from_pubkey: &Pubkey,
-    nonce_pubkey: &Pubkey,
-    base: &Pubkey,
-    seed: &str,
-    authority: &Pubkey,
-    lamports: u64,
-) -> Vec<Instruction> {
-    vec![
-        create_account_with_seed(
-            from_pubkey,
-            nonce_pubkey,
-            base,
-            seed,
-            lamports,
-            nonce::State::size() as u64,
-            &system_program::id(),
-        ),
-        Instruction::new_with_bincode(
-            system_program::id(),
-            &SystemInstruction::InitializeNonceAccount(*authority),
-            vec![
-                AccountMeta::new(*nonce_pubkey, false),
-                #[allow(deprecated)]
-                AccountMeta::new_readonly(recent_blockhashes::id(), false),
-                AccountMeta::new_readonly(rent::id(), false),
-            ],
-        ),
-    ]
-}
-
-pub fn create_nonce_account(
-    from_pubkey: &Pubkey,
-    nonce_pubkey: &Pubkey,
-    authority: &Pubkey,
-    lamports: u64,
-) -> Vec<Instruction> {
-    vec![
-        create_account(
-            from_pubkey,
-            nonce_pubkey,
-            lamports,
-            nonce::State::size() as u64,
-            &system_program::id(),
-        ),
-        Instruction::new_with_bincode(
-            system_program::id(),
-            &SystemInstruction::InitializeNonceAccount(*authority),
-            vec![
-                AccountMeta::new(*nonce_pubkey, false),
-                #[allow(deprecated)]
-                AccountMeta::new_readonly(recent_blockhashes::id(), false),
-                AccountMeta::new_readonly(rent::id(), false),
-            ],
-        ),
-    ]
-}
-
-pub fn advance_nonce_account(nonce_pubkey: &Pubkey, authorized_pubkey: &Pubkey) -> Instruction {
-    let account_metas = vec![
-        AccountMeta::new(*nonce_pubkey, false),
-        #[allow(deprecated)]
-        AccountMeta::new_readonly(recent_blockhashes::id(), false),
-        AccountMeta::new_readonly(*authorized_pubkey, true),
-    ];
-    Instruction::new_with_bincode(
-        system_program::id(),
-        &SystemInstruction::AdvanceNonceAccount,
-        account_metas,
-    )
-}
-
-pub fn withdraw_nonce_account(
-    nonce_pubkey: &Pubkey,
-    authorized_pubkey: &Pubkey,
-    to_pubkey: &Pubkey,
-    lamports: u64,
-) -> Instruction {
-    let account_metas = vec![
-        AccountMeta::new(*nonce_pubkey, false),
-        AccountMeta::new(*to_pubkey, false),
-        #[allow(deprecated)]
-        AccountMeta::new_readonly(recent_blockhashes::id(), false),
-        AccountMeta::new_readonly(rent::id(), false),
-        AccountMeta::new_readonly(*authorized_pubkey, true),
-    ];
-    Instruction::new_with_bincode(
-        system_program::id(),
-        &SystemInstruction::WithdrawNonceAccount(lamports),
-        account_metas,
-    )
-}
-
-pub fn authorize_nonce_account(
-    nonce_pubkey: &Pubkey,
-    authorized_pubkey: &Pubkey,
-    new_authority: &Pubkey,
-) -> Instruction {
-    let account_metas = vec![
-        AccountMeta::new(*nonce_pubkey, false),
-        AccountMeta::new_readonly(*authorized_pubkey, true),
-    ];
-    Instruction::new_with_bincode(
-        system_program::id(),
-        &SystemInstruction::AuthorizeNonceAccount(*new_authority),
-        account_metas,
-    )
-}
-
 /// One-time idempotent upgrade of legacy nonce versions in order to bump
 /// them out of chain blockhash domain.
 pub fn upgrade_nonce_account(nonce_pubkey: Pubkey) -> Instruction {
-    let account_metas = vec![AccountMeta::new(nonce_pubkey, /*is_signer:*/ false)];
+    let account_metas = vec![AccountMeta::new(nonce_pubkey, false)];
     Instruction::new_with_bincode(
         system_program::id(),
         &SystemInstruction::UpgradeNonceAccount,
@@ -571,19 +450,5 @@ mod tests {
         assert_eq!(instructions.len(), 2);
         assert_eq!(get_keys(&instructions[0]), vec![alice_pubkey, bob_pubkey]);
         assert_eq!(get_keys(&instructions[1]), vec![alice_pubkey, carol_pubkey]);
-    }
-
-    #[test]
-    fn test_create_nonce_account() {
-        let from_pubkey = Pubkey::new_unique();
-        let nonce_pubkey = Pubkey::new_unique();
-        let authorized = nonce_pubkey;
-        let ixs = create_nonce_account(&from_pubkey, &nonce_pubkey, &authorized, 42);
-        assert_eq!(ixs.len(), 2);
-        let ix = &ixs[0];
-        assert_eq!(ix.program_id, system_program::id());
-        let pubkeys: Vec<_> = ix.accounts.iter().map(|am| am.pubkey).collect();
-        assert!(pubkeys.contains(&from_pubkey));
-        assert!(pubkeys.contains(&nonce_pubkey));
     }
 }

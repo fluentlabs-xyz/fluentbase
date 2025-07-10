@@ -26,8 +26,9 @@ fluentbase-contracts = { workspace = true }
 [features]
 default = [
     "std",
-    #    "enable-svm"
+    "enable-svm"
 ]
+debug-print = []
 enable-svm = []
 wasmtime = []
 std = [

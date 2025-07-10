@@ -1,9 +1,8 @@
 extern crate solana_rbpf;
 
-use crate::{alloc::string::ToString, solana_program};
-use alloc::{boxed::Box, rc::Rc, str::Utf8Error, string::String, vec, vec::Vec};
+use crate::solana_program;
+use alloc::{boxed::Box, str::Utf8Error, string::String, vec, vec::Vec};
 use core::{
-    cell::RefCell,
     fmt,
     fmt::{Display, Formatter},
 };
@@ -20,15 +19,10 @@ pub type StdResult<T, E> = Result<T, E>;
 
 pub const INSTRUCTION_METER_BUDGET: u64 = 1024 * 1024;
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AllocErr;
-impl Display for AllocErr {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.write_str("Error: Memory allocation failed")
-    }
-}
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SerializedAccountMetadata {
     pub original_data_len: usize,
     pub vm_data_addr: u64,
@@ -37,7 +31,6 @@ pub struct SerializedAccountMetadata {
     pub vm_owner_addr: u64,
 }
 
-#[derive(Debug)]
 pub struct SyscallContext {
     pub allocator: BpfAllocator,
     pub accounts_metadata: Vec<SerializedAccountMetadata>,
@@ -66,241 +59,83 @@ use crate::{
 use fluentbase_sdk::{calc_create4_address, keccak256, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
-const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
-
-pub struct LogCollector {
-    messages: Vec<String>,
-    bytes_written: usize,
-    bytes_limit: Option<usize>,
-    limit_warning: bool,
-}
-
-impl Default for LogCollector {
-    fn default() -> Self {
-        Self {
-            messages: Vec::new(),
-            bytes_written: 0,
-            bytes_limit: Some(LOG_MESSAGES_BYTES_LIMIT),
-            limit_warning: false,
-        }
-    }
-}
-
-impl LogCollector {
-    pub fn log(&mut self, message: &str) {
-        let Some(limit) = self.bytes_limit else {
-            self.messages.push(message.to_string());
-            return;
-        };
-
-        let bytes_written = self.bytes_written.saturating_add(message.len());
-        if bytes_written >= limit {
-            if !self.limit_warning {
-                self.limit_warning = true;
-                self.messages.push(String::from("Log truncated"));
-            }
-        } else {
-            self.bytes_written = bytes_written;
-            self.messages.push(message.to_string());
-        }
-    }
-
-    pub fn get_recorded_content(&self) -> &[String] {
-        self.messages.as_slice()
-    }
-
-    pub fn new_ref() -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self::default()))
-    }
-
-    pub fn new_ref_with_limit(bytes_limit: Option<usize>) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
-            bytes_limit,
-            ..Self::default()
-        }))
-    }
-
-    pub fn into_messages(self) -> Vec<String> {
-        self.messages
-    }
-}
-
-/// Convenience macro to log a message with an `Option<Rc<RefCell<LogCollector>>>`
-#[macro_export]
-macro_rules! ic_logger_msg {
-    ($log_collector:expr, $message:expr) => {
-        $crate::log_collector::log::debug!(
-            target: "solana_runtime::message_processor::stable_log",
-            "{}",
-            $message
-        );
-        if let Some(log_collector) = $log_collector.as_ref() {
-            if let Ok(mut log_collector) = log_collector.try_borrow_mut() {
-                log_collector.log($message);
-            }
-        }
-    };
-    ($log_collector:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::log_collector::log::debug!(
-            target: "solana_runtime::message_processor::stable_log",
-            $fmt,
-            $($arg)*
-        );
-        if let Some(log_collector) = $log_collector.as_ref() {
-            if let Ok(mut log_collector) = log_collector.try_borrow_mut() {
-                log_collector.log(&format!($fmt, $($arg)*));
-            }
-        }
-    };
-}
-
-/// Convenience macro to log a message with an `InvokeContext`
-#[macro_export]
-macro_rules! ic_msg {
-    ($invoke_context:expr, $message:expr) => {
-        $crate::ic_logger_msg!($invoke_context.get_log_collector(), $message)
-    };
-    ($invoke_context:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::ic_logger_msg!($invoke_context.get_log_collector(), $fmt, $($arg)*)
-    };
-}
-
 /// Error definitions
 
-#[derive(Debug, /* ThisError, */ PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum SyscallError {
-    // #[error("{0}: {1:?}")]
     InvalidString(Utf8Error, Vec<u8>),
-    // #[error("SBF program panicked")]
     Abort,
-    // #[error("SBF program Panicked in {0} at {1}:{2}")]
     Panic(String, u64, u64),
-    // #[error("Cannot borrow invoke context")]
     InvokeContextBorrowFailed,
-    // #[error("Malformed signer seed: {0}: {1:?}")]
     MalformedSignerSeed(Utf8Error, Vec<u8>),
-    // #[error("Could not create program address with signer seeds: {0}")]
     BadSeeds(PubkeyError),
-    // #[error("Program {0} not supported by inner instructions")]
     ProgramNotSupported(Pubkey),
-    // #[error("Unaligned pointer")]
     UnalignedPointer,
-    // #[error("Too many signers")]
     TooManySigners,
-    // #[error("Instruction passed to inner instruction is too large ({0} > {1})")]
     InstructionTooLarge(usize, usize),
-    // #[error("Too many accounts passed to inner instruction")]
     TooManyAccounts,
-    // #[error("Overlapping copy")]
     CopyOverlapping,
-    // #[error("Return data too large ({0} > {1})")]
     ReturnDataTooLarge(u64, u64),
-    // #[error("Hashing too many sequences")]
     TooManySlices,
-    // #[error("InvalidLength")]
     InvalidLength,
-    // #[error("Invoked an instruction with data that is too large ({data_len} >
-    // {max_data_len})")]
     MaxInstructionDataLenExceeded {
         data_len: u64,
         max_data_len: u64,
     },
-    // #[error("Invoked an instruction with too many accounts ({num_accounts} > {max_accounts})")]
     MaxInstructionAccountsExceeded {
         num_accounts: u64,
         max_accounts: u64,
     },
-    // #[error("Invoked an instruction with too many account info's ({num_account_infos} >
-    // {max_account_infos})" )]
     MaxInstructionAccountInfosExceeded {
         num_account_infos: u64,
         max_account_infos: u64,
     },
-    // #[error("InvalidAttribute")]
     InvalidAttribute,
-    // #[error("Invalid pointer")]
     InvalidPointer,
-    // #[error("Arithmetic overflow")]
     ArithmeticOverflow,
 }
 
 impl Display for SyscallError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            SyscallError::InvalidString(_, _) => write!(f, "InvalidString"),
-            SyscallError::Abort => write!(f, "Abort"),
-            SyscallError::Panic(_, _, _) => write!(f, "Panic"),
-            SyscallError::InvokeContextBorrowFailed => write!(f, "InvokeContextBorrowFailed"),
-            SyscallError::MalformedSignerSeed(_, _) => write!(f, "MalformedSignerSeed"),
-            SyscallError::BadSeeds(_) => write!(f, "BadSeeds"),
-            SyscallError::ProgramNotSupported(_) => write!(f, "ProgramNotSupported"),
-            SyscallError::UnalignedPointer => write!(f, "UnalignedPointer"),
-            SyscallError::TooManySigners => write!(f, "TooManySigners"),
-            SyscallError::InstructionTooLarge(_, _) => write!(f, "InstructionTooLarge"),
-            SyscallError::TooManyAccounts => write!(f, "TooManyAccounts"),
-            SyscallError::CopyOverlapping => write!(f, "CopyOverlapping"),
-            SyscallError::ReturnDataTooLarge(_, _) => write!(f, "ReturnDataTooLarge"),
-            SyscallError::TooManySlices => write!(f, "TooManySlices"),
-            SyscallError::InvalidLength => write!(f, "InvalidLength"),
+            SyscallError::InvalidString(_, _) => write!(f, "SyscallError::InvalidString"),
+            SyscallError::Abort => write!(f, "SyscallError::Abort"),
+            SyscallError::Panic(_, _, _) => write!(f, "SyscallError::Panic"),
+            SyscallError::InvokeContextBorrowFailed => {
+                write!(f, "SyscallError::InvokeContextBorrowFailed")
+            }
+            SyscallError::MalformedSignerSeed(_, _) => {
+                write!(f, "SyscallError::MalformedSignerSeed")
+            }
+            SyscallError::BadSeeds(_) => write!(f, "SyscallError::BadSeeds"),
+            SyscallError::ProgramNotSupported(_) => write!(f, "SyscallError::ProgramNotSupported"),
+            SyscallError::UnalignedPointer => write!(f, "SyscallError::UnalignedPointer"),
+            SyscallError::TooManySigners => write!(f, "SyscallError::TooManySigners"),
+            SyscallError::InstructionTooLarge(_, _) => {
+                write!(f, "SyscallError::InstructionTooLarge")
+            }
+            SyscallError::TooManyAccounts => write!(f, "SyscallError::TooManyAccounts"),
+            SyscallError::CopyOverlapping => write!(f, "SyscallError::CopyOverlapping"),
+            SyscallError::ReturnDataTooLarge(_, _) => write!(f, "SyscallError::ReturnDataTooLarge"),
+            SyscallError::TooManySlices => write!(f, "SyscallError::TooManySlices"),
+            SyscallError::InvalidLength => write!(f, "SyscallError::InvalidLength"),
             SyscallError::MaxInstructionDataLenExceeded { .. } => {
-                write!(f, "MaxInstructionDataLenExceeded")
+                write!(f, "SyscallError::MaxInstructionDataLenExceeded")
             }
             SyscallError::MaxInstructionAccountsExceeded { .. } => {
-                write!(f, "MaxInstructionAccountsExceeded")
+                write!(f, "SyscallError::MaxInstructionAccountsExceeded")
             }
             SyscallError::MaxInstructionAccountInfosExceeded { .. } => {
-                write!(f, "MaxInstructionAccountInfosExceeded")
+                write!(f, "SyscallError::MaxInstructionAccountInfosExceeded")
             }
-            SyscallError::InvalidAttribute => write!(f, "InvalidAttribute"),
-            SyscallError::InvalidPointer => write!(f, "InvalidPointer"),
-            SyscallError::ArithmeticOverflow => write!(f, "ArithmeticOverflow"),
+            SyscallError::InvalidAttribute => write!(f, "SyscallError::InvalidAttribute"),
+            SyscallError::InvalidPointer => write!(f, "SyscallError::InvalidPointer"),
+            SyscallError::ArithmeticOverflow => write!(f, "SyscallError::ArithmeticOverflow"),
         }
     }
 }
 
 impl core::error::Error for SyscallError {}
-
-// declare_builtin_function!(
-//     SyscallStubInterceptor<SDK: SharedAPI>,
-//     fn rust(
-//         invoke_context: &mut InvokeContext<SDK>,
-//         addr: u64,
-//         len: u64,
-//         arg3: u64,
-//         arg4: u64,
-//         arg5: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//         Ok(0)
-//     }
-// );
-
-// declare_builtin_function!(
-//     /// Panic syscall function, called when the SBF program calls 'sol_panic_()`
-//     /// Causes the SBF program to be halted immediately
-//     SyscallPanic<SDK: SharedAPI>,
-//     fn rust(
-//         _invoke_context: &mut InvokeContext<SDK>,
-//         file: u64,
-//         len: u64,
-//         line: u64,
-//         column: u64,
-//         _arg5: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Box<dyn core::error::Error>> {
-//         // consume_compute_meter(invoke_context, len)?;
-//         //
-//         // translate_string_and_do(
-//         //     memory_mapping,
-//         //     file,
-//         //     len,
-//         //     invoke_context.get_check_aligned(),
-//         //     &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line,
-// column).into()),         // )
-//         let error_message = "Dummy panic due to unimplemented syscall"; // Dummy error message
-//         Err(SyscallError::Panic(error_message.to_string(), line, column).into())
-//     }
-// );
 
 pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
     executable: &'a Executable<C>,
@@ -334,143 +169,6 @@ pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
         MemoryMapping::new(regions, config, sbpf_version)?
     })
 }
-
-// pub fn create_memory_mapping<'a, C: ContextObject>(
-//     executable: &'a Executable<C>,
-//     stack: &mut AlignedMemory<{ HOST_ALIGN }>,
-//     heap: &mut AlignedMemory<{ HOST_ALIGN }>,
-//     additional_regions: Vec<MemoryRegion>,
-//     cow_cb: Option<MemoryCowCallback>,
-// ) -> Result<MemoryMapping<'a>, EbpfError> {
-//     let config = executable.get_config();
-//     let sbpf_version = executable.get_sbpf_version();
-//
-//     let regions: Vec<MemoryRegion> = vec![
-//         executable.get_ro_region(),
-//         MemoryRegion::new_writable_gapped(
-//             stack.as_slice_mut(),
-//             ebpf::MM_STACK_START,
-//             if !sbpf_version.dynamic_stack_frames() && config.enable_stack_frame_gaps {
-//                 config.stack_frame_size as u64
-//             } else {
-//                 0
-//             },
-//         ),
-//         MemoryRegion::new_writable(heap.as_slice_mut(), ebpf::MM_HEAP_START),
-//     ]
-//     .into_iter()
-//     .chain(additional_regions.into_iter())
-//     .collect();
-//
-//     // Program code starts at `0x100000000`
-//     // Stack data starts at `0x200000000`
-//     // Heap data starts at `0x300000000`
-//     // Program input parameters start at `0x400000000`
-//     // Solana offers 4KB of stack frame space and 32KB of heap space by default
-//
-//     Ok(if let Some(cow_cb) = cow_cb {
-//         MemoryMapping::new_with_cow(regions, cow_cb, config, sbpf_version)?
-//     } else {
-//         MemoryMapping::new(regions, config, sbpf_version)?
-//     })
-// }
-
-#[derive(Debug, Clone)]
-pub struct SvmTransactResult {
-    pub reverted: bool,
-    // pub program_state: ProgramState,
-    // pub tx: Tx,
-    // pub receipts: Vec<Receipt>,
-    // pub changes: Changes,
-}
-
-// pub fn execute_generated_program<SDK: SharedAPI>(sdk: SDK, prog: &[u8], mem: &mut [u8]) ->
-// Option<Vec<u8>> {     let max_instruction_count = 1024;
-//     let executable = Executable::<ExecContextObject<SDK>>::from_text_bytes(
-//         prog,
-//         Arc::new(BuiltinProgram::new_loader(
-//             Config {
-//                 enable_instruction_tracing: true,
-//                 ..Config::default()
-//             },
-//             FunctionRegistry::default(),
-//         )),
-//         SBPFVersion::V2,
-//         FunctionRegistry::default(),
-//     );
-//
-//     let mut executable = if let Ok(executable) = executable {
-//         executable
-//     } else {
-//         return None;
-//     };
-//
-//     if executable.verify::<RequisiteVerifier>().is_err() || executable.jit_compile().is_err() {
-//         return None;
-//     }
-//
-//     let (instruction_count_interpreter, tracer_interpreter, result_interpreter) = {
-//         let mut context_object = ExecContextObject::new(sdk, max_instruction_count);
-//         let mem_region = MemoryRegion::new_writable(mem, ebpf::MM_INPUT_START);
-//         crate::create_vm!(
-//             vm,
-//             &executable,
-//             &mut context_object,
-//             stack,
-//             heap,
-//             vec![mem_region],
-//             None
-//         );
-//
-//         let (instruction_count_interpreter, result_interpreter) =
-//             vm.execute_program(&executable, true);
-//
-//         let tracer_interpreter = vm.context_object_pointer;
-//         (
-//             instruction_count_interpreter,
-//             tracer_interpreter,
-//             result_interpreter,
-//         )
-//     };
-//
-//     // JIT
-//
-//     let mut context_object = ExecContextObject::new(sdk, max_instruction_count);
-//     let mem_region = MemoryRegion::new_writable(mem, ebpf::MM_INPUT_START);
-//
-//     crate::create_vm!(
-//         vm,
-//         &executable,
-//         &mut context_object,
-//         stack,
-//         heap,
-//         vec![mem_region],
-//         None
-//     );
-//
-//     let (instruction_count_jit, result_jit) = vm.execute_program(&executable, true);
-//     let tracer_jit = &vm.context_object_pointer;
-//
-//     if format!("{result_interpreter:?}") != format!("{result_jit:?}")
-//         || !ExecContextObject::compare_trace_log(&tracer_interpreter, tracer_jit)
-//     {
-//         let analysis =
-//             solana_rbpf::static_analysis::Analysis::from_executable(&executable).unwrap();
-//         let stdout = std::io::stdout();
-//         analysis
-//             .disassemble_trace_log(&mut stdout.lock(), &tracer_interpreter.trace_log)
-//             .unwrap();
-//         analysis
-//             .disassemble_trace_log(&mut stdout.lock(), &tracer_jit.trace_log)
-//             .unwrap();
-//         panic!();
-//     }
-//     if executable.get_config().enable_instruction_meter {
-//         assert_eq!(instruction_count_interpreter, instruction_count_jit);
-//     }
-//
-//     Some(mem.to_vec())
-// }
 
 pub fn is_zeroed(buf: &[u8]) -> bool {
     const ZEROS_LEN: usize = 1024;
@@ -544,7 +242,6 @@ macro_rules! with_mock_invoke_context {
         $transaction_accounts:expr $(,)?
     ) => {
         use alloc::sync::Arc;
-        use solana_rent::Rent;
         use $crate::{
             account::ReadableAccount,
             compute_budget::compute_budget::ComputeBudget,
@@ -557,7 +254,6 @@ macro_rules! with_mock_invoke_context {
         let compute_budget = ComputeBudget::default();
         let $transaction_context = TransactionContext::new(
             $transaction_accounts,
-            Rent::default(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
         );
@@ -581,9 +277,7 @@ macro_rules! with_mock_invoke_context {
         });
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
-            None,
             Arc::new(feature_set_default()),
-            0,
             sysvar_cache,
         );
         let program_cache_for_tx_batch = ProgramCacheForTxBatch::new2(
@@ -597,92 +291,14 @@ macro_rules! with_mock_invoke_context {
             $transaction_context,
             program_cache_for_tx_batch,
             environment_config,
-            // Some(LogCollector::new_ref()),
             compute_budget,
             $sdk,
         );
     };
 }
 
-// pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
-//     loader_id: &Pubkey,
-//     mut program_indices: Vec<IndexOfAccount>,
-//     instruction_data: &[u8],
-//     mut transaction_accounts: Vec<TransactionAccount>,
-//     instruction_account_metas: Vec<AccountMeta>,
-//     expected_result: Result<(), InstructionError>,
-//     builtin_function: BuiltinFunctionWithContext,
-//     mut pre_adjustments: F,
-//     mut post_adjustments: G,
-// ) -> Vec<AccountSharedData> {
-//     let mut instruction_accounts: Vec<InstructionAccount> =
-//         Vec::with_capacity(instruction_account_metas.len());
-//     for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate()
-// {         let index_in_transaction = transaction_accounts
-//             .iter()
-//             .position(|(key, _account)| *key == account_meta.pubkey)
-//             .unwrap_or(transaction_accounts.len())
-//             as IndexOfAccount;
-//         let index_in_callee = instruction_accounts
-//             .get(0..instruction_account_index)
-//             .unwrap()
-//             .iter()
-//             .position(|instruction_account| {
-//                 instruction_account.index_in_transaction == index_in_transaction
-//             })
-//             .unwrap_or(instruction_account_index) as IndexOfAccount;
-//         instruction_accounts.push(InstructionAccount {
-//             index_in_transaction,
-//             index_in_caller: index_in_transaction,
-//             index_in_callee,
-//             is_signer: account_meta.is_signer,
-//             is_writable: account_meta.is_writable,
-//         });
-//     }
-//     if program_indices.is_empty() {
-//         program_indices.insert(0, transaction_accounts.len() as IndexOfAccount);
-//         let processor_account = AccountSharedData::new(0, 0, &native_loader::id());
-//         transaction_accounts.push((*loader_id, processor_account));
-//     }
-//     let pop_epoch_schedule_account = if !transaction_accounts
-//         .iter()
-//         .any(|(key, _)| *key == sysvar::epoch_schedule::id())
-//     {
-//         transaction_accounts.push((
-//             sysvar::epoch_schedule::id(),
-//             create_account_shared_data_for_test(&EpochSchedule::default()),
-//         ));
-//         true
-//     } else {
-//         false
-//     };
-//     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-//     let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
-//     program_cache_for_tx_batch.replenish(
-//         *loader_id,
-//         Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
-//     );
-//     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
-//     pre_adjustments(&mut invoke_context);
-//     let result = invoke_context.process_instruction(
-//         instruction_data,
-//         &instruction_accounts,
-//         &program_indices,
-//         &mut 0,
-//         &mut ExecuteTimings::default(),
-//     );
-//     assert_eq!(result, expected_result);
-//     post_adjustments(&mut invoke_context);
-//     let mut transaction_accounts = transaction_context.deconstruct_without_keys().unwrap();
-//     if pop_epoch_schedule_account {
-//         transaction_accounts.pop();
-//     }
-//     transaction_accounts.pop();
-//     transaction_accounts
-// }
-
 #[macro_export]
-macro_rules! select_sapi {
+macro_rules! select_api {
     ($optional:expr, $alt:expr, $callback:expr) => {
         if let Some(v) = $optional {
             $callback(*v)
@@ -692,8 +308,8 @@ macro_rules! select_sapi {
     };
 }
 
-pub fn storage_read_account_data<SAPI: MetadataAPI>(
-    sapi: &SAPI,
+pub fn storage_read_account_data<API: MetadataAPI>(
+    api: &API,
     pubkey: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
     let pubkey_hash = keccak256(pubkey.as_ref());
@@ -701,12 +317,12 @@ pub fn storage_read_account_data<SAPI: MetadataAPI>(
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
             keccak256(v)
         });
-    let metadata_size_result = sapi.metadata_size(&derived_metadata_address);
+    let metadata_size_result = api.metadata_size(&derived_metadata_address);
     if !metadata_size_result.status.is_ok() {
         return Err(metadata_size_result.status.into());
     }
     let metadata_len = metadata_size_result.data.0;
-    let metadata_copy = sapi.metadata_copy(&derived_metadata_address, 0, metadata_len);
+    let metadata_copy = api.metadata_copy(&derived_metadata_address, 0, metadata_len);
     if !metadata_copy.status.is_ok() {
         return Err(metadata_copy.status.into());
     }
@@ -715,8 +331,8 @@ pub fn storage_read_account_data<SAPI: MetadataAPI>(
     Ok(deserialize_result?)
 }
 
-pub fn storage_write_account_data<SAPI: MetadataAPI>(
-    sapi: &mut SAPI,
+pub fn storage_write_account_data<API: MetadataAPI>(
+    api: &mut API,
     pubkey: &Pubkey,
     account_data: &AccountSharedData,
 ) -> Result<(), SvmError> {
@@ -726,65 +342,16 @@ pub fn storage_write_account_data<SAPI: MetadataAPI>(
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
             keccak256(v)
         });
-    let (_, is_account_ownable, _, _) = sapi
+    let (metadata_size, _, _, _) = api
         .metadata_size(&derived_metadata_address)
         .expect("metadata size")
         .data;
-    if !is_account_ownable {
-        sapi.metadata_create(&pubkey_hash.into(), account_data.into())
+    if metadata_size == 0 {
+        api.metadata_create(&pubkey_hash.into(), account_data.into())
             .expect("metadata creation failed");
     } else {
-        sapi.metadata_write(&derived_metadata_address, 0, account_data.into())
+        api.metadata_write(&derived_metadata_address, 0, account_data.into())
             .expect("metadata write failed");
     }
     Ok(())
-}
-
-pub mod test_utils {
-    use crate::{
-        account::ReadableAccount,
-        common::{check_loader_id, create_program_runtime_environment_v1, load_program_from_bytes},
-        context::InvokeContext,
-        loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-    };
-    use alloc::sync::Arc;
-    use fluentbase_sdk::SharedAPI;
-    use solana_rbpf::program::BuiltinProgram;
-
-    pub fn load_all_invoked_programs<SDK: SharedAPI>(invoke_context: &mut InvokeContext<SDK>) {
-        // let mut load_program_metrics = LoadProgramMetrics::default();
-        let program_runtime_environment: BuiltinProgram<InvokeContext<SDK>> =
-            create_program_runtime_environment_v1(
-                &invoke_context.environment_config.feature_set,
-                invoke_context.get_compute_budget(),
-                false,
-                false,
-            )
-            .unwrap();
-        let program_runtime_environment = Arc::new(program_runtime_environment);
-        let num_accounts = invoke_context.transaction_context.get_number_of_accounts();
-        for index in 0..num_accounts {
-            let account = invoke_context
-                .transaction_context
-                .get_account_at_index(index)
-                .expect("Failed to get the account")
-                .borrow();
-
-            let owner = account.owner();
-            if check_loader_id(owner) {
-                if let Ok(_loaded_program) = load_program_from_bytes(
-                    account.data(),
-                    owner,
-                    account.data().len(),
-                    0,
-                    program_runtime_environment.clone(),
-                    false,
-                ) {
-                    invoke_context
-                        .program_cache_for_tx_batch
-                        .set_slot_for_tests(DELAY_VISIBILITY_SLOT_OFFSET);
-                }
-            }
-        }
-    }
 }

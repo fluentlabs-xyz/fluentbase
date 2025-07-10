@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub enum PtrType {
     RcStartPtr(u64),
     RcBoxStartPtr(u64),

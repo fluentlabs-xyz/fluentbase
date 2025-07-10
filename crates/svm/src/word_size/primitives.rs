@@ -207,7 +207,6 @@ mod tests {
         };
         assert_eq!(size_of::<TestStruct>(), 8);
 
-        // let lamports_rc: Rc<RefCell<&u64>> = Rc::new(RefCell::new(&lamports));
         let rc_as_ptr = test_struct.lamports_rc.as_ptr() as u64;
         let lamports_rc_const_ptr: *const Rc<RefCell<&mut u64>> =
             &test_struct.lamports_rc as *const _;
@@ -303,36 +302,11 @@ mod tests {
         let addr_to_value_addr = container.addr_to_value_addr::<true, true>();
         let slice =
             SliceFatPtr64::<u8>::from_ptr_to_fat_ptr(addr_to_value_addr as usize, mm.clone());
-        // let slice = reconstruct_slice::<u8>(value_addr as usize, data_as_mut_slice.len());
         assert_eq!(slice.to_vec_cloned(), data_as_mut_slice.to_vec());
-        // let value = container.value::<true, true>();
-        // assert_eq!(value, &data);
-
-        // let container = RcRefCellMemLayout::<&mut [u8]>::new(
-        //     mm.clone(),
-        //     PtrType::RcBoxStartPtr(rc_box_start_ptr),
-        // );
-        // let value = container.value::<true, true>();
-        // assert_eq!(value, &data);
-        // let value_vm_addr = container.value_addr::<true, true>();
-        // assert_eq!(
-        //     u64::from_le_bytes(
-        //         reconstruct_slice::<u8>(value_vm_addr as usize, 8)
-        //             .try_into()
-        //             .unwrap()
-        //     ),
-        //     data
-        // );
-        //
-        // let container =
-        //     RcRefCellMemLayout::<&mut [u8]>::new(mm.clone(), PtrType::PtrToValuePtr(rc_as_ptr));
-        // let value = container.value::<true, true>();
-        // assert_eq!(value, &data);
     }
 
     #[test]
     fn stable_vec_of_account_infos_mutations_test() {
-        // type ItemType = u64;
         type ItemType<'a> = AccountInfo<'a>;
         type VecOfItemsType<'a> = StableVec<ItemType<'a>>;
 

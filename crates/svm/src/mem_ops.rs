@@ -6,26 +6,17 @@ use crate::{
     word_size::{
         addr_type::AddrType,
         common::MemoryMappingHelper,
-        slice::{ElementConstraints, SliceFatPtr64},
+        slice::{SliceFatPtr64, SpecMethods},
     },
 };
 use alloc::{boxed::Box, vec::Vec};
-use core::{slice, str::from_utf8};
+use core::{fmt::Debug, slice, str::from_utf8};
 use fluentbase_sdk::SharedAPI;
-use solana_feature_set::bpf_account_data_direct_mapping;
 use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN};
 use solana_rbpf::{
     error::EbpfError,
     memory_region::{AccessType, MemoryMapping, MemoryRegion},
 };
-// fn mem_op_consume<SDK: SharedAPI>(invoke_context: &mut InvokeContext<SDK>, n: u64) -> Result<(),
-// Error> {     let compute_budget = invoke_context.get_compute_budget();
-//     let cost = compute_budget.mem_op_base_cost.max(
-//         n.checked_div(compute_budget.cpi_bytes_per_unit)
-//             .unwrap_or(u64::MAX),
-//     );
-//     consume_compute_meter(invoke_context, cost)
-// }
 
 // declare_builtin_function!(
 //     /// memcpy
@@ -189,28 +180,6 @@ use solana_rbpf::{
 //     }
 // }
 
-fn memmove_non_contiguous(
-    dst_addr: u64,
-    src_addr: u64,
-    n: u64,
-    memory_mapping: &MemoryMapping,
-) -> Result<u64, Error> {
-    let reverse = dst_addr.wrapping_sub(src_addr) < n;
-    iter_memory_pair_chunks(
-        AccessType::Load,
-        src_addr,
-        AccessType::Store,
-        dst_addr,
-        n,
-        memory_mapping,
-        reverse,
-        |src_host_addr, dst_host_addr, chunk_len| {
-            unsafe { core::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
-            Ok(0)
-        },
-    )
-}
-
 // Marked unsafe since it assumes that the slices are at least `n` bytes long.
 pub unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
     for i in 0..n {
@@ -271,7 +240,7 @@ enum MemcmpError {
 impl core::fmt::Display for MemcmpError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            MemcmpError::Diff(diff) => write!(f, "memcmp diff: {diff}"),
+            MemcmpError::Diff(diff) => write!(f, "MemcmpError::Diff({diff})"),
         }
     }
 }
@@ -282,22 +251,6 @@ impl core::error::Error for MemcmpError {
             MemcmpError::Diff(_) => None,
         }
     }
-}
-
-pub(crate) fn memset_non_contiguous(
-    dst_addr: u64,
-    c: u8,
-    n: u64,
-    memory_mapping: &MemoryMapping,
-) -> Result<u64, Error> {
-    let dst_chunk_iter = MemoryChunkIterator::new(memory_mapping, AccessType::Store, dst_addr, n)?;
-    for item in dst_chunk_iter {
-        let (dst_region, dst_vm_addr, dst_len) = item?;
-        let dst_host_addr = Result::from(dst_region.vm_to_host(dst_vm_addr, dst_len as u64))?;
-        unsafe { slice::from_raw_parts_mut(dst_host_addr as *mut u8, dst_len).fill(c) }
-    }
-
-    Ok(0)
 }
 
 fn iter_memory_pair_chunks<T, F>(
@@ -592,7 +545,7 @@ pub fn translate_type<'a, T>(
     .map(|value| &*value)
 }
 
-fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
+fn translate_slice_inner<'a, T: Clone + SpecMethods<'a>>(
     memory_mapping: &'a MemoryMapping<'a>,
     access_type: AccessType,
     vm_addr: u64,
@@ -619,7 +572,7 @@ fn translate_slice_inner<'a, T: ElementConstraints<'a>>(
     Ok(result)
 }
 
-pub fn translate_slice<'a, T: ElementConstraints<'a>>(
+pub fn translate_slice<'a, T: Clone + SpecMethods<'a>>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,
@@ -635,7 +588,7 @@ pub fn translate_slice<'a, T: ElementConstraints<'a>>(
     // .map(|value| &*value)
 }
 
-pub fn translate_slice_mut<'a, T: ElementConstraints<'a>>(
+pub fn translate_slice_mut<'a, T: Clone + SpecMethods<'a>>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,
@@ -690,29 +643,21 @@ pub fn memmove<SDK: SharedAPI>(
     n: u64,
     memory_mapping: &MemoryMapping,
 ) -> Result<u64, Error> {
-    if invoke_context
-        .get_feature_set()
-        .is_active(&bpf_account_data_direct_mapping::id())
-    {
-        memmove_non_contiguous(dst_addr, src_addr, n, memory_mapping)
-    } else {
-        let mut dst_ptr = translate_slice_mut::<u8>(
-            memory_mapping,
-            dst_addr,
-            n,
-            invoke_context.get_check_aligned(),
-        )?;
-        let src_ptr = translate_slice::<u8>(
-            memory_mapping,
-            src_addr,
-            n,
-            invoke_context.get_check_aligned(),
-        )?;
+    let mut dst_ptr = translate_slice_mut::<u8>(
+        memory_mapping,
+        dst_addr,
+        n,
+        invoke_context.get_check_aligned(),
+    )?;
+    let src_ptr = translate_slice::<u8>(
+        memory_mapping,
+        src_addr,
+        n,
+        invoke_context.get_check_aligned(),
+    )?;
 
-        // unsafe { core::ptr::copy(src_ptr, dst_ptr, n as usize) };
-        dst_ptr.copy_from(&src_ptr)?;
-        Ok(0)
-    }
+    dst_ptr.copy_from(&src_ptr)?;
+    Ok(0)
 }
 pub fn translate_and_check_program_address_inputs<'a>(
     seeds_addr: u64,
@@ -732,14 +677,6 @@ pub fn translate_and_check_program_address_inputs<'a>(
             if untranslated_seed.as_ref().len() > MAX_SEED_LEN {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
-            // let result = translate_slice::<u8>(
-            //     memory_mapping,
-            //     untranslated_seed.as_ref().first_item_fat_ptr_addr(),
-            //     untranslated_seed.as_ref().len() as u64,
-            //     check_aligned,
-            // )
-            // .map(|v| v.to_vec_cloned());
-            // result
             Ok(untranslated_seed.as_ref().to_vec_cloned())
         })
         .collect::<Result<Vec<_>, SvmError>>()?;
@@ -748,464 +685,3 @@ pub fn translate_and_check_program_address_inputs<'a>(
         translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned, false)?;
     Ok((seeds, program_id))
 }
-
-// #[cfg(test)]
-// #[allow(clippy::indexing_slicing)]
-// #[allow(clippy::arithmetic_side_effects)]
-// mod tests {
-//     use std::assert_matches::assert_matches;
-//     use solana_rbpf::vm::Config;
-//     use {
-//         super::*,
-//         solana_rbpf::{ebpf::MM_PROGRAM_START, program::SBPFVersion},
-//     };
-//
-//     fn to_chunk_vec<'a>(
-//         iter: impl Iterator<Item=Result<(&'a MemoryRegion, u64, usize), Error>>,
-//     ) -> Vec<(u64, usize)> {
-//         iter.flat_map(|res| res.map(|(_, vm_addr, len)| (vm_addr, len)))
-//             .collect::<Vec<_>>()
-//     }
-//
-//     #[test]
-//     #[should_panic(expected = "AccessViolation")]
-//     fn test_memory_chunk_iterator_no_regions() {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let memory_mapping = MemoryMapping::new(vec![], &config, &SBPFVersion::V2).unwrap();
-//
-//         let mut src_chunk_iter =
-//             MemoryChunkIterator::new(&memory_mapping, AccessType::Load, 0, 1).unwrap();
-//         src_chunk_iter.next().unwrap().unwrap();
-//     }
-//
-//     #[test]
-//     #[should_panic(expected = "AccessViolation")]
-//     fn test_memory_chunk_iterator_new_out_of_bounds_upper() {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let memory_mapping = MemoryMapping::new(vec![], &config, &SBPFVersion::V2).unwrap();
-//
-//         let mut src_chunk_iter =
-//             MemoryChunkIterator::new(&memory_mapping, AccessType::Load, u64::MAX, 1).unwrap();
-//         src_chunk_iter.next().unwrap().unwrap();
-//     }
-//
-//     #[test]
-//     fn test_memory_chunk_iterator_out_of_bounds() {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let mem1 = vec![0xFF; 42];
-//         let memory_mapping = MemoryMapping::new(
-//             vec![MemoryRegion::new_readonly(&mem1, MM_PROGRAM_START)],
-//             &config,
-//             &SBPFVersion::V2,
-//         )
-//             .unwrap();
-//
-//         // check oob at the lower bound on the first next()
-//         let mut src_chunk_iter =
-//             MemoryChunkIterator::new(&memory_mapping, AccessType::Load, MM_PROGRAM_START - 1, 42)
-//                 .unwrap();
-//         assert_matches!(
-//             src_chunk_iter.next().unwrap().unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 42, "unknown") if *addr ==
-// MM_PROGRAM_START - 1         );
-//
-//         // check oob at the upper bound. Since the memory mapping isn't empty,
-//         // this always happens on the second next().
-//         let mut src_chunk_iter =
-//             MemoryChunkIterator::new(&memory_mapping, AccessType::Load, MM_PROGRAM_START, 43)
-//                 .unwrap();
-//         assert!(src_chunk_iter.next().unwrap().is_ok());
-//         assert_matches!(
-//             src_chunk_iter.next().unwrap().unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 43, "program") if *addr ==
-// MM_PROGRAM_START         );
-//
-//         // check oob at the upper bound on the first next_back()
-//         let mut src_chunk_iter =
-//             MemoryChunkIterator::new(&memory_mapping, AccessType::Load, MM_PROGRAM_START, 43)
-//                 .unwrap()
-//                 .rev();
-//         assert_matches!(
-//             src_chunk_iter.next().unwrap().unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 43, "program") if *addr ==
-// MM_PROGRAM_START         );
-//
-//         // check oob at the upper bound on the 2nd next_back()
-//         let mut src_chunk_iter =
-//             MemoryChunkIterator::new(&memory_mapping, AccessType::Load, MM_PROGRAM_START - 1, 43)
-//                 .unwrap()
-//                 .rev();
-//         assert!(src_chunk_iter.next().unwrap().is_ok());
-//         assert_matches!(
-//             src_chunk_iter.next().unwrap().unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 43, "unknown") if *addr ==
-// MM_PROGRAM_START - 1         );
-//     }
-//
-//     #[test]
-//     fn test_memory_chunk_iterator_one() {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let mem1 = vec![0xFF; 42];
-//         let memory_mapping = MemoryMapping::new(
-//             vec![MemoryRegion::new_readonly(&mem1, MM_PROGRAM_START)],
-//             &config,
-//             &SBPFVersion::V2,
-//         )
-//             .unwrap();
-//
-//         // check lower bound
-//         let mut src_chunk_iter =
-//             MemoryChunkIterator::new(&memory_mapping, AccessType::Load, MM_PROGRAM_START - 1, 1)
-//                 .unwrap();
-//         assert!(src_chunk_iter.next().unwrap().is_err());
-//
-//         // check upper bound
-//         let mut src_chunk_iter =
-//             MemoryChunkIterator::new(&memory_mapping, AccessType::Load, MM_PROGRAM_START + 42, 1)
-//                 .unwrap();
-//         assert!(src_chunk_iter.next().unwrap().is_err());
-//
-//         for (vm_addr, len) in [
-//             (MM_PROGRAM_START, 0),
-//             (MM_PROGRAM_START + 42, 0),
-//             (MM_PROGRAM_START, 1),
-//             (MM_PROGRAM_START, 42),
-//             (MM_PROGRAM_START + 41, 1),
-//         ] {
-//             for rev in [true, false] {
-//                 let iter =
-//                     MemoryChunkIterator::new(&memory_mapping, AccessType::Load, vm_addr, len)
-//                         .unwrap();
-//                 let res = if rev {
-//                     to_chunk_vec(iter.rev())
-//                 } else {
-//                     to_chunk_vec(iter)
-//                 };
-//                 if len == 0 {
-//                     assert_eq!(res, &[]);
-//                 } else {
-//                     assert_eq!(res, &[(vm_addr, len as usize)]);
-//                 }
-//             }
-//         }
-//     }
-//
-//     #[test]
-//     fn test_memory_chunk_iterator_two() {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let mem1 = vec![0x11; 8];
-//         let mem2 = vec![0x22; 4];
-//         let memory_mapping = MemoryMapping::new(
-//             vec![
-//                 MemoryRegion::new_readonly(&mem1, MM_PROGRAM_START),
-//                 MemoryRegion::new_readonly(&mem2, MM_PROGRAM_START + 8),
-//             ],
-//             &config,
-//             &SBPFVersion::V2,
-//         )
-//             .unwrap();
-//
-//         for (vm_addr, len, mut expected) in [
-//             (MM_PROGRAM_START, 8, vec![(MM_PROGRAM_START, 8)]),
-//             (
-//                 MM_PROGRAM_START + 7,
-//                 2,
-//                 vec![(MM_PROGRAM_START + 7, 1), (MM_PROGRAM_START + 8, 1)],
-//             ),
-//             (MM_PROGRAM_START + 8, 4, vec![(MM_PROGRAM_START + 8, 4)]),
-//         ] {
-//             for rev in [false, true] {
-//                 let iter =
-//                     MemoryChunkIterator::new(&memory_mapping, AccessType::Load, vm_addr, len)
-//                         .unwrap();
-//                 let res = if rev {
-//                     expected.reverse();
-//                     to_chunk_vec(iter.rev())
-//                 } else {
-//                     to_chunk_vec(iter)
-//                 };
-//
-//                 assert_eq!(res, expected);
-//             }
-//         }
-//     }
-//
-//     #[test]
-//     fn test_iter_memory_pair_chunks_short() {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let mem1 = vec![0x11; 8];
-//         let mem2 = vec![0x22; 4];
-//         let memory_mapping = MemoryMapping::new(
-//             vec![
-//                 MemoryRegion::new_readonly(&mem1, MM_PROGRAM_START),
-//                 MemoryRegion::new_readonly(&mem2, MM_PROGRAM_START + 8),
-//             ],
-//             &config,
-//             &SBPFVersion::V2,
-//         )
-//             .unwrap();
-//
-//         // dst is shorter than src
-//         assert_matches!(
-//             iter_memory_pair_chunks(
-//                 AccessType::Load,
-//                 MM_PROGRAM_START,
-//                 AccessType::Load,
-//                 MM_PROGRAM_START + 8,
-//                 8,
-//                 &memory_mapping,
-//                 false,
-//                 |_src, _dst, _len| Ok::<_, Error>(0),
-//             ).unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 8, "program") if *addr ==
-// MM_PROGRAM_START + 8         );
-//
-//         // src is shorter than dst
-//         assert_matches!(
-//             iter_memory_pair_chunks(
-//                 AccessType::Load,
-//                 MM_PROGRAM_START + 10,
-//                 AccessType::Load,
-//                 MM_PROGRAM_START + 2,
-//                 3,
-//                 &memory_mapping,
-//                 false,
-//                 |_src, _dst, _len| Ok::<_, Error>(0),
-//             ).unwrap_err().downcast_ref().unwrap(),
-//             EbpfError::AccessViolation(AccessType::Load, addr, 3, "program") if *addr ==
-// MM_PROGRAM_START + 10         );
-//     }
-//
-//     #[test]
-//     #[should_panic(expected = "AccessViolation(Store, 4294967296, 4")]
-//     fn test_memmove_non_contiguous_readonly() {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let mem1 = vec![0x11; 8];
-//         let mem2 = vec![0x22; 4];
-//         let memory_mapping = MemoryMapping::new(
-//             vec![
-//                 MemoryRegion::new_readonly(&mem1, MM_PROGRAM_START),
-//                 MemoryRegion::new_readonly(&mem2, MM_PROGRAM_START + 8),
-//             ],
-//             &config,
-//             &SBPFVersion::V2,
-//         )
-//             .unwrap();
-//
-//         memmove_non_contiguous(MM_PROGRAM_START, MM_PROGRAM_START + 8, 4,
-// &memory_mapping).unwrap();     }
-//
-//     #[test_case(&[], (0, 0, 0); "no regions")]
-//     #[test_case(&[10], (1, 10, 0); "single region 0 len")]
-//     #[test_case(&[10], (0, 5, 5); "single region no overlap")]
-//     #[test_case(&[10], (0, 0, 10) ; "single region complete overlap")]
-//     #[test_case(&[10], (2, 0, 5); "single region partial overlap start")]
-//     #[test_case(&[10], (0, 1, 6); "single region partial overlap middle")]
-//     #[test_case(&[10], (2, 5, 5); "single region partial overlap end")]
-//     #[test_case(&[3, 5], (0, 5, 2) ; "two regions no overlap, single source region")]
-//     #[test_case(&[4, 7], (0, 5, 5) ; "two regions no overlap, multiple source regions")]
-//     #[test_case(&[3, 8], (0, 0, 11) ; "two regions complete overlap")]
-//     #[test_case(&[2, 9], (3, 0, 5) ; "two regions partial overlap start")]
-//     #[test_case(&[3, 9], (1, 2, 5) ; "two regions partial overlap middle")]
-//     #[test_case(&[7, 3], (2, 6, 4) ; "two regions partial overlap end")]
-//     #[test_case(&[2, 6, 3, 4], (0, 10, 2) ; "many regions no overlap, single source region")]
-//     #[test_case(&[2, 1, 2, 5, 6], (2, 10, 4) ; "many regions no overlap, multiple source
-// regions")]     #[test_case(&[8, 1, 3, 6], (0, 0, 18) ; "many regions complete overlap")]
-//     #[test_case(&[7, 3, 1, 4, 5], (5, 0, 8) ; "many regions overlap start")]
-//     #[test_case(&[1, 5, 2, 9, 3], (5, 4, 8) ; "many regions overlap middle")]
-//     #[test_case(&[3, 9, 1, 1, 2, 1], (2, 9, 8) ; "many regions overlap end")]
-//     fn test_memmove_non_contiguous(
-//         regions: &[usize],
-//         (src_offset, dst_offset, len): (usize, usize, usize),
-//     ) {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let (mem, memory_mapping) = build_memory_mapping(regions, &config);
-//
-//         // flatten the memory so we can memmove it with ptr::copy
-//         let mut expected_memory = flatten_memory(&mem);
-//         unsafe {
-//             std::ptr::copy(
-//                 expected_memory.as_ptr().add(src_offset),
-//                 expected_memory.as_mut_ptr().add(dst_offset),
-//                 len,
-//             )
-//         };
-//
-//         // do our memmove
-//         memmove_non_contiguous(
-//             MM_PROGRAM_START + dst_offset as u64,
-//             MM_PROGRAM_START + src_offset as u64,
-//             len as u64,
-//             &memory_mapping,
-//         )
-//             .unwrap();
-//
-//         // flatten memory post our memmove
-//         let memory = flatten_memory(&mem);
-//
-//         // compare libc's memmove with ours
-//         assert_eq!(expected_memory, memory);
-//     }
-//
-//     #[test]
-//     #[should_panic(expected = "AccessViolation(Store, 4294967296, 9")]
-//     fn test_memset_non_contiguous_readonly() {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let mut mem1 = vec![0x11; 8];
-//         let mem2 = vec![0x22; 4];
-//         let memory_mapping = MemoryMapping::new(
-//             vec![
-//                 MemoryRegion::new_writable(&mut mem1, MM_PROGRAM_START),
-//                 MemoryRegion::new_readonly(&mem2, MM_PROGRAM_START + 8),
-//             ],
-//             &config,
-//             &SBPFVersion::V2,
-//         )
-//             .unwrap();
-//
-//         assert_eq!(
-//             memset_non_contiguous(MM_PROGRAM_START, 0x33, 9, &memory_mapping).unwrap(),
-//             0
-//         );
-//     }
-//
-//     #[test]
-//     fn test_memset_non_contiguous() {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let mem1 = vec![0x11; 1];
-//         let mut mem2 = vec![0x22; 2];
-//         let mut mem3 = vec![0x33; 3];
-//         let mut mem4 = vec![0x44; 4];
-//         let memory_mapping = MemoryMapping::new(
-//             vec![
-//                 MemoryRegion::new_readonly(&mem1, MM_PROGRAM_START),
-//                 MemoryRegion::new_writable(&mut mem2, MM_PROGRAM_START + 1),
-//                 MemoryRegion::new_writable(&mut mem3, MM_PROGRAM_START + 3),
-//                 MemoryRegion::new_writable(&mut mem4, MM_PROGRAM_START + 6),
-//             ],
-//             &config,
-//             &SBPFVersion::V2,
-//         )
-//             .unwrap();
-//
-//         assert_eq!(
-//             memset_non_contiguous(MM_PROGRAM_START + 1, 0x55, 7, &memory_mapping).unwrap(),
-//             0
-//         );
-//         assert_eq!(&mem1, &[0x11]);
-//         assert_eq!(&mem2, &[0x55, 0x55]);
-//         assert_eq!(&mem3, &[0x55, 0x55, 0x55]);
-//         assert_eq!(&mem4, &[0x55, 0x55, 0x44, 0x44]);
-//     }
-//
-//     #[test]
-//     fn test_memcmp_non_contiguous() {
-//         let config = Config {
-//             aligned_memory_mapping: false,
-//             ..Config::default()
-//         };
-//         let mem1 = b"foo".to_vec();
-//         let mem2 = b"barbad".to_vec();
-//         let mem3 = b"foobarbad".to_vec();
-//         let memory_mapping = MemoryMapping::new(
-//             vec![
-//                 MemoryRegion::new_readonly(&mem1, MM_PROGRAM_START),
-//                 MemoryRegion::new_readonly(&mem2, MM_PROGRAM_START + 3),
-//                 MemoryRegion::new_readonly(&mem3, MM_PROGRAM_START + 9),
-//             ],
-//             &config,
-//             &SBPFVersion::V2,
-//         )
-//             .unwrap();
-//
-//         // non contiguous src
-//         assert_eq!(
-//             memcmp_non_contiguous(MM_PROGRAM_START, MM_PROGRAM_START + 9, 9, &memory_mapping)
-//                 .unwrap(),
-//             0
-//         );
-//
-//         // non contiguous dst
-//         assert_eq!(
-//             memcmp_non_contiguous(
-//                 MM_PROGRAM_START + 10,
-//                 MM_PROGRAM_START + 1,
-//                 8,
-//                 &memory_mapping
-//             )
-//                 .unwrap(),
-//             0
-//         );
-//
-//         // diff
-//         assert_eq!(
-//             memcmp_non_contiguous(
-//                 MM_PROGRAM_START + 1,
-//                 MM_PROGRAM_START + 11,
-//                 5,
-//                 &memory_mapping
-//             )
-//                 .unwrap(),
-//             unsafe { memcmp(b"oobar", b"obarb", 5) }
-//         );
-//     }
-//
-//     fn build_memory_mapping<'a>(
-//         regions: &[usize],
-//         config: &'a Config,
-//     ) -> (Vec<Vec<u8>>, MemoryMapping<'a>) {
-//         let mut regs = vec![];
-//         let mut mem = Vec::new();
-//         let mut offset = 0;
-//         for (i, region_len) in regions.iter().enumerate() {
-//             mem.push(
-//                 (0..*region_len)
-//                     .map(|x| (i * 10 + x) as u8)
-//                     .collect::<Vec<_>>(),
-//             );
-//             regs.push(MemoryRegion::new_writable(
-//                 &mut mem[i],
-//                 MM_PROGRAM_START + offset as u64,
-//             ));
-//             offset += *region_len;
-//         }
-//
-//         let memory_mapping = MemoryMapping::new(regs, config, &SBPFVersion::V2).unwrap();
-//
-//         (mem, memory_mapping)
-//     }
-//
-//     fn flatten_memory(mem: &[Vec<u8>]) -> Vec<u8> {
-//         mem.iter().flatten().copied().collect()
-//     }
-// }

@@ -18,7 +18,7 @@ use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_stable_layout::stable_instruction::StableInstruction;
 
-#[derive(Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Serialize, Deserialize)]
 enum MockInstruction {
     NoopSuccess,
     NoopFail,
@@ -35,8 +35,6 @@ enum MockInstruction {
         new_len: u64,
     },
 }
-
-const MOCK_BUILTIN_COMPUTE_UNIT_COST: u64 = 1;
 
 declare_process_instruction!(
     MockBuiltin<SDK: SharedAPI>,
@@ -105,8 +103,7 @@ declare_process_instruction!(
                     );
                     invoke_context
                         .transaction_context
-                        .get_next_instruction_context()
-                        .unwrap()
+                        .get_next_instruction_context()?
                         .configure(&[3], &instruction_accounts, &[]);
                     let result = invoke_context.push();
                     assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
@@ -119,12 +116,9 @@ declare_process_instruction!(
                     .try_borrow_instruction_account(transaction_context, 0)?
                     .checked_add_lamports(1)?,
                 MockInstruction::ConsumeComputeUnits {
-                    compute_units_to_consume,
+                    compute_units_to_consume: _,
                     desired_result,
                 } => {
-                    invoke_context
-                        .consume_checked(compute_units_to_consume)
-                        .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
                     return desired_result;
                 }
                 MockInstruction::Resize { new_len } => instruction_context

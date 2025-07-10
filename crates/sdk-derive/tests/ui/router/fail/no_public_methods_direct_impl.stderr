@@ -1,14 +1,9 @@
 error: Router has no methods. Make sure your implementation contains at least one public method that is not named 'deploy'.
+
+         = help: Check that methods are public (pub fn) for regular implementations
+         = help: Consider marking your methods as public: pub fn method_name(...)
+
   --> tests/ui/router/fail/no_public_methods_direct_impl.rs:16:1
    |
-16 | / impl<SDK: SharedAPI> App<SDK> {
-17 | |     // Private method - this should cause an error since in direct implementation
-18 | |     // only public methods are included in routing
-19 | |     fn private_method(&self, value: u32) -> u32 {
-...  |
-29 | |     fn deploy(&self) {}
-30 | | }
-   | |_^
-   |
-   = help: Check that methods are public (pub fn) for regular implementations
-   = help: Consider marking your methods as public: pub fn method_name(...)
+16 | impl<SDK: SharedAPI> App<SDK> {
+   | ^^^^

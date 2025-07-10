@@ -5,11 +5,10 @@ use crate::{
     declare_builtin_function,
     error::Error,
     helpers::SyscallError,
-    loaders::{bpf_loader_upgradeable, syscals::cpi::cpi_common},
+    loaders::syscalls::cpi::cpi_common,
     mem_ops::{
         is_nonoverlapping,
         memmove,
-        memset_non_contiguous,
         translate_and_check_program_address_inputs,
         translate_slice,
         translate_slice_mut,
@@ -21,7 +20,6 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::SharedAPI;
-use solana_feature_set;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
     error::EbpfError,
@@ -32,25 +30,6 @@ use solana_rbpf::{
 pub fn register_builtins<SDK: SharedAPI>(
     function_registry: &mut FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>>,
 ) {
-    function_registry
-        .register_function_hashed(
-            "solana_bpf_loader_deprecated_program",
-            bpf_loader_upgradeable::Entrypoint::vm,
-        )
-        .unwrap();
-    function_registry
-        .register_function_hashed(
-            "solana_bpf_loader_program",
-            bpf_loader_upgradeable::Entrypoint::vm,
-        )
-        .unwrap();
-    function_registry
-        .register_function_hashed(
-            "solana_bpf_loader_upgradeable_program",
-            bpf_loader_upgradeable::Entrypoint::vm,
-        )
-        .unwrap();
-
     function_registry
         .register_function_hashed("sol_log_", SyscallLog::vm)
         .unwrap();
@@ -93,8 +72,7 @@ pub fn register_builtins<SDK: SharedAPI>(
 
     // TODO: doesn't call hash computation handle/function, returns default value (zeroes)
     // function_registry
-    //     .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK,
-    // PoseidonHasher<SDK>>)     .unwrap();
+    //     .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK, PoseidonHasher<SDK>>).unwrap();
     // function_registry
     //     .register_function_hashed("sol_poseidon", SyscallPoseidonSDK::vm)
     //     .unwrap();
@@ -124,8 +102,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // mem_op_consume(invoke_context, n)?;
-
         if !is_nonoverlapping(src_addr, n, dst_addr, n) {
             return Err(SyscallError::CopyOverlapping.into());
         }
@@ -204,9 +180,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-
-        // mem_op_consume(invoke_context, n)?;
-
         memmove(invoke_context, dst_addr, src_addr, n, memory_mapping)
     }
 );
@@ -223,25 +196,15 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
+        let mut s = translate_slice_mut::<u8>(
+            memory_mapping,
+            dst_addr,
+            n,
+            invoke_context.get_check_aligned(),
 
-        // mem_op_consume(invoke_context, n)?;
-
-        if invoke_context
-            .environment_config.feature_set
-            .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
-        {
-            memset_non_contiguous(dst_addr, c as u8, n, memory_mapping)
-        } else {
-            let mut s = translate_slice_mut::<u8>(
-                memory_mapping,
-                dst_addr,
-                n,
-                invoke_context.get_check_aligned(),
-
-            )?;
-            s.fill(&(c as u8));
-            Ok(0)
-        }
+        )?;
+        s.fill(&(c as u8));
+        Ok(0)
     }
 );
 
@@ -290,11 +253,6 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         #[cfg(target_arch = "wasm32")]
         use fluentbase_sdk::debug_log;
-        // let cost = invoke_context
-        //     .get_compute_budget()
-        //     .syscall_base_cost
-        //     .max(len);
-        // consume_compute_meter(invoke_context, cost)?;
 
         translate_string_and_do(
             memory_mapping,
@@ -372,24 +330,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-
-        // let compute_budget = invoke_context.get_compute_budget();
-        // let hash_base_cost = H::get_base_cost(compute_budget);
-        // let hash_byte_cost = H::get_byte_cost(compute_budget);
-        // let hash_max_slices = H::get_max_slices(compute_budget);
-        // if hash_max_slices < vals_len {
-        //     ic_msg!(
-        //         invoke_context,
-        //         "{} Hashing {} sequences in one syscall is over the limit {}",
-        //         H::NAME,
-        //         vals_len,
-        //         hash_max_slices,
-        //     );
-        //     return Err(SyscallError::TooManySlices.into());
-        // }
-
-        // consume_compute_meter(invoke_context, hash_base_cost)?;
-
         let mut hash_result = translate_slice_mut::<u8>(
             memory_mapping,
             result_addr,
@@ -428,10 +368,6 @@ declare_builtin_function!(
 //         _arg5: u64,
 //         memory_mapping: &mut MemoryMapping,
 //     ) -> Result<u64, Error> {
-//
-//         // let cost = invoke_context.get_compute_budget().secp256k1_recover_cost;
-//         // consume_compute_meter(invoke_context, cost)?;
-//
 //         let hash = translate_slice::<u8>(
 //             memory_mapping,
 //             hash_addr,
@@ -496,22 +432,8 @@ declare_builtin_function!(
 //         })?;
 //
 //         if vals_len > 12 {
-//             // ic_msg!(
-//             //     invoke_context,
-//             //     "Poseidon hashing {} sequences is not supported",
-//             //     vals_len,
-//             // );
 //             return Err(SyscallError::InvalidLength.into());
 //         }
-//
-//         // let budget = invoke_context.get_compute_budget();
-//         // let Some(cost) = budget.poseidon_cost(vals_len) else {
-//         //     ic_msg!(
-//         //         invoke_context,
-//         //         "Overflow while calculating the compute cost"
-//         //     );
-//         //     return Err(SyscallError::ArithmeticOverflow.into());
-//         // };
 //         // consume_compute_meter(invoke_context, cost.to_owned())?;
 //
 //         let hash_result = translate_slice_mut::<u8>(
@@ -578,23 +500,8 @@ declare_builtin_function!(
 //         })?;
 //
 //         if vals_len > 12 {
-//             // ic_msg!(
-//             //     invoke_context,
-//             //     "Poseidon hashing {} sequences is not supported",
-//             //     vals_len,
-//             // );
 //             return Err(SyscallError::InvalidLength.into());
 //         }
-//
-//         // let budget = invoke_context.get_compute_budget();
-//         // let Some(cost) = budget.poseidon_cost(vals_len) else {
-//         //     ic_msg!(
-//         //         invoke_context,
-//         //         "Overflow while calculating the compute cost"
-//         //     );
-//         //     return Err(SyscallError::ArithmeticOverflow.into());
-//         // };
-//         // consume_compute_meter(invoke_context, cost.to_owned())?;
 //
 //         let hash_result = translate_slice_mut::<u8>(
 //             memory_mapping,
@@ -661,11 +568,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // let cost = invoke_context
-        //     .get_compute_budget()
-        //     .create_program_address_units;
-        // consume_compute_meter(invoke_context, cost)?;
-
         let (seeds, program_id) = translate_and_check_program_address_inputs(
             seeds_addr,
             seeds_len,
@@ -708,10 +610,6 @@ declare_builtin_function!(
         bump_seed_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // let cost = invoke_context
-        //     .get_compute_budget()
-        //     .create_program_address_units;
-        // consume_compute_meter(invoke_context, cost)?;
         let result = translate_and_check_program_address_inputs(
             seeds_addr,
             seeds_len,
@@ -734,7 +632,6 @@ declare_builtin_function!(
                     program_id
                 );
                 if let Ok(new_address) =
-                    // Pubkey::create_program_address(&seeds_with_bump, program_id)
                     new_address
                 {
                     let bump_seed_ref = translate_type_mut::<u8>(
@@ -766,7 +663,6 @@ declare_builtin_function!(
                 }
             }
             bump_seed[0] = bump_seed[0].saturating_sub(1);
-            // consume_compute_meter(invoke_context, cost)?;
         }
         Ok(1)
     }
@@ -795,68 +691,3 @@ declare_builtin_function!(
         )
     }
 );
-
-// declare_builtin_function!(
-//     /// Create a program address
-//     SyscallTryFindProgramAddress,
-//     fn rust(
-//         invoke_context: &mut InvokeContext,
-//         seeds_addr: u64,
-//         seeds_len: u64,
-//         program_id_addr: u64,
-//         address_addr: u64,
-//         bump_seed_addr: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//         let cost = invoke_context
-//             .get_compute_budget()
-//             .create_program_address_units;
-//         consume_compute_meter(invoke_context, cost)?;
-//
-//         let (seeds, program_id) = translate_and_check_program_address_inputs(
-//             seeds_addr,
-//             seeds_len,
-//             program_id_addr,
-//             memory_mapping,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//
-//         let mut bump_seed = [std::u8::MAX];
-//         for _ in 0..std::u8::MAX {
-//             {
-//                 let mut seeds_with_bump = seeds.to_vec();
-//                 seeds_with_bump.push(&bump_seed);
-//
-//                 if let Ok(new_address) =
-//                     Pubkey::create_program_address(&seeds_with_bump, program_id)
-//                 {
-//                     let bump_seed_ref = translate_type_mut::<u8>(
-//                         memory_mapping,
-//                         bump_seed_addr,
-//                         invoke_context.get_check_aligned(),
-//                     )?;
-//                     let address = translate_slice_mut::<u8>(
-//                         memory_mapping,
-//                         address_addr,
-//                         std::mem::size_of::<Pubkey>() as u64,
-//                         invoke_context.get_check_aligned(),
-//                     )?;
-//                     if !is_nonoverlapping(
-//                         bump_seed_ref as *const _ as usize,
-//                         std::mem::size_of_val(bump_seed_ref),
-//                         address.as_ptr() as usize,
-//                         std::mem::size_of::<Pubkey>(),
-//                     ) {
-//                         return Err(SyscallError::CopyOverlapping.into());
-//                     }
-//                     *bump_seed_ref = bump_seed[0];
-//                     address.copy_from_slice(new_address.as_ref());
-//                     return Ok(0);
-//                 }
-//             }
-//             bump_seed[0] = bump_seed[0].saturating_sub(1);
-//             consume_compute_meter(invoke_context, cost)?;
-//         }
-//         Ok(1)
-//     }
-// );

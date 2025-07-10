@@ -1,8 +1,8 @@
 //! Implementations of syscalls used when `solana-program` is built for non-SBF targets.
 
-use crate::{account_info::AccountInfo, program_error::UNSUPPORTED_SYSVAR};
+use crate::account_info::AccountInfo;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use solana_instruction::Instruction;
+use solana_instruction::{error::UNSUPPORTED_SYSVAR, Instruction};
 use solana_program_error::ProgramResult;
 use solana_program_memory::stubs;
 use solana_pubkey::Pubkey;
@@ -63,9 +63,6 @@ pub trait SyscallStubs: Sync + Send {
     fn sol_get_last_restart_slot(&self, _var_addr: *mut u8) -> u64 {
         UNSUPPORTED_SYSVAR
     }
-    fn sol_get_epoch_stake(&self, _vote_address: *const u8) -> u64 {
-        0
-    }
     /// # Safety
     unsafe fn sol_memcpy(&self, dst: *mut u8, src: *const u8, n: usize) {
         stubs::sol_memcpy(dst, src, n)
@@ -102,30 +99,6 @@ pub(crate) fn sol_log(message: &str) {
     SYSCALL_STUBS.read().sol_log(message);
 }
 
-// pub(crate) fn sol_log_64(arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) {
-//     sol_log(&format!(
-//         "{arg1:#x}, {arg2:#x}, {arg3:#x}, {arg4:#x}, {arg5:#x}"
-//     ));
-// }
-
-// pub(crate) fn sol_log_compute_units() {
-//     SYSCALL_STUBS.read().sol_log_compute_units();
-// }
-
-// pub(crate) fn sol_remaining_compute_units() -> u64 {
-//     SYSCALL_STUBS.read().sol_remaining_compute_units()
-// }
-
-// pub(crate) fn sol_invoke_signed(
-//     instruction: &Instruction,
-//     account_infos: &[AccountInfo],
-//     signers_seeds: &[&[&[u8]]],
-// ) -> ProgramResult {
-//     SYSCALL_STUBS
-//         .read()
-//         .sol_invoke_signed(instruction, account_infos, signers_seeds)
-// }
-
 #[allow(dead_code)]
 pub(crate) fn sol_get_sysvar(
     sysvar_id_addr: *const u8,
@@ -144,46 +117,4 @@ pub(crate) fn sol_get_clock_sysvar(var_addr: *mut u8) -> u64 {
 
 pub(crate) fn sol_get_epoch_schedule_sysvar(var_addr: *mut u8) -> u64 {
     SYSCALL_STUBS.read().sol_get_epoch_schedule_sysvar(var_addr)
-}
-
-pub(crate) fn sol_get_fees_sysvar(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS.read().sol_get_fees_sysvar(var_addr)
-}
-
-pub(crate) fn sol_get_rent_sysvar(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS.read().sol_get_rent_sysvar(var_addr)
-}
-
-pub(crate) fn sol_get_last_restart_slot(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS.read().sol_get_last_restart_slot(var_addr)
-}
-
-// pub(crate) fn sol_get_epoch_stake(vote_address: *const u8) -> u64 {
-//     SYSCALL_STUBS.read().sol_get_epoch_stake(vote_address)
-// }
-
-// pub(crate) fn sol_get_return_data() -> Option<(Pubkey, Vec<u8>)> {
-//     SYSCALL_STUBS.read().sol_get_return_data()
-// }
-
-// pub(crate) fn sol_set_return_data(data: &[u8]) {
-//     SYSCALL_STUBS.read().sol_set_return_data(data)
-// }
-
-// pub(crate) fn sol_log_data(data: &[&[u8]]) {
-//     SYSCALL_STUBS.read().sol_log_data(data)
-// }
-
-pub(crate) fn sol_get_processed_sibling_instruction(index: usize) -> Option<Instruction> {
-    SYSCALL_STUBS
-        .read()
-        .sol_get_processed_sibling_instruction(index)
-}
-
-pub(crate) fn sol_get_stack_height() -> u64 {
-    SYSCALL_STUBS.read().sol_get_stack_height()
-}
-
-pub(crate) fn sol_get_epoch_rewards_sysvar(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS.read().sol_get_epoch_rewards_sysvar(var_addr)
 }

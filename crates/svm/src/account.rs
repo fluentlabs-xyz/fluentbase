@@ -1,16 +1,19 @@
 use crate::{
-    bpf_loader,
-    bpf_loader_deprecated,
+    // bpf_loader,
     clock::{Epoch, INITIAL_RENT_EPOCH},
     context::{IndexOfAccount, InstructionContext, TransactionContext},
     helpers::is_zeroed,
-    solana_program::{bpf_loader_upgradeable, loader_v4, sysvar::Sysvar},
+    solana_program::{loader_v4, sysvar::Sysvar},
     system_instruction::{
         MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         MAX_PERMITTED_DATA_LENGTH,
     },
 };
 use alloc::{rc::Rc, sync::Arc, vec, vec::Vec};
+#[cfg(test)]
+use core::fmt::Debug;
+#[cfg(test)]
+use core::fmt::Formatter;
 use core::{
     cell::{Ref, RefCell, RefMut},
     mem::MaybeUninit,
@@ -25,16 +28,11 @@ use solana_pubkey::Pubkey;
 pub type InheritableAccountFields = (u64, Epoch);
 pub const DUMMY_INHERITABLE_ACCOUNT_FIELDS: InheritableAccountFields = (1, INITIAL_RENT_EPOCH);
 /// Replacement for the executable flag: An account being owned by one of these contains a program.
-pub const PROGRAM_OWNERS: &[Pubkey] = &[
-    bpf_loader_upgradeable::id(),
-    bpf_loader::id(),
-    bpf_loader_deprecated::id(),
-    loader_v4::id(),
-];
+pub const PROGRAM_OWNERS: &[Pubkey] = &[loader_v4::id()];
 pub fn is_executable_by_owner(pk: &Pubkey) -> bool {
     PROGRAM_OWNERS.contains(pk)
 }
-pub fn is_executable_account(account: &AccountSharedData) -> bool {
+pub fn is_executable_by_account(account: &AccountSharedData) -> bool {
     is_executable_by_owner(account.owner())
 }
 
@@ -48,7 +46,6 @@ fn shared_serialize_data<T: serde::Serialize, U: WritableAccount>(
     account: &mut U,
     state: &T,
 ) -> Result<usize, bincode::error::EncodeError> {
-    // TODO need more efficient way to validate ser size
     if serialized_size(state)? > account.data().len() {
         return Err(bincode::error::EncodeError::Other(
             "account data size limit",
@@ -82,39 +79,6 @@ impl Account {
     pub fn new_ref(lamports: u64, space: usize, owner: &Pubkey) -> Rc<RefCell<Self>> {
         shared_new_ref(lamports, space, owner)
     }
-    // pub fn new_data<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     owner: &Pubkey,
-    // ) -> Result<Self, bincode::Error> {
-    //     shared_new_data(lamports, state, owner)
-    // }
-    // pub fn new_ref_data<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     owner: &Pubkey,
-    // ) -> Result<RefCell<Self>, bincode::Error> {
-    //     shared_new_ref_data(lamports, state, owner)
-    // }
-    // pub fn new_data_with_space<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     space: usize,
-    //     owner: &Pubkey,
-    // ) -> Result<Self, bincode::Error> {
-    //     shared_new_data_with_space(lamports, state, space, owner)
-    // }
-    // pub fn new_ref_data_with_space<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     space: usize,
-    //     owner: &Pubkey,
-    // ) -> Result<RefCell<Self>, bincode::Error> {
-    //     shared_new_ref_data_with_space(lamports, state, space, owner)
-    // }
-    // pub fn new_rent_epoch(lamports: u64, space: usize, owner: &Pubkey, rent_epoch: Epoch) -> Self {
-    //     shared_new_rent_epoch(lamports, space, owner, rent_epoch)
-    // }
     pub fn deserialize_data<T: serde::de::DeserializeOwned>(
         &self,
     ) -> Result<T, bincode::error::DecodeError> {
@@ -280,7 +244,7 @@ fn shared_new_ref<T: WritableAccount>(
     Rc::new(RefCell::new(shared_new::<T>(lamports, space, owner)))
 }
 
-fn shared_new_data<T: serde::Serialize + bincode::Encode, U: WritableAccount>(
+fn shared_new_data<T: serde::Serialize, U: WritableAccount>(
     lamports: u64,
     state: &T,
     owner: &Pubkey,
@@ -308,32 +272,10 @@ fn shared_new_data_with_space<T: serde::Serialize, U: WritableAccount>(
     Ok(account)
 }
 
-// fn shared_new_ref_data_with_space<T: serde::Serialize, U: WritableAccount>(
-//     lamports: u64,
-//     state: &T,
-//     space: usize,
-//     owner: &Pubkey,
-// ) -> Result<RefCell<U>, bincode::error::EncodeError> {
-//     Ok(RefCell::new(shared_new_data_with_space::<T, U>(
-//         lamports, state, space, owner,
-//     )?))
-// }
-
 /// An Account with data that is stored on chain
 /// This will be the in-memory representation of the 'Account' struct data.
 /// The existing 'Account' structure cannot easily change due to downstream projects.
-#[derive(
-    PartialEq,
-    Eq,
-    Clone,
-    Default,
-    Debug,
-    /*AbiExample,*/ Serialize,
-    Deserialize,
-    bincode::Encode,
-    bincode::Decode,
-)]
-// #[serde(from = "Account")]
+#[derive(PartialEq, Eq, Clone, Default, Serialize, Deserialize)]
 pub struct AccountSharedData {
     /// lamports in the account
     lamports: u64,
@@ -347,14 +289,23 @@ pub struct AccountSharedData {
     rent_epoch: Epoch,
 }
 
+#[cfg(test)]
+impl Debug for AccountSharedData {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AccountSharedData")
+            .field("lamports", &self.lamports)
+            .field("owner", &self.owner)
+            .field("executable", &self.executable)
+            .field("rent_epoch", &self.rent_epoch)
+            .finish()
+    }
+}
+
 impl AccountSharedData {
     pub fn new(lamports: u64, space: usize, owner: &Pubkey) -> Self {
         shared_new(lamports, space, owner)
     }
-    pub fn new_ref(lamports: u64, space: usize, owner: &Pubkey) -> Rc<RefCell<Self>> {
-        shared_new_ref(lamports, space, owner)
-    }
-    pub fn new_data<T: serde::Serialize + bincode::Encode>(
+    pub fn new_data<T: serde::Serialize>(
         lamports: u64,
         state: &T,
         owner: &Pubkey,
@@ -407,8 +358,7 @@ impl AccountSharedData {
         // update the allocation metadata without moving.
         //
         // Shrinking and copying in place is always faster than making
-        // `new_data` owned, since shrinking boils down to updating the Vec's
-        // length.
+        // `new_data` owned, since shrinking boils down to updating the Vec's length.
 
         data.reserve(new_len.saturating_sub(data.len()));
 
@@ -433,26 +383,6 @@ impl AccountSharedData {
         self.data_mut().spare_capacity_mut()
     }
 
-    // pub fn new(lamports: u64, space: usize, owner: &Pubkey) -> Self {
-    //     shared_new(lamports, space, owner)
-    // }
-    // pub fn new_ref(lamports: u64, space: usize, owner: &Pubkey) -> Rc<RefCell<Self>> {
-    //     shared_new_ref(lamports, space, owner)
-    // }
-    // pub fn new_data<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     owner: &Pubkey,
-    // ) -> Result<Self, bincode::Error> {
-    //     shared_new_data(lamports, state, owner)
-    // }
-    // pub fn new_ref_data<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     owner: &Pubkey,
-    // ) -> Result<RefCell<Self>, bincode::Error> {
-    //     shared_new_ref_data(lamports, state, owner)
-    // }
     pub fn new_data_with_space<T: serde::Serialize>(
         lamports: u64,
         state: &T,
@@ -461,17 +391,7 @@ impl AccountSharedData {
     ) -> Result<Self, bincode::error::EncodeError> {
         shared_new_data_with_space(lamports, state, space, owner)
     }
-    // pub fn new_ref_data_with_space<T: serde::Serialize>(
-    //     lamports: u64,
-    //     state: &T,
-    //     space: usize,
-    //     owner: &Pubkey,
-    // ) -> Result<RefCell<Self>, bincode::Error> {
-    //     shared_new_ref_data_with_space(lamports, state, space, owner)
-    // }
-    // pub fn new_rent_epoch(lamports: u64, space: usize, owner: &Pubkey, rent_epoch: Epoch) -> Self {
-    //     shared_new_rent_epoch(lamports, space, owner, rent_epoch)
-    // }
+
     pub fn deserialize_data<T: serde::de::DeserializeOwned>(
         &self,
     ) -> Result<T, bincode::error::DecodeError> {
@@ -562,7 +482,6 @@ impl ReadableAccount for Ref<'_, AccountSharedData> {
     fn to_account_shared_data(&self) -> AccountSharedData {
         AccountSharedData {
             lamports: self.lamports(),
-            // avoid data copy here
             data: Arc::clone(&self.data),
             owner: *self.owner(),
             executable: self.executable(),
@@ -572,7 +491,7 @@ impl ReadableAccount for Ref<'_, AccountSharedData> {
 }
 
 /// Shared account borrowed from the TransactionContext and an InstructionContext.
-#[derive(Debug)]
+#[cfg_attr(test, derive(Debug))]
 pub struct BorrowedAccount<'a> {
     pub(crate) transaction_context: &'a TransactionContext,
     pub(crate) instruction_context: &'a InstructionContext,
@@ -786,7 +705,6 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Reserves capacity for at least additional more elements to be inserted
     /// in the given account. Does nothing if capacity is already sufficient.
-
     pub fn reserve(&mut self, additional: usize) -> Result<(), InstructionError> {
         // Note that we don't need to call can_data_be_changed() here nor
         // touch() the account. reserve() only changes the capacity of the
@@ -799,7 +717,6 @@ impl<'a> BorrowedAccount<'a> {
     }
 
     /// Returns the number of bytes the account can hold without reallocating.
-
     pub fn capacity(&self) -> usize {
         self.account.capacity()
     }
@@ -811,7 +728,6 @@ impl<'a> BorrowedAccount<'a> {
     ///
     /// During account serialization, if an account is shared it'll get mapped as CoW, else it'll
     /// get mapped directly as writable.
-
     pub fn is_shared(&self) -> bool {
         self.account.is_shared()
     }
@@ -831,7 +747,6 @@ impl<'a> BorrowedAccount<'a> {
     }
 
     /// Deserializes the account data into a state
-
     pub fn get_state<T: serde::de::DeserializeOwned>(&self) -> Result<T, InstructionError> {
         self.account
             .deserialize_data()
@@ -850,15 +765,6 @@ impl<'a> BorrowedAccount<'a> {
         Ok(())
     }
 
-    // Returns whether or the lamports currently in the account is sufficient for rent exemption should the
-    // data be resized to the given size
-
-    pub fn is_rent_exempt_at_data_length(&self, data_length: usize) -> bool {
-        self.transaction_context
-            .rent
-            .is_exempt(self.get_lamports(), data_length)
-    }
-
     /// Returns whether this account is executable (transaction wide)
     #[inline]
     pub fn is_executable(&self) -> bool {
@@ -868,14 +774,6 @@ impl<'a> BorrowedAccount<'a> {
     /// Configures whether this account is executable (transaction wide)
 
     pub fn set_executable(&mut self, is_executable: bool) -> Result<(), InstructionError> {
-        // To become executable an account must be rent exempt
-        if !self
-            .transaction_context
-            .rent
-            .is_exempt(self.get_lamports(), self.get_data().len())
-        {
-            return Err(InstructionError::ExecutableAccountNotRentExempt);
-        }
         // Only the owner can set the executable flag
         if !self.is_owned_by_current_program() {
             return Err(InstructionError::ExecutableModified);
