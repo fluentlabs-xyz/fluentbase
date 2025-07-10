@@ -29,7 +29,6 @@ solana-sha256-hasher = { workspace = true, default-features = false, features = 
 solana-program-error = { workspace = true, default-features = false, features = ["serde"] }
 solana-transaction-error = { workspace = true, default-features = false, features = ["serde"] }
 solana-sysvar-id = { workspace = true, default-features = false, features = [] }
-solana-sdk-macro = { workspace = true, default-features = false, features = [] }
 solana-serialize-utils = { workspace = true, default-features = false, features = [] }
 solana-hash = { workspace = true, default-features = false, features = ["serde", "bytemuck"] }
 solana-decode-error = { workspace = true, default-features = false, features = [] }

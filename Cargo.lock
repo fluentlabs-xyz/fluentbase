@@ -2679,7 +2679,6 @@ dependencies = [
  "solana-program-memory",
  "solana-pubkey",
  "solana-sanitize",
- "solana-sdk-macro",
  "solana-serialize-utils",
  "solana-sha256-hasher",
  "solana-short-vec",

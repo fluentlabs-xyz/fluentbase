@@ -55,7 +55,7 @@ where
             .map_err(|_| InstructionError::InvalidAccountData)
     }
     fn set_state(&mut self, _state: &T) -> Result<(), InstructionError> {
-        panic!("illegal");
+        Err(InstructionError::Immutable)
     }
 }
 

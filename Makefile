@@ -28,9 +28,15 @@ custom_tests:
 	cargo test --frozen --profile test --manifest-path crates/svm/Cargo.toml -- --exact --show-output --nocapture
 	cargo test --frozen --lib svm_loader_v4::tests::test_svm_deploy_exec --profile test --manifest-path e2e/Cargo.toml -- --exact --show-output --nocapture
 
-.PHONY: wasm_target_sizes
-wasm_target_sizes:
-	du -hs --apparent-size target/target2/wasm32-unknown-unknown/release/*.wasm
+.PHONY: wasm_contracts_sizes
+wasm_contracts_sizes:
+	ls -al target/target2/wasm32-unknown-unknown/release/*.wasm
+
+CONTRACT_NAME=svm
+.PHONY: wasm2wat
+wasm2wat:
+	mkdir -p tmp
+	wasm2wat target/target2/wasm32-unknown-unknown/release/fluentbase_contracts_$(CONTRACT_NAME).wasm > tmp/$(CONTRACT_NAME).wat
 
 .PHONY: check
 check:

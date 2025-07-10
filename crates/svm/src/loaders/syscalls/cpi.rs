@@ -1,7 +1,6 @@
 use super::*;
 use crate::{
     account::BorrowedAccount,
-    // bpf_loader,
     builtins::SyscallInvokeSignedRust,
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     error::{Error, SvmError},

@@ -373,8 +373,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
 
         let builtin_id = {
-            // TODO: do we need this check?
-            // debug_assert!(instruction_context.get_number_of_program_accounts() <= 1);
             let borrowed_root_account = instruction_context
                 .try_borrow_program_account(&self.transaction_context, 0)
                 .map_err(|_| InstructionError::UnsupportedProgramId)?;
@@ -676,7 +674,8 @@ impl<'a, SDK: SharedAPI> ContextObject for InvokeContext<'a, SDK> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
+#[cfg_attr(test, derive(Debug))]
 pub struct TransactionAccounts {
     accounts: Vec<RefCell<AccountSharedData>>,
     touched_flags: RefCell<Box<[bool]>>,
@@ -749,7 +748,8 @@ impl TransactionAccounts {
 /// Loaded transaction shared between runtime and programs.
 ///
 /// This context is valid for the entire duration of a transaction being processed.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
+#[cfg_attr(test, derive(Debug))]
 pub struct TransactionContext {
     account_keys: Pin<Box<[Pubkey]>>,
     accounts: Rc<TransactionAccounts>,
@@ -793,7 +793,7 @@ impl TransactionContext {
         }
 
         Ok(Rc::try_unwrap(self.accounts)
-            .expect("transaction_context.accounts has unexpected outstanding refs")
+            .map_err(|_v| InstructionError::InvalidAccountData)?
             .into_accounts())
     }
 

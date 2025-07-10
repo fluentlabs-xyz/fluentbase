@@ -14,7 +14,6 @@ use crate::{
     system_program,
 };
 use bincode::error::DecodeError;
-// pub use deploy_entry_original as deploy_entry;
 pub use deploy_entry_simplified as deploy_entry;
 use fluentbase_sdk::{Bytes, ContextReader, SharedAPI};
 use hashbrown::HashMap;

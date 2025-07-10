@@ -10,9 +10,12 @@ use crate::{
     },
 };
 use alloc::{rc::Rc, sync::Arc, vec, vec::Vec};
+#[cfg(test)]
+use core::fmt::Debug;
+#[cfg(test)]
+use core::fmt::Formatter;
 use core::{
     cell::{Ref, RefCell, RefMut},
-    fmt::{Debug, Formatter},
     mem::MaybeUninit,
     ptr,
 };
@@ -272,7 +275,7 @@ fn shared_new_data_with_space<T: serde::Serialize, U: WritableAccount>(
 /// An Account with data that is stored on chain
 /// This will be the in-memory representation of the 'Account' struct data.
 /// The existing 'Account' structure cannot easily change due to downstream projects.
-#[derive(PartialEq, Eq, Clone, Default, /*Debug,*/ Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Default, Serialize, Deserialize)]
 pub struct AccountSharedData {
     /// lamports in the account
     lamports: u64,
@@ -286,6 +289,7 @@ pub struct AccountSharedData {
     rent_epoch: Epoch,
 }
 
+#[cfg(test)]
 impl Debug for AccountSharedData {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("AccountSharedData")
@@ -293,7 +297,6 @@ impl Debug for AccountSharedData {
             .field("owner", &self.owner)
             .field("executable", &self.executable)
             .field("rent_epoch", &self.rent_epoch)
-            // .field("data", &self.data)
             .finish()
     }
 }
@@ -488,7 +491,7 @@ impl ReadableAccount for Ref<'_, AccountSharedData> {
 }
 
 /// Shared account borrowed from the TransactionContext and an InstructionContext.
-#[derive(Debug)]
+#[cfg_attr(test, derive(Debug))]
 pub struct BorrowedAccount<'a> {
     pub(crate) transaction_context: &'a TransactionContext,
     pub(crate) instruction_context: &'a InstructionContext,

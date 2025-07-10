@@ -547,7 +547,6 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../../examples/svm/solana-program/assets/solana_program.so",
             // "../../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
             "../../contracts/examples/svm/solana-program-state-usage/assets/solana_program.so",
         );
