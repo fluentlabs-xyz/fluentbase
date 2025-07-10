@@ -10,7 +10,6 @@ use alloc::{
     fmt::{Debug, Formatter},
     sync::Arc,
 };
-use core::sync::atomic::{AtomicU64, Ordering};
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashMap;
 use solana_clock::{Epoch, Slot};
@@ -180,12 +179,6 @@ pub struct ProgramCacheEntry<'a, SDK: SharedAPI> {
     pub deployment_slot: Slot,
     /// Slot in which this entry will become active (can be in the future)
     pub effective_slot: Slot,
-    /// How often this entry was used by a transaction
-    pub tx_usage_counter: AtomicU64,
-    /// How often this entry was used by an instruction
-    pub ix_usage_counter: AtomicU64,
-    /// Latest slot in which the entry was used
-    pub latest_access_slot: AtomicU64,
 }
 
 impl<'a, SDK: SharedAPI> PartialEq for ProgramCacheEntry<'a, SDK> {
@@ -267,10 +260,7 @@ impl<'a, SDK: SharedAPI> ProgramCacheEntry<'a, SDK> {
             account_owner: ProgramCacheEntryOwner::try_from(loader_key).unwrap(),
             account_size,
             effective_slot,
-            tx_usage_counter: AtomicU64::new(0),
             program: ProgramCacheEntryType::Loaded(Arc::new(executable)),
-            ix_usage_counter: AtomicU64::new(0),
-            latest_access_slot: AtomicU64::new(0),
         })
     }
 
@@ -291,9 +281,6 @@ impl<'a, SDK: SharedAPI> ProgramCacheEntry<'a, SDK> {
             account_size: self.account_size,
             deployment_slot: self.deployment_slot,
             effective_slot: self.effective_slot,
-            tx_usage_counter: AtomicU64::new(self.tx_usage_counter.load(Ordering::Relaxed)),
-            ix_usage_counter: AtomicU64::new(self.ix_usage_counter.load(Ordering::Relaxed)),
-            latest_access_slot: AtomicU64::new(self.latest_access_slot.load(Ordering::Relaxed)),
         })
     }
 
@@ -312,12 +299,9 @@ impl<'a, SDK: SharedAPI> ProgramCacheEntry<'a, SDK> {
             account_owner: ProgramCacheEntryOwner::NativeLoader,
             account_size,
             effective_slot: deployment_slot,
-            tx_usage_counter: AtomicU64::new(0),
             program: ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_builtin(
                 function_registry,
             ))),
-            ix_usage_counter: AtomicU64::new(0),
-            latest_access_slot: AtomicU64::new(0),
         }
     }
 
@@ -332,9 +316,6 @@ impl<'a, SDK: SharedAPI> ProgramCacheEntry<'a, SDK> {
             account_size: 0,
             deployment_slot: slot,
             effective_slot: slot,
-            tx_usage_counter: AtomicU64::default(),
-            ix_usage_counter: AtomicU64::default(),
-            latest_access_slot: AtomicU64::new(0),
         };
         debug_assert!(tombstone.is_tombstone());
         tombstone
@@ -356,17 +337,6 @@ impl<'a, SDK: SharedAPI> ProgramCacheEntry<'a, SDK> {
     //         && slot >= self.deployment_slot
     //         && slot < self.effective_slot
     // }
-
-    pub fn update_access_slot(&self, slot: Slot) {
-        let _ = self.latest_access_slot.fetch_max(slot, Ordering::Relaxed);
-    }
-
-    pub fn decayed_usage_counter(&self, now: Slot) -> u64 {
-        let last_access = self.latest_access_slot.load(Ordering::Relaxed);
-        // Shifting the u64 value for more than 63 will cause an overflow.
-        let decaying_for = core::cmp::min(63, now.saturating_sub(last_access));
-        self.tx_usage_counter.load(Ordering::Relaxed) >> decaying_for
-    }
 
     pub fn account_owner(&self) -> Pubkey {
         self.account_owner.into()

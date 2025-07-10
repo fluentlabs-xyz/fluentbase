@@ -13,7 +13,6 @@ use crate::{
     },
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use core::sync::atomic::Ordering;
 use fluentbase_sdk::SharedAPI;
 use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
@@ -256,19 +255,6 @@ pub fn process_instruction_deploy<SDK: SharedAPI>(
     state.slot = current_slot;
     state.status = LoaderV4Status::Deployed;
 
-    if let Some(old_entry) = invoke_context
-        .program_cache_for_tx_batch
-        .find(program.get_key())
-    {
-        executor.tx_usage_counter.store(
-            old_entry.tx_usage_counter.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
-        executor.ix_usage_counter.store(
-            old_entry.ix_usage_counter.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
-    }
     invoke_context
         .program_cache_for_tx_batch
         .replenish(*program.get_key(), Arc::new(executor));

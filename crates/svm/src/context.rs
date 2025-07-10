@@ -27,7 +27,6 @@ use core::{
     alloc::Layout,
     cell::{Ref, RefCell, RefMut},
     pin::Pin,
-    sync::atomic::Ordering,
 };
 use fluentbase_sdk::{HashSet, SharedAPI};
 use solana_feature_set::{move_precompile_verification_to_svm, FeatureSet};
@@ -409,8 +408,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             }
         };
 
-        entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
-
         let program_id = *instruction_context.get_last_program_key(&self.transaction_context)?;
 
         self.transaction_context
@@ -645,7 +642,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
             )
         });
 
-        loaded_program.update_access_slot(slot);
         Some(Arc::new(loaded_program))
     }
 
