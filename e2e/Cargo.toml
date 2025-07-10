@@ -39,7 +39,7 @@ default = [
     "std",
     "wasmtime",
     #    "debug-print",
-    #    "enable-svm",
+    "enable-svm",
 ]
 enable-svm = [
     "fluentbase-genesis/enable-svm"
