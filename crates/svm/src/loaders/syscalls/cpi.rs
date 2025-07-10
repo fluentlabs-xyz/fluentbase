@@ -26,15 +26,11 @@ use crate::{
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{fmt::Debug, marker::PhantomData, ptr};
 use fluentbase_sdk::SharedAPI;
-use scopeguard::defer;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS};
 use solana_pubkey::{Pubkey, MAX_SEEDS, PUBKEY_BYTES};
-use solana_rbpf::{
-    ebpf,
-    memory_region::{MemoryMapping, MemoryRegion, MemoryState},
-};
+use solana_rbpf::memory_region::{MemoryMapping, MemoryRegion, MemoryState};
 use solana_stable_layout::stable_instruction::StableInstruction;
 
 fn check_account_info_pointer<SDK: SharedAPI>(
@@ -117,33 +113,12 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
         account_info: SliceFatPtr64<'a, AccountInfo<'b>>,
         account_metadata: &SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a, 'b, SDK>, SvmError> {
-        let direct_mapping = invoke_context
-            .get_feature_set()
-            .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id());
-
         let account_info_first_item_addr = account_info.first_item_addr().inner();
-        let addr_to_key_addr = account_info_first_item_addr;
         let addr_to_lamports_rc_addr = account_info_first_item_addr.saturating_add(8);
         let addr_to_data_addr = account_info_first_item_addr.saturating_add(8 * 2);
         let addr_to_owner_addr = account_info_first_item_addr.saturating_add(8 * 3);
 
         let mmh: MemoryMappingHelper = memory_mapping.into();
-
-        if direct_mapping {
-            check_account_info_pointer(
-                invoke_context,
-                addr_to_key_addr,
-                account_metadata.vm_key_addr,
-                "key",
-            )?;
-
-            check_account_info_pointer(
-                invoke_context,
-                addr_to_owner_addr,
-                account_metadata.vm_owner_addr,
-                "owner",
-            )?;
-        }
 
         // account_info points to host memory. The addresses used internally are
         // in vm space so they need to be translated.
@@ -154,18 +129,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
                 PtrType::RcStartPtr(addr_to_lamports_rc_addr),
             );
 
-            if direct_mapping {
-                if addr_to_lamports_rc_addr >= ebpf::MM_INPUT_START {
-                    return Err(SyscallError::InvalidPointer.into());
-                }
-
-                check_account_info_pointer(
-                    invoke_context,
-                    lamports_mem_layout_ptr.value_addr::<false, false>(),
-                    account_metadata.vm_lamports_addr,
-                    "lamports",
-                )?;
-            }
             translate_type_mut::<u64>(
                 memory_mapping,
                 lamports_mem_layout_ptr.value_addr::<false, false>(),
@@ -183,10 +146,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
         )?;
 
         let (serialized_data, vm_data_addr, ref_to_len_in_vm) = {
-            if direct_mapping && addr_to_data_addr >= ebpf::MM_INPUT_START {
-                return Err(SyscallError::InvalidPointer.into());
-            }
-
             // Double translate data out of RefCell
             let data_mem_layout = RcRefCellMemLayout::<&mut [u8]>::new(
                 mmh.clone(),
@@ -197,36 +156,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             let data =
                 SliceFatPtr64::<u8>::from_ptr_to_fat_ptr(data_fat_ptr_addr as usize, mmh.clone());
 
-            if direct_mapping {
-                check_account_info_pointer(
-                    invoke_context,
-                    data.first_item_addr().inner(),
-                    account_metadata.vm_data_addr,
-                    "data",
-                )?;
-            }
-
-            let ref_to_len_in_vm = if direct_mapping {
-                // let vm_addr = (account_info.data.as_ptr() as *const u64 as u64)
-                //     .saturating_add(size_of::<u64>() as u64);
-                let data_len_fat_ptr_vm_addr = data
-                    .first_item_addr()
-                    .inner()
-                    .saturating_add(size_of::<u64>() as u64);
-                let vm_addr = data_len_fat_ptr_vm_addr;
-                // In the same vein as the other check_account_info_pointer() checks, we don't lock
-                // this pointer to a specific address but we don't want it to be inside accounts, or
-                // callees might be able to write to the pointed memory.
-                if vm_addr >= ebpf::MM_INPUT_START {
-                    return Err(SyscallError::InvalidPointer.into());
-                }
-
-                VmValue::VmAddress {
-                    vm_addr,
-                    memory_mapping,
-                    check_aligned: invoke_context.get_check_aligned(),
-                }
-            } else {
+            let ref_to_len_in_vm = {
                 let data_len_fat_ptr_addr =
                     data_fat_ptr_addr.saturating_add(size_of::<u64>() as u64);
                 let translated = data_len_fat_ptr_addr as *mut u64;
@@ -236,21 +166,7 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
             };
             let vm_data_addr = data.first_item_addr();
 
-            let serialized_data = if direct_mapping {
-                // when direct mapping is enabled, the permissions on the
-                // realloc region can change during CPI so we must delay
-                // translating until when we know whether we're going to mutate
-                // the realloc region or not. Consider this case:
-                //
-                // [caller can't write to an account] <- we are here
-                // [callee grows and assigns account to the caller]
-                // [caller can now write to the account]
-                //
-                // If we always translated the realloc area here, we'd get a
-                // memory access violation since we can't write to the account
-                // _yet_, but we will be able to once the caller returns.
-                Default::default()
-            } else {
+            let serialized_data = {
                 translate_slice_mut::<u8>(
                     memory_mapping,
                     data_fat_ptr_vm_addr,
@@ -285,42 +201,12 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
     //         .get_feature_set()
     //         .is_active(&feature_set::bpf_account_data_direct_mapping::id());
     //
-    //     if direct_mapping {
-    //         check_account_info_pointer(
-    //             invoke_context,
-    //             account_info.key_addr,
-    //             account_metadata.vm_key_addr,
-    //             "key",
-    //         )?;
-    //
-    //         check_account_info_pointer(
-    //             invoke_context,
-    //             account_info.owner_addr,
-    //             account_metadata.vm_owner_addr,
-    //             "owner",
-    //         )?;
-    //
-    //         check_account_info_pointer(
-    //             invoke_context,
-    //             account_info.lamports_addr,
-    //             account_metadata.vm_lamports_addr,
-    //             "lamports",
-    //         )?;
-    //
-    //         check_account_info_pointer(
-    //             invoke_context,
-    //             account_info.data_addr,
-    //             account_metadata.vm_data_addr,
-    //             "data",
-    //         )?;
-    //     }
-    //
     //     // account_info points to host memory. The addresses used internally are
     //     // in vm space so they need to be translated.
     //     let lamports = translate_type_mut::<u64>(
     //         memory_mapping,
     //         account_info.lamports_addr,
-    //         invoke_context.get_check_aligned(),
+    //         invoke_context.get_check_aligned(),solana
     //         false,
     //     )?;
     //     let owner = translate_type_mut::<Pubkey>(
@@ -330,17 +216,12 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
     //         false,
     //     )?;
     //
-    //     let serialized_data = if direct_mapping {
-    //         // See comment in CallerAccount::from_account_info()
-    //         Default::default()
-    //     } else {
     //         translate_slice_mut::<u8>(
     //             memory_mapping,
     //             account_info.data_addr,
     //             account_info.data_len,
     //             invoke_context.get_check_aligned(),
     //         )?
-    //     };
     //
     //     // we already have the host addr we want: &mut account_info.data_len.
     //     // The account info might be read only in the vm though, so we translate
@@ -791,21 +672,6 @@ fn translate_account_infos<'a, T: Clone + SpecMethods<'a> + Debug + 'a, F, SDK: 
 where
     F: Fn(SliceFatPtr64<'a, T>, usize, usize) -> u64,
 {
-    let direct_mapping = invoke_context
-        .get_feature_set()
-        .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id());
-
-    // In the same vein as the other check_account_info_pointer() checks, we don't lock
-    // this pointer to a specific address but we don't want it to be inside accounts, or
-    // callees might be able to write to the pointed memory.
-    if direct_mapping
-        && account_infos_addr
-            .saturating_add(account_infos_len.saturating_mul(size_of::<T>() as u64))
-            >= ebpf::MM_INPUT_START
-    {
-        return Err(SyscallError::InvalidPointer.into());
-    }
-
     let mmh: MemoryMappingHelper = memory_mapping.into();
     crate::remap_addr!(mmh, account_infos_addr);
     let account_infos = SliceFatPtr64::new(
@@ -864,10 +730,6 @@ where
     // only outside syscalls
     let accounts_metadata = &invoke_context.get_syscall_context()?.accounts_metadata;
 
-    let direct_mapping = invoke_context
-        .get_feature_set()
-        .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id());
-
     for (instruction_account_index, instruction_account) in instruction_accounts.iter().enumerate()
     {
         if instruction_account_index as IndexOfAccount != instruction_account.index_in_callee {
@@ -921,7 +783,6 @@ where
                 memory_mapping,
                 &caller_account,
                 callee_account,
-                direct_mapping,
             )?;
 
             let caller_account = if instruction_account.is_writable || update_caller {
@@ -1082,27 +943,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
 
-    // CPI exit.
-    //
-    // Synchronize the callee's account changes so the caller can see them.
-    let direct_mapping = invoke_context
-        .get_feature_set()
-        .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id());
-
-    if direct_mapping {
-        // Update all perms at once before doing account data updates. This
-        // isn't strictly required as we forbid updates to an account to touch
-        // other accounts, but since we did have bugs around this in the past,
-        // it's better to be safe than sorry.
-        for (index_in_caller, caller_account) in accounts.iter() {
-            if let Some(caller_account) = caller_account {
-                let callee_account = instruction_context
-                    .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
-                update_caller_account_perms(memory_mapping, caller_account, &callee_account)?;
-            }
-        }
-    }
-
     for (index_in_caller, caller_account) in accounts.iter_mut() {
         if let Some(caller_account) = caller_account {
             let mut callee_account = instruction_context
@@ -1112,7 +952,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
                 memory_mapping,
                 caller_account,
                 &mut callee_account,
-                direct_mapping,
             )?;
         }
     }
@@ -1132,11 +971,10 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
 // When true is returned, the caller account must be updated after CPI. This
 // is only set for direct mapping when the pointer may have changed.
 fn update_callee_account<SDK: SharedAPI>(
-    invoke_context: &InvokeContext<SDK>,
-    memory_mapping: &MemoryMapping,
+    _invoke_context: &InvokeContext<SDK>,
+    _memory_mapping: &MemoryMapping,
     caller_account: &CallerAccount<SDK>,
     mut callee_account: BorrowedAccount<'_>,
-    direct_mapping: bool,
 ) -> Result<bool, SvmError> {
     let mut must_update_caller = false;
 
@@ -1144,68 +982,24 @@ fn update_callee_account<SDK: SharedAPI>(
         callee_account.set_lamports(*caller_account.lamports)?;
     }
 
-    // TODO this flag must be always false so maybe we can get rid of the other branch?
-    if direct_mapping {
-        let prev_len = callee_account.get_data().len();
-        let post_len = *caller_account.ref_to_len_in_vm.get()? as usize;
-        match callee_account
-            .can_data_be_resized(post_len)
-            .and_then(|_| callee_account.can_data_be_changed())
-        {
-            Ok(()) => {
-                let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
-                if prev_len != post_len {
-                    callee_account.set_data_length(post_len)?;
-                    // pointer to data may have changed, so caller must be updated
-                    must_update_caller = true;
-                }
-                if realloc_bytes_used > 0 {
-                    let serialized_data = translate_slice::<u8>(
-                        memory_mapping,
-                        caller_account
-                            .vm_data_addr
-                            .saturating_add(caller_account.original_data_len as u64),
-                        realloc_bytes_used as u64,
-                        invoke_context.get_check_aligned(),
-                    )?;
+    // The redundant check helps to avoid the expensive data comparison if we can
+    let caller_ser_data = caller_account
+        .serialized_data
+        .iter()
+        .map(|v| v.as_ref().clone())
+        .collect::<Vec<_>>();
 
-                    callee_account
-                        .get_data_mut()?
-                        .get_mut(caller_account.original_data_len..post_len)
-                        .ok_or(SyscallError::InvalidLength)?
-                        .copy_from_slice(
-                            &serialized_data
-                                .iter()
-                                .map(|v| v.as_ref().clone())
-                                .collect::<Vec<_>>(),
-                        );
-                }
-            }
-            Err(err) if prev_len != post_len => {
-                return Err(err.into());
-            }
-            _ => {}
+    match callee_account
+        .can_data_be_resized(caller_account.serialized_data.len())
+        .and_then(|_| callee_account.can_data_be_changed())
+    {
+        Ok(()) => {
+            callee_account.set_data_from_slice(&caller_ser_data)?;
         }
-    } else {
-        // The redundant check helps to avoid the expensive data comparison if we can
-        let caller_ser_data = caller_account
-            .serialized_data
-            .iter()
-            .map(|v| v.as_ref().clone())
-            .collect::<Vec<_>>();
-
-        match callee_account
-            .can_data_be_resized(caller_account.serialized_data.len())
-            .and_then(|_| callee_account.can_data_be_changed())
-        {
-            Ok(()) => {
-                callee_account.set_data_from_slice(&caller_ser_data)?;
-            }
-            Err(err) if callee_account.get_data() != &caller_ser_data => {
-                return Err(err.into());
-            }
-            _ => {}
+        Err(err) if callee_account.get_data() != &caller_ser_data => {
+            return Err(err.into());
         }
+        _ => {}
     }
 
     // Change the owner at the end so that we are allowed to change the lamports and data before
@@ -1261,57 +1055,16 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
     memory_mapping: &'a MemoryMapping,
     caller_account: &mut CallerAccount<'a, 'b, SDK>,
     callee_account: &mut BorrowedAccount<'_>,
-    direct_mapping: bool,
 ) -> Result<(), Error> {
     *caller_account.lamports = callee_account.get_lamports();
     *caller_account.owner = *callee_account.get_owner();
 
     let mut zero_all_mapped_spare_capacity = false;
-    if direct_mapping {
-        if let Some(region) = account_data_region(
-            memory_mapping,
-            caller_account.vm_data_addr,
-            caller_account.original_data_len,
-        )? {
-            // Since each instruction account is directly mapped in a memory region with a *fixed*
-            // length, upon returning from CPI we must ensure that the current capacity is at least
-            // the original length (what is mapped in memory), so that the account's memory region
-            // never points to an invalid address.
-            //
-            // Note that the capacity can be smaller than the original length only if the account is
-            // reallocated using the AccountSharedData API directly (deprecated) or using
-            // BorrowedAccount::set_data_from_slice(), which implements an optimization to avoid an
-            // extra allocation.
-            let min_capacity = caller_account.original_data_len;
-            if callee_account.capacity() < min_capacity {
-                callee_account
-                    .reserve(min_capacity.saturating_sub(callee_account.get_data().len()))?;
-                zero_all_mapped_spare_capacity = true;
-            }
-
-            // If an account's data pointer has changed we must update the corresponding
-            // MemoryRegion in the caller's address space. Address spaces are fixed so we don't need
-            // to update the MemoryRegion's length.
-            //
-            // An account's data pointer can change if the account is reallocated because of CoW,
-            // because of BorrowedAccount::make_data_mut or by a program that uses the
-            // AccountSharedData API directly (deprecated).
-            let callee_ptr = callee_account.get_data().as_ptr() as u64;
-            if region.host_addr.get() != callee_ptr {
-                region.host_addr.set(callee_ptr);
-                zero_all_mapped_spare_capacity = true;
-            }
-        }
-    }
 
     let prev_len = *caller_account.ref_to_len_in_vm.get()? as usize;
     let post_len = callee_account.get_data().len();
     if prev_len != post_len {
-        let max_increase = if direct_mapping && !invoke_context.get_check_aligned() {
-            0
-        } else {
-            MAX_PERMITTED_DATA_INCREASE
-        };
+        let max_increase = MAX_PERMITTED_DATA_INCREASE;
         let data_overflow = post_len
             > caller_account
                 .original_data_len
@@ -1323,74 +1076,21 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
         // If the account has been shrunk, we're going to zero the unused memory
         // *that was previously used*.
         if post_len < prev_len {
-            if direct_mapping {
-                // We have two separate regions to zero out: the account data
-                // and the realloc region. Here we zero the realloc region, the
-                // data region is zeroed further down below.
-                //
-                // This is done for compatibility but really only necessary for
-                // the fringe case of a program calling itself, see
-                // TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS.
-                //
-                // Zeroing the realloc region isn't necessary in the normal
-                // invoke case because consider the following scenario:
-                //
-                // 1. Caller grows an account (prev_len > original_data_len)
-                // 2. Caller assigns the account to the callee (needed for 3 to
-                //    work)
-                // 3. Callee shrinks the account (post_len < prev_len)
-                //
-                // In order for the caller to assign the account to the callee,
-                // the caller _must_ either set the account length to zero,
-                // therefore making prev_len > original_data_len impossible,
-                // or it must zero the account data, therefore making the
-                // zeroing we do here redundant.
-                if prev_len > caller_account.original_data_len {
-                    // Temporarily configure the realloc region as writable then set it back to
-                    // whatever state it had.
-                    let realloc_region = caller_account.realloc_region(memory_mapping)?.unwrap(); // unwrapping here is fine, we already asserted !is_loader_deprecated
-                    let original_state = realloc_region.state.replace(MemoryState::Writable);
-                    defer! {
-                        realloc_region.state.set(original_state);
-                    }
-
-                    // We need to zero the unused space in the realloc region, starting after the
-                    // last byte of the new data which might be > original_data_len.
-                    let dirty_realloc_start = caller_account.original_data_len.max(post_len);
-
-                    // and we want to zero up to the old length
-                    let dirty_realloc_len = prev_len.saturating_sub(dirty_realloc_start);
-
-                    let mut serialized_data = translate_slice_mut::<u8>(
-                        memory_mapping,
-                        caller_account
-                            .vm_data_addr
-                            .saturating_add(dirty_realloc_start as u64),
-                        dirty_realloc_len as u64,
-                        invoke_context.get_check_aligned(),
-                    )?;
-
-                    serialized_data.fill(&0);
-                }
-            } else {
-                caller_account
-                    .serialized_data
-                    .get_mut(post_len..)
-                    .map_err(|_e| InstructionError::AccountDataTooSmall)?
-                    .fill(&0);
-            }
+            caller_account
+                .serialized_data
+                .get_mut(post_len..)
+                .map_err(|_e| InstructionError::AccountDataTooSmall)?
+                .fill(&0);
         }
 
         // when direct mapping is enabled we don't cache the serialized data in
         // caller_account.serialized_data. See CallerAccount::from_account_info.
-        if !direct_mapping {
-            caller_account.serialized_data = translate_slice_mut::<u8>(
-                memory_mapping,
-                caller_account.vm_data_addr,
-                post_len as u64,
-                false, // Don't care since it is byte aligned
-            )?;
-        }
+        caller_account.serialized_data = translate_slice_mut::<u8>(
+            memory_mapping,
+            caller_account.vm_data_addr,
+            post_len as u64,
+            false, // Don't care since it is byte aligned
+        )?;
 
         // this is the len field in the AccountInfo::data slice
         *caller_account.ref_to_len_in_vm.get_mut()? = post_len as u64;
@@ -1407,90 +1107,15 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
         *serialized_len_ptr = post_len as u64;
     }
 
-    if direct_mapping {
-        // Here we zero the account data region.
-        //
-        // If zero_all_mapped_spare_capacity=true, we need to zero regardless of whether the account
-        // size changed, because the underlying vector holding the account might have been
-        // reallocated and contain uninitialized memory in the spare capacity.
-        //
-        // See TEST_CPI_CHANGE_ACCOUNT_DATA_MEMORY_ALLOCATION for an example of
-        // this case.
-        let spare_len = if zero_all_mapped_spare_capacity {
-            // In the unlikely case where the account data vector has
-            // changed - which can happen during CoW - we zero the whole
-            // extra capacity up to the original data length.
-            //
-            // The extra capacity up to original data length is
-            // accessible from the vm and since it's uninitialized
-            // memory, it could be a source of non-determinism.
-            caller_account.original_data_len
-        } else {
-            // If the allocation has not changed, we only zero the
-            // difference between the previous and current lengths. The
-            // rest of the memory contains whatever it contained before,
-            // which is deterministic.
-            prev_len
-        }
-        .saturating_sub(post_len);
-
-        if spare_len > 0 {
-            let dst = callee_account
-                .spare_data_capacity_mut()?
-                .get_mut(..spare_len)
-                .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall))?
-                .as_mut_ptr();
-            // Safety: we check bounds above
-            unsafe { ptr::write_bytes(dst, 0, spare_len) };
-        }
-
-        // Propagate changes to the realloc region in the callee up to the caller.
-        let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
-        if realloc_bytes_used > 0 {
-            let mut to_slice = {
-                // If a callee reallocs an account, we write into the caller's
-                // realloc region regardless of whether the caller has write
-                // permissions to the account or not. If the callee has been able to
-                // make changes, it means they had permissions to do so, and here
-                // we're just going to reflect those changes to the caller's frame.
-                //
-                // Therefore we temporarily configure the realloc region as writable
-                // then set it back to whatever state it had.
-                let realloc_region = caller_account.realloc_region(memory_mapping)?.unwrap(); // unwrapping here is fine, we asserted !is_loader_deprecated
-                let original_state = realloc_region.state.replace(MemoryState::Writable);
-                defer! {
-                    realloc_region.state.set(original_state);
-                }
-
-                translate_slice_mut::<u8>(
-                    memory_mapping,
-                    caller_account
-                        .vm_data_addr
-                        .saturating_add(caller_account.original_data_len as u64),
-                    realloc_bytes_used as u64,
-                    invoke_context.get_check_aligned(),
-                )?
-            };
-            let from_slice = callee_account
-                .get_data()
-                .get(caller_account.original_data_len..post_len)
-                .ok_or(SyscallError::InvalidLength)?;
-            if to_slice.len() != from_slice.len() {
-                return Err(Box::new(InstructionError::AccountDataTooSmall));
-            }
-            to_slice.copy_from_slice(from_slice);
-        }
-    } else {
-        let to_slice = &mut caller_account.serialized_data;
-        let from_slice = callee_account
-            .get_data()
-            .get(0..post_len)
-            .ok_or(SyscallError::InvalidLength)?;
-        if to_slice.len() != from_slice.len() {
-            return Err(Box::new(InstructionError::AccountDataTooSmall));
-        }
-        to_slice.copy_from_slice(from_slice);
+    let to_slice = &mut caller_account.serialized_data;
+    let from_slice = callee_account
+        .get_data()
+        .get(0..post_len)
+        .ok_or(SyscallError::InvalidLength)?;
+    if to_slice.len() != from_slice.len() {
+        return Err(Box::new(InstructionError::AccountDataTooSmall));
     }
+    to_slice.copy_from_slice(from_slice);
 
     Ok(())
 }

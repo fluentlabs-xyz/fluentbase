@@ -198,25 +198,15 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
+        let mut s = translate_slice_mut::<u8>(
+            memory_mapping,
+            dst_addr,
+            n,
+            invoke_context.get_check_aligned(),
 
-        // mem_op_consume(invoke_context, n)?;
-
-        if invoke_context
-            .environment_config.feature_set
-            .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
-        {
-            memset_non_contiguous(dst_addr, c as u8, n, memory_mapping)
-        } else {
-            let mut s = translate_slice_mut::<u8>(
-                memory_mapping,
-                dst_addr,
-                n,
-                invoke_context.get_check_aligned(),
-
-            )?;
-            s.fill(&(c as u8));
-            Ok(0)
-        }
+        )?;
+        s.fill(&(c as u8));
+        Ok(0)
     }
 );
 

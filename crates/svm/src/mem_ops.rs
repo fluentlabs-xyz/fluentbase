@@ -12,7 +12,6 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::{fmt::Debug, slice, str::from_utf8};
 use fluentbase_sdk::SharedAPI;
-use solana_feature_set::bpf_account_data_direct_mapping;
 use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN};
 use solana_rbpf::{
     error::EbpfError,
@@ -682,28 +681,21 @@ pub fn memmove<SDK: SharedAPI>(
     n: u64,
     memory_mapping: &MemoryMapping,
 ) -> Result<u64, Error> {
-    if invoke_context
-        .get_feature_set()
-        .is_active(&bpf_account_data_direct_mapping::id())
-    {
-        memmove_non_contiguous(dst_addr, src_addr, n, memory_mapping)
-    } else {
-        let mut dst_ptr = translate_slice_mut::<u8>(
-            memory_mapping,
-            dst_addr,
-            n,
-            invoke_context.get_check_aligned(),
-        )?;
-        let src_ptr = translate_slice::<u8>(
-            memory_mapping,
-            src_addr,
-            n,
-            invoke_context.get_check_aligned(),
-        )?;
+    let mut dst_ptr = translate_slice_mut::<u8>(
+        memory_mapping,
+        dst_addr,
+        n,
+        invoke_context.get_check_aligned(),
+    )?;
+    let src_ptr = translate_slice::<u8>(
+        memory_mapping,
+        src_addr,
+        n,
+        invoke_context.get_check_aligned(),
+    )?;
 
-        dst_ptr.copy_from(&src_ptr)?;
-        Ok(0)
-    }
+    dst_ptr.copy_from(&src_ptr)?;
+    Ok(0)
 }
 pub fn translate_and_check_program_address_inputs<'a>(
     seeds_addr: u64,
