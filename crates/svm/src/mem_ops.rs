@@ -180,28 +180,6 @@ use solana_rbpf::{
 //     }
 // }
 
-fn memmove_non_contiguous(
-    dst_addr: u64,
-    src_addr: u64,
-    n: u64,
-    memory_mapping: &MemoryMapping,
-) -> Result<u64, Error> {
-    let reverse = dst_addr.wrapping_sub(src_addr) < n;
-    iter_memory_pair_chunks(
-        AccessType::Load,
-        src_addr,
-        AccessType::Store,
-        dst_addr,
-        n,
-        memory_mapping,
-        reverse,
-        |src_host_addr, dst_host_addr, chunk_len| {
-            unsafe { core::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
-            Ok(0)
-        },
-    )
-}
-
 // Marked unsafe since it assumes that the slices are at least `n` bytes long.
 pub unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
     for i in 0..n {
@@ -273,22 +251,6 @@ impl core::error::Error for MemcmpError {
             MemcmpError::Diff(_) => None,
         }
     }
-}
-
-pub(crate) fn memset_non_contiguous(
-    dst_addr: u64,
-    c: u8,
-    n: u64,
-    memory_mapping: &MemoryMapping,
-) -> Result<u64, Error> {
-    let dst_chunk_iter = MemoryChunkIterator::new(memory_mapping, AccessType::Store, dst_addr, n)?;
-    for item in dst_chunk_iter {
-        let (dst_region, dst_vm_addr, dst_len) = item?;
-        let dst_host_addr = Result::from(dst_region.vm_to_host(dst_vm_addr, dst_len as u64))?;
-        unsafe { slice::from_raw_parts_mut(dst_host_addr as *mut u8, dst_len).fill(c) }
-    }
-
-    Ok(0)
 }
 
 fn iter_memory_pair_chunks<T, F>(

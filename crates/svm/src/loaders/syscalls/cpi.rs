@@ -14,7 +14,6 @@ use crate::{
     },
     native_loader,
     precompiles::is_precompile,
-    serialization::account_data_region_memory_state,
     word_size::{
         addr_type::AddrType,
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
@@ -28,24 +27,13 @@ use core::{fmt::Debug, marker::PhantomData, ptr};
 use fluentbase_sdk::SharedAPI;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_instruction::{error::InstructionError, AccountMeta};
-use solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS};
+use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::{Pubkey, MAX_SEEDS, PUBKEY_BYTES};
-use solana_rbpf::memory_region::{MemoryMapping, MemoryRegion, MemoryState};
+use solana_rbpf::memory_region::MemoryMapping;
 use solana_stable_layout::stable_instruction::StableInstruction;
 
-fn check_account_info_pointer<SDK: SharedAPI>(
-    _invoke_context: &InvokeContext<SDK>,
-    vm_addr: u64,
-    expected_vm_addr: u64,
-    _field: &str,
-) -> Result<(), SvmError> {
-    if vm_addr != expected_vm_addr {
-        return Err(SyscallError::InvalidPointer.into());
-    }
-    Ok(())
-}
-
 enum VmValue<'a, 'b, T> {
+    #[allow(dead_code)]
     VmAddress {
         vm_addr: u64,
         memory_mapping: &'b MemoryMapping<'a>,
@@ -257,13 +245,6 @@ impl<'a, 'b, SDK: SharedAPI> CallerAccount<'a, 'b, SDK> {
     //         _phantom_data: Default::default(),
     //     })
     // }
-
-    fn realloc_region(
-        &self,
-        memory_mapping: &'b MemoryMapping<'_>,
-    ) -> Result<Option<&'a MemoryRegion>, Error> {
-        account_realloc_region(memory_mapping, self.vm_data_addr, self.original_data_len)
-    }
 }
 
 type TranslatedAccounts<'a, 'b, SDK> = Vec<(IndexOfAccount, Option<CallerAccount<'a, 'b, SDK>>)>;
@@ -976,7 +957,7 @@ fn update_callee_account<SDK: SharedAPI>(
     caller_account: &CallerAccount<SDK>,
     mut callee_account: BorrowedAccount<'_>,
 ) -> Result<bool, SvmError> {
-    let mut must_update_caller = false;
+    let must_update_caller = false;
 
     if callee_account.get_lamports() != *caller_account.lamports {
         callee_account.set_lamports(*caller_account.lamports)?;
@@ -1011,37 +992,6 @@ fn update_callee_account<SDK: SharedAPI>(
     Ok(must_update_caller)
 }
 
-fn update_caller_account_perms<SDK: SharedAPI>(
-    memory_mapping: &MemoryMapping,
-    caller_account: &CallerAccount<SDK>,
-    callee_account: &BorrowedAccount<'_>,
-) -> Result<(), Error> {
-    let CallerAccount {
-        original_data_len,
-        vm_data_addr,
-        ..
-    } = caller_account;
-
-    let data_region = account_data_region(memory_mapping, *vm_data_addr, *original_data_len)?;
-    if let Some(region) = data_region {
-        region
-            .state
-            .set(account_data_region_memory_state(callee_account));
-    }
-    let realloc_region = account_realloc_region(memory_mapping, *vm_data_addr, *original_data_len)?;
-    if let Some(region) = realloc_region {
-        region
-            .state
-            .set(if callee_account.can_data_be_changed().is_ok() {
-                MemoryState::Writable
-            } else {
-                MemoryState::Readable
-            });
-    }
-
-    Ok(())
-}
-
 // Update the given account after executing CPI.
 //
 // caller_account and callee_account describe to the same account. At CPI exit
@@ -1058,8 +1008,6 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
 ) -> Result<(), Error> {
     *caller_account.lamports = callee_account.get_lamports();
     *caller_account.owner = *callee_account.get_owner();
-
-    let mut zero_all_mapped_spare_capacity = false;
 
     let prev_len = *caller_account.ref_to_len_in_vm.get()? as usize;
     let post_len = callee_account.get_data().len();
@@ -1118,36 +1066,4 @@ fn update_caller_account<'a, 'b, SDK: SharedAPI>(
     to_slice.copy_from_slice(from_slice);
 
     Ok(())
-}
-
-fn account_data_region<'a>(
-    memory_mapping: &'a MemoryMapping<'_>,
-    vm_data_addr: u64,
-    original_data_len: usize,
-) -> Result<Option<&'a MemoryRegion>, Error> {
-    if original_data_len == 0 {
-        return Ok(None);
-    }
-
-    // We can trust vm_data_addr to point to the correct region because we
-    // enforce that in CallerAccount::from_(sol_)account_info.
-    let data_region = memory_mapping.region(AccessType::Load, vm_data_addr)?;
-    // vm_data_addr must always point to the beginning of the region
-    debug_assert_eq!(data_region.vm_addr, vm_data_addr);
-    Ok(Some(data_region))
-}
-
-fn account_realloc_region<'a>(
-    memory_mapping: &'a MemoryMapping<'_>,
-    vm_data_addr: u64,
-    original_data_len: usize,
-) -> Result<Option<&'a MemoryRegion>, Error> {
-    let realloc_vm_addr = vm_data_addr.saturating_add(original_data_len as u64);
-    let realloc_region = memory_mapping.region(AccessType::Load, realloc_vm_addr)?;
-    debug_assert_eq!(realloc_region.vm_addr, realloc_vm_addr);
-    debug_assert!((MAX_PERMITTED_DATA_INCREASE
-        ..MAX_PERMITTED_DATA_INCREASE.saturating_add(BPF_ALIGN_OF_U128))
-        .contains(&(realloc_region.len as usize)));
-    debug_assert!(!matches!(realloc_region.state.get(), MemoryState::Cow(_)));
-    Ok(Some(realloc_region))
 }
