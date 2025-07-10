@@ -1,0 +1,33 @@
+[workspace]
+members = ["genesis/*", "examples/*"]
+exclude = ["examples/svm", "genesis/fairblock"]
+resolver = "2"
+
+[workspace.package]
+authors = [
+    "Dmitry Savonin <dmitry@fluentlabs.xyz>",
+]
+repository = "https://github.com/fluentlabs-xyz/fuentbase"
+edition = "2021"
+license = "MIT"
+keywords = ["wasm", "webassembly", "interpreter", "vm"]
+categories = ["wasm", "no-std", "virtualization"]
+readme = "README.md"
+
+[workspace.dependencies]
+fluentbase-sdk = { path = "../crates/sdk", default-features = false }
+precompile = { path = "../revm/crates/precompile", package = "revm-precompile", default-features = false }
+fluentbase-erc20 = { path = "../crates/erc20", default-features = false }
+fluentbase-evm = { path = "../crates/evm", default-features = false }
+fluentbase-svm = { path = "../crates/svm", default-features = false, features = [] }
+hex-literal = { version = "0.4.1", default-features = false }
+alloy-sol-types = { version = "1.2.0", default-features = false }
+serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+fluentbase-sdk-testing = { path = "../crates/testing" }
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+
+[profile.dev]
+# Optimize WASM for size in debug to avoid massive binaries that slow compilation
+opt-level = "z"
+debug = false

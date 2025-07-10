@@ -1,3 +1,4 @@
+use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
 use fluentbase_sdk::{address, bytes, calc_create_address, Address, Bytes, U256};
 use fluentbase_sdk_testing::{EvmTestingContext, HostTestingContextNativeAPI, TxBuilder};
@@ -7,7 +8,7 @@ use revm::context::result::{ExecutionResult, Output};
 #[test]
 fn test_bridge_contract() {
     // deploy greeting EVM contract
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const SENDER_ADDRESS: Address = address!("d9b36c6c8bfcc633bb83372db44d80f352cdfe3f");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     // now send success tx
@@ -45,7 +46,7 @@ fn test_bridge_contract() {
 
 #[test]
 fn test_bridge_contract2() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const SENDER_ADDRESS: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     let result = TxBuilder::create(
         &mut ctx,
@@ -66,7 +67,7 @@ fn test_bridge_contract_with_call() {
     //     "e77772fe": "tokenFactory()",
     //     "f2fde38b": "transferOwnership(address)"
     // }
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     let signer_l1_wallet_owner = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     let pegged_token_contract_address = address!("5FbDB2315678afecb367f032d93F642f64180aa3");
     let erc20token_contract_address = address!("e7f1725e7734ce288f8367e1bb143e90bb3f0512");

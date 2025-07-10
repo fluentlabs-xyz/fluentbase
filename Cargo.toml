@@ -1,17 +1,14 @@
 [workspace]
 members = [
-    "contracts/*",
     "crates/*",
     "revm/bins/revme",
     "revm/crates/*",
-    "examples/*",
     "e2e",
     "bins/cli"
 ]
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
-    "examples/svm",
 ]
 resolver = "2"
 
@@ -32,7 +29,7 @@ categories = ["wasm", "no-std", "virtualization"]
 fluentbase-build = { path = "./crates/build", default-features = false }
 fluentbase-codec = { path = "./crates/codec", default-features = false, features = ["derive"] }
 fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
-fluentbase-contracts = { path = "./contracts", default-features = false }
+fluentbase-contracts = { path = "./crates/contracts", default-features = false }
 fluentbase-evm = { path = "./crates/evm", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
@@ -104,7 +101,7 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false, features = ["cache-compiled-artifacts"] }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 #rwasm = { path = "../rwasm", default-features = false }
 
 # alloy
@@ -251,7 +248,7 @@ rpath = false
 codegen-units = 1
 
 [profile.dev.build-override]
-debug = false # disable debug symbols for build.rs to avoid 200+MB build-script binaries
+debug = false
 opt-level = 3
 
 # Use the `--profile profiling` flag to show symbols in release mode.

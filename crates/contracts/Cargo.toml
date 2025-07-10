@@ -1,0 +1,45 @@
+[package]
+name = "fluentbase-contracts"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+fluentbase-types = { workspace = true }
+
+[lib]
+path = "lib.rs"
+
+[build-dependencies]
+fluentbase-types = { workspace = true }
+alloy-genesis = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+cargo_metadata = "0.19.1"
+
+# The following dependencies are not used directly but listed here to trigger execution of build.rs whenever they are changed
+fluentbase-sdk = { workspace = true }
+precompile = { workspace = true }
+fluentbase-erc20 = { workspace = true }
+fluentbase-evm = { workspace = true }
+fluentbase-svm = { workspace = true }
+
+[features]
+default = [
+    "std",
+    #    "enable-svm"
+]
+enable-svm = []
+wasmtime = []
+std = [
+    "fluentbase-types/std",
+    "alloy-genesis/std",
+    "serde/std",
+    "serde_json/std",
+]
+generate-genesis = [] # this feature is doing nothing now (genesis is always generated), kept it for backward compatibility, and will remove it once ready

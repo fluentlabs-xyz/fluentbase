@@ -1,6 +1,7 @@
-use fluentbase_sdk_testing::EvmTestingContext;
+use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall, SolValue};
 use fluentbase_sdk::{Address, Bytes};
+use fluentbase_sdk_testing::EvmTestingContext;
 
 /// Contract `ContractDeployer.sol` is a smart contract that deploys
 /// the given smart contract using the CREATE opcode of the EVM.
@@ -29,7 +30,7 @@ fn deploy_via_deployer(ctx: &mut EvmTestingContext, bytecode: Bytes) -> Address 
 
 #[test]
 fn test_evm_create_evm_contract() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     let owner: Address = Address::ZERO;
     let bytecode = hex::decode(include_bytes!("../assets/HelloWorld.bin")).unwrap();
     let contract_address = deploy_via_deployer(&mut ctx, bytecode.into());
@@ -45,12 +46,9 @@ fn test_evm_create_evm_contract() {
 
 #[test]
 fn test_evm_create_wasm_contract() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     let owner: Address = Address::ZERO;
-    let contract_address = deploy_via_deployer(
-        &mut ctx,
-        crate::EXAMPLE_GREETING.into(),
-    );
+    let contract_address = deploy_via_deployer(&mut ctx, crate::EXAMPLE_GREETING.into());
     let result = ctx.call_evm_tx(owner, contract_address, Bytes::new(), None, None);
     println!("{:#?}", result);
     assert!(result.is_success());
@@ -60,9 +58,6 @@ fn test_evm_create_wasm_contract() {
 
 #[test]
 fn test_evm_create_large_wasm_contract() {
-    let mut ctx = EvmTestingContext::default();
-    deploy_via_deployer(
-        &mut ctx,
-        crate::EXAMPLE_ERC20.into(),
-    );
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    deploy_via_deployer(&mut ctx, crate::EXAMPLE_ERC20.into());
 }

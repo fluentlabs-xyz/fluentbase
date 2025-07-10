@@ -6,14 +6,12 @@ use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     create_import_linker,
-    is_resumable_precompile,
     Address,
     BytecodeOrHash,
     Bytes,
     ExitCode,
     SysFuncIdx,
     B256,
-    PRECOMPILE_ADDRESSES,
     STATE_DEPLOY,
     STATE_MAIN,
 };
@@ -81,16 +79,18 @@ impl CachingRuntime {
         };
         let rwasm_module = Rc::new(RwasmModule::new_or_empty(rwasm_bytecode.as_ref()).0);
         #[cfg(feature = "wasmtime")]
-        if PRECOMPILE_ADDRESSES.contains(&address) {
+        if fluentbase_types::is_system_precompile(&address) {
             let wasmtime_module =
                 rwasm::compile_wasmtime_module(&rwasm_module.wasm_section).unwrap();
             let strategy = Arc::new(Strategy::Wasmtime {
                 module: Rc::new(wasmtime_module),
-                resumable: is_resumable_precompile(&address),
+                resumable: fluentbase_types::is_resumable_precompile(&address),
             });
             entry.insert(strategy.clone());
             return strategy;
         }
+        #[cfg(not(feature = "wasmtime"))]
+        let _ = address; // silence unused variable warning
         let strategy = Arc::new(Strategy::Rwasm {
             module: rwasm_module,
             engine: ExecutionEngine::acquire_shared(),

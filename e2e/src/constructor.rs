@@ -1,11 +1,12 @@
-use fluentbase_sdk_testing::EvmTestingContext;
+use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use fluentbase_sdk::{constructor::encode_constructor_params, Address, Bytes};
+use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
 
 #[test]
 fn test_deploy_with_constructor_params() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let bytecode: Vec<u8> = crate::EXAMPLE_CONSTRUCTOR_PARAMS.into();
     let constructor_params: Vec<u8> =

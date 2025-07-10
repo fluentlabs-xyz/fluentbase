@@ -14,7 +14,7 @@ categories.workspace = true
 fluentbase-codec = { workspace = true }
 fluentbase-types = { workspace = true }
 
-rwasm = { workspace = true }
+rwasm = { workspace = true, features = ["cache-compiled-artifacts"] }
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }

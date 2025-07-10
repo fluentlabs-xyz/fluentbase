@@ -1,4 +1,5 @@
 mod tests {
+    use crate::EvmTestingContextWithGenesis;
     use core::str::from_utf8;
     use fluentbase_sdk::{
         address,
@@ -41,7 +42,7 @@ mod tests {
 
     #[test]
     fn test_svm_deploy() {
-        let mut ctx = EvmTestingContext::default();
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
         ctx.sdk.set_ownable_account_address(PRECOMPILE_SVM_RUNTIME);
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
         ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
@@ -55,7 +56,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../examples/svm/solana-program-state-usage/assets/solana_program.so",
+            "../contracts/examples/svm/solana-program-state-usage/assets/solana_program.so",
         );
 
         let program_bytes = account_with_program.data().to_vec();
@@ -69,7 +70,7 @@ mod tests {
 
     #[test]
     fn test_svm_deploy_exec() {
-        let mut ctx = EvmTestingContext::default();
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
         ctx.sdk.set_ownable_account_address(PRECOMPILE_SVM_RUNTIME);
         assert_eq!(ctx.sdk.context().block_number(), 0);
         const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
@@ -82,7 +83,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../examples/svm/solana-program-state-usage/assets/solana_program.so",
+            "../contracts/examples/svm/solana-program-state-usage/assets/solana_program.so",
         );
 
         // setup initial accounts

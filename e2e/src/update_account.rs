@@ -1,11 +1,13 @@
-use fluentbase_genesis::{devnet_genesis_from_file, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX};
+use crate::EvmTestingContextWithGenesis;
+use fluentbase_genesis::devnet_genesis_from_file;
 use fluentbase_sdk::Bytes;
 use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_types::{UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX};
 use revm::bytecode::{Bytecode, RWASM_MAGIC_BYTES};
 
 #[test]
 fn test_update_account_code_by_auth() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     let genesis = devnet_genesis_from_file();
 
     let (update_target, account) = genesis.alloc.iter().next().unwrap();

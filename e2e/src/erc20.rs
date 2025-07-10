@@ -1,3 +1,4 @@
+use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use core::str::from_utf8;
 use fluentbase_erc20::{
@@ -65,7 +66,7 @@ fn call_with_sig_revert(
 
 #[test]
 fn erc20_no_plugins_enabled_test() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
     const USER_ADDR: Address = address!("2222222222222222222222222222222222222222");
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
@@ -125,7 +126,7 @@ fn erc20_no_plugins_enabled_test() {
 
 #[test]
 fn erc20_test() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
     const USER_ADDR: Address = address!("2222222222222222222222222222222222222222");
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {

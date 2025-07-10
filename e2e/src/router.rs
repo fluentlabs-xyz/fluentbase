@@ -1,3 +1,4 @@
+use crate::EvmTestingContextWithGenesis;
 use fluentbase_codec::SolidityABI;
 use fluentbase_sdk::{address, Address, U256};
 use fluentbase_sdk_testing::EvmTestingContext;
@@ -5,7 +6,7 @@ use hex_literal::hex;
 
 #[test]
 fn test_client_solidity() {
-    let mut ctx = EvmTestingContext::default();
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
     ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
 

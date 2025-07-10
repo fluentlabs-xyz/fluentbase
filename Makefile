@@ -15,7 +15,6 @@ examples:
 clean:
 	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE) clean; fi
 	cargo clean
-	find . -type f | grep -iP "lib\.wa(sm|t)" | grep -viP "/fairblock/" | xargs rm || true
 	cd examples/svm/solana-program && $(MAKE) clean
 	cd examples/svm/solana-program-state-usage && $(MAKE) clean
 	cd examples/svm/solana-program-transfer-with-cpi && $(MAKE) clean

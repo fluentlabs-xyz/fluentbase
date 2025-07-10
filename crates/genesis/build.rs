@@ -1,45 +1,53 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_types::{
     address,
+    compile_wasm_to_rwasm_with_config,
+    default_compilation_config,
+    keccak256,
     Address,
     Bytes,
-    GenesisContractBuildOutput,
     B256,
     DEVELOPER_PREVIEW_CHAIN_ID,
     U256,
 };
-use std::{collections::BTreeMap, env, fs::File, io::Write, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env,
+    fs,
+    path::PathBuf,
+    time::Instant,
+};
 
 #[rustfmt::skip]
-const GENESIS_CONTRACTS: &[(Address, GenesisContractBuildOutput)] = &[
-    (fluentbase_types::PRECOMPILE_BIG_MODEXP, fluentbase_contracts_modexp::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BLAKE2F, fluentbase_contracts_blake2f::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BN256_ADD, fluentbase_contracts_bn256::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts_bn256::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts_bn256::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_ERC20_RUNTIME, fluentbase_contracts_erc20::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_EIP2935, fluentbase_contracts_eip2935::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts_evm::BUILD_OUTPUT),
-    #[cfg(feature = "enable-svm")]
-    (fluentbase_types::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts_svm::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts_fairblock::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts_identity::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts_kzg::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, fluentbase_contracts_bls12381::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, fluentbase_contracts_bls12381::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BLS12_381_G2_ADD, fluentbase_contracts_bls12381::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BLS12_381_G2_MSM, fluentbase_contracts_bls12381::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts_bls12381::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts_bls12381::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts_bls12381::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts_multicall::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts_nitro::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts_oauth2::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts_ripemd160::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_WASM_RUNTIME, fluentbase_contracts_wasm::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts_ecrecover::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts_sha256::BUILD_OUTPUT),
-    (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts_webauthn::BUILD_OUTPUT),
+const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
+    (fluentbase_types::PRECOMPILE_BIG_MODEXP, fluentbase_contracts::FLUENTBASE_CONTRACTS_MODEXP),
+    (fluentbase_types::PRECOMPILE_BLAKE2F, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLAKE2F),
+    (fluentbase_types::PRECOMPILE_BN256_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
+    (fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
+    (fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
+    (fluentbase_types::PRECOMPILE_ERC20_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_ERC20),
+    (fluentbase_types::PRECOMPILE_EIP2935, fluentbase_contracts::FLUENTBASE_CONTRACTS_EIP2935),
+    (fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_EVM),
+    #[cfg(feature="enable-svm")]
+    (fluentbase_types::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_SVM),
+    (fluentbase_types::PRECOMPILE_FAIRBLOCK_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_FAIRBLOCK),
+    (fluentbase_types::PRECOMPILE_IDENTITY, fluentbase_contracts::FLUENTBASE_CONTRACTS_IDENTITY),
+    (fluentbase_types::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts::FLUENTBASE_CONTRACTS_KZG),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G1_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G1_MSM, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G2_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_types::PRECOMPILE_BLS12_381_G2_MSM, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_types::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_types::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
+    (fluentbase_types::PRECOMPILE_NATIVE_MULTICALL, fluentbase_contracts::FLUENTBASE_CONTRACTS_MULTICALL),
+    (fluentbase_types::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_NITRO),
+    (fluentbase_types::PRECOMPILE_OAUTH2_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_OAUTH2),
+    (fluentbase_types::PRECOMPILE_RIPEMD160, fluentbase_contracts::FLUENTBASE_CONTRACTS_RIPEMD160),
+    (fluentbase_types::PRECOMPILE_WASM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_WASM),
+    (fluentbase_types::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts::FLUENTBASE_CONTRACTS_ECRECOVER),
+    (fluentbase_types::PRECOMPILE_SHA256, fluentbase_contracts::FLUENTBASE_CONTRACTS_SHA256),
+    (fluentbase_types::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_WEBAUTHN),
 ];
 
 fn devnet_chain_config() -> ChainConfig {
@@ -81,21 +89,34 @@ fn devnet_chain_config() -> ChainConfig {
     }
 }
 
-fn init_contract(
-    alloc: &mut BTreeMap<Address, GenesisAccount>,
-    name: &str,
-    address: Address,
-    rwasm_bytecode: Bytes,
-) {
-    print!("creating genesis account {} (0x{})... ", name, address);
-    std::io::stdout().flush().unwrap();
-    println!("{} bytes", rwasm_bytecode.len());
-    let mut account = alloc
-        .get(&address)
-        .cloned()
-        .unwrap_or_else(GenesisAccount::default);
-    account.code = Some(rwasm_bytecode);
-    alloc.insert(address, account);
+/// Ensures each WASM artifact is compiled to RWASM exactly once, caching the results.
+/// This optimization is particularly valuable for large, unoptimized contracts.
+fn compile_all_contracts() -> HashMap<&'static [u8], (B256, Bytes)> {
+    let mut cache = HashMap::new();
+
+    let config = default_compilation_config().with_builtins_consume_fuel(false);
+    for (_, contract) in GENESIS_CONTRACTS {
+        if !cache.contains_key(contract.wasm_bytecode) {
+            let start = Instant::now();
+            let rwasm_bytecode =
+                compile_wasm_to_rwasm_with_config(contract.wasm_bytecode, config.clone())
+                    .expect("failed to compile wasm to rwasm");
+            assert_eq!(rwasm_bytecode.constructor_params.len(), 0);
+            let rwasm_bytecode: Bytes = rwasm_bytecode.rwasm_module.serialize().into();
+            let hash = keccak256(rwasm_bytecode.as_ref());
+            let result = (hash, rwasm_bytecode.clone());
+            cache.insert(contract.wasm_bytecode, result.clone());
+            println!(
+                "{} time={: <3}ms | wasm={: <5}KiB | rwasm={: <5}KiB | increased={:.1}x",
+                format!("{: <30}", contract.name), // Pads with dots to 20 chars
+                start.elapsed().as_millis(),
+                contract.wasm_bytecode.len() / 1024,
+                rwasm_bytecode.len() / 1024,
+                rwasm_bytecode.len() as f64 / contract.wasm_bytecode.len() as f64,
+            );
+        }
+    }
+    cache
 }
 
 macro_rules! initial_devnet_balance {
@@ -108,7 +129,39 @@ macro_rules! initial_devnet_balance {
     };
 }
 
-fn devnet_genesis() -> Genesis {
+fn init_contract(
+    code: &mut Vec<String>,
+    genesis: &mut BTreeMap<Address, GenesisAccount>,
+    name: &'static str,
+    rwasm_bytecode: Bytes,
+    rwasm_bytecode_hash: B256,
+    address: Address,
+) {
+    println!("creating genesis account {} (0x{})... ", name, address);
+    let mut account = genesis
+        .get(&address)
+        .cloned()
+        .unwrap_or_else(GenesisAccount::default);
+    account.code = Some(rwasm_bytecode.clone());
+    genesis.insert(address.clone(), account);
+
+    let path = PathBuf::from(env::var("OUT_DIR").unwrap())
+        .join(PathBuf::from(name).with_extension("rwasm"))
+        .to_str()
+        .unwrap()
+        .to_string();
+    let rwasm_hash = rwasm_bytecode_hash.to_vec();
+    let address = address.to_vec();
+    fs::write(&path, rwasm_bytecode.as_ref()).unwrap();
+    code.push(format!("\tBuildOutput {{"));
+    code.push(format!("\t    name: \"{name}\","));
+    code.push(format!("\t    rwasm_bytecode: include_bytes!(\"{path}\"),"));
+    code.push(format!("\t    rwasm_bytecode_hash: {rwasm_hash:?},"));
+    code.push(format!("\t    address: {address:?}"));
+    code.push(format!("\t}},"));
+}
+
+fn main() {
     let mut alloc = BTreeMap::from([
         // default testing accounts
         initial_devnet_balance!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3"), // dmitry
@@ -118,16 +171,34 @@ fn devnet_genesis() -> Genesis {
         initial_devnet_balance!("e92c16763ba7f73a2218a5416aaa493a1f038bef"), // khasan
     ]);
 
+    let mut code = Vec::new();
+    code.push("struct BuildOutput {".to_string());
+    code.push("    name: &'static str,".to_string());
+    code.push("    rwasm_bytecode: &'static [u8],".to_string());
+    code.push("    rwasm_bytecode_hash: [u8; 32],".to_string());
+    code.push("    address: [u8; 20],".to_string());
+    code.push("}".to_string());
+    code.push("static BUILD_OUTPUTS: &[BuildOutput] = &[".to_string());
+
+    let rwasm_artifacts = compile_all_contracts();
+
     for (address, contract) in GENESIS_CONTRACTS {
+        let (rwasm_bytecode_hash, rwasm_bytecode) =
+            rwasm_artifacts.get(contract.wasm_bytecode).unwrap().clone();
         init_contract(
+            &mut code,
             &mut alloc,
             contract.name,
+            rwasm_bytecode,
+            rwasm_bytecode_hash,
             address.clone(),
-            contract.rwasm_bytecode.into(),
-        );
+        )
     }
 
-    Genesis {
+    code.push("];".to_string());
+    let code = code.join("\n");
+
+    let genesis = Genesis {
         config: devnet_chain_config(),
         nonce: 0,
         timestamp: 0x6490fdd2,
@@ -141,17 +212,13 @@ fn devnet_genesis() -> Genesis {
         excess_blob_gas: None,
         blob_gas_used: None,
         number: Some(0),
-    }
-}
+    };
+    let genesis_path =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("genesis-devnet.json");
+    let genesis = serde_json::to_string_pretty(&genesis).unwrap();
+    fs::write(&genesis_path, &genesis).unwrap();
 
-fn main() {
-    let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let genesis = devnet_genesis();
-    let genesis_json = serde_json::to_string_pretty(&genesis).unwrap();
-    let file_name = "genesis-devnet.json";
-    let out_dir = cargo_manifest_dir.join(file_name);
-    let mut file = File::create(out_dir).unwrap();
-    file.write(genesis_json.as_bytes()).unwrap();
-    file.sync_all().unwrap();
-    file.flush().unwrap();
+    println!("{}", code);
+    let code_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("build_output.rs");
+    fs::write(&code_path, &code).unwrap();
 }
