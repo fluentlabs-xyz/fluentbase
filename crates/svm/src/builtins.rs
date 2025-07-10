@@ -9,7 +9,6 @@ use crate::{
     mem_ops::{
         is_nonoverlapping,
         memmove,
-        memset_non_contiguous,
         translate_and_check_program_address_inputs,
         translate_slice,
         translate_slice_mut,
@@ -21,7 +20,6 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::SharedAPI;
-use solana_feature_set;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
     error::EbpfError,
