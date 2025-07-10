@@ -1,11 +1,8 @@
 use crate::error::RuntimeError;
-use core::{
-    fmt::{Display, Formatter},
-    ops::Add,
-};
+use core::ops::Add;
 use num_traits::ToPrimitive;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub enum AddrType {
     Vm(u64),
     Host(u64),
@@ -17,14 +14,14 @@ impl Default for AddrType {
     }
 }
 
-impl Display for AddrType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        match self {
-            AddrType::Vm(v) => write!(f, "AddrType::Vm({})", v),
-            AddrType::Host(v) => write!(f, "AddrType::Host({})", v),
-        }
-    }
-}
+// impl Display for AddrType {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+//         match self {
+//             AddrType::Vm(v) => write!(f, "AddrType::Vm({})", v),
+//             AddrType::Host(v) => write!(f, "AddrType::Host({})", v),
+//         }
+//     }
+// }
 
 impl Add<u64> for AddrType {
     type Output = AddrType;

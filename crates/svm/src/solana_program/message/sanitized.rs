@@ -17,7 +17,7 @@ use solana_sanitize::Sanitize;
 )]
 pub use solana_transaction_error::SanitizeMessageError;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct LegacyMessage<'a> {
     /// Legacy message
     pub message: Cow<'a, legacy::Message>,
@@ -63,7 +63,7 @@ impl<'a> LegacyMessage<'a> {
 }
 
 /// Sanitized message of a transaction.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum SanitizedMessage {
     /// Sanitized legacy message
     Legacy(LegacyMessage<'static>),

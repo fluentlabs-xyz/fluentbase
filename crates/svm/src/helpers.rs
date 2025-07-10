@@ -19,15 +19,10 @@ pub type StdResult<T, E> = Result<T, E>;
 
 pub const INSTRUCTION_METER_BUDGET: u64 = 1024 * 1024;
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AllocErr;
-impl Display for AllocErr {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.write_str("Error: Memory allocation failed")
-    }
-}
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SerializedAccountMetadata {
     pub original_data_len: usize,
     pub vm_data_addr: u64,
@@ -36,7 +31,6 @@ pub struct SerializedAccountMetadata {
     pub vm_owner_addr: u64,
 }
 
-#[derive(Debug)]
 pub struct SyscallContext {
     pub allocator: BpfAllocator,
     pub accounts_metadata: Vec<SerializedAccountMetadata>,

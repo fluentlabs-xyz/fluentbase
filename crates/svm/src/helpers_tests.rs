@@ -283,7 +283,7 @@ pub(crate) mod tests {
                 program_runtime_v2: loader.clone(),
             },
         );
-        let feature_set = FeatureSet::all_enabled();
+        let feature_set = feature_set_default();
         let compute_budget = ComputeBudget::default();
         let sysvar_cache = SysvarCache::default();
         let mut invoke_context = InvokeContext::new(

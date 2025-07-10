@@ -125,7 +125,7 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
 // NOTE: Serialization-related changes must be paired with the custom serialization
 // for versioned messages in the `RemainingLegacyMessage` struct.
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Default, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     /// The message header, identifying signed and read-only `account_keys`.
@@ -149,7 +149,7 @@ pub struct Message {
 /// This duplication is required until https://github.com/rustwasm/wasm-bindgen/issues/3671
 /// is fixed. This must not diverge from the regular non-wasm Message struct.
 #[cfg(target_arch = "wasm32")]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Default, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub header: MessageHeader,

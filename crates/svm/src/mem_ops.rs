@@ -584,7 +584,7 @@ pub fn translate_type<'a, T>(
     .map(|value| &*value)
 }
 
-fn translate_slice_inner<'a, T: Clone + SpecMethods<'a> + Debug>(
+fn translate_slice_inner<'a, T: Clone + SpecMethods<'a>>(
     memory_mapping: &'a MemoryMapping<'a>,
     access_type: AccessType,
     vm_addr: u64,
@@ -611,7 +611,7 @@ fn translate_slice_inner<'a, T: Clone + SpecMethods<'a> + Debug>(
     Ok(result)
 }
 
-pub fn translate_slice<'a, T: Clone + SpecMethods<'a> + Debug>(
+pub fn translate_slice<'a, T: Clone + SpecMethods<'a>>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,
@@ -627,7 +627,7 @@ pub fn translate_slice<'a, T: Clone + SpecMethods<'a> + Debug>(
     // .map(|value| &*value)
 }
 
-pub fn translate_slice_mut<'a, T: Clone + SpecMethods<'a> + Debug>(
+pub fn translate_slice_mut<'a, T: Clone + SpecMethods<'a>>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,

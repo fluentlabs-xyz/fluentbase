@@ -15,7 +15,7 @@ use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct BatchMessage {
     messages: Vec<legacy::Message>,
 }

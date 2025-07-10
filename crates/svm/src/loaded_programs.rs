@@ -5,11 +5,8 @@ use crate::{
     native_loader,
     solana_program::loader_v4,
 };
-use alloc::{
-    boxed::Box,
-    fmt::{Debug, Formatter},
-    sync::Arc,
-};
+use alloc::{boxed::Box, sync::Arc};
+use core::fmt::{Debug, Formatter};
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashMap;
 use solana_clock::{Epoch, Slot};
@@ -26,7 +23,7 @@ pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
 pub const DELAY_VISIBILITY_SLOT_OFFSET: Slot = 1;
 
 /// Relationship between two fork IDs
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum BlockRelation {
     /// The slot is on the same fork and is an ancestor of the other slot
     Ancestor,
@@ -47,11 +44,10 @@ pub trait ForkGraph {
 }
 
 /// The owner of a programs accounts, thus the loader of a program
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum ProgramCacheEntryOwner {
     #[default]
     NativeLoader,
-    // LoaderV2,
     LoaderV4,
 }
 
@@ -167,7 +163,7 @@ impl<'a, SDK: SharedAPI> ProgramCacheEntryType<'a, SDK> {
 /// Holds a program version at a specific address and on a specific slot / fork.
 ///
 /// It contains the actual program in [ProgramCacheEntryType] and a bunch of meta-data.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ProgramCacheEntry<'a, SDK: SharedAPI> {
     /// The program of this entry
     pub program: ProgramCacheEntryType<'a, SDK>,
@@ -346,7 +342,7 @@ impl<'a, SDK: SharedAPI> ProgramCacheEntry<'a, SDK> {
 /// Globally shared RBPF config and syscall registry
 ///
 /// This is only valid in an epoch range as long as no feature affecting RBPF is activated.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ProgramRuntimeEnvironments<'a, SDK: SharedAPI> {
     /// For program runtime V1
     pub program_runtime_v1: ProgramRuntimeEnvironment<'a, SDK>,
@@ -374,7 +370,7 @@ impl<'a, SDK: SharedAPI> Default for ProgramRuntimeEnvironments<'a, SDK> {
 /// while the TX batch is guaranteed it will continue to find all the programs it requires.
 /// For program management instructions this also buffers them before they are merged back into the
 /// global [ProgramCache].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct ProgramCacheForTxBatch<'a, SDK: SharedAPI> {
     /// Pubkey is the address of a program.
     /// ProgramCacheEntry is the corresponding program entry valid for the slot in which a

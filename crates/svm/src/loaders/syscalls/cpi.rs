@@ -898,12 +898,12 @@ where
             }
             let account_info = account_infos
                 .clone_from_index(caller_account_index)
-                .expect("caller account doesnt exist at specific index");
+                .expect("caller account doesnt exist at the index");
+            #[cfg(test)]
             if caller_account_index == 0 {
-                assert_eq!(
-                    account_info.first_item_addr(),
-                    account_infos.first_item_addr()
-                );
+                if account_info.first_item_addr() != account_infos.first_item_addr() {
+                    panic!("addresses must match")
+                }
             }
             let caller_account = do_translate(
                 invoke_context,

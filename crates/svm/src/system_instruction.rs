@@ -89,7 +89,7 @@ static_assertions::const_assert!(MAX_PERMITTED_DATA_LENGTH <= u32::MAX as u64);
 static_assertions::const_assert_eq!(MAX_PERMITTED_DATA_LENGTH, 10_485_760);
 
 /// An instruction to the system program.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum SystemInstruction {
     /// Create a new account
     ///

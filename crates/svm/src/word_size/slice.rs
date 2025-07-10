@@ -13,7 +13,6 @@ use crate::{
 };
 use alloc::vec::Vec;
 use core::{
-    fmt::{Debug, Formatter},
     iter::Iterator,
     marker::PhantomData,
     ops::{Bound, RangeBounds},
@@ -87,7 +86,7 @@ macro_rules! impl_numeric_type {
 
 impl_numeric_type!(u16);
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct SliceFatPtr64Repr {
     first_item_addr: AddrType,
     len: usize,
@@ -173,13 +172,13 @@ pub struct SliceFatPtr64<'a, T: SpecMethods<'a>> {
     _phantom: PhantomData<T>,
 }
 
-impl<'a, T: SpecMethods<'a>> Debug for SliceFatPtr64<'a, T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("SliceFatPtr64")
-            .field("slice_repr", &self.slice_repr)
-            .finish()
-    }
-}
+// impl<'a, T: SpecMethods<'a>> Debug for SliceFatPtr64<'a, T> {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+//         f.debug_struct("SliceFatPtr64")
+//             .field("slice_repr", &self.slice_repr)
+//             .finish()
+//     }
+// }
 
 #[inline(always)]
 pub fn reconstruct_slice<'a, T>(ptr: usize, len: usize) -> &'a [T] {
@@ -191,7 +190,7 @@ pub fn reconstruct_slice_mut<'a, T>(ptr: usize, len: usize) -> &'a mut [T] {
     unsafe { core::slice::from_raw_parts_mut::<'a>(ptr as *mut T, len) }
 }
 
-impl<'a, T: Clone + SpecMethods<'a> + Debug> SpecMethods<'a> for SliceFatPtr64<'a, T> {
+impl<'a, T: Clone + SpecMethods<'a>> SpecMethods<'a> for SliceFatPtr64<'a, T> {
     const ITEM_SIZE_BYTES: usize = SLICE_FAT_PTR64_SIZE_BYTES;
 
     fn recover_from_bytes(
@@ -209,7 +208,7 @@ impl<'a, T: Clone + SpecMethods<'a> + Debug> SpecMethods<'a> for SliceFatPtr64<'
     }
 }
 
-impl<'a, T: Clone + SpecMethods<'a> + Debug> SliceFatPtr64<'a, T> {
+impl<'a, T: Clone + SpecMethods<'a>> SliceFatPtr64<'a, T> {
     pub fn new(
         memory_mapping_helper: MemoryMappingHelper<'a>,
         first_item_addr: AddrType,
@@ -433,11 +432,11 @@ impl<'a, T: Clone + SpecMethods<'a> + Debug> SliceFatPtr64<'a, T> {
     }
 }
 
-pub struct SliceFatPtr64Iterator<'a, T: Clone + SpecMethods<'a> + Debug> {
+pub struct SliceFatPtr64Iterator<'a, T: Clone + SpecMethods<'a>> {
     instance: &'a SliceFatPtr64<'a, T>,
     idx: usize,
 }
-impl<'a, T: Clone + SpecMethods<'a> + Debug> From<&'a SliceFatPtr64<'a, T>>
+impl<'a, T: Clone + SpecMethods<'a>> From<&'a SliceFatPtr64<'a, T>>
     for SliceFatPtr64Iterator<'a, T>
 {
     fn from(instance: &'a SliceFatPtr64<'a, T>) -> Self {
@@ -445,7 +444,7 @@ impl<'a, T: Clone + SpecMethods<'a> + Debug> From<&'a SliceFatPtr64<'a, T>>
     }
 }
 
-impl<'a, T: Clone + SpecMethods<'a> + Debug> Iterator for SliceFatPtr64Iterator<'a, T> {
+impl<'a, T: Clone + SpecMethods<'a>> Iterator for SliceFatPtr64Iterator<'a, T> {
     type Item = RetVal<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -458,7 +457,7 @@ impl<'a, T: Clone + SpecMethods<'a> + Debug> Iterator for SliceFatPtr64Iterator<
     }
 }
 
-impl<'a, T: Clone + SpecMethods<'a> + Debug> IntoIterator for &'a SliceFatPtr64<'a, T> {
+impl<'a, T: Clone + SpecMethods<'a>> IntoIterator for &'a SliceFatPtr64<'a, T> {
     type Item = RetVal<'a, T>;
     type IntoIter = SliceFatPtr64Iterator<'a, T>;
 

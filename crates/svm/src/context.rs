@@ -76,7 +76,6 @@ pub enum ProgramAccountLoadResult {
     ProgramOfLoaderV4(AccountSharedData, Slot),
 }
 
-#[derive(Debug)]
 pub struct BpfAllocator {
     len: u64,
     pos: u64,
