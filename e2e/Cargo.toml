@@ -41,7 +41,9 @@ default = [
     #    "debug-print",
     #    "enable-svm",
 ]
-enable-svm = []
+enable-svm = [
+    "fluentbase-genesis/enable-svm"
+]
 std = [
     "fluentbase-codec/std",
     "fluentbase-genesis/std",

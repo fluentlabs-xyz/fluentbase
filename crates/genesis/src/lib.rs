@@ -12,6 +12,7 @@ include!(concat!(env!("OUT_DIR"), "/build_output.rs"));
 
 lazy_static! {
     pub static ref GENESIS_CONTRACTS_BY_ADDRESS: HashMap<Address, GenesisContract> = {
+        let out_dir = env!("OUT_DIR");
         let mut map = HashMap::new();
         for build_output in BUILD_OUTPUTS {
             let contract = GenesisContract {
