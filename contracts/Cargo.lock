@@ -1721,7 +1721,7 @@ checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.3.4-dev"
+version = "0.3.5-dev"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1733,7 +1733,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.3.4-dev"
+version = "0.3.5-dev"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1925,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-erc20"
-version = "0.3.4-dev"
+version = "0.3.5-dev"
 dependencies = [
  "bincode 2.0.1",
  "fluentbase-sdk",
@@ -1933,7 +1933,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.3.4-dev"
+version = "0.3.5-dev"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -2081,7 +2081,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.3.4-dev"
+version = "0.3.5-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-types",
@@ -2097,7 +2097,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.3.4-dev"
+version = "0.3.5-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-sdk-derive",
@@ -2107,7 +2107,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.3.4-dev"
+version = "0.3.5-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2142,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-testing"
-version = "0.3.4-dev"
+version = "0.3.5-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-runtime",
@@ -2156,7 +2156,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm"
-version = "0.3.4-dev"
+version = "0.3.5-dev"
 dependencies = [
  "bincode 2.0.1",
  "bitflags",
@@ -2199,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.3.4-dev"
+version = "0.3.5-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -4200,7 +4200,7 @@ dependencies = [
 
 [[package]]
 name = "rwasm-revm"
-version = "4.0.0"
+version = "0.3.5-dev"
 dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk",
