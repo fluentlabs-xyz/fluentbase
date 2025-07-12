@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 
-use fluentbase_e2e::EXAMPLE_ROUTER_SOLIDITY;
+use fluentbase_e2e::{EvmTestingContextWithGenesis, EXAMPLE_ROUTER_SOLIDITY};
 use fluentbase_sdk::{Address, Bytes};
 use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
@@ -17,7 +17,8 @@ fn multicall_benches(c: &mut Criterion) {
 
     // --- Benchmark 1: EVM Multicall ---
     {
-        let mut ctx = EvmTestingContext::default();
+        let mut ctx = EvmTestingContext::default()
+            .with_full_genesis();
         const DEPLOYER_ADDRESS: Address = Address::ZERO;
         let router_address = ctx.deploy_evm_tx(
             DEPLOYER_ADDRESS,
@@ -43,7 +44,8 @@ fn multicall_benches(c: &mut Criterion) {
 
     // --- Benchmark 2: Wasm Multicall ---
     {
-        let mut ctx = EvmTestingContext::default();
+        let mut ctx = EvmTestingContext::default()
+            .with_full_genesis();
         const DEPLOYER_ADDRESS: Address = Address::ZERO;
         let router_address = ctx.deploy_evm_tx(DEPLOYER_ADDRESS, EXAMPLE_ROUTER_SOLIDITY.into());
 

@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use fluentbase_e2e::EXAMPLE_GREETING;
+use fluentbase_e2e::{EvmTestingContextWithGenesis, EXAMPLE_GREETING};
 use fluentbase_sdk::{Address, Bytes};
 use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
@@ -10,7 +10,8 @@ fn greeting_benches(c: &mut Criterion) {
 
     // --- Benchmark 1: EVM "Hello World" Contract ---
     {
-        let mut ctx = EvmTestingContext::default();
+        let mut ctx = EvmTestingContext::default()
+            .with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
         let contract_address = ctx.deploy_evm_tx(
             OWNER_ADDRESS,
@@ -35,7 +36,8 @@ fn greeting_benches(c: &mut Criterion) {
 
     // --- Benchmark 2: Wasm "Greeting" Contract ---
     {
-        let mut ctx = EvmTestingContext::default();
+        let mut ctx = EvmTestingContext::default()
+            .with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
         let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_GREETING.into());
 
