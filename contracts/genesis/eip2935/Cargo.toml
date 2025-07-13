@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true, features = ["fast-panic", "debug-print"] }
+fluentbase-sdk = { workspace = true, features = ["debug-print"] }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }

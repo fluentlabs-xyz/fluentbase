@@ -1,7 +1,7 @@
 use crate::helpers::SyscallError;
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
-use fluentbase_sdk::ExitCode;
+use fluentbase_sdk::{debug_log_ext, ExitCode};
 use solana_instruction::error::InstructionError;
 use solana_rbpf::{elf::ElfError, error::EbpfError};
 use solana_transaction_error::TransactionError;
@@ -44,6 +44,41 @@ pub enum SvmError {
     InstructionError(InstructionError),
     SyscallError(SyscallError),
     RuntimeError(RuntimeError),
+}
+
+impl Display for SvmError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        debug_log_ext!();
+        match self {
+            SvmError::TransactionError(e) => {
+                write!(f, "SvmError::TransactionError:{}", e)
+            }
+            SvmError::BincodeEncodeError(e) => {
+                write!(f, "SvmError::BincodeEncodeError:{}", e)
+            }
+            SvmError::BincodeDecodeError(e) => {
+                write!(f, "SvmError::BincodeDecodeError:{}", e)
+            }
+            SvmError::InstructionError(e) => {
+                write!(f, "SvmError::InstructionError:{}", e)
+            }
+            SvmError::ElfError(e) => {
+                write!(f, "SvmError::ElfError:{}", e)
+            }
+            SvmError::EbpfError(e) => {
+                write!(f, "SvmError::EbpfError:{}", e)
+            }
+            SvmError::SyscallError(e) => {
+                write!(f, "SvmError::SyscallError:{}", e)
+            }
+            SvmError::RuntimeError(e) => {
+                write!(f, "SvmError::RuntimeError:{}", e)
+            }
+            SvmError::ExitCode(e) => {
+                write!(f, "SvmError::ExitCode:{}", e)
+            }
+        }
+    }
 }
 
 impl From<TransactionError> for SvmError {

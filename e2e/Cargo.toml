@@ -13,7 +13,7 @@ categories.workspace = true
 fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
 fluentbase-runtime = { workspace = true }
-fluentbase-sdk = { workspace = true }
+fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-sdk-testing = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-svm = { workspace = true }
@@ -38,11 +38,15 @@ criterion = "0.6.0"
 default = [
     "std",
     "wasmtime",
-    #    "debug-print",
+    "debug-print",
     "enable-svm",
+    "fast-panic",
 ]
 enable-svm = [
     "fluentbase-genesis/enable-svm"
+]
+fast-panic = [
+    "fluentbase-sdk/fast-panic",
 ]
 std = [
     "fluentbase-codec/std",

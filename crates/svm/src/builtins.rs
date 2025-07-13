@@ -13,6 +13,7 @@ use crate::{
         translate_slice,
         translate_slice_mut,
         translate_string_and_do,
+        translate_type,
         translate_type_mut,
     },
     word_size::slice::SliceFatPtr64,
@@ -27,6 +28,9 @@ use solana_rbpf::{
     program::{BuiltinFunction, FunctionRegistry},
 };
 
+/// Maximum size that can be set using [`set_return_data`].
+pub const MAX_RETURN_DATA: usize = 1024;
+
 pub fn register_builtins<SDK: SharedAPI>(
     function_registry: &mut FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>>,
 ) {
@@ -34,7 +38,24 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_log_", SyscallLog::vm)
         .unwrap();
     function_registry
+        .register_function_hashed("sol_log_64_", SyscallLogU64::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_log_pubkey", SyscallLogPubkey::vm)
+        .unwrap();
+
+    function_registry
+        .register_function_hashed(*b"sol_set_return_data", SyscallSetReturnData::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed(*b"sol_get_return_data", SyscallGetReturnData::vm)
+        .unwrap();
+
+    function_registry
         .register_function_hashed("abort", SyscallAbort::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_panic_", SyscallPanic::vm)
         .unwrap();
     function_registry
         .register_function_hashed(
@@ -66,6 +87,7 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
         .unwrap();
 
+    // TODO
     // function_registry
     //     .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
     //     .unwrap();
@@ -76,9 +98,11 @@ pub fn register_builtins<SDK: SharedAPI>(
     // function_registry
     //     .register_function_hashed("sol_poseidon", SyscallPoseidonSDK::vm)
     //     .unwrap();
+    // TODO
     function_registry
         .register_function_hashed("sol_sha256", SyscallHash::vm::<SDK, Sha256Hasher>)
         .unwrap();
+    // TODO
     function_registry
         .register_function_hashed(
             "sol_keccak256",
@@ -90,26 +114,15 @@ pub fn register_builtins<SDK: SharedAPI>(
     //     .unwrap();
 }
 
-declare_builtin_function!(
-    /// memcpy
-    SyscallMemcpy<SDK: SharedAPI>,
-    fn rust(
-        invoke_context: &mut InvokeContext<SDK>,
-        dst_addr: u64,
-        src_addr: u64,
-        n: u64,
-        _arg4: u64,
-        _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
-    ) -> Result<u64, Error> {
-        if !is_nonoverlapping(src_addr, n, dst_addr, n) {
-            return Err(SyscallError::CopyOverlapping.into());
-        }
-
-        // host addresses can overlap so we always invoke memmove
-        memmove(invoke_context, dst_addr, src_addr, n, memory_mapping)
-    }
-);
+#[allow(unused)]
+fn log_str_common(value: &str) {
+    #[cfg(target_arch = "wasm32")]
+    use fluentbase_sdk::debug_log;
+    #[cfg(test)]
+    println!("builtin log: {}", value);
+    #[cfg(target_arch = "wasm32")]
+    debug_log!("builtin log: {}", value);
+}
 
 // TODO
 // declare_builtin_function!(
@@ -166,8 +179,30 @@ declare_builtin_function!(
 //
 //         Ok(0)
 //     }
-// );
 
+// TODO recheck
+declare_builtin_function!(
+    /// memcpy
+    SyscallMemcpy<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        dst_addr: u64,
+        src_addr: u64,
+        n: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        if !is_nonoverlapping(src_addr, n, dst_addr, n) {
+            return Err(SyscallError::CopyOverlapping.into());
+        }
+
+        // host addresses can overlap so we always invoke memmove
+        memmove(invoke_context, dst_addr, src_addr, n, memory_mapping)
+    }
+);
+
+// TODO recheck
 declare_builtin_function!(
     /// memmove
     SyscallMemmove<SDK: SharedAPI>,
@@ -183,6 +218,8 @@ declare_builtin_function!(
         memmove(invoke_context, dst_addr, src_addr, n, memory_mapping)
     }
 );
+
+// );
 
 declare_builtin_function!(
     /// memset
@@ -251,9 +288,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        #[cfg(target_arch = "wasm32")]
-        use fluentbase_sdk::debug_log;
-
         translate_string_and_do(
             memory_mapping,
             addr,
@@ -261,14 +295,183 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
             #[allow(unused_variables)]
             &mut |string: &str| {
-                #[cfg(test)]
-                println!("SyscallLog: {}", string);
-                #[cfg(target_arch = "wasm32")]
-                debug_log!("SyscallLog: {}", string);
+                log_str_common(string);
                 Ok(0)
             },
 
         )?;
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    /// Log 5 64-bit values
+    SyscallLogU64<SDK: SharedAPI>,
+    fn rust(
+        _invoke_context: &mut InvokeContext<SDK>,
+        arg1: u64,
+        arg2: u64,
+        arg3: u64,
+        arg4: u64,
+        arg5: u64,
+        _memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use alloc::format;
+        log_str_common(&format!("{arg1:#x}, {arg2:#x}, {arg3:#x}, {arg4:#x}, {arg5:#x}"));
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    /// Log a [`Pubkey`] as a base58 string
+    SyscallLogPubkey<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        pubkey_addr: u64,
+        _arg2: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let pubkey = translate_type::<Pubkey>(
+            memory_mapping,
+            pubkey_addr,
+            invoke_context.get_check_aligned(),
+            false,
+        )?;
+        log_str_common(&pubkey.to_string());
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    /// Set return data
+    SyscallSetReturnData<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        addr: u64,
+        len: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        if len > MAX_RETURN_DATA as u64 {
+            return Err(SyscallError::ReturnDataTooLarge(len, MAX_RETURN_DATA as u64).into());
+        }
+
+        let return_data = if len == 0 {
+            Vec::new()
+        } else {
+            translate_slice::<u8>(
+                memory_mapping,
+                addr,
+                len,
+                invoke_context.get_check_aligned(),
+            )?
+            .to_vec_cloned()
+        };
+        let transaction_context = &mut invoke_context.transaction_context;
+        let program_id = *transaction_context
+            .get_current_instruction_context()
+            .and_then(|instruction_context| {
+                instruction_context.get_last_program_key(transaction_context)
+            })?;
+
+        transaction_context.set_return_data(program_id, return_data)?;
+
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    /// Get return data
+    SyscallGetReturnData<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        return_data_addr: u64,
+        length: u64,
+        program_id_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let (program_id, return_data) = invoke_context.transaction_context.get_return_data();
+        let length = length.min(return_data.len() as u64);
+        if length != 0 {
+            let return_data_result = translate_slice_mut::<u8>(
+                memory_mapping,
+                return_data_addr,
+                length,
+                invoke_context.get_check_aligned(),
+            )?;
+
+            let mut to_slice = return_data_result;
+            let from_slice = return_data
+                .get(..length as usize)
+                .ok_or(SyscallError::InvokeContextBorrowFailed)?;
+            if to_slice.len() != from_slice.len() {
+                return Err(SyscallError::InvalidLength.into());
+            }
+            to_slice.copy_from_slice(from_slice);
+
+            let program_id_result = translate_type_mut::<Pubkey>(
+                memory_mapping,
+                program_id_addr,
+                invoke_context.get_check_aligned(),
+                false,
+            )?;
+
+            if !is_nonoverlapping(
+                to_slice.first_item_addr().inner(),
+                length,
+                program_id_result as *const _ as u64,
+                size_of::<Pubkey>() as u64,
+            ) {
+                return Err(SyscallError::CopyOverlapping.into());
+            }
+
+            *program_id_result = *program_id;
+        }
+
+        // Return the actual length, rather the length returned
+        Ok(return_data.len() as u64)
+    }
+);
+
+declare_builtin_function!(
+    /// Log data handling
+    SyscallLogData<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        addr: u64,
+        len: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let untranslated_fields = translate_slice::<SliceFatPtr64<u8>>(
+            memory_mapping,
+            addr,
+            len,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let mut fields = Vec::with_capacity(untranslated_fields.len());
+
+        for untranslated_field in &untranslated_fields {
+            fields.push(translate_slice::<u8>(
+                memory_mapping,
+                untranslated_field.as_ref().first_item_addr().inner(),
+                untranslated_field.as_ref().len() as u64,
+                invoke_context.get_check_aligned(),
+            )?);
+        }
+
+        // stable_log::program_data(&log_collector, &fields);
+
         Ok(0)
     }
 );
@@ -292,6 +495,7 @@ declare_builtin_function!(
     }
 );
 
+// TODO recheck
 declare_builtin_function!(
     /// Panic syscall function, called when the SBF program calls 'sol_panic_()`
     /// Causes the SBF program to be halted immediately
@@ -305,8 +509,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // consume_compute_meter(invoke_context, len)?;
-
         translate_string_and_do(
             memory_mapping,
             file,

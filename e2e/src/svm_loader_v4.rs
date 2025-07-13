@@ -65,7 +65,7 @@ mod tests {
         let measure = Instant::now();
         let (_contract_address, _gas_used) =
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
-        println!("elapsed: {:.2?}", measure.elapsed());
+        println!("deploy took: {:.2?}", measure.elapsed());
     }
 
     #[test]
@@ -95,12 +95,14 @@ mod tests {
         // deploy and get exec contract
 
         let program_bytes = account_with_program.data().to_vec();
+        let measure = Instant::now();
         let (contract_address, _gas) =
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
+        println!("deploy took: {:.2?}", measure.elapsed());
 
         let pk_exec = pubkey_from_evm_address(&contract_address);
 
-        let seed1 = b"my_seed";
+        let seed1 = b"seed";
         let seed2 = pk_payer.as_ref();
         let seeds = &[seed1.as_slice(), seed2];
         let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_exec);
@@ -137,7 +139,7 @@ mod tests {
         let measure = Instant::now();
         let result =
             ctx.call_evm_tx_simple(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
-        println!("elapsed: {:.2?}", measure.elapsed());
+        println!("exec took: {:.2?}", measure.elapsed());
         let output = result.output().unwrap();
         if output.len() > 0 {
             let out_text = from_utf8(output).unwrap();

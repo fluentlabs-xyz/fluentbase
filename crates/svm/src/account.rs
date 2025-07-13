@@ -1,5 +1,4 @@
 use crate::{
-    // bpf_loader,
     clock::{Epoch, INITIAL_RENT_EPOCH},
     context::{IndexOfAccount, InstructionContext, TransactionContext},
     helpers::is_zeroed,
@@ -10,12 +9,9 @@ use crate::{
     },
 };
 use alloc::{rc::Rc, sync::Arc, vec, vec::Vec};
-#[cfg(test)]
-use core::fmt::Debug;
-#[cfg(test)]
-use core::fmt::Formatter;
 use core::{
     cell::{Ref, RefCell, RefMut},
+    fmt::{Debug, Formatter},
     mem::MaybeUninit,
     ptr,
 };
@@ -289,7 +285,6 @@ pub struct AccountSharedData {
     rent_epoch: Epoch,
 }
 
-#[cfg(test)]
 impl Debug for AccountSharedData {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("AccountSharedData")
@@ -491,7 +486,7 @@ impl ReadableAccount for Ref<'_, AccountSharedData> {
 }
 
 /// Shared account borrowed from the TransactionContext and an InstructionContext.
-#[cfg_attr(test, derive(Debug))]
+#[derive(Debug)]
 pub struct BorrowedAccount<'a> {
     pub(crate) transaction_context: &'a TransactionContext,
     pub(crate) instruction_context: &'a InstructionContext,

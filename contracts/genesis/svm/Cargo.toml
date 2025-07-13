@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { workspace = true }
-fluentbase-svm = { workspace = true, default-features = false, features = [] }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-svm = { workspace = true, default-features = false }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }

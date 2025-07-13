@@ -673,8 +673,7 @@ impl<'a, SDK: SharedAPI> ContextObject for InvokeContext<'a, SDK> {
     }
 }
 
-#[derive(Clone, PartialEq)]
-#[cfg_attr(test, derive(Debug))]
+#[derive(Clone, PartialEq, Debug)]
 pub struct TransactionAccounts {
     accounts: Vec<RefCell<AccountSharedData>>,
     touched_flags: RefCell<Box<[bool]>>,
@@ -747,8 +746,7 @@ impl TransactionAccounts {
 /// Loaded transaction shared between runtime and programs.
 ///
 /// This context is valid for the entire duration of a transaction being processed.
-#[derive(Clone, PartialEq)]
-#[cfg_attr(test, derive(Debug))]
+#[derive(Clone, PartialEq, Debug)]
 pub struct TransactionContext {
     account_keys: Pin<Box<[Pubkey]>>,
     accounts: Rc<TransactionAccounts>,
