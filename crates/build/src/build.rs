@@ -216,13 +216,15 @@ fn build_wasm(
         .as_ref()
         .map(|image| (image.as_str(), mount_dir));
 
-    run_command(&cargo_args, contract_dir, docker_config, &env_vars)?;
+    let rust_toolchain = args.toolchain_version(&contract_dir);
+
+    run_command(&cargo_args, contract_dir, docker_config, &env_vars, &rust_toolchain)?;
 
     // Find the built WASM file
     let wasm_path = find_wasm_artifact(&target_dir, package)?;
 
     if args.wasm_opt {
-        optimize_wasm(&wasm_path, docker_config)?;
+        optimize_wasm(&wasm_path, docker_config, &rust_toolchain)?;
     }
 
     Ok(wasm_path)
@@ -289,7 +291,7 @@ fn find_wasm_artifact(target_dir: &Path, package: &Package) -> Result<PathBuf> {
     }
 }
 
-fn optimize_wasm(wasm_path: &Path, docker_config: Option<(&str, &Path)>) -> Result<()> {
+fn optimize_wasm(wasm_path: &Path, docker_config: Option<(&str, &Path)>, rust_toolchain: &Option<String>) -> Result<()> {
     let work_dir = wasm_path.parent().unwrap();
     let wasm_filename = wasm_path.file_name().unwrap().to_str().unwrap();
     let temp_filename = format!("{}.opt", wasm_filename);
@@ -308,6 +310,7 @@ fn optimize_wasm(wasm_path: &Path, docker_config: Option<(&str, &Path)>) -> Resu
         work_dir,
         docker_config,
         &[],
+        rust_toolchain,
     )?;
 
     fs::rename(work_dir.join(&temp_filename), wasm_path)?;
@@ -320,12 +323,13 @@ fn run_command<S: AsRef<str>>(
     work_dir: &Path,
     docker_config: Option<(&str, &Path)>,
     env_vars: &[(String, String)],
+    rust_toolchain: &Option<String>,
 ) -> Result<()> {
     let args: Vec<String> = args.iter().map(|s| s.as_ref().to_string()).collect();
 
     match docker_config {
         Some((image, mount_dir)) => {
-            docker::run_in_docker(image, &args, mount_dir, work_dir, env_vars)
+            docker::run_in_docker(image, &args, mount_dir, work_dir, env_vars, rust_toolchain)
         }
         None => {
             // Local execution
@@ -418,6 +422,7 @@ fn generate_artifacts(
                     output_dir,
                     docker_config,
                     &[],
+                    rust_toolchain,
                 )?;
                 result.wat_path = Some(output_dir.join("lib.wat"));
             }

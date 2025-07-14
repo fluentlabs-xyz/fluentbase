@@ -5,7 +5,6 @@ use std::{path::Path, process::Command};
 const DOCKER_IMAGE_REGISTRY: &str = "ghcr.io/fluentlabs-xyz/fluentbase-build";
 const DOCKER_IMAGE_ENV_VAR: &str = "FLUENT_DOCKER_IMAGE";
 const DOCKER_PLATFORM: &str = "linux/amd64";
-const DEFAULT_RUST_TOOLCHAIN: &str = "1.87.0-x86_64-unknown-linux-gnu";
 
 /// Run command in Docker container
 pub fn run_in_docker(
@@ -14,6 +13,7 @@ pub fn run_in_docker(
     mount_dir: &Path,
     work_dir: &Path,
     env_vars: &[(String, String)],
+    rust_toolchain: &Option<String>,
 ) -> Result<()> {
     let mount_dir = mount_dir
         .canonicalize()
@@ -39,10 +39,6 @@ pub fn run_in_docker(
         DOCKER_PLATFORM,
         "-v",
         &format!("{}:/workspace", mount_dir.display()),
-        "-v",
-        "cargo-registry:/usr/local/cargo/registry",
-        "-v",
-        "cargo-git:/usr/local/cargo/git",
         "-w",
         &format!("/workspace/{}", relative_dir.display()),
     ]);
@@ -52,11 +48,13 @@ pub fn run_in_docker(
         cmd.args(["-e", &format!("{}={}", key, value)]);
     }
 
-    // Always force use of pre-installed toolchain
-    cmd.args([
-        "-e",
-        &format!("RUSTUP_TOOLCHAIN={}", DEFAULT_RUST_TOOLCHAIN),
-    ]);
+
+
+    // Set the rust toolchain ONLY if it's explicitly provided.
+    // If it's None, the container's default toolchain will be used.
+    if let Some(toolchain) = rust_toolchain {
+        cmd.args(["-e", &format!("RUSTUP_TOOLCHAIN={}", toolchain)]);
+    }
 
     cmd.arg(image);
     cmd.args(args);
