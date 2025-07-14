@@ -3,7 +3,7 @@ use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
 use solana_program::{
-    program::{invoke, invoke_signed},
+    program::invoke_signed,
     serialize_utils::cursor::read_u64,
     system_instruction,
 };
@@ -22,9 +22,7 @@ use std::{
 /// Custom program errors
 #[derive(Debug, Clone, PartialEq, FromPrimitive)]
 pub enum MyError {
-    // #[error("Default enum start")]
     DefaultEnumStart,
-    // #[error("The Answer")]
     TheAnswer = 42,
 }
 impl From<MyError> for ProgramError {
@@ -39,6 +37,7 @@ impl<T> DecodeError<T> for MyError {
 }
 
 entrypoint_no_alloc!(process_instruction);
+
 pub fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -62,8 +61,9 @@ pub fn process_instruction(
 
     let instruction_data: Vec<u8> = bincode::deserialize(instruction_data).map_err(|e| {
         msg!(
-            "process_instruction: failed to deserialize 'instruction_data' (len: {})",
-            instruction_data.len()
+            "process_instruction: failed to deserialize 'instruction_data' (len: {}): {}",
+            instruction_data.len(),
+            e
         );
         ProgramError::InvalidInstructionData
     })?;
@@ -73,13 +73,16 @@ pub fn process_instruction(
     );
     let mut cursor = Cursor::new(instruction_data);
     let command_id = read_u8(&mut cursor).map_err(|e| {
-        msg!("process_instruction: failed to read 'command_id' param");
+        msg!(
+            "process_instruction: failed to read 'command_id' param: {}",
+            e
+        );
         ProgramError::InvalidInstructionData
     })?;
     msg!("process_instruction: command_id: {}", command_id);
     match command_id {
         1 => {
-            msg!("process_instruction: Apply modifications to account 1");
+            msg!("process_instruction: applying modifications to account 1");
 
             let account = &accounts[1];
             account.realloc(account.data_len() + MAX_PERMITTED_DATA_INCREASE, false)?;
@@ -88,39 +91,58 @@ pub fn process_instruction(
             msg!("process_instruction: Command finished");
         }
         2 => {
-            msg!("process_instruction: create account");
+            msg!("process_instruction: creating account");
+
             let lamports = read_u64(&mut cursor).map_err(|e| {
-                msg!("process_instruction: failed to read 'lamports' param");
+                msg!(
+                    "process_instruction: failed to read 'lamports' param: {}",
+                    e
+                );
                 ProgramError::InvalidInstructionData
             })?;
             msg!("process_instruction: lamports {}", lamports);
             let space = read_u32(&mut cursor).map_err(|e| {
-                msg!("process_instruction: failed to read 'space' param");
+                msg!("process_instruction: failed to read 'space' param: {}", e);
                 ProgramError::InvalidInstructionData
             })?;
             msg!("process_instruction: space {}", space,);
             let seed_len1 = read_u8(&mut cursor).map_err(|e| {
-                msg!("process_instruction: failed to read 'seed_len' param");
+                msg!(
+                    "process_instruction: failed to read 'seed_len' param: {}",
+                    e
+                );
                 ProgramError::InvalidInstructionData
             })?;
             msg!("process_instruction: seed_len1: {}", seed_len1);
             // let mut seed1 = b"my_seed";
             let mut seed1 = vec![0u8; seed_len1 as usize];
             cursor.read_exact(&mut seed1).map_err(|e| {
-                msg!("process_instruction: failed to read 'seed1' param");
+                msg!("process_instruction: failed to read 'seed1' param: {}", e);
                 ProgramError::InvalidInstructionData
             })?;
             msg!(
                 "process_instruction: Create account: seed1: '{}'",
-                from_utf8(&seed1).map_err(|e| ProgramError::InvalidInstructionData)?
+                from_utf8(&seed1).map_err(|e| {
+                    msg!(
+                        "process_instruction: failed to convert to a valid UTF-8 string: {}",
+                        e
+                    );
+                    ProgramError::InvalidInstructionData
+                })?
             );
             let byte_n_to_set = read_u32(&mut cursor).map_err(|e| {
-                msg!("process_instruction: failed to read 'byte_n_to_set' param");
+                msg!(
+                    "process_instruction: failed to read 'byte_n_to_set' param: {}",
+                    e
+                );
                 ProgramError::InvalidInstructionData
             })?;
             msg!("process_instruction: byte_n_to_set: '{}'", byte_n_to_set);
             let byte_n_value = read_u8(&mut cursor).map_err(|e| {
-                msg!("process_instruction: failed to read 'byte_n_value' param");
+                msg!(
+                    "process_instruction: failed to read 'byte_n_value' param: {}",
+                    e
+                );
                 ProgramError::InvalidInstructionData
             })?;
             msg!("process_instruction: byte_n_value: {}", byte_n_value);
