@@ -2662,7 +2662,6 @@ dependencies = [
  "num-traits",
  "paste",
  "rand 0.9.1",
- "scopeguard",
  "serde",
  "serde_bytes",
  "solana-account-info",

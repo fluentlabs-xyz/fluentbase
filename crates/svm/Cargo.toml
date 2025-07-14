@@ -41,7 +41,6 @@ solana-bincode = { workspace = true, default-features = false, features = [] }
 solana-precompile-error = { workspace = true, default-features = false, features = [] }
 
 paste = { workspace = true }
-scopeguard = { workspace = true, default-features = false, features = [] }
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
 blake3 = { workspace = true, default-features = false, features = ["serde"] }
 bitflags = { workspace = true, default-features = false, features = ["serde"] }

@@ -2169,7 +2169,6 @@ dependencies = [
  "num-derive",
  "num-traits",
  "paste",
- "scopeguard",
  "serde",
  "serde_bytes",
  "solana-account-info",
