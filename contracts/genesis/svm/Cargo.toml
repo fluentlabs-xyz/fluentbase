@@ -6,7 +6,9 @@ edition = "2021"
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-svm = { workspace = true, default-features = false, features = [
-    "use-extended-debug-log"
+    "use-extended-debug-log",
+    # bloats binary size 4 times
+    #    "enable-poseidon",
 ] }
 
 [dev-dependencies]

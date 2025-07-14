@@ -17,6 +17,7 @@ pub enum RuntimeError {
     InvalidIdx,
     InvalidType,
     InvalidPrefix,
+    InvalidConversion,
 }
 
 impl core::error::Error for RuntimeError {}
@@ -29,6 +30,7 @@ impl Display for RuntimeError {
             RuntimeError::InvalidIdx => write!(f, "RuntimeError::InvalidIdx"),
             RuntimeError::InvalidType => write!(f, "RuntimeError::InvalidType"),
             RuntimeError::InvalidPrefix => write!(f, "RuntimeError::InvalidPrefix"),
+            RuntimeError::InvalidConversion => write!(f, "RuntimeError::InvalidConversion"),
         }
     }
 }

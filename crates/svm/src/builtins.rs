@@ -1,9 +1,9 @@
 use crate::{
     alloc::string::ToString,
-    common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
+    common::{Blake3Hasher, HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
-    error::{Error, SvmError},
+    error::{Error, RuntimeError, SvmError},
     helpers::SyscallError,
     loaders::syscalls::cpi::cpi_common,
     mem_ops::{
@@ -21,6 +21,8 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::{debug_log_ext, SharedAPI};
+use solana_feature_set::simplify_alt_bn128_syscall_error_codes;
+use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
     error::EbpfError,
@@ -97,24 +99,24 @@ pub fn register_builtins<SDK: SharedAPI>(
 
     // TODO: doesn't call hash computation handle/function, returns default value (zeroes)
     // function_registry
-    //     .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK, PoseidonHasher<SDK>>).unwrap();
-    // function_registry
-    //     .register_function_hashed("sol_poseidon", SyscallPoseidonSDK::vm)
+    //     .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK, PoseidonHasher<SDK>>)
     //     .unwrap();
-    // TODO
     function_registry
         .register_function_hashed("sol_sha256", SyscallHash::vm::<SDK, Sha256Hasher>)
         .unwrap();
-    // TODO
     function_registry
         .register_function_hashed(
             "sol_keccak256",
             SyscallHash::vm::<SDK, Keccak256Hasher<SDK>>,
         )
         .unwrap();
-    // function_registry
-    //     .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
-    //     .unwrap();
+    function_registry
+        .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
+        .unwrap();
+    #[cfg(feature = "enable-poseidon")]
+    function_registry
+        .register_function_hashed("sol_poseidon", SyscallPoseidon::vm)
+        .unwrap();
 }
 
 macro_rules! log_str_common {
@@ -624,149 +626,69 @@ declare_builtin_function!(
 //     }
 // );
 
-// declare_builtin_function!(
-//     SyscallPoseidon<SDK: SharedAPI>,
-//     fn rust(
-//         invoke_context: &mut InvokeContext<SDK>,
-//         parameters: u64,
-//         endianness: u64,
-//         vals_addr: u64,
-//         vals_len: u64,
-//         result_addr: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//
-//         let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|e| {
-//             SyscallError::Abort
-//         })?;
-//         let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|e| {
-//             SyscallError::Abort
-//         })?;
-//
-//         if vals_len > 12 {
-//             return Err(SyscallError::InvalidLength.into());
-//         }
-//         // consume_compute_meter(invoke_context, cost.to_owned())?;
-//
-//         let hash_result = translate_slice_mut::<u8>(
-//             memory_mapping,
-//             result_addr,
-//             solana_poseidon::HASH_BYTES as u64,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let inputs = translate_slice::<&[u8]>(
-//             memory_mapping,
-//             vals_addr,
-//             vals_len,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let inputs = inputs
-//             .iter()
-//             .map(|input| {
-//                 translate_slice::<u8>(
-//                     memory_mapping,
-//                     input.as_ptr() as *const _ as u64,
-//                     input.len() as u64,
-//                     invoke_context.get_check_aligned(),
-//                 )
-//             })
-//             .collect::<Result<Vec<_>, Error>>()?;
-//
-//         // let simplify_alt_bn128_syscall_error_codes = invoke_context
-//         //     .feature_set
-//         //     .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
-//
-//         let hash = match solana_poseidon::hashv(parameters, endianness, inputs.as_slice()) {
-//             Ok(hash) => hash,
-//             Err(e) => {
-//                 return /*if simplify_alt_bn128_syscall_error_codes {
-//                     Ok(1)
-//                 } else {*/
-//                     Ok(e.into());
-//                 /*};*/
-//             }
-//         };
-//         hash_result.copy_from_slice(&hash.to_bytes());
-//
-//         Ok(SUCCESS)
-//     }
-// );
+#[cfg(feature = "enable-poseidon")]
+declare_builtin_function!(
+    // Poseidon
+    SyscallPoseidon<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        parameters: u64,
+        endianness: u64,
+        vals_addr: u64,
+        vals_len: u64,
+        result_addr: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
+        let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
 
-// declare_builtin_function!(
-//     SyscallPoseidonSDK<SDK: SharedAPI>,
-//     fn rust(
-//         invoke_context: &mut InvokeContext<SDK>,
-//         parameters: u64,
-//         endianness: u64,
-//         vals_addr: u64,
-//         vals_len: u64,
-//         result_addr: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//
-//         let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|e| {
-//             SyscallError::Abort
-//         })?;
-//         let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|e| {
-//             SyscallError::Abort
-//         })?;
-//
-//         if vals_len > 12 {
-//             return Err(SyscallError::InvalidLength.into());
-//         }
-//
-//         let hash_result = translate_slice_mut::<u8>(
-//             memory_mapping,
-//             result_addr,
-//             solana_poseidon::HASH_BYTES as u64,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let inputs = translate_slice::<&[u8]>(
-//             memory_mapping,
-//             vals_addr,
-//             vals_len,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let inputs = inputs
-//             .iter()
-//             .map(|input| {
-//                 translate_slice::<u8>(
-//                     memory_mapping,
-//                     input.as_ptr() as *const _ as u64,
-//                     input.len() as u64,
-//                     invoke_context.get_check_aligned(),
-//                 )
-//             })
-//             .collect::<Result<Vec<_>, Error>>()?;
-//
-//         // let simplify_alt_bn128_syscall_error_codes = invoke_context
-//         //     .feature_set
-//         //     .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
-//
-//         let mut inputs_vec = Vec::new();
-//         for i in inputs {
-//             inputs_vec.extend_from_slice(i);
-//         }
-//         // invoke_context.sdk.deref().;
-//         // TODO
-//         // let hash = invo::poseidon(&inputs_vec);
-//         let hash = [0u8; 32];
-//
-//         // let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
-//         //     Ok(hash) => hash,
-//         //     Err(e) => {
-//         //         return /*if simplify_alt_bn128_syscall_error_codes {
-//         //             Ok(1)
-//         //         } else {*/
-//         //             Ok(e.into());
-//         //         /*};*/
-//         //     }
-//         // };
-//         hash_result.copy_from_slice(&hash);
-//
-//         Ok(SUCCESS)
-//     }
-// );
+        if vals_len > 12 {
+            debug_log_ext!(
+                "Poseidon hashing {} sequences is not supported",
+                vals_len,
+            );
+            return Err(SyscallError::InvalidLength.into());
+        }
+
+        let mut hash_result = translate_slice_mut::<u8>(
+            memory_mapping,
+            result_addr,
+            solana_poseidon::HASH_BYTES as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+        let untranslated_inputs = translate_slice::<SliceFatPtr64<u8>>(
+            memory_mapping,
+            vals_addr,
+            vals_len,
+            invoke_context.get_check_aligned(),
+        )?;
+       let inputs_vec = untranslated_inputs
+            .iter()
+            .map(|v| {
+                Ok(v.as_ref().to_vec_cloned())
+            })
+            .collect::<Result<Vec<_>, SvmError>>()?;
+        let inputs = inputs_vec.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
+
+        let simplify_alt_bn128_syscall_error_codes = invoke_context
+            .get_feature_set()
+            .is_active(&simplify_alt_bn128_syscall_error_codes::id());
+
+        let hash = match solana_poseidon::hashv(parameters, endianness, inputs.as_slice()) {
+            Ok(hash) => hash,
+            Err(e) => {
+                return if simplify_alt_bn128_syscall_error_codes {
+                    Ok(1)
+                } else {
+                    Ok(e.into())
+                };
+            }
+        };
+        hash_result.copy_from_slice(&hash.to_bytes());
+
+        Ok(SUCCESS)
+    }
+);
 
 declare_builtin_function!(
     /// Create a program address

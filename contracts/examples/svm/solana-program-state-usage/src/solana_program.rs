@@ -4,6 +4,7 @@ use fluentbase_examples_svm_bindings::{
     log_data_native,
     log_pubkey_native,
     set_return_data_native,
+    sol_blake3_native,
     sol_keccak256_native,
     sol_sha256_native,
 };
@@ -72,7 +73,7 @@ pub fn process_instruction(
 
     let test_data_for_keccak256: &[&[u8]] = &[
         &[1u8, 2, 3],
-        // TODO need support for accumulation and validate it computes proper values
+        // TODO no support for accumulation for now
         // &[4, 5, 6],
     ];
     let keccak256_result_expected =
@@ -85,13 +86,9 @@ pub fn process_instruction(
     );
     assert_eq!(&keccak256_result, &keccak256_result_expected);
 
-    let test_data_for_sha256: &[&[u8]] = &[
-        &[1u8, 2, 3],
-        // TODO need support for accumulation and validate it computes proper values
-        // &[4, 5, 6],
-    ];
+    let test_data_for_sha256: &[&[u8]] = &[&[1u8, 2, 3], &[4, 5, 6]];
     let sha256_result_expected =
-        hex!("039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81");
+        hex!("7192385c3c0605de55bb9476ce1d90748190ecb32a8eed7f5207b30cf6a1fe89");
     let sha256_result = sol_sha256_native(test_data_for_sha256);
     msg!(
         "test_data_for_sha256 {:x?} sha256_result {}",
@@ -99,6 +96,17 @@ pub fn process_instruction(
         hex::encode(&sha256_result)
     );
     assert_eq!(&sha256_result, &sha256_result_expected);
+
+    let test_data_for_blake3: &[&[u8]] = &[&[1u8, 2, 3], &[4, 5, 6]];
+    let blake3_result_expected =
+        hex!("828a8660ae86b86f1ebf951a6f84349520cc1501fb6fcf95b05df01200be9fa2");
+    let blake3_result = sol_blake3_native(test_data_for_blake3);
+    msg!(
+        "test_data_for_blake3 {:x?} blake3_result {}",
+        test_data_for_blake3,
+        hex::encode(&blake3_result)
+    );
+    assert_eq!(&blake3_result, &blake3_result_expected);
 
     msg!(
         "process_instruction: program_id {:x?} accounts.len {} instruction_data {:x?}",

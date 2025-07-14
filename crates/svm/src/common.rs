@@ -90,6 +90,7 @@ impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
 
     fn hash(&mut self, val: &[u8]) {
         if self.initiated {
+            // TODO impl accumulating version
             panic!("accumulation not supported yet")
         } else {
             self.value = keccak256(val).0;
@@ -107,51 +108,24 @@ pub struct PoseidonHasher<SDK> {
     value: [u8; 32],
     _sdk: PhantomData<SDK>,
 }
-impl<SDK: SharedAPI> HasherImpl for PoseidonHasher<SDK> {
-    const NAME: &'static str = "Poseidon";
+
+pub struct Blake3Hasher(blake3::Hasher);
+impl HasherImpl for Blake3Hasher {
+    const NAME: &'static str = "Blake3";
     type Output = [u8; 32];
 
     fn create_hasher() -> Self {
-        PoseidonHasher {
-            initiated: false,
-            value: Default::default(),
-            _sdk: Default::default(),
-        }
+        Blake3Hasher(blake3::Hasher::default())
     }
 
-    fn hash(&mut self, _val: &[u8]) {
-        if self.initiated {
-            panic!("accumulation not supported yet")
-        } else {
-            // self.value = SDK::poseidon(val).0;
-            // TODO
-            self.value = Default::default();
-            self.initiated = true;
-        }
+    fn hash(&mut self, val: &[u8]) {
+        self.0.update(val);
     }
 
     fn result(self) -> Self::Output {
-        self.value
+        self.0.finalize().as_bytes().clone()
     }
 }
-
-// pub struct Blake3Hasher(blake3::Hasher);
-// impl HasherImpl for Blake3Hasher {
-//     const NAME: &'static str = "Blake3";
-//     type Output = blake3::Hash;
-//
-//     fn create_hasher() -> Self {
-//         Blake3Hasher(blake3::Hasher::default())
-//     }
-//
-//     fn hash(&mut self, val: &[u8]) {
-//         self.0.hash(val);
-//     }
-//
-//     fn result(self) -> Self::Output {
-//         self.0.result()
-//     }
-// }
 
 // declare_id!("NativeLoader1111111111111111111111111111111");
 

@@ -82,3 +82,9 @@ extern "C" {
 pub fn sol_sha256_native(data: &[&[u8]]) -> [u8; 32] {
     hash_impl!(data, sol_sha256)
 }
+extern "C" {
+    fn sol_blake3(values_addr: *const u8, values_len: u64, result_addr: *mut u8);
+}
+pub fn sol_blake3_native(data: &[&[u8]]) -> [u8; 32] {
+    hash_impl!(data, sol_blake3)
+}
