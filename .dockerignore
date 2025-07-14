@@ -1,10 +1,9 @@
-target/
-.git/
-revm/target/
-e2e/target/
-examples/*/target/
-contracts/*/target/
-**/*.wasm
-**/node_modules/
 .idea/
 .vscode/
+
+.git
+
+target
+**/target
+**/*.wasm
+**/node_modules
