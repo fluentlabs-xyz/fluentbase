@@ -3,7 +3,7 @@ use crate::{
     common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
-    error::Error,
+    error::{Error, SvmError},
     helpers::SyscallError,
     loaders::syscalls::cpi::cpi_common,
     mem_ops::{
@@ -21,7 +21,7 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::SharedAPI;
-use solana_pubkey::{Pubkey, PUBKEY_BYTES};
+use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES};
 use solana_rbpf::{
     error::EbpfError,
     memory_region::{AccessType, MemoryMapping},
@@ -42,6 +42,9 @@ pub fn register_builtins<SDK: SharedAPI>(
         .unwrap();
     function_registry
         .register_function_hashed("sol_log_pubkey", SyscallLogPubkey::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_log_data", SyscallLogData::vm)
         .unwrap();
 
     function_registry
@@ -348,7 +351,7 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
             false,
         )?;
-        log_str_common!(&pubkey.to_string());
+        log_str_common!(alloc::format!("{} (hex bytes: {:x?})", pubkey, pubkey.to_bytes()));
         Ok(0)
     }
 );
@@ -467,18 +470,14 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
         )?;
 
-        let mut fields = Vec::with_capacity(untranslated_fields.len());
+        let fields = untranslated_fields
+            .iter()
+            .map(|untranslated_seed| {
+                Ok(untranslated_seed.as_ref().to_vec_cloned())
+            })
+            .collect::<Result<Vec<_>, SvmError>>()?;
 
-        for untranslated_field in &untranslated_fields {
-            fields.push(translate_slice::<u8>(
-                memory_mapping,
-                untranslated_field.as_ref().first_item_addr().inner(),
-                untranslated_field.as_ref().len() as u64,
-                invoke_context.get_check_aligned(),
-            )?);
-        }
-
-        // stable_log::program_data(&log_collector, &fields);
+        log_str_common!(alloc::format!("hex fields: {:x?}", fields));
 
         Ok(0)
     }
@@ -784,7 +783,6 @@ declare_builtin_function!(
             program_id_addr,
             memory_mapping,
             invoke_context.get_check_aligned(),
-
         )?;
 
         // replace smv pubkey with evm create2

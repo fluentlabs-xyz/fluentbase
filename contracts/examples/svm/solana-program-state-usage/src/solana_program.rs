@@ -36,6 +36,22 @@ impl<T> DecodeError<T> for MyError {
     }
 }
 
+// TODO genuine way to call `sol_log_pubkey`?
+extern "C" {
+    fn sol_log_pubkey(pubkey: *const Pubkey);
+}
+fn log_pubkey(pubkey: &Pubkey) {
+    unsafe { sol_log_pubkey(pubkey as *const Pubkey) }
+}
+
+// TODO genuine way to call `sol_log_data`?
+extern "C" {
+    fn sol_log_data(values: *const u8, len: u64);
+}
+fn log_data(data: &[&[u8]]) {
+    unsafe { sol_log_data(data.as_ptr() as *const u8, data.len() as u64) }
+}
+
 entrypoint_no_alloc!(process_instruction);
 
 pub fn process_instruction(
@@ -43,6 +59,7 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    log_pubkey(&program_id);
     msg!(
         "process_instruction: program_id {:x?} accounts.len {} instruction_data {:x?}",
         program_id.to_bytes(),
@@ -168,6 +185,9 @@ pub fn process_instruction(
                 &pda.to_bytes(),
                 bump
             );
+
+            // let data: &[*const u8] = &[[1, 2, 3].as_ptr(), [4, 5, 6].as_ptr()];
+            log_data(seeds);
 
             let signer_seeds = &[&seed1, payer.key.as_ref(), &[bump]];
 
