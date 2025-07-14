@@ -1,0 +1,20 @@
+[workspace]
+
+[package]
+name = "docker-greeting"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.6-dev", default-features = false }
+
+[dev-dependencies]
+fluentbase-sdk-testing = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.6-dev" }
+
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std"]

@@ -18,6 +18,7 @@ pub const DEFAULT_DOCKER_TAG: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 pub const DEFAULT_STACK_SIZE: u32 = 128 * 1024;
 pub const BUILD_TARGET: &str = "wasm32-unknown-unknown";
 pub const HELPER_TARGET_SUBDIR: &str = "wasm-compilation";
+pub const DEFAULT_RUST_TOOLCHAIN: &str = "nightly-2025-01-27";
 
 /// Build contract at specified path
 ///
@@ -138,7 +139,7 @@ impl BuildArgs {
         if self.use_toolchain_file {
             return Self::find_toolchain_in_files(contract_dir);
         }
-        None
+        Some(DEFAULT_RUST_TOOLCHAIN.to_string())
     }
     /// Finds and parses the toolchain version by checking `rust-toolchain.toml`
     /// and then the legacy `rust-toolchain` file.
