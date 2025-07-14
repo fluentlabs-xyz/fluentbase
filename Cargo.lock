@@ -2557,6 +2557,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fluentbase-build",
+ "fluentbase-sdk",
  "hex",
  "reqwest",
  "serde",
