@@ -8,13 +8,14 @@ crate-type = ["cdylib", "rlib"]
 path = "src/solana_program.rs"
 
 [dependencies]
+fluentbase-examples-svm-bindings = { path = "../bindings" }
+
 solana-pubkey = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-account-info = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-program-entrypoint = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-program-error = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-msg = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-program = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
-#solana-decode-error = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-sdk = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 num-traits = { version = "0.2.19", default-features = false, features = [] }
 num-derive = { version = "0.4.2", default-features = false, features = [] }

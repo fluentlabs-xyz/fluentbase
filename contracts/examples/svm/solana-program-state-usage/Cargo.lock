@@ -473,10 +473,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2551bf44bc5f776c15044b9b94153a00198be06743e262afaaa61f11ac7523a5"
 
 [[package]]
+name = "fluentbase-examples-svm-bindings"
+version = "0.1.0"
+dependencies = [
+ "solana-pubkey",
+]
+
+[[package]]
 name = "fluentbase-examples-svm-solana-program-state-usage"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "fluentbase-examples-svm-bindings",
  "num-derive",
  "num-traits",
  "solana-account-info",

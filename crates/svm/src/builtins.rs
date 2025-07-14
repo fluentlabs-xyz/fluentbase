@@ -21,7 +21,7 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::SharedAPI;
-use solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES};
+use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
     error::EbpfError,
     memory_region::{AccessType, MemoryMapping},
@@ -433,6 +433,7 @@ declare_builtin_function!(
                 invoke_context.get_check_aligned(),
                 false,
             )?;
+            log_str_common!(alloc::format!("program_id_result {}", program_id_result));
 
             if !is_nonoverlapping(
                 to_slice.first_item_addr().inner(),
@@ -447,7 +448,9 @@ declare_builtin_function!(
         }
 
         // Return the actual length, rather the length returned
-        Ok(return_data.len() as u64)
+        let return_data_len = return_data.len() as u64;
+        log_str_common!(alloc::format!("return_data_len {}", return_data_len));
+        Ok(return_data_len)
     }
 );
 

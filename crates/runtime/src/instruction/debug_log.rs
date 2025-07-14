@@ -38,7 +38,7 @@ impl SyscallDebugLog {
             0
         };
         LAST_LOG_TIME.set(curr_time);
-        const MSG_LIMIT: usize = 256;
+        const MSG_LIMIT: usize = 256000;
         let msg = if msg.len() > MSG_LIMIT {
             &msg[..MSG_LIMIT]
         } else {

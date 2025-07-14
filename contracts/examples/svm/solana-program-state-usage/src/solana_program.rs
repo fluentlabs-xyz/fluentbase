@@ -1,4 +1,10 @@
 extern crate alloc;
+use fluentbase_examples_svm_bindings::{
+    get_return_data,
+    log_data_native,
+    log_pubkey_native,
+    set_return_data_native,
+};
 use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
@@ -36,22 +42,6 @@ impl<T> DecodeError<T> for MyError {
     }
 }
 
-// TODO genuine way to call `sol_log_pubkey`?
-extern "C" {
-    fn sol_log_pubkey(pubkey: *const Pubkey);
-}
-fn log_pubkey(pubkey: &Pubkey) {
-    unsafe { sol_log_pubkey(pubkey as *const Pubkey) }
-}
-
-// TODO genuine way to call `sol_log_data`?
-extern "C" {
-    fn sol_log_data(values: *const u8, len: u64);
-}
-fn log_data(data: &[&[u8]]) {
-    unsafe { sol_log_data(data.as_ptr() as *const u8, data.len() as u64) }
-}
-
 entrypoint_no_alloc!(process_instruction);
 
 pub fn process_instruction(
@@ -59,7 +49,24 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    log_pubkey(&program_id);
+    log_pubkey_native(&program_id);
+
+    let test_data_for_log: &[&[u8]] = &[&[1, 2, 3], &[4, 5, 6]];
+    log_data_native(test_data_for_log);
+
+    let test_data_for_set_get_return_data: &[u8] = &[7, 6, 5, 4, 3, 2, 1];
+    let return_data_before_set = get_return_data();
+    msg!("return_data_before_set {:x?}", return_data_before_set);
+    set_return_data_native(test_data_for_set_get_return_data);
+    let return_data_after_set =
+        get_return_data().expect("return data must exists as it has already been set");
+    assert_eq!(&return_data_after_set.1, test_data_for_set_get_return_data);
+    msg!(
+        "return_data_after_set {:x?} (pk hex bytes: {:x?})",
+        return_data_after_set,
+        return_data_after_set.0.to_bytes()
+    );
+
     msg!(
         "process_instruction: program_id {:x?} accounts.len {} instruction_data {:x?}",
         program_id.to_bytes(),
@@ -185,9 +192,6 @@ pub fn process_instruction(
                 &pda.to_bytes(),
                 bump
             );
-
-            // let data: &[*const u8] = &[[1, 2, 3].as_ptr(), [4, 5, 6].as_ptr()];
-            log_data(seeds);
 
             let signer_seeds = &[&seed1, payer.key.as_ref(), &[bump]];
 
