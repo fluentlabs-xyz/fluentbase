@@ -12,7 +12,7 @@ use core::marker::PhantomData;
 use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
 use solana_bincode::limited_deserialize;
 use solana_instruction::error::InstructionError;
-use solana_pubkey::{Pubkey, SVM_ADDRESS_PREFIX};
+use solana_pubkey::{Pubkey, PUBKEY_BYTES, SVM_ADDRESS_PREFIX};
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
@@ -374,7 +374,7 @@ pub fn compile_accounts_for_tx_ctx(
 }
 
 pub fn pubkey_from_evm_address(value: &Address) -> Pubkey {
-    let mut new_pk = [0u8; 32];
+    let mut new_pk = [0u8; PUBKEY_BYTES];
     new_pk[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
     new_pk[SVM_ADDRESS_PREFIX.len()..].copy_from_slice(value.as_slice());
     Pubkey::new_from_array(new_pk)

@@ -50,11 +50,11 @@ pub(crate) mod tests {
 
     #[test]
     fn serde_test() {
-        let program_id = Pubkey::new_from_array([0xcu8; 32]);
+        let program_id = Pubkey::new_from_array([0xcu8; PUBKEY_BYTES]);
         let instruction_data: &[u8] = &[1, 2, 3, 4];
 
-        let account1_key = Pubkey::new_from_array([1u8; 32]);
-        let account1_owner = Pubkey::new_from_array([2u8; 32]);
+        let account1_key = Pubkey::new_from_array([1u8; PUBKEY_BYTES]);
+        let account1_owner = Pubkey::new_from_array([2u8; PUBKEY_BYTES]);
         let mut account1_lamports = 11;
         let mut account1_data = vec![3, 2, 1];
         let account1_rent_epoch = Epoch::default();
@@ -170,8 +170,8 @@ pub(crate) mod tests {
         }
         executable_elf.verify::<RequisiteVerifier>().unwrap();
 
-        let account1_key = Pubkey::new_from_array([1u8; 32]);
-        let account1_owner = Pubkey::new_from_array([2u8; 32]);
+        let account1_key = Pubkey::new_from_array([1u8; PUBKEY_BYTES]);
+        let account1_owner = Pubkey::new_from_array([2u8; PUBKEY_BYTES]);
         let mut account1_lamports = 11;
         let mut account1_data = vec![3, 2, 1];
         let account1_rent_epoch = Epoch::default();
@@ -187,7 +187,7 @@ pub(crate) mod tests {
         );
         let accounts: Vec<AccountInfo> = vec![account1];
 
-        let program_id = Pubkey::new_from_array([0xcu8; 32]);
+        let program_id = Pubkey::new_from_array([0xcu8; PUBKEY_BYTES]);
         let instruction_data: &[u8] = &[1, 2, 3, 4];
 
         let (interpreter_instruction_count, interpreter_final_pct) = {

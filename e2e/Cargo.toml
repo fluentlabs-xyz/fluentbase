@@ -40,7 +40,7 @@ default = [
     "wasmtime",
     "debug-print",
     "enable-svm",
-    "fast-panic",
+    #    "fast-panic",
 ]
 enable-svm = [
     "fluentbase-genesis/enable-svm"

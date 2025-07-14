@@ -15,7 +15,7 @@ use fluentbase_sdk::SharedAPI;
 use serde::{Deserialize, Serialize};
 use solana_bincode::{deserialize, serialize};
 use solana_instruction::error::InstructionError;
-use solana_pubkey::Pubkey;
+use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_stable_layout::stable_instruction::StableInstruction;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -298,7 +298,7 @@ fn test_transfer_lamports() {
 
     let from = Pubkey::new_unique();
     let from_account = AccountSharedData::new(100, 0, &system_program::id());
-    let to = Pubkey::from([3; 32]);
+    let to = Pubkey::from([3; PUBKEY_BYTES]);
     let to_account = AccountSharedData::new(1, 0, &to); // account owner should not matter
     let transaction_accounts = vec![
         (from.clone(), from_account.clone()),

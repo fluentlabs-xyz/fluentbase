@@ -182,7 +182,7 @@ mod tests {
     use alloc::rc::Rc;
     use core::cell::RefCell;
     use solana_account_info::AccountInfo;
-    use solana_pubkey::Pubkey;
+    use solana_pubkey::{Pubkey, PUBKEY_BYTES};
     use solana_stable_layout::stable_vec::StableVec;
     use std::ops::Deref;
 
@@ -313,29 +313,29 @@ mod tests {
         let mmh = MemoryMappingHelper::default();
 
         let num: u64 = 1;
-        let key_1 = Pubkey::new_from_array([num as u8; 32]);
-        let owner_1 = Pubkey::new_from_array([num as u8 + 10; 32]);
+        let key_1 = Pubkey::new_from_array([num as u8; PUBKEY_BYTES]);
+        let owner_1 = Pubkey::new_from_array([num as u8 + 10; PUBKEY_BYTES]);
         let mut lamports_1 = num + 20;
         let rent_epoch_1 = num + 30;
         let mut data_1 = [1, 2, 3].to_vec();
 
         let num: u64 = 2;
-        let key_2 = Pubkey::new_from_array([num as u8; 32]);
-        let owner_2 = Pubkey::new_from_array([num as u8 + 10; 32]);
+        let key_2 = Pubkey::new_from_array([num as u8; PUBKEY_BYTES]);
+        let owner_2 = Pubkey::new_from_array([num as u8 + 10; PUBKEY_BYTES]);
         let mut lamports_2 = num + 20;
         let rent_epoch_2 = num + 30;
         let mut data_2 = [1, 2, 3, 4].to_vec();
 
         let num: u64 = 4;
-        let key_3 = Pubkey::new_from_array([num as u8; 32]);
-        let owner_3 = Pubkey::new_from_array([num as u8 + 10; 32]);
+        let key_3 = Pubkey::new_from_array([num as u8; PUBKEY_BYTES]);
+        let owner_3 = Pubkey::new_from_array([num as u8 + 10; PUBKEY_BYTES]);
         let mut lamports_3 = num + 20;
         let rent_epoch_3 = num + 30;
         let mut data_3 = [1, 2, 3, 4].to_vec();
 
         let num: u64 = 3;
-        let key_4 = Pubkey::new_from_array([num as u8; 32]);
-        let owner_4 = Pubkey::new_from_array([num as u8 + 10; 32]);
+        let key_4 = Pubkey::new_from_array([num as u8; PUBKEY_BYTES]);
+        let owner_4 = Pubkey::new_from_array([num as u8 + 10; PUBKEY_BYTES]);
         let mut lamports_4 = num + 20;
         let rent_epoch_4 = num + 30;
         let mut data_4 = [1, 2, 3, 4].to_vec();

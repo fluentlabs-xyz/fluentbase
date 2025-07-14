@@ -14,6 +14,7 @@ mod tests {
     use fluentbase_sdk::SharedAPI;
     use solana_bincode::serialize;
     use solana_instruction::error::InstructionError;
+    use solana_pubkey::PUBKEY_BYTES;
 
     fn process_instruction<SDK: SharedAPI>(
         sdk: &SDK,
@@ -40,7 +41,7 @@ mod tests {
     fn test_create_account() {
         let sdk = new_test_sdk();
 
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let to = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
@@ -79,7 +80,7 @@ mod tests {
     fn test_create_account_with_seed() {
         let sdk = new_test_sdk();
 
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let seed = "shiny pepper";
         let to = Pubkey::create_with_seed(&from, seed, &new_owner).unwrap();
@@ -121,7 +122,7 @@ mod tests {
     fn test_create_account_with_seed_separate_base_account() {
         let sdk = new_test_sdk();
 
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let base = Pubkey::new_unique();
         let seed = "shiny pepper";
@@ -193,7 +194,7 @@ mod tests {
     fn test_create_account_with_seed_missing_sig() {
         let sdk = new_test_sdk();
 
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let seed = "dull boy";
         let to = Pubkey::create_with_seed(&from, seed, &new_owner).unwrap();
@@ -232,7 +233,7 @@ mod tests {
         let sdk = new_test_sdk();
 
         // create account with zero lamports transferred
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &Pubkey::new_unique()); // not from system account
         let to = Pubkey::new_unique();
@@ -272,7 +273,7 @@ mod tests {
         let sdk = new_test_sdk();
 
         // Attempt to create account with more lamports than from_account has
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &Pubkey::new_unique());
         let to = Pubkey::new_unique();
@@ -359,13 +360,13 @@ mod tests {
     fn test_create_already_in_use() {
         let sdk = new_test_sdk();
 
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
         let owned_key = Pubkey::new_unique();
 
         // Attempt to create system account in account already owned by another program
-        let original_program_owner = Pubkey::from([5; 32]);
+        let original_program_owner = Pubkey::from([5; PUBKEY_BYTES]);
         let owned_account = AccountSharedData::new(0, 0, &original_program_owner);
         let unchanged_account = owned_account.clone();
         let accounts = process_instruction(
@@ -458,7 +459,7 @@ mod tests {
         let sdk = new_test_sdk();
 
         // Attempt to create an account without signing the transfer
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
         let owned_key = Pubkey::new_unique();
@@ -585,7 +586,7 @@ mod tests {
         let sdk = new_test_sdk();
 
         // Attempt to create system account in account with populated data
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
         let populated_key = Pubkey::new_unique();
@@ -623,7 +624,7 @@ mod tests {
     fn test_assign() {
         let sdk = new_test_sdk();
 
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let pubkey = Pubkey::new_unique();
         let account = AccountSharedData::new(100, 0, &system_program::id());
 
@@ -726,7 +727,7 @@ mod tests {
 
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
-        let to = Pubkey::from([3; 32]);
+        let to = Pubkey::from([3; PUBKEY_BYTES]);
         let to_account = AccountSharedData::new(1, 0, &to); // account owner should not matter
         let transaction_accounts = vec![
             (from.clone(), from_account.clone()),
@@ -808,12 +809,12 @@ mod tests {
         let sdk = new_test_sdk();
 
         let base = Pubkey::new_unique();
-        let base_account = AccountSharedData::new(100, 0, &Pubkey::from([2; 32])); // account owner should not matter
+        let base_account = AccountSharedData::new(100, 0, &Pubkey::from([2; PUBKEY_BYTES])); // account owner should not matter
         let from_seed = "42".to_string();
         let from_owner = system_program::id();
         let from = Pubkey::create_with_seed(&base, from_seed.as_str(), &from_owner).unwrap();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
-        let to = Pubkey::from([3; 32]);
+        let to = Pubkey::from([3; PUBKEY_BYTES]);
         let to_account = AccountSharedData::new(1, 0, &to); // account owner should not matter
         let transaction_accounts =
             vec![(from, from_account), (base, base_account), (to, to_account)];

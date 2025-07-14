@@ -35,7 +35,7 @@ mod tests {
     use hashbrown::HashMap;
     use solana_bincode::serialize;
     use solana_instruction::AccountMeta;
-    use solana_pubkey::Pubkey;
+    use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 
     fn main_single_message<API: MetadataAPI>(
         mut sdk: impl SharedAPI,
@@ -82,9 +82,9 @@ mod tests {
         let pk_tmp = Pubkey::new_unique();
         let pk_tmp_account = AccountSharedData::new(100, 0, &system_program_id);
 
-        let pk_exec = Pubkey::from([8; 32]);
+        let pk_exec = Pubkey::from([8; PUBKEY_BYTES]);
 
-        let pk_authority = Pubkey::from([9; 32]);
+        let pk_authority = Pubkey::from([9; PUBKEY_BYTES]);
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
@@ -307,7 +307,7 @@ mod tests {
         let seeds = &[seed1, seed2];
         let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_exec);
 
-        let pk_authority = Pubkey::from([9; 32]);
+        let pk_authority = Pubkey::from([9; PUBKEY_BYTES]);
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
