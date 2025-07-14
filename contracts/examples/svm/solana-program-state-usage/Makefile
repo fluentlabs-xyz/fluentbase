@@ -34,3 +34,4 @@ build_cargo_powered_solana_program:
 	#cd $(SOLANA_ROOT) && git checkout v2.1.18 && ./cargo-build-sbf -- -Znext-lockfile-bump
 	cargo build-sbf -j1 -- -Znext-lockfile-bump
 	cp ../../../../target/target2/sbf-solana-solana/release/fluentbase_examples_svm_$(INPUT_NAME).so assets/$(OUTPUT_NAME).so
+	ls -alh assets/$(OUTPUT_NAME).so

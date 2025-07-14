@@ -1,6 +1,5 @@
 use crate::{
     account::AccountSharedData,
-    // bpf_loader,
     clock::Slot,
     context::{InstructionContext, InvokeContext, TransactionContext},
     hash::{Hash, Hasher},
@@ -83,7 +82,7 @@ impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
 
     fn create_hasher() -> Self {
         Keccak256Hasher {
-            initiated: false,
+            initiated: Default::default(),
             value: Default::default(),
             _sdk: Default::default(),
         }
@@ -94,7 +93,6 @@ impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
             panic!("accumulation not supported yet")
         } else {
             self.value = keccak256(val).0;
-            self.value = Default::default();
             self.initiated = true;
         }
     }

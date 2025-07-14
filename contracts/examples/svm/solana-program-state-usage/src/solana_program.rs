@@ -4,7 +4,10 @@ use fluentbase_examples_svm_bindings::{
     log_data_native,
     log_pubkey_native,
     set_return_data_native,
+    sol_keccak256_native,
+    sol_sha256_native,
 };
+use hex_literal::hex;
 use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
@@ -63,9 +66,39 @@ pub fn process_instruction(
     assert_eq!(&return_data_after_set.1, test_data_for_set_get_return_data);
     msg!(
         "return_data_after_set {:x?} (pk hex bytes: {:x?})",
-        return_data_after_set,
+        return_data_after_set.0,
         return_data_after_set.0.to_bytes()
     );
+
+    let test_data_for_keccak256: &[&[u8]] = &[
+        &[1u8, 2, 3],
+        // TODO need support for accumulation and validate it computes proper values
+        // &[4, 5, 6],
+    ];
+    let keccak256_result_expected =
+        hex!("f1885eda54b7a053318cd41e2093220dab15d65381b1157a3633a83bfd5c9239");
+    let keccak256_result = sol_keccak256_native(test_data_for_keccak256);
+    msg!(
+        "test_data_for_keccak256 {:x?} keccak256_result {:x?}",
+        test_data_for_keccak256,
+        hex::encode(keccak256_result)
+    );
+    assert_eq!(&keccak256_result, &keccak256_result_expected);
+
+    let test_data_for_sha256: &[&[u8]] = &[
+        &[1u8, 2, 3],
+        // TODO need support for accumulation and validate it computes proper values
+        // &[4, 5, 6],
+    ];
+    let sha256_result_expected =
+        hex!("039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81");
+    let sha256_result = sol_sha256_native(test_data_for_sha256);
+    msg!(
+        "test_data_for_sha256 {:x?} sha256_result {}",
+        test_data_for_sha256,
+        hex::encode(&sha256_result)
+    );
+    assert_eq!(&sha256_result, &sha256_result_expected);
 
     msg!(
         "process_instruction: program_id {:x?} accounts.len {} instruction_data {:x?}",

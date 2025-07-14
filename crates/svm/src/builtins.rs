@@ -20,7 +20,7 @@ use crate::{
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{debug_log_ext, SharedAPI};
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
     error::EbpfError,
@@ -466,21 +466,20 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let untranslated_fields = translate_slice::<SliceFatPtr64<u8>>(
+        let untranslated_data_fields = translate_slice::<SliceFatPtr64<u8>>(
             memory_mapping,
             addr,
             len,
             invoke_context.get_check_aligned(),
         )?;
-
-        let fields = untranslated_fields
+        let data_fields = untranslated_data_fields
             .iter()
-            .map(|untranslated_seed| {
-                Ok(untranslated_seed.as_ref().to_vec_cloned())
+            .map(|untranslated_data_field| {
+                Ok(untranslated_data_field.as_ref().to_vec_cloned())
             })
             .collect::<Result<Vec<_>, SvmError>>()?;
 
-        log_str_common!(alloc::format!("hex fields: {:x?}", fields));
+        log_str_common!(alloc::format!("hex fields: {:x?}", data_fields));
 
         Ok(0)
     }
@@ -551,19 +550,20 @@ declare_builtin_function!(
         )?;
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
-            let vals = translate_slice::<SliceFatPtr64<u8>>(
+            let untranslated_vals = translate_slice::<SliceFatPtr64<u8>>(
                 memory_mapping,
                 vals_addr,
                 vals_len,
                 invoke_context.get_check_aligned(),
-
             )?;
-            for val in vals.iter() {
-                let bytes = val.as_ref().to_vec_cloned();
+            for untranslated_val in untranslated_vals.iter() {
+                let bytes = untranslated_val.as_ref().to_vec_cloned();
                 hasher.hash(&bytes);
             }
         }
-        hash_result.copy_from_slice(hasher.result().as_ref());
+        let hasher_result = hasher.result();
+        let hashing_result = hasher_result.as_ref();
+        hash_result.copy_from_slice(hashing_result);
         Ok(0)
     }
 );
