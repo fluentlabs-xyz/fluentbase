@@ -43,7 +43,8 @@ default = [
     #    "fast-panic",
 ]
 enable-svm = [
-    "fluentbase-genesis/enable-svm"
+    "fluentbase-genesis/enable-svm",
+    "fluentbase-svm/use-extended-debug-log"
 ]
 fast-panic = [
     "fluentbase-sdk/fast-panic",

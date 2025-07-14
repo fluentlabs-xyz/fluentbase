@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-svm = { workspace = true, default-features = false }
+fluentbase-svm = { workspace = true, default-features = false, features = [
+    "use-extended-debug-log"
+] }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }

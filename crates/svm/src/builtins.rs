@@ -114,14 +114,22 @@ pub fn register_builtins<SDK: SharedAPI>(
     //     .unwrap();
 }
 
-#[allow(unused)]
-fn log_str_common(value: &str) {
-    #[cfg(target_arch = "wasm32")]
-    use fluentbase_sdk::debug_log;
-    #[cfg(test)]
-    println!("builtin log: {}", value);
-    #[cfg(target_arch = "wasm32")]
-    debug_log!("builtin log: {}", value);
+macro_rules! log_str_common {
+    ($value:expr) => {
+        #[allow(unused)]
+        {
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            println!("builtin log: {}", $value);
+            #[cfg(target_arch = "wasm32")]
+            {
+                #[cfg(not(feature = "use-extended-debug-log"))]
+                use fluentbase_sdk::debug_log as log_macro;
+                #[cfg(feature = "use-extended-debug-log")]
+                use fluentbase_sdk::debug_log_ext as log_macro;
+                log_macro!("builtin log: {}", $value);
+            }
+        }
+    };
 }
 
 // TODO
@@ -295,7 +303,7 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
             #[allow(unused_variables)]
             &mut |string: &str| {
-                log_str_common(string);
+                log_str_common!(string);
                 Ok(0)
             },
 
@@ -317,7 +325,7 @@ declare_builtin_function!(
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         use alloc::format;
-        log_str_common(&format!("{arg1:#x}, {arg2:#x}, {arg3:#x}, {arg4:#x}, {arg5:#x}"));
+        log_str_common!(&format!("{arg1:#x}, {arg2:#x}, {arg3:#x}, {arg4:#x}, {arg5:#x}"));
         Ok(0)
     }
 );
@@ -340,7 +348,7 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
             false,
         )?;
-        log_str_common(&pubkey.to_string());
+        log_str_common!(&pubkey.to_string());
         Ok(0)
     }
 );

@@ -68,3 +68,4 @@ std = [
 ]
 debug-print = []
 do-not-validate-elf-on-deploy = []
+use-extended-debug-log = []
