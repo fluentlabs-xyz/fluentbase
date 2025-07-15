@@ -5,30 +5,13 @@ use crate::{
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    create_import_linker,
-    is_resumable_precompile,
-    Address,
-    BytecodeOrHash,
-    Bytes,
-    ExitCode,
-    SysFuncIdx,
-    B256,
-    PRECOMPILE_ADDRESSES,
-    STATE_DEPLOY,
-    STATE_MAIN,
+    create_import_linker, is_resumable_precompile, Address, BytecodeOrHash, Bytes, ExitCode,
+    SysFuncIdx, B256, PRECOMPILE_ADDRESSES, STATE_DEPLOY, STATE_MAIN,
 };
 use hashbrown::{hash_map::Entry, HashMap};
 use rwasm::{
-    ExecutionEngine,
-    ExecutorConfig,
-    ImportLinker,
-    RwasmModule,
-    Store,
-    Strategy,
-    TrapCode,
-    TypedCaller,
-    TypedStore,
-    Value,
+    CompilationConfig, ExecutionEngine, ExecutorConfig, ImportLinker, RwasmModule, Store, Strategy,
+    TrapCode, TypedCaller, TypedStore, Value,
 };
 use std::{cell::RefCell, fmt::Debug, mem::take, rc::Rc, sync::Arc};
 
@@ -82,8 +65,11 @@ impl CachingRuntime {
         let rwasm_module = Rc::new(RwasmModule::new_or_empty(rwasm_bytecode.as_ref()).0);
         #[cfg(feature = "wasmtime")]
         if PRECOMPILE_ADDRESSES.contains(&address) {
-            let wasmtime_module =
-                rwasm::compile_wasmtime_module(&rwasm_module.wasm_section).unwrap();
+            let wasmtime_module = rwasm::compile_wasmtime_module(
+                CompilationConfig::default(),
+                &rwasm_module.wasm_section,
+            )
+            .unwrap();
             let strategy = Arc::new(Strategy::Wasmtime {
                 module: Rc::new(wasmtime_module),
                 resumable: is_resumable_precompile(&address),
