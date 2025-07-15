@@ -101,12 +101,6 @@ impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
     }
 }
 
-pub struct PoseidonHasher<SDK> {
-    initiated: bool,
-    value: [u8; 32],
-    _sdk: PhantomData<SDK>,
-}
-
 pub struct Blake3Hasher(blake3::Hasher);
 impl HasherImpl for Blake3Hasher {
     const NAME: &'static str = "Blake3";
