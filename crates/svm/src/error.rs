@@ -35,6 +35,50 @@ impl Display for RuntimeError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Secp256k1RecoverError {
+    InvalidHash,
+    InvalidRecoveryId,
+    InvalidSignature,
+}
+
+impl From<u64> for Secp256k1RecoverError {
+    fn from(v: u64) -> Secp256k1RecoverError {
+        match v {
+            1 => Secp256k1RecoverError::InvalidHash,
+            2 => Secp256k1RecoverError::InvalidRecoveryId,
+            3 => Secp256k1RecoverError::InvalidSignature,
+            _ => panic!("Unsupported Secp256k1RecoverError"),
+        }
+    }
+}
+
+impl From<Secp256k1RecoverError> for u64 {
+    fn from(v: Secp256k1RecoverError) -> u64 {
+        match v {
+            Secp256k1RecoverError::InvalidHash => 1,
+            Secp256k1RecoverError::InvalidRecoveryId => 2,
+            Secp256k1RecoverError::InvalidSignature => 3,
+        }
+    }
+}
+
+impl Display for Secp256k1RecoverError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Secp256k1RecoverError::InvalidHash => write!(f, "Secp256k1RecoverError::InvalidHash"),
+            Secp256k1RecoverError::InvalidRecoveryId => {
+                write!(f, "Secp256k1RecoverError::InvalidRecoveryId")
+            }
+            Secp256k1RecoverError::InvalidSignature => {
+                write!(f, "Secp256k1RecoverError::InvalidSignature")
+            }
+        }
+    }
+}
+
+impl core::error::Error for Secp256k1RecoverError {}
+
 #[derive(Debug)]
 pub enum SvmError {
     ElfError(ElfError),
@@ -46,6 +90,7 @@ pub enum SvmError {
     InstructionError(InstructionError),
     SyscallError(SyscallError),
     RuntimeError(RuntimeError),
+    Secp256k1RecoverError(Secp256k1RecoverError),
 }
 
 impl Display for SvmError {
@@ -78,6 +123,9 @@ impl Display for SvmError {
             }
             SvmError::ExitCode(e) => {
                 write!(f, "SvmError::ExitCode:{}", e)
+            }
+            SvmError::Secp256k1RecoverError(e) => {
+                write!(f, "SvmError::Secp256k1RecoverError:{}", e)
             }
         }
     }
@@ -149,6 +197,7 @@ impl From<SvmError> for Error {
             SvmError::InstructionError(e) => Box::new(e),
             SvmError::SyscallError(e) => Box::new(e),
             SvmError::RuntimeError(e) => Box::new(e),
+            SvmError::Secp256k1RecoverError(e) => Box::new(e),
         }
     }
 }

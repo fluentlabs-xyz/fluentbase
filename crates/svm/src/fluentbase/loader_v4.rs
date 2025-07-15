@@ -1,7 +1,6 @@
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     common::{lamports_from_evm_balance, pubkey_from_evm_address},
-    error::SvmError,
     fluentbase::{
         common::{extract_account_data_or_default, flush_accounts, process_svm_result},
         helpers::exec_encoded_svm_batch_message,
@@ -256,38 +255,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     .expect("failed to write loader_v4");
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
-    match result {
-        Ok(_) => {}
-        Err(ref e1) => match e1 {
-            SvmError::ElfError(_) => {
-                debug_log_ext!()
-            }
-            SvmError::EbpfError(_) => {
-                debug_log_ext!()
-            }
-            SvmError::TransactionError(e2) => {
-                debug_log_ext!("{}", e2)
-            }
-            SvmError::BincodeEncodeError(_) => {
-                debug_log_ext!()
-            }
-            SvmError::BincodeDecodeError(_) => {
-                debug_log_ext!()
-            }
-            SvmError::ExitCode(_) => {
-                debug_log_ext!()
-            }
-            SvmError::InstructionError(_) => {
-                debug_log_ext!()
-            }
-            SvmError::SyscallError(_) => {
-                debug_log_ext!()
-            }
-            SvmError::RuntimeError(_) => {
-                debug_log_ext!()
-            }
-        },
-    }
     let (result_accounts, _balance_changes): (
         HashMap<Pubkey, AccountSharedData>,
         HashMap<Pubkey, (u64, u64)>,

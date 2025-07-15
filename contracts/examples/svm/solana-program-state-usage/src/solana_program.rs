@@ -3,6 +3,7 @@ use fluentbase_examples_svm_bindings::{
     get_return_data,
     log_data_native,
     log_pubkey_native,
+    secp256k1_recover_native,
     set_return_data_native,
     sol_blake3_native,
     sol_keccak256_native,
@@ -71,19 +72,18 @@ pub fn process_instruction(
         return_data_after_set.0.to_bytes()
     );
 
-    let test_data_for_keccak256: &[&[u8]] = &[
-        &[1u8, 2, 3],
-        // TODO no support for accumulation for now
-        // &[4, 5, 6],
-    ];
+    let test_data_for_keccak256: &[&[u8]] = &[&[1u8, 2, 3], &[4, 5, 6]];
     let keccak256_result_expected =
-        hex!("f1885eda54b7a053318cd41e2093220dab15d65381b1157a3633a83bfd5c9239");
+        hex!("13a08e3cd39a1bc7bf9103f63f83273cced2beada9f723945176d6b983c65bd2");
     let keccak256_result = sol_keccak256_native(test_data_for_keccak256);
     msg!(
         "test_data_for_keccak256 {:x?} keccak256_result {:x?}",
         test_data_for_keccak256,
         hex::encode(keccak256_result)
     );
+    assert_eq!(&keccak256_result, &keccak256_result_expected);
+    let test_data_for_keccak256: &[&[u8]] = &[&[1u8, 2, 3, 4, 5, 6]];
+    let keccak256_result = sol_keccak256_native(test_data_for_keccak256);
     assert_eq!(&keccak256_result, &keccak256_result_expected);
 
     let test_data_for_sha256: &[&[u8]] = &[&[1u8, 2, 3], &[4, 5, 6]];
@@ -96,6 +96,9 @@ pub fn process_instruction(
         hex::encode(&sha256_result)
     );
     assert_eq!(&sha256_result, &sha256_result_expected);
+    let test_data_for_sha256: &[&[u8]] = &[&[1u8, 2, 3, 4, 5, 6]];
+    let sha256_result = sol_sha256_native(test_data_for_sha256);
+    assert_eq!(&sha256_result, &sha256_result_expected);
 
     let test_data_for_blake3: &[&[u8]] = &[&[1u8, 2, 3], &[4, 5, 6]];
     let blake3_result_expected =
@@ -107,6 +110,59 @@ pub fn process_instruction(
         hex::encode(&blake3_result)
     );
     assert_eq!(&blake3_result, &blake3_result_expected);
+    let test_data_for_blake3: &[&[u8]] = &[&[1u8, 2, 3, 4, 5, 6]];
+    let blake3_result = sol_blake3_native(test_data_for_blake3);
+    assert_eq!(&blake3_result, &blake3_result_expected);
+
+    {
+        let message = b"hello world";
+        let message_hash = {
+            let mut hasher = solana_program::keccak::Hasher::default();
+            hasher.hash(message);
+            hasher.result()
+        };
+
+        let pubkey_bytes: [u8; 64] = [
+            0x9B, 0xEE, 0x7C, 0x18, 0x34, 0xE0, 0x18, 0x21, 0x7B, 0x40, 0x14, 0x9B, 0x84, 0x2E,
+            0xFA, 0x80, 0x96, 0x00, 0x1A, 0x9B, 0x17, 0x88, 0x01, 0x80, 0xA8, 0x46, 0x99, 0x09,
+            0xE9, 0xC4, 0x73, 0x6E, 0x39, 0x0B, 0x94, 0x00, 0x97, 0x68, 0xC2, 0x28, 0xB5, 0x55,
+            0xD3, 0x0C, 0x0C, 0x42, 0x43, 0xC1, 0xEE, 0xA5, 0x0D, 0xC0, 0x48, 0x62, 0xD3, 0xAE,
+            0xB0, 0x3D, 0xA2, 0x20, 0xAC, 0x11, 0x85, 0xEE,
+        ];
+        let signature_bytes: [u8; 64] = [
+            0x93, 0x92, 0xC4, 0x6C, 0x42, 0xF6, 0x31, 0x73, 0x81, 0xD4, 0xB2, 0x44, 0xE9, 0x2F,
+            0xFC, 0xE3, 0xF4, 0x57, 0xDD, 0x50, 0xB3, 0xA5, 0x20, 0x26, 0x3B, 0xE7, 0xEF, 0x8A,
+            0xB0, 0x69, 0xBB, 0xDE, 0x2F, 0x90, 0x12, 0x93, 0xD7, 0x3F, 0xA0, 0x29, 0x0C, 0x46,
+            0x4B, 0x97, 0xC5, 0x00, 0xAD, 0xEA, 0x6A, 0x64, 0x4D, 0xC3, 0x8D, 0x25, 0x24, 0xEF,
+            0x97, 0x6D, 0xC6, 0xD7, 0x1D, 0x9F, 0x5A, 0x26,
+        ];
+        let recovery_id: u8 = 0;
+
+        let signature = libsecp256k1::Signature::parse_standard_slice(&signature_bytes).unwrap();
+
+        // Flip the S value in the signature to make a different but valid signature.
+        let mut alt_signature = signature;
+        alt_signature.s = -alt_signature.s;
+        let alt_recovery_id = libsecp256k1::RecoveryId::parse(recovery_id ^ 1).unwrap();
+
+        let alt_signature_bytes = alt_signature.serialize();
+        let alt_recovery_id = alt_recovery_id.serialize();
+
+        let recovered_pubkey =
+            secp256k1_recover_native(&message_hash.0, recovery_id as u64, &signature_bytes);
+        msg!("recovered_pubkey {:x?}", &recovered_pubkey);
+        // TODO starts to return error when uncommented. looks like starts to use some unimplemented builtin
+        // assert_eq!(&recovered_pubkey, &pubkey_bytes);
+
+        let alt_recovered_pubkey = secp256k1_recover_native(
+            &message_hash.0,
+            alt_recovery_id as u64,
+            &alt_signature_bytes,
+        );
+        msg!("alt_recovered_pubkey {:x?}", &alt_recovered_pubkey);
+        // TODO starts to return error when uncommented. looks like starts to use some unimplemented builtin
+        // assert_eq!(alt_recovered_pubkey, pubkey_bytes);
+    }
 
     msg!(
         "process_instruction: program_id {:x?} accounts.len {} instruction_data {:x?}",

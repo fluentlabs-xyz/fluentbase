@@ -3,7 +3,8 @@ use crate::{
     common::{Blake3Hasher, HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
-    error::{Error, RuntimeError, SvmError},
+    error::{Error, Secp256k1RecoverError, SvmError},
+    hash::{SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH},
     helpers::SyscallError,
     loaders::syscalls::cpi::cpi_common,
     mem_ops::{
@@ -20,8 +21,7 @@ use crate::{
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
-use fluentbase_sdk::{debug_log_ext, SharedAPI};
-use solana_feature_set::simplify_alt_bn128_syscall_error_codes;
+use fluentbase_sdk::SharedAPI;
 use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
@@ -92,10 +92,9 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
         .unwrap();
 
-    // TODO
-    // function_registry
-    //     .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
-    //     .unwrap();
+    function_registry
+        .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
+        .unwrap();
 
     // TODO: doesn't call hash computation handle/function, returns default value (zeroes)
     // function_registry
@@ -481,7 +480,7 @@ declare_builtin_function!(
             })
             .collect::<Result<Vec<_>, SvmError>>()?;
 
-        log_str_common!(alloc::format!("hex fields: {:x?}", data_fields));
+        log_str_common!(alloc::format!("hex fields: {:x?}", &data_fields));
 
         Ok(0)
     }
@@ -559,8 +558,8 @@ declare_builtin_function!(
                 invoke_context.get_check_aligned(),
             )?;
             for untranslated_val in untranslated_vals.iter() {
-                let bytes = untranslated_val.as_ref().to_vec_cloned();
-                hasher.hash(&bytes);
+                let bytes = untranslated_val.as_ref().as_slice();
+                hasher.hash(bytes);
             }
         }
         let hasher_result = hasher.result();
@@ -570,61 +569,61 @@ declare_builtin_function!(
     }
 );
 
-// declare_builtin_function!(
-//     /// secp256k1_recover
-//     SyscallSecp256k1Recover<SDK: SharedAPI>,
-//     fn rust(
-//         invoke_context: &mut InvokeContext<SDK>,
-//         hash_addr: u64,
-//         recovery_id_val: u64,
-//         signature_addr: u64,
-//         result_addr: u64,
-//         _arg5: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//         let hash = translate_slice::<u8>(
-//             memory_mapping,
-//             hash_addr,
-//             keccak::HASH_BYTES as u64,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let signature = translate_slice::<u8>(
-//             memory_mapping,
-//             signature_addr,
-//             SECP256K1_SIGNATURE_LENGTH as u64,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let secp256k1_recover_result = translate_slice_mut::<u8>(
-//             memory_mapping,
-//             result_addr,
-//             SECP256K1_PUBLIC_KEY_LENGTH as u64,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//
-//         let Ok(message) = libsecp256k1::Message::parse_slice(hash) else {
-//             return Ok(Secp256k1RecoverError::InvalidHash.into());
-//         };
-//         let Ok(adjusted_recover_id_val) = recovery_id_val.try_into() else {
-//             return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
-//         };
-//         let Ok(recovery_id) =libsecp256k1::RecoveryId::parse(adjusted_recover_id_val) else {
-//             return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
-//         };
-//         let Ok(signature) = libsecp256k1::Signature::parse_standard_slice(signature) else {
-//             return Ok(Secp256k1RecoverError::InvalidSignature.into());
-//         };
-//
-//         let public_key = match libsecp256k1::recover(&message, &signature, &recovery_id) {
-//             Ok(key) => key.serialize(),
-//             Err(_) => {
-//                 return Ok(Secp256k1RecoverError::InvalidSignature.into());
-//             }
-//         };
-//
-//         secp256k1_recover_result.copy_from_slice(&public_key[1..65]);
-//         Ok(SUCCESS)
-//     }
-// );
+declare_builtin_function!(
+    /// secp256k1_recover
+    SyscallSecp256k1Recover<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        hash_addr: u64,
+        recovery_id_val: u64,
+        signature_addr: u64,
+        result_addr: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let hash = translate_slice::<u8>(
+            memory_mapping,
+            hash_addr,
+            solana_hash::HASH_BYTES as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+        let signature = translate_slice::<u8>(
+            memory_mapping,
+            signature_addr,
+            SECP256K1_SIGNATURE_LENGTH as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+        let mut secp256k1_recover_result = translate_slice_mut::<u8>(
+            memory_mapping,
+            result_addr,
+            SECP256K1_PUBLIC_KEY_LENGTH as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let Ok(message) = libsecp256k1::Message::parse_slice(hash.as_slice()) else {
+            return Ok(Secp256k1RecoverError::InvalidHash.into());
+        };
+        let Ok(adjusted_recover_id_val) = recovery_id_val.try_into() else {
+            return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
+        };
+        let Ok(recovery_id) =libsecp256k1::RecoveryId::parse(adjusted_recover_id_val) else {
+            return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
+        };
+        let Ok(signature) = libsecp256k1::Signature::parse_standard_slice(signature.as_slice()) else {
+            return Ok(Secp256k1RecoverError::InvalidSignature.into());
+        };
+
+        let public_key = match libsecp256k1::recover(&message, &signature, &recovery_id) {
+            Ok(key) => key.serialize(),
+            Err(_) => {
+                return Ok(Secp256k1RecoverError::InvalidSignature.into());
+            }
+        };
+
+        secp256k1_recover_result.copy_from_slice(&public_key[1..65]);
+        Ok(SUCCESS)
+    }
+);
 
 #[cfg(feature = "enable-poseidon")]
 declare_builtin_function!(

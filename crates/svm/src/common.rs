@@ -17,7 +17,6 @@ use solana_rbpf::{
     vm::Config,
 };
 
-pub const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
 pub const DEPRECATED_LOADER_COMPUTE_UNITS: u64 = 1_140;
 pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 /// Maximum over-the-wire size of a Transaction
@@ -72,8 +71,8 @@ impl HasherImpl for Sha256Hasher {
 }
 
 pub struct Keccak256Hasher<SDK: SharedAPI> {
-    initiated: bool,
-    value: [u8; 32],
+    value: Option<[u8; 32]>,
+    acc: Vec<u8>,
     _sdk: PhantomData<SDK>,
 }
 impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
@@ -82,24 +81,23 @@ impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
 
     fn create_hasher() -> Self {
         Keccak256Hasher {
-            initiated: Default::default(),
             value: Default::default(),
+            acc: Default::default(),
             _sdk: Default::default(),
         }
     }
 
     fn hash(&mut self, val: &[u8]) {
-        if self.initiated {
-            // TODO impl accumulating version
-            panic!("accumulation not supported yet")
-        } else {
-            self.value = keccak256(val).0;
-            self.initiated = true;
-        }
+        self.acc.extend_from_slice(val);
     }
 
-    fn result(self) -> Self::Output {
-        self.value
+    fn result(mut self) -> Self::Output {
+        if let Some(val) = self.value {
+            return val;
+        }
+        let result = keccak256(&self.acc).0;
+        self.value = Some(result);
+        result
     }
 }
 

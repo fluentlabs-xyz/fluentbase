@@ -17,8 +17,6 @@ use solana_rbpf::{
 
 pub type StdResult<T, E> = Result<T, E>;
 
-pub const INSTRUCTION_METER_BUDGET: u64 = 1024 * 1024;
-
 #[derive(Clone, PartialEq, Eq)]
 pub struct AllocErr;
 

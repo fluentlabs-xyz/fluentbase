@@ -88,3 +88,27 @@ extern "C" {
 pub fn sol_blake3_native(data: &[&[u8]]) -> [u8; 32] {
     hash_impl!(data, sol_blake3)
 }
+extern "C" {
+    fn sol_secp256k1_recover(
+        hash_addr: *const u8,
+        recovery_id_val: u64,
+        signature_addr: *const u8,
+        result_addr: *mut u8,
+    );
+}
+pub fn secp256k1_recover_native(
+    hash: &[u8; 32],
+    recovery_id_val: u64,
+    signature: &[u8; 64],
+) -> [u8; 64] {
+    let mut result = [0u8; 64];
+    unsafe {
+        sol_secp256k1_recover(
+            hash.as_ptr(),
+            recovery_id_val,
+            signature.as_ptr(),
+            result.as_mut_ptr(),
+        )
+    };
+    result
+}
