@@ -13,6 +13,7 @@ use crate::{
 };
 use core::str::from_utf8;
 use fluentbase_codec::{bytes::BytesMut, SolidityABI};
+use fluentbase_contracts::FLUENTBASE_EXAMPLES_PBR_MATH;
 use fluentbase_sdk::{bytes, Address, Bytes, U256};
 use fluentbase_sdk_testing::EvmTestingContext;
 use hex_literal::hex;
@@ -276,4 +277,22 @@ fn deploy_and_load_wasm_contract() {
             )
         }
     }
+}
+
+#[test]
+fn test_wasm_pbr_math() {
+    // deploy greeting WASM contract
+    let mut ctx = EvmTestingContext::default().with_minimal_genesis();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_PBR_MATH.wasm_bytecode.into(),
+    );
+    // call greeting WASM contract
+    let input = hex::decode("4c378238").unwrap();
+    let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
+    println!("Result: {:?}", result);
+    let output = result.output().unwrap_or_default();
+    assert!(result.is_success());
+    assert_eq!("Hello, World", from_utf8(output.as_ref()).unwrap());
 }

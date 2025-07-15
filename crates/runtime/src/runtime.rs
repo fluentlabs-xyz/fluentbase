@@ -190,6 +190,8 @@ impl Runtime {
         let result = self
             .strategy
             .execute(&mut self.store, func_name, &[], &mut []);
+        #[cfg(feature = "debug-print")]
+        println!("RESULT={:?}", result);
         self.handle_execution_result(result, fuel_remaining, fuel_refunded_before_the_call)
     }
 

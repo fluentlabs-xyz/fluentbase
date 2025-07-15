@@ -38,7 +38,7 @@ criterion = "0.6.0"
 default = [
     "std",
     "wasmtime",
-    #    "debug-print",
+    "debug-print",
     "enable-svm",
 ]
 enable-svm = [

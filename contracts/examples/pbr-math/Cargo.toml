@@ -1,0 +1,19 @@
+[package]
+name = "fluentbase-examples-pbr-math"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true }
+libm = { version = "0.2.15" }
+
+[dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std"]

@@ -2022,6 +2022,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-examples-pbr-math"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-sdk-testing",
+ "libm",
+]
+
+[[package]]
 name = "fluentbase-examples-router-solidity"
 version = "0.1.0"
 dependencies = [
