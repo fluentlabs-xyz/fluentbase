@@ -1,5 +1,6 @@
 extern crate alloc;
 use fluentbase_examples_svm_bindings::{
+    big_mod_exp_3,
     get_return_data,
     log_data_native,
     log_pubkey_native,
@@ -114,6 +115,7 @@ pub fn process_instruction(
     let blake3_result = sol_blake3_native(test_data_for_blake3);
     assert_eq!(&blake3_result, &blake3_result_expected);
 
+    // sol_secp256k1_recover
     {
         let message = b"hello world";
         let message_hash = {
@@ -151,7 +153,7 @@ pub fn process_instruction(
         let recovered_pubkey =
             secp256k1_recover_native(&message_hash.0, recovery_id as u64, &signature_bytes);
         msg!("recovered_pubkey {:x?}", &recovered_pubkey);
-        // TODO starts to return error when uncommented. looks like starts to use some unimplemented builtin
+        // TODO errors. looks like uses unimplemented builtin (sol_mem* or sol_alloc_free_). need better error handling
         // assert_eq!(&recovered_pubkey, &pubkey_bytes);
 
         let alt_recovered_pubkey = secp256k1_recover_native(
@@ -160,8 +162,37 @@ pub fn process_instruction(
             &alt_signature_bytes,
         );
         msg!("alt_recovered_pubkey {:x?}", &alt_recovered_pubkey);
-        // TODO starts to return error when uncommented. looks like starts to use some unimplemented builtin
+        // TODO errors. looks like uses unimplemented builtin (sol_mem* or sol_alloc_free_). need better error handling
         // assert_eq!(alt_recovered_pubkey, pubkey_bytes);
+    }
+
+    // sol_big_mod_exp
+    {
+        // {
+        //             "Base":     "1111111111111111111111111111111111111111111111111111111111111111",
+        //             "Exponent": "1111111111111111111111111111111111111111111111111111111111111111",
+        //             "Modulus":  "111111111111111111111111111111111111111111111111111111111111110A",
+        //             "Expected": "0A7074864588D6847F33A168209E516F60005A0CEC3F33AAF70E8002FE964BCD"
+        //         },
+        let base = hex::decode("1111111111111111111111111111111111111111111111111111111111111111")
+            .expect("failed to decode 'base'");
+        let exponent =
+            hex::decode("1111111111111111111111111111111111111111111111111111111111111111")
+                .expect("failed to decode 'exponent'");
+        let modulus =
+            hex::decode("111111111111111111111111111111111111111111111111111111111111110A")
+                .expect("failed to decode 'modulus");
+        let expected =
+            hex::decode("0A7074864588D6847F33A168209E516F60005A0CEC3F33AAF70E8002FE964BCD")
+                .expect("failed to decode 'expected'");
+        assert_eq!(base.len(), 32);
+        assert_eq!(exponent.len(), 32);
+        assert_eq!(modulus.len(), 32);
+        assert_eq!(expected.len(), 32);
+        let modulus: [u8; 32] = modulus.try_into().unwrap();
+        let result = big_mod_exp_3(&base, &exponent, &modulus);
+        msg!("big_mod_exp_3 result {:x?}", result);
+        assert_eq!(&expected, &result);
     }
 
     msg!(

@@ -1,5 +1,6 @@
 use crate::{
     alloc::string::ToString,
+    big_mod_exp::{big_mod_exp, BigModExpParams},
     common::{Blake3Hasher, HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
@@ -21,7 +22,7 @@ use crate::{
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{debug_log_ext, SharedAPI};
 use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
@@ -96,10 +97,6 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
         .unwrap();
 
-    // TODO: doesn't call hash computation handle/function, returns default value (zeroes)
-    // function_registry
-    //     .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK, PoseidonHasher<SDK>>)
-    //     .unwrap();
     function_registry
         .register_function_hashed("sol_sha256", SyscallHash::vm::<SDK, Sha256Hasher>)
         .unwrap();
@@ -111,6 +108,9 @@ pub fn register_builtins<SDK: SharedAPI>(
         .unwrap();
     function_registry
         .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_big_mod_exp", SyscallBigModExp::vm)
         .unwrap();
     #[cfg(feature = "enable-poseidon")]
     function_registry
@@ -821,5 +821,74 @@ declare_builtin_function!(
             signers_seeds_len,
             memory_mapping,
         )
+    }
+);
+
+declare_builtin_function!(
+    /// Big integer modular exponentiation
+    SyscallBigModExp<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        params: u64,
+        return_value: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        debug_log_ext!();
+        let params_slice = &translate_slice::<BigModExpParams>(
+            memory_mapping,
+            params,
+            1,
+            invoke_context.get_check_aligned(),
+        )?;
+        debug_log_ext!();
+        let params_ret = params_slice.try_get(0).ok_or(SyscallError::InvalidLength)?;
+        debug_log_ext!();
+        let params = params_ret.as_ref();
+        debug_log_ext!();
+
+        if params.base_len > 512 || params.exponent_len > 512 || params.modulus_len > 512 {
+            debug_log_ext!();
+            return Err(Box::new(SyscallError::InvalidLength));
+        }
+        debug_log_ext!();
+
+        // let input_len: u64 = core::cmp::max(params.base_len, params.exponent_len);
+        // let input_len: u64 = core::cmp::max(input_len, params.modulus_len);
+
+        let base = translate_slice::<u8>(
+            memory_mapping,
+            params.base,
+            params.base_len,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let exponent = translate_slice::<u8>(
+            memory_mapping,
+            params.exponent,
+            params.exponent_len,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let modulus = translate_slice::<u8>(
+            memory_mapping,
+            params.modulus,
+            params.modulus_len,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let value = big_mod_exp(base.as_slice(), exponent.as_slice(), modulus.as_slice());
+
+        let mut return_value = translate_slice_mut::<u8>(
+            memory_mapping,
+            return_value,
+            params.modulus_len,
+            invoke_context.get_check_aligned(),
+        )?;
+        return_value.copy_from_slice(value.as_slice());
+
+        Ok(0)
     }
 );

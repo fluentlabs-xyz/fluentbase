@@ -27,6 +27,7 @@ pub mod precompiles;
 mod process_instruction_tests;
 // #[cfg(test)]
 // pub mod secp256k1_instruction;
+pub mod big_mod_exp;
 pub mod epoch_schedule;
 pub mod fluentbase;
 pub mod hash;

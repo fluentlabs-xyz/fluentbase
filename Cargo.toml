@@ -198,6 +198,7 @@ once_cell = { version = "1.19", default-features = false, features = ["alloc"] }
 rand = "0.8"
 tokio = "1.44"
 either = { version = "1.15.0", default-features = false }
+num-bigint = { version = "0.4.6", default-features = false, features = [] }
 
 # dev-dependencies
 eyre = "0.6.12"
@@ -209,6 +210,7 @@ serde_derive = "1.0"
 thiserror = "2.0"
 triehash = "0.8"
 walkdir = "2.5"
+array-bytes = "1.6.0"
 
 [workspace.lints]
 rust.missing_debug_implementations = "warn"

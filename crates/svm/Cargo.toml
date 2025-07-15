@@ -49,15 +49,19 @@ spin = { workspace = true, default-features = false, features = ["spin_mutex", "
 
 num-derive = { workspace = true }
 serde = { workspace = true, default-features = false }
+serde_json = { workspace = true, default-features = false, features = ["alloc"] }
 bincode = { workspace = true }
 lazy_static = { workspace = true, default-features = false }
 itertools = { workspace = true, default-features = false, features = ["use_alloc"] }
 libsecp256k1 = { workspace = true, features = ["static-context"] }
+num-bigint = { workspace = true, default-features = false }
 
 [dev-dependencies]
 rand = { version = "0.9.0", default-features = false, features = ["alloc", "thread_rng"] }
 memoffset = { workspace = true, default-features = false, features = [] }
 fluentbase-sdk-testing = { workspace = true }
+serde_derive = { workspace = true, default-features = false }
+array-bytes = { workspace = true, default-features = false, features = [] }
 
 [features]
 default = [
