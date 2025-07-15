@@ -106,8 +106,7 @@ mod tests {
         let pk_exec = pubkey_from_evm_address(&contract_address);
 
         let seed1 = b"seed";
-        let seed2 = pk_payer.as_ref();
-        let seeds = &[seed1.as_slice(), seed2];
+        let seeds = &[seed1.as_slice(), pk_payer.as_ref()];
         let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_exec);
 
         // exec
@@ -238,8 +237,7 @@ mod tests {
         let pk_exec = pubkey_from_evm_address(&contract_address);
 
         let seed1 = b"seed";
-        let seed2 = pk_payer.as_ref();
-        let seeds = &[seed1.as_slice(), seed2];
+        let seeds = &[seed1.as_slice(), pk_payer.as_ref()];
         let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_exec);
 
         // exec

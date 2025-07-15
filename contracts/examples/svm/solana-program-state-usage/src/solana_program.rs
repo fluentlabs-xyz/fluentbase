@@ -202,17 +202,20 @@ pub fn process_instruction(
             msg!("process_instruction: creating account");
             msg!("process_instruction: lamports {}", params.lamports_to_send);
             msg!("process_instruction: space {}", params.space,);
-            let seed1 = params.seeds[0].clone();
-            msg!(
-                "process_instruction: Create account: seed1: '{}'",
-                from_utf8(&seed1).map_err(|e| {
-                    msg!(
-                        "process_instruction: failed to convert to a valid UTF-8 string: {}",
-                        e
-                    );
-                    ProgramError::InvalidInstructionData
-                })?
-            );
+            let mut params_seeds = params.seeds.clone();
+            for (idx, seed) in params_seeds.iter().enumerate() {
+                msg!(
+                    "process_instruction: Create account: seed{}: '{}'",
+                    idx,
+                    from_utf8(&seed).map_err(|e| {
+                        msg!(
+                            "process_instruction: failed to convert to a valid UTF-8 string: {}",
+                            e
+                        );
+                        ProgramError::InvalidInstructionData
+                    })?
+                );
+            }
             msg!(
                 "process_instruction: byte_n_to_set: '{}'",
                 params.byte_n_to_set
@@ -225,23 +228,26 @@ pub fn process_instruction(
             let new_account: &AccountInfo = next_account_info(account_info_iter)?; // Account to create (can be a PDA)
             let system_program_account = next_account_info(account_info_iter)?;
 
-            let seed2 = payer.key.as_ref();
-            let seeds = &[&seed1, seed2];
-            let seeds_addr = seeds.as_ptr() as u64;
+            params_seeds.push(payer.key.as_ref().to_vec());
+            let seeds_addr = params_seeds.as_ptr() as u64;
             msg!(
                 "process_instruction: deriving pda: seeds {:x?} (addr:{}) program_id {:x?}",
-                seeds,
+                params_seeds,
                 seeds_addr,
                 program_id.as_ref()
             );
-            let (pda, bump) = Pubkey::find_program_address(seeds, program_id);
+            let seeds = params_seeds
+                .iter()
+                .map(|v| v.as_slice())
+                .collect::<Vec<_>>();
+            let (pda, bump) = Pubkey::find_program_address(seeds.as_slice(), program_id);
             msg!(
                 "process_instruction: result pda: {:x?} bump: {}",
                 &pda.to_bytes(),
                 bump
             );
 
-            let signer_seeds = &[&seed1, payer.key.as_ref(), &[bump]];
+            let signer_seeds = &[&params_seeds[0], payer.key.as_ref(), &[bump]];
 
             msg!(
                 "payer.key: {:x?} new_account.key: {:x?} lamports {} space {} program_id {:x?} signer_seeds {:x?}",
