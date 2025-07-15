@@ -17,6 +17,7 @@ fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-sdk-testing = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-svm = { workspace = true }
+fluentbase-svm-shared = { workspace = true }
 fluentbase-erc20 = { workspace = true }
 fluentbase-contracts = { workspace = true }
 

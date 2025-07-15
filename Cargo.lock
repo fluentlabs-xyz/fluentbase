@@ -2577,6 +2577,7 @@ dependencies = [
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "fluentbase-svm",
+ "fluentbase-svm-shared",
  "fluentbase-types",
  "hex",
  "hex-literal",
@@ -2752,6 +2753,14 @@ dependencies = [
  "solana_rbpf",
  "spin 0.10.0",
  "static_assertions",
+]
+
+[[package]]
+name = "fluentbase-svm-shared"
+version = "0.3.6-dev"
+dependencies = [
+ "bincode 1.3.3",
+ "serde",
 ]
 
 [[package]]

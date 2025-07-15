@@ -493,8 +493,8 @@ dependencies = [
 name = "fluentbase-examples-svm-solana-program-state-usage"
 version = "0.1.0"
 dependencies = [
- "bincode",
  "fluentbase-examples-svm-bindings",
+ "fluentbase-svm-shared",
  "hex",
  "hex-literal",
  "libsecp256k1 0.7.2",
@@ -507,6 +507,14 @@ dependencies = [
  "solana-program-error",
  "solana-pubkey",
  "solana-sdk",
+]
+
+[[package]]
+name = "fluentbase-svm-shared"
+version = "0.3.6-dev"
+dependencies = [
+ "bincode",
+ "serde",
 ]
 
 [[package]]
