@@ -260,6 +260,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         HashMap<Pubkey, (u64, u64)>,
     ) = match process_svm_result(result) {
         Ok((result_accounts, balance_changes)) => {
+            debug_log_ext!("exec ok");
             if result_accounts.len() > 0 {
                 let mut api: Option<&mut SDK> = None;
                 flush_accounts(&mut sdk, &mut api, &result_accounts)
@@ -268,7 +269,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             (result_accounts, balance_changes)
         }
         Err(err_str) => {
-            debug_log_ext!("err_str: {}", err_str);
+            debug_log_ext!("exec err: {}", err_str);
             panic!("failed to execute encoded svm batch message: {}", err_str);
         }
     };

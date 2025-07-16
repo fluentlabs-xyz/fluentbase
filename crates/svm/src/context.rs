@@ -511,15 +511,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         &self.traces
     }
 
-    pub fn inc_slots(&mut self, step: u64) {
-        self.program_cache_for_tx_batch
-            .set_slot_for_tests(self.program_cache_for_tx_batch.slot().saturating_add(step));
-    }
-
-    pub fn set_slot(&mut self, slot: Slot) {
-        self.program_cache_for_tx_batch.set_slot_for_tests(slot);
-    }
-
     /// Entrypoint for a cross-program invocation from a builtin program
     pub fn native_invoke(
         &mut self,

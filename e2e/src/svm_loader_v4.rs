@@ -1,6 +1,7 @@
 mod tests {
     use crate::EvmTestingContextWithGenesis;
     use core::str::from_utf8;
+    use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
     use fluentbase_sdk::{
         address,
         Address,
@@ -30,6 +31,7 @@ mod tests {
         test_structs::{
             Blake3,
             CreateAccountAndModifySomeData1,
+            CurvePointValidation,
             Keccak256,
             SetGetReturnData,
             Sha256,
@@ -692,6 +694,85 @@ mod tests {
             }
             let output = result.output().unwrap_or_default();
             assert!(result.is_success());
+            let expected_output = hex!("");
+            assert_eq!(hex::encode(expected_output), hex::encode(output));
+        }
+    }
+
+    #[test]
+    fn test_svm_sol_curve_validate_point() {
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let loader_id = loader_v4::id();
+        let system_program_id = system_program::id();
+        let account_with_program = load_program_account_from_elf_file(
+            &loader_id,
+            // "../examples/svm/solana-program/assets/solana_program.so",
+            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+        );
+        let payer_lamports = 101;
+        let seed1 = b"seed";
+
+        let (pk_payer, pk_exec, pk_new, contract_address) =
+            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+
+        // exec
+
+        let test_cases = vec![
+            CurvePointValidation {
+                curve_id: 0,
+                point: ED25519_BASEPOINT_POINT.compress().as_bytes().to_vec(),
+                expected_ret: 0, // OK
+            },
+            CurvePointValidation {
+                curve_id: 0,
+                point: [
+                    120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117,
+                    38, 84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,
+                ]
+                .to_vec(),
+                expected_ret: 1, // ERR
+            },
+        ];
+
+        for test_case in &test_cases {
+            let test_command: TestCommand = test_case.clone().into();
+            let instruction_data = serialize(&test_command).unwrap();
+            println!(
+                "instruction_data ({}): {:x?}",
+                instruction_data.len(),
+                &instruction_data
+            );
+
+            let instructions = vec![Instruction::new_with_bincode(
+                pk_exec.clone(),
+                &instruction_data,
+                vec![
+                    AccountMeta::new(pk_payer, true),
+                    AccountMeta::new(pk_new, false),
+                    AccountMeta::new(system_program_id, false),
+                ],
+            )];
+            let message = Message::new(&instructions, None);
+            let mut batch_message = BatchMessage::new(None);
+            batch_message.clear().append_one(message);
+            let input = serialize(&batch_message).unwrap();
+            println!("exec started");
+            let measure = Instant::now();
+            let result = ctx.call_evm_tx_simple(
+                DEPLOYER_ADDRESS,
+                contract_address,
+                input.into(),
+                None,
+                None,
+            );
+            println!("exec took: {:.2?}", measure.elapsed());
+            let output = result.output().unwrap();
+            if output.len() > 0 {
+                let out_text = from_utf8(output).unwrap();
+                println!("output.len {} output '{}'", output.len(), out_text);
+            }
+            let output = result.output().unwrap_or_default();
+            assert!(&result.is_success());
             let expected_output = hex!("");
             assert_eq!(hex::encode(expected_output), hex::encode(output));
         }

@@ -9,6 +9,7 @@ path = "src/solana_program.rs"
 
 [dependencies]
 fluentbase-examples-svm-bindings = { path = "../bindings" }
+fluentbase-svm-shared = { path = "../../../../crates/svm-shared" }
 
 solana-pubkey = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-account-info = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
@@ -17,10 +18,10 @@ solana-program-error = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.
 solana-msg = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-program = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
 solana-sdk = { git = "https://github.com/anza-xyz/agave", tag = "v2.1.18", default-features = false }
+
 num-traits = { version = "0.2.19", default-features = false, features = [] }
 num-derive = { version = "0.4.2", default-features = false, features = [] }
 libsecp256k1 = "0.7.2"
-fluentbase-svm-shared = { path = "../../../../crates/svm-shared" }
 
 [profile]
 

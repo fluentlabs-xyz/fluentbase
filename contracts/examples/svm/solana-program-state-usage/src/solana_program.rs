@@ -1,6 +1,7 @@
 extern crate alloc;
 use fluentbase_examples_svm_bindings::{
     big_mod_exp_3,
+    curve_validate_point_native,
     get_return_data,
     log_data_native,
     log_pubkey_native,
@@ -81,22 +82,23 @@ pub fn process_instruction(
     );
     let test_command: TestCommand =
         deserialize(&instruction_data).expect("failed to deserialize test command");
+    msg!("processing test_command: {:?}", test_command);
     match test_command {
-        TestCommand::ModifyAccount1(params) => {
+        TestCommand::ModifyAccount1(p) => {
             msg!("process_instruction: applying modifications to account 1");
 
-            let account = &accounts[params.account_idx];
+            let account = &accounts[p.account_idx];
             account.realloc(account.data_len() + MAX_PERMITTED_DATA_INCREASE, false)?;
-            account.data.borrow_mut()[params.byte_n_to_set as usize] = params.byte_n_val;
+            account.data.borrow_mut()[p.byte_n_to_set as usize] = p.byte_n_val;
 
             msg!("process_instruction: Command finished");
         }
-        TestCommand::CreateAccountAndModifySomeData1(params) => {
+        TestCommand::CreateAccountAndModifySomeData1(p) => {
             msg!("process_instruction: creating account");
-            msg!("process_instruction: lamports {}", params.lamports_to_send);
-            msg!("process_instruction: space {}", params.space,);
-            let mut params_seeds = params.seeds.clone();
-            for (idx, seed) in params_seeds.iter().enumerate() {
+            msg!("process_instruction: lamports {}", p.lamports_to_send);
+            msg!("process_instruction: space {}", p.space,);
+            let mut p_seeds = p.seeds.clone();
+            for (idx, seed) in p_seeds.iter().enumerate() {
                 msg!(
                     "process_instruction: Create account: seed{}: '{}'",
                     idx,
@@ -109,11 +111,8 @@ pub fn process_instruction(
                     })?
                 );
             }
-            msg!(
-                "process_instruction: byte_n_to_set: '{}'",
-                params.byte_n_to_set
-            );
-            msg!("process_instruction: byte_n_value: {}", params.byte_n_value);
+            msg!("process_instruction: byte_n_to_set: '{}'", p.byte_n_to_set);
+            msg!("process_instruction: byte_n_value: {}", p.byte_n_value);
 
             let account_info_iter = &mut accounts.iter();
 
@@ -121,18 +120,15 @@ pub fn process_instruction(
             let new_account: &AccountInfo = next_account_info(account_info_iter)?; // Account to create (can be a PDA)
             let system_program_account = next_account_info(account_info_iter)?;
 
-            params_seeds.push(payer.key.as_ref().to_vec());
-            let seeds_addr = params_seeds.as_ptr() as u64;
+            p_seeds.push(payer.key.as_ref().to_vec());
+            let seeds_addr = p_seeds.as_ptr() as u64;
             msg!(
                 "process_instruction: deriving pda: seeds {:x?} (addr:{}) program_id {:x?}",
-                params_seeds,
+                p_seeds,
                 seeds_addr,
                 program_id.as_ref()
             );
-            let seeds = params_seeds
-                .iter()
-                .map(|v| v.as_slice())
-                .collect::<Vec<_>>();
+            let seeds = p_seeds.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
             let (pda, bump) = Pubkey::find_program_address(seeds.as_slice(), program_id);
             msg!(
                 "process_instruction: result pda: {:x?} bump: {}",
@@ -140,14 +136,14 @@ pub fn process_instruction(
                 bump
             );
 
-            let signer_seeds = &[&params_seeds[0], payer.key.as_ref(), &[bump]];
+            let signer_seeds = &[&p_seeds[0], payer.key.as_ref(), &[bump]];
 
             msg!(
                 "payer.key: {:x?} new_account.key: {:x?} lamports {} space {} program_id {:x?} signer_seeds {:x?}",
                 payer.key.to_bytes(),
                 new_account.key.to_bytes(),
-                params.lamports_to_send,
-                params.space,
+                p.lamports_to_send,
+                p.space,
                 program_id.to_bytes(),
                 signer_seeds
             );
@@ -164,25 +160,25 @@ pub fn process_instruction(
                 &system_instruction::create_account(
                     payer.key,
                     new_account.key,
-                    params.lamports_to_send,
-                    params.space as u64,
+                    p.lamports_to_send,
+                    p.space as u64,
                     program_id, // Owner of your program
                 ),
                 account_infos,
                 &[signer_seeds], // optional, only if using PDA
             )?;
 
-            new_account.data.borrow_mut()[params.byte_n_to_set as usize] = params.byte_n_value;
+            new_account.data.borrow_mut()[p.byte_n_to_set as usize] = p.byte_n_value;
 
             msg!("Create account: end");
         }
         TestCommand::SolBigModExp(p) => {
             let modulus: [u8; 32] = p.modulus.try_into().unwrap();
             let result = big_mod_exp_3(&p.base, &p.exponent, &modulus);
-            assert_eq!(&p.expected, &result);
+            assert_eq!(&p.expected, &result.1);
         }
-        TestCommand::SolSecp256k1Recover(params) => {
-            let message = params.message;
+        TestCommand::SolSecp256k1Recover(p) => {
+            let message = p.message;
             let message_hash = {
                 let mut hasher = solana_program::keccak::Hasher::default();
                 hasher.hash(&message);
@@ -190,23 +186,23 @@ pub fn process_instruction(
             };
 
             let signature =
-                libsecp256k1::Signature::parse_standard_slice(&params.signature_bytes).unwrap();
+                libsecp256k1::Signature::parse_standard_slice(&p.signature_bytes).unwrap();
 
             // Flip the S value in the signature to make a different but valid signature.
             let mut alt_signature = signature;
             alt_signature.s = -alt_signature.s;
-            let alt_recovery_id = libsecp256k1::RecoveryId::parse(params.recovery_id ^ 1).unwrap();
+            let alt_recovery_id = libsecp256k1::RecoveryId::parse(p.recovery_id ^ 1).unwrap();
 
             let alt_signature_bytes = alt_signature.serialize();
             let alt_recovery_id = alt_recovery_id.serialize();
 
             let recovered_pubkey = secp256k1_recover_native(
                 &message_hash.0,
-                params.recovery_id as u64,
-                &params.signature_bytes.try_into().unwrap(),
+                p.recovery_id as u64,
+                &p.signature_bytes.try_into().unwrap(),
             );
             msg!("recovered_pubkey {:x?}", &recovered_pubkey);
-            assert_eq!(&recovered_pubkey, params.pubkey_bytes.as_slice());
+            assert_eq!(&recovered_pubkey.1, p.pubkey_bytes.as_slice());
 
             let alt_recovered_pubkey = secp256k1_recover_native(
                 &message_hash.0,
@@ -214,49 +210,53 @@ pub fn process_instruction(
                 &alt_signature_bytes,
             );
             msg!("alt_recovered_pubkey {:x?}", &alt_recovered_pubkey);
-            assert_eq!(alt_recovered_pubkey, params.pubkey_bytes.as_slice());
+            assert_eq!(alt_recovered_pubkey.1, p.pubkey_bytes.as_slice());
         }
-        TestCommand::Keccak256(params) => {
-            let data: Vec<&[u8]> = params.data.iter().map(|v| v.as_slice()).collect();
-            let expected_result = params.expected_result;
+        TestCommand::Keccak256(p) => {
+            let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
+            let expected_result = p.expected_result;
             let result = sol_keccak256_native(&data);
-            assert_eq!(&result, expected_result.as_slice());
+            assert_eq!(&result.1, expected_result.as_slice());
             let mut data_solid = Vec::new();
-            for v in &params.data {
+            for v in &p.data {
                 data_solid.extend_from_slice(v);
             }
             let result = sol_keccak256_native(&[data_solid.as_slice()]);
-            assert_eq!(&result, expected_result.as_slice());
+            assert_eq!(&result.1, expected_result.as_slice());
         }
-        TestCommand::Sha256(params) => {
-            let data: Vec<&[u8]> = params.data.iter().map(|v| v.as_slice()).collect();
-            let expected_result = params.expected_result;
+        TestCommand::Sha256(p) => {
+            let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
+            let expected_result = p.expected_result;
             let result = sol_sha256_native(&data);
-            assert_eq!(&result, expected_result.as_slice());
+            assert_eq!(&result.1, expected_result.as_slice());
             let mut data_solid = Vec::new();
-            for v in &params.data {
+            for v in &p.data {
                 data_solid.extend_from_slice(v);
             }
             let result = sol_sha256_native(&[data_solid.as_slice()]);
-            assert_eq!(&result, expected_result.as_slice());
+            assert_eq!(&result.1, expected_result.as_slice());
         }
-        TestCommand::Blake3(params) => {
-            let data: Vec<&[u8]> = params.data.iter().map(|v| v.as_slice()).collect();
-            let expected_result = params.expected_result;
+        TestCommand::Blake3(p) => {
+            let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
+            let expected_result = p.expected_result;
             let result = sol_blake3_native(data.as_slice());
-            assert_eq!(&result, expected_result.as_slice());
+            assert_eq!(&result.1, expected_result.as_slice());
             let data_solid: &[&[u8]] = &[&[1u8, 2, 3, 4, 5, 6]];
             let result = sol_blake3_native(data_solid);
-            assert_eq!(&result, expected_result.as_slice());
+            assert_eq!(&result.1, expected_result.as_slice());
         }
-        TestCommand::SetGetReturnData(params) => {
-            let data: &[u8] = params.data.as_slice();
+        TestCommand::SetGetReturnData(p) => {
+            let data: &[u8] = p.data.as_slice();
             let return_data_before_set = get_return_data();
             assert_eq!(return_data_before_set, None);
             set_return_data_native(data);
             let return_data_after_set =
                 get_return_data().expect("return data must exists as it has already been set");
             assert_eq!(&return_data_after_set.1, data);
+        }
+        TestCommand::CurvePointValidation(p) => {
+            let result = curve_validate_point_native(p.curve_id, &p.point.try_into().unwrap());
+            assert_eq!(result, p.expected_ret);
         }
     }
 
