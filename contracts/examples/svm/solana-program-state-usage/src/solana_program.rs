@@ -211,8 +211,7 @@ pub fn process_instruction(
                 &params.signature_bytes.try_into().unwrap(),
             );
             msg!("recovered_pubkey {:x?}", &recovered_pubkey);
-            // TODO errors. looks like uses unimplemented builtin (sol_mem* or sol_alloc_free_). need better error handling
-            // assert_eq!(&recovered_pubkey, &pubkey_bytes);
+            assert_eq!(&recovered_pubkey, params.pubkey_bytes.as_slice());
 
             let alt_recovered_pubkey = secp256k1_recover_native(
                 &message_hash.0,
@@ -220,8 +219,7 @@ pub fn process_instruction(
                 &alt_signature_bytes,
             );
             msg!("alt_recovered_pubkey {:x?}", &alt_recovered_pubkey);
-            // TODO errors. looks like uses unimplemented builtin (sol_mem* or sol_alloc_free_). need better error handling
-            // assert_eq!(alt_recovered_pubkey, pubkey_bytes);
+            assert_eq!(alt_recovered_pubkey, params.pubkey_bytes.as_slice());
         }
         TestCommand::Keccak256(params) => {
             let data: Vec<&[u8]> = params.data.iter().map(|v| v.as_slice()).collect();
