@@ -33,6 +33,7 @@ paste = { workspace = true }
 rand = { version = "0.9.1" }
 
 [dev-dependencies]
+fluentbase-svm = { workspace = true }
 criterion = "0.6.0"
 
 [features]
