@@ -50,19 +50,6 @@ pub fn process_instruction(
     let test_data_for_log: &[&[u8]] = &[&[1, 2, 3], &[4, 5, 6]];
     log_data_native(test_data_for_log);
 
-    let test_data_for_set_get_return_data: &[u8] = &[7, 6, 5, 4, 3, 2, 1];
-    let return_data_before_set = get_return_data();
-    msg!("return_data_before_set {:x?}", return_data_before_set);
-    set_return_data_native(test_data_for_set_get_return_data);
-    let return_data_after_set =
-        get_return_data().expect("return data must exists as it has already been set");
-    assert_eq!(&return_data_after_set.1, test_data_for_set_get_return_data);
-    msg!(
-        "return_data_after_set {:x?} (pk hex bytes: {:x?})",
-        return_data_after_set.0,
-        return_data_after_set.0.to_bytes()
-    );
-
     msg!(
         "process_instruction: program_id {:x?} accounts.len {} instruction_data {:x?}",
         program_id.to_bytes(),
