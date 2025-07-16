@@ -255,15 +255,16 @@ pub fn process_instruction(
             let data_solid: &[&[u8]] = &[&[1u8, 2, 3, 4, 5, 6]];
             let result = sol_blake3_native(data_solid);
             assert_eq!(&result, expected_result.as_slice());
-        } // TestCommand::SetGetReturnData(params) => {
-          //     let data: &[u8] = params.data.as_slice();
-          //     let return_data_before_set = get_return_data();
-          //     assert_eq!(return_data_before_set, None);
-          //     set_return_data_native(data);
-          //     let return_data_after_set =
-          //         get_return_data().expect("return data must exists as it has already been set");
-          //     assert_eq!(&return_data_after_set.1, data);
-          // }
+        }
+        TestCommand::SetGetReturnData(params) => {
+            let data: &[u8] = params.data.as_slice();
+            let return_data_before_set = get_return_data();
+            assert_eq!(return_data_before_set, None);
+            set_return_data_native(data);
+            let return_data_after_set =
+                get_return_data().expect("return data must exists as it has already been set");
+            assert_eq!(&return_data_after_set.1, data);
+        }
     }
 
     Ok(())

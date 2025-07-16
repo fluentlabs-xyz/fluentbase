@@ -74,7 +74,7 @@ pub enum TestCommand {
     Keccak256(Keccak256),
     Sha256(Sha256),
     Blake3(Blake3),
-    // SetGetReturnData(SetGetReturnData),
+    SetGetReturnData(SetGetReturnData),
 }
 
 macro_rules! impl_from {
@@ -94,4 +94,4 @@ impl_from!(SolSecp256k1Recover);
 impl_from!(Keccak256);
 impl_from!(Sha256);
 impl_from!(Blake3);
-// impl_from!(SetGetReturnData);
+impl_from!(SetGetReturnData);
