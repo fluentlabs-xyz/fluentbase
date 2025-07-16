@@ -176,15 +176,10 @@ pub fn process_instruction(
 
             msg!("Create account: end");
         }
-        TestCommand::SolBigModExp(params) => {
-            let base = hex::decode(params.base).expect("failed to decode 'base'");
-            let exponent = hex::decode(params.exponent).expect("failed to decode 'exponent'");
-            let modulus = hex::decode(params.modulus).expect("failed to decode 'modulus'");
-            let expected = hex::decode(params.expected).expect("failed to decode 'expected'");
-            let modulus: [u8; 32] = modulus.try_into().unwrap();
-            let result = big_mod_exp_3(&base, &exponent, &modulus);
-            msg!("big_mod_exp_3 result {:x?}", result);
-            assert_eq!(&expected, &result);
+        TestCommand::SolBigModExp(p) => {
+            let modulus: [u8; 32] = p.modulus.try_into().unwrap();
+            let result = big_mod_exp_3(&p.base, &p.exponent, &modulus);
+            assert_eq!(&p.expected, &result);
         }
         TestCommand::SolSecp256k1Recover(params) => {
             let message = params.message;

@@ -1,4 +1,4 @@
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -17,22 +17,21 @@ pub struct CreateAccountAndModifySomeData1 {
     pub byte_n_value: u8,
 }
 
-// sol_big_mod_exp
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SolBigModExp {
-    pub base: String,
-    pub exponent: String,
-    pub modulus: String,
-    pub expected: String,
+    pub base: Vec<u8>,
+    pub exponent: Vec<u8>,
+    pub modulus: Vec<u8>,
+    pub expected: Vec<u8>,
 }
 
 impl SolBigModExp {
     pub fn new(base: &str, exponent: &str, modulus: &str, expected: &str) -> Self {
         Self {
-            base: base.into(),
-            exponent: exponent.into(),
-            modulus: modulus.into(),
-            expected: expected.into(),
+            base: hex::decode(base).unwrap(),
+            exponent: hex::decode(exponent).unwrap(),
+            modulus: hex::decode(modulus).unwrap(),
+            expected: hex::decode(expected).unwrap(),
         }
     }
 }
