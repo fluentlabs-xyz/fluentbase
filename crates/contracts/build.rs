@@ -12,14 +12,7 @@ fn main() {
     let contracts_dir = fluentbase_root_dir.join("contracts");
     println!("cargo:rerun-if-changed={}", contracts_dir.to_str().unwrap());
     let contracts_manifest_path = contracts_dir.join("Cargo.toml");
-    // TODO(khasan): why router::test_client_solidity is failing with WASM compiled in debug profile
-    // test router::test_client_solidity ... FAILED
-    // Caused by:
-    //   process didn't exit successfully:
-    // `/home/khasan/code/fluentlabs/fluentbase/target/debug/deps/fluentbase_e2e-b00ad5ba2b63abf1`
-    // (signal: 11, SIGSEGV: invalid memory reference)
-    // let is_debug_profile = env::var("PROFILE").unwrap() == "debug";
-    let is_debug_profile = false;
+    let is_debug_profile = env::var("PROFILE").unwrap() == "debug";
     let metadata = MetadataCommand::new()
         .manifest_path(&contracts_manifest_path)
         .exec()
