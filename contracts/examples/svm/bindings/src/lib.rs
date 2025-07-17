@@ -152,3 +152,29 @@ extern "C" {
 pub fn curve_validate_point_native(curve_id: u64, point: &[u8; 32]) -> ReturnValue {
     unsafe { sol_curve_validate_point(curve_id, point.as_ptr()) }
 }
+extern "C" {
+    fn sol_curve_group_op(
+        curve_id: u64,
+        group_op: u64,
+        left_input_addr: *const u8,
+        right_input_addr: *const u8,
+        result_point_addr: *mut u8,
+    ) -> ReturnValue;
+}
+pub fn curve_group_op_native(
+    curve_id: u64,
+    group_op: u64,
+    left_input: &[u8; 32],
+    right_input: &[u8; 32],
+    result_point: &mut [u8; 32],
+) -> ReturnValue {
+    unsafe {
+        sol_curve_group_op(
+            curve_id,
+            group_op,
+            left_input.as_ptr(),
+            right_input.as_ptr(),
+            result_point.as_mut_ptr(),
+        )
+    }
+}

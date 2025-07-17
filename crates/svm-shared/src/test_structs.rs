@@ -69,6 +69,15 @@ pub struct CurvePointValidation {
     pub point: Vec<u8>,
     pub expected_ret: u64,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CurveGroupOp {
+    pub curve_id: u64,
+    pub group_op: u64,
+    pub left_input: Vec<u8>,
+    pub right_input: Vec<u8>,
+    pub expected_point: Vec<u8>,
+    pub expected_ret: u64,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TestCommand {
@@ -81,6 +90,7 @@ pub enum TestCommand {
     Blake3(Blake3),
     SetGetReturnData(SetGetReturnData),
     CurvePointValidation(CurvePointValidation),
+    CurveGroupOp(CurveGroupOp),
 }
 
 macro_rules! impl_from {
@@ -102,3 +112,4 @@ impl_from!(Sha256);
 impl_from!(Blake3);
 impl_from!(SetGetReturnData);
 impl_from!(CurvePointValidation);
+impl_from!(CurveGroupOp);

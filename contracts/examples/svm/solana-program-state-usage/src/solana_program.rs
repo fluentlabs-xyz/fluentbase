@@ -1,6 +1,7 @@
 extern crate alloc;
 use fluentbase_examples_svm_bindings::{
     big_mod_exp_3,
+    curve_group_op_native,
     curve_validate_point_native,
     get_return_data,
     log_data_native,
@@ -257,6 +258,19 @@ pub fn process_instruction(
         TestCommand::CurvePointValidation(p) => {
             let result = curve_validate_point_native(p.curve_id, &p.point.try_into().unwrap());
             assert_eq!(result, p.expected_ret);
+        }
+        TestCommand::CurveGroupOp(p) => {
+            let mut point = [0u8; 32];
+            let result = curve_group_op_native(
+                p.curve_id,
+                p.group_op,
+                &p.left_input.try_into().unwrap(),
+                &p.right_input.try_into().unwrap(),
+                &mut point,
+            );
+            assert_eq!(result, p.expected_ret);
+            let expected_point: [u8; 32] = p.expected_point.try_into().unwrap();
+            assert_eq!(&expected_point, &point);
         }
     }
 

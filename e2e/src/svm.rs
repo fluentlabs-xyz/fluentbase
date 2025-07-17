@@ -1,7 +1,11 @@
 mod tests {
     use crate::EvmTestingContextWithGenesis;
     use core::str::from_utf8;
-    use curve25519_dalek::constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT};
+    use curve25519_dalek::{
+        constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT},
+        traits::Identity,
+        EdwardsPoint,
+    };
     use fluentbase_sdk::{
         address,
         Address,
@@ -31,6 +35,7 @@ mod tests {
         test_structs::{
             Blake3,
             CreateAccountAndModifySomeData1,
+            CurveGroupOp,
             CurvePointValidation,
             Keccak256,
             SetGetReturnData,
@@ -42,6 +47,7 @@ mod tests {
     };
     use hex_literal::hex;
     use rand::random_range;
+    use solana_curve25519::edwards::{add_edwards, subtract_edwards, PodEdwardsPoint};
     use std::{fs::File, io::Read, time::Instant};
 
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
@@ -747,6 +753,204 @@ mod tests {
                 expected_ret: 1, // ERR
             },
         ];
+
+        for test_case in &test_cases {
+            let test_command: TestCommand = test_case.clone().into();
+            let instruction_data = serialize(&test_command).unwrap();
+            println!(
+                "instruction_data ({}): {:x?}",
+                instruction_data.len(),
+                &instruction_data
+            );
+
+            let instructions = vec![Instruction::new_with_bincode(
+                pk_exec.clone(),
+                &instruction_data,
+                vec![
+                    AccountMeta::new(pk_payer, true),
+                    AccountMeta::new(pk_new, false),
+                    AccountMeta::new(system_program_id, false),
+                ],
+            )];
+            let message = Message::new(&instructions, None);
+            let mut batch_message = BatchMessage::new(None);
+            batch_message.clear().append_one(message);
+            let input = serialize(&batch_message).unwrap();
+            println!("exec started");
+            let measure = Instant::now();
+            let result = ctx.call_evm_tx_simple(
+                DEPLOYER_ADDRESS,
+                contract_address,
+                input.into(),
+                None,
+                None,
+            );
+            println!("exec took: {:.2?}", measure.elapsed());
+            let output = result.output().unwrap();
+            if output.len() > 0 {
+                let out_text = from_utf8(output).unwrap();
+                println!("output.len {} output '{}'", output.len(), out_text);
+            }
+            let output = result.output().unwrap_or_default();
+            assert!(&result.is_success());
+            let expected_output = hex!("");
+            assert_eq!(hex::encode(expected_output), hex::encode(output));
+        }
+    }
+
+    #[test]
+    fn test_svm_sol_curve_group_op() {
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let loader_id = loader_v4::id();
+        let system_program_id = system_program::id();
+        let account_with_program = load_program_account_from_elf_file(
+            &loader_id,
+            // "../examples/svm/solana-program/assets/solana_program.so",
+            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+        );
+        let payer_lamports = 101;
+        let seed1 = b"seed";
+
+        let (pk_payer, pk_exec, pk_new, contract_address) =
+            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+
+        // exec
+
+        let mut test_cases = vec![];
+
+        // identity cases
+        let identity = PodEdwardsPoint(EdwardsPoint::identity().compress().to_bytes());
+        let point = PodEdwardsPoint([
+            201, 179, 241, 122, 180, 185, 239, 50, 183, 52, 221, 0, 153, 195, 43, 18, 22, 38, 187,
+            206, 179, 192, 210, 58, 53, 45, 150, 98, 89, 17, 158, 11,
+        ]);
+        assert_eq!(add_edwards(&point, &identity).unwrap(), point);
+        assert_eq!(subtract_edwards(&point, &identity).unwrap(), point);
+        test_cases.push(CurveGroupOp {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point.0.to_vec(),
+            right_input: identity.0.to_vec(),
+            expected_point: point.0.to_vec(),
+            expected_ret: 0, // OK
+        });
+        test_cases.push(CurveGroupOp {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::SUB,
+            left_input: point.0.to_vec(),
+            right_input: identity.0.to_vec(),
+            expected_point: point.0.to_vec(),
+            expected_ret: 0, // OK
+        });
+
+        // associativity cases
+        let point_a = PodEdwardsPoint([
+            33, 124, 71, 170, 117, 69, 151, 247, 59, 12, 95, 125, 133, 166, 64, 5, 2, 27, 90, 27,
+            200, 167, 59, 164, 52, 54, 52, 200, 29, 13, 34, 213,
+        ]);
+        let point_b = PodEdwardsPoint([
+            70, 222, 137, 221, 253, 204, 71, 51, 78, 8, 124, 1, 67, 200, 102, 225, 122, 228, 111,
+            183, 129, 14, 131, 210, 212, 95, 109, 246, 55, 10, 159, 91,
+        ]);
+        let point_c = PodEdwardsPoint([
+            72, 60, 66, 143, 59, 197, 111, 36, 181, 137, 25, 97, 157, 201, 247, 215, 123, 83, 220,
+            250, 154, 150, 180, 192, 196, 28, 215, 137, 34, 247, 39, 129,
+        ]);
+        assert_eq!(
+            add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c),
+            add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap()),
+        );
+        test_cases.push(CurveGroupOp {
+            // a + b
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_a.0.to_vec(),
+            right_input: point_b.0.to_vec(),
+            expected_point: add_edwards(&point_a, &point_b).unwrap().0.to_vec(),
+            expected_ret: 0, // OK
+        });
+        test_cases.push(CurveGroupOp {
+            // (a + b) + c
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: add_edwards(&point_a, &point_b).unwrap().0.to_vec(),
+            right_input: point_c.0.to_vec(),
+            expected_point: add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c)
+                .unwrap()
+                .0
+                .to_vec(),
+            expected_ret: 0, // OK
+        });
+        test_cases.push(CurveGroupOp {
+            // b + c
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_b.0.to_vec(),
+            right_input: point_c.0.to_vec(),
+            expected_point: add_edwards(&point_b, &point_c).unwrap().0.to_vec(),
+            expected_ret: 0, // OK
+        });
+        test_cases.push(CurveGroupOp {
+            // a + (b + c)
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_a.0.to_vec(),
+            right_input: add_edwards(&point_b, &point_c).unwrap().0.to_vec(),
+            expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
+                .unwrap()
+                .0
+                .to_vec(),
+            expected_ret: 0, // OK
+        });
+        test_cases.push(CurveGroupOp {
+            // (a + b) + c = a + (b + c)
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: add_edwards(&point_a, &point_b).unwrap().0.to_vec(),
+            right_input: point_c.0.to_vec(),
+            expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
+                .unwrap()
+                .0
+                .to_vec(),
+            expected_ret: 0, // OK
+        });
+
+        // commutativity
+        assert_eq!(
+            add_edwards(&point_a, &point_b).unwrap(),
+            add_edwards(&point_b, &point_a).unwrap(),
+        );
+        test_cases.push(CurveGroupOp {
+            // a + b = b + a
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_a.0.to_vec(),
+            right_input: point_b.0.to_vec(),
+            expected_point: add_edwards(&point_b, &point_a).unwrap().0.to_vec(),
+            expected_ret: 0, // OK
+        });
+        test_cases.push(CurveGroupOp {
+            // b + a = a + b
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_b.0.to_vec(),
+            right_input: point_a.0.to_vec(),
+            expected_point: add_edwards(&point_a, &point_b).unwrap().0.to_vec(),
+            expected_ret: 0, // OK
+        });
+
+        // subtraction
+        let point = PodEdwardsPoint(ED25519_BASEPOINT_POINT.compress().to_bytes());
+        let point_negated = PodEdwardsPoint((-ED25519_BASEPOINT_POINT).compress().to_bytes());
+        assert_eq!(point_negated, subtract_edwards(&identity, &point).unwrap(),);
+        test_cases.push(CurveGroupOp {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::SUB,
+            left_input: identity.0.to_vec(),
+            right_input: point.0.to_vec(),
+            expected_point: point_negated.0.to_vec(),
+            expected_ret: 0, // OK
+        });
 
         for test_case in &test_cases {
             let test_command: TestCommand = test_case.clone().into();

@@ -2632,6 +2632,7 @@ dependencies = [
  "revm",
  "rwasm",
  "rwasm-revm",
+ "solana-curve25519",
  "wat",
 ]
 
