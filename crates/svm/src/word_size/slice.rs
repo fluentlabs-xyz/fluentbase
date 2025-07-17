@@ -1,6 +1,7 @@
 use crate::{
     error::RuntimeError,
     map_addr,
+    typ_size,
     word_size::{
         addr_type::AddrType,
         common::{
@@ -498,6 +499,20 @@ impl<'a> SpecMethods<'a> for AccountInfo<'a> {
             "cannot recover {} as it contains word size deps",
             crate::typ_name!(Self)
         );
+    }
+}
+
+impl<'a, const N: usize> SpecMethods<'a> for [u8; N] {
+    const ITEM_SIZE_BYTES: usize = typ_size!(Self);
+
+    fn recover_from_bytes(
+        byte_repr: &'a [u8],
+        _memory_mapping_helper: MemoryMappingHelper<'a>,
+    ) -> RetVal<'a, Self>
+    where
+        Self: Sized,
+    {
+        RetVal::Reference(typecast_bytes(byte_repr))
     }
 }
 

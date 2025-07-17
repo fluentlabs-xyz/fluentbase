@@ -73,9 +73,17 @@ pub struct CurvePointValidation {
 pub struct CurveGroupOp {
     pub curve_id: u64,
     pub group_op: u64,
-    pub left_input: Vec<u8>,
-    pub right_input: Vec<u8>,
-    pub expected_point: Vec<u8>,
+    pub left_input: [u8; 32],
+    pub right_input: [u8; 32],
+    pub expected_point: [u8; 32],
+    pub expected_ret: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CurveMultiscalarMultiplication {
+    pub curve_id: u64,
+    pub scalars: Vec<[u8; 32]>,
+    pub points: Vec<[u8; 32]>,
+    pub expected_point: [u8; 32],
     pub expected_ret: u64,
 }
 
@@ -91,6 +99,7 @@ pub enum TestCommand {
     SetGetReturnData(SetGetReturnData),
     CurvePointValidation(CurvePointValidation),
     CurveGroupOp(CurveGroupOp),
+    CurveMultiscalarMultiplication(CurveMultiscalarMultiplication),
 }
 
 macro_rules! impl_from {
@@ -113,3 +122,4 @@ impl_from!(Blake3);
 impl_from!(SetGetReturnData);
 impl_from!(CurvePointValidation);
 impl_from!(CurveGroupOp);
+impl_from!(CurveMultiscalarMultiplication);

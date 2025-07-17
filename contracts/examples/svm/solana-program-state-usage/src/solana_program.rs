@@ -2,6 +2,7 @@ extern crate alloc;
 use fluentbase_examples_svm_bindings::{
     big_mod_exp_3,
     curve_group_op_native,
+    curve_multiscalar_mul_native,
     curve_validate_point_native,
     get_return_data,
     log_data_native,
@@ -83,7 +84,7 @@ pub fn process_instruction(
     );
     let test_command: TestCommand =
         deserialize(&instruction_data).expect("failed to deserialize test command");
-    msg!("processing test_command: {:?}", test_command);
+    msg!("processing test_command: {:x?}", test_command);
     match test_command {
         TestCommand::ModifyAccount1(p) => {
             msg!("process_instruction: applying modifications to account 1");
@@ -260,17 +261,23 @@ pub fn process_instruction(
             assert_eq!(result, p.expected_ret);
         }
         TestCommand::CurveGroupOp(p) => {
-            let mut point = [0u8; 32];
+            let mut result_point = [0u8; 32];
             let result = curve_group_op_native(
                 p.curve_id,
                 p.group_op,
-                &p.left_input.try_into().unwrap(),
-                &p.right_input.try_into().unwrap(),
-                &mut point,
+                &p.left_input,
+                &p.right_input,
+                &mut result_point,
             );
             assert_eq!(result, p.expected_ret);
-            let expected_point: [u8; 32] = p.expected_point.try_into().unwrap();
-            assert_eq!(&expected_point, &point);
+            assert_eq!(&p.expected_point, &result_point);
+        }
+        TestCommand::CurveMultiscalarMultiplication(p) => {
+            let mut result_point = [0u8; 32];
+            let result =
+                curve_multiscalar_mul_native(p.curve_id, &p.scalars, &p.points, &mut result_point);
+            assert_eq!(result, p.expected_ret);
+            assert_eq!(&p.expected_point, &result_point)
         }
     }
 

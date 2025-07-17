@@ -36,6 +36,7 @@ mod tests {
             Blake3,
             CreateAccountAndModifySomeData1,
             CurveGroupOp,
+            CurveMultiscalarMultiplication,
             CurvePointValidation,
             Keccak256,
             SetGetReturnData,
@@ -47,7 +48,16 @@ mod tests {
     };
     use hex_literal::hex;
     use rand::random_range;
-    use solana_curve25519::edwards::{add_edwards, subtract_edwards, PodEdwardsPoint};
+    use solana_curve25519::{
+        edwards::{
+            add_edwards,
+            multiply_edwards,
+            multiscalar_multiply_edwards,
+            subtract_edwards,
+            PodEdwardsPoint,
+        },
+        scalar::PodScalar,
+    };
     use std::{fs::File, io::Read, time::Instant};
 
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
@@ -829,17 +839,17 @@ mod tests {
         test_cases.push(CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point.0.to_vec(),
-            right_input: identity.0.to_vec(),
-            expected_point: point.0.to_vec(),
+            left_input: point.0,
+            right_input: identity.0,
+            expected_point: point.0,
             expected_ret: 0, // OK
         });
         test_cases.push(CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::SUB,
-            left_input: point.0.to_vec(),
-            right_input: identity.0.to_vec(),
-            expected_point: point.0.to_vec(),
+            left_input: point.0,
+            right_input: identity.0,
+            expected_point: point.0,
             expected_ret: 0, // OK
         });
 
@@ -864,54 +874,51 @@ mod tests {
             // a + b
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point_a.0.to_vec(),
-            right_input: point_b.0.to_vec(),
-            expected_point: add_edwards(&point_a, &point_b).unwrap().0.to_vec(),
+            left_input: point_a.0,
+            right_input: point_b.0,
+            expected_point: add_edwards(&point_a, &point_b).unwrap().0,
             expected_ret: 0, // OK
         });
         test_cases.push(CurveGroupOp {
             // (a + b) + c
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: add_edwards(&point_a, &point_b).unwrap().0.to_vec(),
-            right_input: point_c.0.to_vec(),
+            left_input: add_edwards(&point_a, &point_b).unwrap().0,
+            right_input: point_c.0,
             expected_point: add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c)
                 .unwrap()
-                .0
-                .to_vec(),
+                .0,
             expected_ret: 0, // OK
         });
         test_cases.push(CurveGroupOp {
             // b + c
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point_b.0.to_vec(),
-            right_input: point_c.0.to_vec(),
-            expected_point: add_edwards(&point_b, &point_c).unwrap().0.to_vec(),
+            left_input: point_b.0,
+            right_input: point_c.0,
+            expected_point: add_edwards(&point_b, &point_c).unwrap().0,
             expected_ret: 0, // OK
         });
         test_cases.push(CurveGroupOp {
             // a + (b + c)
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point_a.0.to_vec(),
-            right_input: add_edwards(&point_b, &point_c).unwrap().0.to_vec(),
+            left_input: point_a.0,
+            right_input: add_edwards(&point_b, &point_c).unwrap().0,
             expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
                 .unwrap()
-                .0
-                .to_vec(),
+                .0,
             expected_ret: 0, // OK
         });
         test_cases.push(CurveGroupOp {
             // (a + b) + c = a + (b + c)
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: add_edwards(&point_a, &point_b).unwrap().0.to_vec(),
-            right_input: point_c.0.to_vec(),
+            left_input: add_edwards(&point_a, &point_b).unwrap().0,
+            right_input: point_c.0,
             expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
                 .unwrap()
-                .0
-                .to_vec(),
+                .0,
             expected_ret: 0, // OK
         });
 
@@ -924,18 +931,18 @@ mod tests {
             // a + b = b + a
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point_a.0.to_vec(),
-            right_input: point_b.0.to_vec(),
-            expected_point: add_edwards(&point_b, &point_a).unwrap().0.to_vec(),
+            left_input: point_a.0,
+            right_input: point_b.0,
+            expected_point: add_edwards(&point_b, &point_a).unwrap().0,
             expected_ret: 0, // OK
         });
         test_cases.push(CurveGroupOp {
             // b + a = a + b
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point_b.0.to_vec(),
-            right_input: point_a.0.to_vec(),
-            expected_point: add_edwards(&point_a, &point_b).unwrap().0.to_vec(),
+            left_input: point_b.0,
+            right_input: point_a.0,
+            expected_point: add_edwards(&point_a, &point_b).unwrap().0,
             expected_ret: 0, // OK
         });
 
@@ -946,9 +953,122 @@ mod tests {
         test_cases.push(CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::SUB,
-            left_input: identity.0.to_vec(),
-            right_input: point.0.to_vec(),
-            expected_point: point_negated.0.to_vec(),
+            left_input: identity.0,
+            right_input: point.0,
+            expected_point: point_negated.0,
+            expected_ret: 0, // OK
+        });
+
+        for test_case in &test_cases {
+            let test_command: TestCommand = test_case.clone().into();
+            let instruction_data = serialize(&test_command).unwrap();
+            println!(
+                "instruction_data ({}): {:x?}",
+                instruction_data.len(),
+                &instruction_data
+            );
+
+            let instructions = vec![Instruction::new_with_bincode(
+                pk_exec.clone(),
+                &instruction_data,
+                vec![
+                    AccountMeta::new(pk_payer, true),
+                    AccountMeta::new(pk_new, false),
+                    AccountMeta::new(system_program_id, false),
+                ],
+            )];
+            let message = Message::new(&instructions, None);
+            let mut batch_message = BatchMessage::new(None);
+            batch_message.clear().append_one(message);
+            let input = serialize(&batch_message).unwrap();
+            println!("exec started");
+            let measure = Instant::now();
+            let result = ctx.call_evm_tx_simple(
+                DEPLOYER_ADDRESS,
+                contract_address,
+                input.into(),
+                None,
+                None,
+            );
+            println!("exec took: {:.2?}", measure.elapsed());
+            let output = result.output().unwrap();
+            if output.len() > 0 {
+                let out_text = from_utf8(output).unwrap();
+                println!("output.len {} output '{}'", output.len(), out_text);
+            }
+            let output = result.output().unwrap_or_default();
+            assert!(&result.is_success());
+            let expected_output = hex!("");
+            assert_eq!(hex::encode(expected_output), hex::encode(output));
+        }
+    }
+
+    #[test]
+    fn test_sol_curve_multiscalar_mul() {
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let loader_id = loader_v4::id();
+        let system_program_id = system_program::id();
+        let account_with_program = load_program_account_from_elf_file(
+            &loader_id,
+            // "../examples/svm/solana-program/assets/solana_program.so",
+            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+        );
+        let payer_lamports = 101;
+        let seed1 = b"seed";
+
+        let (pk_payer, pk_exec, pk_new, contract_address) =
+            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+
+        // exec
+
+        let mut test_cases = vec![];
+
+        let scalar = PodScalar([
+            205, 73, 127, 173, 83, 80, 190, 66, 202, 3, 237, 77, 52, 223, 238, 70, 80, 242, 24, 87,
+            111, 84, 49, 63, 194, 76, 202, 108, 62, 240, 83, 15,
+        ]);
+        let point = PodEdwardsPoint([
+            222, 174, 184, 139, 143, 122, 253, 96, 0, 207, 120, 157, 112, 38, 54, 189, 91, 144, 78,
+            111, 111, 122, 140, 183, 65, 250, 191, 133, 6, 42, 212, 93,
+        ]);
+        let basic_product = multiply_edwards(&scalar, &point).unwrap();
+        let msm_product = multiscalar_multiply_edwards(&[scalar], &[point]).unwrap();
+        assert_eq!(basic_product, msm_product);
+        test_cases.push(CurveMultiscalarMultiplication {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            scalars: vec![scalar.0],
+            points: vec![point.0],
+            expected_point: basic_product.0,
+            expected_ret: 0, // OK
+        });
+
+        let scalar_a = PodScalar([
+            246, 154, 34, 110, 31, 185, 50, 1, 252, 194, 163, 56, 211, 18, 101, 192, 57, 225, 207,
+            69, 19, 84, 231, 118, 137, 175, 148, 218, 106, 212, 69, 9,
+        ]);
+        let scalar_b = PodScalar([
+            27, 58, 126, 136, 253, 178, 176, 245, 246, 55, 15, 202, 35, 183, 66, 199, 134, 187,
+            169, 154, 66, 120, 169, 193, 75, 4, 33, 241, 126, 227, 59, 3,
+        ]);
+        let point_x = PodEdwardsPoint([
+            252, 31, 230, 46, 173, 95, 144, 148, 158, 157, 63, 10, 8, 68, 58, 176, 142, 192, 168,
+            53, 61, 105, 194, 166, 43, 56, 246, 236, 28, 146, 114, 133,
+        ]);
+        let point_y = PodEdwardsPoint([
+            10, 111, 8, 236, 97, 189, 124, 69, 89, 176, 222, 39, 199, 253, 111, 11, 248, 186, 128,
+            90, 120, 128, 248, 210, 232, 183, 93, 104, 111, 150, 7, 241,
+        ]);
+        let ax = multiply_edwards(&scalar_a, &point_x).unwrap();
+        let by = multiply_edwards(&scalar_b, &point_y).unwrap();
+        let basic_product = add_edwards(&ax, &by).unwrap();
+        let msm_product =
+            multiscalar_multiply_edwards(&[scalar_a, scalar_b], &[point_x, point_y]).unwrap();
+        assert_eq!(basic_product, msm_product);
+        test_cases.push(CurveMultiscalarMultiplication {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            scalars: vec![scalar_a.0, scalar_b.0],
+            points: vec![point_x.0, point_y.0],
+            expected_point: basic_product.0,
             expected_ret: 0, // OK
         });
 
