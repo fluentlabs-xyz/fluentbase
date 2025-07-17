@@ -5779,7 +5779,6 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#5bfe99ae967bd6b1e9b25408a8769bc1a4dfd63e"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
