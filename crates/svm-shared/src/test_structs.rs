@@ -66,7 +66,7 @@ pub struct SetGetReturnData {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurvePointValidation {
     pub curve_id: u64,
-    pub point: Vec<u8>,
+    pub point: [u8; 32],
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

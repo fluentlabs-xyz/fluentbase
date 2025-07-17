@@ -257,7 +257,7 @@ pub fn process_instruction(
             assert_eq!(&return_data_after_set.1, data);
         }
         TestCommand::CurvePointValidation(p) => {
-            let result = curve_validate_point_native(p.curve_id, &p.point.try_into().unwrap());
+            let result = curve_validate_point_native(p.curve_id, &p.point);
             assert_eq!(result, p.expected_ret);
         }
         TestCommand::CurveGroupOp(p) => {
