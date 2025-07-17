@@ -62,6 +62,58 @@ mod tests {
 
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
 
+    pub fn process_test_commands(
+        ctx: &mut EvmTestingContext,
+        contract_address: &Address,
+        pk_exec: &Pubkey,
+        pk_payer: &Pubkey,
+        pk_new: &Pubkey,
+        system_program_id: &Pubkey,
+        test_commands: &[TestCommand],
+    ) {
+        for test_command in test_commands {
+            let instruction_data = serialize(&test_command).unwrap();
+            println!(
+                "instruction_data ({}): {:x?}",
+                instruction_data.len(),
+                &instruction_data
+            );
+
+            let instructions = vec![Instruction::new_with_bincode(
+                pk_exec.clone(),
+                &instruction_data,
+                vec![
+                    AccountMeta::new(pk_payer.clone(), true),
+                    AccountMeta::new(pk_new.clone(), false),
+                    AccountMeta::new(system_program_id.clone(), false),
+                ],
+            )];
+            let message = Message::new(&instructions, None);
+            let mut batch_message = BatchMessage::new(None);
+            batch_message.clear().append_one(message);
+            let input = serialize(&batch_message).unwrap();
+            println!("exec started");
+            let measure = Instant::now();
+            let result = ctx.call_evm_tx_simple(
+                DEPLOYER_ADDRESS,
+                contract_address.clone(),
+                input.into(),
+                None,
+                None,
+            );
+            println!("exec took: {:.2?}", measure.elapsed());
+            let output = result.output().unwrap();
+            if output.len() > 0 {
+                let out_text = from_utf8(output).unwrap();
+                println!("output.len {} output '{}'", output.len(), out_text);
+            }
+            let output = result.output().unwrap_or_default();
+            assert!(&result.is_success());
+            let expected_output = hex!("");
+            assert_eq!(hex::encode(expected_output), hex::encode(output));
+        }
+    }
+
     pub fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
         let mut file = File::open(path).expect("file open failed");
         let mut elf = Vec::new();
@@ -319,46 +371,15 @@ mod tests {
             .into(),
         ];
 
-        for test_command in test_commands {
-            let instruction_data = serialize(&test_command).unwrap();
-            println!(
-                "instruction_data ({}): {:x?}",
-                instruction_data.len(),
-                &instruction_data
-            );
-
-            let instructions = vec![Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &instruction_data,
-                vec![
-                    AccountMeta::new(pk_payer, true),
-                    AccountMeta::new(pk_new, false),
-                    AccountMeta::new(system_program_id, false),
-                ],
-            )];
-            let message = Message::new(&instructions, None);
-            let mut batch_message = BatchMessage::new(None);
-            batch_message.clear().append_one(message);
-            let input = serialize(&batch_message).unwrap();
-            let measure = Instant::now();
-            let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS,
-                contract_address,
-                input.into(),
-                None,
-                None,
-            );
-            println!("exec took: {:.2?}", measure.elapsed());
-            let output = result.output().unwrap();
-            if output.len() > 0 {
-                let out_text = from_utf8(output).unwrap();
-                println!("output.len {} output '{}'", output.len(), out_text);
-            }
-            let output = result.output().unwrap_or_default();
-            assert!(result.is_success());
-            let expected_output = hex!("");
-            assert_eq!(hex::encode(expected_output), hex::encode(output));
-        }
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
     }
 
     #[test]
@@ -399,46 +420,15 @@ mod tests {
         }
         .into()];
 
-        for test_command in test_commands {
-            let instruction_data = serialize(&test_command).unwrap();
-            println!(
-                "instruction_data ({}): {:x?}",
-                instruction_data.len(),
-                &instruction_data
-            );
-
-            let instructions = vec![Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &instruction_data,
-                vec![
-                    AccountMeta::new(pk_payer, true),
-                    AccountMeta::new(pk_new, false),
-                    AccountMeta::new(system_program_id, false),
-                ],
-            )];
-            let message = Message::new(&instructions, None);
-            let mut batch_message = BatchMessage::new(None);
-            batch_message.clear().append_one(message);
-            let input = serialize(&batch_message).unwrap();
-            let measure = Instant::now();
-            let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS,
-                contract_address,
-                input.into(),
-                None,
-                None,
-            );
-            println!("exec took: {:.2?}", measure.elapsed());
-            let output = result.output().unwrap();
-            if output.len() > 0 {
-                let out_text = from_utf8(output).unwrap();
-                println!("output.len {} output '{}'", output.len(), out_text);
-            }
-            let output = result.output().unwrap_or_default();
-            assert!(result.is_success());
-            let expected_output = hex!("");
-            assert_eq!(hex::encode(expected_output), hex::encode(output));
-        }
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
     }
 
     #[test]
@@ -467,46 +457,15 @@ mod tests {
         }
         .into()];
 
-        for test_command in test_commands {
-            let instruction_data = serialize(&test_command).unwrap();
-            println!(
-                "instruction_data ({}): {:x?}",
-                instruction_data.len(),
-                &instruction_data
-            );
-
-            let instructions = vec![Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &instruction_data,
-                vec![
-                    AccountMeta::new(pk_payer, true),
-                    AccountMeta::new(pk_new, false),
-                    AccountMeta::new(system_program_id, false),
-                ],
-            )];
-            let message = Message::new(&instructions, None);
-            let mut batch_message = BatchMessage::new(None);
-            batch_message.clear().append_one(message);
-            let input = serialize(&batch_message).unwrap();
-            let measure = Instant::now();
-            let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS,
-                contract_address,
-                input.into(),
-                None,
-                None,
-            );
-            println!("exec took: {:.2?}", measure.elapsed());
-            let output = result.output().unwrap();
-            if output.len() > 0 {
-                let out_text = from_utf8(output).unwrap();
-                println!("output.len {} output '{}'", output.len(), out_text);
-            }
-            let output = result.output().unwrap_or_default();
-            assert!(result.is_success());
-            let expected_output = hex!("");
-            assert_eq!(hex::encode(expected_output), hex::encode(output));
-        }
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
     }
 
     #[test]
@@ -535,46 +494,15 @@ mod tests {
         }
         .into()];
 
-        for test_command in test_commands {
-            let instruction_data = serialize(&test_command).unwrap();
-            println!(
-                "instruction_data ({}): {:x?}",
-                instruction_data.len(),
-                &instruction_data
-            );
-
-            let instructions = vec![Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &instruction_data,
-                vec![
-                    AccountMeta::new(pk_payer, true),
-                    AccountMeta::new(pk_new, false),
-                    AccountMeta::new(system_program_id, false),
-                ],
-            )];
-            let message = Message::new(&instructions, None);
-            let mut batch_message = BatchMessage::new(None);
-            batch_message.clear().append_one(message);
-            let input = serialize(&batch_message).unwrap();
-            let measure = Instant::now();
-            let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS,
-                contract_address,
-                input.into(),
-                None,
-                None,
-            );
-            println!("exec took: {:.2?}", measure.elapsed());
-            let output = result.output().unwrap();
-            if output.len() > 0 {
-                let out_text = from_utf8(output).unwrap();
-                println!("output.len {} output '{}'", output.len(), out_text);
-            }
-            let output = result.output().unwrap_or_default();
-            assert!(result.is_success());
-            let expected_output = hex!("");
-            assert_eq!(hex::encode(expected_output), hex::encode(output));
-        }
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
     }
 
     #[test]
@@ -603,46 +531,15 @@ mod tests {
         }
         .into()];
 
-        for test_command in test_commands {
-            let instruction_data = serialize(&test_command).unwrap();
-            println!(
-                "instruction_data ({}): {:x?}",
-                instruction_data.len(),
-                &instruction_data
-            );
-
-            let instructions = vec![Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &instruction_data,
-                vec![
-                    AccountMeta::new(pk_payer, true),
-                    AccountMeta::new(pk_new, false),
-                    AccountMeta::new(system_program_id, false),
-                ],
-            )];
-            let message = Message::new(&instructions, None);
-            let mut batch_message = BatchMessage::new(None);
-            batch_message.clear().append_one(message);
-            let input = serialize(&batch_message).unwrap();
-            let measure = Instant::now();
-            let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS,
-                contract_address,
-                input.into(),
-                None,
-                None,
-            );
-            println!("exec took: {:.2?}", measure.elapsed());
-            let output = result.output().unwrap();
-            if output.len() > 0 {
-                let out_text = from_utf8(output).unwrap();
-                println!("output.len {} output '{}'", output.len(), out_text);
-            }
-            let output = result.output().unwrap_or_default();
-            assert!(result.is_success());
-            let expected_output = hex!("");
-            assert_eq!(hex::encode(expected_output), hex::encode(output));
-        }
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
     }
 
     #[test]
@@ -668,47 +565,15 @@ mod tests {
         }
         .into()];
 
-        for test_command in test_commands {
-            let instruction_data = serialize(&test_command).unwrap();
-            println!(
-                "instruction_data ({}): {:x?}",
-                instruction_data.len(),
-                &instruction_data
-            );
-
-            let instructions = vec![Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &instruction_data,
-                vec![
-                    AccountMeta::new(pk_payer, true),
-                    AccountMeta::new(pk_new, false),
-                    AccountMeta::new(system_program_id, false),
-                ],
-            )];
-            let message = Message::new(&instructions, None);
-            let mut batch_message = BatchMessage::new(None);
-            batch_message.clear().append_one(message);
-            let input = serialize(&batch_message).unwrap();
-            println!("exec started");
-            let measure = Instant::now();
-            let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS,
-                contract_address,
-                input.into(),
-                None,
-                None,
-            );
-            println!("exec took: {:.2?}", measure.elapsed());
-            let output = result.output().unwrap();
-            if output.len() > 0 {
-                let out_text = from_utf8(output).unwrap();
-                println!("output.len {} output '{}'", output.len(), out_text);
-            }
-            let output = result.output().unwrap_or_default();
-            assert!(result.is_success());
-            let expected_output = hex!("");
-            assert_eq!(hex::encode(expected_output), hex::encode(output));
-        }
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
     }
 
     #[test]
@@ -762,48 +627,15 @@ mod tests {
             .into(),
         ];
 
-        for test_command in test_commands {
-            let test_command: TestCommand = test_command.clone().into();
-            let instruction_data = serialize(&test_command).unwrap();
-            println!(
-                "instruction_data ({}): {:x?}",
-                instruction_data.len(),
-                &instruction_data
-            );
-
-            let instructions = vec![Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &instruction_data,
-                vec![
-                    AccountMeta::new(pk_payer, true),
-                    AccountMeta::new(pk_new, false),
-                    AccountMeta::new(system_program_id, false),
-                ],
-            )];
-            let message = Message::new(&instructions, None);
-            let mut batch_message = BatchMessage::new(None);
-            batch_message.clear().append_one(message);
-            let input = serialize(&batch_message).unwrap();
-            println!("exec started");
-            let measure = Instant::now();
-            let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS,
-                contract_address,
-                input.into(),
-                None,
-                None,
-            );
-            println!("exec took: {:.2?}", measure.elapsed());
-            let output = result.output().unwrap();
-            if output.len() > 0 {
-                let out_text = from_utf8(output).unwrap();
-                println!("output.len {} output '{}'", output.len(), out_text);
-            }
-            let output = result.output().unwrap_or_default();
-            assert!(&result.is_success());
-            let expected_output = hex!("");
-            assert_eq!(hex::encode(expected_output), hex::encode(output));
-        }
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
     }
 
     #[test]
@@ -987,47 +819,15 @@ mod tests {
             .into(),
         );
 
-        for test_command in &test_commands {
-            let instruction_data = serialize(&test_command).unwrap();
-            println!(
-                "instruction_data ({}): {:x?}",
-                instruction_data.len(),
-                &instruction_data
-            );
-
-            let instructions = vec![Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &instruction_data,
-                vec![
-                    AccountMeta::new(pk_payer, true),
-                    AccountMeta::new(pk_new, false),
-                    AccountMeta::new(system_program_id, false),
-                ],
-            )];
-            let message = Message::new(&instructions, None);
-            let mut batch_message = BatchMessage::new(None);
-            batch_message.clear().append_one(message);
-            let input = serialize(&batch_message).unwrap();
-            println!("exec started");
-            let measure = Instant::now();
-            let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS,
-                contract_address,
-                input.into(),
-                None,
-                None,
-            );
-            println!("exec took: {:.2?}", measure.elapsed());
-            let output = result.output().unwrap();
-            if output.len() > 0 {
-                let out_text = from_utf8(output).unwrap();
-                println!("output.len {} output '{}'", output.len(), out_text);
-            }
-            let output = result.output().unwrap_or_default();
-            assert!(&result.is_success());
-            let expected_output = hex!("");
-            assert_eq!(hex::encode(expected_output), hex::encode(output));
-        }
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
     }
 
     #[test]
@@ -1105,46 +905,14 @@ mod tests {
             .into(),
         );
 
-        for test_command in &test_commands {
-            let instruction_data = serialize(&test_command).unwrap();
-            println!(
-                "instruction_data ({}): {:x?}",
-                instruction_data.len(),
-                &instruction_data
-            );
-
-            let instructions = vec![Instruction::new_with_bincode(
-                pk_exec.clone(),
-                &instruction_data,
-                vec![
-                    AccountMeta::new(pk_payer, true),
-                    AccountMeta::new(pk_new, false),
-                    AccountMeta::new(system_program_id, false),
-                ],
-            )];
-            let message = Message::new(&instructions, None);
-            let mut batch_message = BatchMessage::new(None);
-            batch_message.clear().append_one(message);
-            let input = serialize(&batch_message).unwrap();
-            println!("exec started");
-            let measure = Instant::now();
-            let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS,
-                contract_address,
-                input.into(),
-                None,
-                None,
-            );
-            println!("exec took: {:.2?}", measure.elapsed());
-            let output = result.output().unwrap();
-            if output.len() > 0 {
-                let out_text = from_utf8(output).unwrap();
-                println!("output.len {} output '{}'", output.len(), out_text);
-            }
-            let output = result.output().unwrap_or_default();
-            assert!(&result.is_success());
-            let expected_output = hex!("");
-            assert_eq!(hex::encode(expected_output), hex::encode(output));
-        }
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
     }
 }
