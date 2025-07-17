@@ -253,67 +253,73 @@ mod tests {
 
         // exec
 
-        let test_cases = [
-            SolBigModExp::new(
+        let test_commands: &[TestCommand] = &[
+            SolBigModExp::from_hex(
                 "1111111111111111111111111111111111111111111111111111111111111111",
                 "1111111111111111111111111111111111111111111111111111111111111111",
                 "111111111111111111111111111111111111111111111111111111111111110A",
                 "0A7074864588D6847F33A168209E516F60005A0CEC3F33AAF70E8002FE964BCD",
-            ),
-            SolBigModExp::new(
+            )
+            .into(),
+            SolBigModExp::from_hex(
                 "2222222222222222222222222222222222222222222222222222222222222222",
                 "2222222222222222222222222222222222222222222222222222222222222222",
                 "1111111111111111111111111111111111111111111111111111111111111111",
                 "0000000000000000000000000000000000000000000000000000000000000000",
-            ),
-            SolBigModExp::new(
+            )
+            .into(),
+            SolBigModExp::from_hex(
                 "3333333333333333333333333333333333333333333333333333333333333333",
                 "3333333333333333333333333333333333333333333333333333333333333333",
                 "2222222222222222222222222222222222222222222222222222222222222222",
                 "1111111111111111111111111111111111111111111111111111111111111111",
-            ),
-            SolBigModExp::new(
+            )
+            .into(),
+            SolBigModExp::from_hex(
                 "9874231472317432847923174392874918237439287492374932871937289719",
                 "0948403985401232889438579475812347232099080051356165126166266222",
                 "25532321a214321423124212222224222b242222222222222222222222222444",
                 "220ECE1C42624E98AEE7EB86578B2FE5C4855DFFACCB43CCBB708A3AB37F184D",
-            ),
-            SolBigModExp::new(
+            )
+            .into(),
+            SolBigModExp::from_hex(
                 "3494396663463663636363662632666565656456646566786786676786768766",
                 "2324324333246536456354655645656616169896565698987033121934984955",
                 "0218305479243590485092843590249879879842313131156656565565656566",
                 "012F2865E8B9E79B645FCE3A9E04156483AE1F9833F6BFCF86FCA38FC2D5BEF0",
-            ),
-            SolBigModExp::new(
+            )
+            .into(),
+            SolBigModExp::from_hex(
                 "0000000000000000000000000000000000000000000000000000000000000005",
                 "0000000000000000000000000000000000000000000000000000000000000002",
                 "0000000000000000000000000000000000000000000000000000000000000007",
                 "0000000000000000000000000000000000000000000000000000000000000004",
-            ),
-            SolBigModExp::new(
+            )
+            .into(),
+            SolBigModExp::from_hex(
                 "0000000000000000000000000000000000000000000000000000000000000019",
                 "0000000000000000000000000000000000000000000000000000000000000019",
                 "0000000000000000000000000000000000000000000000000000000000000064",
                 "0000000000000000000000000000000000000000000000000000000000000019",
-            ),
-            SolBigModExp::new(
+            )
+            .into(),
+            SolBigModExp::from_hex(
                 "0000000000000000000000000000000000000000000000000000000000000019",
                 "0000000000000000000000000000000000000000000000000000000000000019",
                 "0000000000000000000000000000000000000000000000000000000000000000",
                 "0000000000000000000000000000000000000000000000000000000000000000",
-            ),
-            SolBigModExp::new(
+            )
+            .into(),
+            SolBigModExp::from_hex(
                 "0000000000000000000000000000000000000000000000000000000000000019",
                 "0000000000000000000000000000000000000000000000000000000000000019",
                 "0000000000000000000000000000000000000000000000000000000000000001",
                 "0000000000000000000000000000000000000000000000000000000000000000",
-            ),
-        ]
-        .to_vec();
+            )
+            .into(),
+        ];
 
-        for test_case in &test_cases {
-            let test_command_data = test_case;
-            let test_command: TestCommand = test_command_data.clone().into();
+        for test_command in test_commands {
             let instruction_data = serialize(&test_command).unwrap();
             println!(
                 "instruction_data ({}): {:x?}",
@@ -373,7 +379,7 @@ mod tests {
 
         // exec
 
-        let test_cases = vec![SolSecp256k1Recover {
+        let test_commands: &[TestCommand] = &[SolSecp256k1Recover {
             message: b"hello world".to_vec(),
             signature_bytes: vec![
                 0x93, 0x92, 0xC4, 0x6C, 0x42, 0xF6, 0x31, 0x73, 0x81, 0xD4, 0xB2, 0x44, 0xE9, 0x2F,
@@ -390,14 +396,10 @@ mod tests {
                 0xD3, 0x0C, 0x0C, 0x42, 0x43, 0xC1, 0xEE, 0xA5, 0x0D, 0xC0, 0x48, 0x62, 0xD3, 0xAE,
                 0xB0, 0x3D, 0xA2, 0x20, 0xAC, 0x11, 0x85, 0xEE,
             ],
-        }];
+        }
+        .into()];
 
-        for test_case in &test_cases {
-            let test_command_data = test_case;
-            let test_command =
-                fluentbase_svm_shared::test_structs::TestCommand::SolSecp256k1Recover(
-                    test_command_data.clone(),
-                );
+        for test_command in test_commands {
             let instruction_data = serialize(&test_command).unwrap();
             println!(
                 "instruction_data ({}): {:x?}",
@@ -457,17 +459,15 @@ mod tests {
 
         // exec
 
-        let test_cases = vec![Keccak256 {
+        let test_commands: &[TestCommand] = &[Keccak256 {
             data: vec![vec![1u8, 2, 3], vec![4, 5, 6]],
             expected_result: hex!(
                 "13a08e3cd39a1bc7bf9103f63f83273cced2beada9f723945176d6b983c65bd2"
-            )
-            .to_vec(),
-        }];
+            ),
+        }
+        .into()];
 
-        for test_case in &test_cases {
-            let test_command_data = test_case;
-            let test_command: TestCommand = test_command_data.clone().into();
+        for test_command in test_commands {
             let instruction_data = serialize(&test_command).unwrap();
             println!(
                 "instruction_data ({}): {:x?}",
@@ -527,17 +527,15 @@ mod tests {
 
         // exec
 
-        let test_cases = vec![Sha256 {
+        let test_commands: &[TestCommand] = &[Sha256 {
             data: vec![vec![1u8, 2, 3], vec![4, 5, 6]],
             expected_result: hex!(
                 "7192385c3c0605de55bb9476ce1d90748190ecb32a8eed7f5207b30cf6a1fe89"
-            )
-            .to_vec(),
-        }];
+            ),
+        }
+        .into()];
 
-        for test_case in &test_cases {
-            let test_command_data = test_case;
-            let test_command: TestCommand = test_command_data.clone().into();
+        for test_command in test_commands {
             let instruction_data = serialize(&test_command).unwrap();
             println!(
                 "instruction_data ({}): {:x?}",
@@ -597,17 +595,15 @@ mod tests {
 
         // exec
 
-        let test_cases = vec![Blake3 {
+        let test_commands: &[TestCommand] = &[Blake3 {
             data: vec![vec![1u8, 2, 3], vec![4, 5, 6]],
             expected_result: hex!(
                 "828a8660ae86b86f1ebf951a6f84349520cc1501fb6fcf95b05df01200be9fa2"
-            )
-            .to_vec(),
-        }];
+            ),
+        }
+        .into()];
 
-        for test_case in &test_cases {
-            let test_command_data = test_case;
-            let test_command: TestCommand = test_command_data.clone().into();
+        for test_command in test_commands {
             let instruction_data = serialize(&test_command).unwrap();
             println!(
                 "instruction_data ({}): {:x?}",
@@ -667,12 +663,12 @@ mod tests {
 
         // exec
 
-        let test_cases = vec![SetGetReturnData {
+        let test_commands: &[TestCommand] = &[SetGetReturnData {
             data: vec![9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
-        }];
+        }
+        .into()];
 
-        for test_case in &test_cases {
-            let test_command: TestCommand = test_case.clone().into();
+        for test_command in test_commands {
             let instruction_data = serialize(&test_command).unwrap();
             println!(
                 "instruction_data ({}): {:x?}",
@@ -733,12 +729,13 @@ mod tests {
 
         // exec
 
-        let test_cases = vec![
+        let test_commands: &[TestCommand] = &[
             CurvePointValidation {
                 curve_id: 0,
                 point: ED25519_BASEPOINT_POINT.compress().as_bytes().clone(),
                 expected_ret: 0, // OK
-            },
+            }
+            .into(),
             CurvePointValidation {
                 curve_id: 0,
                 point: [
@@ -746,12 +743,14 @@ mod tests {
                     38, 84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,
                 ],
                 expected_ret: 1, // ERR
-            },
+            }
+            .into(),
             CurvePointValidation {
                 curve_id: 0,
                 point: RISTRETTO_BASEPOINT_POINT.compress().as_bytes().clone(),
                 expected_ret: 0, // OK
-            },
+            }
+            .into(),
             CurvePointValidation {
                 curve_id: 0,
                 point: [
@@ -759,11 +758,12 @@ mod tests {
                     38, 84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,
                 ],
                 expected_ret: 1, // ERR
-            },
+            }
+            .into(),
         ];
 
-        for test_case in &test_cases {
-            let test_command: TestCommand = test_case.clone().into();
+        for test_command in test_commands {
+            let test_command: TestCommand = test_command.clone().into();
             let instruction_data = serialize(&test_command).unwrap();
             println!(
                 "instruction_data ({}): {:x?}",
@@ -824,7 +824,7 @@ mod tests {
 
         // exec
 
-        let mut test_cases = vec![];
+        let mut test_commands: Vec<TestCommand> = vec![];
 
         // identity cases
         let identity = PodEdwardsPoint(EdwardsPoint::identity().compress().to_bytes());
@@ -834,22 +834,28 @@ mod tests {
         ]);
         assert_eq!(add_edwards(&point, &identity).unwrap(), point);
         assert_eq!(subtract_edwards(&point, &identity).unwrap(), point);
-        test_cases.push(CurveGroupOp {
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point.0,
-            right_input: identity.0,
-            expected_point: point.0,
-            expected_ret: 0, // OK
-        });
-        test_cases.push(CurveGroupOp {
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            group_op: solana_curve25519::curve_syscall_traits::SUB,
-            left_input: point.0,
-            right_input: identity.0,
-            expected_point: point.0,
-            expected_ret: 0, // OK
-        });
+        test_commands.push(
+            CurveGroupOp {
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::ADD,
+                left_input: point.0,
+                right_input: identity.0,
+                expected_point: point.0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
+        test_commands.push(
+            CurveGroupOp {
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::SUB,
+                left_input: point.0,
+                right_input: identity.0,
+                expected_point: point.0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
 
         // associativity cases
         let point_a = PodEdwardsPoint([
@@ -868,97 +874,120 @@ mod tests {
             add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c),
             add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap()),
         );
-        test_cases.push(CurveGroupOp {
-            // a + b
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point_a.0,
-            right_input: point_b.0,
-            expected_point: add_edwards(&point_a, &point_b).unwrap().0,
-            expected_ret: 0, // OK
-        });
-        test_cases.push(CurveGroupOp {
-            // (a + b) + c
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: add_edwards(&point_a, &point_b).unwrap().0,
-            right_input: point_c.0,
-            expected_point: add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c)
-                .unwrap()
-                .0,
-            expected_ret: 0, // OK
-        });
-        test_cases.push(CurveGroupOp {
-            // b + c
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point_b.0,
-            right_input: point_c.0,
-            expected_point: add_edwards(&point_b, &point_c).unwrap().0,
-            expected_ret: 0, // OK
-        });
-        test_cases.push(CurveGroupOp {
-            // a + (b + c)
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point_a.0,
-            right_input: add_edwards(&point_b, &point_c).unwrap().0,
-            expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
-                .unwrap()
-                .0,
-            expected_ret: 0, // OK
-        });
-        test_cases.push(CurveGroupOp {
-            // (a + b) + c = a + (b + c)
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: add_edwards(&point_a, &point_b).unwrap().0,
-            right_input: point_c.0,
-            expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
-                .unwrap()
-                .0,
-            expected_ret: 0, // OK
-        });
+        test_commands.push(
+            CurveGroupOp {
+                // a + b
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::ADD,
+                left_input: point_a.0,
+                right_input: point_b.0,
+                expected_point: add_edwards(&point_a, &point_b).unwrap().0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
+        test_commands.push(
+            CurveGroupOp {
+                // (a + b) + c
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::ADD,
+                left_input: add_edwards(&point_a, &point_b).unwrap().0,
+                right_input: point_c.0,
+                expected_point: add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c)
+                    .unwrap()
+                    .0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
+        test_commands.push(
+            CurveGroupOp {
+                // b + c
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::ADD,
+                left_input: point_b.0,
+                right_input: point_c.0,
+                expected_point: add_edwards(&point_b, &point_c).unwrap().0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
+        test_commands.push(
+            CurveGroupOp {
+                // a + (b + c)
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::ADD,
+                left_input: point_a.0,
+                right_input: add_edwards(&point_b, &point_c).unwrap().0,
+                expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
+                    .unwrap()
+                    .0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
+        test_commands.push(
+            CurveGroupOp {
+                // (a + b) + c = a + (b + c)
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::ADD,
+                left_input: add_edwards(&point_a, &point_b).unwrap().0,
+                right_input: point_c.0,
+                expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
+                    .unwrap()
+                    .0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
 
         // commutativity
         assert_eq!(
             add_edwards(&point_a, &point_b).unwrap(),
             add_edwards(&point_b, &point_a).unwrap(),
         );
-        test_cases.push(CurveGroupOp {
-            // a + b = b + a
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point_a.0,
-            right_input: point_b.0,
-            expected_point: add_edwards(&point_b, &point_a).unwrap().0,
-            expected_ret: 0, // OK
-        });
-        test_cases.push(CurveGroupOp {
-            // b + a = a + b
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            group_op: solana_curve25519::curve_syscall_traits::ADD,
-            left_input: point_b.0,
-            right_input: point_a.0,
-            expected_point: add_edwards(&point_a, &point_b).unwrap().0,
-            expected_ret: 0, // OK
-        });
+        test_commands.push(
+            CurveGroupOp {
+                // a + b = b + a
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::ADD,
+                left_input: point_a.0,
+                right_input: point_b.0,
+                expected_point: add_edwards(&point_b, &point_a).unwrap().0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
+        test_commands.push(
+            CurveGroupOp {
+                // b + a = a + b
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::ADD,
+                left_input: point_b.0,
+                right_input: point_a.0,
+                expected_point: add_edwards(&point_a, &point_b).unwrap().0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
 
         // subtraction
         let point = PodEdwardsPoint(ED25519_BASEPOINT_POINT.compress().to_bytes());
         let point_negated = PodEdwardsPoint((-ED25519_BASEPOINT_POINT).compress().to_bytes());
         assert_eq!(point_negated, subtract_edwards(&identity, &point).unwrap(),);
-        test_cases.push(CurveGroupOp {
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            group_op: solana_curve25519::curve_syscall_traits::SUB,
-            left_input: identity.0,
-            right_input: point.0,
-            expected_point: point_negated.0,
-            expected_ret: 0, // OK
-        });
+        test_commands.push(
+            CurveGroupOp {
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::SUB,
+                left_input: identity.0,
+                right_input: point.0,
+                expected_point: point_negated.0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
 
-        for test_case in &test_cases {
-            let test_command: TestCommand = test_case.clone().into();
+        for test_command in &test_commands {
             let instruction_data = serialize(&test_command).unwrap();
             println!(
                 "instruction_data ({}): {:x?}",
@@ -1019,7 +1048,7 @@ mod tests {
 
         // exec
 
-        let mut test_cases = vec![];
+        let mut test_commands: Vec<TestCommand> = vec![];
 
         let scalar = PodScalar([
             205, 73, 127, 173, 83, 80, 190, 66, 202, 3, 237, 77, 52, 223, 238, 70, 80, 242, 24, 87,
@@ -1032,13 +1061,16 @@ mod tests {
         let basic_product = multiply_edwards(&scalar, &point).unwrap();
         let msm_product = multiscalar_multiply_edwards(&[scalar], &[point]).unwrap();
         assert_eq!(basic_product, msm_product);
-        test_cases.push(CurveMultiscalarMultiplication {
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            scalars: vec![scalar.0],
-            points: vec![point.0],
-            expected_point: basic_product.0,
-            expected_ret: 0, // OK
-        });
+        test_commands.push(
+            CurveMultiscalarMultiplication {
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                scalars: vec![scalar.0],
+                points: vec![point.0],
+                expected_point: basic_product.0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
 
         let scalar_a = PodScalar([
             246, 154, 34, 110, 31, 185, 50, 1, 252, 194, 163, 56, 211, 18, 101, 192, 57, 225, 207,
@@ -1062,16 +1094,18 @@ mod tests {
         let msm_product =
             multiscalar_multiply_edwards(&[scalar_a, scalar_b], &[point_x, point_y]).unwrap();
         assert_eq!(basic_product, msm_product);
-        test_cases.push(CurveMultiscalarMultiplication {
-            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-            scalars: vec![scalar_a.0, scalar_b.0],
-            points: vec![point_x.0, point_y.0],
-            expected_point: basic_product.0,
-            expected_ret: 0, // OK
-        });
+        test_commands.push(
+            CurveMultiscalarMultiplication {
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                scalars: vec![scalar_a.0, scalar_b.0],
+                points: vec![point_x.0, point_y.0],
+                expected_point: basic_product.0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
 
-        for test_case in &test_cases {
-            let test_command: TestCommand = test_case.clone().into();
+        for test_command in &test_commands {
             let instruction_data = serialize(&test_command).unwrap();
             println!(
                 "instruction_data ({}): {:x?}",

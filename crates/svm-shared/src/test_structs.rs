@@ -26,12 +26,17 @@ pub struct SolBigModExp {
 }
 
 impl SolBigModExp {
-    pub fn new(base: &str, exponent: &str, modulus: &str, expected: &str) -> Self {
+    pub fn from_hex(
+        base_hex: &str,
+        exponent_hex: &str,
+        modulus_hex: &str,
+        expected_hex: &str,
+    ) -> Self {
         Self {
-            base: hex::decode(base).unwrap(),
-            exponent: hex::decode(exponent).unwrap(),
-            modulus: hex::decode(modulus).unwrap(),
-            expected: hex::decode(expected).unwrap(),
+            base: hex::decode(base_hex).unwrap(),
+            exponent: hex::decode(exponent_hex).unwrap(),
+            modulus: hex::decode(modulus_hex).unwrap(),
+            expected: hex::decode(expected_hex).unwrap(),
         }
     }
 }
@@ -47,17 +52,17 @@ pub struct SolSecp256k1Recover {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Keccak256 {
     pub data: Vec<Vec<u8>>,
-    pub expected_result: Vec<u8>,
+    pub expected_result: [u8; 32],
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Sha256 {
     pub data: Vec<Vec<u8>>,
-    pub expected_result: Vec<u8>,
+    pub expected_result: [u8; 32],
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Blake3 {
     pub data: Vec<Vec<u8>>,
-    pub expected_result: Vec<u8>,
+    pub expected_result: [u8; 32],
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SetGetReturnData {
