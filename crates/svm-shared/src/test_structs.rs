@@ -91,6 +91,20 @@ pub struct CurveMultiscalarMultiplication {
     pub expected_point: [u8; 32],
     pub expected_ret: u64,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SyscallAltBn128 {
+    pub group_op: u64,
+    pub input: Vec<u8>,
+    pub expected_result: Vec<u8>,
+    pub expected_ret: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SyscallAltBn128Compression {
+    pub group_op: u64,
+    pub input: Vec<u8>,
+    pub expected_result: Vec<u8>,
+    pub expected_ret: u64,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TestCommand {
@@ -105,6 +119,8 @@ pub enum TestCommand {
     CurvePointValidation(CurvePointValidation),
     CurveGroupOp(CurveGroupOp),
     CurveMultiscalarMultiplication(CurveMultiscalarMultiplication),
+    SyscallAltBn128(SyscallAltBn128),
+    SyscallAltBn128Compression(SyscallAltBn128Compression),
 }
 
 macro_rules! impl_from {
@@ -128,3 +144,5 @@ impl_from!(SetGetReturnData);
 impl_from!(CurvePointValidation);
 impl_from!(CurveGroupOp);
 impl_from!(CurveMultiscalarMultiplication);
+impl_from!(SyscallAltBn128);
+impl_from!(SyscallAltBn128Compression);

@@ -67,6 +67,7 @@ fluentbase-erc20 = { path = "./crates/erc20", default-features = false }
 #solana-native-token = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 #solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 #solana-curve25519 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+#solana-bn254 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-pubkey = { path = "../agave/sdk/pubkey", default-features = false }
 solana-instruction = { path = "../agave/sdk/instruction", default-features = false }
 solana-account-info = { path = "../agave/sdk/account-info", default-features = false }
@@ -92,6 +93,7 @@ solana-atomic-u64 = { path = "../agave/sdk/atomic-u64", default-features = false
 solana-poseidon = { path = "../agave/poseidon", default-features = false }
 solana-secp256k1-recover = { path = "../agave/curves/secp256k1-recover", default-features = false }
 solana-curve25519 = { path = "../agave/curves/curve25519", default-features = false }
+solana-bn254 = { path = "../agave/curves/bn254", default-features = false }
 
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }

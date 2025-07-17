@@ -1,5 +1,7 @@
 extern crate alloc;
 use fluentbase_examples_svm_bindings::{
+    alt_bn128_compression_native,
+    alt_bn128_group_op_native,
     big_mod_exp_3,
     curve_group_op_native,
     curve_multiscalar_mul_native,
@@ -278,6 +280,28 @@ pub fn process_instruction(
                 curve_multiscalar_mul_native(p.curve_id, &p.scalars, &p.points, &mut result_point);
             assert_eq!(result, p.expected_ret);
             assert_eq!(&p.expected_point, &result_point)
+        }
+        TestCommand::SyscallAltBn128(p) => {
+            let mut result_point = [0u8; 64]; // can hold to 64 (32 or 64)
+            let ret = alt_bn128_group_op_native(p.group_op, &p.input, &mut result_point);
+            msg!("ret {:x?}", ret);
+            msg!("p.expected_ret {:x?}", p.expected_ret);
+            assert_eq!(ret, p.expected_ret);
+            let mut expected_result_point = [0u8; 64];
+            expected_result_point[..p.expected_result.as_slice().len()]
+                .copy_from_slice(p.expected_result.as_slice());
+            msg!("expected_result_point {:x?}", expected_result_point);
+            msg!("result_point {:x?}", result_point);
+            assert_eq!(&expected_result_point, &result_point)
+        }
+        TestCommand::SyscallAltBn128Compression(p) => {
+            let mut result_point = [0u8; 128]; // can be 32, 64, 128
+            let result = alt_bn128_compression_native(p.group_op, &p.input, &mut result_point);
+            assert_eq!(result, p.expected_ret);
+            let mut expected_result_point = [0u8; 128];
+            expected_result_point[..p.expected_result.as_slice().len()]
+                .copy_from_slice(p.expected_result.as_slice());
+            assert_eq!(&expected_result_point, &result_point)
         }
     }
 
