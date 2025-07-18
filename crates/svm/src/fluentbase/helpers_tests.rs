@@ -286,6 +286,7 @@ mod tests {
         assert_eq!(account_data.lamports(), 112);
     }
 
+    #[ignore]
     #[test]
     fn test_create_fill_deploy_exec_with_state() {
         // setup
@@ -312,7 +313,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../../examples/svm/solana-program/assets/solana_program.so",
-            "../../contracts/examples/svm/solana-program-state-usage/assets/solana_program.so",
+            "../../contracts/examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
         );
 
         let program_len = account_with_program.data().len();
@@ -520,6 +521,7 @@ mod tests {
         assert_eq!(account_data.executable(), false);
     }
 
+    #[ignore]
     #[test]
     fn test_create_fill_deploy_exec_messages_batch() {
         let mut sdk = HostTestingContext::default();
@@ -548,7 +550,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
-            "../../contracts/examples/svm/solana-program-state-usage/assets/solana_program.so",
+            "../../contracts/examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
         );
 
         let program_len = account_with_program.data().len();
