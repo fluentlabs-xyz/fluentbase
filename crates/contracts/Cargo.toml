@@ -21,6 +21,7 @@ alloy-genesis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 cargo_metadata = "0.19.1"
+wasm-opt = { version = "0.116.1" }
 
 # The following dependencies are not used directly but listed here to trigger execution of build.rs whenever they are changed
 fluentbase-sdk = { workspace = true }

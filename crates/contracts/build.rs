@@ -1,5 +1,6 @@
 use cargo_metadata::{CrateType, MetadataCommand, TargetKind};
 use std::{env, fs, path::PathBuf, process::Command};
+use wasm_opt::OptimizationOptions;
 
 fn main() {
     let fluentbase_root_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
@@ -89,6 +90,19 @@ fn main() {
         contracts_dir.join("genesis/fairblock/fallback.wasm"),
     ));
     paths.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut final_paths = Vec::new();
+    let final_artifacts_dir: PathBuf = root_metadata.target_directory.join("contracts").into();
+    fs::create_dir_all(&final_artifacts_dir).unwrap();
+    for (name, path) in paths {
+        let final_path = final_artifacts_dir.join(&name).with_extension("wasm");
+        OptimizationOptions::new_opt_level_3()
+            .run(&path, &final_path)
+            .expect("failed to optimize wasm");
+        println!("optimized {}", name);
+        final_paths.push((name, final_path));
+    }
+    let paths = final_paths;
 
     let mut code = Vec::new();
     code.push("pub struct BuildOutput {".to_string());
