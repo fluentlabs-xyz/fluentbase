@@ -29,14 +29,7 @@ use rwasm::{
     TypedStore,
     Value,
 };
-use std::{
-    cell::RefCell,
-    fmt::Debug,
-    hash::{Hash, Hasher},
-    mem::take,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::RefCell, fmt::Debug, hash::Hash, mem::take, rc::Rc, sync::Arc};
 
 #[derive(Default, Clone, Debug)]
 pub struct ExecutionResult {
