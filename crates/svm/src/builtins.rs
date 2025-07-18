@@ -1335,7 +1335,6 @@ declare_builtin_function!(
         let output: usize = match group_op {
             ALT_BN128_ADD =>
                 ALT_BN128_ADDITION_OUTPUT_LEN,
-
             ALT_BN128_MUL =>
                 ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
             ALT_BN128_PAIRING => {

@@ -34,6 +34,7 @@ mod tests {
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
+            AltBn128Compression,
             Blake3,
             CreateAccountAndModifySomeData1,
             CurveGroupOp,
@@ -45,7 +46,6 @@ mod tests {
             SolBigModExp,
             SolSecp256k1Recover,
             SyscallAltBn128,
-            SyscallAltBn128Compression,
             TestCommand,
         },
     };
@@ -56,8 +56,13 @@ mod tests {
         compression::prelude::{
             alt_bn128_g1_compress,
             alt_bn128_g1_decompress,
+            alt_bn128_g2_compress,
+            alt_bn128_g2_decompress,
             convert_endianness,
             ALT_BN128_G1_COMPRESS,
+            ALT_BN128_G1_DECOMPRESS,
+            ALT_BN128_G2_COMPRESS,
+            ALT_BN128_G2_DECOMPRESS,
         },
         prelude::{
             alt_bn128_addition,
@@ -956,8 +961,6 @@ mod tests {
 
         let mut test_commands: Vec<TestCommand> = vec![];
 
-        use serde_derive::Deserialize;
-
         let test_data = r#"[
         {
             "Input": "18b18acfb4c2c30276db5411368e7185b311dd124691610c5d3b74034e093dc9063c909c4720840cb5134cb9f59fa749755796819658d32efc0d288198f3726607c2b7f58a84bd6145f00c9c2bc0bb1a187f20ff2c92963a88019e7c6a014eed06614e20c147e940f2d70da3f74c9a17df361706a4485c742bd6788478fa17d7",
@@ -1087,8 +1090,6 @@ mod tests {
         // exec
 
         let mut test_commands: Vec<TestCommand> = vec![];
-
-        use serde_derive::Deserialize;
 
         let test_data = r#"[
         {
@@ -1262,8 +1263,6 @@ mod tests {
 
         let mut test_commands: Vec<TestCommand> = vec![];
 
-        use serde_derive::Deserialize;
-
         let test_data = r#"[
         {
             "Input": "1c76476f4def4bb94541d57ebba1193381ffa7aa76ada664dd31c16024c43f593034dd2920f673e204fee2811c678745fc819b55d3e9d294e45c9b03a76aef41209dd15ebff5d46c4bd888e51a93cf99a7329636c63514396b4a452003a35bf704bf11ca01483bfa8b34b43561848d28905960114c8ac04049af4b6315a416782bb8324af6cfc93537a2ad1a445cfd0ca2a71acd7ac41fadbf933c2a51be344d120a2a4cf30c1bf9845f20c6fe39e07ea2cce61f0c9bb048165fe5e4de877550111e129f1cf1097710d41c4ac70fcdfa5ba2023c6ff1cbeac322de49d1b6df7c2032c61a830e3c17286de9462bf242fca2883585b93870a73853face6a6bf411198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
@@ -1398,8 +1397,11 @@ mod tests {
         );
     }
 
+    type G1 = ark_bn254::g1::G1Affine;
+    type G2 = ark_bn254::g2::G2Affine;
+
     #[test]
-    fn test_sol_alt_bn128_compression__g1() {
+    fn test_sol_alt_bn128_compression__g1_compression() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -1417,9 +1419,6 @@ mod tests {
         // exec
 
         let mut test_commands: Vec<TestCommand> = vec![];
-
-        type G1 = ark_bn254::g1::G1Affine;
-        type G2 = ark_bn254::g2::G2Affine;
 
         let g1_be = [
             45, 206, 255, 166, 152, 55, 128, 138, 79, 217, 145, 164, 25, 74, 120, 234, 234, 217,
@@ -1459,7 +1458,7 @@ mod tests {
             assert_eq!(decompressed, *g1_be);
 
             test_commands.push(
-                SyscallAltBn128Compression {
+                AltBn128Compression {
                     group_op: ALT_BN128_G1_COMPRESS,
                     input: decompressed.to_vec(),
                     expected_result: alt_bn128_g1_compress(&decompressed).unwrap().to_vec(),
@@ -1467,7 +1466,188 @@ mod tests {
                 }
                 .into(),
             );
+            test_commands.push(
+                AltBn128Compression {
+                    group_op: ALT_BN128_G1_DECOMPRESS,
+                    input: alt_bn128_g1_compress(&decompressed).unwrap().to_vec(),
+                    expected_result: decompressed.to_vec(),
+                    expected_ret: 0, // OK
+                }
+                .into(),
+            );
         }
+
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
+    }
+
+    #[test]
+    fn test_sol_alt_bn128_compression__g2_compression() {
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let loader_id = loader_v4::id();
+        let system_program_id = system_program::id();
+        let account_with_program = load_program_account_from_elf_file(
+            &loader_id,
+            // "../examples/svm/solana-program/assets/solana_program.so",
+            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+        );
+        let payer_lamports = 101;
+        let seed1 = b"seed";
+
+        let (pk_payer, pk_exec, pk_new, contract_address) =
+            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+
+        // exec
+
+        let mut test_commands: Vec<TestCommand> = vec![];
+
+        let g2_be = [
+            40, 57, 233, 205, 180, 46, 35, 111, 215, 5, 23, 93, 12, 71, 118, 225, 7, 46, 247, 147,
+            47, 130, 106, 189, 184, 80, 146, 103, 141, 52, 242, 25, 0, 203, 124, 176, 110, 34, 151,
+            212, 66, 180, 238, 151, 236, 189, 133, 209, 17, 137, 205, 183, 168, 196, 92, 159, 75,
+            174, 81, 168, 18, 86, 176, 56, 16, 26, 210, 20, 18, 81, 122, 142, 104, 62, 251, 169,
+            98, 141, 21, 253, 50, 130, 182, 15, 33, 109, 228, 31, 79, 183, 88, 147, 174, 108, 4,
+            22, 14, 129, 168, 6, 80, 246, 254, 100, 218, 131, 94, 49, 247, 211, 3, 245, 22, 200,
+            177, 91, 60, 144, 147, 174, 90, 17, 19, 189, 62, 147, 152, 18,
+        ];
+        let g2_le = convert_endianness::<64, 128>(&g2_be);
+        let g2: G2 =
+            G2::deserialize_with_mode(g2_le.as_slice(), Compress::No, Validate::No).unwrap();
+
+        let g2_neg = g2.neg();
+        let mut g2_neg_be = [0u8; 128];
+        g2_neg
+            .x
+            .serialize_with_mode(&mut g2_neg_be[..64], Compress::No)
+            .unwrap();
+        g2_neg
+            .y
+            .serialize_with_mode(&mut g2_neg_be[64..128], Compress::No)
+            .unwrap();
+        let g2_neg_be: [u8; 128] = convert_endianness::<64, 128>(&g2_neg_be);
+
+        let points = [(g2, g2_be), (g2_neg, g2_neg_be)];
+
+        for (point, g2_be) in &points {
+            let mut compressed_ref = [0u8; 64];
+            G2::serialize_with_mode(point, compressed_ref.as_mut_slice(), Compress::Yes).unwrap();
+            let compressed_ref: [u8; 64] = convert_endianness::<64, 64>(&compressed_ref);
+
+            let decompressed = alt_bn128_g2_decompress(compressed_ref.as_slice()).unwrap();
+
+            assert_eq!(
+                alt_bn128_g2_compress(&decompressed).unwrap(),
+                compressed_ref
+            );
+            assert_eq!(decompressed, *g2_be);
+
+            test_commands.push(
+                AltBn128Compression {
+                    group_op: ALT_BN128_G2_COMPRESS,
+                    input: decompressed.to_vec(),
+                    expected_result: alt_bn128_g2_compress(&decompressed).unwrap().to_vec(),
+                    expected_ret: 0, // OK
+                }
+                .into(),
+            );
+            test_commands.push(
+                AltBn128Compression {
+                    group_op: ALT_BN128_G2_DECOMPRESS,
+                    input: alt_bn128_g2_compress(&decompressed).unwrap().to_vec(),
+                    expected_result: decompressed.to_vec(),
+                    expected_ret: 0, // OK
+                }
+                .into(),
+            );
+        }
+
+        process_test_commands(
+            &mut ctx,
+            &contract_address,
+            &pk_exec,
+            &pk_payer,
+            &pk_new,
+            &system_program_id,
+            &test_commands,
+        );
+    }
+
+    #[test]
+    fn test_sol_alt_bn128_compression__pairing() {
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let loader_id = loader_v4::id();
+        let system_program_id = system_program::id();
+        let account_with_program = load_program_account_from_elf_file(
+            &loader_id,
+            // "../examples/svm/solana-program/assets/solana_program.so",
+            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+        );
+        let payer_lamports = 101;
+        let seed1 = b"seed";
+
+        let (pk_payer, pk_exec, pk_new, contract_address) =
+            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+
+        // exec
+
+        let mut test_commands: Vec<TestCommand> = vec![];
+
+        let test_data = r#"[
+        {
+            "Input": "1c76476f4def4bb94541d57ebba1193381ffa7aa76ada664dd31c16024c43f593034dd2920f673e204fee2811c678745fc819b55d3e9d294e45c9b03a76aef41209dd15ebff5d46c4bd888e51a93cf99a7329636c63514396b4a452003a35bf704bf11ca01483bfa8b34b43561848d28905960114c8ac04049af4b6315a416782bb8324af6cfc93537a2ad1a445cfd0ca2a71acd7ac41fadbf933c2a51be344d120a2a4cf30c1bf9845f20c6fe39e07ea2cce61f0c9bb048165fe5e4de877550111e129f1cf1097710d41c4ac70fcdfa5ba2023c6ff1cbeac322de49d1b6df7c2032c61a830e3c17286de9462bf242fca2883585b93870a73853face6a6bf411198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
+            "Expected": "0000000000000000000000000000000000000000000000000000000000000001",
+            "Name": "jeff1",
+            "Gas": 113000,
+            "NoBenchmark": false
+        }
+        ]"#;
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct TestCase {
+            input: String,
+        }
+
+        let test_cases: Vec<TestCase> = serde_json::from_str(test_data).unwrap();
+
+        test_cases.iter().for_each(|test| {
+            let input = array_bytes::hex2bytes_unchecked(&test.input);
+            let g1 = input[0..64].to_vec();
+            let g1_compressed = alt_bn128_g1_compress(&g1).unwrap();
+            assert_eq!(g1, alt_bn128_g1_decompress(&g1_compressed).unwrap());
+
+            println!("input.len {}", input.len());
+            test_commands.push(
+                AltBn128Compression {
+                    group_op: ALT_BN128_G1_DECOMPRESS,
+                    input: g1_compressed.to_vec(),
+                    expected_result: g1.to_vec(),
+                    expected_ret: 0,
+                }
+                .into(),
+            );
+
+            let g2 = input[64..192].to_vec();
+            let g2_compressed = alt_bn128_g2_compress(&g2).unwrap();
+            assert_eq!(g2, alt_bn128_g2_decompress(&g2_compressed).unwrap());
+
+            test_commands.push(
+                AltBn128Compression {
+                    group_op: ALT_BN128_G2_DECOMPRESS,
+                    input: g2_compressed.to_vec(),
+                    expected_result: g2.to_vec(),
+                    expected_ret: 0,
+                }
+                .into(),
+            );
+        });
 
         process_test_commands(
             &mut ctx,

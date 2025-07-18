@@ -99,7 +99,7 @@ pub struct SyscallAltBn128 {
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SyscallAltBn128Compression {
+pub struct AltBn128Compression {
     pub group_op: u64,
     pub input: Vec<u8>,
     pub expected_result: Vec<u8>,
@@ -120,7 +120,7 @@ pub enum TestCommand {
     CurveGroupOp(CurveGroupOp),
     CurveMultiscalarMultiplication(CurveMultiscalarMultiplication),
     SyscallAltBn128(SyscallAltBn128),
-    SyscallAltBn128Compression(SyscallAltBn128Compression),
+    AltBn128Compression(AltBn128Compression),
 }
 
 macro_rules! impl_from {
@@ -128,6 +128,13 @@ macro_rules! impl_from {
         impl From<$typ> for TestCommand {
             fn from(value: $typ) -> Self {
                 TestCommand::$typ(value)
+            }
+        }
+    };
+    ($typ:ident, $enum_branch:ident) => {
+        impl From<$typ> for TestCommand {
+            fn from(value: $typ) -> Self {
+                TestCommand::$enum_branch(value)
             }
         }
     };
@@ -145,4 +152,4 @@ impl_from!(CurvePointValidation);
 impl_from!(CurveGroupOp);
 impl_from!(CurveMultiscalarMultiplication);
 impl_from!(SyscallAltBn128);
-impl_from!(SyscallAltBn128Compression);
+impl_from!(AltBn128Compression);
