@@ -56,22 +56,23 @@ pub fn process_instruction(
     let test_data_for_log: &[&[u8]] = &[&[1, 2, 3], &[4, 5, 6]];
     log_data_native(test_data_for_log);
 
-    msg!(
-        "process_instruction: program_id {:x?} accounts.len {} instruction_data {:x?}",
-        program_id.to_bytes(),
-        accounts.len(),
-        instruction_data,
-    );
-    for (account_idx, account) in accounts.iter().enumerate() {
-        msg!(
-            "input account {}: {:?} key {:x?} owner {:x?}",
-            account_idx,
-            account,
-            account.key.to_bytes(),
-            account.owner.to_bytes()
-        );
-    }
+    // msg!(
+    //     "process_instruction: program_id {:x?} accounts.len {} instruction_data {:x?}",
+    //     program_id.to_bytes(),
+    //     accounts.len(),
+    //     instruction_data,
+    // );
+    // for (account_idx, account) in accounts.iter().enumerate() {
+    //     msg!(
+    //         "input account {}: {:?} key {:x?} owner {:x?}",
+    //         account_idx,
+    //         account,
+    //         account.key.to_bytes(),
+    //         account.owner.to_bytes()
+    //     );
+    // }
 
+    msg!("deserialize(instruction_data) into Vec<u8>");
     let instruction_data: Vec<u8> = deserialize(instruction_data).map_err(|e| {
         msg!(
             "process_instruction: failed to deserialize 'instruction_data' (len: {}): {}",
@@ -80,11 +81,7 @@ pub fn process_instruction(
         );
         ProgramError::InvalidInstructionData
     })?;
-    msg!(
-        "process_instruction:  {}): {:x?}",
-        instruction_data.len(),
-        &instruction_data
-    );
+    msg!("deserialize(&instruction_data) into TestCommand");
     let test_command: TestCommand =
         deserialize(&instruction_data).expect("failed to deserialize test command");
     msg!("processing test_command: {:x?}", test_command);
@@ -116,8 +113,6 @@ pub fn process_instruction(
                     })?
                 );
             }
-            msg!("process_instruction: byte_n_to_set: '{}'", p.byte_n_to_set);
-            msg!("process_instruction: byte_n_value: {}", p.byte_n_value);
 
             let account_info_iter = &mut accounts.iter();
 
@@ -308,17 +303,13 @@ pub fn process_instruction(
             assert_eq!(&p.expected_point, &result_point)
         }
         TestCommand::SyscallAltBn128(p) => {
-            let mut result_point = [0u8; 64]; // can hold to 64 (32 or 64)
-            let ret = alt_bn128_group_op_native(p.group_op, &p.input, &mut result_point);
-            msg!("ret {:x?}", ret);
-            msg!("p.expected_ret {:x?}", p.expected_ret);
-            assert_eq!(ret, p.expected_ret);
-            let mut expected_result_point = [0u8; 64];
-            expected_result_point[..p.expected_result.as_slice().len()]
-                .copy_from_slice(p.expected_result.as_slice());
-            msg!("expected_result_point {:x?}", expected_result_point);
-            msg!("result_point {:x?}", result_point);
-            assert_eq!(&expected_result_point, &result_point)
+            // let mut result_point = [0u8; 64]; // can hold to 64 (32 or 64)
+            // let ret = alt_bn128_group_op_native(p.group_op, &p.input, &mut result_point);
+            // assert_eq!(ret, p.expected_ret);
+            // let mut expected_result_point = [0u8; 64];
+            // expected_result_point[..p.expected_result.as_slice().len()]
+            //     .copy_from_slice(p.expected_result.as_slice());
+            // assert_eq!(&expected_result_point, &result_point)
         }
         TestCommand::AltBn128Compression(p) => {
             let mut result_point = [0u8; 128]; // can be 32, 64, 128

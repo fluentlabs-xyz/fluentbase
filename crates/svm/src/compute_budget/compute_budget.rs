@@ -1,10 +1,10 @@
 use crate::{
     common::{MAX_CALL_DEPTH, MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE},
-    compute_budget_processor::{MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES},
+    compute_budget_processor::MAX_HEAP_FRAME_BYTES,
 };
 
 /// Length of the heap memory region used for program heap.
-pub const HEAP_LENGTH: usize = 32 * 1024;
+pub const HEAP_LENGTH: usize = 32 * 1024 * 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeBudget {
@@ -29,12 +29,12 @@ pub struct ComputeBudget {
 
 impl Default for ComputeBudget {
     fn default() -> Self {
-        Self::new(MAX_COMPUTE_UNIT_LIMIT as u64)
+        Self::new()
     }
 }
 
 impl ComputeBudget {
-    pub fn new(_compute_unit_limit: u64) -> Self {
+    pub fn new() -> Self {
         ComputeBudget {
             max_instruction_stack_depth: MAX_INSTRUCTION_STACK_DEPTH,
             max_instruction_trace_length: 64,
