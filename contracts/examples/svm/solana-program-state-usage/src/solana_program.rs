@@ -303,13 +303,13 @@ pub fn process_instruction(
             assert_eq!(&p.expected_point, &result_point)
         }
         TestCommand::SyscallAltBn128(p) => {
-            // let mut result_point = [0u8; 64]; // can hold to 64 (32 or 64)
-            // let ret = alt_bn128_group_op_native(p.group_op, &p.input, &mut result_point);
-            // assert_eq!(ret, p.expected_ret);
-            // let mut expected_result_point = [0u8; 64];
-            // expected_result_point[..p.expected_result.as_slice().len()]
-            //     .copy_from_slice(p.expected_result.as_slice());
-            // assert_eq!(&expected_result_point, &result_point)
+            let mut result_point = [0u8; 64]; // can hold to 64 (32 or 64)
+            let ret = alt_bn128_group_op_native(p.group_op, &p.input, &mut result_point);
+            assert_eq!(ret, p.expected_ret);
+            let mut expected_result_point = [0u8; 64];
+            expected_result_point[..p.expected_result.as_slice().len()]
+                .copy_from_slice(p.expected_result.as_slice());
+            assert_eq!(&expected_result_point, &result_point)
         }
         TestCommand::AltBn128Compression(p) => {
             let mut result_point = [0u8; 128]; // can be 32, 64, 128

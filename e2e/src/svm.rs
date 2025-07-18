@@ -1700,8 +1700,6 @@ mod tests {
 
             assert_eq!(result.unwrap(), expected);
 
-            println!("input.len() {}", input.len());
-
             test_commands.push(
                 SyscallAltBn128 {
                     group_op: ALT_BN128_PAIRING,
@@ -1950,7 +1948,6 @@ mod tests {
             let g1_compressed = alt_bn128_g1_compress(&g1).unwrap();
             assert_eq!(g1, alt_bn128_g1_decompress(&g1_compressed).unwrap());
 
-            println!("input.len {}", input.len());
             test_commands.push(
                 AltBn128Compression {
                     group_op: ALT_BN128_G1_DECOMPRESS,
