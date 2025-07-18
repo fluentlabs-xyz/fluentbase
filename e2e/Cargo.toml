@@ -50,7 +50,7 @@ ark-serialize = { workspace = true }
 default = [
     "std",
     "wasmtime",
-    "debug-print",
+    #    "debug-print",
     "enable-svm",
 ]
 enable-svm = [
