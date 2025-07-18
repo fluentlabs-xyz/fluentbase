@@ -13,6 +13,7 @@ use fluentbase_examples_svm_bindings::{
     set_return_data_native,
     sol_blake3_native,
     sol_keccak256_native,
+    sol_poseidon_native,
     sol_sha256_native,
 };
 use fluentbase_svm_shared::{bincode_helpers::deserialize, test_structs::TestCommand};
@@ -220,34 +221,50 @@ pub fn process_instruction(
             let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
             let expected_result = p.expected_result;
             let result = sol_keccak256_native(&data);
-            assert_eq!(&result.1, expected_result.as_slice());
-            let mut data_solid = Vec::new();
-            for v in &p.data {
-                data_solid.extend_from_slice(v);
+            assert_eq!(expected_result.as_slice(), &result.1);
+            if p.data.len() > 0 {
+                let mut data_solid = Vec::new();
+                for v in &p.data {
+                    data_solid.extend_from_slice(v);
+                }
+                let result = sol_keccak256_native(&[data_solid.as_slice()]);
+                assert_eq!(expected_result.as_slice(), &result.1);
             }
-            let result = sol_keccak256_native(&[data_solid.as_slice()]);
-            assert_eq!(&result.1, expected_result.as_slice());
         }
         TestCommand::Sha256(p) => {
             let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
             let expected_result = p.expected_result;
             let result = sol_sha256_native(&data);
-            assert_eq!(&result.1, expected_result.as_slice());
-            let mut data_solid = Vec::new();
-            for v in &p.data {
-                data_solid.extend_from_slice(v);
+            assert_eq!(expected_result.as_slice(), &result.1);
+            if p.data.len() > 0 {
+                let mut data_solid = Vec::new();
+                for v in &p.data {
+                    data_solid.extend_from_slice(v);
+                }
+                let result = sol_sha256_native(&[data_solid.as_slice()]);
+                assert_eq!(expected_result.as_slice(), &result.1);
             }
-            let result = sol_sha256_native(&[data_solid.as_slice()]);
-            assert_eq!(&result.1, expected_result.as_slice());
         }
         TestCommand::Blake3(p) => {
             let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
             let expected_result = p.expected_result;
             let result = sol_blake3_native(data.as_slice());
-            assert_eq!(&result.1, expected_result.as_slice());
-            let data_solid: &[&[u8]] = &[&[1u8, 2, 3, 4, 5, 6]];
-            let result = sol_blake3_native(data_solid);
-            assert_eq!(&result.1, expected_result.as_slice());
+            assert_eq!(expected_result.as_slice(), &result.1);
+            if p.data.len() > 0 {
+                let mut data_solid = Vec::new();
+                for v in &p.data {
+                    data_solid.extend_from_slice(v);
+                }
+                let result = sol_blake3_native(&[data_solid.as_slice()]);
+                assert_eq!(expected_result.as_slice(), &result.1);
+            }
+        }
+        TestCommand::Poseidon(p) => {
+            let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
+            let expected_result = p.expected_result;
+            let result = sol_poseidon_native(p.parameters, p.endianness, data.as_slice());
+            assert_eq!(&p.expected_ret, &result.0);
+            assert_eq!(expected_result.as_slice(), &result.1);
         }
         TestCommand::SetGetReturnData(p) => {
             let data: &[u8] = p.data.as_slice();

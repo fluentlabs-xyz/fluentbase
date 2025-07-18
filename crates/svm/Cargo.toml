@@ -39,7 +39,7 @@ static_assertions = { workspace = true, default-features = false, features = [] 
 solana-stable-layout = { workspace = true, default-features = false, features = [] }
 solana-bincode = { workspace = true, default-features = false, features = [] }
 solana-precompile-error = { workspace = true, default-features = false, features = [] }
-solana-poseidon = { workspace = true, default-features = false, optional = true, features = [] }
+solana-poseidon = { workspace = true, default-features = false, features = [] }
 solana-curve25519 = { workspace = true, default-features = false, features = [] }
 solana-bn254 = { workspace = true, default-features = false, features = [] }
 
@@ -68,6 +68,7 @@ array-bytes = { workspace = true, default-features = false, features = [] }
 [features]
 default = [
     "std",
+    #    "enable-poseidon"
 ]
 std = [
     "fluentbase-sdk/std",
@@ -78,6 +79,6 @@ debug-print = []
 do-not-validate-elf-on-deploy = []
 use-extended-debug-log = []
 # bloats binary size 4 times
-enable-poseidon = [
-    "dep:solana-poseidon"
-]
+#enable-poseidon = [
+#    "dep:solana-poseidon"
+#]

@@ -2284,6 +2284,7 @@ dependencies = [
  "solana-feature-set",
  "solana-hash",
  "solana-instruction",
+ "solana-poseidon",
  "solana-precompile-error",
  "solana-program-entrypoint",
  "solana-program-error",
@@ -3016,6 +3017,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3db8d6ba2cec9eacc40e6e8ccc98931840301f1006e95647ceb2dd5c3aa06f7c"
 dependencies = [
  "libsecp256k1-core 0.3.0",
+]
+
+[[package]]
+name = "light-poseidon"
+version = "0.2.0"
+source = "git+https://github.com/fluentlabs-xyz/light-poseidon?branch=feat%2Fsvm-0.2.0#43b0d9caae01f007091338e86f798258dba8d594"
+dependencies = [
+ "ark-bn254 0.4.0",
+ "ark-ff 0.4.2",
+ "num-bigint 0.4.6",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -4962,6 +4974,16 @@ dependencies = [
 name = "solana-native-token"
 version = "2.1.18"
 source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+
+[[package]]
+name = "solana-poseidon"
+version = "2.1.18"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+dependencies = [
+ "ark-bn254 0.4.0",
+ "light-poseidon",
+ "solana-define-syscall",
+]
 
 [[package]]
 name = "solana-precompile-error"

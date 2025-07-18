@@ -65,6 +65,14 @@ pub struct Blake3 {
     pub expected_result: [u8; 32],
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Poseidon {
+    pub parameters: u64,
+    pub endianness: u64,
+    pub data: Vec<Vec<u8>>,
+    pub expected_result: [u8; 32],
+    pub expected_ret: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SetGetReturnData {
     pub data: Vec<u8>,
 }
@@ -115,6 +123,7 @@ pub enum TestCommand {
     Keccak256(Keccak256),
     Sha256(Sha256),
     Blake3(Blake3),
+    Poseidon(Poseidon),
     SetGetReturnData(SetGetReturnData),
     CurvePointValidation(CurvePointValidation),
     CurveGroupOp(CurveGroupOp),
@@ -147,6 +156,7 @@ impl_from!(SolSecp256k1Recover);
 impl_from!(Keccak256);
 impl_from!(Sha256);
 impl_from!(Blake3);
+impl_from!(Poseidon);
 impl_from!(SetGetReturnData);
 impl_from!(CurvePointValidation);
 impl_from!(CurveGroupOp);

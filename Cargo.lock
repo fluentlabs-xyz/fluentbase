@@ -2643,6 +2643,7 @@ dependencies = [
  "serde_json",
  "solana-bn254",
  "solana-curve25519",
+ "solana-poseidon",
  "wat",
 ]
 

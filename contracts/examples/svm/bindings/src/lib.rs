@@ -92,6 +92,32 @@ pub fn sol_blake3_native(data: &[&[u8]]) -> (ReturnValue, [u8; 32]) {
     hash_impl!(data, sol_blake3)
 }
 extern "C" {
+    fn sol_poseidon(
+        parameters_addr: u64,
+        endianness_addr: u64,
+        vals_addr: *const u8,
+        vals_len: u64,
+        result_addr: *const u8,
+    ) -> ReturnValue;
+}
+pub fn sol_poseidon_native(
+    parameters: u64,
+    endianness: u64,
+    vals: &[&[u8]],
+) -> (ReturnValue, [u8; 32]) {
+    let mut result = [0u8; 32];
+    let ret = unsafe {
+        sol_poseidon(
+            parameters,
+            endianness,
+            vals.as_ptr() as *const u8,
+            vals.len() as u64,
+            result.as_mut_ptr(),
+        )
+    };
+    (ret, result)
+}
+extern "C" {
     fn sol_secp256k1_recover(
         hash_addr: *const u8,
         recovery_id_val: u64,

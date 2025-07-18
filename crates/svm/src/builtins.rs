@@ -149,7 +149,7 @@ pub fn register_builtins<SDK: SharedAPI>(
     function_registry
         .register_function_hashed("sol_big_mod_exp", SyscallBigModExp::vm)
         .unwrap();
-    #[cfg(feature = "enable-poseidon")]
+    // #[cfg(feature = "enable-poseidon")]
     function_registry
         .register_function_hashed("sol_poseidon", SyscallPoseidon::vm)
         .unwrap();
@@ -650,7 +650,7 @@ declare_builtin_function!(
     }
 );
 
-#[cfg(feature = "enable-poseidon")]
+// #[cfg(feature = "enable-poseidon")]
 declare_builtin_function!(
     // Poseidon
     SyscallPoseidon<SDK: SharedAPI>,
@@ -663,14 +663,12 @@ declare_builtin_function!(
         result_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
+        use crate::error::RuntimeError;
         let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
         let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
 
         if vals_len > 12 {
-            debug_log_ext!(
-                "Poseidon hashing {} sequences is not supported",
-                vals_len,
-            );
+            debug_log_ext!("Poseidon hashing {} sequences is not supported", vals_len);
             return Err(SyscallError::InvalidLength.into());
         }
 
@@ -686,7 +684,7 @@ declare_builtin_function!(
             vals_len,
             invoke_context.get_check_aligned(),
         )?;
-       let inputs_vec = untranslated_inputs
+        let inputs_vec = untranslated_inputs
             .iter()
             .map(|v| {
                 Ok(v.as_ref().to_vec_cloned())

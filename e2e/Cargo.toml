@@ -38,6 +38,7 @@ fluentbase-svm = { workspace = true }
 criterion = "0.6.0"
 solana-curve25519 = { workspace = true, default-features = false, features = [] }
 solana-bn254 = { workspace = true, default-features = false, features = [] }
+solana-poseidon = { workspace = true, default-features = false, features = [] }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
@@ -52,11 +53,15 @@ default = [
     "debug-print",
     "enable-svm",
     #    "fast-panic",
+    #    "svm-enable-poseidon",
 ]
 enable-svm = [
     "fluentbase-genesis/enable-svm",
     "fluentbase-svm/use-extended-debug-log"
 ]
+#svm-enable-poseidon = [
+#    "fluentbase-svm/enable-poseidon"
+#]
 fast-panic = [
     "fluentbase-sdk/fast-panic",
 ]
