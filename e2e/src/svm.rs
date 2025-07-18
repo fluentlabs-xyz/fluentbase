@@ -577,7 +577,6 @@ mod tests {
         );
     }
 
-    // #[cfg(feature = "svm-enable-poseidon")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_be() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -627,7 +626,6 @@ mod tests {
         );
     }
 
-    // #[cfg(feature = "svm-enable-poseidon")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_le() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -677,7 +675,6 @@ mod tests {
         );
     }
 
-    // #[cfg(feature = "svm-enable-poseidon")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_twos_be() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -732,7 +729,6 @@ mod tests {
         );
     }
 
-    // #[cfg(feature = "svm-enable-poseidon")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_twos_le() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -787,7 +783,6 @@ mod tests {
         );
     }
 
-    // #[cfg(feature = "svm-enable-poseidon")]
     #[test]
     fn test_svm_sol_poseidon__input_one() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();

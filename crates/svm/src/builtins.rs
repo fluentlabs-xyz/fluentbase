@@ -149,7 +149,6 @@ pub fn register_builtins<SDK: SharedAPI>(
     function_registry
         .register_function_hashed("sol_big_mod_exp", SyscallBigModExp::vm)
         .unwrap();
-    // #[cfg(feature = "enable-poseidon")]
     function_registry
         .register_function_hashed("sol_poseidon", SyscallPoseidon::vm)
         .unwrap();
@@ -650,7 +649,6 @@ declare_builtin_function!(
     }
 );
 
-// #[cfg(feature = "enable-poseidon")]
 declare_builtin_function!(
     // Poseidon
     SyscallPoseidon<SDK: SharedAPI>,

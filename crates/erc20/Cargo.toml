@@ -10,7 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-sdk = { workspace = true, features = [] }
+fluentbase-sdk = { workspace = true, features = ["fast-panic"] }
 bincode = { workspace = true, default-features = false, features = ["serde"] }
 
 [dev-dependencies]

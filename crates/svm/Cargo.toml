@@ -68,7 +68,6 @@ array-bytes = { workspace = true, default-features = false, features = [] }
 [features]
 default = [
     "std",
-    #    "enable-poseidon"
 ]
 std = [
     "fluentbase-sdk/std",
@@ -78,7 +77,3 @@ std = [
 debug-print = []
 do-not-validate-elf-on-deploy = []
 use-extended-debug-log = []
-# bloats binary size 4 times
-#enable-poseidon = [
-#    "dep:solana-poseidon"
-#]

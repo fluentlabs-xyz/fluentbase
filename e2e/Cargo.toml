@@ -13,7 +13,7 @@ categories.workspace = true
 fluentbase-codec = { workspace = true }
 fluentbase-genesis = { workspace = true }
 fluentbase-runtime = { workspace = true }
-fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true }
 fluentbase-sdk-testing = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-svm = { workspace = true }
@@ -52,16 +52,12 @@ default = [
     "wasmtime",
     "debug-print",
     "enable-svm",
-    #    "fast-panic",
-    #    "svm-enable-poseidon",
+    "fast-panic",
 ]
 enable-svm = [
     "fluentbase-genesis/enable-svm",
     "fluentbase-svm/use-extended-debug-log"
 ]
-#svm-enable-poseidon = [
-#    "fluentbase-svm/enable-poseidon"
-#]
 fast-panic = [
     "fluentbase-sdk/fast-panic",
 ]
