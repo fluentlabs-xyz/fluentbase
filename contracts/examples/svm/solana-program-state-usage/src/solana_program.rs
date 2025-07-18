@@ -180,6 +180,7 @@ pub fn process_instruction(
         TestCommand::SolBigModExp(p) => {
             let modulus: [u8; 32] = p.modulus.try_into().unwrap();
             let result = big_mod_exp_3(&p.base, &p.exponent, &modulus);
+            assert_eq!(&p.expected_ret, &result.0);
             assert_eq!(&p.expected, &result.1);
         }
         TestCommand::SolSecp256k1Recover(p) => {
@@ -207,6 +208,7 @@ pub fn process_instruction(
                 &p.signature_bytes.try_into().unwrap(),
             );
             msg!("recovered_pubkey {:x?}", &recovered_pubkey);
+            assert_eq!(&p.expected_ret, &recovered_pubkey.0);
             assert_eq!(&recovered_pubkey.1, p.pubkey_bytes.as_slice());
 
             let alt_recovered_pubkey = secp256k1_recover_native(
@@ -215,12 +217,14 @@ pub fn process_instruction(
                 &alt_signature_bytes,
             );
             msg!("alt_recovered_pubkey {:x?}", &alt_recovered_pubkey);
+            assert_eq!(&p.expected_ret, &alt_recovered_pubkey.0);
             assert_eq!(alt_recovered_pubkey.1, p.pubkey_bytes.as_slice());
         }
         TestCommand::Keccak256(p) => {
             let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
             let expected_result = p.expected_result;
             let result = sol_keccak256_native(&data);
+            assert_eq!(&p.expected_ret, &result.0);
             assert_eq!(expected_result.as_slice(), &result.1);
             if p.data.len() > 0 {
                 let mut data_solid = Vec::new();
@@ -228,6 +232,7 @@ pub fn process_instruction(
                     data_solid.extend_from_slice(v);
                 }
                 let result = sol_keccak256_native(&[data_solid.as_slice()]);
+                assert_eq!(&p.expected_ret, &result.0);
                 assert_eq!(expected_result.as_slice(), &result.1);
             }
         }
@@ -235,6 +240,7 @@ pub fn process_instruction(
             let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
             let expected_result = p.expected_result;
             let result = sol_sha256_native(&data);
+            assert_eq!(&p.expected_ret, &result.0);
             assert_eq!(expected_result.as_slice(), &result.1);
             if p.data.len() > 0 {
                 let mut data_solid = Vec::new();
@@ -242,6 +248,7 @@ pub fn process_instruction(
                     data_solid.extend_from_slice(v);
                 }
                 let result = sol_sha256_native(&[data_solid.as_slice()]);
+                assert_eq!(&p.expected_ret, &result.0);
                 assert_eq!(expected_result.as_slice(), &result.1);
             }
         }
@@ -249,6 +256,7 @@ pub fn process_instruction(
             let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
             let expected_result = p.expected_result;
             let result = sol_blake3_native(data.as_slice());
+            assert_eq!(&p.expected_ret, &result.0);
             assert_eq!(expected_result.as_slice(), &result.1);
             if p.data.len() > 0 {
                 let mut data_solid = Vec::new();
@@ -256,6 +264,7 @@ pub fn process_instruction(
                     data_solid.extend_from_slice(v);
                 }
                 let result = sol_blake3_native(&[data_solid.as_slice()]);
+                assert_eq!(&p.expected_ret, &result.0);
                 assert_eq!(expected_result.as_slice(), &result.1);
             }
         }
