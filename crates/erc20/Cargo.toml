@@ -21,3 +21,6 @@ default = [
 ]
 std = []
 debug-print = []
+json = [
+	"fluentbase-sdk/json"
+]

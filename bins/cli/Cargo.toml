@@ -27,3 +27,4 @@ sha2 = "0.10"
 [features]
 default = []
 std = ["fluentbase-build/std"]
+json = ["fluentbase-sdk/json", "fluentbase-build/json"]
