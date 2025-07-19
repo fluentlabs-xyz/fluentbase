@@ -1,6 +1,5 @@
 #![allow(dead_code, unreachable_patterns, unused_macros)]
 #![warn(unused_crate_dependencies)]
-#![feature(file_lock)]
 extern crate core;
 
 pub mod instruction;
