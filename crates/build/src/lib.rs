@@ -14,8 +14,11 @@ use std::{
 };
 
 // Build configuration constants
+pub const DEFAULT_DOCKER_IMAGE: &str = "ghcr.io/fluentlabs-xyz/fluentbase-build";
 pub const DEFAULT_DOCKER_TAG: &str = concat!("v", env!("CARGO_PKG_VERSION"));
-pub const DEFAULT_STACK_SIZE: u32 = 128 * 1024;
+pub const DOCKER_PLATFORM: &str = "linux/amd64";
+
+pub const DEFAULT_STACK_SIZE: u32 = 128 * 1024; // 128 KB
 pub const BUILD_TARGET: &str = "wasm32-unknown-unknown";
 pub const HELPER_TARGET_SUBDIR: &str = "wasm-compilation";
 pub const DEFAULT_RUST_TOOLCHAIN: &str = "nightly-2025-01-27";
@@ -60,9 +63,12 @@ pub struct BuildArgs {
     #[arg(long)]
     pub docker: bool,
 
+    #[arg(long, default_value = DEFAULT_DOCKER_IMAGE)]
+    pub docker_image: String,
+
     /// Docker image tag to use
     #[arg(long, default_value = DEFAULT_DOCKER_TAG)]
-    pub tag: String,
+    pub docker_tag: String,
 
     /// Root directory to mount in Docker (defaults to current directory)
     #[arg(long)]
@@ -115,7 +121,8 @@ impl Default for BuildArgs {
         Self {
             contract_name: None,
             docker: true,
-            tag: DEFAULT_DOCKER_TAG.to_string(),
+            docker_image: DEFAULT_DOCKER_IMAGE.to_string(),
+            docker_tag: DEFAULT_DOCKER_TAG.to_string(),
             mount_dir: None,
             rust_version: None,
             use_toolchain_file: false, // by default use rust from the image
@@ -272,8 +279,8 @@ impl BuildArgs {
         cmd
     }
 
-    /// Generate RUSTFLAGS for WASM compilation
-    pub fn rustflags(&self) -> String {
+    /// Generate RUST FLAGS for WASM compilation
+    pub fn rust_flags(&self) -> String {
         let mut flags = vec![
             format!("-Clink-arg=-zstack-size={}", self.stack_size),
             "-Cpanic=abort".to_string(),

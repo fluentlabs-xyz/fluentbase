@@ -2,8 +2,7 @@ use crate::{docker, generators, Artifact, BuildArgs, BUILD_TARGET};
 use anyhow::{Context, Result};
 use cargo_metadata::{Metadata, MetadataCommand, Package};
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -116,9 +115,12 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
         .cloned()
         .unwrap_or_else(|| find_mount_dir(&contract_dir));
 
-    // Determine Docker image that would be used for all generators
+    // Determine the Docker image that would be used for all generators
     let docker_image = if args.docker {
-        Some(docker::ensure_rust_image(&args.tag)?)
+        Some(docker::ensure_rust_image(&format!(
+            "{:?}:{:?}",
+            args.docker_image, args.docker_tag
+        ))?)
     } else {
         None
     };
@@ -188,29 +190,21 @@ fn build_wasm(
     docker_image: &Option<String>,
     mount_dir: &Path,
 ) -> Result<PathBuf> {
-    // Determine target directory based on build mode
-    let target_subdir = if docker_image.is_some() {
-        "docker"
-    } else {
-        "local"
-    };
     let target_dir = contract_dir
         .join("target")
-        .join(crate::HELPER_TARGET_SUBDIR)
-        .join(target_subdir);
+        .join(crate::HELPER_TARGET_SUBDIR);
     fs::create_dir_all(&target_dir)?;
 
     // Build cargo command
     let mut cargo_args = args.cargo_build_command();
 
-    // Add target dir for local builds
     // TODO(d1r1): do we actually need to change target dir for local builds?
     if docker_image.is_none() {
         cargo_args.extend(["--target-dir".to_string(), target_dir.display().to_string()]);
     }
 
     // Run build
-    let env_vars = vec![("CARGO_ENCODED_RUSTFLAGS".to_string(), args.rustflags())];
+    let env_vars = vec![("CARGO_ENCODED_RUSTFLAGS".to_string(), args.rust_flags())];
 
     let docker_config = docker_image
         .as_ref()
@@ -218,7 +212,13 @@ fn build_wasm(
 
     let rust_toolchain = args.toolchain_version(&contract_dir);
 
-    run_command(&cargo_args, contract_dir, docker_config, &env_vars, &rust_toolchain)?;
+    run_command(
+        &cargo_args,
+        contract_dir,
+        docker_config,
+        &env_vars,
+        &rust_toolchain,
+    )?;
 
     // Find the built WASM file
     let wasm_path = find_wasm_artifact(&target_dir, package)?;
@@ -291,7 +291,11 @@ fn find_wasm_artifact(target_dir: &Path, package: &Package) -> Result<PathBuf> {
     }
 }
 
-fn optimize_wasm(wasm_path: &Path, docker_config: Option<(&str, &Path)>, rust_toolchain: &Option<String>) -> Result<()> {
+fn optimize_wasm(
+    wasm_path: &Path,
+    docker_config: Option<(&str, &Path)>,
+    rust_toolchain: &Option<String>,
+) -> Result<()> {
     let work_dir = wasm_path.parent().unwrap();
     let wasm_filename = wasm_path.file_name().unwrap().to_str().unwrap();
     let temp_filename = format!("{}.opt", wasm_filename);
