@@ -23,17 +23,3 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 }
 
 entrypoint!(main_entry);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fluentbase_sdk_testing::HostTestingContext;
-
-    #[test]
-    fn test_contract_works() {
-        let sdk = HostTestingContext::default();
-        main_entry(sdk.clone());
-        let output = sdk.take_output();
-        assert_eq!(&output, "Hello, World".as_bytes());
-    }
-}

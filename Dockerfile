@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7-labs
 
-ARG RUST_TOOLCHAIN=nightly-2025-01-27
+ARG RUST_TOOLCHAIN=1.88
 ARG PLATFORM=linux/amd64
 ARG SDK_VERSION=0.3.6-dev
 ARG BINARYEN_VERSION=120
@@ -17,16 +17,25 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates build-essential pkg-config libssl-dev git \
+    mold clang \
     && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /root/.cargo && \
+    printf '[build]\nrustflags = ["-C","link-arg=-fuse-ld=mold"]\n\
+[target.x86_64-unknown-linux-gnu]\nlinker = "clang"\n' \
+    > /root/.cargo/config.toml
 
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --default-toolchain ${RUST_TOOLCHAIN} \
     && ${CARGO_HOME}/bin/rustup target add wasm32-unknown-unknown \
-    && ${CARGO_HOME}/bin/rustup component add rust-src
+    && ${CARGO_HOME}/bin/rustup component add rust-src \
+    && ${CARGO_HOME}/bin/cargo install sccache --locked
 
 ENV PATH="${CARGO_HOME}/bin:${PATH}" \
+    RUSTC_WRAPPER=sccache \
+    SCCACHE_DIR=/usr/local/cargo/sccache \
     CARGO_NET_RETRY=3 \
     CARGO_NET_GIT_FETCH_WITH_CLI=true \
     CARGO_INCREMENTAL=0 \
@@ -86,10 +95,12 @@ WORKDIR /build/docker/contract
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/usr/local/cargo/sccache \
     cargo build --release --target wasm32-unknown-unknown --no-default-features \
     && mkdir -p /deps \
     && cp -r /usr/local/cargo/registry /deps/registry \
-    && cp -r /usr/local/cargo/git /deps/git
+    && cp -r /usr/local/cargo/git /deps/git \
+    && cp -r /usr/local/cargo/sccache /deps/sccache
 
 
 
@@ -108,6 +119,12 @@ COPY --from=tools /tmp/wabt-*/bin/* /usr/local/bin/
 
 # Copy CLI binary
 COPY --from=cli-builder /build/target/release/fluentbase /usr/local/bin/
+
+# Copy sccache binary
+COPY --from=contract-builder /usr/local/cargo/bin/sccache /usr/local/bin/sccache
+
+# Copy sccache cache directory
+COPY --from=contract-builder /deps/sccache /usr/local/cargo/sccache
 
 # Copy explicitly stored dependencies
 COPY --from=contract-builder /deps/registry /usr/local/cargo/registry
