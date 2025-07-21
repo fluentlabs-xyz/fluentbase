@@ -50,6 +50,8 @@ pub enum Artifact {
     Solidity,
     /// Contract verification metadata
     Metadata,
+    /// Foundry metadata,
+    Foundry,
 }
 
 /// Build configuration for Fluent smart contracts

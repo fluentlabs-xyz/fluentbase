@@ -2,7 +2,8 @@ use crate::{docker, generators, Artifact, BuildArgs, BUILD_TARGET};
 use anyhow::{Context, Result};
 use cargo_metadata::{Metadata, MetadataCommand, Package};
 use std::{
-    env, fs,
+    env,
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -16,6 +17,7 @@ pub struct BuildResult {
     pub abi_path: Option<PathBuf>,
     pub solidity_path: Option<PathBuf>,
     pub metadata_path: Option<PathBuf>,
+    pub foundry_metadata_path: Option<PathBuf>,
 }
 
 /// Executes the build process with Docker/local compilation and generates artifacts.
@@ -408,6 +410,7 @@ fn generate_artifacts(
             Artifact::Abi => 2,      // Depends on pre-generated ABI
             Artifact::Solidity => 3, // Depends on ABI
             Artifact::Metadata => 4, // Depends on everything else
+            Artifact::Foundry => 5,  // Depends on everything else
         }
     });
 
@@ -477,6 +480,45 @@ fn generate_artifacts(
                 let meta_path = output_dir.join("metadata.json");
                 write_json(&meta_path, &metadata)?;
                 result.metadata_path = Some(meta_path);
+            }
+
+            Artifact::Foundry => {
+                let abi = abi.as_ref().expect("ABI should be pre-generated");
+                let wasm = wasm_data
+                    .get_or_insert_with(|| fs::read(wasm_path).expect("Failed to read WASM file"));
+
+                let rwasm_data_path = result
+                    .rwasm_path
+                    .as_ref()
+                    .expect("rwasm is required for Foundry artifact - generate rwasm first");
+
+                let rwasm_data =
+                    fs::read(rwasm_data_path).expect("rwasm should be generated at this point");
+
+                // Create minimal build metadata for Foundry artifact
+                // (if full metadata is needed, we'd need to generate it first)
+                let build_metadata = generators::metadata::generate(
+                    contract_dir,
+                    args,
+                    wasm,
+                    Some(&rwasm_data),
+                    docker_image.as_deref(),
+                    rust_toolchain.as_deref(),
+                )?;
+
+                let interface_path = format!("{}.wasm/interface.sol", package_name);
+                let foundry_artifact = generators::foundry::generate_artifact(
+                    package_name,
+                    &serde_json::to_value(abi)?,
+                    wasm,
+                    &rwasm_data,
+                    &build_metadata,
+                    &interface_path,
+                )?;
+
+                let foundry_path = output_dir.join("foundry.json");
+                write_json(&foundry_path, &foundry_artifact)?;
+                result.foundry_metadata_path = Some(foundry_path);
             }
         }
     }
