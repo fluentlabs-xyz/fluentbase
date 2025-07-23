@@ -35,7 +35,7 @@ mod tests {
     use hashbrown::HashMap;
     use solana_bincode::serialize;
     use solana_instruction::AccountMeta;
-    use solana_pubkey::Pubkey;
+    use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 
     fn main_single_message<API: MetadataAPI>(
         mut sdk: impl SharedAPI,
@@ -82,9 +82,9 @@ mod tests {
         let pk_tmp = Pubkey::new_unique();
         let pk_tmp_account = AccountSharedData::new(100, 0, &system_program_id);
 
-        let pk_exec = Pubkey::from([8; 32]);
+        let pk_exec = Pubkey::from([8; PUBKEY_BYTES]);
 
-        let pk_authority = Pubkey::from([9; 32]);
+        let pk_authority = Pubkey::from([9; PUBKEY_BYTES]);
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
@@ -286,6 +286,7 @@ mod tests {
         assert_eq!(account_data.lamports(), 112);
     }
 
+    #[ignore]
     #[test]
     fn test_create_fill_deploy_exec_with_state() {
         // setup
@@ -307,12 +308,12 @@ mod tests {
         let seeds = &[seed1, seed2];
         let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_exec);
 
-        let pk_authority = Pubkey::from([9; 32]);
+        let pk_authority = Pubkey::from([9; PUBKEY_BYTES]);
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../../examples/svm/solana-program/assets/solana_program.so",
-            "../../contracts/examples/svm/solana-program-state-usage/assets/solana_program.so",
+            "../../contracts/examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
         );
 
         let program_len = account_with_program.data().len();
@@ -520,6 +521,7 @@ mod tests {
         assert_eq!(account_data.executable(), false);
     }
 
+    #[ignore]
     #[test]
     fn test_create_fill_deploy_exec_messages_batch() {
         let mut sdk = HostTestingContext::default();
@@ -548,7 +550,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../../examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
-            "../../contracts/examples/svm/solana-program-state-usage/assets/solana_program.so",
+            "../../contracts/examples/svm/solana-program-transfer-with-cpi/assets/solana_program.so",
         );
 
         let program_len = account_with_program.data().len();

@@ -1,7 +1,7 @@
 use crate::helpers::SyscallError;
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
-use fluentbase_sdk::ExitCode;
+use fluentbase_sdk::{debug_log_ext, ExitCode};
 use solana_instruction::error::InstructionError;
 use solana_rbpf::{elf::ElfError, error::EbpfError};
 use solana_transaction_error::TransactionError;
@@ -17,6 +17,7 @@ pub enum RuntimeError {
     InvalidIdx,
     InvalidType,
     InvalidPrefix,
+    InvalidConversion,
 }
 
 impl core::error::Error for RuntimeError {}
@@ -29,9 +30,54 @@ impl Display for RuntimeError {
             RuntimeError::InvalidIdx => write!(f, "RuntimeError::InvalidIdx"),
             RuntimeError::InvalidType => write!(f, "RuntimeError::InvalidType"),
             RuntimeError::InvalidPrefix => write!(f, "RuntimeError::InvalidPrefix"),
+            RuntimeError::InvalidConversion => write!(f, "RuntimeError::InvalidConversion"),
         }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Secp256k1RecoverError {
+    InvalidHash,
+    InvalidRecoveryId,
+    InvalidSignature,
+}
+
+impl From<u64> for Secp256k1RecoverError {
+    fn from(v: u64) -> Secp256k1RecoverError {
+        match v {
+            1 => Secp256k1RecoverError::InvalidHash,
+            2 => Secp256k1RecoverError::InvalidRecoveryId,
+            3 => Secp256k1RecoverError::InvalidSignature,
+            _ => panic!("Unsupported Secp256k1RecoverError"),
+        }
+    }
+}
+
+impl From<Secp256k1RecoverError> for u64 {
+    fn from(v: Secp256k1RecoverError) -> u64 {
+        match v {
+            Secp256k1RecoverError::InvalidHash => 1,
+            Secp256k1RecoverError::InvalidRecoveryId => 2,
+            Secp256k1RecoverError::InvalidSignature => 3,
+        }
+    }
+}
+
+impl Display for Secp256k1RecoverError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Secp256k1RecoverError::InvalidHash => write!(f, "Secp256k1RecoverError::InvalidHash"),
+            Secp256k1RecoverError::InvalidRecoveryId => {
+                write!(f, "Secp256k1RecoverError::InvalidRecoveryId")
+            }
+            Secp256k1RecoverError::InvalidSignature => {
+                write!(f, "Secp256k1RecoverError::InvalidSignature")
+            }
+        }
+    }
+}
+
+impl core::error::Error for Secp256k1RecoverError {}
 
 #[derive(Debug)]
 pub enum SvmError {
@@ -44,6 +90,45 @@ pub enum SvmError {
     InstructionError(InstructionError),
     SyscallError(SyscallError),
     RuntimeError(RuntimeError),
+    Secp256k1RecoverError(Secp256k1RecoverError),
+}
+
+impl Display for SvmError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        debug_log_ext!();
+        match self {
+            SvmError::TransactionError(e) => {
+                write!(f, "SvmError::TransactionError:{}", e)
+            }
+            SvmError::BincodeEncodeError(e) => {
+                write!(f, "SvmError::BincodeEncodeError:{}", e)
+            }
+            SvmError::BincodeDecodeError(e) => {
+                write!(f, "SvmError::BincodeDecodeError:{}", e)
+            }
+            SvmError::InstructionError(e) => {
+                write!(f, "SvmError::InstructionError:{}", e)
+            }
+            SvmError::ElfError(e) => {
+                write!(f, "SvmError::ElfError:{}", e)
+            }
+            SvmError::EbpfError(e) => {
+                write!(f, "SvmError::EbpfError:{}", e)
+            }
+            SvmError::SyscallError(e) => {
+                write!(f, "SvmError::SyscallError:{}", e)
+            }
+            SvmError::RuntimeError(e) => {
+                write!(f, "SvmError::RuntimeError:{}", e)
+            }
+            SvmError::ExitCode(e) => {
+                write!(f, "SvmError::ExitCode:{}", e)
+            }
+            SvmError::Secp256k1RecoverError(e) => {
+                write!(f, "SvmError::Secp256k1RecoverError:{}", e)
+            }
+        }
+    }
 }
 
 impl From<TransactionError> for SvmError {
@@ -112,6 +197,7 @@ impl From<SvmError> for Error {
             SvmError::InstructionError(e) => Box::new(e),
             SvmError::SyscallError(e) => Box::new(e),
             SvmError::RuntimeError(e) => Box::new(e),
+            SvmError::Secp256k1RecoverError(e) => Box::new(e),
         }
     }
 }

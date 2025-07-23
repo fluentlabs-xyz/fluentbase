@@ -28,9 +28,9 @@ build_solana_program:
 	rm assets/*.o
 
 INPUT_NAME=solana_program_state_usage
-OUTPUT_NAME=solana_program
 .PHONY: build_cargo_powered_solana_program
 build_cargo_powered_solana_program:
 	#cd $(SOLANA_ROOT) && git checkout v2.1.18 && ./cargo-build-sbf -- -Znext-lockfile-bump
 	cargo build-sbf -j1 -- -Znext-lockfile-bump
-	cp target/sbf-solana-solana/release/fluentbase_examples_svm_$(INPUT_NAME).so assets/$(OUTPUT_NAME).so
+	cp ../../../../target/target2/sbf-solana-solana/release/fluentbase_examples_svm_$(INPUT_NAME).so ../assets/fluentbase_examples_svm_$(INPUT_NAME).so
+	ls -alh ../assets/fluentbase_examples_svm_$(INPUT_NAME).so

@@ -511,15 +511,6 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         &self.traces
     }
 
-    pub fn inc_slots(&mut self, step: u64) {
-        self.program_cache_for_tx_batch
-            .set_slot_for_tests(self.program_cache_for_tx_batch.slot().saturating_add(step));
-    }
-
-    pub fn set_slot(&mut self, slot: Slot) {
-        self.program_cache_for_tx_batch.set_slot_for_tests(slot);
-    }
-
     /// Entrypoint for a cross-program invocation from a builtin program
     pub fn native_invoke(
         &mut self,
@@ -673,8 +664,7 @@ impl<'a, SDK: SharedAPI> ContextObject for InvokeContext<'a, SDK> {
     }
 }
 
-#[derive(Clone, PartialEq)]
-#[cfg_attr(test, derive(Debug))]
+#[derive(Clone, PartialEq, Debug)]
 pub struct TransactionAccounts {
     accounts: Vec<RefCell<AccountSharedData>>,
     touched_flags: RefCell<Box<[bool]>>,
@@ -747,8 +737,7 @@ impl TransactionAccounts {
 /// Loaded transaction shared between runtime and programs.
 ///
 /// This context is valid for the entire duration of a transaction being processed.
-#[derive(Clone, PartialEq)]
-#[cfg_attr(test, derive(Debug))]
+#[derive(Clone, PartialEq, Debug)]
 pub struct TransactionContext {
     account_keys: Pin<Box<[Pubkey]>>,
     accounts: Rc<TransactionAccounts>,

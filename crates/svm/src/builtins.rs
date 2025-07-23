@@ -1,31 +1,56 @@
 use crate::{
     alloc::string::ToString,
-    common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
+    big_mod_exp::{big_mod_exp, BigModExpParams},
+    common::{Blake3Hasher, HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
-    error::Error,
+    error::{Error, Secp256k1RecoverError, SvmError},
+    hash::{SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH},
     helpers::SyscallError,
     loaders::syscalls::cpi::cpi_common,
     mem_ops::{
         is_nonoverlapping,
+        memcmp,
         memmove,
         translate_and_check_program_address_inputs,
         translate_slice,
         translate_slice_mut,
         translate_string_and_do,
+        translate_type,
         translate_type_mut,
     },
-    word_size::slice::SliceFatPtr64,
+    word_size::{
+        common::{typecast_bytes, MemoryMappingHelper},
+        slice::{RetVal, SliceFatPtr64, SpecMethods},
+    },
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{debug_log_ext, SharedAPI};
+use itertools::Itertools;
+use solana_bn254::{
+    prelude::{
+        alt_bn128_addition,
+        alt_bn128_multiplication,
+        alt_bn128_pairing,
+        ALT_BN128_ADDITION_OUTPUT_LEN,
+        ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
+        ALT_BN128_PAIRING_OUTPUT_LEN,
+    },
+    AltBn128Error,
+};
+use solana_curve25519::{edwards, ristretto, scalar};
+use solana_feature_set::{abort_on_invalid_curve, simplify_alt_bn128_syscall_error_codes};
+use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
     error::EbpfError,
     memory_region::{AccessType, MemoryMapping},
     program::{BuiltinFunction, FunctionRegistry},
 };
+
+/// Maximum size that can be set using [`set_return_data`].
+pub const MAX_RETURN_DATA: usize = 1024;
 
 pub fn register_builtins<SDK: SharedAPI>(
     function_registry: &mut FunctionRegistry<BuiltinFunction<InvokeContext<SDK>>>,
@@ -34,7 +59,27 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_log_", SyscallLog::vm)
         .unwrap();
     function_registry
+        .register_function_hashed("sol_log_64_", SyscallLogU64::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_log_pubkey", SyscallLogPubkey::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_log_data", SyscallLogData::vm)
+        .unwrap();
+
+    function_registry
+        .register_function_hashed(*b"sol_set_return_data", SyscallSetReturnData::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed(*b"sol_get_return_data", SyscallGetReturnData::vm)
+        .unwrap();
+
+    function_registry
         .register_function_hashed("abort", SyscallAbort::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_panic_", SyscallPanic::vm)
         .unwrap();
     function_registry
         .register_function_hashed(
@@ -55,9 +100,9 @@ pub fn register_builtins<SDK: SharedAPI>(
     function_registry
         .register_function_hashed("sol_memmove_", SyscallMemmove::vm)
         .unwrap();
-    // function_registry
-    //     .register_function_hashed("sol_memcmp_", SyscallMemcmp::vm)
-    //     .unwrap();
+    function_registry
+        .register_function_hashed("sol_memcmp_", SyscallMemcmp::vm)
+        .unwrap();
     function_registry
         .register_function_hashed("sol_memset_", SyscallMemset::vm)
         .unwrap();
@@ -66,16 +111,29 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
         .unwrap();
 
-    // function_registry
-    //     .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
-    //     .unwrap();
+    function_registry
+        .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_curve_group_op", SyscallCurveGroupOps::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed(
+            "sol_curve_multiscalar_mul",
+            SyscallCurveMultiscalarMultiplication::vm,
+        )
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_curve_validate_point", SyscallCurvePointValidation::vm)
+        .unwrap();
 
-    // TODO: doesn't call hash computation handle/function, returns default value (zeroes)
-    // function_registry
-    //     .register_function_hashed("sol_poseidon", SyscallHash::vm::<SDK, PoseidonHasher<SDK>>).unwrap();
-    // function_registry
-    //     .register_function_hashed("sol_poseidon", SyscallPoseidonSDK::vm)
-    //     .unwrap();
+    function_registry
+        .register_function_hashed("sol_alt_bn128_group_op", SyscallAltBn128::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_alt_bn128_compression", SyscallAltBn128Compression::vm)
+        .unwrap();
+
     function_registry
         .register_function_hashed("sol_sha256", SyscallHash::vm::<SDK, Sha256Hasher>)
         .unwrap();
@@ -85,11 +143,80 @@ pub fn register_builtins<SDK: SharedAPI>(
             SyscallHash::vm::<SDK, Keccak256Hasher<SDK>>,
         )
         .unwrap();
-    // function_registry
-    //     .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
-    //     .unwrap();
+    function_registry
+        .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_big_mod_exp", SyscallBigModExp::vm)
+        .unwrap();
+    function_registry
+        .register_function_hashed("sol_poseidon", SyscallPoseidon::vm)
+        .unwrap();
 }
 
+macro_rules! log_str_common {
+    ($value:expr) => {
+        #[allow(unused)]
+        {
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            println!("builtin log: {}", $value);
+            #[cfg(target_arch = "wasm32")]
+            {
+                #[cfg(not(feature = "use-extended-debug-log"))]
+                use fluentbase_sdk::debug_log as log_macro;
+                #[cfg(feature = "use-extended-debug-log")]
+                use fluentbase_sdk::debug_log_ext as log_macro;
+                log_macro!("builtin log: {}", $value);
+            }
+        }
+    };
+}
+
+// TODO re-validate
+declare_builtin_function!(
+    /// memcmp
+    SyscallMemcmp<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        s1_addr: u64,
+        s2_addr: u64,
+        n: u64,
+        cmp_result_addr: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let s1 = translate_slice::<u8>(
+            memory_mapping,
+            s1_addr,
+            n,
+            invoke_context.get_check_aligned(),
+        )?;
+        let s2 = translate_slice::<u8>(
+            memory_mapping,
+            s2_addr,
+            n,
+            invoke_context.get_check_aligned(),
+        )?;
+        let cmp_result = translate_type_mut::<i32>(
+            memory_mapping,
+            cmp_result_addr,
+            invoke_context.get_check_aligned(),
+            false,
+        )?;
+
+        debug_assert_eq!(s1.len(), n as usize);
+        debug_assert_eq!(s2.len(), n as usize);
+        // Safety:
+        // memcmp is marked unsafe since it assumes that the inputs are at least
+        // `n` bytes long. `s1` and `s2` are guaranteed to be exactly `n` bytes
+        // long because `translate_slice` would have failed otherwise.
+        *cmp_result = unsafe { memcmp(s1.as_slice(), s2.as_slice(), n as usize) };
+
+        Ok(0)
+    }
+);
+
+// TODO recheck
 declare_builtin_function!(
     /// memcpy
     SyscallMemcpy<SDK: SharedAPI>,
@@ -111,63 +238,7 @@ declare_builtin_function!(
     }
 );
 
-// TODO
-// declare_builtin_function!(
-//     /// memcmp
-//     SyscallMemcmp<SDK: SharedAPI>,
-//     fn rust(
-//         invoke_context: &mut InvokeContext<SDK>,
-//         s1_addr: u64,
-//         s2_addr: u64,
-//         n: u64,
-//         cmp_result_addr: u64,
-//         _arg5: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//         mem_op_consume(invoke_context, n)?;
-//
-//         if invoke_context
-//             .environment_config.feature_set
-//             .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
-//         {
-//             let cmp_result = translate_type_mut::<i32>(
-//                 memory_mapping,
-//                 cmp_result_addr,
-//                 invoke_context.get_check_aligned(),
-//             )?;
-//             *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, memory_mapping)?;
-//         } else {
-//             let s1 = translate_slice::<u8>(
-//                 memory_mapping,
-//                 s1_addr,
-//                 n,
-//                 invoke_context.get_check_aligned(),
-//             )?;
-//             let s2 = translate_slice::<u8>(
-//                 memory_mapping,
-//                 s2_addr,
-//                 n,
-//                 invoke_context.get_check_aligned(),
-//             )?;
-//             let cmp_result = translate_type_mut::<i32>(
-//                 memory_mapping,
-//                 cmp_result_addr,
-//                 invoke_context.get_check_aligned(),
-//             )?;
-//
-//             debug_assert_eq!(s1.len(), n);
-//             debug_assert_eq!(s2.len(), n);
-//             // Safety:
-//             // memcmp is marked unsafe since it assumes that the inputs are at least
-//             // `n` bytes long. `s1` and `s2` are guaranteed to be exactly `n` bytes
-//             // long because `translate_slice` would have failed otherwise.
-//             *cmp_result = unsafe { memcmp(s1.as_slice(), s2.as_slice(), n as usize) };
-//         }
-//
-//         Ok(0)
-//     }
-// );
-
+// TODO recheck
 declare_builtin_function!(
     /// memmove
     SyscallMemmove<SDK: SharedAPI>,
@@ -183,6 +254,8 @@ declare_builtin_function!(
         memmove(invoke_context, dst_addr, src_addr, n, memory_mapping)
     }
 );
+
+// );
 
 declare_builtin_function!(
     /// memset
@@ -251,9 +324,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        #[cfg(target_arch = "wasm32")]
-        use fluentbase_sdk::debug_log;
-
         translate_string_and_do(
             memory_mapping,
             addr,
@@ -261,14 +331,181 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
             #[allow(unused_variables)]
             &mut |string: &str| {
-                #[cfg(test)]
-                println!("SyscallLog: {}", string);
-                #[cfg(target_arch = "wasm32")]
-                debug_log!("SyscallLog: {}", string);
+                log_str_common!(string);
                 Ok(0)
             },
 
         )?;
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    /// Log 5 64-bit values
+    SyscallLogU64<SDK: SharedAPI>,
+    fn rust(
+        _invoke_context: &mut InvokeContext<SDK>,
+        arg1: u64,
+        arg2: u64,
+        arg3: u64,
+        arg4: u64,
+        arg5: u64,
+        _memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use alloc::format;
+        log_str_common!(&format!("{arg1:#x}, {arg2:#x}, {arg3:#x}, {arg4:#x}, {arg5:#x}"));
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    /// Log a [`Pubkey`] as a base58 string
+    SyscallLogPubkey<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        pubkey_addr: u64,
+        _arg2: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let pubkey = translate_type::<Pubkey>(
+            memory_mapping,
+            pubkey_addr,
+            invoke_context.get_check_aligned(),
+            false,
+        )?;
+        log_str_common!(alloc::format!("{} (hex bytes: {:x?})", pubkey, pubkey.to_bytes()));
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    /// Set return data
+    SyscallSetReturnData<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        addr: u64,
+        len: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        if len > MAX_RETURN_DATA as u64 {
+            return Err(SyscallError::ReturnDataTooLarge(len, MAX_RETURN_DATA as u64).into());
+        }
+
+        let return_data = if len == 0 {
+            Vec::new()
+        } else {
+            translate_slice::<u8>(
+                memory_mapping,
+                addr,
+                len,
+                invoke_context.get_check_aligned(),
+            )?
+            .to_vec_cloned()
+        };
+        let transaction_context = &mut invoke_context.transaction_context;
+        let program_id = *transaction_context
+            .get_current_instruction_context()
+            .and_then(|instruction_context| {
+                instruction_context.get_last_program_key(transaction_context)
+            })?;
+
+        transaction_context.set_return_data(program_id, return_data)?;
+
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    /// Get return data
+    SyscallGetReturnData<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        return_data_addr: u64,
+        length: u64,
+        program_id_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let (program_id, return_data) = invoke_context.transaction_context.get_return_data();
+        let length = length.min(return_data.len() as u64);
+        if length != 0 {
+            let return_data_result = translate_slice_mut::<u8>(
+                memory_mapping,
+                return_data_addr,
+                length,
+                invoke_context.get_check_aligned(),
+            )?;
+
+            let mut to_slice = return_data_result;
+            let from_slice = return_data
+                .get(..length as usize)
+                .ok_or(SyscallError::InvokeContextBorrowFailed)?;
+            if to_slice.len() != from_slice.len() {
+                return Err(SyscallError::InvalidLength.into());
+            }
+            to_slice.copy_from_slice(from_slice);
+
+            let program_id_result = translate_type_mut::<Pubkey>(
+                memory_mapping,
+                program_id_addr,
+                invoke_context.get_check_aligned(),
+                false,
+            )?;
+            log_str_common!(alloc::format!("program_id_result {}", program_id_result));
+
+            if !is_nonoverlapping(
+                to_slice.first_item_addr().inner(),
+                length,
+                program_id_result as *const _ as u64,
+                size_of::<Pubkey>() as u64,
+            ) {
+                return Err(SyscallError::CopyOverlapping.into());
+            }
+
+            *program_id_result = *program_id;
+        }
+
+        // Return the actual length, rather the length returned
+        let return_data_len = return_data.len() as u64;
+        log_str_common!(alloc::format!("return_data_len {}", return_data_len));
+        Ok(return_data_len)
+    }
+);
+
+declare_builtin_function!(
+    /// Log data handling
+    SyscallLogData<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        addr: u64,
+        len: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let untranslated_data_fields = translate_slice::<SliceFatPtr64<u8>>(
+            memory_mapping,
+            addr,
+            len,
+            invoke_context.get_check_aligned(),
+        )?;
+        let data_fields = untranslated_data_fields
+            .iter()
+            .map(|untranslated_data_field| {
+                Ok(untranslated_data_field.as_ref().to_vec_cloned())
+            })
+            .collect::<Result<Vec<_>, SvmError>>()?;
+
+        log_str_common!(alloc::format!("hex fields: {:x?}", &data_fields));
+
         Ok(0)
     }
 );
@@ -292,6 +529,7 @@ declare_builtin_function!(
     }
 );
 
+// TODO recheck
 declare_builtin_function!(
     /// Panic syscall function, called when the SBF program calls 'sol_panic_()`
     /// Causes the SBF program to be halted immediately
@@ -305,8 +543,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        // consume_compute_meter(invoke_context, len)?;
-
         translate_string_and_do(
             memory_mapping,
             file,
@@ -339,222 +575,140 @@ declare_builtin_function!(
         )?;
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
-            let vals = translate_slice::<SliceFatPtr64<u8>>(
+            let untranslated_vals = translate_slice::<SliceFatPtr64<u8>>(
                 memory_mapping,
                 vals_addr,
                 vals_len,
                 invoke_context.get_check_aligned(),
-
             )?;
-            for val in vals.iter() {
-                let bytes = val.as_ref().to_vec_cloned();
-                hasher.hash(&bytes);
+            for untranslated_val in untranslated_vals.iter() {
+                let bytes = untranslated_val.as_ref().as_slice();
+                hasher.hash(bytes);
             }
         }
-        hash_result.copy_from_slice(hasher.result().as_ref());
+        let hasher_result = hasher.result();
+        let hashing_result = hasher_result.as_ref();
+        hash_result.copy_from_slice(hashing_result);
         Ok(0)
     }
 );
 
-// declare_builtin_function!(
-//     /// secp256k1_recover
-//     SyscallSecp256k1Recover<SDK: SharedAPI>,
-//     fn rust(
-//         invoke_context: &mut InvokeContext<SDK>,
-//         hash_addr: u64,
-//         recovery_id_val: u64,
-//         signature_addr: u64,
-//         result_addr: u64,
-//         _arg5: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//         let hash = translate_slice::<u8>(
-//             memory_mapping,
-//             hash_addr,
-//             keccak::HASH_BYTES as u64,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let signature = translate_slice::<u8>(
-//             memory_mapping,
-//             signature_addr,
-//             SECP256K1_SIGNATURE_LENGTH as u64,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let secp256k1_recover_result = translate_slice_mut::<u8>(
-//             memory_mapping,
-//             result_addr,
-//             SECP256K1_PUBLIC_KEY_LENGTH as u64,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//
-//         let Ok(message) = libsecp256k1::Message::parse_slice(hash) else {
-//             return Ok(Secp256k1RecoverError::InvalidHash.into());
-//         };
-//         let Ok(adjusted_recover_id_val) = recovery_id_val.try_into() else {
-//             return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
-//         };
-//         let Ok(recovery_id) =libsecp256k1::RecoveryId::parse(adjusted_recover_id_val) else {
-//             return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
-//         };
-//         let Ok(signature) = libsecp256k1::Signature::parse_standard_slice(signature) else {
-//             return Ok(Secp256k1RecoverError::InvalidSignature.into());
-//         };
-//
-//         let public_key = match libsecp256k1::recover(&message, &signature, &recovery_id) {
-//             Ok(key) => key.serialize(),
-//             Err(_) => {
-//                 return Ok(Secp256k1RecoverError::InvalidSignature.into());
-//             }
-//         };
-//
-//         secp256k1_recover_result.copy_from_slice(&public_key[1..65]);
-//         Ok(SUCCESS)
-//     }
-// );
+declare_builtin_function!(
+    /// secp256k1_recover
+    SyscallSecp256k1Recover<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        hash_addr: u64,
+        recovery_id_val: u64,
+        signature_addr: u64,
+        result_addr: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let hash = translate_slice::<u8>(
+            memory_mapping,
+            hash_addr,
+            solana_hash::HASH_BYTES as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+        let signature = translate_slice::<u8>(
+            memory_mapping,
+            signature_addr,
+            SECP256K1_SIGNATURE_LENGTH as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+        let mut secp256k1_recover_result = translate_slice_mut::<u8>(
+            memory_mapping,
+            result_addr,
+            SECP256K1_PUBLIC_KEY_LENGTH as u64,
+            invoke_context.get_check_aligned(),
+        )?;
 
-// declare_builtin_function!(
-//     SyscallPoseidon<SDK: SharedAPI>,
-//     fn rust(
-//         invoke_context: &mut InvokeContext<SDK>,
-//         parameters: u64,
-//         endianness: u64,
-//         vals_addr: u64,
-//         vals_len: u64,
-//         result_addr: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//
-//         let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|e| {
-//             SyscallError::Abort
-//         })?;
-//         let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|e| {
-//             SyscallError::Abort
-//         })?;
-//
-//         if vals_len > 12 {
-//             return Err(SyscallError::InvalidLength.into());
-//         }
-//         // consume_compute_meter(invoke_context, cost.to_owned())?;
-//
-//         let hash_result = translate_slice_mut::<u8>(
-//             memory_mapping,
-//             result_addr,
-//             solana_poseidon::HASH_BYTES as u64,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let inputs = translate_slice::<&[u8]>(
-//             memory_mapping,
-//             vals_addr,
-//             vals_len,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let inputs = inputs
-//             .iter()
-//             .map(|input| {
-//                 translate_slice::<u8>(
-//                     memory_mapping,
-//                     input.as_ptr() as *const _ as u64,
-//                     input.len() as u64,
-//                     invoke_context.get_check_aligned(),
-//                 )
-//             })
-//             .collect::<Result<Vec<_>, Error>>()?;
-//
-//         // let simplify_alt_bn128_syscall_error_codes = invoke_context
-//         //     .feature_set
-//         //     .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
-//
-//         let hash = match solana_poseidon::hashv(parameters, endianness, inputs.as_slice()) {
-//             Ok(hash) => hash,
-//             Err(e) => {
-//                 return /*if simplify_alt_bn128_syscall_error_codes {
-//                     Ok(1)
-//                 } else {*/
-//                     Ok(e.into());
-//                 /*};*/
-//             }
-//         };
-//         hash_result.copy_from_slice(&hash.to_bytes());
-//
-//         Ok(SUCCESS)
-//     }
-// );
+        let Ok(message) = libsecp256k1::Message::parse_slice(hash.as_slice()) else {
+            return Ok(Secp256k1RecoverError::InvalidHash.into());
+        };
+        let Ok(adjusted_recover_id_val) = recovery_id_val.try_into() else {
+            return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
+        };
+        let Ok(recovery_id) =libsecp256k1::RecoveryId::parse(adjusted_recover_id_val) else {
+            return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
+        };
+        let Ok(signature) = libsecp256k1::Signature::parse_standard_slice(signature.as_slice()) else {
+            return Ok(Secp256k1RecoverError::InvalidSignature.into());
+        };
 
-// declare_builtin_function!(
-//     SyscallPoseidonSDK<SDK: SharedAPI>,
-//     fn rust(
-//         invoke_context: &mut InvokeContext<SDK>,
-//         parameters: u64,
-//         endianness: u64,
-//         vals_addr: u64,
-//         vals_len: u64,
-//         result_addr: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//
-//         let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|e| {
-//             SyscallError::Abort
-//         })?;
-//         let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|e| {
-//             SyscallError::Abort
-//         })?;
-//
-//         if vals_len > 12 {
-//             return Err(SyscallError::InvalidLength.into());
-//         }
-//
-//         let hash_result = translate_slice_mut::<u8>(
-//             memory_mapping,
-//             result_addr,
-//             solana_poseidon::HASH_BYTES as u64,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let inputs = translate_slice::<&[u8]>(
-//             memory_mapping,
-//             vals_addr,
-//             vals_len,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let inputs = inputs
-//             .iter()
-//             .map(|input| {
-//                 translate_slice::<u8>(
-//                     memory_mapping,
-//                     input.as_ptr() as *const _ as u64,
-//                     input.len() as u64,
-//                     invoke_context.get_check_aligned(),
-//                 )
-//             })
-//             .collect::<Result<Vec<_>, Error>>()?;
-//
-//         // let simplify_alt_bn128_syscall_error_codes = invoke_context
-//         //     .feature_set
-//         //     .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
-//
-//         let mut inputs_vec = Vec::new();
-//         for i in inputs {
-//             inputs_vec.extend_from_slice(i);
-//         }
-//         // invoke_context.sdk.deref().;
-//         // TODO
-//         // let hash = invo::poseidon(&inputs_vec);
-//         let hash = [0u8; 32];
-//
-//         // let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
-//         //     Ok(hash) => hash,
-//         //     Err(e) => {
-//         //         return /*if simplify_alt_bn128_syscall_error_codes {
-//         //             Ok(1)
-//         //         } else {*/
-//         //             Ok(e.into());
-//         //         /*};*/
-//         //     }
-//         // };
-//         hash_result.copy_from_slice(&hash);
-//
-//         Ok(SUCCESS)
-//     }
-// );
+        let public_key = match libsecp256k1::recover(&message, &signature, &recovery_id) {
+            Ok(key) => key.serialize(),
+            Err(_) => {
+                return Ok(Secp256k1RecoverError::InvalidSignature.into());
+            }
+        };
+
+        secp256k1_recover_result.copy_from_slice(&public_key[1..65]);
+        Ok(SUCCESS)
+    }
+);
+
+declare_builtin_function!(
+    // Poseidon
+    SyscallPoseidon<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        parameters: u64,
+        endianness: u64,
+        vals_addr: u64,
+        vals_len: u64,
+        result_addr: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use crate::error::RuntimeError;
+        let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
+        let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
+
+        if vals_len > 12 {
+            debug_log_ext!("Poseidon hashing {} sequences is not supported", vals_len);
+            return Err(SyscallError::InvalidLength.into());
+        }
+
+        let mut hash_result = translate_slice_mut::<u8>(
+            memory_mapping,
+            result_addr,
+            solana_poseidon::HASH_BYTES as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+        let untranslated_inputs = translate_slice::<SliceFatPtr64<u8>>(
+            memory_mapping,
+            vals_addr,
+            vals_len,
+            invoke_context.get_check_aligned(),
+        )?;
+        let inputs_vec = untranslated_inputs
+            .iter()
+            .map(|v| {
+                Ok(v.as_ref().to_vec_cloned())
+            })
+            .collect::<Result<Vec<_>, SvmError>>()?;
+        let inputs = inputs_vec.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
+
+        let simplify_alt_bn128_syscall_error_codes = invoke_context
+            .get_feature_set()
+            .is_active(&simplify_alt_bn128_syscall_error_codes::id());
+
+        let hash = match solana_poseidon::hashv(parameters, endianness, inputs.as_slice()) {
+            Ok(hash) => hash,
+            Err(e) => {
+                return if simplify_alt_bn128_syscall_error_codes {
+                    Ok(1)
+                } else {
+                    Ok(e.into())
+                };
+            }
+        };
+        hash_result.copy_from_slice(&hash.to_bytes());
+
+        Ok(SUCCESS)
+    }
+);
 
 declare_builtin_function!(
     /// Create a program address
@@ -574,7 +728,6 @@ declare_builtin_function!(
             program_id_addr,
             memory_mapping,
             invoke_context.get_check_aligned(),
-
         )?;
 
         // replace smv pubkey with evm create2
@@ -689,5 +842,661 @@ declare_builtin_function!(
             signers_seeds_len,
             memory_mapping,
         )
+    }
+);
+
+declare_builtin_function!(
+    /// Big integer modular exponentiation
+    SyscallBigModExp<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        params: u64,
+        return_value: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        debug_log_ext!();
+        let params_slice = &translate_slice::<BigModExpParams>(
+            memory_mapping,
+            params,
+            1,
+            invoke_context.get_check_aligned(),
+        )?;
+        debug_log_ext!();
+        let params_ret = params_slice.try_get(0).ok_or(SyscallError::InvalidLength)?;
+        debug_log_ext!();
+        let params = params_ret.as_ref();
+        debug_log_ext!();
+
+        if params.base_len > 512 || params.exponent_len > 512 || params.modulus_len > 512 {
+            debug_log_ext!();
+            return Err(Box::new(SyscallError::InvalidLength));
+        }
+        debug_log_ext!();
+
+        // let input_len: u64 = core::cmp::max(params.base_len, params.exponent_len);
+        // let input_len: u64 = core::cmp::max(input_len, params.modulus_len);
+
+        let base = translate_slice::<u8>(
+            memory_mapping,
+            params.base,
+            params.base_len,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let exponent = translate_slice::<u8>(
+            memory_mapping,
+            params.exponent,
+            params.exponent_len,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let modulus = translate_slice::<u8>(
+            memory_mapping,
+            params.modulus,
+            params.modulus_len,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let value = big_mod_exp(base.as_slice(), exponent.as_slice(), modulus.as_slice());
+
+        let mut return_value = translate_slice_mut::<u8>(
+            memory_mapping,
+            return_value,
+            params.modulus_len,
+            invoke_context.get_check_aligned(),
+        )?;
+        return_value.copy_from_slice(value.as_slice());
+
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    // Elliptic Curve Point Validation
+    //
+    // Currently, only curve25519 Edwards and Ristretto representations are supported
+    SyscallCurvePointValidation<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        curve_id: u64,
+        point_addr: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use solana_curve25519::{curve_syscall_traits::*, edwards, ristretto};
+        match curve_id {
+            CURVE25519_EDWARDS => {
+                let point = translate_type::<edwards::PodEdwardsPoint>(
+                    memory_mapping,
+                    point_addr,
+                    invoke_context.get_check_aligned(),
+                    false,
+                )?;
+
+                if edwards::validate_edwards(&point) {
+                    Ok(0)
+                } else {
+                    Ok(1)
+                }
+            }
+            CURVE25519_RISTRETTO => {
+                let point = translate_type::<ristretto::PodRistrettoPoint>(
+                    memory_mapping,
+                    point_addr,
+                    invoke_context.get_check_aligned(),
+                    false,
+                )?;
+
+                if ristretto::validate_ristretto(point) {
+                    Ok(0)
+                } else {
+                    Ok(1)
+                }
+            }
+            _ => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&abort_on_invalid_curve::id())
+                {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
+        }
+    }
+);
+
+declare_builtin_function!(
+    // Elliptic Curve Group Operations
+    //
+    // Currently, only curve25519 Edwards and Ristretto representations are supported
+    SyscallCurveGroupOps<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        curve_id: u64,
+        group_op: u64,
+        left_input_addr: u64,
+        right_input_addr: u64,
+        result_point_addr: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use solana_curve25519::{curve_syscall_traits::*, edwards, ristretto, scalar};
+        match curve_id {
+            CURVE25519_EDWARDS => match group_op {
+                ADD => {
+                    let left_point = translate_type::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let right_point = translate_type::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    if let Some(result_point) = edwards::add_edwards(left_point, right_point) {
+                        *translate_type_mut::<edwards::PodEdwardsPoint>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                            false,
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                SUB => {
+                    let left_point = translate_type::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let right_point = translate_type::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    if let Some(result_point) = edwards::subtract_edwards(left_point, right_point) {
+                        *translate_type_mut::<edwards::PodEdwardsPoint>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                            false,
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                MUL => {
+                    let scalar = translate_type::<scalar::PodScalar>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let input_point = translate_type::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    if let Some(result_point) = edwards::multiply_edwards(scalar, input_point) {
+                        *translate_type_mut::<edwards::PodEdwardsPoint>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                            false,
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                _ => {
+                    if invoke_context
+                        .get_feature_set()
+                        .is_active(&abort_on_invalid_curve::id())
+                    {
+                        Err(SyscallError::InvalidAttribute.into())
+                    } else {
+                        Ok(1)
+                    }
+                }
+            },
+
+            CURVE25519_RISTRETTO => match group_op {
+                ADD => {
+                    let left_point = translate_type::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let right_point = translate_type::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    if let Some(result_point) = ristretto::add_ristretto(left_point, right_point) {
+                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                        false,
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                SUB => {
+                    let left_point = translate_type::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let right_point = translate_type::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    if let Some(result_point) =
+                        ristretto::subtract_ristretto(left_point, right_point)
+                    {
+                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                            false,
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                MUL => {
+                    let scalar = translate_type::<scalar::PodScalar>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let input_point = translate_type::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    if let Some(result_point) = ristretto::multiply_ristretto(scalar, input_point) {
+                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                            false,
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                _ => {
+                    if invoke_context
+                        .get_feature_set()
+                        .is_active(&abort_on_invalid_curve::id())
+                    {
+                        Err(SyscallError::InvalidAttribute.into())
+                    } else {
+                        Ok(1)
+                    }
+                }
+            },
+
+            _ => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&abort_on_invalid_curve::id())
+                {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
+        }
+    }
+);
+
+macro_rules! impl_spec_methods_for_tuple_struct {
+    ($typ:ty) => {
+        impl<'a> SpecMethods<'a> for $typ {
+            const ITEM_SIZE_BYTES: usize = size_of::<Self>();
+
+            fn recover_from_bytes(
+                byte_repr: &'a [u8],
+                _memory_mapping_helper: MemoryMappingHelper<'a>,
+            ) -> RetVal<'a, Self>
+            where
+                Self: Sized,
+            {
+                RetVal::Reference(typecast_bytes(byte_repr))
+            }
+        }
+    };
+}
+
+impl<'a> SpecMethods<'a> for scalar::PodScalar {
+    const ITEM_SIZE_BYTES: usize = size_of::<Self>();
+
+    fn recover_from_bytes(
+        byte_repr: &'a [u8],
+        _memory_mapping_helper: MemoryMappingHelper<'a>,
+    ) -> RetVal<'a, Self>
+    where
+        Self: Sized,
+    {
+        RetVal::Reference(typecast_bytes(byte_repr))
+    }
+}
+
+impl_spec_methods_for_tuple_struct!(edwards::PodEdwardsPoint);
+impl_spec_methods_for_tuple_struct!(ristretto::PodRistrettoPoint);
+
+declare_builtin_function!(
+    // Elliptic Curve Multiscalar Multiplication
+    //
+    // Currently, only curve25519 Edwards and Ristretto representations are supported
+    SyscallCurveMultiscalarMultiplication<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        curve_id: u64,
+        scalars_addr: u64,
+        points_addr: u64,
+        points_len: u64,
+        result_point_addr: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use solana_curve25519::{curve_syscall_traits::*, edwards, ristretto, scalar};
+
+        if points_len > 512 {
+            return Err(Box::new(SyscallError::InvalidLength));
+        }
+
+        match curve_id {
+            CURVE25519_EDWARDS => {
+                debug_log_ext!();
+                let scalars = translate_slice::<scalar::PodScalar>(
+                    memory_mapping,
+                    scalars_addr,
+                    points_len,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let points = translate_slice::<edwards::PodEdwardsPoint>(
+                    memory_mapping,
+                    points_addr,
+                    points_len,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                if let Some(result_point) = edwards::multiscalar_multiply_edwards(scalars.as_slice(), points.as_slice()) {
+                    *translate_type_mut::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        result_point_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )? = result_point;
+                    Ok(0)
+                } else {
+                    Ok(1)
+                }
+            }
+
+            CURVE25519_RISTRETTO => {
+                let scalars = translate_slice::<scalar::PodScalar>(
+                    memory_mapping,
+                    scalars_addr,
+                    points_len,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let points = translate_slice::<ristretto::PodRistrettoPoint>(
+                    memory_mapping,
+                    points_addr,
+                    points_len,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                if let Some(result_point) =
+                    ristretto::multiscalar_multiply_ristretto(scalars.as_slice(), points.as_slice())
+                {
+                    *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        result_point_addr,
+                        invoke_context.get_check_aligned(),
+                    false,
+                    )? = result_point;
+                    Ok(0)
+                } else {
+                    Ok(1)
+                }
+            }
+
+            _ => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&abort_on_invalid_curve::id())
+                {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
+        }
+    }
+);
+
+declare_builtin_function!(
+    /// alt_bn128 group operations
+    SyscallAltBn128<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        group_op: u64,
+        input_addr: u64,
+        input_size: u64,
+        result_addr: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use solana_bn254::prelude::{ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING};
+        let output: usize = match group_op {
+            ALT_BN128_ADD =>
+                ALT_BN128_ADDITION_OUTPUT_LEN,
+            ALT_BN128_MUL =>
+                ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
+            ALT_BN128_PAIRING => {
+                ALT_BN128_PAIRING_OUTPUT_LEN
+            }
+            _ => {
+                return Err(SyscallError::InvalidAttribute.into());
+            }
+        };
+
+        let input = translate_slice::<u8>(
+            memory_mapping,
+            input_addr,
+            input_size,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let mut call_result = translate_slice_mut::<u8>(
+            memory_mapping,
+            result_addr,
+            output as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let calculation = match group_op {
+            ALT_BN128_ADD => alt_bn128_addition,
+            ALT_BN128_MUL => alt_bn128_multiplication,
+            ALT_BN128_PAIRING => alt_bn128_pairing,
+            _ => {
+                return Err(SyscallError::InvalidAttribute.into());
+            }
+        };
+
+        let simplify_alt_bn128_syscall_error_codes = invoke_context
+            .get_feature_set()
+            .is_active(&simplify_alt_bn128_syscall_error_codes::id());
+
+        let result_point = match calculation(input.as_slice()) {
+            Ok(result_point) => result_point,
+            Err(e) => {
+                return if simplify_alt_bn128_syscall_error_codes {
+                    Ok(1)
+                } else {
+                    Ok(e.into())
+                };
+            }
+        };
+
+        // This can never happen and should be removed when the
+        // simplify_alt_bn128_syscall_error_codes feature gets activated
+        if result_point.len() != output && !simplify_alt_bn128_syscall_error_codes {
+            return Ok(AltBn128Error::SliceOutOfBounds.into());
+        }
+
+        call_result.copy_from_slice(&result_point);
+        Ok(SUCCESS)
+    }
+);
+
+declare_builtin_function!(
+    /// alt_bn128 g1 and g2 compression and decompression
+    SyscallAltBn128Compression<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        op: u64,
+        input_addr: u64,
+        input_size: u64,
+        result_addr: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use solana_bn254::compression::prelude::{
+            alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
+            alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
+            ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS, G1, G1_COMPRESSED, G2, G2_COMPRESSED,
+        };
+        let output: usize = match op {
+            ALT_BN128_G1_COMPRESS => G1_COMPRESSED,
+            ALT_BN128_G1_DECOMPRESS => {
+                G1
+            }
+            ALT_BN128_G2_COMPRESS => G2_COMPRESSED,
+            ALT_BN128_G2_DECOMPRESS => {
+                G2
+            }
+            _ => {
+                return Err(SyscallError::InvalidAttribute.into());
+            }
+        };
+
+        let input = translate_slice::<u8>(
+            memory_mapping,
+            input_addr,
+            input_size,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let mut call_result = translate_slice_mut::<u8>(
+            memory_mapping,
+            result_addr,
+            output as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let simplify_alt_bn128_syscall_error_codes = invoke_context
+            .get_feature_set()
+            .is_active(&simplify_alt_bn128_syscall_error_codes::id());
+
+        match op {
+            ALT_BN128_G1_COMPRESS => {
+                let result_point = match alt_bn128_g1_compress(input.as_slice()) {
+                    Ok(result_point) => result_point,
+                    Err(e) => {
+                        return if simplify_alt_bn128_syscall_error_codes {
+                            Ok(1)
+                        } else {
+                            Ok(e.into())
+                        };
+                    }
+                };
+                call_result.copy_from_slice(&result_point);
+                Ok(SUCCESS)
+            }
+            ALT_BN128_G1_DECOMPRESS => {
+                let result_point = match alt_bn128_g1_decompress(input.as_slice()) {
+                    Ok(result_point) => result_point,
+                    Err(e) => {
+                        return if simplify_alt_bn128_syscall_error_codes {
+                            Ok(1)
+                        } else {
+                            Ok(e.into())
+                        };
+                    }
+                };
+                call_result.copy_from_slice(&result_point);
+                Ok(SUCCESS)
+            }
+            ALT_BN128_G2_COMPRESS => {
+                let result_point = match alt_bn128_g2_compress(input.as_slice()) {
+                    Ok(result_point) => result_point,
+                    Err(e) => {
+                        return if simplify_alt_bn128_syscall_error_codes {
+                            Ok(1)
+                        } else {
+                            Ok(e.into())
+                        };
+                    }
+                };
+                call_result.copy_from_slice(&result_point);
+                Ok(SUCCESS)
+            }
+            ALT_BN128_G2_DECOMPRESS => {
+                let result_point = match alt_bn128_g2_decompress(input.as_slice()) {
+                    Ok(result_point) => result_point,
+                    Err(e) => {
+                        return if simplify_alt_bn128_syscall_error_codes {
+                            Ok(1)
+                        } else {
+                            Ok(e.into())
+                        };
+                    }
+                };
+                call_result.copy_from_slice(&result_point);
+                Ok(SUCCESS)
+            }
+            _ => Err(SyscallError::InvalidAttribute.into()),
+        }
     }
 );

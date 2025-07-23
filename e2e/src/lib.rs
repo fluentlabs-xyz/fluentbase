@@ -32,7 +32,7 @@ mod router;
 #[cfg(test)]
 mod stateless;
 #[cfg(all(test, feature = "enable-svm"))]
-pub mod svm_loader_v4;
+pub mod svm;
 #[cfg(test)]
 mod update_account;
 #[cfg(test)]

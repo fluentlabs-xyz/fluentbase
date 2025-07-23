@@ -9,6 +9,7 @@ members = [
 exclude = [
     # exclude revm e2e testing suite to let it be a separate crate
     "revm/e2e",
+    "contracts/examples/svm"
 ]
 resolver = "2"
 
@@ -38,6 +39,7 @@ fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false
 fluentbase-sdk-testing = { path = "crates/testing" }
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
+fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
 fluentbase-erc20 = { path = "./crates/erc20", default-features = false }
 
 solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
@@ -45,19 +47,13 @@ solana-instruction = { git = "https://github.com/fluentlabs-xyz/agave", branch =
 solana-account-info = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-clock = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-epoch-schedule = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-rent = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-sanitize = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-short-vec = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-hash = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-slot-hashes = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-fee-calculator = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-transaction-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-sysvar-id = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-sdk-macro = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-serialize-utils = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-last-restart-slot = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-slot-history = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-sha256-hasher = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-decode-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-entrypoint = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
@@ -66,26 +62,24 @@ solana-program-memory = { git = "https://github.com/fluentlabs-xyz/agave", branc
 solana-stable-layout = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-precompile-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-poseidon = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-secp256k1-recover = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-native-token = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-curve25519 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-bn254 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 #solana-pubkey = { path = "../agave/sdk/pubkey", default-features = false }
 #solana-instruction = { path = "../agave/sdk/instruction", default-features = false }
 #solana-account-info = { path = "../agave/sdk/account-info", default-features = false }
 #solana-clock = { path = "../agave/sdk/clock", default-features = false }
 #solana-epoch-schedule = { path = "../agave/sdk/epoch-schedule", default-features = false }
-#solana-rent = { path = "../agave/sdk/rent", default-features = false }
 #solana-sanitize = { path = "../agave/sdk/sanitize", default-features = false }
 #solana-short-vec = { path = "../agave/short-vec", default-features = false }
 #solana-hash = { path = "../agave/sdk/hash", default-features = false }
-#solana-slot-hashes = { path = "../agave/sdk/slot-hashes", default-features = false }
-#solana-fee-calculator = { path = "../agave/sdk/fee-calculator", default-features = false }
 #solana-program-error = { path = "../agave/sdk/program-error", default-features = false }
 #solana-transaction-error = { path = "../agave/sdk/transaction-error", default-features = false }
 #solana-sysvar-id = { path = "../agave/sdk/sysvar-id", default-features = false }
-#solana-sdk-macro = { path = "../agave/sdk/macro", default-features = false }
 #solana-serialize-utils = { path = "../agave/sdk/serialize-utils", default-features = false }
-#solana-last-restart-slot = { path = "../agave/sdk/last-restart-slot", default-features = false }
-#solana-slot-history = { path = "../agave/sdk/slot-history", default-features = false }
 #solana-sha256-hasher = { path = "../agave/sdk/sha256-hasher", default-features = false }
 #solana-decode-error = { path = "../agave/sdk/decode-error", default-features = false }
 #solana-program-entrypoint = { path = "../agave/sdk/program-entrypoint", default-features = false }
@@ -96,12 +90,16 @@ solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = 
 #solana-precompile-error = { path = "../agave/sdk/precompile-error", default-features = false }
 #solana-native-token = { path = "../agave/sdk/native-token", default-features = false }
 #solana-atomic-u64 = { path = "../agave/sdk/atomic-u64", default-features = false }
+#solana-poseidon = { path = "../agave/poseidon", default-features = false }
+#solana-secp256k1-recover = { path = "../agave/curves/secp256k1-recover", default-features = false }
+#solana-curve25519 = { path = "../agave/curves/curve25519", default-features = false }
+#solana-bn254 = { path = "../agave/curves/bn254", default-features = false }
 
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", rev = "5bfe99ae", default-features = false }
 #rwasm = { path = "../rwasm", default-features = false }
 
 # alloy
@@ -119,12 +117,9 @@ alloy-transport = { version = "1.0.11" }
 
 # misc
 scopeguard = { version = "1.2.0", default-features = false }
-bytemuck = { version = "1.19.0", default-features = false }
-bytemuck_derive = { version = ">=1.8.0, <1.9.0", default-features = false }
 blake3 = { version = "1.5.4", default-features = false }
 base64 = { version = "0.22.1", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
-keccak-hash = { version = "0.11.0", default-features = false }
 itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
 
 num-derive = { version = "0.4" }
@@ -151,7 +146,6 @@ syn = "2.0"
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "derive"] }
-wasmtime = { version = "33.0.0" }
 convert_case = "0.8.0"
 proc-macro2 = { version = "1.0", default-features = false }
 quote = { version = "1.0" }
@@ -209,6 +203,7 @@ once_cell = { version = "1.19", default-features = false, features = ["alloc"] }
 rand = "0.8"
 tokio = "1.44"
 either = { version = "1.15.0", default-features = false }
+num-bigint = { version = "0.4.6", default-features = false, features = [] }
 
 # dev-dependencies
 eyre = "0.6.12"
@@ -220,6 +215,7 @@ serde_derive = "1.0"
 thiserror = "2.0"
 triehash = "0.8"
 walkdir = "2.5"
+array-bytes = "1.6.0"
 
 [workspace.lints]
 rust.missing_debug_implementations = "warn"

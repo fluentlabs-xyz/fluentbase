@@ -1,6 +1,7 @@
 use crate::{
     context::RuntimeContext,
     instruction::{exec::SysExecResumable, invoke_runtime_handler},
+    inter_process_lock::{InterProcessLock, FILE_NAME_PREFIX1},
 };
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{
@@ -80,8 +81,14 @@ impl CachingRuntime {
         let rwasm_module = Rc::new(RwasmModule::new_or_empty(rwasm_bytecode.as_ref()).0);
         #[cfg(feature = "wasmtime")]
         if fluentbase_types::is_system_precompile(&address) {
-            let wasmtime_module =
-                rwasm::compile_wasmtime_module(&rwasm_module.wasm_section).unwrap();
+            let wasmtime_module = {
+                let lock =
+                    InterProcessLock::acquire_on_b256(FILE_NAME_PREFIX1, &code_hash).unwrap();
+                let wasmtime_module =
+                    rwasm::compile_wasmtime_module(&rwasm_module.wasm_section).unwrap();
+                drop(lock);
+                wasmtime_module
+            };
             let strategy = Arc::new(Strategy::Wasmtime {
                 module: Rc::new(wasmtime_module),
                 resumable: fluentbase_types::is_resumable_precompile(&address),

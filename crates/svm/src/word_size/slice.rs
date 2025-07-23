@@ -1,6 +1,7 @@
 use crate::{
     error::RuntimeError,
     map_addr,
+    typ_size,
     word_size::{
         addr_type::AddrType,
         common::{
@@ -13,6 +14,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 use core::{
+    fmt::{Debug, Formatter},
     iter::Iterator,
     marker::PhantomData,
     ops::{Bound, RangeBounds},
@@ -86,7 +88,7 @@ macro_rules! impl_numeric_type {
 
 impl_numeric_type!(u16);
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct SliceFatPtr64Repr {
     first_item_addr: AddrType,
     len: usize,
@@ -172,13 +174,13 @@ pub struct SliceFatPtr64<'a, T: SpecMethods<'a>> {
     _phantom: PhantomData<T>,
 }
 
-// impl<'a, T: SpecMethods<'a>> Debug for SliceFatPtr64<'a, T> {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-//         f.debug_struct("SliceFatPtr64")
-//             .field("slice_repr", &self.slice_repr)
-//             .finish()
-//     }
-// }
+impl<'a, T: SpecMethods<'a>> Debug for SliceFatPtr64<'a, T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SliceFatPtr64")
+            .field("slice_repr", &self.slice_repr)
+            .finish()
+    }
+}
 
 #[inline(always)]
 pub fn reconstruct_slice<'a, T>(ptr: usize, len: usize) -> &'a [T] {
@@ -364,6 +366,11 @@ impl<'a, T: Clone + SpecMethods<'a>> SliceFatPtr64<'a, T> {
         r
     }
 
+    // Do not use for types holding pointers
+    pub fn as_slice(&'a self) -> &'a [T] {
+        reconstruct_slice::<'a, T>(self.first_item_addr().inner() as usize, self.slice_repr.len)
+    }
+
     pub fn copy_from_slice(&mut self, slice: &[T]) {
         assert_eq!(self.len(), slice.len(), "lengths must be equal");
         for (idx, elem) in slice.iter().enumerate() {
@@ -495,6 +502,20 @@ impl<'a> SpecMethods<'a> for AccountInfo<'a> {
     }
 }
 
+impl<'a, const N: usize> SpecMethods<'a> for [u8; N] {
+    const ITEM_SIZE_BYTES: usize = typ_size!(Self);
+
+    fn recover_from_bytes(
+        byte_repr: &'a [u8],
+        _memory_mapping_helper: MemoryMappingHelper<'a>,
+    ) -> RetVal<'a, Self>
+    where
+        Self: Sized,
+    {
+        RetVal::Reference(typecast_bytes(byte_repr))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::word_size::{
@@ -529,13 +550,15 @@ mod tests {
         let items_first_item_ptr = items.as_ptr() as usize;
         let items_len = items.len();
 
-        let slice = SliceFatPtr64::<ElemType>::new(
+        let slice_fat_ptr64 = SliceFatPtr64::<ElemType>::new(
             MemoryMappingHelper::default(),
             items_first_item_ptr.into(),
             items_len,
         );
 
-        for (idx, item) in slice.iter().enumerate() {
+        let as_slice = slice_fat_ptr64.as_slice();
+        for (idx, item) in slice_fat_ptr64.iter().enumerate() {
+            assert_eq!(&items[idx], &as_slice[idx]);
             assert_eq!(item.as_ref(), &items[idx]);
         }
     }

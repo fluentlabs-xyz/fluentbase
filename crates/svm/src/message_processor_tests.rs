@@ -27,7 +27,7 @@ pub mod tests {
     use serde::{Deserialize, Serialize};
     use solana_bincode::deserialize;
     use solana_instruction::{error::InstructionError, AccountMeta, Instruction};
-    use solana_pubkey::Pubkey;
+    use solana_pubkey::{Pubkey, PUBKEY_BYTES};
     use solana_rbpf::program::{BuiltinFunction, BuiltinProgram, FunctionRegistry};
     use solana_transaction_error::TransactionError;
 
@@ -295,14 +295,14 @@ pub mod tests {
                 Err(InstructionError::InvalidInstructionData)
             }
         });
-        let mock_program_id = Pubkey::from([2u8; 32]);
+        let mock_program_id = Pubkey::from([2u8; PUBKEY_BYTES]);
         let accounts = vec![
             (
-                Pubkey::from(rand::random::<[u8; solana_pubkey::PUBKEY_BYTES]>()),
+                Pubkey::from(rand::random::<[u8; PUBKEY_BYTES]>()),
                 AccountSharedData::new(100, 1, &mock_program_id),
             ),
             (
-                Pubkey::from(rand::random::<[u8; solana_pubkey::PUBKEY_BYTES]>()),
+                Pubkey::from(rand::random::<[u8; PUBKEY_BYTES]>()),
                 AccountSharedData::new(0, 1, &mock_program_id),
             ),
             (
@@ -483,7 +483,7 @@ pub mod tests {
 
         let sdk = journal_state();
 
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
         let to = Pubkey::new_unique();
@@ -604,7 +604,7 @@ pub mod tests {
         let sdk = journal_state();
 
         let from = Pubkey::new_unique();
-        let to = Pubkey::from([3; 32]);
+        let to = Pubkey::from([3; PUBKEY_BYTES]);
         let system_program_id = system_program::id();
         let native_loader_id = native_loader::id();
 
@@ -807,7 +807,7 @@ pub mod tests {
 
         let native_loader_id = native_loader::id();
         let system_program_id = system_program::id();
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let to = Pubkey::new_unique();
         let account_from = AccountSharedData::new(100, 0, &system_program_id);
@@ -1017,7 +1017,7 @@ pub mod tests {
         let native_loader_id = native_loader::id();
         let system_program_id = system_program::id();
 
-        let new_owner = Pubkey::from([9; 32]);
+        let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
         let to = Pubkey::new_unique();
         let account_from = AccountSharedData::new(100, 0, &system_program_id);

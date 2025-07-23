@@ -1,12 +1,10 @@
 use crate::{
     common::{MAX_CALL_DEPTH, MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE},
-    compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT,
+    compute_budget_processor::MAX_HEAP_FRAME_BYTES,
 };
-use solana_program_entrypoint::HEAP_LENGTH;
 
-/// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
-/// default heap page cost = 0.5 * 15 ~= 8CU/page
-pub const DEFAULT_HEAP_COST: u64 = 8;
+/// Length of the heap memory region used for program heap.
+pub const HEAP_LENGTH: usize = 32 * 1024 * 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeBudget {
@@ -25,20 +23,18 @@ pub struct ComputeBudget {
     pub stack_frame_size: usize,
     /// Maximum cross-program invocation instruction size
     pub max_cpi_instruction_size: usize,
-    /// Number of account data bytes per compute unit charged during a cross-program invocation
-    pub cpi_bytes_per_unit: u64,
     /// program heap region size, default: solana_sdk::entrypoint::HEAP_LENGTH
     pub heap_size: u32,
 }
 
 impl Default for ComputeBudget {
     fn default() -> Self {
-        Self::new(MAX_COMPUTE_UNIT_LIMIT as u64)
+        Self::new()
     }
 }
 
 impl ComputeBudget {
-    pub fn new(_compute_unit_limit: u64) -> Self {
+    pub fn new() -> Self {
         ComputeBudget {
             max_instruction_stack_depth: MAX_INSTRUCTION_STACK_DEPTH,
             max_instruction_trace_length: 64,
@@ -46,8 +42,7 @@ impl ComputeBudget {
             max_call_depth: MAX_CALL_DEPTH,
             stack_frame_size: STACK_FRAME_SIZE,
             max_cpi_instruction_size: 1280, // IPv6 Min MTU size
-            cpi_bytes_per_unit: 250,        // ~50MB at 200,000 units
-            heap_size: u32::try_from(HEAP_LENGTH).unwrap(),
+            heap_size: u32::try_from(MAX_HEAP_FRAME_BYTES as usize).unwrap(),
         }
     }
 }

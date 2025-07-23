@@ -17,8 +17,6 @@ use solana_rbpf::{
 
 pub type StdResult<T, E> = Result<T, E>;
 
-pub const INSTRUCTION_METER_BUDGET: u64 = 1024 * 1024;
-
 #[derive(Clone, PartialEq, Eq)]
 pub struct AllocErr;
 
@@ -198,24 +196,6 @@ pub fn create_account_with_fields<S: Sysvar>(
     to_account::<S, Account>(sysvar, &mut account).unwrap();
     account.rent_epoch = rent_epoch;
     account
-}
-
-/// Only used in macro, do not use directly!
-pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
-    const KIBIBYTE: u64 = 1024;
-    const PAGE_SIZE_KB: u64 = 32;
-    let mut rounded_heap_size = u64::from(heap_size);
-    rounded_heap_size =
-        rounded_heap_size.saturating_add(PAGE_SIZE_KB.saturating_mul(KIBIBYTE).saturating_sub(1));
-    rounded_heap_size
-        .checked_div(PAGE_SIZE_KB.saturating_mul(KIBIBYTE))
-        .expect("PAGE_SIZE_KB * KIBIBYTE > 0")
-        .saturating_sub(1)
-        .saturating_mul(heap_cost)
-}
-
-pub fn create_account_for_test<S: Sysvar>(sysvar: &S) -> Account {
-    create_account_with_fields(sysvar, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
 }
 
 pub fn create_account_shared_data_with_fields<S: Sysvar>(

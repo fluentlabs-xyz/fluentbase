@@ -118,8 +118,7 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, API: MetadataAPI>(
     exec_svm_message(sdk, api, message, flush_result_accounts)
 }
 
-#[derive(PartialEq, Eq, Clone)]
-#[cfg_attr(test, derive(Debug))]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct LoadedTransactionAccount {
     pub(crate) account: AccountSharedData,
     pub(crate) loaded_size: usize,
@@ -450,7 +449,6 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
     );
     let (accounts, program_indices) = result?;
 
-    // TODO fill hardcoded parameters?
     let transaction_context = TransactionContext::new(
         accounts,
         INSTRUCTION_STACK_CAPACITY,

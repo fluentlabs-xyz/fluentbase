@@ -2,7 +2,7 @@ use crate::error::RuntimeError;
 use core::ops::Add;
 use num_traits::ToPrimitive;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum AddrType {
     Vm(u64),
     Host(u64),

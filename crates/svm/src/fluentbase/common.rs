@@ -8,7 +8,6 @@ use crate::{
     system_program,
 };
 use alloc::{string::String, vec::Vec};
-use core::fmt::{Display, Formatter};
 use fluentbase_sdk::{MetadataAPI, SharedAPI};
 use hashbrown::{HashMap, HashSet};
 use lazy_static::lazy_static;
@@ -77,40 +76,6 @@ pub(crate) fn flush_accounts<SDK: SharedAPI, API: MetadataAPI>(
         })?;
     }
     Ok(())
-}
-
-impl Display for SvmError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        match self {
-            SvmError::TransactionError(e) => {
-                write!(f, "SvmError::TransactionError:{}", e)
-            }
-            SvmError::BincodeEncodeError(e) => {
-                write!(f, "SvmError::BincodeEncodeError:{}", e)
-            }
-            SvmError::BincodeDecodeError(e) => {
-                write!(f, "SvmError::BincodeDecodeError:{}", e)
-            }
-            SvmError::InstructionError(e) => {
-                write!(f, "SvmError::InstructionError:{}", e)
-            }
-            SvmError::ElfError(e) => {
-                write!(f, "SvmError::ElfError:{}", e)
-            }
-            SvmError::EbpfError(e) => {
-                write!(f, "SvmError::EbpfError:{}", e)
-            }
-            SvmError::SyscallError(e) => {
-                write!(f, "SvmError::SyscallError:{}", e)
-            }
-            SvmError::RuntimeError(e) => {
-                write!(f, "SvmError::RuntimeError:{}", e)
-            }
-            SvmError::ExitCode(e) => {
-                write!(f, "SvmError::ExitCode:{}", e)
-            }
-        }
-    }
 }
 
 pub fn process_svm_result<T>(result: Result<T, SvmError>) -> Result<T, String> {

@@ -1,6 +1,5 @@
 use crate::{
     account::AccountSharedData,
-    // bpf_loader,
     clock::Slot,
     context::{InstructionContext, InvokeContext, TransactionContext},
     hash::{Hash, Hasher},
@@ -12,13 +11,12 @@ use core::marker::PhantomData;
 use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
 use solana_bincode::limited_deserialize;
 use solana_instruction::error::InstructionError;
-use solana_pubkey::{Pubkey, SVM_ADDRESS_PREFIX};
+use solana_pubkey::{Pubkey, PUBKEY_BYTES, SVM_ADDRESS_PREFIX};
 use solana_rbpf::{
     program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
     vm::Config,
 };
 
-pub const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
 pub const DEPRECATED_LOADER_COMPUTE_UNITS: u64 = 1_140;
 pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 /// Maximum over-the-wire size of a Transaction
@@ -73,8 +71,8 @@ impl HasherImpl for Sha256Hasher {
 }
 
 pub struct Keccak256Hasher<SDK: SharedAPI> {
-    initiated: bool,
-    value: [u8; 32],
+    value: Option<[u8; 32]>,
+    acc: Vec<u8>,
     _sdk: PhantomData<SDK>,
 }
 impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
@@ -83,77 +81,43 @@ impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
 
     fn create_hasher() -> Self {
         Keccak256Hasher {
-            initiated: false,
             value: Default::default(),
+            acc: Default::default(),
             _sdk: Default::default(),
         }
     }
 
     fn hash(&mut self, val: &[u8]) {
-        if self.initiated {
-            panic!("accumulation not supported yet")
-        } else {
-            self.value = keccak256(val).0;
-            self.value = Default::default();
-            self.initiated = true;
+        self.acc.extend_from_slice(val);
+    }
+
+    fn result(mut self) -> Self::Output {
+        if let Some(val) = self.value {
+            return val;
         }
-    }
-
-    fn result(self) -> Self::Output {
-        self.value
+        let result = keccak256(&self.acc).0;
+        self.value = Some(result);
+        result
     }
 }
 
-pub struct PoseidonHasher<SDK> {
-    initiated: bool,
-    value: [u8; 32],
-    _sdk: PhantomData<SDK>,
-}
-impl<SDK: SharedAPI> HasherImpl for PoseidonHasher<SDK> {
-    const NAME: &'static str = "Poseidon";
+pub struct Blake3Hasher(blake3::Hasher);
+impl HasherImpl for Blake3Hasher {
+    const NAME: &'static str = "Blake3";
     type Output = [u8; 32];
 
     fn create_hasher() -> Self {
-        PoseidonHasher {
-            initiated: false,
-            value: Default::default(),
-            _sdk: Default::default(),
-        }
+        Blake3Hasher(blake3::Hasher::default())
     }
 
-    fn hash(&mut self, _val: &[u8]) {
-        if self.initiated {
-            panic!("accumulation not supported yet")
-        } else {
-            // self.value = SDK::poseidon(val).0;
-            // TODO
-            self.value = Default::default();
-            self.initiated = true;
-        }
+    fn hash(&mut self, val: &[u8]) {
+        self.0.update(val);
     }
 
     fn result(self) -> Self::Output {
-        self.value
+        self.0.finalize().as_bytes().clone()
     }
 }
-
-// pub struct Blake3Hasher(blake3::Hasher);
-// impl HasherImpl for Blake3Hasher {
-//     const NAME: &'static str = "Blake3";
-//     type Output = blake3::Hash;
-//
-//     fn create_hasher() -> Self {
-//         Blake3Hasher(blake3::Hasher::default())
-//     }
-//
-//     fn hash(&mut self, val: &[u8]) {
-//         self.0.hash(val);
-//     }
-//
-//     fn result(self) -> Self::Output {
-//         self.0.result()
-//     }
-// }
 
 // declare_id!("NativeLoader1111111111111111111111111111111");
 
@@ -374,7 +338,7 @@ pub fn compile_accounts_for_tx_ctx(
 }
 
 pub fn pubkey_from_evm_address(value: &Address) -> Pubkey {
-    let mut new_pk = [0u8; 32];
+    let mut new_pk = [0u8; PUBKEY_BYTES];
     new_pk[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
     new_pk[SVM_ADDRESS_PREFIX.len()..].copy_from_slice(value.as_slice());
     Pubkey::new_from_array(new_pk)
