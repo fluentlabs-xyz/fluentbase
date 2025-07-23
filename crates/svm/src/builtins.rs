@@ -27,7 +27,6 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::{debug_log_ext, SharedAPI};
-use itertools::Itertools;
 use solana_bn254::{
     prelude::{
         alt_bn128_addition,
