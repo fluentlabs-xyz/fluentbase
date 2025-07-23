@@ -91,24 +91,41 @@ fn convert_path_type(type_path: &syn::TypePath) -> Result<SolType, ConversionErr
         }
     }
 }
-
 fn convert_primitive_type(type_name: &str) -> Option<SolType> {
+    // Normalize case for matching
+    let lower = type_name.to_ascii_lowercase();
+
+    // Unsigned types
+    if lower.starts_with('u') {
+        if let Ok(bits) = lower[1..].parse::<usize>() {
+            // Allowed sizes: 8, 16, ..., 256, 512, and all multiples of 8 up to 256, plus 24, 40, 48, ...
+            if [
+                8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152,
+                160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 512,
+            ]
+            .contains(&bits)
+            {
+                return Some(SolType::Uint(bits));
+            }
+        }
+    }
+
+    // Signed types
+    if lower.starts_with('i') {
+        if let Ok(bits) = lower[1..].parse::<usize>() {
+            if [
+                8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152,
+                160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 512,
+            ]
+            .contains(&bits)
+            {
+                return Some(SolType::Int(bits));
+            }
+        }
+    }
+
+    // Other primitive types
     match type_name {
-        // Unsigned integers
-        name @ ("u8" | "u16" | "u32" | "u64" | "u128") => {
-            let bits = name[1..].parse::<usize>().ok()?;
-            Some(SolType::Uint(bits))
-        }
-        "u256" | "U256" => Some(SolType::Uint(256)),
-
-        // Signed integers
-        name @ ("i8" | "i16" | "i32" | "i64" | "i128") => {
-            let bits = name[1..].parse::<usize>().ok()?;
-            Some(SolType::Int(bits))
-        }
-        "i256" | "I256" => Some(SolType::Int(256)),
-
-        // Other primitive types
         "bool" => Some(SolType::Bool),
         "Address" => Some(SolType::Address),
         "String" | "str" => Some(SolType::String),
@@ -219,18 +236,150 @@ mod tests {
     #[test]
     fn test_primitive_types() {
         assert_type("bool", SolType::Bool);
-        assert_type("u8", SolType::Uint(8));
-        assert_type("u16", SolType::Uint(16));
-        assert_type("u32", SolType::Uint(32));
-        assert_type("u64", SolType::Uint(64));
-        assert_type("u128", SolType::Uint(128));
-        assert_type("U256", SolType::Uint(256));
-        assert_type("i8", SolType::Int(8));
-        assert_type("i256", SolType::Int(256));
-        assert_type("I256", SolType::Int(256));
         assert_type("Address", SolType::Address);
         assert_type("String", SolType::String);
         assert_type("Bytes", SolType::Bytes);
+    }
+
+    #[test]
+    fn test_primitive_types_uint() {
+        // Unsigned types (aliases and rust-like names)
+        assert_type("u8", SolType::Uint(8));
+        assert_type("U8", SolType::Uint(8));
+        assert_type("u16", SolType::Uint(16));
+        assert_type("U16", SolType::Uint(16));
+        assert_type("u24", SolType::Uint(24));
+        assert_type("U24", SolType::Uint(24));
+        assert_type("u32", SolType::Uint(32));
+        assert_type("U32", SolType::Uint(32));
+        assert_type("u40", SolType::Uint(40));
+        assert_type("U40", SolType::Uint(40));
+        assert_type("u48", SolType::Uint(48));
+        assert_type("U48", SolType::Uint(48));
+        assert_type("u56", SolType::Uint(56));
+        assert_type("U56", SolType::Uint(56));
+        assert_type("u64", SolType::Uint(64));
+        assert_type("U64", SolType::Uint(64));
+        assert_type("u72", SolType::Uint(72));
+        assert_type("U72", SolType::Uint(72));
+        assert_type("u80", SolType::Uint(80));
+        assert_type("U80", SolType::Uint(80));
+        assert_type("u88", SolType::Uint(88));
+        assert_type("U88", SolType::Uint(88));
+        assert_type("u96", SolType::Uint(96));
+        assert_type("U96", SolType::Uint(96));
+        assert_type("u104", SolType::Uint(104));
+        assert_type("U104", SolType::Uint(104));
+        assert_type("u112", SolType::Uint(112));
+        assert_type("U112", SolType::Uint(112));
+        assert_type("u120", SolType::Uint(120));
+        assert_type("U120", SolType::Uint(120));
+        assert_type("u128", SolType::Uint(128));
+        assert_type("U128", SolType::Uint(128));
+        assert_type("u136", SolType::Uint(136));
+        assert_type("U136", SolType::Uint(136));
+        assert_type("u144", SolType::Uint(144));
+        assert_type("U144", SolType::Uint(144));
+        assert_type("u152", SolType::Uint(152));
+        assert_type("U152", SolType::Uint(152));
+        assert_type("u160", SolType::Uint(160));
+        assert_type("U160", SolType::Uint(160));
+        assert_type("u168", SolType::Uint(168));
+        assert_type("U168", SolType::Uint(168));
+        assert_type("u176", SolType::Uint(176));
+        assert_type("U176", SolType::Uint(176));
+        assert_type("u184", SolType::Uint(184));
+        assert_type("U184", SolType::Uint(184));
+        assert_type("u192", SolType::Uint(192));
+        assert_type("U192", SolType::Uint(192));
+        assert_type("u200", SolType::Uint(200));
+        assert_type("U200", SolType::Uint(200));
+        assert_type("u208", SolType::Uint(208));
+        assert_type("U208", SolType::Uint(208));
+        assert_type("u216", SolType::Uint(216));
+        assert_type("U216", SolType::Uint(216));
+        assert_type("u224", SolType::Uint(224));
+        assert_type("U224", SolType::Uint(224));
+        assert_type("u232", SolType::Uint(232));
+        assert_type("U232", SolType::Uint(232));
+        assert_type("u240", SolType::Uint(240));
+        assert_type("U240", SolType::Uint(240));
+        assert_type("u248", SolType::Uint(248));
+        assert_type("U248", SolType::Uint(248));
+        assert_type("u256", SolType::Uint(256));
+        assert_type("U256", SolType::Uint(256));
+        assert_type("u512", SolType::Uint(512));
+        assert_type("U512", SolType::Uint(512));
+    }
+    #[test]
+    fn test_primitive_types_int() {
+        // Signed types (aliases and rust-like names)
+        assert_type("i8", SolType::Int(8));
+        assert_type("I8", SolType::Int(8));
+        assert_type("i16", SolType::Int(16));
+        assert_type("I16", SolType::Int(16));
+        assert_type("i24", SolType::Int(24));
+        assert_type("I24", SolType::Int(24));
+        assert_type("i32", SolType::Int(32));
+        assert_type("I32", SolType::Int(32));
+        assert_type("i40", SolType::Int(40));
+        assert_type("I40", SolType::Int(40));
+        assert_type("i48", SolType::Int(48));
+        assert_type("I48", SolType::Int(48));
+        assert_type("i56", SolType::Int(56));
+        assert_type("I56", SolType::Int(56));
+        assert_type("i64", SolType::Int(64));
+        assert_type("I64", SolType::Int(64));
+        assert_type("i72", SolType::Int(72));
+        assert_type("I72", SolType::Int(72));
+        assert_type("i80", SolType::Int(80));
+        assert_type("I80", SolType::Int(80));
+        assert_type("i88", SolType::Int(88));
+        assert_type("I88", SolType::Int(88));
+        assert_type("i96", SolType::Int(96));
+        assert_type("I96", SolType::Int(96));
+        assert_type("i104", SolType::Int(104));
+        assert_type("I104", SolType::Int(104));
+        assert_type("i112", SolType::Int(112));
+        assert_type("I112", SolType::Int(112));
+        assert_type("i120", SolType::Int(120));
+        assert_type("I120", SolType::Int(120));
+        assert_type("i128", SolType::Int(128));
+        assert_type("I128", SolType::Int(128));
+        assert_type("i136", SolType::Int(136));
+        assert_type("I136", SolType::Int(136));
+        assert_type("i144", SolType::Int(144));
+        assert_type("I144", SolType::Int(144));
+        assert_type("i152", SolType::Int(152));
+        assert_type("I152", SolType::Int(152));
+        assert_type("i160", SolType::Int(160));
+        assert_type("I160", SolType::Int(160));
+        assert_type("i168", SolType::Int(168));
+        assert_type("I168", SolType::Int(168));
+        assert_type("i176", SolType::Int(176));
+        assert_type("I176", SolType::Int(176));
+        assert_type("i184", SolType::Int(184));
+        assert_type("I184", SolType::Int(184));
+        assert_type("i192", SolType::Int(192));
+        assert_type("I192", SolType::Int(192));
+        assert_type("i200", SolType::Int(200));
+        assert_type("I200", SolType::Int(200));
+        assert_type("i208", SolType::Int(208));
+        assert_type("I208", SolType::Int(208));
+        assert_type("i216", SolType::Int(216));
+        assert_type("I216", SolType::Int(216));
+        assert_type("i224", SolType::Int(224));
+        assert_type("I224", SolType::Int(224));
+        assert_type("i232", SolType::Int(232));
+        assert_type("I232", SolType::Int(232));
+        assert_type("i240", SolType::Int(240));
+        assert_type("I240", SolType::Int(240));
+        assert_type("i248", SolType::Int(248));
+        assert_type("I248", SolType::Int(248));
+        assert_type("i256", SolType::Int(256));
+        assert_type("I256", SolType::Int(256));
+        assert_type("i512", SolType::Int(512));
+        assert_type("I512", SolType::Int(512));
     }
 
     #[test]
