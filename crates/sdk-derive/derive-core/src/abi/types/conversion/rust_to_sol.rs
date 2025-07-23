@@ -92,40 +92,43 @@ fn convert_path_type(type_path: &syn::TypePath) -> Result<SolType, ConversionErr
     }
 }
 fn convert_primitive_type(type_name: &str) -> Option<SolType> {
-    // Normalize case for matching
-    let lower = type_name.to_ascii_lowercase();
+    const ALLOWED: [usize; 33] = [
+        8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168,
+        176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 512,
+    ];
 
-    // Unsigned types
-    if lower.starts_with('u') {
-        if let Ok(bits) = lower[1..].parse::<usize>() {
-            // Allowed sizes: 8, 16, ..., 256, 512, and all multiples of 8 up to 256, plus 24, 40, 48, ...
-            if [
-                8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152,
-                160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 512,
-            ]
-            .contains(&bits)
-            {
+    // Unsigned types (u8, U8, ...)
+    if type_name.starts_with('u') || type_name.starts_with('U') {
+        if let Ok(bits) = type_name[1..].parse::<usize>() {
+            if ALLOWED.contains(&bits) {
                 return Some(SolType::Uint(bits));
             }
         }
     }
 
-    // Signed types
-    if lower.starts_with('i') {
-        if let Ok(bits) = lower[1..].parse::<usize>() {
-            if [
-                8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152,
-                160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 512,
-            ]
-            .contains(&bits)
-            {
+    // Signed types (i8, I8, ...)
+    if type_name.starts_with('i') || type_name.starts_with('I') {
+        if let Ok(bits) = type_name[1..].parse::<usize>() {
+            if ALLOWED.contains(&bits) {
                 return Some(SolType::Int(bits));
             }
         }
     }
 
-    // Other primitive types
     match type_name {
+        "B8" => Some(SolType::FixedBytes(1)),
+        "B16" => Some(SolType::FixedBytes(2)),
+        "B32" => Some(SolType::FixedBytes(4)),
+        "B64" => Some(SolType::FixedBytes(8)),
+        "B96" => Some(SolType::FixedBytes(12)),
+        "B128" => Some(SolType::FixedBytes(16)),
+        "B160" => Some(SolType::FixedBytes(20)),
+        "B192" => Some(SolType::FixedBytes(24)),
+        "B224" => Some(SolType::FixedBytes(28)),
+        "B256" => Some(SolType::FixedBytes(32)),
+        "B512" => Some(SolType::FixedArray(Box::new(SolType::Uint(8)), 64)),
+        "B1024" => Some(SolType::FixedArray(Box::new(SolType::Uint(8)), 128)),
+        "B2048" => Some(SolType::FixedArray(Box::new(SolType::Uint(8)), 256)),
         "bool" => Some(SolType::Bool),
         "Address" => Some(SolType::Address),
         "String" | "str" => Some(SolType::String),
@@ -516,5 +519,197 @@ mod tests {
         assert_error("Container<K, V>", |e| {
             assert!(matches!(e, ConversionError::UnsupportedType(_)));
         });
+    }
+
+    mod b_type_tests {
+        use super::*;
+        use syn::parse_str;
+
+        fn assert_type(rust_type: &str, expected: SolType) {
+            let ty: Type = parse_str(rust_type).unwrap();
+            let result = rust_to_sol(&ty).unwrap();
+            assert_eq!(result, expected);
+        }
+
+        fn assert_struct_type(rust_type: &str) {
+            let ty: Type = parse_str(rust_type).unwrap();
+            let result = rust_to_sol(&ty).unwrap();
+            // Verify that this is treated as a struct, not as FixedBytes
+            assert!(matches!(result, SolType::Struct { .. }));
+        }
+
+        #[test]
+        fn test_exact_b_types() {
+            // Test all supported B-types that convert to Solidity bytesN
+            assert_type("B8", SolType::FixedBytes(1)); // 8 bits = 1 byte
+            assert_type("B16", SolType::FixedBytes(2)); // 16 bits = 2 bytes
+            assert_type("B32", SolType::FixedBytes(4)); // 32 bits = 4 bytes
+            assert_type("B64", SolType::FixedBytes(8)); // 64 bits = 8 bytes
+            assert_type("B96", SolType::FixedBytes(12)); // 96 bits = 12 bytes
+            assert_type("B128", SolType::FixedBytes(16)); // 128 bits = 16 bytes
+            assert_type("B160", SolType::FixedBytes(20)); // 160 bits = 20 bytes (address size)
+            assert_type("B192", SolType::FixedBytes(24)); // 192 bits = 24 bytes
+            assert_type("B224", SolType::FixedBytes(28)); // 224 bits = 28 bytes
+            assert_type("B256", SolType::FixedBytes(32)); // 256 bits = 32 bytes (hash size)
+        }
+
+        #[test]
+        fn test_large_b_types() {
+            // Test large B-types that exceed Solidity's 32-byte limit for bytesN
+            // These should convert to fixed arrays of uint8
+            assert_type("B512", SolType::FixedArray(Box::new(SolType::Uint(8)), 64)); // 512 bits = 64 bytes
+            assert_type(
+                "B1024",
+                SolType::FixedArray(Box::new(SolType::Uint(8)), 128),
+            ); // 1024 bits = 128 bytes
+            assert_type(
+                "B2048",
+                SolType::FixedArray(Box::new(SolType::Uint(8)), 256),
+            ); // 2048 bits = 256 bytes
+        }
+
+        #[test]
+        fn test_b_like_structs_not_converted() {
+            // Test that types starting with 'B' but not in our exact list
+            // are correctly treated as custom structs, not as B-types
+            assert_struct_type("BankAccount"); // Common struct name starting with B
+            assert_struct_type("Buffer"); // Another common struct name
+            assert_struct_type("BlockHeader"); // Blockchain-related struct
+            assert_struct_type("B7"); // Not in our supported list
+            assert_struct_type("B24"); // Not in our supported list
+            assert_struct_type("B100"); // Not in our supported list
+            assert_struct_type("B4096"); // Not in our supported list
+            assert_struct_type("BigNumber"); // Should not be confused with B-types
+        }
+
+        #[test]
+        fn test_b_types_in_collections() {
+            // Test that B-types work correctly inside collections
+
+            // Dynamic arrays (Vec)
+            assert_type(
+                "Vec<B256>",
+                SolType::Array(Box::new(SolType::FixedBytes(32))),
+            );
+            assert_type(
+                "Vec<B128>",
+                SolType::Array(Box::new(SolType::FixedBytes(16))),
+            );
+
+            // Fixed arrays
+            assert_type(
+                "[B128; 5]",
+                SolType::FixedArray(Box::new(SolType::FixedBytes(16)), 5),
+            );
+            assert_type(
+                "[B64; 10]",
+                SolType::FixedArray(Box::new(SolType::FixedBytes(8)), 10),
+            );
+
+            // Large B-types in collections
+            assert_type(
+                "Vec<B512>",
+                SolType::Array(Box::new(SolType::FixedArray(
+                    Box::new(SolType::Uint(8)),
+                    64,
+                ))),
+            );
+
+            // Nested collections
+            assert_type(
+                "Vec<Vec<B256>>",
+                SolType::Array(Box::new(SolType::Array(Box::new(SolType::FixedBytes(32))))),
+            );
+        }
+
+        #[test]
+        fn test_b_types_in_tuples() {
+            // Test B-types in tuple combinations
+            assert_type(
+                "(B256, B128)",
+                SolType::Tuple(vec![SolType::FixedBytes(32), SolType::FixedBytes(16)]),
+            );
+
+            // Mixed with other types
+            assert_type(
+                "(u256, B256, bool)",
+                SolType::Tuple(vec![
+                    SolType::Uint(256),
+                    SolType::FixedBytes(32),
+                    SolType::Bool,
+                ]),
+            );
+
+            // Large B-types in tuples
+            assert_type(
+                "(B512, u64)",
+                SolType::Tuple(vec![
+                    SolType::FixedArray(Box::new(SolType::Uint(8)), 64),
+                    SolType::Uint(64),
+                ]),
+            );
+        }
+
+        #[test]
+        fn test_mixed_b_types_and_structs() {
+            // Test mixing real B-types with B-like struct names
+            assert_type(
+                "(B256, BankAccount, B128)",
+                SolType::Tuple(vec![
+                    SolType::FixedBytes(32), // Real B-type
+                    SolType::Struct {
+                        // Custom struct
+                        name: "BankAccount".to_string(),
+                        fields: vec![],
+                    },
+                    SolType::FixedBytes(16), // Real B-type
+                ]),
+            );
+        }
+
+        #[test]
+        fn test_b_types_with_references() {
+            // Test that references to B-types work correctly
+            assert_type("&B256", SolType::FixedBytes(32));
+            assert_type("&mut B128", SolType::FixedBytes(16));
+            assert_type(
+                "&[B64; 5]",
+                SolType::FixedArray(Box::new(SolType::FixedBytes(8)), 5),
+            );
+
+            // References to large B-types
+            assert_type("&B512", SolType::FixedArray(Box::new(SolType::Uint(8)), 64));
+        }
+
+        #[test]
+        fn test_common_use_cases() {
+            // Test common blockchain/crypto use cases for B-types
+
+            // Hash types
+            assert_type("B256", SolType::FixedBytes(32)); // Common for SHA256, Keccak256
+            assert_type("B160", SolType::FixedBytes(20)); // Ethereum address size
+
+            // Signature components
+            assert_type(
+                "(B256, B256, u8)",
+                SolType::Tuple(vec![
+                    SolType::FixedBytes(32), // r
+                    SolType::FixedBytes(32), // s
+                    SolType::Uint(8),        // v
+                ]),
+            );
+
+            // Array of hashes
+            assert_type(
+                "Vec<B256>",
+                SolType::Array(Box::new(SolType::FixedBytes(32))),
+            );
+
+            // Merkle proof
+            assert_type(
+                "[B256; 10]",
+                SolType::FixedArray(Box::new(SolType::FixedBytes(32)), 10),
+            );
+        }
     }
 }
