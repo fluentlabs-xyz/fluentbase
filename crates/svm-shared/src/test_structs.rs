@@ -54,7 +54,22 @@ pub struct SolSecp256k1Recover {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SolSecp256k1RecoverOriginal {
+    pub message: Vec<u8>,
+    pub signature_bytes: Vec<u8>,
+    pub recovery_id: u8,
+    pub pubkey_bytes: Vec<u8>,
+    pub expected_ret: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Keccak256 {
+    pub data: Vec<Vec<u8>>,
+    pub expected_result: [u8; 32],
+    pub expected_ret: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Sha256Original {
     pub data: Vec<Vec<u8>>,
     pub expected_result: [u8; 32],
     pub expected_ret: u64,
@@ -127,7 +142,9 @@ pub enum TestCommand {
     CreateAccountAndModifySomeData1(CreateAccountAndModifySomeData1),
     SolBigModExp(SolBigModExp),
     SolSecp256k1Recover(SolSecp256k1Recover),
+    SolSecp256k1RecoverOriginal(SolSecp256k1RecoverOriginal),
     Keccak256(Keccak256),
+    Sha256Original(Sha256Original),
     Sha256(Sha256),
     Blake3(Blake3),
     Poseidon(Poseidon),
@@ -140,10 +157,10 @@ pub enum TestCommand {
 }
 
 macro_rules! impl_from {
-    ($typ:ident) => {
-        impl From<$typ> for TestCommand {
-            fn from(value: $typ) -> Self {
-                TestCommand::$typ(value)
+    ($typ_and_enum_branch:ident) => {
+        impl From<$typ_and_enum_branch> for TestCommand {
+            fn from(value: $typ_and_enum_branch) -> Self {
+                TestCommand::$typ_and_enum_branch(value)
             }
         }
     };
@@ -159,8 +176,10 @@ macro_rules! impl_from {
 impl_from!(ModifyAccount1);
 impl_from!(CreateAccountAndModifySomeData1);
 impl_from!(SolBigModExp);
+impl_from!(SolSecp256k1RecoverOriginal);
 impl_from!(SolSecp256k1Recover);
 impl_from!(Keccak256);
+impl_from!(Sha256Original);
 impl_from!(Sha256);
 impl_from!(Blake3);
 impl_from!(Poseidon);

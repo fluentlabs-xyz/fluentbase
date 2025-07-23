@@ -80,6 +80,16 @@ pub fn sol_keccak256_native(data: &[&[u8]]) -> (ReturnValue, [u8; 32]) {
     hash_impl!(data, sol_keccak256)
 }
 extern "C" {
+    fn sol_sha256_original(
+        values_addr: *const u8,
+        values_len: u64,
+        result_addr: *mut u8,
+    ) -> ReturnValue;
+}
+pub fn sol_sha256_original_native(data: &[&[u8]]) -> (ReturnValue, [u8; 32]) {
+    hash_impl!(data, sol_sha256_original)
+}
+extern "C" {
     fn sol_sha256(values_addr: *const u8, values_len: u64, result_addr: *mut u8) -> ReturnValue;
 }
 pub fn sol_sha256_native(data: &[&[u8]]) -> (ReturnValue, [u8; 32]) {
@@ -112,6 +122,30 @@ pub fn sol_poseidon_native(
             endianness,
             vals.as_ptr() as *const u8,
             vals.len() as u64,
+            result.as_mut_ptr(),
+        )
+    };
+    (ret, result)
+}
+extern "C" {
+    fn sol_secp256k1_recover_original(
+        hash_addr: *const u8,
+        recovery_id_val: u64,
+        signature_addr: *const u8,
+        result_addr: *mut u8,
+    ) -> ReturnValue;
+}
+pub fn secp256k1_recover_original_native(
+    hash: &[u8; 32],
+    recovery_id_val: u64,
+    signature: &[u8; 64],
+) -> (ReturnValue, [u8; 64]) {
+    let mut result = [0u8; 64];
+    let ret = unsafe {
+        sol_secp256k1_recover_original(
+            hash.as_ptr(),
+            recovery_id_val,
+            signature.as_ptr(),
             result.as_mut_ptr(),
         )
     };

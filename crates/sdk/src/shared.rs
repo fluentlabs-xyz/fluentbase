@@ -197,6 +197,14 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::keccak256(data)
     }
 
+    fn sha256(data: &[u8]) -> B256 {
+        API::sha256(data)
+    }
+
+    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
+        API::secp256k1_recover(digest, sig, rec_id)
+    }
+
     fn read(&self, target: &mut [u8], offset: u32) {
         self.native_sdk
             .read(target, SharedContextInputV1::SIZE as u32 + offset)

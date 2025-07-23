@@ -44,8 +44,10 @@ mod tests {
             Poseidon,
             SetGetReturnData,
             Sha256,
+            Sha256Original,
             SolBigModExp,
             SolSecp256k1Recover,
+            SolSecp256k1RecoverOriginal,
             SyscallAltBn128,
             TestCommand,
         },
@@ -431,7 +433,9 @@ mod tests {
 
         // exec
 
-        let test_commands: &[TestCommand] = &[SolSecp256k1Recover {
+        let mut test_commands: Vec<TestCommand> = vec![];
+
+        let original_test_case = SolSecp256k1RecoverOriginal {
             message: b"hello world".to_vec(),
             signature_bytes: vec![
                 0x93, 0x92, 0xC4, 0x6C, 0x42, 0xF6, 0x31, 0x73, 0x81, 0xD4, 0xB2, 0x44, 0xE9, 0x2F,
@@ -449,8 +453,16 @@ mod tests {
                 0xB0, 0x3D, 0xA2, 0x20, 0xAC, 0x11, 0x85, 0xEE,
             ],
             expected_ret: 0,
-        }
-        .into()];
+        };
+        test_commands.push(original_test_case.clone().into());
+        let fluent_test_case = SolSecp256k1Recover {
+            message: original_test_case.message,
+            signature_bytes: original_test_case.signature_bytes,
+            recovery_id: original_test_case.recovery_id,
+            pubkey_bytes: original_test_case.pubkey_bytes,
+            expected_ret: original_test_case.expected_ret,
+        };
+        test_commands.push(fluent_test_case.into());
 
         process_test_commands(
             &mut ctx,
@@ -519,14 +531,21 @@ mod tests {
 
         // exec
 
-        let test_commands: &[TestCommand] = &[Sha256 {
+        let mut test_commands: Vec<TestCommand> = vec![];
+        let original_test_case = Sha256Original {
             data: vec![vec![1u8, 2, 3], vec![4, 5, 6]],
             expected_result: hex!(
                 "7192385c3c0605de55bb9476ce1d90748190ecb32a8eed7f5207b30cf6a1fe89"
             ),
             expected_ret: 0,
-        }
-        .into()];
+        };
+        test_commands.push(original_test_case.clone().into());
+        // TODO uncomment when fluent's sha256 implemented
+        // test_commands.push(Sha256 {
+        //     data: original_test_case.data,
+        //     expected_result: original_test_case.expected_result,
+        //     expected_ret: original_test_case.expected_ret,
+        // }.into());
 
         process_test_commands(
             &mut ctx,

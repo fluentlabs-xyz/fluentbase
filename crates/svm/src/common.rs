@@ -2,7 +2,7 @@ use crate::{
     account::AccountSharedData,
     clock::Slot,
     context::{InstructionContext, InvokeContext, TransactionContext},
-    hash::{Hash, Hasher},
+    hash::Hash,
     loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
     solana_program::loader_v4,
 };
@@ -52,13 +52,13 @@ pub trait HasherImpl {
     fn result(self) -> Self::Output;
 }
 
-pub struct Sha256Hasher(Hasher);
-impl HasherImpl for Sha256Hasher {
-    const NAME: &'static str = "Sha256";
+pub struct Sha256HasherOriginal(solana_sha256_hasher::Hasher);
+impl HasherImpl for Sha256HasherOriginal {
+    const NAME: &'static str = "Sha256Original";
     type Output = Hash;
 
     fn create_hasher() -> Self {
-        Sha256Hasher(Hasher::default())
+        Sha256HasherOriginal(solana_sha256_hasher::Hasher::default())
     }
 
     fn hash(&mut self, val: &[u8]) {
@@ -67,6 +67,38 @@ impl HasherImpl for Sha256Hasher {
 
     fn result(self) -> Self::Output {
         self.0.result()
+    }
+}
+
+pub struct Sha256Hasher<SDK: SharedAPI> {
+    _phantom: PhantomData<SDK>,
+    data: Vec<u8>,
+    hash: Option<Hash>,
+}
+impl<SDK: SharedAPI> HasherImpl for Sha256Hasher<SDK> {
+    const NAME: &'static str = "Sha256";
+    type Output = Hash;
+
+    fn create_hasher() -> Self {
+        Self {
+            _phantom: Default::default(),
+            data: vec![],
+            hash: None,
+        }
+    }
+
+    fn hash(&mut self, val: &[u8]) {
+        self.data.extend_from_slice(val);
+        self.hash = None;
+    }
+
+    fn result(mut self) -> Self::Output {
+        if let Some(hash) = self.hash {
+            return hash;
+        }
+        let hash: Hash = SDK::sha256(&self.data).0.into();
+        self.hash = Some(hash);
+        hash
     }
 }
 

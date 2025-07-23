@@ -16,6 +16,7 @@ use crate::{
         read_output::SyscallReadOutput,
         resume::SyscallResume,
         secp256k1_recover::SyscallSecp256k1Recover,
+        sha256_compress::SyscallSha256Compress,
         state::SyscallState,
         write::SyscallWrite,
     },

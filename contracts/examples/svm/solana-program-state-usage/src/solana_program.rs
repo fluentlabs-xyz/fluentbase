@@ -10,11 +10,13 @@ use fluentbase_examples_svm_bindings::{
     log_data_native,
     log_pubkey_native,
     secp256k1_recover_native,
+    secp256k1_recover_original_native,
     set_return_data_native,
     sol_blake3_native,
     sol_keccak256_native,
     sol_poseidon_native,
     sol_sha256_native,
+    sol_sha256_original_native,
 };
 use fluentbase_svm_shared::{bincode_helpers::deserialize, test_structs::TestCommand};
 use num_derive::FromPrimitive;
@@ -178,7 +180,7 @@ pub fn process_instruction(
             assert_eq!(&p.expected_ret, &result.0);
             assert_eq!(&p.expected, &result.1);
         }
-        TestCommand::SolSecp256k1Recover(p) => {
+        TestCommand::SolSecp256k1RecoverOriginal(p) => {
             let message = p.message;
             let message_hash = {
                 let mut hasher = solana_program::keccak::Hasher::default();
@@ -197,21 +199,51 @@ pub fn process_instruction(
             let alt_signature_bytes = alt_signature.serialize();
             let alt_recovery_id = alt_recovery_id.serialize();
 
-            let recovered_pubkey = secp256k1_recover_native(
+            let recovered_pubkey = secp256k1_recover_original_native(
                 &message_hash.0,
                 p.recovery_id as u64,
                 &p.signature_bytes.try_into().unwrap(),
             );
-            msg!("recovered_pubkey {:x?}", &recovered_pubkey);
             assert_eq!(&p.expected_ret, &recovered_pubkey.0);
             assert_eq!(&recovered_pubkey.1, p.pubkey_bytes.as_slice());
 
+            let alt_recovered_pubkey = secp256k1_recover_original_native(
+                &message_hash.0,
+                alt_recovery_id as u64,
+                &alt_signature_bytes,
+            );
+            assert_eq!(&p.expected_ret, &alt_recovered_pubkey.0);
+            assert_eq!(alt_recovered_pubkey.1, p.pubkey_bytes.as_slice());
+        }
+        TestCommand::SolSecp256k1Recover(p) => {
+            let message = p.message;
+            let message_hash = {
+                let mut hasher = solana_program::keccak::Hasher::default();
+                hasher.hash(&message);
+                hasher.result()
+            };
+
+            let recovered_pubkey = secp256k1_recover_native(
+                &message_hash.0,
+                p.recovery_id as u64,
+                &p.signature_bytes.clone().try_into().unwrap(),
+            );
+            assert_eq!(&p.expected_ret, &recovered_pubkey.0);
+            assert_eq!(&recovered_pubkey.1, p.pubkey_bytes.as_slice());
+
+            let signature =
+                libsecp256k1::Signature::parse_standard_slice(&p.signature_bytes).unwrap();
+            // Flip the S value in the signature to make a different but valid signature.
+            let mut alt_signature = signature;
+            alt_signature.s = -alt_signature.s;
+            let alt_recovery_id = libsecp256k1::RecoveryId::parse(p.recovery_id ^ 1).unwrap();
+            let alt_signature_bytes = alt_signature.serialize();
+            let alt_recovery_id = alt_recovery_id.serialize();
             let alt_recovered_pubkey = secp256k1_recover_native(
                 &message_hash.0,
                 alt_recovery_id as u64,
                 &alt_signature_bytes,
             );
-            msg!("alt_recovered_pubkey {:x?}", &alt_recovered_pubkey);
             assert_eq!(&p.expected_ret, &alt_recovered_pubkey.0);
             assert_eq!(alt_recovered_pubkey.1, p.pubkey_bytes.as_slice());
         }
@@ -227,6 +259,22 @@ pub fn process_instruction(
                     data_solid.extend_from_slice(v);
                 }
                 let result = sol_keccak256_native(&[data_solid.as_slice()]);
+                assert_eq!(&p.expected_ret, &result.0);
+                assert_eq!(expected_result.as_slice(), &result.1);
+            }
+        }
+        TestCommand::Sha256Original(p) => {
+            let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
+            let expected_result = p.expected_result;
+            let result = sol_sha256_original_native(&data);
+            assert_eq!(&p.expected_ret, &result.0);
+            assert_eq!(expected_result.as_slice(), &result.1);
+            if p.data.len() > 0 {
+                let mut data_solid = Vec::new();
+                for v in &p.data {
+                    data_solid.extend_from_slice(v);
+                }
+                let result = sol_sha256_original_native(&[data_solid.as_slice()]);
                 assert_eq!(&p.expected_ret, &result.0);
                 assert_eq!(expected_result.as_slice(), &result.1);
             }
