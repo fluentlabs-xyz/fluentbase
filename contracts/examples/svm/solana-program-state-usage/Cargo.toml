@@ -25,3 +25,13 @@ libsecp256k1 = "0.7.2"
 
 [profile]
 
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = 3
+strip = true
+debug = false
+debug-assertions = false
+rpath = false
+codegen-units = 1
+
