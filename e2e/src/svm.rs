@@ -163,7 +163,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
 
         let program_bytes = account_with_program.data().to_vec();
@@ -213,7 +213,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -319,7 +319,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -423,7 +423,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -483,7 +483,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -521,7 +521,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -566,7 +566,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -604,7 +604,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -653,7 +653,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -702,7 +702,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -756,7 +756,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -810,7 +810,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -918,7 +918,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -952,7 +952,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -1014,7 +1014,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -1206,7 +1206,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -1292,7 +1292,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -1422,7 +1422,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -1594,7 +1594,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -1752,7 +1752,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -1840,7 +1840,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
@@ -1931,7 +1931,7 @@ mod tests {
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
             // "../examples/svm/solana-program/assets/solana_program.so",
-            "../contracts/examples/svm/assets/fluentbase_examples_svm_solana_program_state_usage.so",
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
         let seed1 = b"seed";
