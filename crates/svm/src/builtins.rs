@@ -158,14 +158,14 @@ macro_rules! log_str_common {
         #[allow(unused)]
         {
             #[cfg(all(test, not(target_arch = "wasm32")))]
-            println!("builtin log: {}", $value);
+            println!("svm_log: {}", $value);
             #[cfg(target_arch = "wasm32")]
             {
                 #[cfg(not(feature = "use-extended-debug-log"))]
                 use fluentbase_sdk::debug_log as log_macro;
                 #[cfg(feature = "use-extended-debug-log")]
                 use fluentbase_sdk::debug_log_ext as log_macro;
-                log_macro!("builtin log: {}", $value);
+                log_macro!("svm_log: {}", $value);
             }
         }
     };
@@ -292,8 +292,6 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Box<dyn core::error::Error>> {
-        #[cfg(target_arch = "wasm32")]
-        use fluentbase_sdk::debug_log;
         let host_addr: Result<u64, EbpfError> =
             memory_mapping.map(AccessType::Load, vm_addr, len).into();
         let host_addr = host_addr?;
@@ -302,10 +300,7 @@ declare_builtin_function!(
             let len = c_buf.iter().position(|c| *c == 0).unwrap_or(len as usize);
             #[allow(unused_variables)]
             let message = from_utf8(&c_buf[0..len]).unwrap_or("Invalid UTF-8 String");
-            #[cfg(test)]
-            println!("message={}", message);
-            #[cfg(target_arch = "wasm32")]
-            debug_log!("message={}", message);
+            log_str_common!(message);
         }
         Ok(0)
     }
@@ -351,8 +346,7 @@ declare_builtin_function!(
         arg5: u64,
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use alloc::format;
-        log_str_common!(&format!("{arg1:#x}, {arg2:#x}, {arg3:#x}, {arg4:#x}, {arg5:#x}"));
+        log_str_common!(&alloc::format!("{arg1:#x}, {arg2:#x}, {arg3:#x}, {arg4:#x}, {arg5:#x}"));
         Ok(0)
     }
 );
@@ -369,6 +363,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
+        #[allow(unused_variables)]
         let pubkey = translate_type::<Pubkey>(
             memory_mapping,
             pubkey_addr,
@@ -496,6 +491,7 @@ declare_builtin_function!(
             len,
             invoke_context.get_check_aligned(),
         )?;
+        #[allow(unused_variables)]
         let data_fields = untranslated_data_fields
             .iter()
             .map(|untranslated_data_field| {
