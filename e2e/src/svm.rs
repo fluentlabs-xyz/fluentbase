@@ -1,7 +1,9 @@
 mod tests {
     use crate::EvmTestingContextWithGenesis;
+    #[cfg(feature = "enable-solana-extended-builtins")]
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
     use core::str::from_utf8;
+    #[cfg(feature = "enable-solana-extended-builtins")]
     use curve25519_dalek::{
         constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT},
         traits::Identity,
@@ -55,6 +57,7 @@ mod tests {
     use hex_literal::hex;
     use rand::random_range;
     use serde::Deserialize;
+    #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_bn254::{
         compression::prelude::{
             alt_bn128_g1_compress,
@@ -76,6 +79,7 @@ mod tests {
             ALT_BN128_PAIRING,
         },
     };
+    #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_curve25519::{
         edwards::{
             add_edwards,
@@ -86,6 +90,7 @@ mod tests {
         },
         scalar::PodScalar,
     };
+    #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_poseidon::{Endianness, Parameters};
     use std::{fs::File, io::Read, ops::Neg, time::Instant};
 
@@ -311,6 +316,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_big_mod_exp() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -454,6 +460,7 @@ mod tests {
             ],
             expected_ret: 0,
         };
+        #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(original_test_case.clone().into());
         let fluent_test_case = SolSecp256k1Recover {
             message: original_test_case.message,
@@ -539,6 +546,7 @@ mod tests {
             ),
             expected_ret: 0,
         };
+        #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(original_test_case.clone().into());
         // TODO uncomment when fluent's sha256 implemented
         // test_commands.push(Sha256 {
@@ -558,6 +566,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_blake3() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -596,6 +605,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_be() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -645,6 +655,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_le() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -694,6 +705,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_twos_be() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -748,6 +760,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_twos_le() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -802,6 +815,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_poseidon__input_one() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -944,6 +958,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_curve_validate_point() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1006,6 +1021,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_curve_group_op() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1198,6 +1214,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_sol_curve_multiscalar_mul() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1284,6 +1301,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_sol_alt_bn128_group_op__addition() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1414,6 +1432,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_sol_alt_bn128_group_op__multiplication() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1586,6 +1605,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_sol_alt_bn128_group_op__pairing() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1744,6 +1764,7 @@ mod tests {
     type G1 = ark_bn254::g1::G1Affine;
     type G2 = ark_bn254::g2::G2Affine;
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_sol_alt_bn128_compression__g1_compression() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1832,6 +1853,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_sol_alt_bn128_compression__g2_compression() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1923,6 +1945,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_sol_alt_bn128_compression__pairing() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();

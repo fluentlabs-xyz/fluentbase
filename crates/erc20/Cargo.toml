@@ -11,7 +11,7 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-sdk = { workspace = true, features = [
-    #    "fast-panic"
+    "fast-panic"
 ] }
 bincode = { workspace = true, default-features = false, features = ["serde"] }
 
