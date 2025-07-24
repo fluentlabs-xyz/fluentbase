@@ -1,5 +1,5 @@
 use cargo_metadata::{CrateType, MetadataCommand, TargetKind};
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{env, fs, path::PathBuf, process::Command, thread};
 use wasm_opt::OptimizationOptions;
 
 fn main() {
@@ -42,6 +42,8 @@ fn main() {
         "panic=abort".to_string(),
         "-C".to_string(),
         "target-feature=+bulk-memory".to_string(),
+        "-C".to_string(),
+        "target-feature=+simd128".to_string(),
     ];
     let encoded_flags = flags.join("\x1f");
 
@@ -91,18 +93,43 @@ fn main() {
     ));
     paths.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let mut final_paths = Vec::new();
     let final_artifacts_dir: PathBuf = root_metadata.target_directory.join("contracts").into();
     fs::create_dir_all(&final_artifacts_dir).unwrap();
+
+    let mut handles = Vec::new();
+    let final_paths_mutex = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
     for (name, path) in paths {
-        let final_path = final_artifacts_dir.join(&name).with_extension("wasm");
-        OptimizationOptions::new_opt_level_3()
-            .run(&path, &final_path)
-            .expect("failed to optimize wasm");
-        println!("optimized {}", name);
-        final_paths.push((name, final_path));
+        let name_clone = name.clone();
+        let path_clone = path.clone();
+        let final_artifacts_dir = final_artifacts_dir.clone();
+        let final_paths_mutex = final_paths_mutex.clone();
+
+        let handle = thread::spawn(move || {
+            let final_path = final_artifacts_dir.join(&name_clone).with_extension("wasm");
+
+            OptimizationOptions::new_opt_level_4()
+                .run(&path_clone, &final_path)
+                .unwrap_or_else(|_| panic!("failed to optimize wasm: {}", name_clone));
+
+            println!("optimized {}", name_clone);
+
+            let mut locked = final_paths_mutex.lock().unwrap();
+            locked.push((name_clone, final_path));
+        });
+
+        handles.push(handle);
     }
-    let paths = final_paths;
+
+    // Wait for all threads to finish
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let paths = std::sync::Arc::try_unwrap(final_paths_mutex)
+        .expect("Arc still has multiple owners")
+        .into_inner()
+        .unwrap();
 
     let mut code = Vec::new();
     code.push("pub struct BuildOutput {".to_string());
