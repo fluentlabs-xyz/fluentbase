@@ -110,41 +110,77 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
         .unwrap();
 
+    #[cfg(feature = "enable-solana-original-builtins")]
     function_registry
         .register_function_hashed(
             "sol_secp256k1_recover_original",
             SyscallSecp256k1RecoverOriginal::vm,
         )
         .unwrap();
+    #[cfg(not(feature = "enable-solana-original-builtins"))]
+    function_registry
+        .register_function_hashed("sol_secp256k1_recover_original", SyscallStub::vm)
+        .unwrap();
     function_registry
         .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
         .unwrap();
+    #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_curve_group_op", SyscallCurveGroupOps::vm)
         .unwrap();
+    #[cfg(not(feature = "enable-solana-extended-builtins"))]
+    function_registry
+        .register_function_hashed("sol_curve_group_op", SyscallStub::vm)
+        .unwrap();
+    #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed(
             "sol_curve_multiscalar_mul",
             SyscallCurveMultiscalarMultiplication::vm,
         )
         .unwrap();
+    #[cfg(not(feature = "enable-solana-extended-builtins"))]
+    function_registry
+        .register_function_hashed("sol_curve_multiscalar_mul", SyscallStub::vm)
+        .unwrap();
+    #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_curve_validate_point", SyscallCurvePointValidation::vm)
         .unwrap();
+    #[cfg(not(feature = "enable-solana-extended-builtins"))]
+    function_registry
+        .register_function_hashed("sol_curve_validate_point", SyscallStub::vm)
+        .unwrap();
 
+    #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_alt_bn128_group_op", SyscallAltBn128::vm)
         .unwrap();
+    #[cfg(not(feature = "enable-solana-extended-builtins"))]
+    function_registry
+        .register_function_hashed("sol_alt_bn128_group_op", SyscallStub::vm)
+        .unwrap();
+    #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_alt_bn128_compression", SyscallAltBn128Compression::vm)
         .unwrap();
+    #[cfg(not(feature = "enable-solana-extended-builtins"))]
+    function_registry
+        .register_function_hashed("sol_alt_bn128_compression", SyscallStub::vm)
+        .unwrap();
 
+    #[cfg(feature = "enable-solana-original-builtins")]
     function_registry
         .register_function_hashed(
             "sol_sha256_original",
             SyscallHash::vm::<SDK, Sha256HasherOriginal>,
         )
         .unwrap();
+    #[cfg(not(feature = "enable-solana-original-builtins"))]
+    function_registry
+        .register_function_hashed("sol_sha256_original", SyscallStub::vm)
+        .unwrap();
+
     function_registry
         .register_function_hashed("sol_sha256", SyscallHash::vm::<SDK, Sha256Hasher<SDK>>)
         .unwrap();
@@ -154,14 +190,29 @@ pub fn register_builtins<SDK: SharedAPI>(
             SyscallHash::vm::<SDK, Keccak256Hasher<SDK>>,
         )
         .unwrap();
+    #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
         .unwrap();
+    #[cfg(not(feature = "enable-solana-extended-builtins"))]
+    function_registry
+        .register_function_hashed("sol_blake3", SyscallStub::vm)
+        .unwrap();
+    #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_big_mod_exp", SyscallBigModExp::vm)
         .unwrap();
+    #[cfg(not(feature = "enable-solana-extended-builtins"))]
+    function_registry
+        .register_function_hashed("sol_big_mod_exp", SyscallStub::vm)
+        .unwrap();
+    #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_poseidon", SyscallPoseidon::vm)
+        .unwrap();
+    #[cfg(not(feature = "enable-solana-extended-builtins"))]
+    function_registry
+        .register_function_hashed("sol_poseidon", SyscallStub::vm)
         .unwrap();
 }
 
@@ -183,7 +234,7 @@ macro_rules! log_str_common {
     };
 }
 
-// TODO re-validate
+// TODO check again
 declare_builtin_function!(
     /// memcmp
     SyscallMemcmp<SDK: SharedAPI>,
@@ -227,7 +278,7 @@ declare_builtin_function!(
     }
 );
 
-// TODO recheck
+// TODO check again
 declare_builtin_function!(
     /// memcpy
     SyscallMemcpy<SDK: SharedAPI>,
@@ -249,7 +300,7 @@ declare_builtin_function!(
     }
 );
 
-// TODO recheck
+// TODO check again
 declare_builtin_function!(
     /// memmove
     SyscallMemmove<SDK: SharedAPI>,
@@ -266,8 +317,7 @@ declare_builtin_function!(
     }
 );
 
-// );
-
+// TODO check again
 declare_builtin_function!(
     /// memset
     SyscallMemset<SDK: SharedAPI>,
@@ -558,6 +608,23 @@ declare_builtin_function!(
             &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line, column).into()),
 
         )
+    }
+);
+
+declare_builtin_function!(
+    /// Panic syscall function, called when the SBF program calls 'sol_panic_()`
+    /// Causes the SBF program to be halted immediately
+    SyscallStub<SDK: SharedAPI>,
+    fn rust(
+        _invoke_context: &mut InvokeContext<SDK>,
+        _arg1: u64,
+        _arg2: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        _memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        panic!("function disabled")
     }
 );
 

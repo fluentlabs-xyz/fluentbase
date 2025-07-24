@@ -29,6 +29,12 @@ build_solana_program:
 
 TARGET=release
 INPUT_NAME=solana_program_state_usage
+.PHONY: build
+build:
+	cargo build --release
+
+TARGET=release
+INPUT_NAME=solana_program_state_usage
 .PHONY: build_cargo_powered_solana_program
 build_cargo_powered_solana_program:
 	cargo build-sbf #-- -Znext-lockfile-bump
