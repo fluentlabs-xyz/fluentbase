@@ -73,14 +73,21 @@ impl FunctionIDAttribute {
                 Span::call_site(),
                 format!(
                     "Invalid Solidity function signature: '{signature}'. \
-                     Expected format: 'functionName(type1,type2,...)'"
+                 Expected format: 'functionName(type1,type2,...)'"
                 ),
             ));
         }
 
+        let sanitized = sanitize_signature(signature).ok_or_else(|| {
+            syn::Error::new(
+                Span::call_site(),
+                format!("Failed to sanitize signature: '{signature}'"),
+            )
+        })?;
+
         Ok(Self {
             validate: default_validate(),
-            selector: Some(calculate_keccak256(signature)),
+            selector: Some(calculate_keccak256(&sanitized)),
             original_input: Some(Input::Signature(signature.to_string())),
         })
     }
@@ -321,6 +328,86 @@ impl ToTokens for FunctionIDAttribute {
     }
 }
 
+/// Splits the parameter list into arguments,
+/// handling nested tuples/arrays so commas inside brackets are ignored.
+fn split_args_types(params: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut curr = String::new();
+    let mut depth = 0;
+
+    for c in params.chars() {
+        match c {
+            '(' | '[' => {
+                depth += 1;
+                curr.push(c);
+            }
+            ')' | ']' => {
+                depth -= 1;
+                curr.push(c);
+            }
+            ',' if depth == 0 => {
+                // Only split at top-level commas
+                args.push(curr.trim().to_string());
+                curr.clear();
+            }
+            _ => curr.push(c),
+        }
+    }
+    if !curr.trim().is_empty() {
+        args.push(curr.trim().to_string());
+    }
+    args
+}
+
+/// Removes argument names, storage modifiers, and keeps only the type.
+/// For example:
+///   "uint256 amount"              -> "uint256"
+///   "(address,bool) memory data"  -> "(address,bool)"
+///   "uint256[3] calldata arr"     -> "uint256[3]"
+fn extract_type(arg: &str) -> String {
+    let mut part = arg.trim();
+
+    // Remove storage/location modifiers if present
+    for modifier in ["memory", "calldata", "storage"] {
+        if let Some(idx) = part.find(&format!(" {}", modifier)) {
+            part = &part[..idx];
+        }
+    }
+
+    // Remove trailing argument names.
+    // Find the last whitespace outside any nested tuple/array to separate type from name.
+    let mut idx = part.len();
+    let mut paren = 0;
+    for (i, c) in part.chars().rev().enumerate() {
+        match c {
+            ')' | ']' => paren += 1,
+            '(' | '[' => paren -= 1,
+            _ => {}
+        }
+        if c.is_whitespace() && paren == 0 {
+            idx = part.len() - i - 1;
+            break;
+        }
+    }
+    part[..idx].trim_end().to_string()
+}
+
+/// Converts a Solidity function declaration to a canonical signature string,
+/// e.g. `function foo(uint256[3] memory arr, (address,bool) data)`
+///   -> "foo(uint256[3],(address,bool))"
+fn sanitize_signature(decl: &str) -> Option<String> {
+    let start = decl.find('(')?;
+    let end = decl.rfind(')')?;
+    let name = decl[..start].split_whitespace().last()?;
+    let params = &decl[start + 1..end];
+    let types: Vec<_> = split_args_types(params)
+        .iter()
+        .map(|s| extract_type(s))
+        .collect();
+    let sig = format!("{}({})", name, types.join(","));
+    Some(sig.replace(" ", ""))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,5 +580,40 @@ mod tests {
         let attr3 = FunctionIDAttribute::from_bytes(bytes);
         assert_eq!(attr3.function_id_bytes().unwrap(), bytes);
         assert_eq!(attr3.function_id_hex().unwrap(), hex);
+    }
+
+    #[test]
+    fn sanitize() {
+        assert_eq!(
+            sanitize_signature("function transfer(address to, uint256 amount)"),
+            Some("transfer(address,uint256)".to_string())
+        );
+        assert_eq!(
+            sanitize_signature("function mint(address,uint256)"),
+            Some("mint(address,uint256)".to_string())
+        );
+        assert_eq!(
+            sanitize_signature("function foo(uint8[] memory values, string calldata message)"),
+            Some("foo(uint8[],string)".to_string())
+        );
+        assert_eq!(
+            sanitize_signature("setData(uint256[3] memory arr, (address,bool) data)"),
+            Some("setData(uint256[3],(address,bool))".to_string())
+        );
+        assert_eq!(sanitize_signature("empty()"), Some("empty()".to_string()));
+        assert_eq!(
+            sanitize_signature("function complex((uint256,(bool,address[]))  data , string s)"),
+            Some("complex((uint256,(bool,address[])),string)".to_string())
+        );
+        assert_eq!(
+            sanitize_signature("function nested(tuple(uint256,bool)[] memory arr)"),
+            Some("nested(tuple(uint256,bool)[])".to_string())
+        );
+        assert_eq!(
+            sanitize_signature(
+                "deep(uint256,(address, (bool, uint256[3]), (string, (bytes, (uint8, address[2]))))[] memory,(uint256, (bytes32, (address[], (bool, (uint256, bytes32[4]))))) calldata)"
+            ),
+            Some("deep(uint256,(address,(bool,uint256[3]),(string,(bytes,(uint8,address[2]))))[],(uint256,(bytes32,(address[],(bool,(uint256,bytes32[4]))))))".to_string())
+        );
     }
 }
