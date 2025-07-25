@@ -33,29 +33,32 @@ mod tests {
         },
         system_program,
     };
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use fluentbase_svm_shared::test_structs::{
+        AltBn128Compression,
+        Blake3,
+        CurveGroupOp,
+        CurveMultiscalarMultiplication,
+        CurvePointValidation,
+        Poseidon,
+        SolBigModExp,
+        SyscallAltBn128,
+    };
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
-            AltBn128Compression,
-            Blake3,
             CreateAccountAndModifySomeData1,
-            CurveGroupOp,
-            CurveMultiscalarMultiplication,
-            CurvePointValidation,
             Keccak256,
-            Poseidon,
             SetGetReturnData,
-            Sha256,
             Sha256Original,
-            SolBigModExp,
             SolSecp256k1Recover,
             SolSecp256k1RecoverOriginal,
-            SyscallAltBn128,
             TestCommand,
         },
     };
     use hex_literal::hex;
     use rand::random_range;
+    #[cfg(feature = "enable-solana-extended-builtins")]
     use serde::Deserialize;
     #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_bn254::{
@@ -92,7 +95,9 @@ mod tests {
     };
     #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_poseidon::{Endianness, Parameters};
-    use std::{fs::File, io::Read, ops::Neg, time::Instant};
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use std::ops::Neg;
+    use std::{fs::File, io::Read, time::Instant};
 
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
 

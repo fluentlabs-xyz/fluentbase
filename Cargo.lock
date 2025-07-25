@@ -2639,7 +2639,6 @@ dependencies = [
  "rwasm",
  "rwasm-revm",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-bn254",
  "solana-curve25519",

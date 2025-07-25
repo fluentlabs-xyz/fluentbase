@@ -40,7 +40,6 @@ solana-curve25519 = { workspace = true, default-features = false, features = [] 
 solana-bn254 = { workspace = true, default-features = false, features = [] }
 solana-poseidon = { workspace = true, default-features = false, features = [] }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 array-bytes = { workspace = true }
 ark-bn254 = { workspace = true }
@@ -52,9 +51,8 @@ default = [
     "wasmtime",
     "debug-print",
     "enable-svm",
-    # when enabling - enable corresponding in 'contracts' crate
+    # when enabling nable-solana-* - enable corresponding in 'contracts' crate
     "enable-solana-original-builtins",
-    # when enabling - enable corresponding in 'contracts' crate
     "enable-solana-extended-builtins",
 ]
 enable-solana-original-builtins = [

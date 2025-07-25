@@ -31,12 +31,7 @@ use solana_rbpf::{
 pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
     let elf_program_slice = sdk.input();
     let elf_program_bytes: Bytes = elf_program_slice.into();
-    // let program_len = elf_program_bytes.len();
-    // let block_number = sdk.context().block_number();
-    // let loader_id = loader_v4::id();
-
     let ctx = sdk.context();
-    // let contract_caller = ctx.contract_caller();
     let contract_address = ctx.contract_address();
 
     drop(ctx);
@@ -53,27 +48,8 @@ pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
         Elf64::parse(bytes).expect("invalid elf executable");
     }
 
-    // let pk_caller = pubkey_from_evm_address(&contract_caller); // must exist // caller
-    let pk_contract = pubkey_from_evm_address(&contract_address); // may not exist // contract_address
-                                                                  // let pk_authority = pk_caller.clone(); // must exist // caller
+    let pk_contract = pubkey_from_evm_address(&contract_address); // may not exist
 
-    // let mut contract_account_data = AccountSharedData::new(
-    //     0, // TODO set from input value?
-    //     LoaderV4State::program_data_offset().saturating_add(program_len),
-    //     &loader_id,
-    // );
-    // contract_account_data.set_rent_epoch(Epoch::MAX);
-    // let state = get_state_mut(contract_account_data.data_as_mut_slice())
-    //     .expect("contract account has not enough data len");
-    // state.slot = block_number;
-    // state.authority_address_or_next_version = pk_authority;
-    // state.status = LoaderV4Status::Deployed;
-    // contract_account_data.data_as_mut_slice()[LoaderV4State::program_data_offset()..]
-    //     .copy_from_slice(elf_program_bytes.as_ref());
-
-    // let contract_account_data =
-    //     serialize(&contract_account_data).expect("failed to serialize contract account data");
-    // let contract_account_data: Bytes = contract_account_data.into();
     write_contract_data(&mut sdk, &pk_contract, elf_program_bytes)
         .expect("failed to save contract");
     // TODO figure out balance changes and apply them to evm
