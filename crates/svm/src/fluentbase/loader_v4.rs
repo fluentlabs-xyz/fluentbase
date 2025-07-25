@@ -33,6 +33,8 @@ pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
     let elf_program_bytes: Bytes = elf_program_slice.into();
     let ctx = sdk.context();
     let contract_address = ctx.contract_address();
+    // let contract_caller = ctx.contract_caller();
+    // let pk_caller = pubkey_from_evm_address(&contract_caller);
 
     drop(ctx);
 
@@ -50,9 +52,10 @@ pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
 
     let pk_contract = pubkey_from_evm_address(&contract_address); // may not exist
 
+    // let mut contract_data = pk_caller.to_bytes().to_vec();
+    // contract_data.extend_from_slice(elf_program_bytes.as_ref());
     write_contract_data(&mut sdk, &pk_contract, elf_program_bytes)
-        .expect("failed to save contract");
-    // TODO figure out balance changes and apply them to evm
+        .expect("failed to save contract data");
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
@@ -78,7 +81,11 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         extract_account_data_or_default(&sdk, &pk_caller).expect("caller must exist");
     caller_account_data.set_lamports(caller_account_balance);
 
-    let data = read_contract_data(&sdk, &pk_contract).expect("failed to read contract executable");
+    let contract_data =
+        read_contract_data(&sdk, &pk_contract).expect("failed to read contract executable");
+    // let pk_authority = &contract_data.data[0..PUBKEY_BYTES];
+    // let elf_program_bytes = &contract_data.data[PUBKEY_BYTES..];
+    let elf_program_bytes = &contract_data.data;
     let contract_balance = lamports_from_evm_balance(
         sdk.balance(&contract_address)
             .expect("contract balance must exist")
@@ -86,17 +93,19 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     );
     let mut contract_account_data = AccountSharedData::new(
         contract_balance,
-        LoaderV4State::program_data_offset().saturating_add(data.data.len()),
+        LoaderV4State::program_data_offset().saturating_add(elf_program_bytes.len()),
         &loader_id,
     );
     contract_account_data.set_rent_epoch(Epoch::MAX);
     let state = get_state_mut(contract_account_data.data_as_mut_slice())
         .expect("contract account has not enough data len");
     // state.slot = block_number;
-    state.authority_address_or_next_version = pk_caller; // TODO must be taken from OwnableAccount
+    // state.authority_address_or_next_version = pk_authority
+    //     .try_into()
+    //     .expect("metadata doesnt contain pk_authority");
     state.status = LoaderV4Status::Deployed;
     contract_account_data.data_as_mut_slice()[LoaderV4State::program_data_offset()..]
-        .copy_from_slice(data.as_ref());
+        .copy_from_slice(elf_program_bytes);
 
     let exec_account_balance_before = contract_balance;
 

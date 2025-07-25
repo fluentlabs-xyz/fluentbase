@@ -984,13 +984,13 @@ mod tests {
 
         let test_commands: &[TestCommand] = &[
             CurvePointValidation {
-                curve_id: 0,
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
                 point: ED25519_BASEPOINT_POINT.compress().as_bytes().clone(),
                 expected_ret: 0, // OK
             }
             .into(),
             CurvePointValidation {
-                curve_id: 0,
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
                 point: [
                     120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117,
                     38, 84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,
@@ -999,13 +999,13 @@ mod tests {
             }
             .into(),
             CurvePointValidation {
-                curve_id: 0,
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
                 point: RISTRETTO_BASEPOINT_POINT.compress().as_bytes().clone(),
                 expected_ret: 0, // OK
             }
             .into(),
             CurvePointValidation {
-                curve_id: 0,
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
                 point: [
                     120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117,
                     38, 84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,

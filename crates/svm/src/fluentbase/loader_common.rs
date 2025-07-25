@@ -1,5 +1,3 @@
-use crate::account::AccountSharedData;
-use bincode::error::DecodeError;
 use fluentbase_sdk::{
     calc_create4_address,
     keccak256,
@@ -11,7 +9,6 @@ use fluentbase_sdk::{
     SVM_EXECUTABLE_PREIMAGE,
     U256,
 };
-use solana_bincode::deserialize;
 use solana_pubkey::Pubkey;
 
 fn derive_salt(pk: &Pubkey) -> U256 {

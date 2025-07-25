@@ -984,24 +984,18 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        debug_log_ext!();
         let params_slice = &translate_slice::<BigModExpParams>(
             memory_mapping,
             params,
             1,
             invoke_context.get_check_aligned(),
         )?;
-        debug_log_ext!();
         let params_ret = params_slice.try_get(0).ok_or(SyscallError::InvalidLength)?;
-        debug_log_ext!();
         let params = params_ret.as_ref();
-        debug_log_ext!();
 
         if params.base_len > 512 || params.exponent_len > 512 || params.modulus_len > 512 {
-            debug_log_ext!();
             return Err(Box::new(SyscallError::InvalidLength));
         }
-        debug_log_ext!();
 
         // let input_len: u64 = core::cmp::max(params.base_len, params.exponent_len);
         // let input_len: u64 = core::cmp::max(input_len, params.modulus_len);
@@ -1370,7 +1364,6 @@ declare_builtin_function!(
 
         match curve_id {
             CURVE25519_EDWARDS => {
-                debug_log_ext!();
                 let scalars = translate_slice::<scalar::PodScalar>(
                     memory_mapping,
                     scalars_addr,

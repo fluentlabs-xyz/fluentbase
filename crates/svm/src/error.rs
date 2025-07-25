@@ -1,7 +1,7 @@
 use crate::helpers::SyscallError;
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
-use fluentbase_sdk::{debug_log_ext, ExitCode};
+use fluentbase_sdk::ExitCode;
 use solana_instruction::error::InstructionError;
 use solana_rbpf::{elf::ElfError, error::EbpfError};
 use solana_transaction_error::TransactionError;
@@ -95,7 +95,6 @@ pub enum SvmError {
 
 impl Display for SvmError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        debug_log_ext!();
         match self {
             SvmError::TransactionError(e) => {
                 write!(f, "SvmError::TransactionError:{}", e)
