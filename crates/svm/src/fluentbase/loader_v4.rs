@@ -10,7 +10,7 @@ use crate::{
     helpers::storage_write_account_data,
     loaders::bpf_loader_v4::get_state_mut,
     native_loader,
-    native_loader::create_loadable_account_for_test,
+    native_loader::create_loadable_account_with_fields2,
     solana_program::{
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status},
@@ -109,13 +109,13 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     storage_write_account_data(
         &mut mem_storage,
         &system_program::id(),
-        &create_loadable_account_for_test("system_program_id", &native_loader::id()), // TODO replace with create_loadable_account_with_fields
+        &create_loadable_account_with_fields2("system_program_id", &native_loader::id()),
     )
     .expect("failed to write system_program");
     storage_write_account_data(
         &mut mem_storage,
         &loader_v4,
-        &create_loadable_account_for_test("loader_v4_id", &native_loader::id()), // TODO replace with create_loadable_account_with_fields
+        &create_loadable_account_with_fields2("loader_v4_id", &native_loader::id()),
     )
     .expect("failed to write loader_v4");
 

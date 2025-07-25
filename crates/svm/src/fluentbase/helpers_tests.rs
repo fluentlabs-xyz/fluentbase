@@ -10,7 +10,7 @@ mod tests {
         helpers::{storage_read_account_data, storage_write_account_data},
         loaders::bpf_loader_v4::get_state,
         native_loader,
-        native_loader::create_loadable_account_for_test,
+        native_loader::{create_loadable_account_with_fields2, INHERITABLE_ACCOUNT_FIELDS},
         solana_program::{
             instruction::Instruction,
             loader_v4,
@@ -115,19 +115,19 @@ mod tests {
         storage_write_account_data(
             &mut mem_storage,
             &system_program_id,
-            &create_loadable_account_for_test("system_program_id", &native_loader_id),
+            &create_loadable_account_with_fields2("system_program_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
             &mut mem_storage,
             &loader_id,
-            &create_loadable_account_for_test("loader_id", &native_loader_id),
+            &create_loadable_account_with_fields2("loader_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
             &mut mem_storage,
             &sysvar_clock_id,
-            &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
+            &create_loadable_account_with_fields2("sysvar_clock_id", &system_program_id),
         )
         .unwrap();
 
@@ -161,13 +161,13 @@ mod tests {
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &system_program_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &loader_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), "loader_id".len());
         assert_eq!(account_data.executable(), true);
 
@@ -204,13 +204,13 @@ mod tests {
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &system_program_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &loader_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), "loader_id".len());
         assert_eq!(account_data.executable(), true);
 
@@ -235,19 +235,19 @@ mod tests {
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &system_program_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &loader_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), "loader_id".len());
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &sysvar_clock_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), "sysvar_clock_id".len());
         assert_eq!(account_data.executable(), true);
 
@@ -339,19 +339,19 @@ mod tests {
         storage_write_account_data(
             &mut mem_storage,
             &system_program_id,
-            &create_loadable_account_for_test("system_program_id", &native_loader_id),
+            &create_loadable_account_with_fields2("system_program_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
             &mut mem_storage,
             &loader_id,
-            &create_loadable_account_for_test("loader_id", &native_loader_id),
+            &create_loadable_account_with_fields2("loader_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
             &mut mem_storage,
             &sysvar_clock_id,
-            &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
+            &create_loadable_account_with_fields2("sysvar_clock_id", &system_program_id),
         )
         .unwrap();
 
@@ -385,13 +385,13 @@ mod tests {
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &system_program_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &loader_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), "loader_id".len());
         assert_eq!(account_data.executable(), true);
 
@@ -422,19 +422,19 @@ mod tests {
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &pk_exec).unwrap();
-        assert_eq!(account_data.lamports(), 0);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), buffer_len);
         assert_eq!(account_data.executable(), false);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &system_program_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &loader_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), "loader_id".len());
         assert_eq!(account_data.executable(), true);
 
@@ -453,25 +453,25 @@ mod tests {
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &pk_exec).unwrap();
-        assert_eq!(account_data.lamports(), 0);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), buffer_len);
         assert_eq!(account_data.executable(), false);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &system_program_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), 17);
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &loader_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), "loader_id".len());
         assert_eq!(account_data.executable(), true);
 
         let account_data: AccountSharedData =
             storage_read_account_data(&mem_storage, &sysvar_clock_id).unwrap();
-        assert_eq!(account_data.lamports(), 1);
+        assert_eq!(account_data.lamports(), INHERITABLE_ACCOUNT_FIELDS.0);
         assert_eq!(account_data.data().len(), "sysvar_clock_id".len());
         assert_eq!(account_data.executable(), true);
 
@@ -560,19 +560,19 @@ mod tests {
         storage_write_account_data(
             &mut mem_storage,
             &system_program_id,
-            &create_loadable_account_for_test("system_program_id", &native_loader_id),
+            &create_loadable_account_with_fields2("system_program_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
             &mut mem_storage,
             &loader_id,
-            &create_loadable_account_for_test("loader_id", &native_loader_id),
+            &create_loadable_account_with_fields2("loader_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
             &mut mem_storage,
             &sysvar_clock_id,
-            &create_loadable_account_for_test("sysvar_clock_id", &system_program_id),
+            &create_loadable_account_with_fields2("sysvar_clock_id", &system_program_id),
         )
         .unwrap();
 
@@ -626,13 +626,13 @@ mod tests {
         storage_write_account_data(
             &mut mem_storage,
             &system_program_id,
-            &create_loadable_account_for_test("system_program_id", &native_loader_id),
+            &create_loadable_account_with_fields2("system_program_id", &native_loader_id),
         )
         .unwrap();
         storage_write_account_data(
             &mut mem_storage,
             &loader_id,
-            &create_loadable_account_for_test("loader_id", &native_loader_id),
+            &create_loadable_account_with_fields2("loader_id", &native_loader_id),
         )
         .unwrap();
 
