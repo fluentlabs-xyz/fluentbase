@@ -1,6 +1,7 @@
 pub use crate::{
     bindings::{
         _bn254_add,
+        _bn254_double,
         _charge_fuel,
         _charge_fuel_manually,
         _debug_log,
@@ -22,7 +23,7 @@ pub use crate::{
     },
     B256,
 };
-use fluentbase_types::{native_api::NativeAPI, BytecodeOrHash, ExitCode};
+use fluentbase_types::{bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, ExitCode};
 
 #[derive(Default)]
 pub struct RwasmContext;
@@ -66,9 +67,20 @@ impl NativeAPI for RwasmContext {
 
     #[inline(always)]
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
-        unsafe {
-            _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
-        }
+        bn254_add_common_impl!(
+            p,
+            q,
+            {
+                unsafe {
+                    _bn254_double(p.as_ptr() as u32);
+                }
+            },
+            {
+                unsafe {
+                    _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
+                }
+            }
+        )
     }
 
     #[inline(always)]

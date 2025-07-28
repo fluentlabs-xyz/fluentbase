@@ -19,11 +19,13 @@ use crate::{
         sha256_compress::SyscallSha256Compress,
         state::SyscallState,
         weierstrass_add::SyscallWeierstrassAddAssign,
+        weierstrass_double::SyscallWeierstrassDoubleAssign,
         write::SyscallWrite,
     },
     RuntimeContext,
 };
 use fluentbase_types::{
+    bn254_add_common_impl,
     native_api::NativeAPI,
     BytecodeOrHash,
     Bytes,
@@ -61,7 +63,12 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
-        let result = SyscallWeierstrassAddAssign::<Bn254>::fn_impl(p, q);
+        let result = bn254_add_common_impl!(
+            p,
+            q,
+            { SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p) },
+            { SyscallWeierstrassAddAssign::<Bn254>::fn_impl(p, q) }
+        );
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
     }

@@ -49,5 +49,6 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
         &[ValType::I32; 1]
     );
     import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);
+    import_function!("_bn254_double", BN254_DOUBLE, &[ValType::I32; 1], &[]);
     Rc::new(import_linker)
 }

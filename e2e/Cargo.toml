@@ -53,7 +53,7 @@ default = [
     "enable-svm",
     # when enabling nable-solana-* - enable corresponding in 'contracts' crate
     "enable-solana-original-builtins",
-    "enable-solana-extended-builtins",
+    #    "enable-solana-extended-builtins",
 ]
 enable-solana-original-builtins = [
     "fluentbase-svm/enable-solana-original-builtins"
