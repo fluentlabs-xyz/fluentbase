@@ -1,5 +1,6 @@
 pub use crate::{
     bindings::{
+        _bn254_add,
         _charge_fuel,
         _charge_fuel_manually,
         _debug_log,
@@ -60,6 +61,13 @@ impl NativeAPI for RwasmContext {
             } else {
                 None
             }
+        }
+    }
+
+    #[inline(always)]
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
+        unsafe {
+            _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
         }
     }
 

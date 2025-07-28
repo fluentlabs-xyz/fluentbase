@@ -2765,6 +2765,8 @@ dependencies = [
 name = "fluentbase-svm"
 version = "0.3.6-dev"
 dependencies = [
+ "ark-bn254 0.5.0",
+ "ark-serialize 0.5.0",
  "array-bytes",
  "bincode 2.0.1",
  "bitflags",
@@ -6252,7 +6254,7 @@ dependencies = [
 [[package]]
 name = "solana-account-info"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -6265,12 +6267,12 @@ dependencies = [
 [[package]]
 name = "solana-atomic-u64"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 
 [[package]]
 name = "solana-bincode"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "lazy_static",
@@ -6280,7 +6282,7 @@ dependencies = [
 [[package]]
 name = "solana-bn254"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ec 0.4.2",
@@ -6292,7 +6294,7 @@ dependencies = [
 [[package]]
 name = "solana-clock"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -6304,7 +6306,7 @@ dependencies = [
 [[package]]
 name = "solana-cpi"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "solana-account-info",
  "solana-define-syscall",
@@ -6317,7 +6319,7 @@ dependencies = [
 [[package]]
 name = "solana-curve25519"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -6329,7 +6331,7 @@ dependencies = [
 [[package]]
 name = "solana-decode-error"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "num-traits",
 ]
@@ -6337,12 +6339,12 @@ dependencies = [
 [[package]]
 name = "solana-define-syscall"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 
 [[package]]
 name = "solana-epoch-schedule"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -6354,7 +6356,7 @@ dependencies = [
 [[package]]
 name = "solana-feature-set"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "hashbrown 0.15.4",
  "lazy_static",
@@ -6368,7 +6370,7 @@ dependencies = [
 [[package]]
 name = "solana-fee-calculator"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "log",
@@ -6379,7 +6381,7 @@ dependencies = [
 [[package]]
 name = "solana-hash"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "bs58",
@@ -6394,7 +6396,7 @@ dependencies = [
 [[package]]
 name = "solana-instruction"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "num-traits",
@@ -6408,7 +6410,7 @@ dependencies = [
 [[package]]
 name = "solana-last-restart-slot"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -6420,7 +6422,7 @@ dependencies = [
 [[package]]
 name = "solana-msg"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "solana-define-syscall",
 ]
@@ -6428,12 +6430,12 @@ dependencies = [
 [[package]]
 name = "solana-native-token"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 
 [[package]]
 name = "solana-poseidon"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "ark-bn254 0.4.0",
  "light-poseidon",
@@ -6443,7 +6445,7 @@ dependencies = [
 [[package]]
 name = "solana-precompile-error"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "num-traits",
  "solana-decode-error",
@@ -6452,7 +6454,7 @@ dependencies = [
 [[package]]
 name = "solana-program"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "base64 0.22.1",
  "bincode 2.0.1",
@@ -6521,7 +6523,7 @@ dependencies = [
 [[package]]
 name = "solana-program-entrypoint"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -6532,7 +6534,7 @@ dependencies = [
 [[package]]
 name = "solana-program-error"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "num-traits",
  "serde",
@@ -6546,7 +6548,7 @@ dependencies = [
 [[package]]
 name = "solana-program-memory"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "num-traits",
  "solana-define-syscall",
@@ -6555,12 +6557,12 @@ dependencies = [
 [[package]]
 name = "solana-program-option"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 
 [[package]]
 name = "solana-program-pack"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "solana-program-error",
 ]
@@ -6568,7 +6570,7 @@ dependencies = [
 [[package]]
 name = "solana-pubkey"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "bs58",
@@ -6593,7 +6595,7 @@ dependencies = [
 [[package]]
 name = "solana-rent"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -6605,12 +6607,12 @@ dependencies = [
 [[package]]
 name = "solana-sanitize"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 
 [[package]]
 name = "solana-sdk-macro"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bs58",
  "proc-macro2",
@@ -6621,7 +6623,7 @@ dependencies = [
 [[package]]
 name = "solana-secp256k1-recover"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "libsecp256k1 0.6.0",
  "solana-define-syscall",
@@ -6631,7 +6633,7 @@ dependencies = [
 [[package]]
 name = "solana-serde-varint"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "serde",
 ]
@@ -6639,7 +6641,7 @@ dependencies = [
 [[package]]
 name = "solana-serialize-utils"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "solana-instruction",
  "solana-pubkey",
@@ -6649,7 +6651,7 @@ dependencies = [
 [[package]]
 name = "solana-sha256-hasher"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "sha2 0.10.9",
  "solana-define-syscall",
@@ -6659,7 +6661,7 @@ dependencies = [
 [[package]]
 name = "solana-short-vec"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "serde",
 ]
@@ -6667,7 +6669,7 @@ dependencies = [
 [[package]]
 name = "solana-slot-hashes"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -6679,7 +6681,7 @@ dependencies = [
 [[package]]
 name = "solana-slot-history"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "bincode 2.0.1",
  "bv",
@@ -6691,7 +6693,7 @@ dependencies = [
 [[package]]
 name = "solana-stable-layout"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "solana-instruction",
  "solana-pubkey",
@@ -6700,7 +6702,7 @@ dependencies = [
 [[package]]
 name = "solana-sysvar-id"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "solana-pubkey",
 ]
@@ -6708,7 +6710,7 @@ dependencies = [
 [[package]]
 name = "solana-transaction-error"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#75cc479dd11581e8259d733f5e637505c99c176e"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#bdfcdb60a2d2806155ba9434eec1f438f4ada882"
 dependencies = [
  "serde",
  "serde_derive",
@@ -6734,9 +6736,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-curves"
-version = "5.0.5"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4d6faecc70f0ca84d0e1259ab2f5eb6d2d351d263c3cd00edf654f8530c0473"
+checksum = "9208e3831da02d1327bd33d852d06770a1c6dbd291591e5a6f0f6a3f4fc44ff9"
 dependencies = [
  "cfg-if",
  "dashu",
@@ -6756,9 +6758,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-derive"
-version = "5.0.5"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c25a3bd262f3b0b0ab59d9bc86638ebd895ade9c16526203023c08f926d62732"
+checksum = "5efc1439094c4dc86e35e2ded63ef2b56b2717671adc0582373e9a7ac76c8b34"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -6777,9 +6779,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-primitives"
-version = "5.0.5"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "699935774a5131c1a8b371108d0666c0c80c43611045fb77fae43f2f242676d5"
+checksum = "5504d5a422be065fa8f1fc49ff5208017d6e3fe7e392a7761e73178581f5f35d"
 dependencies = [
  "bincode 1.3.3",
  "blake3",
@@ -6797,9 +6799,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-stark"
-version = "5.0.5"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a795a0a309949772a6f26480f5d844e9f2fad9ef82e4caef9e7b0cec98daffe"
+checksum = "dbe80bdd3bb89d1543c1ad53a47fd902fe20293d4e1ccc20ca2ecff600f32477"
 dependencies = [
  "arrayref",
  "hashbrown 0.14.5",

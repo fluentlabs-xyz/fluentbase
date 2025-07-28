@@ -34,16 +34,19 @@ mod tests {
         system_program,
     };
     #[cfg(feature = "enable-solana-extended-builtins")]
-    use fluentbase_svm_shared::test_structs::{
-        AltBn128Compression,
-        Blake3,
-        CurveGroupOp,
-        CurveMultiscalarMultiplication,
-        CurvePointValidation,
-        Poseidon,
-        SolBigModExp,
-        SyscallAltBn128,
-    };
+    use fluentbase_svm_shared::test_structs::AltBn128Compression;
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use fluentbase_svm_shared::test_structs::Blake3;
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use fluentbase_svm_shared::test_structs::CurveGroupOp;
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use fluentbase_svm_shared::test_structs::CurveMultiscalarMultiplication;
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use fluentbase_svm_shared::test_structs::CurvePointValidation;
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use fluentbase_svm_shared::test_structs::Poseidon;
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use fluentbase_svm_shared::test_structs::SolBigModExp;
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
@@ -53,13 +56,15 @@ mod tests {
             Sha256Original,
             SolSecp256k1Recover,
             SolSecp256k1RecoverOriginal,
+            SyscallAltBn128,
+            SyscallAltBn128Original,
             TestCommand,
         },
     };
     use hex_literal::hex;
     use rand::random_range;
-    #[cfg(feature = "enable-solana-extended-builtins")]
     use serde::Deserialize;
+    use solana_bn254::prelude::{alt_bn128_addition, ALT_BN128_ADD};
     #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_bn254::{
         compression::prelude::{
@@ -73,14 +78,7 @@ mod tests {
             ALT_BN128_G2_COMPRESS,
             ALT_BN128_G2_DECOMPRESS,
         },
-        prelude::{
-            alt_bn128_addition,
-            alt_bn128_multiplication,
-            alt_bn128_pairing,
-            ALT_BN128_ADD,
-            ALT_BN128_MUL,
-            ALT_BN128_PAIRING,
-        },
+        prelude::{alt_bn128_multiplication, alt_bn128_pairing, ALT_BN128_MUL, ALT_BN128_PAIRING},
     };
     #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_curve25519::{
@@ -1306,7 +1304,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_sol_alt_bn128_group_op__addition() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1415,12 +1412,20 @@ mod tests {
 
             assert_eq!(result.unwrap(), expected);
 
+            let original_test_case = SyscallAltBn128Original {
+                group_op: ALT_BN128_ADD,
+                input: input.clone(),
+                expected_result: expected,
+                expected_ret: 0, // OK
+            };
+            #[cfg(feature = "enable-solana-original-builtins")]
+            test_commands.push(original_test_case.clone().into());
             test_commands.push(
                 SyscallAltBn128 {
-                    group_op: ALT_BN128_ADD,
-                    input: input.clone(),
-                    expected_result: expected,
-                    expected_ret: 0, // OK
+                    group_op: original_test_case.group_op,
+                    input: original_test_case.input,
+                    expected_result: original_test_case.expected_result,
+                    expected_ret: original_test_case.expected_ret, // OK
                 }
                 .into(),
             );
@@ -1589,7 +1594,7 @@ mod tests {
             assert_eq!(result.unwrap(), expected);
 
             test_commands.push(
-                SyscallAltBn128 {
+                SyscallAltBn128Original {
                     group_op: ALT_BN128_MUL,
                     input: input.clone(),
                     expected_result: expected,
@@ -1745,7 +1750,7 @@ mod tests {
             assert_eq!(result.unwrap(), expected);
 
             test_commands.push(
-                SyscallAltBn128 {
+                SyscallAltBn128Original {
                     group_op: ALT_BN128_PAIRING,
                     input: input.clone(),
                     expected_result: expected,

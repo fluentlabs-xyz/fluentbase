@@ -1,7 +1,9 @@
+#[cfg(feature = "enable-solana-original-builtins")]
+use crate::common::{Blake3Hasher, Sha256HasherOriginal};
 use crate::{
     alloc::string::ToString,
     big_mod_exp::{big_mod_exp, BigModExpParams},
-    common::{Blake3Hasher, HasherImpl, Keccak256Hasher, Sha256Hasher, Sha256HasherOriginal},
+    common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
     error::{Error, Secp256k1RecoverError, SvmError},
@@ -29,14 +31,16 @@ use core::str::from_utf8;
 use fluentbase_sdk::{debug_log_ext, SharedAPI, B256};
 use solana_bn254::{
     prelude::{
-        alt_bn128_addition,
         alt_bn128_multiplication,
         alt_bn128_pairing,
+        ALT_BN128_ADDITION_INPUT_LEN,
         ALT_BN128_ADDITION_OUTPUT_LEN,
         ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
         ALT_BN128_PAIRING_OUTPUT_LEN,
     },
+    target_arch::CanonicalSerialize,
     AltBn128Error,
+    PodG1,
 };
 use solana_curve25519::{edwards, ristretto, scalar};
 use solana_feature_set::{abort_on_invalid_curve, simplify_alt_bn128_syscall_error_codes};
@@ -152,14 +156,26 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_curve_validate_point", SyscallStub::vm)
         .unwrap();
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
+    // #[cfg(feature = "enable-solana-original-builtins")]
+    function_registry
+        .register_function_hashed(
+            "sol_alt_bn128_group_op_original",
+            SyscallAltBn128Original::vm,
+        )
+        .unwrap();
+    // #[cfg(not(feature = "enable-solana-original-builtins"))]
+    // function_registry
+    //     .register_function_hashed("sol_alt_bn128_group_op_original", SyscallStub::vm)
+    //     .unwrap();
+    // #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_alt_bn128_group_op", SyscallAltBn128::vm)
         .unwrap();
-    #[cfg(not(feature = "enable-solana-extended-builtins"))]
-    function_registry
-        .register_function_hashed("sol_alt_bn128_group_op", SyscallStub::vm)
-        .unwrap();
+    // #[cfg(not(feature = "enable-solana-extended-builtins"))]
+    // function_registry
+    //     .register_function_hashed("sol_alt_bn128_group_op", SyscallStub::vm)
+    //     .unwrap();
+
     #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_alt_bn128_compression", SyscallAltBn128Compression::vm)
@@ -1435,6 +1451,134 @@ declare_builtin_function!(
     }
 );
 
+fn convert_endianness_64(bytes: &[u8]) -> Vec<u8> {
+    bytes
+        .chunks(32)
+        .flat_map(|b| b.iter().copied().rev().collect::<Vec<u8>>())
+        .collect::<Vec<u8>>()
+}
+
+fn alt_bn128_addition_test(input: &[u8]) -> Result<Vec<u8>, AltBn128Error> {
+    use solana_bn254::target_arch;
+    use target_arch::Compress;
+    type G1 = target_arch::G1;
+    type G2 = target_arch::G2;
+
+    if input.len() > ALT_BN128_ADDITION_INPUT_LEN {
+        return Err(AltBn128Error::InvalidInputData);
+    }
+
+    let mut input = input.to_vec();
+    input.resize(ALT_BN128_ADDITION_INPUT_LEN, 0);
+
+    let p: G1 = PodG1(
+        convert_endianness_64(&input[..64])
+            .try_into()
+            .map_err(AltBn128Error::TryIntoVecError)?,
+    )
+    .try_into()
+    .unwrap();
+    let q: G1 = PodG1(
+        convert_endianness_64(&input[64..ALT_BN128_ADDITION_INPUT_LEN])
+            .try_into()
+            .map_err(AltBn128Error::TryIntoVecError)?,
+    )
+    .try_into()
+    .unwrap();
+
+    #[allow(clippy::arithmetic_side_effects)]
+    let result_point = p + q;
+
+    let mut result_point_data = [0u8; ALT_BN128_ADDITION_OUTPUT_LEN];
+    let result_point_affine: G1 = result_point.into();
+    result_point_affine
+        .x
+        .serialize_with_mode(&mut result_point_data[..32], Compress::No)
+        .map_err(|_| AltBn128Error::InvalidInputData)?;
+    result_point_affine
+        .y
+        .serialize_with_mode(&mut result_point_data[32..], Compress::No)
+        .map_err(|_| AltBn128Error::InvalidInputData)?;
+
+    debug_log_ext!("result_point_data {:x?}", &result_point_data);
+    Ok(convert_endianness_64(&result_point_data[..]).to_vec())
+}
+
+declare_builtin_function!(
+    /// alt_bn128 group operations
+    SyscallAltBn128Original<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        group_op: u64,
+        input_addr: u64,
+        input_size: u64,
+        result_addr: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use solana_bn254::prelude::{ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING};
+        let output: usize = match group_op {
+            ALT_BN128_ADD =>
+                ALT_BN128_ADDITION_OUTPUT_LEN,
+            ALT_BN128_MUL =>
+                ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
+            ALT_BN128_PAIRING => {
+                ALT_BN128_PAIRING_OUTPUT_LEN
+            }
+            _ => {
+                return Err(SyscallError::InvalidAttribute.into());
+            }
+        };
+
+        let input = translate_slice::<u8>(
+            memory_mapping,
+            input_addr,
+            input_size,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let mut call_result = translate_slice_mut::<u8>(
+            memory_mapping,
+            result_addr,
+            output as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let calculation = match group_op {
+            ALT_BN128_ADD => alt_bn128_addition_test,
+            ALT_BN128_MUL => alt_bn128_multiplication,
+            ALT_BN128_PAIRING => alt_bn128_pairing,
+            _ => {
+                return Err(SyscallError::InvalidAttribute.into());
+            }
+        };
+
+        let simplify_alt_bn128_syscall_error_codes = invoke_context
+            .get_feature_set()
+            .is_active(&simplify_alt_bn128_syscall_error_codes::id());
+
+        let result_point = match calculation(input.as_slice()) {
+            Ok(result_point) => result_point,
+            Err(e) => {
+                return if simplify_alt_bn128_syscall_error_codes {
+                    Ok(1)
+                } else {
+                    Ok(e.into())
+                };
+            }
+        };
+
+        // This can never happen and should be removed when the
+        // simplify_alt_bn128_syscall_error_codes feature gets activated
+        if result_point.len() != output && !simplify_alt_bn128_syscall_error_codes {
+            return Ok(AltBn128Error::SliceOutOfBounds.into());
+        }
+
+        call_result.copy_from_slice(&result_point);
+        Ok(SUCCESS)
+    }
+);
+
 declare_builtin_function!(
     /// alt_bn128 group operations
     SyscallAltBn128<SDK: SharedAPI>,
@@ -1476,7 +1620,18 @@ declare_builtin_function!(
         )?;
 
         let calculation = match group_op {
-            ALT_BN128_ADD => alt_bn128_addition,
+            ALT_BN128_ADD => |input: &[u8]| -> Result<Vec<u8>, AltBn128Error> {
+                if input.len() > 128 {
+                    return Err(AltBn128Error::InvalidInputData);
+                }
+                let mut input = input.to_vec();
+                input.resize(128, 0);
+
+                let mut p: [u8; 64] = convert_endianness_64(&input[0..64]).try_into().unwrap();
+                let q: [u8; 64] = convert_endianness_64(&input[64..128]).try_into().unwrap();
+                SDK::bn254_add(&mut p, &q);
+                Ok(convert_endianness_64(&p).to_vec())
+            },
             ALT_BN128_MUL => alt_bn128_multiplication,
             ALT_BN128_PAIRING => alt_bn128_pairing,
             _ => {

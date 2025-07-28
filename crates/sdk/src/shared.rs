@@ -205,6 +205,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::secp256k1_recover(digest, sig, rec_id)
     }
 
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
+        API::bn254_add(p, q)
+    }
+
     fn read(&self, target: &mut [u8], offset: u32) {
         self.native_sdk
             .read(target, SharedContextInputV1::SIZE as u32 + offset)

@@ -18,6 +18,7 @@ use crate::{
         secp256k1_recover::SyscallSecp256k1Recover,
         sha256_compress::SyscallSha256Compress,
         state::SyscallState,
+        weierstrass_add::SyscallWeierstrassAddAssign,
         write::SyscallWrite,
     },
     RuntimeContext,
@@ -30,6 +31,7 @@ use fluentbase_types::{
     UnwrapExitCode,
     B256,
 };
+use sp1_curves::weierstrass::bn254::Bn254;
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 #[derive(Default, Clone)]
@@ -56,6 +58,12 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
+    }
+
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
+        let result = SyscallWeierstrassAddAssign::<Bn254>::fn_impl(p, q);
+        let min = core::cmp::min(p.len(), result.len());
+        p[..min].copy_from_slice(&result[..min]);
     }
 
     fn debug_log(message: &str) {

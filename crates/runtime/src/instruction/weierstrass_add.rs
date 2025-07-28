@@ -1,15 +1,20 @@
 use crate::{instruction::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
-use sp1_curves::{params::NumWords, AffinePoint, EllipticCurve};
+use sp1_curves::{
+    params::NumWords,
+    weierstrass::{SwCurve, WeierstrassParameters},
+    AffinePoint,
+    EllipticCurve,
+};
 use sp1_primitives::consts::words_to_bytes_le_vec;
 use std::marker::PhantomData;
 
-pub struct SyscallWeierstrassAddAssign<E: EllipticCurve> {
+pub struct SyscallWeierstrassAddAssign<E: EllipticCurve + WeierstrassParameters> {
     _phantom: PhantomData<E>,
 }
 
-impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
+impl<E: EllipticCurve + WeierstrassParameters> SyscallWeierstrassAddAssign<E> {
     /// Create a new instance of the [`SyscallWeierstrassAddAssign`].
     pub const fn new() -> Self {
         Self {
@@ -28,11 +33,13 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
             params[1].i32().unwrap() as u32,
         );
         let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;
+        const WORD_SIZE: usize = 4;
+        let param_len = num_words * WORD_SIZE;
 
         // Read p and q values from memory
-        let mut p = vec![0u8; num_words * 4];
+        let mut p = vec![0u8; param_len];
         caller.memory_read(p_ptr as usize, &mut p)?;
-        let mut q = vec![0u8; num_words * 4];
+        let mut q = vec![0u8; param_len];
         caller.memory_read(q_ptr as usize, &mut q)?;
 
         // Write the result back to memory at the p_ptr location
@@ -47,11 +54,21 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
         let q = cast_u8_to_u32(q).unwrap();
 
         // Convert memory to affine points
-        let p_affine = AffinePoint::<E>::from_words_le(&p);
-        let q_affine = AffinePoint::<E>::from_words_le(&q);
+        let p_affine = AffinePoint::<SwCurve<E>>::from_words_le(&p);
+        let q_affine = AffinePoint::<SwCurve<E>>::from_words_le(&q);
 
         // Perform point addition on the affine points
-        let result_affine = p_affine + q_affine;
+        let result_affine = if *p == *q {
+            p_affine.sw_double()
+        } else {
+            if p.iter().all(|v| *v == 0) {
+                q_affine
+            } else if q.iter().all(|v| *v == 0) {
+                p_affine
+            } else {
+                p_affine + q_affine
+            }
+        };
 
         // Convert the result back to memory format (LE words)
         let result_words = result_affine.to_words_le();

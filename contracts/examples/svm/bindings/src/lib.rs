@@ -264,6 +264,28 @@ pub fn curve_multiscalar_mul_native(
     }
 }
 extern "C" {
+    fn sol_alt_bn128_group_op_original(
+        group_op: u64,
+        input_addr: *const u8,
+        input_len: u64,
+        result_addr: *mut u8,
+    ) -> ReturnValue;
+}
+pub fn alt_bn128_group_op_original_native(
+    group_op: u64,
+    input: &[u8],
+    result_point: &mut [u8; 64],
+) -> ReturnValue {
+    unsafe {
+        sol_alt_bn128_group_op_original(
+            group_op,
+            input.as_ptr(),
+            input.len() as u64,
+            result_point.as_mut_ptr(),
+        )
+    }
+}
+extern "C" {
     fn sol_alt_bn128_group_op(
         group_op: u64,
         input_addr: *const u8,

@@ -232,6 +232,9 @@ impl SharedAPI for HostTestingContext {
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         RuntimeContextWrapper::secp256k1_recover(digest, sig, rec_id)
     }
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
+        RuntimeContextWrapper::bn254_add(p, q);
+    }
 
     fn read(&self, target: &mut [u8], offset: u32) {
         self.inner.borrow().native_sdk.read(target, offset);

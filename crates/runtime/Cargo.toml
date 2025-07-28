@@ -28,8 +28,8 @@ hashbrown = { workspace = true }
 hex = { version = "0.4.3", optional = true }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 num = "0.4.3"
-sp1-curves = { version = "5.0.0" }
-sp1-primitives = { version = "5.0.0" }
+sp1-curves = { version = "5.1.0" }
+sp1-primitives = { version = "5.1.0" }
 fs2 = "0.4.3"
 
 [dev-dependencies]
