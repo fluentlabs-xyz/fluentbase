@@ -211,14 +211,3 @@ fn create_foundry_metadata(
         version: 1,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_generate_artifact_basic() {
-        let abi = serde_json::json!([]);
-        let wasm_bytecode = b"test_bytecode";
-    }
-}

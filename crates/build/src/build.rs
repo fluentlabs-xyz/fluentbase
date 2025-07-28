@@ -2,8 +2,7 @@ use crate::{docker, generators, Artifact, BuildArgs, BUILD_TARGET};
 use anyhow::{Context, Result};
 use cargo_metadata::{Metadata, MetadataCommand, Package};
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -120,7 +119,7 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
     // Determine the Docker image that would be used for all generators
     let docker_image = if args.docker {
         Some(docker::ensure_rust_image(&format!(
-            "{:?}:{:?}",
+            "{}:{}",
             args.docker_image, args.docker_tag
         ))?)
     } else {
@@ -200,9 +199,13 @@ fn build_wasm(
     // Build cargo command
     let mut cargo_args = args.cargo_build_command();
 
-    // TODO(d1r1): do we actually need to change target dir for local builds?
     if docker_image.is_none() {
         cargo_args.extend(["--target-dir".to_string(), target_dir.display().to_string()]);
+    } else {
+        cargo_args.extend([
+            "--target-dir".to_string(),
+            format!("./target/{}", crate::HELPER_TARGET_SUBDIR).to_string(),
+        ]);
     }
 
     // Run build

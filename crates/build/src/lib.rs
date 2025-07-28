@@ -21,7 +21,7 @@ pub const DOCKER_PLATFORM: &str = "linux/amd64";
 pub const DEFAULT_STACK_SIZE: u32 = 128 * 1024; // 128 KB
 pub const BUILD_TARGET: &str = "wasm32-unknown-unknown";
 pub const HELPER_TARGET_SUBDIR: &str = "wasm-compilation";
-pub const DEFAULT_RUST_TOOLCHAIN: &str = "nightly-2025-01-27";
+pub const DEFAULT_RUST_TOOLCHAIN: &str = "1.88";
 
 /// Build contract at specified path
 ///
