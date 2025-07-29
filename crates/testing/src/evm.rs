@@ -61,6 +61,16 @@ impl EvmTestingContext {
         }
     }
 
+    pub fn with_block_number(self, number: u64) -> Self {
+        let sdk = self.sdk.with_block_number(number);
+        Self {
+            sdk,
+            db: self.db,
+            cfg: self.cfg,
+            disabled_rwasm: self.disabled_rwasm,
+        }
+    }
+
     // Add smart contracts to the genesis
     pub fn with_contracts(self, contracts: &[GenesisContract]) -> Self {
         let mut db = self.db;
