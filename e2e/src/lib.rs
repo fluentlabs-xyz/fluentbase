@@ -8,6 +8,8 @@ use fluentbase_sdk_testing::EvmTestingContext;
 use fluentbase_types::{GenesisContract, PRECOMPILE_WASM_RUNTIME};
 
 #[cfg(test)]
+mod blockhash;
+#[cfg(test)]
 mod bridge;
 #[cfg(test)]
 mod builtins;

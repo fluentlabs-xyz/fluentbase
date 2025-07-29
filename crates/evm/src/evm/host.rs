@@ -127,7 +127,7 @@ pub fn blockhash<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     let hash = match block_number.checked_sub(number_u64) {
         Some(diff) => {
             if diff > 0 && diff <= BLOCK_HASH_HISTORY {
-                todo!("implement block hash history")
+                unwrap_syscall!(evm, evm.sdk.block_hash(number_u64))
             } else {
                 B256::ZERO
             }

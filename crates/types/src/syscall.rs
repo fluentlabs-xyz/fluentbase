@@ -163,6 +163,7 @@ pub const SYSCALL_ID_CODE_HASH: B256 = B256::with_last_byte(0x0e);
 pub const SYSCALL_ID_CODE_COPY: B256 = B256::with_last_byte(0x0f);
 pub const SYSCALL_ID_TRANSIENT_READ: B256 = B256::with_last_byte(0x11);
 pub const SYSCALL_ID_TRANSIENT_WRITE: B256 = B256::with_last_byte(0x12);
+pub const SYSCALL_ID_BLOCK_HASH: B256 = B256::with_last_byte(0x13);
 
 pub const SYSCALL_ID_METADATA_WRITE: B256 = B256::with_last_byte(0x40);
 pub const SYSCALL_ID_METADATA_SIZE: B256 = B256::with_last_byte(0x41);
