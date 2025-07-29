@@ -1,19 +1,16 @@
 use crate::utils::parse_rustc_version;
+use crate::DOCKER_PLATFORM;
 use anyhow::{bail, Context, Result};
 use std::{path::Path, process::Command};
 
-const DOCKER_IMAGE_REGISTRY: &str = "ghcr.io/fluentlabs-xyz/fluentbase-build";
-const DOCKER_IMAGE_ENV_VAR: &str = "FLUENT_DOCKER_IMAGE";
-const DOCKER_PLATFORM: &str = "linux/amd64";
-const DEFAULT_RUST_TOOLCHAIN: &str = "1.87.0-x86_64-unknown-linux-gnu";
-
-/// Run command in Docker container
+/// Run command in the Docker container
 pub fn run_in_docker(
     image: &str,
     args: &[String],
     mount_dir: &Path,
     work_dir: &Path,
     env_vars: &[(String, String)],
+    rust_toolchain: &Option<String>,
 ) -> Result<()> {
     let mount_dir = mount_dir
         .canonicalize()
@@ -39,10 +36,6 @@ pub fn run_in_docker(
         DOCKER_PLATFORM,
         "-v",
         &format!("{}:/workspace", mount_dir.display()),
-        "-v",
-        "cargo-registry:/usr/local/cargo/registry",
-        "-v",
-        "cargo-git:/usr/local/cargo/git",
         "-w",
         &format!("/workspace/{}", relative_dir.display()),
     ]);
@@ -52,11 +45,11 @@ pub fn run_in_docker(
         cmd.args(["-e", &format!("{}={}", key, value)]);
     }
 
-    // Always force use of pre-installed toolchain
-    cmd.args([
-        "-e",
-        &format!("RUSTUP_TOOLCHAIN={}", DEFAULT_RUST_TOOLCHAIN),
-    ]);
+    // Set the rust toolchain ONLY if it's explicitly provided.
+    // If it's None, the container's default toolchain will be used.
+    if let Some(toolchain) = rust_toolchain {
+        cmd.args(["-e", &format!("RUSTUP_TOOLCHAIN={}", toolchain)]);
+    }
 
     cmd.arg(image);
     cmd.args(args);
@@ -71,25 +64,23 @@ pub fn run_in_docker(
 }
 
 /// Get Docker image for builds
-pub fn ensure_rust_image(base_tag: &str) -> Result<String> {
+pub fn ensure_rust_image(image: &str) -> Result<String> {
     check_docker()?;
     verify_host_platform()?;
 
-    let base_image = get_base_image(base_tag);
-
-    // Ensure base image exists (pull if needed)
-    if !image_exists(&base_image)? {
-        println!("Pulling base image: {} ...", base_image);
+    // Ensure image exists (pull if needed)
+    if !image_exists(&image)? {
+        println!("Pulling base image: {} ...", image);
         let status = Command::new("docker")
-            .args(["pull", "--platform", DOCKER_PLATFORM, &base_image])
+            .args(["pull", "--platform", DOCKER_PLATFORM, &image])
             .status()?;
         if !status.success() {
-            bail!("Failed to get base image: {}", base_image);
+            bail!("Failed to get image: {}", image);
         }
     }
 
-    println!("Using base image: {}", base_image);
-    Ok(base_image)
+    println!("Using image: {}", image);
+    Ok(image.to_string())
 }
 
 /// PUBLIC UTILS
@@ -181,11 +172,6 @@ fn verify_host_platform() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn get_base_image(tag: &str) -> String {
-    std::env::var(DOCKER_IMAGE_ENV_VAR)
-        .unwrap_or_else(|_| format!("{}:{}", DOCKER_IMAGE_REGISTRY, tag))
 }
 
 fn image_exists(image: &str) -> Result<bool> {

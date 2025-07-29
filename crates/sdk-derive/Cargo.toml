@@ -24,3 +24,10 @@ fluentbase-sdk = { workspace = true }
 
 [lib]
 proc-macro = true
+
+[features]
+default = []
+json = [
+	"fluentbase-sdk-derive-core/json",
+	"fluentbase-sdk/json"
+]
