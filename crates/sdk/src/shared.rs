@@ -209,6 +209,22 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::bn254_add(p, q)
     }
 
+    fn bn254_double(p: &mut [u8; 64]) {
+        API::bn254_double(p)
+    }
+
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        API::bn254_mul(p, q)
+    }
+
+    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        API::bn254_fp_mul(p, q)
+    }
+
+    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        API::bn254_fp2_mul(p, q)
+    }
+
     fn read(&self, target: &mut [u8], offset: u32) {
         self.native_sdk
             .read(target, SharedContextInputV1::SIZE as u32 + offset)

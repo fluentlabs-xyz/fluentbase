@@ -64,7 +64,6 @@ mod tests {
     use hex_literal::hex;
     use rand::random_range;
     use serde::Deserialize;
-    use solana_bn254::prelude::{alt_bn128_addition, ALT_BN128_ADD};
     #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_bn254::{
         compression::prelude::{
@@ -78,7 +77,11 @@ mod tests {
             ALT_BN128_G2_COMPRESS,
             ALT_BN128_G2_DECOMPRESS,
         },
-        prelude::{alt_bn128_multiplication, alt_bn128_pairing, ALT_BN128_MUL, ALT_BN128_PAIRING},
+        prelude::{alt_bn128_pairing, ALT_BN128_MUL, ALT_BN128_PAIRING},
+    };
+    use solana_bn254::{
+        prelude::{alt_bn128_addition, ALT_BN128_ADD, ALT_BN128_MUL},
+        target_arch::alt_bn128_multiplication,
     };
     #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_curve25519::{
@@ -1425,7 +1428,7 @@ mod tests {
                     group_op: original_test_case.group_op,
                     input: original_test_case.input,
                     expected_result: original_test_case.expected_result,
-                    expected_ret: original_test_case.expected_ret, // OK
+                    expected_ret: original_test_case.expected_ret,
                 }
                 .into(),
             );
@@ -1442,7 +1445,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_sol_alt_bn128_group_op__multiplication() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1593,12 +1595,20 @@ mod tests {
 
             assert_eq!(result.unwrap(), expected);
 
+            let original_test_case = SyscallAltBn128Original {
+                group_op: ALT_BN128_MUL,
+                input: input.clone(),
+                expected_result: expected,
+                expected_ret: 0, // OK
+            };
+            test_commands.push(original_test_case.clone().into());
+            // TODO uncomment when fluent's version implemented
             test_commands.push(
-                SyscallAltBn128Original {
-                    group_op: ALT_BN128_MUL,
-                    input: input.clone(),
-                    expected_result: expected,
-                    expected_ret: 0, // OK
+                SyscallAltBn128 {
+                    group_op: original_test_case.group_op,
+                    input: original_test_case.input,
+                    expected_result: original_test_case.expected_result,
+                    expected_ret: original_test_case.expected_ret,
                 }
                 .into(),
             );

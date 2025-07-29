@@ -2,6 +2,9 @@ pub use crate::{
     bindings::{
         _bn254_add,
         _bn254_double,
+        _bn254_fp2_mul,
+        _bn254_fp_mul,
+        _bn254_mul,
         _charge_fuel,
         _charge_fuel_manually,
         _debug_log,
@@ -81,6 +84,34 @@ impl NativeAPI for RwasmContext {
                 }
             }
         )
+    }
+
+    #[inline(always)]
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        unsafe {
+            _bn254_mul(p.as_ptr() as u32, q.as_ptr() as u32);
+        }
+    }
+
+    #[inline(always)]
+    fn bn254_double(p: &mut [u8; 64]) {
+        unsafe {
+            _bn254_double(p.as_ptr() as u32);
+        }
+    }
+
+    #[inline(always)]
+    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        unsafe {
+            _bn254_fp_mul(p.as_ptr() as u32, q.as_ptr() as u32);
+        }
+    }
+
+    #[inline(always)]
+    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        unsafe {
+            _bn254_fp2_mul(p.as_ptr() as u32, q.as_ptr() as u32);
+        }
     }
 
     #[inline(always)]

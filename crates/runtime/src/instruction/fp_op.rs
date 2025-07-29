@@ -29,7 +29,7 @@ impl<P: FpOpField, OP: FieldOp> SyscallFpOp<P, OP> {
 
         let mut x = vec![0u8; num_words * 4];
         caller.memory_read(x_ptr as usize, &mut x)?;
-        let mut y = vec![0u8; num_words * 4];
+        let mut y = vec![0u8; num_words * 2];
         caller.memory_read(y_ptr as usize, &mut y)?;
 
         let result_vec = Self::fn_impl(&x, &y);

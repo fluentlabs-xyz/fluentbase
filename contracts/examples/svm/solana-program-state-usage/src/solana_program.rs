@@ -75,7 +75,6 @@ pub fn process_instruction(
     //     );
     // }
 
-    msg!("deserialize(instruction_data) into Vec<u8>");
     let instruction_data: Vec<u8> = deserialize(instruction_data).map_err(|e| {
         msg!(
             "process_instruction: failed to deserialize 'instruction_data' (len: {}): {}",
@@ -84,7 +83,6 @@ pub fn process_instruction(
         );
         ProgramError::InvalidInstructionData
     })?;
-    msg!("deserialize(&instruction_data) into TestCommand");
     let test_command: TestCommand =
         deserialize(&instruction_data).expect("failed to deserialize test command");
     msg!("processing test_command: {:x?}", test_command);

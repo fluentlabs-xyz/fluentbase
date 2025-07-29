@@ -1,5 +1,5 @@
 #[cfg(feature = "enable-solana-original-builtins")]
-use crate::common::{Blake3Hasher, Sha256HasherOriginal};
+use crate::common::Sha256HasherOriginal;
 use crate::{
     alloc::string::ToString,
     big_mod_exp::{big_mod_exp, BigModExpParams},
@@ -38,7 +38,7 @@ use solana_bn254::{
         ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
         ALT_BN128_PAIRING_OUTPUT_LEN,
     },
-    target_arch::CanonicalSerialize,
+    target_arch::{alt_bn128_addition, CanonicalSerialize},
     AltBn128Error,
     PodG1,
 };
@@ -1545,7 +1545,7 @@ declare_builtin_function!(
         )?;
 
         let calculation = match group_op {
-            ALT_BN128_ADD => alt_bn128_addition_test,
+            ALT_BN128_ADD => alt_bn128_addition,
             ALT_BN128_MUL => alt_bn128_multiplication,
             ALT_BN128_PAIRING => alt_bn128_pairing,
             _ => {
@@ -1621,18 +1621,32 @@ declare_builtin_function!(
 
         let calculation = match group_op {
             ALT_BN128_ADD => |input: &[u8]| -> Result<Vec<u8>, AltBn128Error> {
-                if input.len() > 128 {
+                const MAX_LEN: usize = 128;
+                if input.len() > MAX_LEN {
                     return Err(AltBn128Error::InvalidInputData);
                 }
                 let mut input = input.to_vec();
-                input.resize(128, 0);
+                input.resize(MAX_LEN, 0);
 
                 let mut p: [u8; 64] = convert_endianness_64(&input[0..64]).try_into().unwrap();
-                let q: [u8; 64] = convert_endianness_64(&input[64..128]).try_into().unwrap();
+                let q: [u8; 64] = convert_endianness_64(&input[64..MAX_LEN]).try_into().unwrap();
                 SDK::bn254_add(&mut p, &q);
                 Ok(convert_endianness_64(&p).to_vec())
             },
-            ALT_BN128_MUL => alt_bn128_multiplication,
+            // ALT_BN128_MUL => alt_bn128_multiplication,
+            ALT_BN128_MUL => |input: &[u8]| -> Result<Vec<u8>, AltBn128Error> {
+                const MAX_LEN: usize = 96;
+                if input.len() > MAX_LEN {
+                    return Err(AltBn128Error::InvalidInputData);
+                }
+                let mut input = input.to_vec();
+                input.resize(MAX_LEN, 0);
+
+                let mut p: [u8; 64] = convert_endianness_64(&input[0..64]).try_into().unwrap();
+                let q: [u8; 32] = convert_endianness_64(&input[64..MAX_LEN]).try_into().unwrap();
+                SDK::bn254_mul(&mut p, &q);
+                Ok(convert_endianness_64(&p).to_vec())
+            },
             ALT_BN128_PAIRING => alt_bn128_pairing,
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());

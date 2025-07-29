@@ -6,6 +6,8 @@ use crate::{
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
+        fp2_mul::SyscallFp2Mul,
+        fp_op::SyscallFpOp,
         fuel::SyscallFuel,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
@@ -20,7 +22,9 @@ use crate::{
         state::SyscallState,
         weierstrass_add::SyscallWeierstrassAddAssign,
         weierstrass_double::SyscallWeierstrassDoubleAssign,
+        weierstrass_mul::SyscallWeierstrassMulAssign,
         write::SyscallWrite,
+        FieldMul,
     },
     RuntimeContext,
 };
@@ -33,7 +37,7 @@ use fluentbase_types::{
     UnwrapExitCode,
     B256,
 };
-use sp1_curves::weierstrass::bn254::Bn254;
+use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 #[derive(Default, Clone)]
@@ -69,6 +73,29 @@ impl NativeAPI for RuntimeContextWrapper {
             { SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p) },
             { SyscallWeierstrassAddAssign::<Bn254>::fn_impl(p, q) }
         );
+        let min = core::cmp::min(p.len(), result.len());
+        p[..min].copy_from_slice(&result[..min]);
+    }
+
+    fn bn254_double(p: &mut [u8; 64]) {
+        let result = SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p);
+        let min = core::cmp::min(p.len(), result.len());
+        p[..min].copy_from_slice(&result[..min]);
+    }
+
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        let result = SyscallWeierstrassMulAssign::<Bn254>::fn_impl(p, q);
+        p.copy_from_slice(&result);
+    }
+
+    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        let result = SyscallFpOp::<Bn254BaseField, FieldMul>::fn_impl(p, q);
+        let min = core::cmp::min(p.len(), result.len());
+        p[..min].copy_from_slice(&result[..min]);
+    }
+
+    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        let result = SyscallFp2Mul::<Bn254BaseField>::fn_impl(p, q);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
     }

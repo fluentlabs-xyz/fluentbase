@@ -27,6 +27,7 @@ pub mod uint256_mul;
 pub mod weierstrass_add;
 pub mod weierstrass_decompress;
 pub mod weierstrass_double;
+pub mod weierstrass_mul;
 pub mod write;
 
 use crate::{
@@ -60,6 +61,7 @@ use crate::{
         weierstrass_add::SyscallWeierstrassAddAssign,
         weierstrass_decompress::SyscallWeierstrassDecompressAssign,
         weierstrass_double::SyscallWeierstrassDoubleAssign,
+        weierstrass_mul::SyscallWeierstrassMulAssign,
         write::SyscallWrite,
     },
     RuntimeContext,
@@ -71,7 +73,7 @@ use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{
         bls12_381::{Bls12381, Bls12381BaseField},
-        bn254::{Bn254, Bn254BaseField},
+        bn254::{Bn254, Bn254BaseField, Bn254Parameters},
         secp256k1::Secp256k1,
     },
 };
@@ -121,6 +123,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::BLS12381_FP2_MUL => SyscallFp2Mul::<Bls12381BaseField>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_ADD => SyscallWeierstrassAddAssign::<Bn254>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_DOUBLE => SyscallWeierstrassDoubleAssign::<Bn254>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_MUL => SyscallWeierstrassMulAssign::<Bn254Parameters>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP_ADD => SyscallFpOp::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP_SUB => SyscallFpOp::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP_MUL => SyscallFpOp::<Bn254BaseField, FieldMul>::fn_handler(caller, params, result),
