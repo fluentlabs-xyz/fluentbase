@@ -27,20 +27,25 @@ use crate::{
     },
 };
 use alloc::{boxed::Box, vec::Vec};
+use ark_bn254::Bn254;
 use core::str::from_utf8;
 use fluentbase_sdk::{debug_log_ext, SharedAPI, B256};
 use solana_bn254::{
     prelude::{
         alt_bn128_multiplication,
         alt_bn128_pairing,
+        BigInteger256,
         ALT_BN128_ADDITION_INPUT_LEN,
         ALT_BN128_ADDITION_OUTPUT_LEN,
         ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
         ALT_BN128_PAIRING_OUTPUT_LEN,
+        G1,
+        G2,
     },
-    target_arch::{alt_bn128_addition, CanonicalSerialize},
+    target_arch::{alt_bn128_addition, BigInteger, CanonicalSerialize, Pairing},
     AltBn128Error,
     PodG1,
+    PodG2,
 };
 use solana_curve25519::{edwards, ristretto, scalar};
 use solana_feature_set::{abort_on_invalid_curve, simplify_alt_bn128_syscall_error_codes};
@@ -1458,6 +1463,13 @@ fn convert_endianness_64(bytes: &[u8]) -> Vec<u8> {
         .collect::<Vec<u8>>()
 }
 
+fn convert_endianness_128(bytes: &[u8]) -> Vec<u8> {
+    bytes
+        .chunks(64)
+        .flat_map(|b| b.iter().copied().rev().collect::<Vec<u8>>())
+        .collect::<Vec<u8>>()
+}
+
 fn alt_bn128_addition_test(input: &[u8]) -> Result<Vec<u8>, AltBn128Error> {
     use solana_bn254::target_arch;
     use target_arch::Compress;
@@ -1647,7 +1659,34 @@ declare_builtin_function!(
                 SDK::bn254_mul(&mut p, &q);
                 Ok(convert_endianness_64(&p).to_vec())
             },
-            ALT_BN128_PAIRING => alt_bn128_pairing,
+            // ALT_BN128_PAIRING => alt_bn128_pairing,
+            ALT_BN128_PAIRING => |input: &[u8]| -> Result<Vec<u8>, AltBn128Error> {
+                const PAIRING_ELEMENT_LEN: usize = 192;
+                const G1_POINT_SIZE: usize = 64;
+                const G2_POINT_SIZE: usize = 128;
+
+                // let mut vec_pairs: Vec<([u8; G1_POINT_SIZE], [u8; G2_POINT_SIZE])> = Default::default();
+                let mut vec_pairs2: Vec<([u8; G1_POINT_SIZE], [u8; G2_POINT_SIZE])> = Vec::new();
+                let ele_len = input.len().saturating_div(PAIRING_ELEMENT_LEN);
+                for i in 0..ele_len {
+                    let g1_vec = convert_endianness_64(
+                        &input[i.saturating_mul(PAIRING_ELEMENT_LEN)
+                            ..i.saturating_mul(PAIRING_ELEMENT_LEN)
+                                .saturating_add(G1_POINT_SIZE)],
+                    );
+                    let g2_vec = convert_endianness_128(
+                        &input[i
+                            .saturating_mul(PAIRING_ELEMENT_LEN)
+                            .saturating_add(G1_POINT_SIZE)
+                            ..i.saturating_mul(PAIRING_ELEMENT_LEN)
+                                .saturating_add(PAIRING_ELEMENT_LEN)],
+                    );
+                    vec_pairs2.push((g1_vec.clone().try_into().unwrap(), g2_vec.clone().try_into().unwrap()));
+                }
+
+                let output = SDK::bn254_multi_pairing(&vec_pairs2);
+                Ok(convert_endianness_64(&output))
+            },
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
             }

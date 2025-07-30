@@ -23,6 +23,7 @@ use crate::{
         weierstrass_add::SyscallWeierstrassAddAssign,
         weierstrass_double::SyscallWeierstrassDoubleAssign,
         weierstrass_mul::SyscallWeierstrassMulAssign,
+        weierstrass_multi_pairing::SyscallWeierstrassMultiPairingAssign,
         write::SyscallWrite,
         FieldMul,
     },
@@ -86,6 +87,11 @@ impl NativeAPI for RuntimeContextWrapper {
     fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
         let result = SyscallWeierstrassMulAssign::<Bn254>::fn_impl(p, q);
         p.copy_from_slice(&result);
+    }
+
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+        let result = SyscallWeierstrassMultiPairingAssign::<Bn254>::fn_impl(elements);
+        result.try_into().unwrap()
     }
 
     fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {

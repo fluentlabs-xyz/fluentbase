@@ -42,6 +42,7 @@ pub trait SharedAPI: StorageAPI + MetadataAPI {
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]);
     fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]);
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32];
     fn bn254_double(p: &mut [u8; 64]);
     fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]);
     fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]);

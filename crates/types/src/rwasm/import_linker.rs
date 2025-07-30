@@ -51,6 +51,12 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
     import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);
     import_function!("_bn254_double", BN254_DOUBLE, &[ValType::I32; 1], &[]);
     import_function!("_bn254_mul", BN254_MUL, &[ValType::I32; 2], &[]);
+    import_function!(
+        "_bn254_multi_pairing",
+        BN254_MULTI_PAIRING,
+        &[ValType::I32; 3],
+        &[]
+    );
     import_function!("_bn254_fp_mul", BN254_FP_MUL, &[ValType::I32; 2], &[]);
     import_function!("_bn254_fp2_mul", BN254_FP2_MUL, &[ValType::I32; 2], &[]);
     Rc::new(import_linker)

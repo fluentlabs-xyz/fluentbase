@@ -55,6 +55,7 @@ pub enum SysFuncIdx {
     BN254_ADD = 0x0130,
     BN254_DOUBLE = 0x0131,
     BN254_MUL = 0x0138,
+    BN254_MULTI_PAIRING = 0x0139,
     BN254_FP_ADD = 0x0132,
     BN254_FP_SUB = 0x0133,
     BN254_FP_MUL = 0x0134,

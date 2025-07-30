@@ -5,6 +5,7 @@ pub use crate::{
         _bn254_fp2_mul,
         _bn254_fp_mul,
         _bn254_mul,
+        _bn254_multi_pairing,
         _charge_fuel,
         _charge_fuel_manually,
         _debug_log,
@@ -91,6 +92,19 @@ impl NativeAPI for RwasmContext {
         unsafe {
             _bn254_mul(p.as_ptr() as u32, q.as_ptr() as u32);
         }
+    }
+
+    #[inline(always)]
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+        let mut result = [0u8; 32];
+        unsafe {
+            _bn254_multi_pairing(
+                elements.as_ptr() as *const u8,
+                elements.len() as u32,
+                result.as_mut_ptr(),
+            );
+        }
+        result
     }
 
     #[inline(always)]
