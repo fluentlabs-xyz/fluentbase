@@ -3,7 +3,6 @@ use ark_bn254::Bn254;
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::{BigInteger, BigInteger256};
 use ark_serialize::{CanonicalDeserialize, Compress, Validate};
-use itertools::Itertools;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::weierstrass::WeierstrassParameters;
 use std::marker::PhantomData;
@@ -62,7 +61,7 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMultiPairingAssign<E> {
                     };
                     (g1, g2)
                 })
-                .collect_vec(),
+                .collect::<Vec<([u8; 64], [u8; 128])>>(),
         );
         caller.memory_write(out_ptr as usize, &result_vec)?;
 
