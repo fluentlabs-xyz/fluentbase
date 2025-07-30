@@ -44,9 +44,13 @@ jobs:
               id: meta
               run: |
                   SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)
-                  VERSION=${GITHUB_REF#refs/tags/}
-                  TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
-                  TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                  if [[ "${{ github.ref_type }}" == "tag" ]]; then
+                      VERSION="${GITHUB_REF#refs/tags/}"
+                      TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                  else
+                      VERSION="$SHA_SHORT"
+                      TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
+                  fi
                   echo "tags=${TAGS}" >> $GITHUB_OUTPUT
                   echo "sdk_version=${VERSION}" >> $GITHUB_OUTPUT
 
