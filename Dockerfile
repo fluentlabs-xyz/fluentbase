@@ -8,7 +8,7 @@ ARG WABT_VERSION=1.0.36
 ARG WABT_OS=ubuntu-20.04
 
 #######################################
-# Stage 1: Base (Rust) - NO sccache   #
+# Stage 1: Base (Rust)                #
 #######################################
 FROM --platform=${PLATFORM} debian:bookworm-slim AS base
 ARG RUST_TOOLCHAIN
@@ -33,7 +33,6 @@ RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --default-tool
     && ${CARGO_HOME}/bin/rustup component add rust-src \
     && ${CARGO_HOME}/bin/cargo install sccache --locked
 
-# NO sccache in base stage - only basic cargo config
 ENV PATH="${CARGO_HOME}/bin:${PATH}" \
     CARGO_NET_RETRY=3 \
     CARGO_NET_GIT_FETCH_WITH_CLI=true \
@@ -58,15 +57,12 @@ RUN curl -L https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION
     | tar xz -C /tmp
 
 #######################################
-# Stage 3: CLI Builder - NO sccache   #
+# Stage 3: CLI Builder                #
 #######################################
 FROM base AS cli-builder
 ARG RUST_TOOLCHAIN
 
 WORKDIR /build
-
-# Ensure target directory structure exists
-RUN mkdir -p target/release/deps
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
@@ -74,22 +70,16 @@ COPY revm/ ./revm/
 COPY bins/cli ./bins/cli/
 COPY e2e/ ./e2e/
 
-# Use separate cache IDs to avoid conflicts between stages
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cli-registry \
-    --mount=type=cache,target=/usr/local/cargo/git,id=cli-git \
-    --mount=type=cache,target=/build/target,id=cli-target \
-    CARGO_BUILD_JOBS=2 cargo build --bin fluentbase --release
+# Simple build without cache mount
+RUN cargo build --bin fluentbase --release
 
 #######################################
-# Stage 5: Contract Builder WITH sccache for cache warming #
+# Stage 4: Contract Builder           #
 #######################################
 FROM base AS contract-builder
 ARG RUST_TOOLCHAIN
 
 WORKDIR /build
-
-# Ensure target directory structure exists
-RUN mkdir -p target/release/deps
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
@@ -100,26 +90,15 @@ COPY docker/contract ./docker/contract
 
 WORKDIR /build/docker/contract
 
-# Ensure contract target directory exists
-RUN mkdir -p target/wasm32-unknown-unknown/release/deps
-
 # Enable sccache for cache warming
 ENV RUSTC_WRAPPER=sccache \
     SCCACHE_DIR=/usr/local/cargo/sccache
 
-# Use separate cache IDs and add target cache
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=contract-registry \
-    --mount=type=cache,target=/usr/local/cargo/git,id=contract-git \
-    --mount=type=cache,target=/usr/local/cargo/sccache,id=contract-sccache \
-    --mount=type=cache,target=/build/docker/contract/target,id=contract-target \
-    CARGO_BUILD_JOBS=2 cargo build --release --target wasm32-unknown-unknown --no-default-features \
-    && mkdir -p /deps \
-    && cp -r /usr/local/cargo/registry /deps/registry \
-    && cp -r /usr/local/cargo/git /deps/git \
-    && cp -r /usr/local/cargo/sccache /deps/sccache
+# Simple build without cache mount
+RUN cargo build --release --target wasm32-unknown-unknown --no-default-features
 
 #######################################
-# Stage 6: Final SDK                  #
+# Stage 5: Final SDK                  #
 #######################################
 FROM base AS final
 
@@ -132,18 +111,18 @@ ARG WABT_VERSION
 COPY --from=tools /tmp/binaryen-version_*/bin/* /usr/local/bin/
 COPY --from=tools /tmp/wabt-*/bin/* /usr/local/bin/
 
-# Copy CLI binary
+# Copy CLI binary - now this simply works!
 COPY --from=cli-builder /build/target/release/fluentbase /usr/local/bin/
 
 # Copy sccache binary
 COPY --from=contract-builder /usr/local/cargo/bin/sccache /usr/local/bin/sccache
 
-# Copy pre-warmed sccache cache directory
-COPY --from=contract-builder /deps/sccache /usr/local/cargo/sccache
+# Copy pre-warmed sccache cache
+COPY --from=contract-builder /usr/local/cargo/sccache /usr/local/cargo/sccache
 
-# Copy explicitly stored dependencies
-COPY --from=contract-builder /deps/registry /usr/local/cargo/registry
-COPY --from=contract-builder /deps/git /usr/local/cargo/git
+# Copy cargo registry and git (for faster user builds)
+COPY --from=contract-builder /usr/local/cargo/registry /usr/local/cargo/registry
+COPY --from=contract-builder /usr/local/cargo/git /usr/local/cargo/git
 
 # Copy pre-built target directory
 COPY --from=contract-builder /build/docker/contract/target /target
