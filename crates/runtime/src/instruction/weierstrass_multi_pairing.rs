@@ -47,7 +47,7 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMultiPairingAssign<E> {
             &pairs
                 .chunks(PAIRING_ELEMENT_LEN)
                 .map(|v| {
-                    let mut g1: [u8; G1_POINT_SIZE] =
+                    let g1: [u8; G1_POINT_SIZE] =
                         unsafe { core::slice::from_raw_parts(v.as_ptr(), G1_POINT_SIZE) }
                             .try_into()
                             .unwrap();

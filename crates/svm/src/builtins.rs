@@ -27,25 +27,18 @@ use crate::{
     },
 };
 use alloc::{boxed::Box, vec::Vec};
-use ark_bn254::Bn254;
 use core::str::from_utf8;
 use fluentbase_sdk::{debug_log_ext, SharedAPI, B256};
 use solana_bn254::{
     prelude::{
         alt_bn128_multiplication,
         alt_bn128_pairing,
-        BigInteger256,
-        ALT_BN128_ADDITION_INPUT_LEN,
         ALT_BN128_ADDITION_OUTPUT_LEN,
         ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
         ALT_BN128_PAIRING_OUTPUT_LEN,
-        G1,
-        G2,
     },
-    target_arch::{alt_bn128_addition, BigInteger, CanonicalSerialize, Pairing},
+    target_arch::alt_bn128_addition,
     AltBn128Error,
-    PodG1,
-    PodG2,
 };
 use solana_curve25519::{edwards, ristretto, scalar};
 use solana_feature_set::{abort_on_invalid_curve, simplify_alt_bn128_syscall_error_codes};
@@ -1468,52 +1461,6 @@ fn convert_endianness_128(bytes: &[u8]) -> Vec<u8> {
         .chunks(64)
         .flat_map(|b| b.iter().copied().rev().collect::<Vec<u8>>())
         .collect::<Vec<u8>>()
-}
-
-fn alt_bn128_addition_test(input: &[u8]) -> Result<Vec<u8>, AltBn128Error> {
-    use solana_bn254::target_arch;
-    use target_arch::Compress;
-    type G1 = target_arch::G1;
-    type G2 = target_arch::G2;
-
-    if input.len() > ALT_BN128_ADDITION_INPUT_LEN {
-        return Err(AltBn128Error::InvalidInputData);
-    }
-
-    let mut input = input.to_vec();
-    input.resize(ALT_BN128_ADDITION_INPUT_LEN, 0);
-
-    let p: G1 = PodG1(
-        convert_endianness_64(&input[..64])
-            .try_into()
-            .map_err(AltBn128Error::TryIntoVecError)?,
-    )
-    .try_into()
-    .unwrap();
-    let q: G1 = PodG1(
-        convert_endianness_64(&input[64..ALT_BN128_ADDITION_INPUT_LEN])
-            .try_into()
-            .map_err(AltBn128Error::TryIntoVecError)?,
-    )
-    .try_into()
-    .unwrap();
-
-    #[allow(clippy::arithmetic_side_effects)]
-    let result_point = p + q;
-
-    let mut result_point_data = [0u8; ALT_BN128_ADDITION_OUTPUT_LEN];
-    let result_point_affine: G1 = result_point.into();
-    result_point_affine
-        .x
-        .serialize_with_mode(&mut result_point_data[..32], Compress::No)
-        .map_err(|_| AltBn128Error::InvalidInputData)?;
-    result_point_affine
-        .y
-        .serialize_with_mode(&mut result_point_data[32..], Compress::No)
-        .map_err(|_| AltBn128Error::InvalidInputData)?;
-
-    debug_log_ext!("result_point_data {:x?}", &result_point_data);
-    Ok(convert_endianness_64(&result_point_data[..]).to_vec())
 }
 
 declare_builtin_function!(

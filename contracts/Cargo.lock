@@ -2138,7 +2138,6 @@ dependencies = [
  "fluentbase-types",
  "fs2",
  "hashbrown 0.15.4",
- "itertools 0.14.0",
  "k256",
  "num",
  "rwasm",

@@ -61,6 +61,30 @@ mod tests {
             todo!()
         }
 
+        fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
+            todo!()
+        }
+
+        fn bn254_double(p: &mut [u8; 64]) {
+            todo!()
+        }
+
+        fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+            todo!()
+        }
+
+        fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+            todo!()
+        }
+
+        fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+            todo!()
+        }
+
+        fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+            todo!()
+        }
+
         fn debug_log(_message: &str) {
             todo!()
         }
