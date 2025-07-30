@@ -1,15 +1,19 @@
 use crate::RuntimeContext;
 use ark_bn254::Bn254;
+use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::{BigInteger, BigInteger256};
+use ark_serialize::{CanonicalDeserialize, Compress, Validate};
 use itertools::Itertools;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
-use solana_bn254::{prelude::G1, target_arch::Pairing};
 use sp1_curves::weierstrass::WeierstrassParameters;
 use std::marker::PhantomData;
 
 const PAIRING_ELEMENT_LEN: usize = 192;
 const G1_POINT_SIZE: usize = 64;
 const G2_POINT_SIZE: usize = 128;
+
+type G1 = ark_bn254::g1::G1Affine;
+type G2 = ark_bn254::g2::G2Affine;
 
 pub struct SyscallWeierstrassMultiPairingAssign<E: WeierstrassParameters> {
     _phantom: PhantomData<E>,
@@ -65,13 +69,60 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMultiPairingAssign<E> {
         Ok(())
     }
 
+    fn g1_from_bytes(bytes: [u8; G1_POINT_SIZE]) -> Result<G1, ()> {
+        if bytes == [0u8; 64] {
+            return Ok(G1::zero());
+        }
+        let g1 = G1::deserialize_with_mode(
+            &*[&bytes[..], &[0u8][..]].concat(),
+            Compress::No,
+            Validate::Yes,
+        );
+
+        match g1 {
+            Ok(g1) => {
+                if !g1.is_on_curve() {
+                    Err(())
+                } else {
+                    Ok(g1)
+                }
+            }
+            Err(_) => Err(()),
+        }
+    }
+
+    fn g2_from_bytes(bytes: [u8; G2_POINT_SIZE]) -> Result<G2, ()> {
+        if bytes == [0u8; 128] {
+            return Ok(G2::zero());
+        }
+        let g2 = G2::deserialize_with_mode(
+            &*[&bytes[..], &[0u8][..]].concat(),
+            Compress::No,
+            Validate::Yes,
+        );
+
+        match g2 {
+            Ok(g2) => {
+                if !g2.is_on_curve() {
+                    Err(())
+                } else {
+                    Ok(g2)
+                }
+            }
+            Err(_) => Err(()),
+        }
+    }
+
     pub fn fn_impl(pairs: &[([u8; G1_POINT_SIZE], [u8; G2_POINT_SIZE])]) -> Vec<u8> {
-        let mut vec_pairs: Vec<(ark_bn254::g1::G1Affine, ark_bn254::g2::G2Affine)> = Vec::new();
+        let mut vec_pairs: Vec<(G1, G2)> = Vec::new();
         for pair in pairs {
-            vec_pairs.push((
-                solana_bn254::PodG1(pair.0.clone()).try_into().unwrap(),
-                solana_bn254::PodG2(pair.1.clone()).try_into().unwrap(),
-            ));
+            // let g1_words = cast_u8_to_u32(&pair.0).unwrap();
+            // let g2_words = cast_u8_to_u32(&pair.1).unwrap();
+            // let g1_affine = AffinePoint::<E>::from_words_le(&g1_words);
+            // let g2_affine = AffinePoint::<E>::from_words_le(&g2_words);
+            let g1 = Self::g1_from_bytes(pair.0).unwrap();
+            let g2 = Self::g2_from_bytes(pair.1).unwrap();
+            vec_pairs.push((g1, g2));
         }
 
         let mut result = BigInteger256::from(0u64);

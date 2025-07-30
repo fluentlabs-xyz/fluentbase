@@ -2628,7 +2628,9 @@ name = "fluentbase-runtime"
 version = "0.3.6-dev"
 dependencies = [
  "ark-bn254",
+ "ark-ec",
  "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
  "fluentbase-codec",
  "fluentbase-types",
  "fs2",
@@ -2641,7 +2643,6 @@ dependencies = [
  "rwasm",
  "secp256k1 0.29.1",
  "sha2 0.10.9",
- "solana-bn254",
  "sp1-curves",
  "sp1-primitives",
  "tiny-keccak",
@@ -2717,8 +2718,6 @@ name = "fluentbase-svm"
 version = "0.3.6-dev"
 dependencies = [
  "ark-bn254",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
  "array-bytes",
  "bincode 2.0.1",
  "bitflags",
