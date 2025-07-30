@@ -4,12 +4,14 @@ on:
     push:
         tags:
             - "v*"
+        branches:
+            - "fix/build-docker"
     workflow_dispatch:
 
 env:
     REGISTRY: ghcr.io
     IMAGE_NAME: ${{ github.repository_owner }}/fluentbase-build
-    RUST_TOOLCHAIN: nightly-2025-01-27
+    RUST_TOOLCHAIN: 1.88
     BINARYEN_VERSION: 120
     WABT_VERSION: 1.0.36
     WABT_OS: ubuntu-20.04
