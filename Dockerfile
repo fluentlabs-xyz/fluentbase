@@ -73,7 +73,7 @@ COPY bins/cli ./bins/cli/
 COPY e2e/ ./e2e/
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
+    # --mount=type=cache,target=/usr/local/cargo/git \
     cargo build --bin fluentbase --release
 
 #######################################
@@ -94,7 +94,7 @@ COPY docker/contract ./docker/contract
 WORKDIR /build/docker/contract
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
+    # --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/usr/local/cargo/sccache \
     cargo build --release --target wasm32-unknown-unknown --no-default-features \
     && mkdir -p /deps \
