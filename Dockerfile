@@ -57,7 +57,6 @@ RUN curl -L https://github.com/WebAssembly/binaryen/releases/download/version_${
 
 RUN curl -L https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_OS}.tar.gz \
     | tar xz -C /tmp
-
 #######################################
 # Stage 3: CLI Builder                #
 #######################################
@@ -66,14 +65,19 @@ ARG RUST_TOOLCHAIN
 
 WORKDIR /build
 
+# Ensure target directory structure exists
+RUN mkdir -p target/release/deps
+
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY revm/ ./revm/
 COPY bins/cli ./bins/cli/
 COPY e2e/ ./e2e/
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    # --mount=type=cache,target=/usr/local/cargo/git \
+# Use separate cache IDs to avoid conflicts between stages
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cli-registry \
+    --mount=type=cache,target=/usr/local/cargo/git,id=cli-git \
+    --mount=type=cache,target=/build/target,id=cli-target \
     cargo build --bin fluentbase --release
 
 #######################################
@@ -84,6 +88,9 @@ ARG RUST_TOOLCHAIN
 
 WORKDIR /build
 
+# Ensure target directory structure exists
+RUN mkdir -p target/release/deps
+
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY revm/ ./revm/
@@ -93,16 +100,19 @@ COPY docker/contract ./docker/contract
 
 WORKDIR /build/docker/contract
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    # --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/usr/local/cargo/sccache \
+# Ensure contract target directory exists
+RUN mkdir -p target/wasm32-unknown-unknown/release/deps
+
+# Use separate cache IDs and add target cache
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=contract-registry \
+    --mount=type=cache,target=/usr/local/cargo/git,id=contract-git \
+    --mount=type=cache,target=/usr/local/cargo/sccache,id=contract-sccache \
+    --mount=type=cache,target=/build/docker/contract/target,id=contract-target \
     cargo build --release --target wasm32-unknown-unknown --no-default-features \
     && mkdir -p /deps \
     && cp -r /usr/local/cargo/registry /deps/registry \
     && cp -r /usr/local/cargo/git /deps/git \
     && cp -r /usr/local/cargo/sccache /deps/sccache
-
-
 
 #######################################
 # Stage 6: Final SDK                  #
