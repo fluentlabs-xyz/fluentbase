@@ -34,8 +34,6 @@ RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --default-tool
     && ${CARGO_HOME}/bin/cargo install sccache --locked
 
 ENV PATH="${CARGO_HOME}/bin:${PATH}" \
-    RUSTC_WRAPPER=sccache \
-    SCCACHE_DIR=/usr/local/cargo/sccache \
     CARGO_NET_RETRY=3 \
     CARGO_NET_GIT_FETCH_WITH_CLI=true \
     CARGO_INCREMENTAL=0 \
@@ -72,12 +70,11 @@ COPY revm/ ./revm/
 COPY bins/cli ./bins/cli/
 COPY e2e/ ./e2e/
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    cargo build --bin fluentbase --release
+# Simple build without cache mount
+RUN cargo build --bin fluentbase --release
 
 #######################################
-# Stage 5: Contract Builder           #
+# Stage 4: Contract Builder           #
 #######################################
 FROM base AS contract-builder
 ARG RUST_TOOLCHAIN
@@ -93,19 +90,15 @@ COPY docker/contract ./docker/contract
 
 WORKDIR /build/docker/contract
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/usr/local/cargo/sccache \
-    cargo build --release --target wasm32-unknown-unknown --no-default-features \
-    && mkdir -p /deps \
-    && cp -r /usr/local/cargo/registry /deps/registry \
-    && cp -r /usr/local/cargo/git /deps/git \
-    && cp -r /usr/local/cargo/sccache /deps/sccache
+# Enable sccache for cache warming
+ENV RUSTC_WRAPPER=sccache \
+    SCCACHE_DIR=/usr/local/cargo/sccache
 
-
+# Simple build without cache mount
+RUN cargo build --release --target wasm32-unknown-unknown --no-default-features
 
 #######################################
-# Stage 6: Final SDK                  #
+# Stage 5: Final SDK                  #
 #######################################
 FROM base AS final
 
@@ -113,25 +106,30 @@ ARG SDK_VERSION
 ARG RUST_TOOLCHAIN
 ARG BINARYEN_VERSION
 ARG WABT_VERSION
+
 # Copy WASM tools
 COPY --from=tools /tmp/binaryen-version_*/bin/* /usr/local/bin/
 COPY --from=tools /tmp/wabt-*/bin/* /usr/local/bin/
 
-# Copy CLI binary
+# Copy CLI binary - now this simply works!
 COPY --from=cli-builder /build/target/release/fluentbase /usr/local/bin/
 
 # Copy sccache binary
 COPY --from=contract-builder /usr/local/cargo/bin/sccache /usr/local/bin/sccache
 
-# Copy sccache cache directory
-COPY --from=contract-builder /deps/sccache /usr/local/cargo/sccache
+# Copy pre-warmed sccache cache
+COPY --from=contract-builder /usr/local/cargo/sccache /usr/local/cargo/sccache
 
-# Copy explicitly stored dependencies
-COPY --from=contract-builder /deps/registry /usr/local/cargo/registry
-COPY --from=contract-builder /deps/git /usr/local/cargo/git
+# Copy cargo registry and git (for faster user builds)
+COPY --from=contract-builder /usr/local/cargo/registry /usr/local/cargo/registry
+COPY --from=contract-builder /usr/local/cargo/git /usr/local/cargo/git
 
 # Copy pre-built target directory
 COPY --from=contract-builder /build/docker/contract/target /target
+
+# Enable sccache for user builds
+ENV RUSTC_WRAPPER=sccache \
+    SCCACHE_DIR=/usr/local/cargo/sccache
 
 WORKDIR /workspace
 
