@@ -1,23 +1,17 @@
 use crate::{instruction::syscall_process_exit_code, RuntimeContext};
-use curve25519_dalek::{ristretto::CompressedRistretto, EdwardsPoint, RistrettoPoint};
+use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint};
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
-use sp1_curves::EllipticCurve;
-use std::marker::PhantomData;
 
-pub(crate) struct SyscallED25519RistrettoDecompressValidate<E: EllipticCurve> {
-    _phantom: PhantomData<E>,
-}
+pub(crate) struct SyscallED25519RistrettoDecompressValidate {}
 
-impl<E: EllipticCurve> SyscallED25519RistrettoDecompressValidate<E> {
+impl SyscallED25519RistrettoDecompressValidate {
     pub const fn new() -> Self {
-        Self {
-            _phantom: PhantomData,
-        }
+        Self {}
     }
 }
 
-impl<E: EllipticCurve> SyscallED25519RistrettoDecompressValidate<E> {
+impl SyscallED25519RistrettoDecompressValidate {
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],

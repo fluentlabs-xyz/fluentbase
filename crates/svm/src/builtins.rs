@@ -126,13 +126,19 @@ pub fn register_builtins<SDK: SharedAPI>(
     function_registry
         .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
         .unwrap();
-    #[cfg(feature = "enable-solana-extended-builtins")]
+    #[cfg(feature = "enable-solana-original-builtins")]
+    function_registry
+        .register_function_hashed(
+            "sol_curve_group_op_original",
+            SyscallCurveGroupOpsOriginal::vm,
+        )
+        .unwrap();
+    #[cfg(not(feature = "enable-solana-original-builtins"))]
+    function_registry
+        .register_function_hashed("sol_curve_group_op_original", SyscallStub::vm)
+        .unwrap();
     function_registry
         .register_function_hashed("sol_curve_group_op", SyscallCurveGroupOps::vm)
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-extended-builtins"))]
-    function_registry
-        .register_function_hashed("sol_curve_group_op", SyscallStub::vm)
         .unwrap();
     #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
@@ -1175,7 +1181,7 @@ declare_builtin_function!(
     // Elliptic Curve Group Operations
     //
     // Currently, only curve25519 Edwards and Ristretto representations are supported
-    SyscallCurveGroupOps<SDK: SharedAPI>,
+    SyscallCurveGroupOpsOriginal<SDK: SharedAPI>,
     fn rust(
         invoke_context: &mut InvokeContext<SDK>,
         curve_id: u64,
@@ -1261,6 +1267,224 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                             false,
                         )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                _ => {
+                    if invoke_context
+                        .get_feature_set()
+                        .is_active(&abort_on_invalid_curve::id())
+                    {
+                        Err(SyscallError::InvalidAttribute.into())
+                    } else {
+                        Ok(1)
+                    }
+                }
+            },
+
+            CURVE25519_RISTRETTO => match group_op {
+                ADD => {
+                    let left_point = translate_type::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let right_point = translate_type::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    if let Some(result_point) = ristretto::add_ristretto(left_point, right_point) {
+                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                        false,
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                SUB => {
+                    let left_point = translate_type::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let right_point = translate_type::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    if let Some(result_point) =
+                        ristretto::subtract_ristretto(left_point, right_point)
+                    {
+                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                            false,
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                MUL => {
+                    let scalar = translate_type::<scalar::PodScalar>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let input_point = translate_type::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    if let Some(result_point) = ristretto::multiply_ristretto(scalar, input_point) {
+                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                            false,
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                _ => {
+                    if invoke_context
+                        .get_feature_set()
+                        .is_active(&abort_on_invalid_curve::id())
+                    {
+                        Err(SyscallError::InvalidAttribute.into())
+                    } else {
+                        Ok(1)
+                    }
+                }
+            },
+
+            _ => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&abort_on_invalid_curve::id())
+                {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
+        }
+    }
+);
+
+declare_builtin_function!(
+    // Elliptic Curve Group Operations
+    //
+    // Currently, only curve25519 Edwards and Ristretto representations are supported
+    SyscallCurveGroupOps<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        curve_id: u64,
+        group_op: u64,
+        left_input_addr: u64,
+        right_input_addr: u64,
+        result_point_addr: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use solana_curve25519::{curve_syscall_traits::*, edwards, ristretto, scalar};
+        match curve_id {
+            CURVE25519_EDWARDS => match group_op {
+                ADD => {
+                    let left_point = translate_type::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let right_point = translate_type::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    let mut left_point_or_result = left_point.0.clone();
+                    if SDK::ed25519_edwards_add(&mut left_point_or_result, &right_point.0) {
+                        *translate_type_mut::<[u8; 32]>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                            false,
+                        )? = left_point_or_result;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                SUB => {
+                    let left_point = translate_type::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let right_point = translate_type::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    let mut left_point_or_result = left_point.0.clone();
+
+                    if SDK::ed25519_edwards_sub(&mut left_point_or_result, &right_point.0) {
+                        *translate_type_mut::<[u8; 32]>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                            false,
+                        )? = left_point_or_result;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                MUL => {
+                    let scalar = translate_type::<scalar::PodScalar>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+                    let input_point = translate_type::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )?;
+
+                    let mut left_point_or_result = input_point.0.clone();
+                    if SDK::ed25519_edwards_mul(&mut left_point_or_result, &scalar.0) {
+                        *translate_type_mut::<[u8; 32]>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                            false,
+                        )? = left_point_or_result;
                         Ok(0)
                     } else {
                         Ok(1)

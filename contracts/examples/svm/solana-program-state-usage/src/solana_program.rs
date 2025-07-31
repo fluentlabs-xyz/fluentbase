@@ -5,6 +5,7 @@ use fluentbase_examples_svm_bindings::{
     alt_bn128_group_op_original_native,
     big_mod_exp_3,
     curve_group_op_native,
+    curve_group_op_original_native,
     curve_multiscalar_mul_native,
     curve_validate_point_native,
     curve_validate_point_original_native,
@@ -334,6 +335,18 @@ pub fn process_instruction(
         TestCommand::CurvePointValidation(p) => {
             let result = curve_validate_point_native(p.curve_id, &p.point);
             assert_eq!(result, p.expected_ret);
+        }
+        TestCommand::CurveGroupOpOriginal(p) => {
+            let mut result_point = [0u8; 32];
+            let result = curve_group_op_original_native(
+                p.curve_id,
+                p.group_op,
+                &p.left_input,
+                &p.right_input,
+                &mut result_point,
+            );
+            assert_eq!(result, p.expected_ret);
+            assert_eq!(&p.expected_point, &result_point);
         }
         TestCommand::CurveGroupOp(p) => {
             let mut result_point = [0u8; 32];

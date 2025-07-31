@@ -52,7 +52,7 @@ default = [
     "debug-print",
     "enable-svm",
     # when enabling nable-solana-* - enable corresponding in 'contracts' crate
-    #    "enable-solana-original-builtins",
+    "enable-solana-original-builtins",
     #    "enable-solana-extended-builtins",
 ]
 enable-solana-original-builtins = [

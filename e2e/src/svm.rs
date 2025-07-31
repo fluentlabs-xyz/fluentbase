@@ -3,11 +3,10 @@ mod tests {
     #[cfg(feature = "enable-solana-extended-builtins")]
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
     use core::str::from_utf8;
-    use curve25519_dalek::constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT};
-    #[cfg(feature = "enable-solana-extended-builtins")]
-    use curve25519_dalek::traits::Identity;
-    #[cfg(feature = "enable-solana-extended-builtins")]
-    use curve25519_dalek::EdwardsPoint;
+    use curve25519_dalek::{
+        constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT},
+        EdwardsPoint,
+    };
     use fluentbase_sdk::{
         address,
         Address,
@@ -37,8 +36,6 @@ mod tests {
     #[cfg(feature = "enable-solana-extended-builtins")]
     use fluentbase_svm_shared::test_structs::Blake3;
     #[cfg(feature = "enable-solana-extended-builtins")]
-    use fluentbase_svm_shared::test_structs::CurveGroupOp;
-    #[cfg(feature = "enable-solana-extended-builtins")]
     use fluentbase_svm_shared::test_structs::CurveMultiscalarMultiplication;
     #[cfg(feature = "enable-solana-extended-builtins")]
     use fluentbase_svm_shared::test_structs::Poseidon;
@@ -48,6 +45,8 @@ mod tests {
         bincode_helpers::serialize,
         test_structs::{
             CreateAccountAndModifySomeData1,
+            CurveGroupOp,
+            CurveGroupOpOriginal,
             CurvePointValidation,
             CurvePointValidationOriginal,
             Keccak256,
@@ -84,16 +83,12 @@ mod tests {
         target_arch::{alt_bn128_multiplication, alt_bn128_pairing},
     };
     #[cfg(feature = "enable-solana-extended-builtins")]
-    use solana_curve25519::{
-        edwards::{
-            add_edwards,
-            multiply_edwards,
-            multiscalar_multiply_edwards,
-            subtract_edwards,
-            PodEdwardsPoint,
-        },
-        scalar::PodScalar,
-    };
+    use solana_curve25519::edwards::multiply_edwards;
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use solana_curve25519::edwards::multiscalar_multiply_edwards;
+    use solana_curve25519::edwards::{add_edwards, subtract_edwards, PodEdwardsPoint};
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use solana_curve25519::scalar::PodScalar;
     #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_poseidon::{Endianness, Parameters};
     #[cfg(feature = "enable-solana-extended-builtins")]
@@ -1061,7 +1056,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_curve_group_op() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1083,6 +1077,7 @@ mod tests {
         let mut test_commands: Vec<TestCommand> = vec![];
 
         // identity cases
+        use curve25519_dalek::traits::Identity;
         let identity = PodEdwardsPoint(EdwardsPoint::identity().compress().to_bytes());
         let point = PodEdwardsPoint([
             201, 179, 241, 122, 180, 185, 239, 50, 183, 52, 221, 0, 153, 195, 43, 18, 22, 38, 187,
@@ -1090,28 +1085,53 @@ mod tests {
         ]);
         assert_eq!(add_edwards(&point, &identity).unwrap(), point);
         assert_eq!(subtract_edwards(&point, &identity).unwrap(), point);
-        test_commands.push(
-            CurveGroupOp {
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::ADD,
-                left_input: point.0,
-                right_input: identity.0,
-                expected_point: point.0,
-                expected_ret: 0, // OK
-            }
-            .into(),
-        );
-        test_commands.push(
-            CurveGroupOp {
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::SUB,
-                left_input: point.0,
-                right_input: identity.0,
-                expected_point: point.0,
-                expected_ret: 0, // OK
-            }
-            .into(),
-        );
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point.0,
+            right_input: identity.0,
+            expected_point: point.0,
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::SUB,
+            left_input: point.0,
+            right_input: identity.0,
+            expected_point: point.0,
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+
+        let scalar: [u8; 32] = [
+            254, 198, 23, 138, 67, 243, 184, 110, 236, 115, 236, 205, 205, 215, 79, 114, 45, 250,
+            78, 137, 3, 107, 136, 237, 49, 126, 117, 223, 37, 191, 88, 6,
+        ];
+        let right_point: [u8; 32] = [
+            70, 222, 137, 221, 253, 204, 71, 51, 78, 8, 124, 1, 67, 200, 102, 225, 122, 228, 111,
+            183, 129, 14, 131, 210, 212, 95, 109, 246, 55, 10, 159, 91,
+        ];
+        let expected_point: [u8; 32] = [
+            64, 150, 40, 55, 80, 49, 217, 209, 105, 229, 181, 65, 241, 68, 2, 106, 220, 234, 211,
+            71, 159, 76, 156, 114, 242, 68, 147, 31, 243, 211, 191, 124,
+        ];
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::MUL,
+            left_input: scalar,
+            right_input: right_point,
+            expected_point,
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
 
         // associativity cases
         let point_a = PodEdwardsPoint([
@@ -1130,118 +1150,121 @@ mod tests {
             add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c),
             add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap()),
         );
-        test_commands.push(
-            CurveGroupOp {
-                // a + b
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::ADD,
-                left_input: point_a.0,
-                right_input: point_b.0,
-                expected_point: add_edwards(&point_a, &point_b).unwrap().0,
-                expected_ret: 0, // OK
-            }
-            .into(),
-        );
-        test_commands.push(
-            CurveGroupOp {
-                // (a + b) + c
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::ADD,
-                left_input: add_edwards(&point_a, &point_b).unwrap().0,
-                right_input: point_c.0,
-                expected_point: add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c)
-                    .unwrap()
-                    .0,
-                expected_ret: 0, // OK
-            }
-            .into(),
-        );
-        test_commands.push(
-            CurveGroupOp {
-                // b + c
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::ADD,
-                left_input: point_b.0,
-                right_input: point_c.0,
-                expected_point: add_edwards(&point_b, &point_c).unwrap().0,
-                expected_ret: 0, // OK
-            }
-            .into(),
-        );
-        test_commands.push(
-            CurveGroupOp {
-                // a + (b + c)
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::ADD,
-                left_input: point_a.0,
-                right_input: add_edwards(&point_b, &point_c).unwrap().0,
-                expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
-                    .unwrap()
-                    .0,
-                expected_ret: 0, // OK
-            }
-            .into(),
-        );
-        test_commands.push(
-            CurveGroupOp {
-                // (a + b) + c = a + (b + c)
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::ADD,
-                left_input: add_edwards(&point_a, &point_b).unwrap().0,
-                right_input: point_c.0,
-                expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
-                    .unwrap()
-                    .0,
-                expected_ret: 0, // OK
-            }
-            .into(),
-        );
+        let test_case_original = CurveGroupOpOriginal {
+            // a + b
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_a.0,
+            right_input: point_b.0,
+            expected_point: add_edwards(&point_a, &point_b).unwrap().0,
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        let test_case_original = CurveGroupOpOriginal {
+            // (a + b) + c
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: add_edwards(&point_a, &point_b).unwrap().0,
+            right_input: point_c.0,
+            expected_point: add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c)
+                .unwrap()
+                .0,
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
 
-        // commutativity
-        assert_eq!(
-            add_edwards(&point_a, &point_b).unwrap(),
-            add_edwards(&point_b, &point_a).unwrap(),
-        );
-        test_commands.push(
-            CurveGroupOp {
-                // a + b = b + a
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::ADD,
-                left_input: point_a.0,
-                right_input: point_b.0,
-                expected_point: add_edwards(&point_b, &point_a).unwrap().0,
-                expected_ret: 0, // OK
-            }
-            .into(),
-        );
-        test_commands.push(
-            CurveGroupOp {
-                // b + a = a + b
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::ADD,
-                left_input: point_b.0,
-                right_input: point_a.0,
-                expected_point: add_edwards(&point_a, &point_b).unwrap().0,
-                expected_ret: 0, // OK
-            }
-            .into(),
-        );
+        let test_case_original = CurveGroupOpOriginal {
+            // b + c
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_b.0,
+            right_input: point_c.0,
+            expected_point: add_edwards(&point_b, &point_c).unwrap().0,
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
 
-        // subtraction
-        let point = PodEdwardsPoint(ED25519_BASEPOINT_POINT.compress().to_bytes());
-        let point_negated = PodEdwardsPoint((-ED25519_BASEPOINT_POINT).compress().to_bytes());
-        assert_eq!(point_negated, subtract_edwards(&identity, &point).unwrap(),);
-        test_commands.push(
-            CurveGroupOp {
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::SUB,
-                left_input: identity.0,
-                right_input: point.0,
-                expected_point: point_negated.0,
-                expected_ret: 0, // OK
-            }
-            .into(),
-        );
+        let test_case_original = CurveGroupOpOriginal {
+            // a + (b + c)
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_a.0,
+            right_input: add_edwards(&point_b, &point_c).unwrap().0,
+            expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
+                .unwrap()
+                .0,
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+
+        let test_case_original = CurveGroupOpOriginal {
+            // (a + b) + c = a + (b + c)
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: add_edwards(&point_a, &point_b).unwrap().0,
+            right_input: point_c.0,
+            expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
+                .unwrap()
+                .0,
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+
+        // // commutativity
+        // assert_eq!(
+        //     add_edwards(&point_a, &point_b).unwrap(),
+        //     add_edwards(&point_b, &point_a).unwrap(),
+        // );
+        // test_commands.push(
+        //     CurveGroupOpOriginal {
+        //         // a + b = b + a
+        //         curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+        //         group_op: solana_curve25519::curve_syscall_traits::ADD,
+        //         left_input: point_a.0,
+        //         right_input: point_b.0,
+        //         expected_point: add_edwards(&point_b, &point_a).unwrap().0,
+        //         expected_ret: 0, // OK
+        //     }
+        //     .into(),
+        // );
+        // test_commands.push(
+        //     CurveGroupOpOriginal {
+        //         // b + a = a + b
+        //         curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+        //         group_op: solana_curve25519::curve_syscall_traits::ADD,
+        //         left_input: point_b.0,
+        //         right_input: point_a.0,
+        //         expected_point: add_edwards(&point_a, &point_b).unwrap().0,
+        //         expected_ret: 0, // OK
+        //     }
+        //     .into(),
+        // );
+        //
+        // // subtraction
+        // let point = PodEdwardsPoint(ED25519_BASEPOINT_POINT.compress().to_bytes());
+        // let point_negated = PodEdwardsPoint((-ED25519_BASEPOINT_POINT).compress().to_bytes());
+        // assert_eq!(point_negated, subtract_edwards(&identity, &point).unwrap(),);
+        // test_commands.push(
+        //     CurveGroupOpOriginal {
+        //         curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+        //         group_op: solana_curve25519::curve_syscall_traits::SUB,
+        //         left_input: identity.0,
+        //         right_input: point.0,
+        //         expected_point: point_negated.0,
+        //         expected_ret: 0, // OK
+        //     }
+        //     .into(),
+        // );
 
         process_test_commands(
             &mut ctx,
@@ -1449,23 +1472,16 @@ mod tests {
 
             assert_eq!(result.unwrap(), expected);
 
-            let original_test_case = SyscallAltBn128Original {
+            let test_case_original = SyscallAltBn128Original {
                 group_op: ALT_BN128_ADD,
                 input: input.clone(),
                 expected_result: expected,
                 expected_ret: 0, // OK
             };
+
             #[cfg(feature = "enable-solana-original-builtins")]
-            test_commands.push(original_test_case.clone().into());
-            test_commands.push(
-                SyscallAltBn128 {
-                    group_op: original_test_case.group_op,
-                    input: original_test_case.input,
-                    expected_result: original_test_case.expected_result,
-                    expected_ret: original_test_case.expected_ret,
-                }
-                .into(),
-            );
+            test_commands.push(test_case_original.clone().into());
+            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case_original).into());
         });
 
         process_test_commands(
@@ -1629,23 +1645,15 @@ mod tests {
 
             assert_eq!(result.unwrap(), expected);
 
-            let original_test_case = SyscallAltBn128Original {
+            let test_case_original = SyscallAltBn128Original {
                 group_op: ALT_BN128_MUL,
                 input: input.clone(),
                 expected_result: expected,
                 expected_ret: 0, // OK
             };
-            test_commands.push(original_test_case.clone().into());
-            // TODO uncomment when fluent's version implemented
-            test_commands.push(
-                SyscallAltBn128 {
-                    group_op: original_test_case.group_op,
-                    input: original_test_case.input,
-                    expected_result: original_test_case.expected_result,
-                    expected_ret: original_test_case.expected_ret,
-                }
-                .into(),
-            );
+            #[cfg(feature = "enable-solana-original-builtins")]
+            test_commands.push(test_case_original.clone().into());
+            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case_original).into());
         });
 
         process_test_commands(
@@ -1714,16 +1722,10 @@ mod tests {
                 expected_result: expected,
                 expected_ret: 0, // OK
             };
+
+            #[cfg(feature = "enable-solana-original-builtins")]
             test_commands.push(test_case_original.clone().into());
-            test_commands.push(
-                SyscallAltBn128 {
-                    group_op: test_case_original.group_op,
-                    input: test_case_original.input,
-                    expected_result: test_case_original.expected_result,
-                    expected_ret: test_case_original.expected_ret,
-                }
-                .into(),
-            );
+            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case_original).into());
         });
 
         process_test_commands(

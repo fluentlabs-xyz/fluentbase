@@ -49,6 +49,24 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
         &[ValType::I32; 1]
     );
     import_function!(
+        "_ed25519_edwards_add",
+        ED25519_EDWARDS_ADD,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_edwards_sub",
+        ED25519_EDWARDS_SUB,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_edwards_mul",
+        ED25519_EDWARDS_MUL,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
         "_ed25519_edwards_decompress_validate",
         ED25519_EDWARDS_DECOMPRESS_VALIDATE,
         &[ValType::I32; 1],

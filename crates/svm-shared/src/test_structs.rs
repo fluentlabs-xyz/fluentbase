@@ -80,6 +80,15 @@ pub struct Sha256 {
     pub expected_result: [u8; 32],
     pub expected_ret: u64,
 }
+impl From<Sha256Original> for Sha256 {
+    fn from(value: Sha256Original) -> Self {
+        Self {
+            data: value.data,
+            expected_result: value.expected_result,
+            expected_ret: value.expected_ret,
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Blake3 {
     pub data: Vec<Vec<u8>>,
@@ -110,6 +119,24 @@ pub struct CurvePointValidation {
     pub point: [u8; 32],
     pub expected_ret: u64,
 }
+impl From<CurvePointValidationOriginal> for CurvePointValidation {
+    fn from(value: CurvePointValidationOriginal) -> Self {
+        Self {
+            curve_id: value.curve_id,
+            point: value.point,
+            expected_ret: value.expected_ret,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CurveGroupOpOriginal {
+    pub curve_id: u64,
+    pub group_op: u64,
+    pub left_input: [u8; 32],
+    pub right_input: [u8; 32],
+    pub expected_point: [u8; 32],
+    pub expected_ret: u64,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurveGroupOp {
     pub curve_id: u64,
@@ -118,6 +145,18 @@ pub struct CurveGroupOp {
     pub right_input: [u8; 32],
     pub expected_point: [u8; 32],
     pub expected_ret: u64,
+}
+impl From<CurveGroupOpOriginal> for CurveGroupOp {
+    fn from(value: CurveGroupOpOriginal) -> Self {
+        Self {
+            curve_id: value.curve_id,
+            group_op: value.group_op,
+            left_input: value.left_input,
+            right_input: value.right_input,
+            expected_point: value.expected_point,
+            expected_ret: value.expected_ret,
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurveMultiscalarMultiplication {
@@ -140,6 +179,16 @@ pub struct SyscallAltBn128 {
     pub input: Vec<u8>,
     pub expected_result: Vec<u8>,
     pub expected_ret: u64,
+}
+impl From<SyscallAltBn128Original> for SyscallAltBn128 {
+    fn from(value: SyscallAltBn128Original) -> Self {
+        Self {
+            group_op: value.group_op,
+            input: value.input,
+            expected_result: value.expected_result,
+            expected_ret: value.expected_ret,
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AltBn128Compression {
@@ -164,6 +213,7 @@ pub enum TestCommand {
     SetGetReturnData(SetGetReturnData),
     CurvePointValidationOriginal(CurvePointValidationOriginal),
     CurvePointValidation(CurvePointValidation),
+    CurveGroupOpOriginal(CurveGroupOpOriginal),
     CurveGroupOp(CurveGroupOp),
     CurveMultiscalarMultiplication(CurveMultiscalarMultiplication),
     SyscallAltBn128Original(SyscallAltBn128Original),
@@ -201,6 +251,7 @@ impl_from!(Poseidon);
 impl_from!(SetGetReturnData);
 impl_from!(CurvePointValidationOriginal);
 impl_from!(CurvePointValidation);
+impl_from!(CurveGroupOpOriginal);
 impl_from!(CurveGroupOp);
 impl_from!(CurveMultiscalarMultiplication);
 impl_from!(SyscallAltBn128Original);

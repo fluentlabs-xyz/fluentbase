@@ -2,22 +2,16 @@ use crate::{instruction::syscall_process_exit_code, RuntimeContext};
 use curve25519_dalek::{edwards::CompressedEdwardsY, EdwardsPoint};
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
-use sp1_curves::EllipticCurve;
-use std::marker::PhantomData;
 
-pub(crate) struct SyscallED25519EdwardsDecompressValidate<E: EllipticCurve> {
-    _phantom: PhantomData<E>,
-}
+pub(crate) struct SyscallED25519EdwardsDecompressValidate {}
 
-impl<E: EllipticCurve> SyscallED25519EdwardsDecompressValidate<E> {
+impl SyscallED25519EdwardsDecompressValidate {
     pub const fn new() -> Self {
-        Self {
-            _phantom: PhantomData,
-        }
+        Self {}
     }
 }
 
-impl<E: EllipticCurve> SyscallED25519EdwardsDecompressValidate<E> {
+impl SyscallED25519EdwardsDecompressValidate {
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],

@@ -1,7 +1,10 @@
 pub mod charge_fuel;
 pub mod charge_fuel_manually;
 pub mod debug_log;
+pub mod ed25519_edwards_add;
 pub mod ed25519_edwards_decompress_validate;
+pub mod ed25519_edwards_mul;
+pub mod ed25519_edwards_sub;
 pub mod ed25519_ristretto_decompress_validate;
 pub mod ed_add;
 pub mod ed_decompress;
@@ -38,7 +41,10 @@ use crate::{
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
+        ed25519_edwards_add::SyscallED25519EdwardsAdd,
         ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
+        ed25519_edwards_mul::SyscallED25519EdwardsMul,
+        ed25519_edwards_sub::SyscallED25519EdwardsSub,
         ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
         ed_add::SyscallEdwardsAddAssign,
         ed_decompress::SyscallEdwardsDecompress,
@@ -114,8 +120,11 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_EDWARDS_DECOMPRESS_VALIDATE => SyscallED25519EdwardsDecompressValidate::<Ed25519>::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_RISTRETTO_DECOMPRESS_VALIDATE => SyscallED25519RistrettoDecompressValidate::<Ed25519>::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_DECOMPRESS_VALIDATE => SyscallED25519EdwardsDecompressValidate::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_DECOMPRESS_VALIDATE => SyscallED25519RistrettoDecompressValidate::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_ADD => SyscallED25519EdwardsAdd::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_SUB => SyscallED25519EdwardsSub::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_MUL => SyscallED25519EdwardsMul::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_RECOVER => SyscallSecp256k1Recover::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_DECOMPRESS => SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller, params, result),

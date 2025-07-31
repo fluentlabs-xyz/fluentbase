@@ -3,7 +3,10 @@ use crate::{
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
+        ed25519_edwards_add::SyscallED25519EdwardsAdd,
         ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
+        ed25519_edwards_mul::SyscallED25519EdwardsMul,
+        ed25519_edwards_sub::SyscallED25519EdwardsSub,
         ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
         exec::SyscallExec,
         exit::SyscallExit,
@@ -71,14 +74,24 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
     }
 
+    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519EdwardsAdd::fn_impl(p, q).is_ok()
+    }
+
+    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519EdwardsSub::fn_impl(p, q).is_ok()
+    }
+
+    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519EdwardsMul::fn_impl(p, q).is_ok()
+    }
+
     fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallED25519EdwardsDecompressValidate::<Ed25519>::fn_impl(p)
-            .map_or_else(|_| false, |_| true)
+        SyscallED25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
     }
 
     fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallED25519RistrettoDecompressValidate::<Ed25519>::fn_impl(p)
-            .map_or_else(|_| false, |_| true)
+        SyscallED25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
     }
 
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {

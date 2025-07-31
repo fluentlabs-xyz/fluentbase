@@ -9,7 +9,10 @@ pub use crate::{
         _charge_fuel,
         _charge_fuel_manually,
         _debug_log,
+        _ed25519_edwards_add,
         _ed25519_edwards_decompress_validate,
+        _ed25519_edwards_mul,
+        _ed25519_edwards_sub,
         _ed25519_ristretto_decompress_validate,
         _exec,
         _exit,
@@ -69,6 +72,18 @@ impl NativeAPI for RwasmContext {
                 None
             }
         }
+    }
+    #[inline(always)]
+    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_edwards_add(p.as_mut_ptr(), q.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_edwards_sub(p.as_mut_ptr(), q.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_edwards_mul(p.as_mut_ptr(), q.as_ptr()) == 0 }
     }
     #[inline(always)]
     fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
