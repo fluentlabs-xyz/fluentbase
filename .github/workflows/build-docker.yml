@@ -4,14 +4,11 @@ on:
     push:
         tags:
             - "v*"
-        branches:
-            - "fix/build-docker"
     workflow_dispatch:
         inputs:
             custom_tag:
                 description: "Custom Docker image tag (e.g., v0.3.7-dev)"
                 required: true
-                default: "v0.3.7-dev"
             push_latest:
                 description: "Also tag as latest"
                 required: false
