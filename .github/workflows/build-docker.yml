@@ -87,8 +87,8 @@ jobs:
                   platforms: ${{ env.PLATFORM }}
                   push: true
                   tags: ${{ steps.meta.outputs.tags }}
-                  #   cache-from: type=gha
-                  #   cache-to: type=gha,mode=max
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
                   build-args: |
                       RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
                       PLATFORM=${{ env.PLATFORM }}
