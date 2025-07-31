@@ -20,7 +20,7 @@ precompile = { path = "../revm/crates/precompile", package = "revm-precompile", 
 fluentbase-erc20 = { path = "../crates/erc20", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 fluentbase-svm = { path = "../crates/svm", default-features = false, features = [
-    "enable-solana-original-builtins",
+    #    "enable-solana-original-builtins",
     #    "enable-solana-extended-builtins",
 ] }
 hex-literal = { version = "0.4.1", default-features = false }

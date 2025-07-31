@@ -5,7 +5,7 @@ use rwasm::{ImportLinker, ImportName, ValType};
 pub fn create_import_linker() -> Rc<ImportLinker> {
     let mut import_linker = ImportLinker::default();
     macro_rules! import_function {
-        ($func_name:literal, $sys_func_idx:ident, $params:expr, $results:expr) => {
+        ($func_name:literal, $sys_func_idx:ident, $params:expr, $results:expr $(,)?) => {
             import_linker.insert_function(
                 ImportName::new("fluentbase_v1preview", $func_name),
                 SysFuncIdx::$sys_func_idx as u32,
@@ -46,6 +46,18 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
         "_secp256k1_recover",
         SECP256K1_RECOVER,
         &[ValType::I32; 4],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_edwards_decompress_validate",
+        ED25519_EDWARDS_DECOMPRESS_VALIDATE,
+        &[ValType::I32; 1],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_ristretto_decompress_validate",
+        ED25519_RISTRETTO_DECOMPRESS_VALIDATE,
+        &[ValType::I32; 1],
         &[ValType::I32; 1]
     );
     import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);

@@ -207,6 +207,12 @@ pub fn big_mod_exp_3<const N: usize>(
     (ret, result)
 }
 extern "C" {
+    fn sol_curve_validate_point_original(curve_id: u64, point_addr: *const u8) -> ReturnValue;
+}
+pub fn curve_validate_point_original_native(curve_id: u64, point: &[u8; 32]) -> ReturnValue {
+    unsafe { sol_curve_validate_point_original(curve_id, point.as_ptr()) }
+}
+extern "C" {
     fn sol_curve_validate_point(curve_id: u64, point_addr: *const u8) -> ReturnValue;
 }
 pub fn curve_validate_point_native(curve_id: u64, point: &[u8; 32]) -> ReturnValue {

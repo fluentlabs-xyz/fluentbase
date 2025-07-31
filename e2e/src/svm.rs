@@ -3,12 +3,11 @@ mod tests {
     #[cfg(feature = "enable-solana-extended-builtins")]
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
     use core::str::from_utf8;
+    use curve25519_dalek::constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT};
     #[cfg(feature = "enable-solana-extended-builtins")]
-    use curve25519_dalek::{
-        constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT},
-        traits::Identity,
-        EdwardsPoint,
-    };
+    use curve25519_dalek::traits::Identity;
+    #[cfg(feature = "enable-solana-extended-builtins")]
+    use curve25519_dalek::EdwardsPoint;
     use fluentbase_sdk::{
         address,
         Address,
@@ -42,8 +41,6 @@ mod tests {
     #[cfg(feature = "enable-solana-extended-builtins")]
     use fluentbase_svm_shared::test_structs::CurveMultiscalarMultiplication;
     #[cfg(feature = "enable-solana-extended-builtins")]
-    use fluentbase_svm_shared::test_structs::CurvePointValidation;
-    #[cfg(feature = "enable-solana-extended-builtins")]
     use fluentbase_svm_shared::test_structs::Poseidon;
     #[cfg(feature = "enable-solana-extended-builtins")]
     use fluentbase_svm_shared::test_structs::SolBigModExp;
@@ -51,6 +48,8 @@ mod tests {
         bincode_helpers::serialize,
         test_structs::{
             CreateAccountAndModifySomeData1,
+            CurvePointValidation,
+            CurvePointValidationOriginal,
             Keccak256,
             SetGetReturnData,
             Sha256Original,
@@ -61,6 +60,7 @@ mod tests {
             TestCommand,
         },
     };
+    use fluentbase_types::default;
     use hex_literal::hex;
     use rand::random_range;
     use serde::Deserialize;
@@ -964,7 +964,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_curve_validate_point() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -983,38 +982,73 @@ mod tests {
 
         // exec
 
-        let test_commands: &[TestCommand] = &[
+        let mut test_commands: Vec<TestCommand> = default!();
+        let test_case_original = CurvePointValidationOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            point: ED25519_BASEPOINT_POINT.compress().as_bytes().clone(),
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(
             CurvePointValidation {
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                point: ED25519_BASEPOINT_POINT.compress().as_bytes().clone(),
-                expected_ret: 0, // OK
+                curve_id: test_case_original.curve_id,
+                point: test_case_original.point,
+                expected_ret: test_case_original.expected_ret,
             }
             .into(),
+        );
+        let test_case_original = CurvePointValidationOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            point: [
+                120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117, 38,
+                84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,
+            ],
+            expected_ret: 1, // ERR
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(
             CurvePointValidation {
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                point: [
-                    120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117,
-                    38, 84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,
-                ],
-                expected_ret: 1, // ERR
+                curve_id: test_case_original.curve_id,
+                point: test_case_original.point,
+                expected_ret: test_case_original.expected_ret,
             }
             .into(),
+        );
+        let test_case_original = CurvePointValidationOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            point: RISTRETTO_BASEPOINT_POINT.compress().as_bytes().clone(),
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(
             CurvePointValidation {
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
-                point: RISTRETTO_BASEPOINT_POINT.compress().as_bytes().clone(),
-                expected_ret: 0, // OK
+                curve_id: test_case_original.curve_id,
+                point: test_case_original.point,
+                expected_ret: test_case_original.expected_ret,
             }
             .into(),
+        );
+        let test_case_original = CurvePointValidationOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            point: [
+                120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117, 38,
+                84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,
+            ],
+            expected_ret: 1, // ERR
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(
             CurvePointValidation {
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
-                point: [
-                    120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117,
-                    38, 84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,
-                ],
-                expected_ret: 1, // ERR
+                curve_id: test_case_original.curve_id,
+                point: test_case_original.point,
+                expected_ret: test_case_original.expected_ret,
             }
             .into(),
-        ];
+        );
 
         process_test_commands(
             &mut ctx,

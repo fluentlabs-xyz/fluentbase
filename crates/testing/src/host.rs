@@ -232,6 +232,12 @@ impl SharedAPI for HostTestingContext {
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         RuntimeContextWrapper::secp256k1_recover(digest, sig, rec_id)
     }
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::ed25519_edwards_decompress_validate(p)
+    }
+    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::ed25519_ristretto_decompress_validate(p)
+    }
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
         RuntimeContextWrapper::bn254_add(p, q);
     }

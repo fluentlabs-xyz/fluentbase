@@ -3,6 +3,8 @@ use crate::{
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
+        ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
+        ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
@@ -37,7 +39,10 @@ use fluentbase_types::{
     UnwrapExitCode,
     B256,
 };
-use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
+use sp1_curves::{
+    edwards::ed25519::Ed25519,
+    weierstrass::bn254::{Bn254, Bn254BaseField},
+};
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 #[derive(Default, Clone)]
@@ -64,6 +69,16 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
+    }
+
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        SyscallED25519EdwardsDecompressValidate::<Ed25519>::fn_impl(p)
+            .map_or_else(|_| false, |_| true)
+    }
+
+    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+        SyscallED25519RistrettoDecompressValidate::<Ed25519>::fn_impl(p)
+            .map_or_else(|_| false, |_| true)
     }
 
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {

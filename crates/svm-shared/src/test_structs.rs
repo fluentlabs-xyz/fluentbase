@@ -99,6 +99,12 @@ pub struct SetGetReturnData {
     pub data: Vec<u8>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CurvePointValidationOriginal {
+    pub curve_id: u64,
+    pub point: [u8; 32],
+    pub expected_ret: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurvePointValidation {
     pub curve_id: u64,
     pub point: [u8; 32],
@@ -156,6 +162,7 @@ pub enum TestCommand {
     Blake3(Blake3),
     Poseidon(Poseidon),
     SetGetReturnData(SetGetReturnData),
+    CurvePointValidationOriginal(CurvePointValidationOriginal),
     CurvePointValidation(CurvePointValidation),
     CurveGroupOp(CurveGroupOp),
     CurveMultiscalarMultiplication(CurveMultiscalarMultiplication),
@@ -192,6 +199,7 @@ impl_from!(Sha256);
 impl_from!(Blake3);
 impl_from!(Poseidon);
 impl_from!(SetGetReturnData);
+impl_from!(CurvePointValidationOriginal);
 impl_from!(CurvePointValidation);
 impl_from!(CurveGroupOp);
 impl_from!(CurveMultiscalarMultiplication);

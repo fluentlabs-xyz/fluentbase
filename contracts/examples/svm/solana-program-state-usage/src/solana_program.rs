@@ -7,6 +7,7 @@ use fluentbase_examples_svm_bindings::{
     curve_group_op_native,
     curve_multiscalar_mul_native,
     curve_validate_point_native,
+    curve_validate_point_original_native,
     get_return_data,
     log_data_native,
     log_pubkey_native,
@@ -325,6 +326,10 @@ pub fn process_instruction(
             let return_data_after_set =
                 get_return_data().expect("return data must exists as it has already been set");
             assert_eq!(&return_data_after_set.1, data);
+        }
+        TestCommand::CurvePointValidationOriginal(p) => {
+            let result = curve_validate_point_original_native(p.curve_id, &p.point);
+            assert_eq!(result, p.expected_ret);
         }
         TestCommand::CurvePointValidation(p) => {
             let result = curve_validate_point_native(p.curve_id, &p.point);

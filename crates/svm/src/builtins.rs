@@ -145,13 +145,19 @@ pub fn register_builtins<SDK: SharedAPI>(
     function_registry
         .register_function_hashed("sol_curve_multiscalar_mul", SyscallStub::vm)
         .unwrap();
-    #[cfg(feature = "enable-solana-extended-builtins")]
+    #[cfg(feature = "enable-solana-original-builtins")]
+    function_registry
+        .register_function_hashed(
+            "sol_curve_validate_point_original",
+            SyscallCurvePointValidationOriginal::vm,
+        )
+        .unwrap();
+    #[cfg(not(feature = "enable-solana-original-builtins"))]
+    function_registry
+        .register_function_hashed("sol_curve_validate_point_original", SyscallStub::vm)
+        .unwrap();
     function_registry
         .register_function_hashed("sol_curve_validate_point", SyscallCurvePointValidation::vm)
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-extended-builtins"))]
-    function_registry
-        .register_function_hashed("sol_curve_validate_point", SyscallStub::vm)
         .unwrap();
 
     // #[cfg(feature = "enable-solana-original-builtins")]
@@ -1053,7 +1059,7 @@ declare_builtin_function!(
     // Elliptic Curve Point Validation
     //
     // Currently, only curve25519 Edwards and Ristretto representations are supported
-    SyscallCurvePointValidation<SDK: SharedAPI>,
+    SyscallCurvePointValidationOriginal<SDK: SharedAPI>,
     fn rust(
         invoke_context: &mut InvokeContext<SDK>,
         curve_id: u64,
@@ -1088,6 +1094,64 @@ declare_builtin_function!(
                 )?;
 
                 if ristretto::validate_ristretto(point) {
+                    Ok(0)
+                } else {
+                    Ok(1)
+                }
+            }
+            _ => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&abort_on_invalid_curve::id())
+                {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
+        }
+    }
+);
+
+declare_builtin_function!(
+    // Elliptic Curve Point Validation
+    //
+    // Currently, only curve25519 Edwards and Ristretto representations are supported
+    SyscallCurvePointValidation<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        curve_id: u64,
+        point_addr: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use solana_curve25519::{curve_syscall_traits::*};
+        match curve_id {
+            CURVE25519_EDWARDS => {
+                let point = translate_type::<[u8; 32]>(
+                    memory_mapping,
+                    point_addr,
+                    invoke_context.get_check_aligned(),
+                    false,
+                )?;
+
+                if SDK::ed25519_edwards_decompress_validate(point) {
+                    Ok(0)
+                } else {
+                    Ok(1)
+                }
+            }
+            CURVE25519_RISTRETTO => {
+                let point = translate_type::<[u8; 32]>(
+                    memory_mapping,
+                    point_addr,
+                    invoke_context.get_check_aligned(),
+                    false,
+                )?;
+
+                if SDK::ed25519_ristretto_decompress_validate(point) {
                     Ok(0)
                 } else {
                     Ok(1)

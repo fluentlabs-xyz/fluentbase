@@ -205,6 +205,14 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::secp256k1_recover(digest, sig, rec_id)
     }
 
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        API::ed25519_edwards_decompress_validate(p)
+    }
+
+    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+        API::ed25519_ristretto_decompress_validate(p)
+    }
+
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
         API::bn254_add(p, q)
     }

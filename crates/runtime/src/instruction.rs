@@ -1,6 +1,8 @@
 pub mod charge_fuel;
 pub mod charge_fuel_manually;
 pub mod debug_log;
+pub mod ed25519_edwards_decompress_validate;
+pub mod ed25519_ristretto_decompress_validate;
 pub mod ed_add;
 pub mod ed_decompress;
 pub mod exec;
@@ -36,6 +38,8 @@ use crate::{
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
+        ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
+        ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
         ed_add::SyscallEdwardsAddAssign,
         ed_decompress::SyscallEdwardsDecompress,
         exec::SyscallExec,
@@ -68,9 +72,9 @@ use crate::{
     },
     RuntimeContext,
 };
-use fluentbase_types::SysFuncIdx;
+use fluentbase_types::{ExitCode, SysFuncIdx};
 use num::BigUint;
-use rwasm::{TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{
@@ -110,6 +114,8 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_DECOMPRESS_VALIDATE => SyscallED25519EdwardsDecompressValidate::<Ed25519>::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_DECOMPRESS_VALIDATE => SyscallED25519RistrettoDecompressValidate::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_RECOVER => SyscallSecp256k1Recover::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_DECOMPRESS => SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller, params, result),
@@ -205,4 +211,12 @@ impl FieldOp2 for FieldSub {
             (ac1 + modulus - bc1) % modulus,
         )
     }
+}
+
+fn syscall_process_exit_code(
+    caller: &mut TypedCaller<RuntimeContext>,
+    exit_code: ExitCode,
+) -> TrapCode {
+    caller.context_mut(|ctx| ctx.execution_result.exit_code = exit_code.into());
+    TrapCode::ExecutionHalted
 }

@@ -12,6 +12,7 @@ mod context;
 pub mod evm;
 mod exit_code;
 pub mod genesis;
+pub mod macroses;
 pub mod native_api;
 mod preimage;
 mod rwasm;

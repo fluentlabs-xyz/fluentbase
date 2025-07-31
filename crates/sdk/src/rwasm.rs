@@ -9,6 +9,8 @@ pub use crate::{
         _charge_fuel,
         _charge_fuel_manually,
         _debug_log,
+        _ed25519_edwards_decompress_validate,
+        _ed25519_ristretto_decompress_validate,
         _exec,
         _exit,
         _forward_output,
@@ -67,6 +69,14 @@ impl NativeAPI for RwasmContext {
                 None
             }
         }
+    }
+    #[inline(always)]
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        unsafe { _ed25519_edwards_decompress_validate(p.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+        unsafe { _ed25519_ristretto_decompress_validate(p.as_ptr()) == 0 }
     }
 
     #[inline(always)]

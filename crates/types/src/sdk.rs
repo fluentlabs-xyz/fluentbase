@@ -40,6 +40,8 @@ pub trait SharedAPI: StorageAPI + MetadataAPI {
     fn keccak256(&self, data: &[u8]) -> B256;
     fn sha256(data: &[u8]) -> B256;
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool;
+    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool;
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]);
     fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]);
     fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32];
