@@ -7,6 +7,16 @@ on:
         branches:
             - "fix/build-docker"
     workflow_dispatch:
+        inputs:
+            custom_tag:
+                description: "Custom Docker image tag (e.g., v0.3.7-dev)"
+                required: true
+                default: "v0.3.7-dev"
+            push_latest:
+                description: "Also tag as latest"
+                required: false
+                default: false
+                type: boolean
 
 env:
     REGISTRY: ghcr.io
@@ -44,15 +54,30 @@ jobs:
               id: meta
               run: |
                   SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)
-                  if [[ "${{ github.ref_type }}" == "tag" ]]; then
+
+                  # Manual workflow dispatch with custom tag
+                  if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+                      VERSION="${{ inputs.custom_tag }}"
+                      TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
+                      if [[ "${{ inputs.push_latest }}" == "true" ]]; then
+                          TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                      fi
+                      echo "🚀 Manual build triggered with custom tag: ${VERSION}"
+                  # Automatic push with git tag
+                  elif [[ "${{ github.ref_type }}" == "tag" ]]; then
                       VERSION="${GITHUB_REF#refs/tags/}"
                       TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                      echo "🏷️ Git tag build: ${VERSION}"
+                  # Push to branch (development)
                   else
-                      VERSION="$SHA_SHORT"
+                      VERSION="dev-$SHA_SHORT"
                       TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
+                      echo "🔧 Development build: ${VERSION}"
                   fi
+
                   echo "tags=${TAGS}" >> $GITHUB_OUTPUT
                   echo "sdk_version=${VERSION}" >> $GITHUB_OUTPUT
+                  echo "Final tags: ${TAGS}"
 
             - name: Build and push Docker image
               uses: docker/build-push-action@v6
@@ -62,8 +87,8 @@ jobs:
                   platforms: ${{ env.PLATFORM }}
                   push: true
                   tags: ${{ steps.meta.outputs.tags }}
-                #   cache-from: type=gha
-                #   cache-to: type=gha,mode=max
+                  #   cache-from: type=gha
+                  #   cache-to: type=gha,mode=max
                   build-args: |
                       RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
                       PLATFORM=${{ env.PLATFORM }}
@@ -85,8 +110,13 @@ jobs:
               run: |
                   echo "### Docker Image Published 🚀" >> $GITHUB_STEP_SUMMARY
                   echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "**Build Type:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
                   echo "**Rust Toolchain:** \`${{ env.RUST_TOOLCHAIN }}\`" >> $GITHUB_STEP_SUMMARY
                   echo "**SDK Version:** \`${{ steps.meta.outputs.sdk_version }}\`" >> $GITHUB_STEP_SUMMARY
+                  if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+                      echo "**Custom Tag:** \`${{ inputs.custom_tag }}\`" >> $GITHUB_STEP_SUMMARY
+                      echo "**Push Latest:** \`${{ inputs.push_latest }}\`" >> $GITHUB_STEP_SUMMARY
+                  fi
                   echo "" >> $GITHUB_STEP_SUMMARY
                   echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
                   IFS=',' read -ra ADDR <<< "${{ steps.meta.outputs.tags }}"
@@ -95,5 +125,5 @@ jobs:
                   done
                   echo "" >> $GITHUB_STEP_SUMMARY
                   echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-                  echo "**Tag:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "**Branch/Tag:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
                   echo "**Actor:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
