@@ -24,6 +24,7 @@ use fluentbase_types::{
     B256,
     STATE_MAIN,
     SYSCALL_ID_BALANCE,
+    SYSCALL_ID_BLOCK_HASH,
     SYSCALL_ID_CALL,
     SYSCALL_ID_CALL_CODE,
     SYSCALL_ID_CODE_COPY,
@@ -376,6 +377,21 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             self.native_sdk.read_output(&mut output, 0);
         };
         let value = U256::from_le_slice(&output);
+        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
+    }
+
+    fn block_hash(&self, block_number: u64) -> SyscallResult<B256> {
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            SYSCALL_ID_BLOCK_HASH,
+            &block_number.to_le_bytes(),
+            None,
+            STATE_MAIN,
+        );
+        let mut output = [0u8; B256::len_bytes()];
+        if SyscallResult::is_ok(exit_code) {
+            self.native_sdk.read_output(&mut output, 0);
+        }
+        let value = B256::from_slice(&output);
         SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 

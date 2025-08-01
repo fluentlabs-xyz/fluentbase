@@ -43,3 +43,9 @@ std = [
     "serde_json/std",
 ]
 generate-genesis = [] # this feature is doing nothing now (genesis is always generated), kept it for backward compatibility, and will remove it once ready
+json = [
+	"fluentbase-erc20/json",
+	"fluentbase-evm/json",
+	"fluentbase-sdk/json",
+	"fluentbase-svm/json"
+]

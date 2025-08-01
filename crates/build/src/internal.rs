@@ -102,8 +102,9 @@ pub fn rust_to_wasm(config: RustToWasmConfig) -> PathBuf {
 
 pub fn wasm_to_wasmtime(wasm_path: &PathBuf) -> PathBuf {
     let wasm_bytecode = fs::read(wasm_path).unwrap();
+    let config = default_compilation_config();
     let module =
-        compile_wasmtime_module(&wasm_bytecode).expect("failed to compile wasmtime module");
+        compile_wasmtime_module(config, &wasm_bytecode).expect("failed to compile wasmtime module");
     let module_bytes = module
         .serialize()
         .expect("failed to serialize wasm bytecode");

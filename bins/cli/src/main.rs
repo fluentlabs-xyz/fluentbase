@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use fluentbase_build::{execute_build, Artifact, BuildArgs};
+use fluentbase_sdk::{rwasm_core};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
@@ -175,23 +176,22 @@ fn handle_verify(cmd: VerifyCommand) -> Result<()> {
     let build_result = execute_build(&build_args, Some(cmd.path))
         .context("Failed to build contract for verification")?;
 
-    // Get the rwasm path - required for verification
-    let rwasm_path = build_result.rwasm_path.ok_or_else(|| {
-        anyhow::anyhow!("rWASM artifact was not generated. This is required for verification.")
-    })?;
 
-    // Read the generated rwasm file
-    let rwasm_bytes = fs::read(&rwasm_path).context("Failed to read generated rwasm file")?;
+    // Read the generated wasm file
+    let wasm_bytes = fs::read(&build_result.wasm_path).context("Failed to read generated rwasm file")?;
 
-    // Calculate hash of locally built rwasm
-    let local_hash = calculate_hash(&rwasm_bytes);
+    // Calculate hash of locally built wasm
+    let local_hash = calculate_hash(&wasm_bytes);
 
-    // Fetch deployed bytecode from chain
+    // Fetch deployed bytecode from the network
     let deployed_bytecode = fetch_deployed_bytecode(&cmd.address, &cmd.rpc)
         .context("Failed to fetch deployed bytecode from chain")?;
 
-    // Calculate hash of deployed rwasm
-    let deployed_hash = calculate_hash(&deployed_bytecode);
+    let (deployed_module, _read_len) = rwasm_core::RwasmModule::new(&deployed_bytecode);
+
+    // Calculate hash of deployed wasm
+    let deployed_hash = calculate_hash(&deployed_module.wasm_section);
+
 
     // Get metadata path - required for version info
     let metadata_path = build_result.metadata_path.ok_or_else(|| {

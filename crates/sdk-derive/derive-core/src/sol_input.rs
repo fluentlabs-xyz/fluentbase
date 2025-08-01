@@ -94,14 +94,14 @@ fn convert_sol_to_rust(
                 Span::call_site(),
                 "Expected Solidity interface or contract, not type",
             ));
-        } /* TODO(d1r1): Handle JSON ABI
-           * #[cfg(feature = "json")]
-           * SolInputKind::Json(_, _) => {
-           *     return Err(syn::Error::new(
-           *         Span::call_site(),
-           *         "JSON ABI not supported in this macro",
-           *     ));
-           * } */
+        }
+        #[cfg(feature = "json")]
+        SolInputKind::Json(_, _) => {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "JSON ABI not supported in this macro",
+            ));
+        }
     };
 
     let mut visitor = Collector::default();

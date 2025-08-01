@@ -84,6 +84,17 @@ wasmtime = [
     "fluentbase-runtime/wasmtime",
     "rwasm-revm/wasmtime",
 ]
+json = [
+	"fluentbase-contracts/json",
+	"fluentbase-erc20/json",
+	"fluentbase-sdk/json",
+	"fluentbase-sdk-testing/json",
+	"fluentbase-svm/json",
+	"op-revm/json",
+	"revm/json",
+	"rwasm-revm/json",
+	"fluentbase-genesis/json"
+]
 
 
 [[bench]]

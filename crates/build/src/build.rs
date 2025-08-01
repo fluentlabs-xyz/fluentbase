@@ -2,8 +2,7 @@ use crate::{docker, generators, Artifact, BuildArgs, BUILD_TARGET};
 use anyhow::{Context, Result};
 use cargo_metadata::{Metadata, MetadataCommand, Package};
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -17,6 +16,7 @@ pub struct BuildResult {
     pub abi_path: Option<PathBuf>,
     pub solidity_path: Option<PathBuf>,
     pub metadata_path: Option<PathBuf>,
+    pub foundry_metadata_path: Option<PathBuf>,
 }
 
 /// Executes the build process with Docker/local compilation and generates artifacts.
@@ -116,9 +116,12 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
         .cloned()
         .unwrap_or_else(|| find_mount_dir(&contract_dir));
 
-    // Determine Docker image that would be used for all generators
+    // Determine the Docker image that would be used for all generators
     let docker_image = if args.docker {
-        Some(docker::ensure_rust_image(&args.tag)?)
+        Some(docker::ensure_rust_image(&format!(
+            "{}:{}",
+            args.docker_image, args.docker_tag
+        ))?)
     } else {
         None
     };
@@ -188,41 +191,45 @@ fn build_wasm(
     docker_image: &Option<String>,
     mount_dir: &Path,
 ) -> Result<PathBuf> {
-    // Determine target directory based on build mode
-    let target_subdir = if docker_image.is_some() {
-        "docker"
-    } else {
-        "local"
-    };
     let target_dir = contract_dir
         .join("target")
-        .join(crate::HELPER_TARGET_SUBDIR)
-        .join(target_subdir);
+        .join(crate::HELPER_TARGET_SUBDIR);
     fs::create_dir_all(&target_dir)?;
 
     // Build cargo command
     let mut cargo_args = args.cargo_build_command();
 
-    // Add target dir for local builds
-    // TODO(d1r1): do we actually need to change target dir for local builds?
     if docker_image.is_none() {
         cargo_args.extend(["--target-dir".to_string(), target_dir.display().to_string()]);
+    } else {
+        cargo_args.extend([
+            "--target-dir".to_string(),
+            format!("./target/{}", crate::HELPER_TARGET_SUBDIR).to_string(),
+        ]);
     }
 
     // Run build
-    let env_vars = vec![("CARGO_ENCODED_RUSTFLAGS".to_string(), args.rustflags())];
+    let env_vars = vec![("CARGO_ENCODED_RUSTFLAGS".to_string(), args.rust_flags())];
 
     let docker_config = docker_image
         .as_ref()
         .map(|image| (image.as_str(), mount_dir));
 
-    run_command(&cargo_args, contract_dir, docker_config, &env_vars)?;
+    let rust_toolchain = args.toolchain_version(&contract_dir);
+
+    run_command(
+        &cargo_args,
+        contract_dir,
+        docker_config,
+        &env_vars,
+        &rust_toolchain,
+    )?;
 
     // Find the built WASM file
     let wasm_path = find_wasm_artifact(&target_dir, package)?;
 
     if args.wasm_opt {
-        optimize_wasm(&wasm_path, docker_config)?;
+        optimize_wasm(&wasm_path, docker_config, &rust_toolchain)?;
     }
 
     Ok(wasm_path)
@@ -289,7 +296,11 @@ fn find_wasm_artifact(target_dir: &Path, package: &Package) -> Result<PathBuf> {
     }
 }
 
-fn optimize_wasm(wasm_path: &Path, docker_config: Option<(&str, &Path)>) -> Result<()> {
+fn optimize_wasm(
+    wasm_path: &Path,
+    docker_config: Option<(&str, &Path)>,
+    rust_toolchain: &Option<String>,
+) -> Result<()> {
     let work_dir = wasm_path.parent().unwrap();
     let wasm_filename = wasm_path.file_name().unwrap().to_str().unwrap();
     let temp_filename = format!("{}.opt", wasm_filename);
@@ -308,6 +319,7 @@ fn optimize_wasm(wasm_path: &Path, docker_config: Option<(&str, &Path)>) -> Resu
         work_dir,
         docker_config,
         &[],
+        rust_toolchain,
     )?;
 
     fs::rename(work_dir.join(&temp_filename), wasm_path)?;
@@ -320,12 +332,13 @@ fn run_command<S: AsRef<str>>(
     work_dir: &Path,
     docker_config: Option<(&str, &Path)>,
     env_vars: &[(String, String)],
+    rust_toolchain: &Option<String>,
 ) -> Result<()> {
     let args: Vec<String> = args.iter().map(|s| s.as_ref().to_string()).collect();
 
     match docker_config {
         Some((image, mount_dir)) => {
-            docker::run_in_docker(image, &args, mount_dir, work_dir, env_vars)
+            docker::run_in_docker(image, &args, mount_dir, work_dir, env_vars, rust_toolchain)
         }
         None => {
             // Local execution
@@ -400,6 +413,7 @@ fn generate_artifacts(
             Artifact::Abi => 2,      // Depends on pre-generated ABI
             Artifact::Solidity => 3, // Depends on ABI
             Artifact::Metadata => 4, // Depends on everything else
+            Artifact::Foundry => 5,  // Depends on everything else
         }
     });
 
@@ -418,6 +432,7 @@ fn generate_artifacts(
                     output_dir,
                     docker_config,
                     &[],
+                    rust_toolchain,
                 )?;
                 result.wat_path = Some(output_dir.join("lib.wat"));
             }
@@ -468,6 +483,45 @@ fn generate_artifacts(
                 let meta_path = output_dir.join("metadata.json");
                 write_json(&meta_path, &metadata)?;
                 result.metadata_path = Some(meta_path);
+            }
+
+            Artifact::Foundry => {
+                let abi = abi.as_ref().expect("ABI should be pre-generated");
+                let wasm = wasm_data
+                    .get_or_insert_with(|| fs::read(wasm_path).expect("Failed to read WASM file"));
+
+                let rwasm_data_path = result
+                    .rwasm_path
+                    .as_ref()
+                    .expect("rwasm is required for Foundry artifact - generate rwasm first");
+
+                let rwasm_data =
+                    fs::read(rwasm_data_path).expect("rwasm should be generated at this point");
+
+                // Create minimal build metadata for Foundry artifact
+                // (if full metadata is needed, we'd need to generate it first)
+                let build_metadata = generators::metadata::generate(
+                    contract_dir,
+                    args,
+                    wasm,
+                    Some(&rwasm_data),
+                    docker_image.as_deref(),
+                    rust_toolchain.as_deref(),
+                )?;
+
+                let interface_path = format!("{}.wasm/interface.sol", package_name);
+                let foundry_artifact = generators::foundry::generate_artifact(
+                    package_name,
+                    &serde_json::to_value(abi)?,
+                    wasm,
+                    &rwasm_data,
+                    &build_metadata,
+                    &interface_path,
+                )?;
+
+                let foundry_path = output_dir.join("foundry.json");
+                write_json(&foundry_path, &foundry_artifact)?;
+                result.foundry_metadata_path = Some(foundry_path);
             }
         }
     }

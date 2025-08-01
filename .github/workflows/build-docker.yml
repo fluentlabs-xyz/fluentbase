@@ -2,19 +2,27 @@ name: Build Docker Image
 
 on:
     push:
-        branches:
-            - devel
         tags:
             - "v*"
-        paths:
-            - "crates/build/**"
-            - ".github/workflows/build-docker.yml"
     workflow_dispatch:
+        inputs:
+            custom_tag:
+                description: "Custom Docker image tag (e.g., v0.3.7-dev)"
+                required: true
+            push_latest:
+                description: "Also tag as latest"
+                required: false
+                default: false
+                type: boolean
 
 env:
     REGISTRY: ghcr.io
     IMAGE_NAME: ${{ github.repository_owner }}/fluentbase-build
-    RUST_VERSION: "1.87.0"
+    RUST_TOOLCHAIN: 1.88
+    BINARYEN_VERSION: 120
+    WABT_VERSION: 1.0.36
+    WABT_OS: ubuntu-20.04
+    PLATFORM: linux/amd64
 
 jobs:
     build:
@@ -39,42 +47,52 @@ jobs:
                   username: ${{ github.actor }}
                   password: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Get SDK revision for releases
-              id: sdk_rev
+            - name: Extract metadata (tag, tags, version)
+              id: meta
               run: |
-                  SDK_REV=""
-                  if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-                    # Для релизных тегов получаем коммит, на который указывает тег
-                    SDK_REV=$(git rev-parse --short "${{ github.ref_name }}")
-                    echo "SDK revision for release: ${SDK_REV}"
-                  fi
-                  echo "rev=${SDK_REV}" >> $GITHUB_OUTPUT
-
-            - name: Generate Docker tags
-              id: tags
-              run: |
-                  TAGS=""
                   SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)
 
-                  if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-                    VERSION=${GITHUB_REF#refs/tags/}
-                    TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
-                    TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-                  elif [[ "${{ github.ref_name }}" == "devel" ]]; then
-                    TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:devel-${SHA_SHORT}"
-                    TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:devel"
+                  # Manual workflow dispatch with custom tag
+                  if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+                      VERSION="${{ inputs.custom_tag }}"
+                      TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
+                      if [[ "${{ inputs.push_latest }}" == "true" ]]; then
+                          TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                      fi
+                      echo "🚀 Manual build triggered with custom tag: ${VERSION}"
+                  # Automatic push with git tag
+                  elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+                      VERSION="${GITHUB_REF#refs/tags/}"
+                      TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                      echo "🏷️ Git tag build: ${VERSION}"
+                  # Push to branch (development)
+                  else
+                      VERSION="dev-$SHA_SHORT"
+                      TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
+                      echo "🔧 Development build: ${VERSION}"
                   fi
 
                   echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+                  echo "sdk_version=${VERSION}" >> $GITHUB_OUTPUT
+                  echo "Final tags: ${TAGS}"
 
             - name: Build and push Docker image
               uses: docker/build-push-action@v6
               with:
                   context: ./
                   file: ./Dockerfile
-                  platforms: linux/amd64
+                  platforms: ${{ env.PLATFORM }}
                   push: true
-                  tags: ${{ steps.tags.outputs.tags }}
+                  tags: ${{ steps.meta.outputs.tags }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+                  build-args: |
+                      RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
+                      PLATFORM=${{ env.PLATFORM }}
+                      SDK_VERSION=${{ steps.meta.outputs.sdk_version }}
+                      BINARYEN_VERSION=${{ env.BINARYEN_VERSION }}
+                      WABT_VERSION=${{ env.WABT_VERSION }}
+                      WABT_OS=${{ env.WABT_OS }}
                   labels: |
                       org.opencontainers.image.source=${{ github.event.repository.html_url }}
                       org.opencontainers.image.revision=${{ github.sha }}
@@ -82,30 +100,27 @@ jobs:
                       org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
                       org.opencontainers.image.title=Fluent Build Environment
                       org.opencontainers.image.description=Docker image for building Fluent smart contracts
-                      rust.version=${{ env.RUST_VERSION }}
-                      fluentbase.sdk.rev=${{ steps.sdk_rev.outputs.rev }}
-                #   cache-from: type=gha
-                #   cache-to: type=gha,mode=max
-                  build-args: |
-                      BINARYEN_VERSION=120
-                      RUST_VERSION=${{ env.RUST_VERSION }}
-                      FLUENTBASE_SDK_REV=${{ steps.sdk_rev.outputs.rev }}
+                      rust.toolchain=${{ env.RUST_TOOLCHAIN }}
+                      fluentbase.sdk.version=${{ steps.meta.outputs.sdk_version }}
 
             - name: Print summary
               run: |
                   echo "### Docker Image Published 🚀" >> $GITHUB_STEP_SUMMARY
                   echo "" >> $GITHUB_STEP_SUMMARY
-                  echo "**Rust Version:** \`${{ env.RUST_VERSION }}\`" >> $GITHUB_STEP_SUMMARY
-                  if [ -n "${{ steps.sdk_rev.outputs.rev }}" ]; then
-                    echo "**SDK Revision (cached):** \`${{ steps.sdk_rev.outputs.rev }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "**Build Type:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "**Rust Toolchain:** \`${{ env.RUST_TOOLCHAIN }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "**SDK Version:** \`${{ steps.meta.outputs.sdk_version }}\`" >> $GITHUB_STEP_SUMMARY
+                  if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+                      echo "**Custom Tag:** \`${{ inputs.custom_tag }}\`" >> $GITHUB_STEP_SUMMARY
+                      echo "**Push Latest:** \`${{ inputs.push_latest }}\`" >> $GITHUB_STEP_SUMMARY
                   fi
                   echo "" >> $GITHUB_STEP_SUMMARY
                   echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
-                  IFS=',' read -ra ADDR <<< "${{ steps.tags.outputs.tags }}"
+                  IFS=',' read -ra ADDR <<< "${{ steps.meta.outputs.tags }}"
                   for tag in "${ADDR[@]}"; do
                     echo "- \`${tag}\`" >> $GITHUB_STEP_SUMMARY
                   done
                   echo "" >> $GITHUB_STEP_SUMMARY
                   echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-                  echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "**Branch/Tag:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
                   echo "**Actor:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY

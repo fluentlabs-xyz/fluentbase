@@ -1,10 +1,80 @@
+# Build artifacts
 target/
+**/target/
+*.wasm
+*.wat
+
+# Git and version control
 .git/
-revm/target/
-e2e/target/
-examples/*/target/
-contracts/*/target/
-**/*.wasm
-**/node_modules/
-.idea/
+.gitignore
+.gitmodules
+
+# Documentation
+README.md
+*.md
+docs/
+LICENSE*
+CONTRIBUTING.md
+CHANGELOG.md
+MIGRATION_GUIDE.md
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+azure-pipelines.yml
+Jenkinsfile
+codecov.yml
+
+# IDE and editor files
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+
+# Testing and benchmarking
+tests/
+test_*
+*_test.rs
+coverage/
+**/*_tests.rs
+**/*test*.rs
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Package manager files
+node_modules/
+yarn.lock
+package-lock.json
+
+# Configuration files
+Cross.toml
+typos.toml
+book.toml
+funding.json
+
+# Assets and binaries
+assets/
+**/assets/
+*.bin
+*.sol
+*.hex
+*.pem

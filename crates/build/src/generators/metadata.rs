@@ -202,7 +202,7 @@ pub fn generate(
     // Docker image info if applicable
     let docker_image = docker_image_used.map(|image| DockerImageInfo {
         image_used: image.to_string(),
-        base_tag: args.tag.clone(),
+        base_tag: args.docker_tag.clone(),
         image_id: docker::get_image_id(image).ok(),
     });
 

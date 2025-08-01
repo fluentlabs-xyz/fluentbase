@@ -361,6 +361,10 @@ impl SharedAPI for HostTestingContext {
         unimplemented!("not supported for testing context")
     }
 
+    fn block_hash(&self, _number: u64) -> SyscallResult<B256> {
+        unimplemented!("not supported for testing context")
+    }
+
     fn code_size(&self, _address: &Address) -> SyscallResult<u32> {
         unimplemented!("not supported for testing context")
     }

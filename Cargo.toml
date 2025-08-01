@@ -14,7 +14,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
@@ -99,7 +99,7 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", rev = "5bfe99ae", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", rev = "853d86b9", default-features = false }
 #rwasm = { path = "../rwasm", default-features = false }
 
 # alloy

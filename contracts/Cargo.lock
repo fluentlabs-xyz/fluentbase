@@ -1768,7 +1768,7 @@ checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1780,7 +1780,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1972,7 +1972,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-erc20"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "bincode 2.0.1",
  "fluentbase-sdk",
@@ -1980,7 +1980,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -2128,7 +2128,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2150,7 +2150,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-sdk-derive",
@@ -2160,7 +2160,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2195,7 +2195,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-testing"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-runtime",
@@ -2209,7 +2209,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "ark-bn254",
  "bincode 2.0.1",
@@ -2258,7 +2258,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -3084,6 +3084,12 @@ checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
 ]
+
+[[package]]
+name = "multi-stash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "685a9ac4b61f4e728e1d2c6a7844609c16527aeb5e6c865915c08e619c16410f"
 
 [[package]]
 name = "ntapi"
@@ -4370,7 +4376,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?rev=5bfe99ae#5bfe99ae967bd6b1e9b25408a8769bc1a4dfd63e"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?rev=853d86b9#853d86b9faa87685c13d65eb7aef5d43387b81e6"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -4379,17 +4385,19 @@ dependencies = [
  "downcast-rs",
  "hashbrown 0.15.4",
  "libm",
+ "num-derive",
  "num-traits",
  "paste",
  "smallvec",
  "tiny-keccak",
+ "wasmi",
  "wasmparser-nostd",
  "wasmtime",
 ]
 
 [[package]]
 name = "rwasm-revm"
-version = "0.3.6-dev"
+version = "0.3.7-dev"
 dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -5905,6 +5913,55 @@ checksum = "b3bc393c395cb621367ff02d854179882b9a351b4e0c93d1397e6090b53a5c2a"
 dependencies = [
  "leb128fmt",
  "wasmparser 0.235.0",
+]
+
+[[package]]
+name = "wasmi"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c63b9ec4d4ba7754a81c6143967a878586d60431970a6dd1ae1b51fe4f4cc28b"
+dependencies = [
+ "arrayvec",
+ "multi-stash",
+ "smallvec",
+ "spin 0.9.8",
+ "wasmi_collections",
+ "wasmi_core",
+ "wasmi_ir",
+ "wasmparser 0.228.0",
+]
+
+[[package]]
+name = "wasmi_collections"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09b94ec9c51b94bcfaa8485aaea400fc38c082d4fab7acbabd02b5d90cd8fe44"
+
+[[package]]
+name = "wasmi_core"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34c89630ed2abff8a4d4c067b0d177f4c2b7ceecdb22512001f9075f804f15e7"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "wasmi_ir"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "970d16ec098d3ce6127ead10986ab4e6f4063a950b4b2968cd360b35340e7675"
+dependencies = [
+ "wasmi_core",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.228.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4abf1132c1fdf747d56bbc1bb52152400c70f336870f968b85e89ea422198ae3"
+dependencies = [
+ "bitflags",
 ]
 
 [[package]]

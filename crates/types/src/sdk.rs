@@ -130,6 +130,8 @@ pub trait SharedAPI: StorageAPI + MetadataAPI {
 
     fn self_balance(&self) -> SyscallResult<U256>;
     fn balance(&self, address: &Address) -> SyscallResult<U256>;
+
+    fn block_hash(&self, block_number: u64) -> SyscallResult<B256>;
     fn code_size(&self, address: &Address) -> SyscallResult<u32>;
     fn code_hash(&self, address: &Address) -> SyscallResult<B256>;
     fn code_copy(
