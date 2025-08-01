@@ -61,6 +61,52 @@ mod tests {
             todo!()
         }
 
+        fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_edwards_multiscalar_mul(
+            pairs: &[([u8; 32], [u8; 32])],
+            out: &mut [u8; 32],
+        ) -> bool {
+            todo!()
+        }
+
+        fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_ristretto_multiscalar_mul(
+            pairs: &[([u8; 32], [u8; 32])],
+            out: &mut [u8; 32],
+        ) -> bool {
+            todo!()
+        }
+
         fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
             todo!()
         }
