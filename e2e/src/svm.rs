@@ -1220,51 +1220,51 @@ mod tests {
         test_commands.push(test_case_original.clone().into());
         test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
 
-        // // commutativity
-        // assert_eq!(
-        //     add_edwards(&point_a, &point_b).unwrap(),
-        //     add_edwards(&point_b, &point_a).unwrap(),
-        // );
-        // test_commands.push(
-        //     CurveGroupOpOriginal {
-        //         // a + b = b + a
-        //         curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-        //         group_op: solana_curve25519::curve_syscall_traits::ADD,
-        //         left_input: point_a.0,
-        //         right_input: point_b.0,
-        //         expected_point: add_edwards(&point_b, &point_a).unwrap().0,
-        //         expected_ret: 0, // OK
-        //     }
-        //     .into(),
-        // );
-        // test_commands.push(
-        //     CurveGroupOpOriginal {
-        //         // b + a = a + b
-        //         curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-        //         group_op: solana_curve25519::curve_syscall_traits::ADD,
-        //         left_input: point_b.0,
-        //         right_input: point_a.0,
-        //         expected_point: add_edwards(&point_a, &point_b).unwrap().0,
-        //         expected_ret: 0, // OK
-        //     }
-        //     .into(),
-        // );
-        //
-        // // subtraction
-        // let point = PodEdwardsPoint(ED25519_BASEPOINT_POINT.compress().to_bytes());
-        // let point_negated = PodEdwardsPoint((-ED25519_BASEPOINT_POINT).compress().to_bytes());
-        // assert_eq!(point_negated, subtract_edwards(&identity, &point).unwrap(),);
-        // test_commands.push(
-        //     CurveGroupOpOriginal {
-        //         curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-        //         group_op: solana_curve25519::curve_syscall_traits::SUB,
-        //         left_input: identity.0,
-        //         right_input: point.0,
-        //         expected_point: point_negated.0,
-        //         expected_ret: 0, // OK
-        //     }
-        //     .into(),
-        // );
+        // commutativity
+        assert_eq!(
+            add_edwards(&point_a, &point_b).unwrap(),
+            add_edwards(&point_b, &point_a).unwrap(),
+        );
+        let test_case_original = CurveGroupOpOriginal {
+            // a + b = b + a
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_a.0,
+            right_input: point_b.0,
+            expected_point: add_edwards(&point_b, &point_a).unwrap().0,
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        let test_case_original = CurveGroupOpOriginal {
+            // b + a = a + b
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_b.0,
+            right_input: point_a.0,
+            expected_point: add_edwards(&point_a, &point_b).unwrap().0,
+            expected_ret: 0, // OK
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+
+        // subtraction
+        let point = PodEdwardsPoint(ED25519_BASEPOINT_POINT.compress().to_bytes());
+        let point_negated = PodEdwardsPoint((-ED25519_BASEPOINT_POINT).compress().to_bytes());
+        assert_eq!(point_negated, subtract_edwards(&identity, &point).unwrap(),);
+        test_commands.push(
+            CurveGroupOpOriginal {
+                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+                group_op: solana_curve25519::curve_syscall_traits::SUB,
+                left_input: identity.0,
+                right_input: point.0,
+                expected_point: point_negated.0,
+                expected_ret: 0, // OK
+            }
+            .into(),
+        );
 
         process_test_commands(
             &mut ctx,
