@@ -73,6 +73,12 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
         &[ValType::I32; 1]
     );
     import_function!(
+        "_ed25519_edwards_multiscalar_mul",
+        ED25519_EDWARDS_MULTISCALAR_MUL,
+        &[ValType::I32; 3],
+        &[ValType::I32; 1]
+    );
+    import_function!(
         "_ed25519_ristretto_decompress_validate",
         ED25519_RISTRETTO_DECOMPRESS_VALIDATE,
         &[ValType::I32; 1],
@@ -94,6 +100,12 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
         "_ed25519_ristretto_mul",
         ED25519_RISTRETTO_MUL,
         &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_ristretto_multiscalar_mul",
+        ED25519_RISTRETTO_MULTISCALAR_MUL,
+        &[ValType::I32; 3],
         &[ValType::I32; 1]
     );
     import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);

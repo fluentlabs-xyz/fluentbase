@@ -39,30 +39,28 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMultiPairingAssign<E> {
         let pairs_byte_len = PAIRING_ELEMENT_LEN.saturating_mul(pairs_count as usize);
 
         // Read p and q values from memory
-        let mut pairs = vec![0u8; pairs_byte_len];
-        caller.memory_read(pairs_ptr as usize, &mut pairs)?;
+        let mut pair_elements = vec![0u8; pairs_byte_len];
+        caller.memory_read(pairs_ptr as usize, &mut pair_elements)?;
 
-        // Write the result back to memory at the p_ptr location
-        let result_vec = Self::fn_impl(
-            &pairs
-                .chunks(PAIRING_ELEMENT_LEN)
-                .map(|v| {
-                    let g1: [u8; G1_POINT_SIZE] =
-                        unsafe { core::slice::from_raw_parts(v.as_ptr(), G1_POINT_SIZE) }
-                            .try_into()
-                            .unwrap();
-                    let g2: [u8; G2_POINT_SIZE] = unsafe {
-                        core::slice::from_raw_parts(
-                            v[G1_POINT_SIZE..G2_POINT_SIZE].as_ptr(),
-                            G2_POINT_SIZE,
-                        )
+        let pairs = pair_elements
+            .chunks(PAIRING_ELEMENT_LEN)
+            .map(|v| {
+                let g1: [u8; G1_POINT_SIZE] =
+                    unsafe { core::slice::from_raw_parts(v.as_ptr(), G1_POINT_SIZE) }
                         .try_into()
-                        .unwrap()
-                    };
-                    (g1, g2)
-                })
-                .collect::<Vec<([u8; 64], [u8; 128])>>(),
-        );
+                        .unwrap();
+                let g2: [u8; G2_POINT_SIZE] = unsafe {
+                    core::slice::from_raw_parts(
+                        v[G1_POINT_SIZE..G2_POINT_SIZE].as_ptr(),
+                        G2_POINT_SIZE,
+                    )
+                    .try_into()
+                    .unwrap()
+                };
+                (g1, g2)
+            })
+            .collect::<Vec<([u8; 64], [u8; 128])>>();
+        let result_vec = Self::fn_impl(&pairs);
         caller.memory_write(out_ptr as usize, &result_vec)?;
 
         Ok(())
@@ -115,10 +113,6 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMultiPairingAssign<E> {
     pub fn fn_impl(pairs: &[([u8; G1_POINT_SIZE], [u8; G2_POINT_SIZE])]) -> Vec<u8> {
         let mut vec_pairs: Vec<(G1, G2)> = Vec::new();
         for pair in pairs {
-            // let g1_words = cast_u8_to_u32(&pair.0).unwrap();
-            // let g2_words = cast_u8_to_u32(&pair.1).unwrap();
-            // let g1_affine = AffinePoint::<E>::from_words_le(&g1_words);
-            // let g2_affine = AffinePoint::<E>::from_words_le(&g2_words);
             let g1 = Self::g1_from_bytes(pair.0).unwrap();
             let g2 = Self::g2_from_bytes(pair.1).unwrap();
             vec_pairs.push((g1, g2));

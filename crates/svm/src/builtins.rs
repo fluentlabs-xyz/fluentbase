@@ -29,6 +29,7 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::{debug_log_ext, SharedAPI, B256};
+use itertools::Itertools;
 use solana_bn254::{
     prelude::{
         alt_bn128_multiplication,
@@ -140,16 +141,22 @@ pub fn register_builtins<SDK: SharedAPI>(
     function_registry
         .register_function_hashed("sol_curve_group_op", SyscallCurveGroupOps::vm)
         .unwrap();
-    #[cfg(feature = "enable-solana-extended-builtins")]
+    #[cfg(feature = "enable-solana-original-builtins")]
+    function_registry
+        .register_function_hashed(
+            "sol_curve_multiscalar_mul_original",
+            SyscallCurveMultiscalarMultiplicationOriginal::vm,
+        )
+        .unwrap();
+    #[cfg(not(feature = "enable-solana-original-builtins"))]
+    function_registry
+        .register_function_hashed("sol_curve_multiscalar_mul_original", SyscallStub::vm)
+        .unwrap();
     function_registry
         .register_function_hashed(
             "sol_curve_multiscalar_mul",
             SyscallCurveMultiscalarMultiplication::vm,
         )
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-extended-builtins"))]
-    function_registry
-        .register_function_hashed("sol_curve_multiscalar_mul", SyscallStub::vm)
         .unwrap();
     #[cfg(feature = "enable-solana-original-builtins")]
     function_registry
@@ -1649,7 +1656,7 @@ declare_builtin_function!(
     // Elliptic Curve Multiscalar Multiplication
     //
     // Currently, only curve25519 Edwards and Ristretto representations are supported
-    SyscallCurveMultiscalarMultiplication<SDK: SharedAPI>,
+    SyscallCurveMultiscalarMultiplicationOriginal<SDK: SharedAPI>,
     fn rust(
         invoke_context: &mut InvokeContext<SDK>,
         curve_id: u64,
@@ -1718,6 +1725,105 @@ declare_builtin_function!(
                         invoke_context.get_check_aligned(),
                     false,
                     )? = result_point;
+                    Ok(0)
+                } else {
+                    Ok(1)
+                }
+            }
+
+            _ => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&abort_on_invalid_curve::id())
+                {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
+        }
+    }
+);
+
+declare_builtin_function!(
+    // Elliptic Curve Multiscalar Multiplication
+    //
+    // Currently, only curve25519 Edwards and Ristretto representations are supported
+    SyscallCurveMultiscalarMultiplication<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        curve_id: u64,
+        scalars_addr: u64,
+        points_addr: u64,
+        points_len: u64,
+        result_point_addr: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use solana_curve25519::{curve_syscall_traits::*, edwards, ristretto, scalar};
+
+        if points_len > 512 {
+            return Err(Box::new(SyscallError::InvalidLength));
+        }
+
+        match curve_id {
+            CURVE25519_EDWARDS => {
+                let scalars = translate_slice::<scalar::PodScalar>(
+                    memory_mapping,
+                    scalars_addr,
+                    points_len,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let points = translate_slice::<edwards::PodEdwardsPoint>(
+                    memory_mapping,
+                    points_addr,
+                    points_len,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let mut result = [0u8; 32];
+                let pairs = points.as_slice().iter()
+                    .zip(scalars.as_slice().iter())
+                    .map(|v| (v.0.0, v.1.0)).collect_vec();
+                if SDK::ed25519_edwards_multiscalar_mul(&pairs, &mut result) {
+                    *translate_type_mut::<[u8; 32]>(
+                        memory_mapping,
+                        result_point_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )? = result;
+                    Ok(0)
+                } else {
+                    Ok(1)
+                }
+            }
+
+            CURVE25519_RISTRETTO => {
+                let scalars = translate_slice::<scalar::PodScalar>(
+                    memory_mapping,
+                    scalars_addr,
+                    points_len,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let points = translate_slice::<ristretto::PodRistrettoPoint>(
+                    memory_mapping,
+                    points_addr,
+                    points_len,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let mut result = [0u8; 32];
+                let pairs = points.as_slice().iter()
+                    .zip(scalars.as_slice().iter())
+                    .map(|v| (v.0.0, v.1.0)).collect_vec();
+                if SDK::ed25519_ristretto_multiscalar_mul(&pairs, &mut result) {
+                    *translate_type_mut::<[u8; 32]>(
+                        memory_mapping,
+                        result_point_addr,
+                        invoke_context.get_check_aligned(),
+                        false,
+                    )? = result;
                     Ok(0)
                 } else {
                     Ok(1)

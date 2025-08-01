@@ -4,10 +4,12 @@ pub mod debug_log;
 pub mod ed25519_edwards_add;
 pub mod ed25519_edwards_decompress_validate;
 pub mod ed25519_edwards_mul;
+pub mod ed25519_edwards_multiscalar_mul;
 pub mod ed25519_edwards_sub;
 pub mod ed25519_ristretto_add;
 pub mod ed25519_ristretto_decompress_validate;
 pub mod ed25519_ristretto_mul;
+pub mod ed25519_ristretto_multiscalar_mul;
 pub mod ed25519_ristretto_sub;
 pub mod ed_add;
 pub mod ed_decompress;
@@ -47,10 +49,12 @@ use crate::{
         ed25519_edwards_add::SyscallED25519EdwardsAdd,
         ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
         ed25519_edwards_mul::SyscallED25519EdwardsMul,
+        ed25519_edwards_multiscalar_mul::SyscallED25519EdwardsMultiscalarMul,
         ed25519_edwards_sub::SyscallED25519EdwardsSub,
         ed25519_ristretto_add::SyscallED25519RistrettoAdd,
         ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
         ed25519_ristretto_mul::SyscallED25519RistrettoMul,
+        ed25519_ristretto_multiscalar_mul::SyscallED25519RistrettoMultiscalarMul,
         ed25519_ristretto_sub::SyscallED25519RistrettoSub,
         ed_add::SyscallEdwardsAddAssign,
         ed_decompress::SyscallEdwardsDecompress,
@@ -130,10 +134,12 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::ED25519_EDWARDS_ADD => SyscallED25519EdwardsAdd::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_EDWARDS_SUB => SyscallED25519EdwardsSub::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_EDWARDS_MUL => SyscallED25519EdwardsMul::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_MULTISCALAR_MUL => SyscallED25519EdwardsMultiscalarMul::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_RISTRETTO_DECOMPRESS_VALIDATE => SyscallED25519RistrettoDecompressValidate::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_RISTRETTO_ADD => SyscallED25519RistrettoAdd::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_RISTRETTO_SUB => SyscallED25519RistrettoSub::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_RISTRETTO_MUL => SyscallED25519RistrettoMul::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_MULTISCALAR_MUL => SyscallED25519RistrettoMultiscalarMul::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_RECOVER => SyscallSecp256k1Recover::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_DECOMPRESS => SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller, params, result),
@@ -229,12 +235,4 @@ impl FieldOp2 for FieldSub {
             (ac1 + modulus - bc1) % modulus,
         )
     }
-}
-
-fn syscall_process_exit_code(
-    caller: &mut TypedCaller<RuntimeContext>,
-    exit_code: ExitCode,
-) -> TrapCode {
-    caller.context_mut(|ctx| ctx.execution_result.exit_code = exit_code.into());
-    TrapCode::ExecutionHalted
 }

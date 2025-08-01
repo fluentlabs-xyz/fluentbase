@@ -6,10 +6,12 @@ use crate::{
         ed25519_edwards_add::SyscallED25519EdwardsAdd,
         ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
         ed25519_edwards_mul::SyscallED25519EdwardsMul,
+        ed25519_edwards_multiscalar_mul::SyscallED25519EdwardsMultiscalarMul,
         ed25519_edwards_sub::SyscallED25519EdwardsSub,
         ed25519_ristretto_add::SyscallED25519RistrettoAdd,
         ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
         ed25519_ristretto_mul::SyscallED25519RistrettoMul,
+        ed25519_ristretto_multiscalar_mul::SyscallED25519RistrettoMultiscalarMul,
         ed25519_ristretto_sub::SyscallED25519RistrettoSub,
         exec::SyscallExec,
         exit::SyscallExit,
@@ -45,10 +47,7 @@ use fluentbase_types::{
     UnwrapExitCode,
     B256,
 };
-use sp1_curves::{
-    edwards::ed25519::Ed25519,
-    weierstrass::bn254::{Bn254, Bn254BaseField},
-};
+use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 #[derive(Default, Clone)]
@@ -93,6 +92,17 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallED25519EdwardsMul::fn_impl(p, q).is_ok()
     }
 
+    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool {
+        let result = SyscallED25519EdwardsMultiscalarMul::fn_impl(pairs);
+        match result {
+            Ok(v) => {
+                *out = v.compress().to_bytes();
+            }
+            Err(_) => return false,
+        }
+        true
+    }
+
     fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
         SyscallED25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
     }
@@ -107,6 +117,19 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         SyscallED25519RistrettoMul::fn_impl(p, q).is_ok()
+    }
+    fn ed25519_ristretto_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
+        let result = SyscallED25519RistrettoMultiscalarMul::fn_impl(pairs);
+        match result {
+            Ok(v) => {
+                *out = v.compress().to_bytes();
+            }
+            Err(_) => return false,
+        }
+        true
     }
 
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {

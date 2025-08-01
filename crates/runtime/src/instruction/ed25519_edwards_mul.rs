@@ -1,8 +1,6 @@
 use crate::{
-    instruction::{
-        ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
-        syscall_process_exit_code,
-    },
+    instruction::ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
+    utils::syscall_process_exit_code,
     RuntimeContext,
 };
 use curve25519_dalek::EdwardsPoint;

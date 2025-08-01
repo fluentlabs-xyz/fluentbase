@@ -162,12 +162,31 @@ impl From<CurveGroupOpOriginal> for CurveGroupOp {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CurveMultiscalarMultiplicationOriginal {
+    pub curve_id: u64,
+    pub scalars: Vec<[u8; 32]>,
+    pub points: Vec<[u8; 32]>,
+    pub expected_point: [u8; 32],
+    pub expected_ret: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurveMultiscalarMultiplication {
     pub curve_id: u64,
     pub scalars: Vec<[u8; 32]>,
     pub points: Vec<[u8; 32]>,
     pub expected_point: [u8; 32],
     pub expected_ret: u64,
+}
+impl From<CurveMultiscalarMultiplicationOriginal> for CurveMultiscalarMultiplication {
+    fn from(value: CurveMultiscalarMultiplicationOriginal) -> Self {
+        Self {
+            curve_id: value.curve_id,
+            scalars: value.scalars,
+            points: value.points,
+            expected_point: value.expected_point,
+            expected_ret: value.expected_ret,
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyscallAltBn128Original {
@@ -218,6 +237,7 @@ pub enum TestCommand {
     CurvePointValidation(CurvePointValidation),
     CurveGroupOpOriginal(CurveGroupOpOriginal),
     CurveGroupOp(CurveGroupOp),
+    CurveMultiscalarMultiplicationOriginal(CurveMultiscalarMultiplicationOriginal),
     CurveMultiscalarMultiplication(CurveMultiscalarMultiplication),
     SyscallAltBn128Original(SyscallAltBn128Original),
     SyscallAltBn128(SyscallAltBn128),
@@ -256,6 +276,7 @@ impl_from!(CurvePointValidationOriginal);
 impl_from!(CurvePointValidation);
 impl_from!(CurveGroupOpOriginal);
 impl_from!(CurveGroupOp);
+impl_from!(CurveMultiscalarMultiplicationOriginal);
 impl_from!(CurveMultiscalarMultiplication);
 impl_from!(SyscallAltBn128Original);
 impl_from!(SyscallAltBn128);

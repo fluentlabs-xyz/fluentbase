@@ -7,6 +7,7 @@ use fluentbase_examples_svm_bindings::{
     curve_group_op_native,
     curve_group_op_original_native,
     curve_multiscalar_mul_native,
+    curve_multiscalar_mul_original_native,
     curve_validate_point_native,
     curve_validate_point_original_native,
     get_return_data,
@@ -359,6 +360,17 @@ pub fn process_instruction(
             );
             assert_eq!(result, p.expected_ret);
             assert_eq!(&p.expected_point, &result_point);
+        }
+        TestCommand::CurveMultiscalarMultiplicationOriginal(p) => {
+            let mut result_point = [0u8; 32];
+            let result = curve_multiscalar_mul_original_native(
+                p.curve_id,
+                &p.scalars,
+                &p.points,
+                &mut result_point,
+            );
+            assert_eq!(result, p.expected_ret);
+            assert_eq!(&p.expected_point, &result_point)
         }
         TestCommand::CurveMultiscalarMultiplication(p) => {
             let mut result_point = [0u8; 32];

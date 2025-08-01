@@ -1,8 +1,6 @@
 use crate::{
-    instruction::{
-        ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
-        syscall_process_exit_code,
-    },
+    instruction::ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
+    utils::syscall_process_exit_code,
     RuntimeContext,
 };
 use curve25519_dalek::RistrettoPoint;

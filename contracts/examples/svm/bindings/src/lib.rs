@@ -271,6 +271,31 @@ pub fn curve_group_op_native(
     }
 }
 extern "C" {
+    fn sol_curve_multiscalar_mul_original(
+        curve_id: u64,
+        scalars_addr: *const u8,
+        points_addr: *const u8,
+        scalars_points_len: u64,
+        result_point_addr: *mut u8,
+    ) -> ReturnValue;
+}
+pub fn curve_multiscalar_mul_original_native(
+    curve_id: u64,
+    scalars: &[[u8; 32]],
+    points: &[[u8; 32]],
+    result_point: &mut [u8; 32],
+) -> ReturnValue {
+    unsafe {
+        sol_curve_multiscalar_mul_original(
+            curve_id,
+            scalars.as_ptr() as *const u8,
+            points.as_ptr() as *const u8,
+            points.len() as u64,
+            result_point.as_mut_ptr(),
+        )
+    }
+}
+extern "C" {
     fn sol_curve_multiscalar_mul(
         curve_id: u64,
         scalars_addr: *const u8,

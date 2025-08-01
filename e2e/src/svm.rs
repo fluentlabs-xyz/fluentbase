@@ -37,8 +37,6 @@ mod tests {
     #[cfg(feature = "enable-solana-extended-builtins")]
     use fluentbase_svm_shared::test_structs::Blake3;
     #[cfg(feature = "enable-solana-extended-builtins")]
-    use fluentbase_svm_shared::test_structs::CurveMultiscalarMultiplication;
-    #[cfg(feature = "enable-solana-extended-builtins")]
     use fluentbase_svm_shared::test_structs::Poseidon;
     #[cfg(feature = "enable-solana-extended-builtins")]
     use fluentbase_svm_shared::test_structs::SolBigModExp;
@@ -48,6 +46,8 @@ mod tests {
             CreateAccountAndModifySomeData1,
             CurveGroupOp,
             CurveGroupOpOriginal,
+            CurveMultiscalarMultiplication,
+            CurveMultiscalarMultiplicationOriginal,
             CurvePointValidation,
             CurvePointValidationOriginal,
             Keccak256,
@@ -85,13 +85,21 @@ mod tests {
         prelude::{alt_bn128_addition, ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING},
         target_arch::{alt_bn128_multiplication, alt_bn128_pairing},
     };
-    #[cfg(feature = "enable-solana-extended-builtins")]
-    use solana_curve25519::edwards::multiply_edwards;
-    #[cfg(feature = "enable-solana-extended-builtins")]
-    use solana_curve25519::edwards::multiscalar_multiply_edwards;
     use solana_curve25519::{
-        edwards::{add_edwards, subtract_edwards, PodEdwardsPoint},
-        ristretto::{add_ristretto, multiply_ristretto, subtract_ristretto, PodRistrettoPoint},
+        edwards::{
+            add_edwards,
+            multiply_edwards,
+            multiscalar_multiply_edwards,
+            subtract_edwards,
+            PodEdwardsPoint,
+        },
+        ristretto::{
+            add_ristretto,
+            multiply_ristretto,
+            multiscalar_multiply_ristretto,
+            subtract_ristretto,
+            PodRistrettoPoint,
+        },
         scalar::PodScalar,
     };
     #[cfg(feature = "enable-solana-extended-builtins")]
@@ -1431,7 +1439,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_sol_curve_multiscalar_mul() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1463,16 +1470,17 @@ mod tests {
         let basic_product = multiply_edwards(&scalar, &point).unwrap();
         let msm_product = multiscalar_multiply_edwards(&[scalar], &[point]).unwrap();
         assert_eq!(basic_product, msm_product);
-        test_commands.push(
-            CurveMultiscalarMultiplication {
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                scalars: vec![scalar.0],
-                points: vec![point.0],
-                expected_point: basic_product.0,
-                expected_ret: EXPECTED_RET_OK,
-            }
-            .into(),
-        );
+        let test_case_original = CurveMultiscalarMultiplicationOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            scalars: vec![scalar.0],
+            points: vec![point.0],
+            expected_point: basic_product.0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands
+            .push(<CurveMultiscalarMultiplication as From<_>>::from(test_case_original).into());
 
         let scalar_a = PodScalar([
             246, 154, 34, 110, 31, 185, 50, 1, 252, 194, 163, 56, 211, 18, 101, 192, 57, 225, 207,
@@ -1496,16 +1504,74 @@ mod tests {
         let msm_product =
             multiscalar_multiply_edwards(&[scalar_a, scalar_b], &[point_x, point_y]).unwrap();
         assert_eq!(basic_product, msm_product);
-        test_commands.push(
-            CurveMultiscalarMultiplication {
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                scalars: vec![scalar_a.0, scalar_b.0],
-                points: vec![point_x.0, point_y.0],
-                expected_point: basic_product.0,
-                expected_ret: EXPECTED_RET_OK,
-            }
-            .into(),
-        );
+        let test_case_original = CurveMultiscalarMultiplicationOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            scalars: vec![scalar_a.0, scalar_b.0],
+            points: vec![point_x.0, point_y.0],
+            expected_point: basic_product.0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands
+            .push(<CurveMultiscalarMultiplication as From<_>>::from(test_case_original).into());
+
+        let scalar = PodScalar([
+            123, 108, 109, 66, 154, 185, 88, 122, 178, 43, 17, 154, 201, 223, 31, 238, 59, 215, 71,
+            154, 215, 143, 177, 158, 9, 136, 32, 223, 139, 13, 133, 5,
+        ]);
+        let point = PodRistrettoPoint([
+            158, 2, 130, 90, 148, 36, 172, 155, 86, 196, 74, 139, 30, 98, 44, 225, 155, 207, 135,
+            111, 238, 167, 235, 67, 234, 125, 0, 227, 146, 31, 24, 113,
+        ]);
+        let basic_product = multiply_ristretto(&scalar, &point).unwrap();
+        let msm_product = multiscalar_multiply_ristretto(&[scalar], &[point]).unwrap();
+        assert_eq!(basic_product, msm_product);
+        let test_case_original = CurveMultiscalarMultiplicationOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            scalars: vec![scalar.0],
+            points: vec![point.0],
+            expected_point: basic_product.0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands
+            .push(<CurveMultiscalarMultiplication as From<_>>::from(test_case_original).into());
+
+        let scalar_a = PodScalar([
+            8, 161, 219, 155, 192, 137, 153, 26, 27, 40, 30, 17, 124, 194, 26, 41, 32, 7, 161, 45,
+            212, 198, 212, 81, 133, 185, 164, 85, 95, 232, 106, 10,
+        ]);
+        let scalar_b = PodScalar([
+            135, 207, 106, 208, 107, 127, 46, 82, 66, 22, 136, 125, 105, 62, 69, 34, 213, 210, 17,
+            196, 120, 114, 238, 237, 149, 170, 5, 243, 54, 77, 172, 12,
+        ]);
+        let point_x = PodRistrettoPoint([
+            130, 35, 97, 25, 18, 199, 33, 239, 85, 143, 119, 111, 49, 51, 224, 40, 167, 185, 240,
+            179, 25, 194, 213, 41, 14, 155, 104, 18, 181, 197, 15, 112,
+        ]);
+        let point_y = PodRistrettoPoint([
+            152, 156, 155, 197, 152, 232, 92, 206, 219, 159, 193, 134, 121, 128, 139, 36, 56, 191,
+            51, 143, 72, 204, 87, 76, 110, 124, 101, 96, 238, 158, 42, 108,
+        ]);
+        let ax = multiply_ristretto(&scalar_a, &point_x).unwrap();
+        let by = multiply_ristretto(&scalar_b, &point_y).unwrap();
+        let basic_product = add_ristretto(&ax, &by).unwrap();
+        let msm_product =
+            multiscalar_multiply_ristretto(&[scalar_a, scalar_b], &[point_x, point_y]).unwrap();
+        assert_eq!(basic_product, msm_product);
+        let test_case_original = CurveMultiscalarMultiplicationOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            scalars: vec![scalar_a.0, scalar_b.0],
+            points: vec![point_x.0, point_y.0],
+            expected_point: basic_product.0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands
+            .push(<CurveMultiscalarMultiplication as From<_>>::from(test_case_original).into());
 
         process_test_commands(
             &mut ctx,

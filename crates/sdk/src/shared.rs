@@ -221,6 +221,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::ed25519_edwards_mul(p, q)
     }
 
+    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool {
+        API::ed25519_edwards_multiscalar_mul(pairs, out)
+    }
+
     fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
         API::ed25519_ristretto_decompress_validate(p)
     }
@@ -235,6 +239,13 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
 
     fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         API::ed25519_ristretto_mul(p, q)
+    }
+
+    fn ed25519_ristretto_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
+        API::ed25519_ristretto_multiscalar_mul(pairs, out)
     }
 
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
