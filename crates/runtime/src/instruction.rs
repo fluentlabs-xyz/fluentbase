@@ -88,7 +88,7 @@ use crate::{
     },
     RuntimeContext,
 };
-use fluentbase_types::{ExitCode, SysFuncIdx};
+use fluentbase_types::SysFuncIdx;
 use num::BigUint;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::{

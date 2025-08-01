@@ -42,14 +42,14 @@ impl SyscallED25519RistrettoMultiscalarMul {
                 let point: [u8; POINT_LEN] =
                     unsafe { core::slice::from_raw_parts(v.as_ptr(), POINT_LEN) }
                         .try_into()
-                        .map_err(|e| ExitCode::MalformedBuiltinParams)?;
+                        .map_err(|_e| ExitCode::MalformedBuiltinParams)?;
                 let scalar: [u8; SCALAR_LEN] = unsafe {
                     core::slice::from_raw_parts(
                         v[POINT_LEN..(POINT_LEN + SCALAR_LEN)].as_ptr(),
                         SCALAR_LEN,
                     )
                     .try_into()
-                    .map_err(|e| ExitCode::MalformedBuiltinParams)?
+                    .map_err(|_e| ExitCode::MalformedBuiltinParams)?
                 };
                 Ok((point, scalar))
             })

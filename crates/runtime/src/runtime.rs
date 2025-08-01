@@ -81,9 +81,15 @@ impl CachingRuntime {
         let rwasm_module = Rc::new(RwasmModule::new_or_empty(rwasm_bytecode.as_ref()).0);
         #[cfg(feature = "wasmtime")]
         if fluentbase_types::is_system_precompile(&address) {
-            let config = fluentbase_types::default_compilation_config();
-            let wasmtime_module =
-                rwasm::compile_wasmtime_module(config, &rwasm_module.wasm_section).unwrap();
+            let wasmtime_module = {
+                let lock =
+                    InterProcessLock::acquire_on_b256(FILE_NAME_PREFIX1, &code_hash).unwrap();
+                let config = fluentbase_types::default_compilation_config();
+                let wasmtime_module =
+                    rwasm::compile_wasmtime_module(config, &rwasm_module.wasm_section).unwrap();
+                drop(lock);
+                wasmtime_module
+            };
             let strategy = Arc::new(Strategy::Wasmtime {
                 module: Rc::new(wasmtime_module),
                 resumable: fluentbase_types::is_resumable_precompile(&address),
