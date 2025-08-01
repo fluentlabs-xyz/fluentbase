@@ -6,28 +6,13 @@ use crate::{
 use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    create_import_linker,
-    Address,
-    BytecodeOrHash,
-    Bytes,
-    ExitCode,
-    SysFuncIdx,
-    B256,
-    STATE_DEPLOY,
+    create_import_linker, Address, BytecodeOrHash, Bytes, ExitCode, SysFuncIdx, B256, STATE_DEPLOY,
     STATE_MAIN,
 };
 use hashbrown::{hash_map::Entry, HashMap};
 use rwasm::{
-    ExecutionEngine,
-    ExecutorConfig,
-    ImportLinker,
-    RwasmModule,
-    Store,
-    Strategy,
-    TrapCode,
-    TypedCaller,
-    TypedStore,
-    Value,
+    ExecutionEngine, ExecutorConfig, ImportLinker, RwasmModule, Store, Strategy, TrapCode,
+    TypedCaller, TypedStore, Value,
 };
 use std::{cell::RefCell, fmt::Debug, mem::take, rc::Rc, sync::Arc};
 
