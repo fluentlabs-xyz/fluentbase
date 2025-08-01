@@ -6,6 +6,7 @@ mod tests {
     use curve25519_dalek::{
         constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT},
         EdwardsPoint,
+        RistrettoPoint,
     };
     use fluentbase_sdk::{
         address,
@@ -57,6 +58,8 @@ mod tests {
             SyscallAltBn128,
             SyscallAltBn128Original,
             TestCommand,
+            EXPECTED_RET_ERR,
+            EXPECTED_RET_OK,
         },
     };
     use fluentbase_types::default;
@@ -86,9 +89,11 @@ mod tests {
     use solana_curve25519::edwards::multiply_edwards;
     #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_curve25519::edwards::multiscalar_multiply_edwards;
-    use solana_curve25519::edwards::{add_edwards, subtract_edwards, PodEdwardsPoint};
-    #[cfg(feature = "enable-solana-extended-builtins")]
-    use solana_curve25519::scalar::PodScalar;
+    use solana_curve25519::{
+        edwards::{add_edwards, subtract_edwards, PodEdwardsPoint},
+        ristretto::{add_ristretto, multiply_ristretto, subtract_ristretto, PodRistrettoPoint},
+        scalar::PodScalar,
+    };
     #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_poseidon::{Endianness, Parameters};
     #[cfg(feature = "enable-solana-extended-builtins")]
@@ -981,7 +986,7 @@ mod tests {
         let test_case_original = CurvePointValidationOriginal {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             point: ED25519_BASEPOINT_POINT.compress().as_bytes().clone(),
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -999,7 +1004,7 @@ mod tests {
                 120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117, 38,
                 84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,
             ],
-            expected_ret: 1, // ERR
+            expected_ret: EXPECTED_RET_ERR,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1014,7 +1019,7 @@ mod tests {
         let test_case_original = CurvePointValidationOriginal {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             point: RISTRETTO_BASEPOINT_POINT.compress().as_bytes().clone(),
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1032,7 +1037,7 @@ mod tests {
                 120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117, 38,
                 84, 60, 87, 144, 161, 146, 42, 34, 91, 155, 158, 189, 121, 79,
             ],
-            expected_ret: 1, // ERR
+            expected_ret: EXPECTED_RET_ERR,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1091,7 +1096,7 @@ mod tests {
             left_input: point.0,
             right_input: identity.0,
             expected_point: point.0,
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1103,7 +1108,7 @@ mod tests {
             left_input: point.0,
             right_input: identity.0,
             expected_point: point.0,
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1127,7 +1132,7 @@ mod tests {
             left_input: scalar,
             right_input: right_point,
             expected_point,
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1157,7 +1162,7 @@ mod tests {
             left_input: point_a.0,
             right_input: point_b.0,
             expected_point: add_edwards(&point_a, &point_b).unwrap().0,
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1171,7 +1176,7 @@ mod tests {
             expected_point: add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c)
                 .unwrap()
                 .0,
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1184,7 +1189,7 @@ mod tests {
             left_input: point_b.0,
             right_input: point_c.0,
             expected_point: add_edwards(&point_b, &point_c).unwrap().0,
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1199,7 +1204,7 @@ mod tests {
             expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
                 .unwrap()
                 .0,
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1214,7 +1219,7 @@ mod tests {
             expected_point: add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap())
                 .unwrap()
                 .0,
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1232,7 +1237,7 @@ mod tests {
             left_input: point_a.0,
             right_input: point_b.0,
             expected_point: add_edwards(&point_b, &point_a).unwrap().0,
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1244,7 +1249,7 @@ mod tests {
             left_input: point_b.0,
             right_input: point_a.0,
             expected_point: add_edwards(&point_a, &point_b).unwrap().0,
-            expected_ret: 0, // OK
+            expected_ret: EXPECTED_RET_OK,
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
@@ -1254,17 +1259,166 @@ mod tests {
         let point = PodEdwardsPoint(ED25519_BASEPOINT_POINT.compress().to_bytes());
         let point_negated = PodEdwardsPoint((-ED25519_BASEPOINT_POINT).compress().to_bytes());
         assert_eq!(point_negated, subtract_edwards(&identity, &point).unwrap(),);
-        test_commands.push(
-            CurveGroupOpOriginal {
-                curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
-                group_op: solana_curve25519::curve_syscall_traits::SUB,
-                left_input: identity.0,
-                right_input: point.0,
-                expected_point: point_negated.0,
-                expected_ret: 0, // OK
-            }
-            .into(),
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
+            group_op: solana_curve25519::curve_syscall_traits::SUB,
+            left_input: identity.0,
+            right_input: point.0,
+            expected_point: point_negated.0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+
+        // RISTRETTO
+        // identity
+        let identity = PodRistrettoPoint(RistrettoPoint::identity().compress().to_bytes());
+        let point = PodRistrettoPoint([
+            210, 174, 124, 127, 67, 77, 11, 114, 71, 63, 168, 136, 113, 20, 141, 228, 195, 254,
+            232, 229, 220, 249, 213, 232, 61, 238, 152, 249, 83, 225, 206, 16,
+        ]);
+        assert_eq!(add_ristretto(&point, &identity).unwrap(), point);
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point.0,
+            right_input: identity.0,
+            expected_point: add_ristretto(&point, &identity).unwrap().0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        assert_eq!(subtract_ristretto(&point, &identity).unwrap(), point);
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            group_op: solana_curve25519::curve_syscall_traits::SUB,
+            left_input: point.0,
+            right_input: identity.0,
+            expected_point: subtract_ristretto(&point, &identity).unwrap().0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+
+        // associativity
+        let point_a = PodRistrettoPoint([
+            208, 165, 125, 204, 2, 100, 218, 17, 170, 194, 23, 9, 102, 156, 134, 136, 217, 190, 98,
+            34, 183, 194, 228, 153, 92, 11, 108, 103, 28, 57, 88, 15,
+        ]);
+        let point_b = PodRistrettoPoint([
+            208, 241, 72, 163, 73, 53, 32, 174, 54, 194, 71, 8, 70, 181, 244, 199, 93, 147, 99,
+            231, 162, 127, 25, 40, 39, 19, 140, 132, 112, 212, 145, 108,
+        ]);
+        let point_c = PodRistrettoPoint([
+            250, 61, 200, 25, 195, 15, 144, 179, 24, 17, 252, 167, 247, 44, 47, 41, 104, 237, 49,
+            137, 231, 173, 86, 106, 121, 249, 245, 247, 70, 188, 31, 49,
+        ]);
+        assert_eq!(
+            add_ristretto(&add_ristretto(&point_a, &point_b).unwrap(), &point_c),
+            add_ristretto(&point_a, &add_ristretto(&point_b, &point_c).unwrap()),
         );
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: add_ristretto(&point_a, &point_b).unwrap().0,
+            right_input: point_c.0,
+            expected_point: add_ristretto(&point_a, &add_ristretto(&point_b, &point_c).unwrap())
+                .unwrap()
+                .0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        assert_eq!(
+            subtract_ristretto(&subtract_ristretto(&point_a, &point_b).unwrap(), &point_c),
+            subtract_ristretto(&point_a, &add_ristretto(&point_b, &point_c).unwrap()),
+        );
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            group_op: solana_curve25519::curve_syscall_traits::SUB,
+            left_input: subtract_ristretto(&point_a, &point_b).unwrap().0,
+            right_input: point_c.0,
+            expected_point: subtract_ristretto(
+                &point_a,
+                &add_ristretto(&point_b, &point_c).unwrap(),
+            )
+            .unwrap()
+            .0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+
+        // commutativity
+        assert_eq!(
+            add_ristretto(&point_a, &point_b).unwrap(),
+            add_ristretto(&point_b, &point_a).unwrap(),
+        );
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            group_op: solana_curve25519::curve_syscall_traits::ADD,
+            left_input: point_a.0,
+            right_input: point_b.0,
+            expected_point: add_ristretto(&point_b, &point_a).unwrap().0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+
+        // subtraction
+        let point = PodRistrettoPoint(RISTRETTO_BASEPOINT_POINT.compress().to_bytes());
+        let point_negated = PodRistrettoPoint((-RISTRETTO_BASEPOINT_POINT).compress().to_bytes());
+        assert_eq!(
+            point_negated,
+            subtract_ristretto(&identity, &point).unwrap(),
+        );
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            group_op: solana_curve25519::curve_syscall_traits::SUB,
+            left_input: identity.0,
+            right_input: point.0,
+            expected_point: point_negated.0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+
+        let scalar_x = PodScalar([
+            254, 198, 23, 138, 67, 243, 184, 110, 236, 115, 236, 205, 205, 215, 79, 114, 45, 250,
+            78, 137, 3, 107, 136, 237, 49, 126, 117, 223, 37, 191, 88, 6,
+        ]);
+        let point_a = PodRistrettoPoint([
+            68, 80, 232, 181, 241, 77, 60, 81, 154, 51, 173, 35, 98, 234, 149, 37, 1, 39, 191, 201,
+            193, 48, 88, 189, 97, 126, 63, 35, 144, 145, 203, 31,
+        ]);
+        let point_b = PodRistrettoPoint([
+            200, 236, 1, 12, 244, 130, 226, 214, 28, 125, 43, 163, 222, 234, 81, 213, 201, 156, 31,
+            4, 167, 132, 240, 76, 164, 18, 45, 20, 48, 85, 206, 121,
+        ]);
+        let ax = multiply_ristretto(&scalar_x, &point_a).unwrap();
+        let bx = multiply_ristretto(&scalar_x, &point_b).unwrap();
+        assert_eq!(
+            add_ristretto(&ax, &bx),
+            multiply_ristretto(&scalar_x, &add_ristretto(&point_a, &point_b).unwrap()),
+        );
+        let test_case_original = CurveGroupOpOriginal {
+            curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
+            group_op: solana_curve25519::curve_syscall_traits::MUL,
+            left_input: scalar_x.0,
+            right_input: add_ristretto(&point_a, &point_b).unwrap().0,
+            expected_point: add_ristretto(&ax, &bx).unwrap().0,
+            expected_ret: EXPECTED_RET_OK,
+        };
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
 
         process_test_commands(
             &mut ctx,
@@ -1315,7 +1469,7 @@ mod tests {
                 scalars: vec![scalar.0],
                 points: vec![point.0],
                 expected_point: basic_product.0,
-                expected_ret: 0, // OK
+                expected_ret: EXPECTED_RET_OK,
             }
             .into(),
         );
@@ -1348,7 +1502,7 @@ mod tests {
                 scalars: vec![scalar_a.0, scalar_b.0],
                 points: vec![point_x.0, point_y.0],
                 expected_point: basic_product.0,
-                expected_ret: 0, // OK
+                expected_ret: EXPECTED_RET_OK,
             }
             .into(),
         );
@@ -1476,7 +1630,7 @@ mod tests {
                 group_op: ALT_BN128_ADD,
                 input: input.clone(),
                 expected_result: expected,
-                expected_ret: 0, // OK
+                expected_ret: EXPECTED_RET_OK,
             };
 
             #[cfg(feature = "enable-solana-original-builtins")]
@@ -1649,7 +1803,7 @@ mod tests {
                 group_op: ALT_BN128_MUL,
                 input: input.clone(),
                 expected_result: expected,
-                expected_ret: 0, // OK
+                expected_ret: EXPECTED_RET_OK,
             };
             #[cfg(feature = "enable-solana-original-builtins")]
             test_commands.push(test_case_original.clone().into());
@@ -1720,7 +1874,7 @@ mod tests {
                 group_op: ALT_BN128_PAIRING,
                 input: input.clone(),
                 expected_result: expected,
-                expected_ret: 0, // OK
+                expected_ret: EXPECTED_RET_OK,
             };
 
             #[cfg(feature = "enable-solana-original-builtins")]
@@ -1805,7 +1959,7 @@ mod tests {
                     group_op: ALT_BN128_G1_COMPRESS,
                     input: decompressed.to_vec(),
                     expected_result: alt_bn128_g1_compress(&decompressed).unwrap().to_vec(),
-                    expected_ret: 0, // OK
+                    expected_ret: EXPECTED_RET_OK,
                 }
                 .into(),
             );
@@ -1814,7 +1968,7 @@ mod tests {
                     group_op: ALT_BN128_G1_DECOMPRESS,
                     input: alt_bn128_g1_compress(&decompressed).unwrap().to_vec(),
                     expected_result: decompressed.to_vec(),
-                    expected_ret: 0, // OK
+                    expected_ret: EXPECTED_RET_OK,
                 }
                 .into(),
             );
@@ -1897,7 +2051,7 @@ mod tests {
                     group_op: ALT_BN128_G2_COMPRESS,
                     input: decompressed.to_vec(),
                     expected_result: alt_bn128_g2_compress(&decompressed).unwrap().to_vec(),
-                    expected_ret: 0, // OK
+                    expected_ret: EXPECTED_RET_OK,
                 }
                 .into(),
             );
@@ -1906,7 +2060,7 @@ mod tests {
                     group_op: ALT_BN128_G2_DECOMPRESS,
                     input: alt_bn128_g2_compress(&decompressed).unwrap().to_vec(),
                     expected_result: decompressed.to_vec(),
-                    expected_ret: 0, // OK
+                    expected_ret: EXPECTED_RET_OK,
                 }
                 .into(),
             );

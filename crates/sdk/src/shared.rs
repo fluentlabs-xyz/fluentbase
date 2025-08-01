@@ -205,6 +205,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::secp256k1_recover(digest, sig, rec_id)
     }
 
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        API::ed25519_edwards_decompress_validate(p)
+    }
+
     fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         API::ed25519_edwards_add(p, q)
     }
@@ -217,12 +221,20 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::ed25519_edwards_mul(p, q)
     }
 
-    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        API::ed25519_edwards_decompress_validate(p)
-    }
-
     fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
         API::ed25519_ristretto_decompress_validate(p)
+    }
+
+    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        API::ed25519_ristretto_add(p, q)
+    }
+
+    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        API::ed25519_ristretto_sub(p, q)
+    }
+
+    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        API::ed25519_ristretto_mul(p, q)
     }
 
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {

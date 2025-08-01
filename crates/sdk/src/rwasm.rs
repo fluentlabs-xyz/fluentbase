@@ -13,7 +13,10 @@ pub use crate::{
         _ed25519_edwards_decompress_validate,
         _ed25519_edwards_mul,
         _ed25519_edwards_sub,
+        _ed25519_ristretto_add,
         _ed25519_ristretto_decompress_validate,
+        _ed25519_ristretto_mul,
+        _ed25519_ristretto_sub,
         _exec,
         _exit,
         _forward_output,
@@ -74,6 +77,10 @@ impl NativeAPI for RwasmContext {
         }
     }
     #[inline(always)]
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        unsafe { _ed25519_edwards_decompress_validate(p.as_ptr()) == 0 }
+    }
+    #[inline(always)]
     fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         unsafe { _ed25519_edwards_add(p.as_mut_ptr(), q.as_ptr()) == 0 }
     }
@@ -86,12 +93,20 @@ impl NativeAPI for RwasmContext {
         unsafe { _ed25519_edwards_mul(p.as_mut_ptr(), q.as_ptr()) == 0 }
     }
     #[inline(always)]
-    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        unsafe { _ed25519_edwards_decompress_validate(p.as_ptr()) == 0 }
-    }
-    #[inline(always)]
     fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
         unsafe { _ed25519_ristretto_decompress_validate(p.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_ristretto_add(p.as_mut_ptr(), q.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_ristretto_sub(p.as_mut_ptr(), q.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_ristretto_mul(p.as_mut_ptr(), q.as_ptr()) == 0 }
     }
 
     #[inline(always)]

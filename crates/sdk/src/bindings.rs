@@ -151,11 +151,14 @@ extern "C" {
     pub fn _bls12381_fp2_sub(arg1: u32, arg2: u32);
     pub fn _bls12381_fp2_mul(arg1: u32, arg2: u32);
 
+    pub fn _ed25519_edwards_decompress_validate(arg1: *const u8) -> u32;
     pub fn _ed25519_edwards_add(arg1: *mut u8, arg2: *const u8) -> u32;
     pub fn _ed25519_edwards_sub(arg1: *mut u8, arg2: *const u8) -> u32;
     pub fn _ed25519_edwards_mul(arg1: *mut u8, arg2: *const u8) -> u32;
-    pub fn _ed25519_edwards_decompress_validate(arg1: *const u8) -> u32;
     pub fn _ed25519_ristretto_decompress_validate(arg1: *const u8) -> u32;
+    pub fn _ed25519_ristretto_add(arg1: *mut u8, arg2: *const u8) -> u32;
+    pub fn _ed25519_ristretto_sub(arg1: *mut u8, arg2: *const u8) -> u32;
+    pub fn _ed25519_ristretto_mul(arg1: *mut u8, arg2: *const u8) -> u32;
     pub fn _bn254_add(arg1: u32, arg2: u32);
     pub fn _bn254_double(p_ptr: u32);
     pub fn _bn254_mul(arg1: u32, arg2: u32);

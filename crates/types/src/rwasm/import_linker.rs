@@ -49,6 +49,12 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
         &[ValType::I32; 1]
     );
     import_function!(
+        "_ed25519_edwards_decompress_validate",
+        ED25519_EDWARDS_DECOMPRESS_VALIDATE,
+        &[ValType::I32; 1],
+        &[ValType::I32; 1]
+    );
+    import_function!(
         "_ed25519_edwards_add",
         ED25519_EDWARDS_ADD,
         &[ValType::I32; 2],
@@ -67,15 +73,27 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
         &[ValType::I32; 1]
     );
     import_function!(
-        "_ed25519_edwards_decompress_validate",
-        ED25519_EDWARDS_DECOMPRESS_VALIDATE,
+        "_ed25519_ristretto_decompress_validate",
+        ED25519_RISTRETTO_DECOMPRESS_VALIDATE,
         &[ValType::I32; 1],
         &[ValType::I32; 1]
     );
     import_function!(
-        "_ed25519_ristretto_decompress_validate",
-        ED25519_RISTRETTO_DECOMPRESS_VALIDATE,
-        &[ValType::I32; 1],
+        "_ed25519_ristretto_add",
+        ED25519_RISTRETTO_ADD,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_ristretto_sub",
+        ED25519_RISTRETTO_SUB,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_ristretto_mul",
+        ED25519_RISTRETTO_MUL,
+        &[ValType::I32; 2],
         &[ValType::I32; 1]
     );
     import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);

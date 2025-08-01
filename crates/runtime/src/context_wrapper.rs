@@ -7,7 +7,10 @@ use crate::{
         ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
         ed25519_edwards_mul::SyscallED25519EdwardsMul,
         ed25519_edwards_sub::SyscallED25519EdwardsSub,
+        ed25519_ristretto_add::SyscallED25519RistrettoAdd,
         ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
+        ed25519_ristretto_mul::SyscallED25519RistrettoMul,
+        ed25519_ristretto_sub::SyscallED25519RistrettoSub,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
@@ -74,6 +77,10 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
     }
 
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        SyscallED25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
+    }
+
     fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         SyscallED25519EdwardsAdd::fn_impl(p, q).is_ok()
     }
@@ -86,12 +93,20 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallED25519EdwardsMul::fn_impl(p, q).is_ok()
     }
 
-    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallED25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
-    }
-
     fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
         SyscallED25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
+    }
+
+    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519RistrettoAdd::fn_impl(p, q).is_ok()
+    }
+
+    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519RistrettoSub::fn_impl(p, q).is_ok()
+    }
+
+    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519RistrettoMul::fn_impl(p, q).is_ok()
     }
 
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {

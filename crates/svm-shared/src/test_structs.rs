@@ -1,6 +1,9 @@
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
+pub const EXPECTED_RET_OK: u64 = 0;
+pub const EXPECTED_RET_ERR: u64 = 1;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModifyAccount1 {
     pub account_idx: usize,
