@@ -1517,13 +1517,14 @@ declare_builtin_function!(
                         false,
                     )?;
 
-                    if let Some(result_point) = ristretto::add_ristretto(left_point, right_point) {
-                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                    let mut left_point_or_result = left_point.0.clone();
+                    if SDK::ed25519_ristretto_add(&mut left_point_or_result, &right_point.0) {
+                        *translate_type_mut::<[u8; 32]>(
                             memory_mapping,
                             result_point_addr,
                             invoke_context.get_check_aligned(),
-                        false,
-                        )? = result_point;
+                            false,
+                        )? = left_point_or_result;
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1543,15 +1544,14 @@ declare_builtin_function!(
                         false,
                     )?;
 
-                    if let Some(result_point) =
-                        ristretto::subtract_ristretto(left_point, right_point)
-                    {
-                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                    let mut left_point_or_result = left_point.0.clone();
+                    if SDK::ed25519_ristretto_sub(&mut left_point_or_result, &right_point.0) {
+                        *translate_type_mut::<[u8; 32]>(
                             memory_mapping,
                             result_point_addr,
                             invoke_context.get_check_aligned(),
                             false,
-                        )? = result_point;
+                        )? = left_point_or_result;
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1571,13 +1571,14 @@ declare_builtin_function!(
                         false,
                     )?;
 
-                    if let Some(result_point) = ristretto::multiply_ristretto(scalar, input_point) {
-                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                    let mut left_point_or_result = input_point.0.clone();
+                    if SDK::ed25519_ristretto_mul(&mut left_point_or_result, &scalar.0) {
+                        *translate_type_mut::<[u8; 32]>(
                             memory_mapping,
                             result_point_addr,
                             invoke_context.get_check_aligned(),
                             false,
-                        )? = result_point;
+                        )? = left_point_or_result;
                         Ok(0)
                     } else {
                         Ok(1)

@@ -1,11 +1,11 @@
 use crate::{
     instruction::{
-        ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
+        ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
         syscall_process_exit_code,
     },
     RuntimeContext,
 };
-use curve25519_dalek::EdwardsPoint;
+use curve25519_dalek::RistrettoPoint;
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
@@ -42,8 +42,8 @@ impl SyscallED25519RistrettoMul {
         Ok(())
     }
 
-    pub fn fn_impl(p: &[u8; 32], q: &[u8; 32]) -> Result<EdwardsPoint, ExitCode> {
-        let p = SyscallED25519EdwardsDecompressValidate::fn_impl(p)?;
+    pub fn fn_impl(p: &[u8; 32], q: &[u8; 32]) -> Result<RistrettoPoint, ExitCode> {
+        let p = SyscallED25519RistrettoDecompressValidate::fn_impl(p)?;
         let q = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(*q);
 
         let result = p * q;
