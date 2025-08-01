@@ -1,12 +1,9 @@
 use crate::{
-    instruction::{
-        ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
-        ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
-    },
+    instruction::ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
     utils::syscall_process_exit_code,
     RuntimeContext,
 };
-use curve25519_dalek::{traits::MultiscalarMul, EdwardsPoint, RistrettoPoint, Scalar};
+use curve25519_dalek::{traits::MultiscalarMul, RistrettoPoint, Scalar};
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
