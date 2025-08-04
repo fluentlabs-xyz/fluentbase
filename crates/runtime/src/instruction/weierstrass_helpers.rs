@@ -1,4 +1,4 @@
-use ark_ec::{pairing::Pairing, AffineRepr};
+use ark_ec::AffineRepr;
 use ark_serialize::{CanonicalDeserialize, Compress, Validate};
 use fluentbase_types::{
     BN254_G1_POINT_COMPRESSED_SIZE,

@@ -1,7 +1,5 @@
 use crate::{utils::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::ExitCode;
-use k256::elliptic_curve::generic_array::typenum::Unsigned;
-use num::BigUint;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
 pub struct SyscallMathBigModExp {}

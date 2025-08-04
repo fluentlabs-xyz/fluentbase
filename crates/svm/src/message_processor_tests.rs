@@ -1,7 +1,7 @@
 #[cfg(test)]
 pub mod tests {
     use crate::{
-        account::{AccountSharedData, ReadableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS},
+        account::{AccountSharedData, ReadableAccount},
         common::rbpf_config_default,
         compute_budget::compute_budget::ComputeBudget,
         context::{EnvironmentConfig, InvokeContext, TransactionContext},

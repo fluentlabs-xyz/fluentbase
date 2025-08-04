@@ -1,13 +1,9 @@
 extern crate solana_rbpf;
 
 use crate::solana_program;
-use alloc::{boxed::Box, str::Utf8Error, string::String, vec, vec::Vec};
-use core::{
-    fmt,
-    fmt::{Display, Formatter},
-};
+use alloc::{boxed::Box, vec, vec::Vec};
 use solana_bincode::{deserialize, serialize, serialized_size};
-use solana_pubkey::{Pubkey, PubkeyError};
+use solana_pubkey::Pubkey;
 use solana_rbpf::{
     ebpf,
     elf::Executable,

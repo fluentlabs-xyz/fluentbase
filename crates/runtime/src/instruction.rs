@@ -101,7 +101,7 @@ use crate::{
 };
 use fluentbase_types::SysFuncIdx;
 use num::BigUint;
-use rwasm::{Store, TrapCode, TypedCaller, Value};
+use rwasm::{TrapCode, TypedCaller, Value};
 use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{

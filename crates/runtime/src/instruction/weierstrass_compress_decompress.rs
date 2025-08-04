@@ -8,7 +8,6 @@ use crate::{
     utils::syscall_process_exit_code,
     RuntimeContext,
 };
-use ark_ec::pairing::Pairing;
 use ark_serialize::{CanonicalSerialize, Compress};
 use fluentbase_types::{
     ExitCode,
