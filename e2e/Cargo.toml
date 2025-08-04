@@ -35,6 +35,7 @@ rand = { version = "0.9.1" }
 
 [dev-dependencies]
 fluentbase-svm = { workspace = true }
+fluentbase-types = { workspace = true }
 criterion = "0.6.0"
 solana-curve25519 = { workspace = true, default-features = false, features = [] }
 solana-bn254 = { workspace = true, default-features = false, features = [] }

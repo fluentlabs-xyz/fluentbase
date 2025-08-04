@@ -2141,6 +2141,7 @@ dependencies = [
  "hashbrown 0.15.4",
  "k256",
  "num",
+ "paste",
  "rwasm",
  "secp256k1 0.29.1",
  "sp1-curves",

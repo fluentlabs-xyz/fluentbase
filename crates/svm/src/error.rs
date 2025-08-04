@@ -1,14 +1,93 @@
-use crate::helpers::SyscallError;
-use alloc::boxed::Box;
-use core::fmt::{Display, Formatter};
+use alloc::{boxed::Box, string::String, vec::Vec};
+use core::{
+    fmt,
+    fmt::{Display, Formatter},
+    str::Utf8Error,
+};
 use fluentbase_sdk::ExitCode;
 use solana_instruction::error::InstructionError;
+use solana_pubkey::{Pubkey, PubkeyError};
 use solana_rbpf::{elf::ElfError, error::EbpfError};
 use solana_transaction_error::TransactionError;
 
 pub type Error = Box<dyn core::error::Error>;
 
-/// Error definitions
+#[derive(Debug, PartialEq, Eq)]
+pub enum SyscallError {
+    InvalidString(Utf8Error, Vec<u8>),
+    Abort,
+    Panic(String, u64, u64),
+    InvokeContextBorrowFailed,
+    MalformedSignerSeed(Utf8Error, Vec<u8>),
+    BadSeeds(PubkeyError),
+    ProgramNotSupported(Pubkey),
+    UnalignedPointer,
+    TooManySigners,
+    InstructionTooLarge(usize, usize),
+    TooManyAccounts,
+    CopyOverlapping,
+    ReturnDataTooLarge(u64, u64),
+    TooManySlices,
+    InvalidLength,
+    MaxInstructionDataLenExceeded {
+        data_len: u64,
+        max_data_len: u64,
+    },
+    MaxInstructionAccountsExceeded {
+        num_accounts: u64,
+        max_accounts: u64,
+    },
+    MaxInstructionAccountInfosExceeded {
+        num_account_infos: u64,
+        max_account_infos: u64,
+    },
+    InvalidAttribute,
+    InvalidPointer,
+    ArithmeticOverflow,
+}
+
+impl Display for SyscallError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            SyscallError::InvalidString(_, _) => write!(f, "SyscallError::InvalidString"),
+            SyscallError::Abort => write!(f, "SyscallError::Abort"),
+            SyscallError::Panic(_, _, _) => write!(f, "SyscallError::Panic"),
+            SyscallError::InvokeContextBorrowFailed => {
+                write!(f, "SyscallError::InvokeContextBorrowFailed")
+            }
+            SyscallError::MalformedSignerSeed(_, _) => {
+                write!(f, "SyscallError::MalformedSignerSeed")
+            }
+            SyscallError::BadSeeds(_) => write!(f, "SyscallError::BadSeeds"),
+            SyscallError::ProgramNotSupported(_) => write!(f, "SyscallError::ProgramNotSupported"),
+            SyscallError::UnalignedPointer => write!(f, "SyscallError::UnalignedPointer"),
+            SyscallError::TooManySigners => write!(f, "SyscallError::TooManySigners"),
+            SyscallError::InstructionTooLarge(_, _) => {
+                write!(f, "SyscallError::InstructionTooLarge")
+            }
+            SyscallError::TooManyAccounts => write!(f, "SyscallError::TooManyAccounts"),
+            SyscallError::CopyOverlapping => write!(f, "SyscallError::CopyOverlapping"),
+            SyscallError::ReturnDataTooLarge(_, _) => write!(f, "SyscallError::ReturnDataTooLarge"),
+            SyscallError::TooManySlices => write!(f, "SyscallError::TooManySlices"),
+            SyscallError::InvalidLength => write!(f, "SyscallError::InvalidLength"),
+            SyscallError::MaxInstructionDataLenExceeded { .. } => {
+                write!(f, "SyscallError::MaxInstructionDataLenExceeded")
+            }
+            SyscallError::MaxInstructionAccountsExceeded { .. } => {
+                write!(f, "SyscallError::MaxInstructionAccountsExceeded")
+            }
+            SyscallError::MaxInstructionAccountInfosExceeded { .. } => {
+                write!(f, "SyscallError::MaxInstructionAccountInfosExceeded")
+            }
+            SyscallError::InvalidAttribute => write!(f, "SyscallError::InvalidAttribute"),
+            SyscallError::InvalidPointer => write!(f, "SyscallError::InvalidPointer"),
+            SyscallError::ArithmeticOverflow => write!(f, "SyscallError::ArithmeticOverflow"),
+        }
+    }
+}
+
+impl core::error::Error for SyscallError {}
+
 #[derive(Debug)]
 #[repr(u64)]
 pub enum RuntimeError {

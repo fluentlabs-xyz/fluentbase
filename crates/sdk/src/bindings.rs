@@ -173,6 +173,10 @@ extern "C" {
     pub fn _bn254_double(p_ptr: u32);
     pub fn _bn254_mul(arg1: u32, arg2: u32);
     pub fn _bn254_multi_pairing(elements_ptr: *const u8, elements_count: u32, ret_ptr: *mut u8);
+    pub fn _bn254_g1_compress(point_ptr: *const u8, ret_ptr: *mut u8) -> u32;
+    pub fn _bn254_g1_decompress(point_ptr: *const u8, ret_ptr: *mut u8) -> u32;
+    pub fn _bn254_g2_compress(point_ptr: *const u8, ret_ptr: *mut u8) -> u32;
+    pub fn _bn254_g2_decompress(point_ptr: *const u8, ret_ptr: *mut u8) -> u32;
     pub fn _bn254_fp_add(arg1: u32, arg2: u32);
     pub fn _bn254_fp_sub(arg1: u32, arg2: u32);
     pub fn _bn254_fp_mul(arg1: u32, arg2: u32);

@@ -4,6 +4,10 @@ pub use crate::{
         _bn254_double,
         _bn254_fp2_mul,
         _bn254_fp_mul,
+        _bn254_g1_compress,
+        _bn254_g1_decompress,
+        _bn254_g2_compress,
+        _bn254_g2_decompress,
         _bn254_mul,
         _bn254_multi_pairing,
         _charge_fuel,
@@ -37,7 +41,16 @@ pub use crate::{
     },
     B256,
 };
-use fluentbase_types::{bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, ExitCode};
+use fluentbase_types::{
+    bn254_add_common_impl,
+    native_api::NativeAPI,
+    BytecodeOrHash,
+    ExitCode,
+    BN254_G1_POINT_COMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE,
+};
 
 #[derive(Default)]
 pub struct RwasmContext;
@@ -170,6 +183,52 @@ impl NativeAPI for RwasmContext {
             );
         }
         result
+    }
+
+    #[inline(always)]
+    fn bn254_g1_compress(
+        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
+        let mut result_point = [0u8; BN254_G1_POINT_COMPRESSED_SIZE];
+        unsafe {
+            if _bn254_g1_compress(point.as_ptr() as *const u8, result_point.as_mut_ptr()) != 0 {
+                return Err(ExitCode::MalformedBuiltinParams);
+            };
+        }
+        Ok(result_point)
+    }
+
+    #[inline(always)]
+    fn bn254_g1_decompress(
+        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        let mut result_point = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
+        unsafe {
+            _bn254_g1_decompress(point.as_ptr() as *const u8, result_point.as_mut_ptr());
+        }
+        Ok(result_point)
+    }
+
+    #[inline(always)]
+    fn bn254_g2_compress(
+        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
+        let mut result_point = [0u8; BN254_G2_POINT_COMPRESSED_SIZE];
+        unsafe {
+            _bn254_g2_compress(point.as_ptr() as *const u8, result_point.as_mut_ptr());
+        }
+        Ok(result_point)
+    }
+
+    #[inline(always)]
+    fn bn254_g2_decompress(
+        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        let mut result_point = [0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
+        unsafe {
+            _bn254_g2_decompress(point.as_ptr() as *const u8, result_point.as_mut_ptr());
+        }
+        Ok(result_point)
     }
 
     #[inline(always)]

@@ -1,16 +1,15 @@
 use crate::{
-    instruction::weierstrass_helpers::{
-        g1_from_decompressed_bytes,
-        g2_from_decompressed_bytes,
-        G1_POINT_UNCOMPRESSED_SIZE,
-        G2_POINT_UNCOMPRESSED_SIZE,
-        PAIRING_ELEMENT_UNCOMPRESSED_LEN,
-    },
+    instruction::weierstrass_helpers::{g1_from_decompressed_bytes, g2_from_decompressed_bytes},
     RuntimeContext,
 };
 use ark_bn254::Bn254;
 use ark_ec::pairing::Pairing;
 use ark_ff::{BigInteger, BigInteger256};
+use fluentbase_types::{
+    BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE,
+    BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN,
+};
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::weierstrass::WeierstrassParameters;
 use std::marker::PhantomData;
@@ -40,23 +39,26 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMultiPairingAssign<E> {
             params[2].i32().unwrap() as u32,
         );
 
-        let pairs_byte_len = PAIRING_ELEMENT_UNCOMPRESSED_LEN.saturating_mul(pairs_count as usize);
+        let pairs_byte_len =
+            BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN.saturating_mul(pairs_count as usize);
 
         // Read p and q values from memory
         let mut pair_elements = vec![0u8; pairs_byte_len];
         caller.memory_read(pairs_ptr as usize, &mut pair_elements)?;
 
         let pairs = pair_elements
-            .chunks(PAIRING_ELEMENT_UNCOMPRESSED_LEN)
+            .chunks(BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN)
             .map(|v| {
-                let g1: [u8; G1_POINT_UNCOMPRESSED_SIZE] =
-                    unsafe { core::slice::from_raw_parts(v.as_ptr(), G1_POINT_UNCOMPRESSED_SIZE) }
-                        .try_into()
-                        .unwrap();
-                let g2: [u8; G2_POINT_UNCOMPRESSED_SIZE] = unsafe {
+                let g1: [u8; BN254_G1_POINT_DECOMPRESSED_SIZE] = unsafe {
+                    core::slice::from_raw_parts(v.as_ptr(), BN254_G1_POINT_DECOMPRESSED_SIZE)
+                }
+                .try_into()
+                .unwrap();
+                let g2: [u8; BN254_G2_POINT_DECOMPRESSED_SIZE] = unsafe {
                     core::slice::from_raw_parts(
-                        v[G1_POINT_UNCOMPRESSED_SIZE..G2_POINT_UNCOMPRESSED_SIZE].as_ptr(),
-                        G2_POINT_UNCOMPRESSED_SIZE,
+                        v[BN254_G1_POINT_DECOMPRESSED_SIZE..BN254_G2_POINT_DECOMPRESSED_SIZE]
+                            .as_ptr(),
+                        BN254_G2_POINT_DECOMPRESSED_SIZE,
                     )
                     .try_into()
                     .unwrap()
@@ -72,8 +74,8 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMultiPairingAssign<E> {
 
     pub fn fn_impl(
         pairs: &[(
-            [u8; G1_POINT_UNCOMPRESSED_SIZE],
-            [u8; G2_POINT_UNCOMPRESSED_SIZE],
+            [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+            [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
         )],
     ) -> Vec<u8> {
         let mut vec_pairs: Vec<(G1, G2)> = Vec::new();

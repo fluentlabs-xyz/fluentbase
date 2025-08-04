@@ -8,7 +8,13 @@ mod tests {
         RistrettoPoint,
     };
     use fluentbase_runtime::instruction::{
-        weierstrass_compress_decompress::SyscallWeierstrassCompressDecompressAssign,
+        weierstrass_compress_decompress::{
+            ConfigG1Compress,
+            ConfigG1Decompress,
+            ConfigG2Compress,
+            ConfigG2Decompress,
+            SyscallWeierstrassCompressDecompressAssign,
+        },
         weierstrass_helpers::convert_endianness,
     };
     use fluentbase_sdk::{
@@ -65,7 +71,13 @@ mod tests {
             EXPECTED_RET_OK,
         },
     };
-    use fluentbase_types::default;
+    use fluentbase_types::{
+        default,
+        BN254_G1_POINT_COMPRESSED_SIZE,
+        BN254_G1_POINT_DECOMPRESSED_SIZE,
+        BN254_G2_POINT_COMPRESSED_SIZE,
+        BN254_G2_POINT_DECOMPRESSED_SIZE,
+    };
     use hex_literal::hex;
     use rand::random_range;
     use serde::Deserialize;
@@ -2098,9 +2110,13 @@ mod tests {
             test_commands.push(test_case_original.clone().into());
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_decompressed =
-                SyscallWeierstrassCompressDecompressAssign::<Bn254>::g1_decompress_fn_impl(
-                    &convert_endianness::<32, 32>(&compressed_ref.try_into().unwrap()),
-                );
+                SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_impl(
+                    &convert_endianness::<
+                        BN254_G1_POINT_COMPRESSED_SIZE,
+                        BN254_G1_POINT_COMPRESSED_SIZE,
+                    >(&compressed_ref.try_into().unwrap()),
+                )
+                .unwrap();
             assert_eq!(
                 decompressed,
                 convert_endianness::<32, 64>(&syscall_decompressed.try_into().unwrap(),)
@@ -2116,9 +2132,13 @@ mod tests {
             test_commands.push(test_case_original.clone().into());
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_compressed =
-                SyscallWeierstrassCompressDecompressAssign::<Bn254>::g1_compress_fn_impl(
-                    &convert_endianness::<32, 64>(&decompressed.try_into().unwrap()),
-                );
+                SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_impl(
+                    &convert_endianness::<
+                        BN254_G1_POINT_COMPRESSED_SIZE,
+                        BN254_G1_POINT_DECOMPRESSED_SIZE,
+                    >(&decompressed.try_into().unwrap()),
+                )
+                .unwrap();
             assert_eq!(
                 compressed_ref,
                 convert_endianness::<32, 32>(&syscall_compressed.try_into().unwrap(),)
@@ -2206,9 +2226,13 @@ mod tests {
             test_commands.push(test_case_original.clone().into());
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_decompressed =
-                SyscallWeierstrassCompressDecompressAssign::<Bn254>::g2_decompress_fn_impl(
-                    &convert_endianness::<64, 64>(&compressed_ref.try_into().unwrap()),
-                );
+                SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_impl(
+                    &convert_endianness::<
+                        BN254_G2_POINT_COMPRESSED_SIZE,
+                        BN254_G2_POINT_COMPRESSED_SIZE,
+                    >(&compressed_ref.try_into().unwrap()),
+                )
+                .unwrap();
             assert_eq!(
                 decompressed,
                 convert_endianness::<64, 128>(&syscall_decompressed.try_into().unwrap(),)
@@ -2224,9 +2248,13 @@ mod tests {
             test_commands.push(test_case_original.clone().into());
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_compressed =
-                SyscallWeierstrassCompressDecompressAssign::<Bn254>::g2_compress_fn_impl(
-                    &convert_endianness::<64, 128>(&decompressed.try_into().unwrap()),
-                );
+                SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_impl(
+                    &convert_endianness::<
+                        BN254_G2_POINT_COMPRESSED_SIZE,
+                        BN254_G2_POINT_DECOMPRESSED_SIZE,
+                    >(&decompressed.try_into().unwrap()),
+                )
+                .unwrap();
             assert_eq!(
                 compressed_ref,
                 convert_endianness::<64, 64>(&syscall_compressed.try_into().unwrap(),)

@@ -30,6 +30,13 @@ use crate::{
         secp256k1_recover::SyscallSecp256k1Recover,
         state::SyscallState,
         weierstrass_add::SyscallWeierstrassAddAssign,
+        weierstrass_compress_decompress::{
+            ConfigG1Compress,
+            ConfigG1Decompress,
+            ConfigG2Compress,
+            ConfigG2Decompress,
+            SyscallWeierstrassCompressDecompressAssign,
+        },
         weierstrass_double::SyscallWeierstrassDoubleAssign,
         weierstrass_mul::SyscallWeierstrassMulAssign,
         weierstrass_multi_pairing::SyscallWeierstrassMultiPairingAssign,
@@ -46,6 +53,10 @@ use fluentbase_types::{
     ExitCode,
     UnwrapExitCode,
     B256,
+    BN254_G1_POINT_COMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
 use std::{cell::RefCell, mem::take, rc::Rc};
@@ -157,6 +168,38 @@ impl NativeAPI for RuntimeContextWrapper {
     fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
         let result = SyscallWeierstrassMultiPairingAssign::<Bn254>::fn_impl(elements);
         result.try_into().unwrap()
+    }
+
+    fn bn254_g1_compress(
+        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
+        let result =
+            SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_impl(point)?;
+        result.try_into().map_err(|_| ExitCode::UnknownError)
+    }
+
+    fn bn254_g1_decompress(
+        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        let result =
+            SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_impl(point)?;
+        result.try_into().map_err(|_| ExitCode::UnknownError)
+    }
+
+    fn bn254_g2_compress(
+        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
+        let result =
+            SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_impl(point)?;
+        result.try_into().map_err(|_| ExitCode::UnknownError)
+    }
+
+    fn bn254_g2_decompress(
+        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        let result =
+            SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_impl(point)?;
+        result.try_into().map_err(|_| ExitCode::UnknownError)
     }
 
     fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {

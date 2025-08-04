@@ -18,6 +18,10 @@ use fluentbase_sdk::{
     StorageAPI,
     SyscallResult,
     B256,
+    BN254_G1_POINT_COMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE,
     FUEL_DENOM_RATE,
     U256,
 };
@@ -276,6 +280,26 @@ impl SharedAPI for HostTestingContext {
     }
     fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
         RuntimeContextWrapper::bn254_multi_pairing(elements)
+    }
+    fn bn254_g1_compress(
+        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
+        RuntimeContextWrapper::bn254_g1_compress(point)
+    }
+    fn bn254_g1_decompress(
+        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        RuntimeContextWrapper::bn254_g1_decompress(point)
+    }
+    fn bn254_g2_compress(
+        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
+        RuntimeContextWrapper::bn254_g2_compress(point)
+    }
+    fn bn254_g2_decompress(
+        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        RuntimeContextWrapper::bn254_g2_decompress(point)
     }
     fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
         RuntimeContextWrapper::bn254_fp_mul(p, q);

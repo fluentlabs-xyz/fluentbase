@@ -6,9 +6,8 @@ use crate::{
     common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
-    error::{Error, Secp256k1RecoverError, SvmError},
+    error::{Error, Secp256k1RecoverError, SvmError, SyscallError},
     hash::{SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH},
-    helpers::SyscallError,
     loaders::syscalls::cpi::cpi_common,
     mem_ops::{
         is_nonoverlapping,
@@ -31,6 +30,7 @@ use core::str::from_utf8;
 use fluentbase_sdk::{debug_log_ext, SharedAPI, B256};
 use itertools::Itertools;
 use solana_bn254::{
+    compression::prelude::convert_endianness,
     prelude::{
         alt_bn128_multiplication,
         alt_bn128_pairing,
@@ -2183,8 +2183,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         use solana_bn254::compression::prelude::{
-            alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
-            alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
+            alt_bn128_g2_compress, alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
             ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS, G1, G1_COMPRESSED, G2, G2_COMPRESSED,
         };
         let output: usize = match op {
@@ -2221,58 +2220,66 @@ declare_builtin_function!(
 
         match op {
             ALT_BN128_G1_COMPRESS => {
-                let result_point = match alt_bn128_g1_compress(input.as_slice()) {
+                let input = convert_endianness::<G1_COMPRESSED, G1>(input.as_slice().try_into().unwrap());
+                let result_point = match SDK::bn254_g1_compress(input.as_slice().try_into().unwrap()) {
                     Ok(result_point) => result_point,
                     Err(e) => {
                         return if simplify_alt_bn128_syscall_error_codes {
                             Ok(1)
                         } else {
-                            Ok(e.into())
+                            Err(SvmError::ExitCode(e).into())
                         };
                     }
                 };
+                let result_point = convert_endianness::<G1_COMPRESSED, G1_COMPRESSED>(&result_point);
                 call_result.copy_from_slice(&result_point);
                 Ok(SUCCESS)
             }
             ALT_BN128_G1_DECOMPRESS => {
-                let result_point = match alt_bn128_g1_decompress(input.as_slice()) {
+                let input = convert_endianness::<G1_COMPRESSED, G1_COMPRESSED>(input.as_slice().try_into().unwrap());
+                let result_point = match SDK::bn254_g1_decompress(input.as_slice().try_into().unwrap()) {
                     Ok(result_point) => result_point,
                     Err(e) => {
                         return if simplify_alt_bn128_syscall_error_codes {
                             Ok(1)
                         } else {
-                            Ok(e.into())
+                            Err(SvmError::ExitCode(e).into())
                         };
                     }
                 };
+                let result_point = convert_endianness::<G1_COMPRESSED, G1>(&result_point);
                 call_result.copy_from_slice(&result_point);
                 Ok(SUCCESS)
             }
             ALT_BN128_G2_COMPRESS => {
-                let result_point = match alt_bn128_g2_compress(input.as_slice()) {
+                let input = convert_endianness::<G2_COMPRESSED, G2>(input.as_slice().try_into().unwrap());
+                let result_point = match SDK::bn254_g2_compress(input.as_slice().try_into().unwrap()) {
                     Ok(result_point) => result_point,
                     Err(e) => {
                         return if simplify_alt_bn128_syscall_error_codes {
                             Ok(1)
                         } else {
-                            Ok(e.into())
+                            Err(SvmError::ExitCode(e).into())
                         };
                     }
                 };
+                let result_point = convert_endianness::<G2_COMPRESSED, G2_COMPRESSED>(&result_point);
                 call_result.copy_from_slice(&result_point);
                 Ok(SUCCESS)
             }
             ALT_BN128_G2_DECOMPRESS => {
-                let result_point = match alt_bn128_g2_decompress(input.as_slice()) {
+                let input = convert_endianness::<G2_COMPRESSED, G2_COMPRESSED>(input.as_slice().try_into().unwrap());
+                let result_point = match SDK::bn254_g2_decompress(input.as_slice().try_into().unwrap()) {
                     Ok(result_point) => result_point,
                     Err(e) => {
                         return if simplify_alt_bn128_syscall_error_codes {
                             Ok(1)
                         } else {
-                            Ok(e.into())
+                            Err(SvmError::ExitCode(e).into())
                         };
                     }
                 };
+                let result_point = convert_endianness::<G2_COMPRESSED, G2>(&result_point);
                 call_result.copy_from_slice(&result_point);
                 Ok(SUCCESS)
             }
