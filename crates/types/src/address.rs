@@ -43,7 +43,14 @@ pub fn calc_create4_address(owner: &Address, salt: &U256, hash_func: fn(&[u8]) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BytecodeOrHash, ExitCode};
+    use crate::{
+        BytecodeOrHash,
+        ExitCode,
+        BN254_G1_POINT_COMPRESSED_SIZE,
+        BN254_G1_POINT_DECOMPRESSED_SIZE,
+        BN254_G2_POINT_COMPRESSED_SIZE,
+        BN254_G2_POINT_DECOMPRESSED_SIZE,
+    };
     use alloy_primitives::{address, b256, keccak256};
 
     struct TestContext;
@@ -123,11 +130,39 @@ mod tests {
             todo!()
         }
 
+        fn bn254_g1_compress(
+            point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+        ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
+            todo!()
+        }
+
+        fn bn254_g1_decompress(
+            point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
+        ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+            todo!()
+        }
+
+        fn bn254_g2_compress(
+            point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+        ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
+            todo!()
+        }
+
+        fn bn254_g2_decompress(
+            point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
+        ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
+            todo!()
+        }
+
         fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
             todo!()
         }
 
         fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+            todo!()
+        }
+
+        fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
             todo!()
         }
 
