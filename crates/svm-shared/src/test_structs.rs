@@ -213,11 +213,28 @@ impl From<SyscallAltBn128Original> for SyscallAltBn128 {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AltBn128CompressionOriginal {
+    pub group_op: u64,
+    pub input: Vec<u8>,
+    pub expected_result: Vec<u8>,
+    pub expected_ret: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AltBn128Compression {
     pub group_op: u64,
     pub input: Vec<u8>,
     pub expected_result: Vec<u8>,
     pub expected_ret: u64,
+}
+impl From<AltBn128CompressionOriginal> for AltBn128Compression {
+    fn from(value: AltBn128CompressionOriginal) -> Self {
+        Self {
+            group_op: value.group_op,
+            input: value.input,
+            expected_result: value.expected_result,
+            expected_ret: value.expected_ret,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -241,6 +258,7 @@ pub enum TestCommand {
     CurveMultiscalarMultiplication(CurveMultiscalarMultiplication),
     SyscallAltBn128Original(SyscallAltBn128Original),
     SyscallAltBn128(SyscallAltBn128),
+    AltBn128CompressionOriginal(AltBn128CompressionOriginal),
     AltBn128Compression(AltBn128Compression),
 }
 
@@ -280,4 +298,5 @@ impl_from!(CurveMultiscalarMultiplicationOriginal);
 impl_from!(CurveMultiscalarMultiplication);
 impl_from!(SyscallAltBn128Original);
 impl_from!(SyscallAltBn128);
+impl_from!(AltBn128CompressionOriginal);
 impl_from!(AltBn128Compression);

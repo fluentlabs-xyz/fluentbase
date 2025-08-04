@@ -1,6 +1,7 @@
 extern crate alloc;
 use fluentbase_examples_svm_bindings::{
     alt_bn128_compression_native,
+    alt_bn128_compression_original_native,
     alt_bn128_group_op_native,
     alt_bn128_group_op_original_native,
     big_mod_exp_3,
@@ -405,6 +406,16 @@ pub fn process_instruction(
                 &expected_result_point,
                 &result_point
             );
+            assert_eq!(&expected_result_point, &result_point)
+        }
+        TestCommand::AltBn128CompressionOriginal(p) => {
+            let mut result_point = [0u8; 128]; // can be 32, 64, 128
+            let result =
+                alt_bn128_compression_original_native(p.group_op, &p.input, &mut result_point);
+            assert_eq!(result, p.expected_ret);
+            let mut expected_result_point = [0u8; 128];
+            expected_result_point[..p.expected_result.as_slice().len()]
+                .copy_from_slice(p.expected_result.as_slice());
             assert_eq!(&expected_result_point, &result_point)
         }
         TestCommand::AltBn128Compression(p) => {

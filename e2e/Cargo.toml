@@ -44,6 +44,7 @@ serde_json = { workspace = true }
 array-bytes = { workspace = true }
 ark-bn254 = { workspace = true }
 ark-serialize = { workspace = true }
+sp1-curves = "5.1.1"
 
 [features]
 default = [
@@ -85,15 +86,15 @@ wasmtime = [
     "rwasm-revm/wasmtime",
 ]
 json = [
-	"fluentbase-contracts/json",
-	"fluentbase-erc20/json",
-	"fluentbase-sdk/json",
-	"fluentbase-sdk-testing/json",
-	"fluentbase-svm/json",
-	"op-revm/json",
-	"revm/json",
-	"rwasm-revm/json",
-	"fluentbase-genesis/json"
+    "fluentbase-contracts/json",
+    "fluentbase-erc20/json",
+    "fluentbase-sdk/json",
+    "fluentbase-sdk-testing/json",
+    "fluentbase-svm/json",
+    "op-revm/json",
+    "revm/json",
+    "rwasm-revm/json",
+    "fluentbase-genesis/json"
 ]
 
 
