@@ -7,7 +7,10 @@ mod tests {
         EdwardsPoint,
         RistrettoPoint,
     };
-    use fluentbase_runtime::instruction::weierstrass_compress_decompress::SyscallWeierstrassCompressDecompressAssign;
+    use fluentbase_runtime::instruction::{
+        weierstrass_compress_decompress::SyscallWeierstrassCompressDecompressAssign,
+        weierstrass_helpers::convert_endianness,
+    };
     use fluentbase_sdk::{
         address,
         Address,
@@ -74,7 +77,6 @@ mod tests {
             alt_bn128_g1_decompress,
             alt_bn128_g2_compress,
             alt_bn128_g2_decompress,
-            convert_endianness,
             ALT_BN128_G1_COMPRESS,
             ALT_BN128_G1_DECOMPRESS,
             ALT_BN128_G2_COMPRESS,
@@ -2097,16 +2099,11 @@ mod tests {
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_decompressed =
                 SyscallWeierstrassCompressDecompressAssign::<Bn254>::g1_decompress_fn_impl(
-                    &fluentbase_runtime::instruction::weierstrass_helpers::convert_endianness::<
-                        32,
-                        32,
-                    >(&compressed_ref.try_into().unwrap()),
+                    &convert_endianness::<32, 32>(&compressed_ref.try_into().unwrap()),
                 );
             assert_eq!(
                 decompressed,
-                fluentbase_runtime::instruction::weierstrass_helpers::convert_endianness::<32, 64>(
-                    &syscall_decompressed.try_into().unwrap(),
-                )
+                convert_endianness::<32, 64>(&syscall_decompressed.try_into().unwrap(),)
             );
 
             let test_case_original = AltBn128CompressionOriginal {
@@ -2120,16 +2117,11 @@ mod tests {
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_compressed =
                 SyscallWeierstrassCompressDecompressAssign::<Bn254>::g1_compress_fn_impl(
-                    &fluentbase_runtime::instruction::weierstrass_helpers::convert_endianness::<
-                        32,
-                        64,
-                    >(&decompressed.try_into().unwrap()),
+                    &convert_endianness::<32, 64>(&decompressed.try_into().unwrap()),
                 );
             assert_eq!(
                 compressed_ref,
-                fluentbase_runtime::instruction::weierstrass_helpers::convert_endianness::<32, 32>(
-                    &syscall_compressed.try_into().unwrap(),
-                )
+                convert_endianness::<32, 32>(&syscall_compressed.try_into().unwrap(),)
             );
         }
 
@@ -2215,16 +2207,11 @@ mod tests {
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_decompressed =
                 SyscallWeierstrassCompressDecompressAssign::<Bn254>::g2_decompress_fn_impl(
-                    &fluentbase_runtime::instruction::weierstrass_helpers::convert_endianness::<
-                        64,
-                        64,
-                    >(&compressed_ref.try_into().unwrap()),
+                    &convert_endianness::<64, 64>(&compressed_ref.try_into().unwrap()),
                 );
             assert_eq!(
                 decompressed,
-                fluentbase_runtime::instruction::weierstrass_helpers::convert_endianness::<64, 128>(
-                    &syscall_decompressed.try_into().unwrap(),
-                )
+                convert_endianness::<64, 128>(&syscall_decompressed.try_into().unwrap(),)
             );
 
             let test_case_original = AltBn128CompressionOriginal {
@@ -2238,16 +2225,11 @@ mod tests {
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_compressed =
                 SyscallWeierstrassCompressDecompressAssign::<Bn254>::g2_compress_fn_impl(
-                    &fluentbase_runtime::instruction::weierstrass_helpers::convert_endianness::<
-                        64,
-                        128,
-                    >(&decompressed.try_into().unwrap()),
+                    &convert_endianness::<64, 128>(&decompressed.try_into().unwrap()),
                 );
             assert_eq!(
                 compressed_ref,
-                fluentbase_runtime::instruction::weierstrass_helpers::convert_endianness::<64, 64>(
-                    &syscall_compressed.try_into().unwrap(),
-                )
+                convert_endianness::<64, 64>(&syscall_compressed.try_into().unwrap(),)
             );
         }
 
