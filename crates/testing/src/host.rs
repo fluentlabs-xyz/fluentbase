@@ -307,6 +307,9 @@ impl SharedAPI for HostTestingContext {
     fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
         RuntimeContextWrapper::bn254_fp2_mul(p, q);
     }
+    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
+        RuntimeContextWrapper::big_mod_exp(base, exponent, modulus)
+    }
 
     fn read(&self, target: &mut [u8], offset: u32) {
         self.inner.borrow().native_sdk.read(target, offset);

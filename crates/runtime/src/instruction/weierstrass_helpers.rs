@@ -7,20 +7,6 @@ use fluentbase_types::{
     BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 
-pub fn convert_endianness<const CHUNK_SIZE: usize, const ARRAY_SIZE: usize>(
-    bytes: &[u8; ARRAY_SIZE],
-) -> [u8; ARRAY_SIZE] {
-    let reversed: [_; ARRAY_SIZE] = bytes
-        .chunks_exact(CHUNK_SIZE)
-        .flat_map(|chunk| chunk.iter().rev().copied())
-        .enumerate()
-        .fold([0u8; ARRAY_SIZE], |mut acc, (i, v)| {
-            acc[i] = v;
-            acc
-        });
-    reversed
-}
-
 type G1 = ark_bn254::g1::G1Affine;
 type G2 = ark_bn254::g2::G2Affine;
 

@@ -7,15 +7,12 @@ mod tests {
         EdwardsPoint,
         RistrettoPoint,
     };
-    use fluentbase_runtime::instruction::{
-        weierstrass_compress_decompress::{
-            ConfigG1Compress,
-            ConfigG1Decompress,
-            ConfigG2Compress,
-            ConfigG2Decompress,
-            SyscallWeierstrassCompressDecompressAssign,
-        },
-        weierstrass_helpers::convert_endianness,
+    use fluentbase_runtime::instruction::weierstrass_compress_decompress::{
+        ConfigG1Compress,
+        ConfigG1Decompress,
+        ConfigG2Compress,
+        ConfigG2Decompress,
+        SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{
         address,
@@ -41,12 +38,6 @@ mod tests {
         },
         system_program,
     };
-    #[cfg(feature = "enable-solana-extended-builtins")]
-    use fluentbase_svm_shared::test_structs::Blake3;
-    #[cfg(feature = "enable-solana-extended-builtins")]
-    use fluentbase_svm_shared::test_structs::Poseidon;
-    #[cfg(feature = "enable-solana-extended-builtins")]
-    use fluentbase_svm_shared::test_structs::SolBigModExp;
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
@@ -62,6 +53,8 @@ mod tests {
             Keccak256,
             SetGetReturnData,
             Sha256Original,
+            SolBigModExp,
+            SolBigModExpOriginal,
             SolSecp256k1Recover,
             SolSecp256k1RecoverOriginal,
             SyscallAltBn128,
@@ -73,6 +66,7 @@ mod tests {
     };
     use fluentbase_types::{
         default,
+        helpers::convert_endianness_fixed,
         BN254_G1_POINT_COMPRESSED_SIZE,
         BN254_G1_POINT_DECOMPRESSED_SIZE,
         BN254_G2_POINT_COMPRESSED_SIZE,
@@ -116,7 +110,6 @@ mod tests {
     };
     #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_poseidon::{Endianness, Parameters};
-    use sp1_curves::weierstrass::bn254::Bn254;
     use std::{fs::File, io::Read, ops::Neg, time::Instant};
 
     const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
@@ -341,7 +334,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_big_mod_exp() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -360,80 +352,97 @@ mod tests {
 
         // exec
 
-        let test_commands: &[TestCommand] = &[
-            SolBigModExp::from_hex(
-                "1111111111111111111111111111111111111111111111111111111111111111",
-                "1111111111111111111111111111111111111111111111111111111111111111",
-                "111111111111111111111111111111111111111111111111111111111111110A",
-                "0A7074864588D6847F33A168209E516F60005A0CEC3F33AAF70E8002FE964BCD",
-                0,
-            )
-            .into(),
-            SolBigModExp::from_hex(
-                "2222222222222222222222222222222222222222222222222222222222222222",
-                "2222222222222222222222222222222222222222222222222222222222222222",
-                "1111111111111111111111111111111111111111111111111111111111111111",
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                0,
-            )
-            .into(),
-            SolBigModExp::from_hex(
-                "3333333333333333333333333333333333333333333333333333333333333333",
-                "3333333333333333333333333333333333333333333333333333333333333333",
-                "2222222222222222222222222222222222222222222222222222222222222222",
-                "1111111111111111111111111111111111111111111111111111111111111111",
-                0,
-            )
-            .into(),
-            SolBigModExp::from_hex(
-                "9874231472317432847923174392874918237439287492374932871937289719",
-                "0948403985401232889438579475812347232099080051356165126166266222",
-                "25532321a214321423124212222224222b242222222222222222222222222444",
-                "220ECE1C42624E98AEE7EB86578B2FE5C4855DFFACCB43CCBB708A3AB37F184D",
-                0,
-            )
-            .into(),
-            SolBigModExp::from_hex(
-                "3494396663463663636363662632666565656456646566786786676786768766",
-                "2324324333246536456354655645656616169896565698987033121934984955",
-                "0218305479243590485092843590249879879842313131156656565565656566",
-                "012F2865E8B9E79B645FCE3A9E04156483AE1F9833F6BFCF86FCA38FC2D5BEF0",
-                0,
-            )
-            .into(),
-            SolBigModExp::from_hex(
-                "0000000000000000000000000000000000000000000000000000000000000005",
-                "0000000000000000000000000000000000000000000000000000000000000002",
-                "0000000000000000000000000000000000000000000000000000000000000007",
-                "0000000000000000000000000000000000000000000000000000000000000004",
-                0,
-            )
-            .into(),
-            SolBigModExp::from_hex(
-                "0000000000000000000000000000000000000000000000000000000000000019",
-                "0000000000000000000000000000000000000000000000000000000000000019",
-                "0000000000000000000000000000000000000000000000000000000000000064",
-                "0000000000000000000000000000000000000000000000000000000000000019",
-                0,
-            )
-            .into(),
-            SolBigModExp::from_hex(
-                "0000000000000000000000000000000000000000000000000000000000000019",
-                "0000000000000000000000000000000000000000000000000000000000000019",
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                0,
-            )
-            .into(),
-            SolBigModExp::from_hex(
-                "0000000000000000000000000000000000000000000000000000000000000019",
-                "0000000000000000000000000000000000000000000000000000000000000019",
-                "0000000000000000000000000000000000000000000000000000000000000001",
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                0,
-            )
-            .into(),
-        ];
+        let mut test_commands: Vec<TestCommand> = default!();
+        let test_case_original = SolBigModExpOriginal::from_hex(
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "111111111111111111111111111111111111111111111111111111111111110A",
+            "0A7074864588D6847F33A168209E516F60005A0CEC3F33AAF70E8002FE964BCD",
+            0,
+        );
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
+        let test_case_original = SolBigModExpOriginal::from_hex(
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            0,
+        );
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
+        let test_case_original = SolBigModExpOriginal::from_hex(
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "3333333333333333333333333333333333333333333333333333333333333333",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            0,
+        );
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
+        let test_case_original = SolBigModExpOriginal::from_hex(
+            "9874231472317432847923174392874918237439287492374932871937289719",
+            "0948403985401232889438579475812347232099080051356165126166266222",
+            "25532321a214321423124212222224222b242222222222222222222222222444",
+            "220ECE1C42624E98AEE7EB86578B2FE5C4855DFFACCB43CCBB708A3AB37F184D",
+            0,
+        );
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
+        let test_case_original = SolBigModExpOriginal::from_hex(
+            "3494396663463663636363662632666565656456646566786786676786768766",
+            "2324324333246536456354655645656616169896565698987033121934984955",
+            "0218305479243590485092843590249879879842313131156656565565656566",
+            "012F2865E8B9E79B645FCE3A9E04156483AE1F9833F6BFCF86FCA38FC2D5BEF0",
+            0,
+        );
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
+        let test_case_original = SolBigModExpOriginal::from_hex(
+            "0000000000000000000000000000000000000000000000000000000000000005",
+            "0000000000000000000000000000000000000000000000000000000000000002",
+            "0000000000000000000000000000000000000000000000000000000000000007",
+            "0000000000000000000000000000000000000000000000000000000000000004",
+            0,
+        );
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
+        let test_case_original = SolBigModExpOriginal::from_hex(
+            "0000000000000000000000000000000000000000000000000000000000000019",
+            "0000000000000000000000000000000000000000000000000000000000000019",
+            "0000000000000000000000000000000000000000000000000000000000000064",
+            "0000000000000000000000000000000000000000000000000000000000000019",
+            0,
+        );
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
+        let test_case_original = SolBigModExpOriginal::from_hex(
+            "0000000000000000000000000000000000000000000000000000000000000019",
+            "0000000000000000000000000000000000000000000000000000000000000019",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            0,
+        );
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
+        let test_case_original = SolBigModExpOriginal::from_hex(
+            "0000000000000000000000000000000000000000000000000000000000000019",
+            "0000000000000000000000000000000000000000000000000000000000000019",
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            0,
+        );
+        #[cfg(feature = "enable-solana-original-builtins")]
+        test_commands.push(test_case_original.clone().into());
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
 
         process_test_commands(
             &mut ctx,
@@ -1009,14 +1018,7 @@ mod tests {
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
-        test_commands.push(
-            CurvePointValidation {
-                curve_id: test_case_original.curve_id,
-                point: test_case_original.point,
-                expected_ret: test_case_original.expected_ret,
-            }
-            .into(),
-        );
+        test_commands.push(<CurvePointValidation as From<_>>::from(test_case_original).into());
         let test_case_original = CurvePointValidationOriginal {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             point: [
@@ -1027,14 +1029,7 @@ mod tests {
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
-        test_commands.push(
-            CurvePointValidation {
-                curve_id: test_case_original.curve_id,
-                point: test_case_original.point,
-                expected_ret: test_case_original.expected_ret,
-            }
-            .into(),
-        );
+        test_commands.push(<CurvePointValidation as From<_>>::from(test_case_original).into());
         let test_case_original = CurvePointValidationOriginal {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             point: RISTRETTO_BASEPOINT_POINT.compress().as_bytes().clone(),
@@ -1042,14 +1037,7 @@ mod tests {
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
-        test_commands.push(
-            CurvePointValidation {
-                curve_id: test_case_original.curve_id,
-                point: test_case_original.point,
-                expected_ret: test_case_original.expected_ret,
-            }
-            .into(),
-        );
+        test_commands.push(<CurvePointValidation as From<_>>::from(test_case_original).into());
         let test_case_original = CurvePointValidationOriginal {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             point: [
@@ -1060,14 +1048,7 @@ mod tests {
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(test_case_original.clone().into());
-        test_commands.push(
-            CurvePointValidation {
-                curve_id: test_case_original.curve_id,
-                point: test_case_original.point,
-                expected_ret: test_case_original.expected_ret,
-            }
-            .into(),
-        );
+        test_commands.push(<CurvePointValidation as From<_>>::from(test_case_original).into());
 
         process_test_commands(
             &mut ctx,
@@ -2069,7 +2050,7 @@ mod tests {
             175, 106, 75, 147, 236, 90, 101, 123, 219, 245, 151, 209, 202, 218, 104, 148, 8, 32,
             254, 243, 191, 218, 122, 42, 81, 193, 84,
         ];
-        let g1_le = convert_endianness::<32, 64>(&g1_be);
+        let g1_le = convert_endianness_fixed::<32, 64>(&g1_be);
         let g1: G1 =
             G1::deserialize_with_mode(g1_le.as_slice(), Compress::No, Validate::No).unwrap();
 
@@ -2083,14 +2064,14 @@ mod tests {
             .y
             .serialize_with_mode(&mut g1_neg_be[32..64], Compress::No)
             .unwrap();
-        let g1_neg_be: [u8; 64] = convert_endianness::<32, 64>(&g1_neg_be);
+        let g1_neg_be: [u8; 64] = convert_endianness_fixed::<32, 64>(&g1_neg_be);
 
         let points = [(g1, g1_be), (g1_neg, g1_neg_be)];
 
         for (point, g1_be) in &points {
             let mut compressed_ref = [0u8; 32];
             G1::serialize_with_mode(point, compressed_ref.as_mut_slice(), Compress::Yes).unwrap();
-            let compressed_ref: [u8; 32] = convert_endianness::<32, 32>(&compressed_ref);
+            let compressed_ref: [u8; 32] = convert_endianness_fixed::<32, 32>(&compressed_ref);
 
             let decompressed = alt_bn128_g1_decompress(compressed_ref.as_slice()).unwrap();
 
@@ -2111,7 +2092,7 @@ mod tests {
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_decompressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_impl(
-                    &convert_endianness::<
+                    &convert_endianness_fixed::<
                         BN254_G1_POINT_COMPRESSED_SIZE,
                         BN254_G1_POINT_COMPRESSED_SIZE,
                     >(&compressed_ref.try_into().unwrap()),
@@ -2119,7 +2100,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 decompressed,
-                convert_endianness::<32, 64>(&syscall_decompressed.try_into().unwrap(),)
+                convert_endianness_fixed::<32, 64>(&syscall_decompressed.try_into().unwrap(),)
             );
 
             let test_case_original = AltBn128CompressionOriginal {
@@ -2133,7 +2114,7 @@ mod tests {
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_compressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_impl(
-                    &convert_endianness::<
+                    &convert_endianness_fixed::<
                         BN254_G1_POINT_COMPRESSED_SIZE,
                         BN254_G1_POINT_DECOMPRESSED_SIZE,
                     >(&decompressed.try_into().unwrap()),
@@ -2141,7 +2122,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 compressed_ref,
-                convert_endianness::<32, 32>(&syscall_compressed.try_into().unwrap(),)
+                convert_endianness_fixed::<32, 32>(&syscall_compressed.try_into().unwrap(),)
             );
         }
 
@@ -2185,7 +2166,7 @@ mod tests {
             22, 14, 129, 168, 6, 80, 246, 254, 100, 218, 131, 94, 49, 247, 211, 3, 245, 22, 200,
             177, 91, 60, 144, 147, 174, 90, 17, 19, 189, 62, 147, 152, 18,
         ];
-        let g2_le = convert_endianness::<64, 128>(&g2_be);
+        let g2_le = convert_endianness_fixed::<64, 128>(&g2_be);
         let g2: G2 =
             G2::deserialize_with_mode(g2_le.as_slice(), Compress::No, Validate::No).unwrap();
 
@@ -2199,14 +2180,14 @@ mod tests {
             .y
             .serialize_with_mode(&mut g2_neg_be[64..128], Compress::No)
             .unwrap();
-        let g2_neg_be: [u8; 128] = convert_endianness::<64, 128>(&g2_neg_be);
+        let g2_neg_be: [u8; 128] = convert_endianness_fixed::<64, 128>(&g2_neg_be);
 
         let points = [(g2, g2_be), (g2_neg, g2_neg_be)];
 
         for (point, g2_be) in &points {
             let mut compressed_ref = [0u8; 64];
             G2::serialize_with_mode(point, compressed_ref.as_mut_slice(), Compress::Yes).unwrap();
-            let compressed_ref: [u8; 64] = convert_endianness::<64, 64>(&compressed_ref);
+            let compressed_ref: [u8; 64] = convert_endianness_fixed::<64, 64>(&compressed_ref);
 
             let decompressed = alt_bn128_g2_decompress(compressed_ref.as_slice()).unwrap();
 
@@ -2227,7 +2208,7 @@ mod tests {
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_decompressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_impl(
-                    &convert_endianness::<
+                    &convert_endianness_fixed::<
                         BN254_G2_POINT_COMPRESSED_SIZE,
                         BN254_G2_POINT_COMPRESSED_SIZE,
                     >(&compressed_ref.try_into().unwrap()),
@@ -2235,7 +2216,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 decompressed,
-                convert_endianness::<64, 128>(&syscall_decompressed.try_into().unwrap(),)
+                convert_endianness_fixed::<64, 128>(&syscall_decompressed.try_into().unwrap(),)
             );
 
             let test_case_original = AltBn128CompressionOriginal {
@@ -2249,7 +2230,7 @@ mod tests {
             test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
             let syscall_compressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_impl(
-                    &convert_endianness::<
+                    &convert_endianness_fixed::<
                         BN254_G2_POINT_COMPRESSED_SIZE,
                         BN254_G2_POINT_DECOMPRESSED_SIZE,
                     >(&decompressed.try_into().unwrap()),
@@ -2257,7 +2238,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 compressed_ref,
-                convert_endianness::<64, 64>(&syscall_compressed.try_into().unwrap(),)
+                convert_endianness_fixed::<64, 64>(&syscall_compressed.try_into().unwrap(),)
             );
         }
 

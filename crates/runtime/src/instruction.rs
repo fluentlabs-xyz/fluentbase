@@ -23,6 +23,7 @@ pub mod fuel;
 pub mod input_size;
 pub mod keccak256;
 pub mod keccak256_permute;
+pub mod math_big_mod_exp;
 pub mod output_size;
 pub mod preimage_copy;
 pub mod preimage_size;
@@ -70,6 +71,7 @@ use crate::{
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
         keccak256_permute::SyscallKeccak256Permute,
+        math_big_mod_exp::SyscallMathBigModExp,
         output_size::SyscallOutputSize,
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
@@ -176,6 +178,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::BN254_FP2_ADD => SyscallFp2AddSub::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP2_SUB => SyscallFp2AddSub::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP2_MUL => SyscallFp2Mul::<Bn254BaseField>::fn_handler(caller, params, result),
+        SysFuncIdx::BIG_MOD_EXP => SyscallMathBigModExp::fn_handler(caller, params, result),
         SysFuncIdx::UINT256_MUL => SyscallUint256Mul::fn_handler(caller, params, result),
         _ => unreachable!("unknown system function ({})", sys_func_idx),
     }

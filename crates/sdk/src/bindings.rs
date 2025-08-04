@@ -185,4 +185,12 @@ extern "C" {
     pub fn _bn254_fp2_mul(arg1: u32, arg2: u32);
 
     pub fn _uint256_mul(x_ptr: u32, y_ptr: u32, m_ptr: u32);
+    pub fn _big_mod_exp(
+        base_ptr: *const u8,
+        base_len: u32,
+        exponent_ptr: *const u8,
+        exponent_len: u32,
+        modulus_out_ptr: *mut u8,
+        modulus_out_len: u32,
+    ) -> u32;
 }

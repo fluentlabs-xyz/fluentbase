@@ -13,7 +13,6 @@ use crate::{
     FUEL_DENOM_RATE,
     U256,
 };
-use precompile::bls12_381_const::G1_ADD_INPUT_LENGTH;
 
 pub type IsAccountOwnable = bool;
 pub type IsColdAccess = bool;
@@ -41,7 +40,6 @@ pub trait MetadataAPI {
 
 pub trait SharedAPI: StorageAPI + MetadataAPI {
     fn context(&self) -> impl ContextReader;
-
     fn keccak256(&self, data: &[u8]) -> B256;
     fn sha256(data: &[u8]) -> B256;
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
@@ -76,6 +74,8 @@ pub trait SharedAPI: StorageAPI + MetadataAPI {
     fn bn254_double(p: &mut [u8; 64]);
     fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]);
     fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]);
+
+    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode>;
 
     fn read(&self, target: &mut [u8], offset: u32);
     fn input_size(&self) -> u32;

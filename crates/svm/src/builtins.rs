@@ -28,6 +28,7 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::{debug_log_ext, SharedAPI, B256};
+use fluentbase_types::helpers::convert_endianness_flexible;
 use itertools::Itertools;
 use solana_bn254::{
     compression::prelude::convert_endianness,
@@ -232,14 +233,19 @@ pub fn register_builtins<SDK: SharedAPI>(
     function_registry
         .register_function_hashed("sol_blake3", SyscallStub::vm)
         .unwrap();
-    #[cfg(feature = "enable-solana-extended-builtins")]
+
+    #[cfg(feature = "enable-solana-original-builtins")]
+    function_registry
+        .register_function_hashed("sol_big_mod_exp_original", SyscallBigModExpOriginal::vm)
+        .unwrap();
+    #[cfg(not(feature = "enable-solana-original-builtins"))]
+    function_registry
+        .register_function_hashed("sol_big_mod_exp_original", SyscallStub::vm)
+        .unwrap();
     function_registry
         .register_function_hashed("sol_big_mod_exp", SyscallBigModExp::vm)
         .unwrap();
-    #[cfg(not(feature = "enable-solana-extended-builtins"))]
-    function_registry
-        .register_function_hashed("sol_big_mod_exp", SyscallStub::vm)
-        .unwrap();
+
     #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_poseidon", SyscallPoseidon::vm)
@@ -1008,11 +1014,11 @@ declare_builtin_function!(
 
 declare_builtin_function!(
     /// Big integer modular exponentiation
-    SyscallBigModExp<SDK: SharedAPI>,
+    SyscallBigModExpOriginal<SDK: SharedAPI>,
     fn rust(
         invoke_context: &mut InvokeContext<SDK>,
-        params: u64,
-        return_value: u64,
+        params_addr: u64,
+        return_value_addr: u64,
         _arg3: u64,
         _arg4: u64,
         _arg5: u64,
@@ -1020,7 +1026,7 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         let params_slice = &translate_slice::<BigModExpParams>(
             memory_mapping,
-            params,
+            params_addr,
             1,
             invoke_context.get_check_aligned(),
         )?;
@@ -1030,9 +1036,6 @@ declare_builtin_function!(
         if params.base_len > 512 || params.exponent_len > 512 || params.modulus_len > 512 {
             return Err(Box::new(SyscallError::InvalidLength));
         }
-
-        // let input_len: u64 = core::cmp::max(params.base_len, params.exponent_len);
-        // let input_len: u64 = core::cmp::max(input_len, params.modulus_len);
 
         let base = translate_slice::<u8>(
             memory_mapping,
@@ -1059,11 +1062,72 @@ declare_builtin_function!(
 
         let mut return_value = translate_slice_mut::<u8>(
             memory_mapping,
-            return_value,
+            return_value_addr,
             params.modulus_len,
             invoke_context.get_check_aligned(),
         )?;
         return_value.copy_from_slice(value.as_slice());
+
+        Ok(0)
+    }
+);
+
+declare_builtin_function!(
+    /// Big integer modular exponentiation
+    SyscallBigModExp<SDK: SharedAPI>,
+    fn rust(
+        invoke_context: &mut InvokeContext<SDK>,
+        params: u64,
+        return_value: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        let params_slice = &translate_slice::<BigModExpParams>(
+            memory_mapping,
+            params,
+            1,
+            invoke_context.get_check_aligned(),
+        )?;
+        let params_ret = params_slice.try_get(0).ok_or(SyscallError::InvalidLength)?;
+        let params = params_ret.as_ref();
+
+        if params.base_len > 512 || params.exponent_len > 512 || params.modulus_len > 512 {
+            return Err(Box::new(SyscallError::InvalidLength));
+        }
+
+        let base = translate_slice::<u8>(
+            memory_mapping,
+            params.base,
+            params.base_len,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let exponent = translate_slice::<u8>(
+            memory_mapping,
+            params.exponent,
+            params.exponent_len,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        let mut modulus = translate_slice::<u8>(
+            memory_mapping,
+            params.modulus,
+            params.modulus_len,
+            invoke_context.get_check_aligned(),
+        )?.as_slice().to_vec();
+
+        SDK::big_mod_exp(base.as_slice(), exponent.as_slice(), modulus.as_mut_slice())
+            .map_err(|err| {SvmError::ExitCode(err)})?;
+
+        let mut return_value = translate_slice_mut::<u8>(
+            memory_mapping,
+            return_value,
+            params.modulus_len,
+            invoke_context.get_check_aligned(),
+        )?;
+        return_value.copy_from_slice(modulus.as_slice());
 
         Ok(0)
     }
@@ -1845,20 +1909,6 @@ declare_builtin_function!(
     }
 );
 
-fn convert_endianness_64(bytes: &[u8]) -> Vec<u8> {
-    bytes
-        .chunks(32)
-        .flat_map(|b| b.iter().copied().rev().collect::<Vec<u8>>())
-        .collect::<Vec<u8>>()
-}
-
-fn convert_endianness_128(bytes: &[u8]) -> Vec<u8> {
-    bytes
-        .chunks(64)
-        .flat_map(|b| b.iter().copied().rev().collect::<Vec<u8>>())
-        .collect::<Vec<u8>>()
-}
-
 declare_builtin_function!(
     /// alt_bn128 group operations
     SyscallAltBn128Original<SDK: SharedAPI>,
@@ -1983,10 +2033,10 @@ declare_builtin_function!(
                 let mut input = input.to_vec();
                 input.resize(MAX_LEN, 0);
 
-                let mut p: [u8; 64] = convert_endianness_64(&input[0..64]).try_into().unwrap();
-                let q: [u8; 64] = convert_endianness_64(&input[64..MAX_LEN]).try_into().unwrap();
+                let mut p: [u8; 64] = convert_endianness_flexible::<32>(&input[0..64]).try_into().unwrap();
+                let q: [u8; 64] = convert_endianness_flexible::<32>(&input[64..MAX_LEN]).try_into().unwrap();
                 SDK::bn254_add(&mut p, &q);
-                Ok(convert_endianness_64(&p).to_vec())
+                Ok(convert_endianness_flexible::<32>(&p).to_vec())
             },
             ALT_BN128_MUL => |input: &[u8]| -> Result<Vec<u8>, AltBn128Error> {
                 const MAX_LEN: usize = 96;
@@ -1996,10 +2046,10 @@ declare_builtin_function!(
                 let mut input = input.to_vec();
                 input.resize(MAX_LEN, 0);
 
-                let mut p: [u8; 64] = convert_endianness_64(&input[0..64]).try_into().unwrap();
-                let q: [u8; 32] = convert_endianness_64(&input[64..MAX_LEN]).try_into().unwrap();
+                let mut p: [u8; 64] = convert_endianness_flexible::<32>(&input[0..64]).try_into().unwrap();
+                let q: [u8; 32] = convert_endianness_flexible::<32>(&input[64..MAX_LEN]).try_into().unwrap();
                 SDK::bn254_mul(&mut p, &q);
-                Ok(convert_endianness_64(&p).to_vec())
+                Ok(convert_endianness_flexible::<32>(&p).to_vec())
             },
             ALT_BN128_PAIRING => |input: &[u8]| -> Result<Vec<u8>, AltBn128Error> {
                 const PAIRING_ELEMENT_LEN: usize = 192;
@@ -2010,12 +2060,12 @@ declare_builtin_function!(
                 let mut vec_pairs2: Vec<([u8; G1_POINT_SIZE], [u8; G2_POINT_SIZE])> = Vec::new();
                 let ele_len = input.len().saturating_div(PAIRING_ELEMENT_LEN);
                 for i in 0..ele_len {
-                    let g1_vec = convert_endianness_64(
+                    let g1_vec = convert_endianness_flexible::<32>(
                         &input[i.saturating_mul(PAIRING_ELEMENT_LEN)
                             ..i.saturating_mul(PAIRING_ELEMENT_LEN)
                                 .saturating_add(G1_POINT_SIZE)],
                     );
-                    let g2_vec = convert_endianness_128(
+                    let g2_vec = convert_endianness_flexible::<64>(
                         &input[i
                             .saturating_mul(PAIRING_ELEMENT_LEN)
                             .saturating_add(G1_POINT_SIZE)
@@ -2026,7 +2076,7 @@ declare_builtin_function!(
                 }
 
                 let output = SDK::bn254_multi_pairing(&vec_pairs2);
-                Ok(convert_endianness_64(&output))
+                Ok(convert_endianness_flexible::<32>(&output))
             },
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
@@ -2183,7 +2233,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         use solana_bn254::compression::prelude::{
-            alt_bn128_g2_compress, alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
+            ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
             ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS, G1, G1_COMPRESSED, G2, G2_COMPRESSED,
         };
         let output: usize = match op {

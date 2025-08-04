@@ -11,6 +11,7 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
 
 num-traits = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
@@ -81,6 +82,6 @@ debug-print = []
 do-not-validate-elf-on-deploy = []
 use-extended-debug-log = []
 json = [
-	"fluentbase-sdk/json",
-	"fluentbase-sdk-testing/json"
+    "fluentbase-sdk/json",
+    "fluentbase-sdk-testing/json"
 ]

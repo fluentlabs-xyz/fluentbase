@@ -45,6 +45,9 @@ pub trait NativeAPI {
     ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode>;
     fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]);
     fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]);
+
+    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode>;
+
     fn debug_log(message: &str);
 
     fn read(&self, target: &mut [u8], offset: u32);

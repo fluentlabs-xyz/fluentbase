@@ -5,6 +5,7 @@ use fluentbase_examples_svm_bindings::{
     alt_bn128_group_op_native,
     alt_bn128_group_op_original_native,
     big_mod_exp_3,
+    big_mod_exp_3_original,
     curve_group_op_native,
     curve_group_op_original_native,
     curve_multiscalar_mul_native,
@@ -176,6 +177,12 @@ pub fn process_instruction(
             new_account.data.borrow_mut()[p.byte_n_to_set as usize] = p.byte_n_value;
 
             msg!("Create account: end");
+        }
+        TestCommand::SolBigModExpOriginal(p) => {
+            let modulus: [u8; 32] = p.modulus.try_into().unwrap();
+            let result = big_mod_exp_3_original(&p.base, &p.exponent, &modulus);
+            assert_eq!(&p.expected_ret, &result.0);
+            assert_eq!(&p.expected, &result.1);
         }
         TestCommand::SolBigModExp(p) => {
             let modulus: [u8; 32] = p.modulus.try_into().unwrap();

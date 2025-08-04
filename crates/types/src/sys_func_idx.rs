@@ -25,10 +25,11 @@ pub enum SysFuncIdx {
     // hashing
     KECCAK256 = 0x0101,
     KECCAK256_PERMUTE = 0x0102,
-    // POSEIDON = 0x0103,
+    POSEIDON = 0x0103,
     // POSEIDON_HASH = 0x0104,
     SHA256_EXTEND = 0x0105,
     SHA256_COMPRESS = 0x0106,
+    BLAKE3 = 0x0117,
 
     // ed25519
     ED25519_ADD = 0x0107,
@@ -88,6 +89,9 @@ pub enum SysFuncIdx {
     // VERIFY_SP1_PROOF = 0x021B,
     // HINT_LEN = 0x02F0,
     // HINT_READ = 0x02F1,
+
+    // math
+    BIG_MOD_EXP = 0x0300,
 }
 
 impl SysFuncIdx {

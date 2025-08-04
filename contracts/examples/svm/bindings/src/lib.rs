@@ -176,6 +176,37 @@ pub fn secp256k1_recover_native(
     (ret, result)
 }
 extern "C" {
+    fn sol_big_mod_exp_original(params_addr: *const u8, return_value_addr: *mut u8) -> ReturnValue;
+}
+pub fn big_mod_exp_original_native<const N: usize>(
+    params: &[u8; size_of::<u64>() * 6],
+) -> (ReturnValue, [u8; N]) {
+    let mut result = [0u8; N];
+    let ret = unsafe { sol_big_mod_exp_original(params.as_ptr(), result.as_mut_ptr()) };
+    (ret, result)
+}
+pub fn big_mod_exp_3_original<const N: usize>(
+    base: &[u8],
+    exponent: &[u8],
+    modulus: &[u8; N],
+) -> (ReturnValue, [u8; N]) {
+    const PARAM_COMPONENT_SIZE: usize = size_of::<u64>();
+    let mut params = [0u8; PARAM_COMPONENT_SIZE * 6];
+    for (idx, param) in [base, exponent, modulus].iter().enumerate() {
+        let param_ptr = param.as_ptr() as u64;
+        let param_len = param.len() as u64;
+        let idx_ptr_base = idx * PARAM_COMPONENT_SIZE * 2;
+        let idx_len_base = idx_ptr_base + PARAM_COMPONENT_SIZE;
+        params[idx_ptr_base..idx_ptr_base + PARAM_COMPONENT_SIZE]
+            .copy_from_slice(&param_ptr.to_le_bytes());
+        params[idx_len_base..idx_len_base + PARAM_COMPONENT_SIZE]
+            .copy_from_slice(&param_len.to_le_bytes());
+    }
+    let mut result = [0u8; N];
+    let ret = unsafe { sol_big_mod_exp_original(params.as_ptr(), result.as_mut_ptr()) };
+    (ret, result)
+}
+extern "C" {
     fn sol_big_mod_exp(params_addr: *const u8, return_value_addr: *mut u8) -> ReturnValue;
 }
 pub fn big_mod_exp_native<const N: usize>(

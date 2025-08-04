@@ -1,5 +1,6 @@
 pub use crate::{
     bindings::{
+        _big_mod_exp,
         _bn254_add,
         _bn254_double,
         _bn254_fp2_mul,
@@ -250,6 +251,24 @@ impl NativeAPI for RwasmContext {
         unsafe {
             _bn254_fp2_mul(p.as_ptr() as u32, q.as_ptr() as u32);
         }
+    }
+
+    #[inline(always)]
+    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
+        unsafe {
+            if _big_mod_exp(
+                base.as_ptr(),
+                base.len() as u32,
+                exponent.as_ptr(),
+                exponent.len() as u32,
+                modulus.as_mut_ptr(),
+                modulus.len() as u32,
+            ) != 0
+            {
+                return Err(ExitCode::MalformedBuiltinParams);
+            };
+        }
+        Ok(())
     }
 
     #[inline(always)]

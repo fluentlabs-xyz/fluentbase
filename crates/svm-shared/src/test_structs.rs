@@ -21,6 +21,14 @@ pub struct CreateAccountAndModifySomeData1 {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SolBigModExpOriginal {
+    pub base: Vec<u8>,
+    pub exponent: Vec<u8>,
+    pub modulus: Vec<u8>,
+    pub expected: Vec<u8>,
+    pub expected_ret: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SolBigModExp {
     pub base: Vec<u8>,
     pub exponent: Vec<u8>,
@@ -28,8 +36,19 @@ pub struct SolBigModExp {
     pub expected: Vec<u8>,
     pub expected_ret: u64,
 }
+impl From<SolBigModExpOriginal> for SolBigModExp {
+    fn from(value: SolBigModExpOriginal) -> Self {
+        Self {
+            base: value.base,
+            exponent: value.exponent,
+            modulus: value.modulus,
+            expected: value.expected,
+            expected_ret: value.expected_ret,
+        }
+    }
+}
 
-impl SolBigModExp {
+impl SolBigModExpOriginal {
     pub fn from_hex(
         base_hex: &str,
         exponent_hex: &str,
@@ -241,6 +260,7 @@ impl From<AltBn128CompressionOriginal> for AltBn128Compression {
 pub enum TestCommand {
     ModifyAccount1(ModifyAccount1),
     CreateAccountAndModifySomeData1(CreateAccountAndModifySomeData1),
+    SolBigModExpOriginal(SolBigModExpOriginal),
     SolBigModExp(SolBigModExp),
     SolSecp256k1Recover(SolSecp256k1Recover),
     SolSecp256k1RecoverOriginal(SolSecp256k1RecoverOriginal),
@@ -281,6 +301,7 @@ macro_rules! impl_from {
 
 impl_from!(ModifyAccount1);
 impl_from!(CreateAccountAndModifySomeData1);
+impl_from!(SolBigModExpOriginal);
 impl_from!(SolBigModExp);
 impl_from!(SolSecp256k1RecoverOriginal);
 impl_from!(SolSecp256k1Recover);

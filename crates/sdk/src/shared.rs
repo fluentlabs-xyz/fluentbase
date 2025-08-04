@@ -301,6 +301,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::bn254_fp2_mul(p, q)
     }
 
+    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
+        API::big_mod_exp(base, exponent, modulus)
+    }
+
     fn read(&self, target: &mut [u8], offset: u32) {
         self.native_sdk
             .read(target, SharedContextInputV1::SIZE as u32 + offset)

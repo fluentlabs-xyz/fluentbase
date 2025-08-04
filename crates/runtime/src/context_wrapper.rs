@@ -21,6 +21,7 @@ use crate::{
         fuel::SyscallFuel,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
+        math_big_mod_exp::SyscallMathBigModExp,
         output_size::SyscallOutputSize,
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
@@ -212,6 +213,10 @@ impl NativeAPI for RuntimeContextWrapper {
         let result = SyscallFp2Mul::<Bn254BaseField>::fn_impl(p, q);
         let min = core::cmp::min(p.len(), result.len());
         p[..min].copy_from_slice(&result[..min]);
+    }
+
+    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
+        SyscallMathBigModExp::fn_impl(base, exponent, modulus)
     }
 
     fn debug_log(message: &str) {
