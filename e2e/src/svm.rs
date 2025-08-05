@@ -43,6 +43,7 @@ mod tests {
         test_structs::{
             AltBn128Compression,
             AltBn128CompressionOriginal,
+            Blake3,
             CreateAccountAndModifySomeData1,
             CurveGroupOp,
             CurveGroupOpOriginal,
@@ -51,6 +52,7 @@ mod tests {
             CurvePointValidation,
             CurvePointValidationOriginal,
             Keccak256,
+            Poseidon,
             SetGetReturnData,
             Sha256Original,
             SolBigModExp,
@@ -108,7 +110,6 @@ mod tests {
         },
         scalar::PodScalar,
     };
-    #[cfg(feature = "enable-solana-extended-builtins")]
     use solana_poseidon::{Endianness, Parameters};
     use std::{fs::File, io::Read, ops::Neg, time::Instant};
 
@@ -185,7 +186,6 @@ mod tests {
 
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
 
@@ -235,7 +235,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -341,7 +340,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -462,7 +460,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -523,7 +520,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -561,7 +557,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -600,7 +595,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_blake3() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -608,7 +602,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -639,7 +632,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_be() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -647,7 +639,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -689,7 +680,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_le() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -697,7 +687,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -739,7 +728,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_twos_be() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -747,7 +735,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -794,7 +781,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_poseidon__input_ones_twos_le() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -802,7 +788,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -849,7 +834,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     #[test]
     fn test_svm_sol_poseidon__input_one() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -857,7 +841,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -965,7 +948,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -999,7 +981,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -1068,7 +1049,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -1438,7 +1418,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -1583,7 +1562,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -1714,7 +1692,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -1889,7 +1866,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -2031,7 +2007,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -2144,7 +2119,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;
@@ -2260,7 +2234,6 @@ mod tests {
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
             &loader_id,
-            // "../examples/svm/solana-program/assets/solana_program.so",
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
         let payer_lamports = 101;

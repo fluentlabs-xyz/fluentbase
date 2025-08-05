@@ -133,25 +133,29 @@ impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
     }
 }
 
-pub struct Blake3Hasher(blake3::Hasher);
-impl HasherImpl for Blake3Hasher {
+pub struct Blake3Hasher<SDK: SharedAPI> {
+    _phantom: PhantomData<SDK>,
+    hasher: blake3::Hasher,
+}
+impl<SDK: SharedAPI> HasherImpl for Blake3Hasher<SDK> {
     const NAME: &'static str = "Blake3";
     type Output = [u8; 32];
 
     fn create_hasher() -> Self {
-        Blake3Hasher(blake3::Hasher::default())
+        Blake3Hasher {
+            _phantom: Default::default(),
+            hasher: blake3::Hasher::default(),
+        }
     }
 
     fn hash(&mut self, val: &[u8]) {
-        self.0.update(val);
+        self.hasher.update(val);
     }
 
     fn result(self) -> Self::Output {
-        self.0.finalize().as_bytes().clone()
+        self.hasher.finalize().as_bytes().clone()
     }
 }
-
-// declare_id!("NativeLoader1111111111111111111111111111111");
 
 pub fn morph_into_deployment_environment_v1<'a, SDK: SharedAPI>(
     from: Arc<BuiltinProgram<InvokeContext<'a, SDK>>>,

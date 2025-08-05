@@ -3,7 +3,7 @@ use crate::common::Sha256HasherOriginal;
 use crate::{
     alloc::string::ToString,
     big_mod_exp::{big_mod_exp, BigModExpParams},
-    common::{HasherImpl, Keccak256Hasher, Sha256Hasher},
+    common::{Blake3Hasher, HasherImpl, Keccak256Hasher, Sha256Hasher},
     context::InvokeContext,
     declare_builtin_function,
     error::{Error, Secp256k1RecoverError, SvmError, SyscallError},
@@ -225,13 +225,8 @@ pub fn register_builtins<SDK: SharedAPI>(
             SyscallHash::vm::<SDK, Keccak256Hasher<SDK>>,
         )
         .unwrap();
-    #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
-        .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher>)
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-extended-builtins"))]
-    function_registry
-        .register_function_hashed("sol_blake3", SyscallStub::vm)
+        .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher<SDK>>)
         .unwrap();
 
     #[cfg(feature = "enable-solana-original-builtins")]
@@ -246,13 +241,8 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_big_mod_exp", SyscallBigModExp::vm)
         .unwrap();
 
-    #[cfg(feature = "enable-solana-extended-builtins")]
     function_registry
         .register_function_hashed("sol_poseidon", SyscallPoseidon::vm)
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-extended-builtins"))]
-    function_registry
-        .register_function_hashed("sol_poseidon", SyscallStub::vm)
         .unwrap();
 }
 
