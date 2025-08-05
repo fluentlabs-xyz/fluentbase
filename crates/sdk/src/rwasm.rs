@@ -32,6 +32,7 @@ pub use crate::{
         _input_size,
         _keccak256,
         _output_size,
+        _poseidon,
         _preimage_copy,
         _preimage_size,
         _read,
@@ -85,6 +86,23 @@ impl NativeAPI for RwasmContext {
                 res.as_mut_slice().as_mut_ptr(),
             );
             res
+        }
+    }
+    #[inline(always)]
+    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
+        unsafe {
+            let mut res = B256::ZERO;
+            if _poseidon(
+                parameters,
+                endianness,
+                data.as_ptr() as *const u8,
+                data.len() as u32,
+                res.as_mut_ptr(),
+            ) != 0
+            {
+                return Err(ExitCode::MalformedBuiltinParams);
+            };
+            Ok(res)
         }
     }
 

@@ -2702,6 +2702,7 @@ dependencies = [
  "rwasm",
  "secp256k1 0.29.1",
  "sha2 0.10.9",
+ "solana-poseidon",
  "sp1-curves",
  "sp1-primitives",
  "tiny-keccak",

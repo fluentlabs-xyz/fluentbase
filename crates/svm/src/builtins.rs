@@ -28,7 +28,7 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
 use fluentbase_sdk::{debug_log_ext, SharedAPI, B256};
-use fluentbase_types::helpers::convert_endianness_flexible;
+use fluentbase_types::{helpers::convert_endianness_flexible, ExitCode};
 use itertools::Itertools;
 use solana_bn254::{
     compression::prelude::convert_endianness,
@@ -44,6 +44,7 @@ use solana_bn254::{
 };
 use solana_curve25519::{edwards, ristretto, scalar};
 use solana_feature_set::{abort_on_invalid_curve, simplify_alt_bn128_syscall_error_codes};
+use solana_poseidon::HASH_BYTES;
 use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
@@ -806,6 +807,67 @@ declare_builtin_function!(
     }
 );
 
+// declare_builtin_function!(
+//     // Poseidon
+//     SyscallPoseidon<SDK: SharedAPI>,
+//     fn rust(
+//         invoke_context: &mut InvokeContext<SDK>,
+//         parameters: u64,
+//         endianness: u64,
+//         vals_addr: u64,
+//         vals_len: u64,
+//         result_addr: u64,
+//         memory_mapping: &mut MemoryMapping,
+//     ) -> Result<u64, Error> {
+//         use crate::error::RuntimeError;
+//         let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
+//         let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
+//
+//         if vals_len > 12 {
+//             debug_log_ext!("Poseidon hashing {} sequences is not supported", vals_len);
+//             return Err(SyscallError::InvalidLength.into());
+//         }
+//
+//         let mut hash_result = translate_slice_mut::<u8>(
+//             memory_mapping,
+//             result_addr,
+//             solana_poseidon::HASH_BYTES as u64,
+//             invoke_context.get_check_aligned(),
+//         )?;
+//         let untranslated_inputs = translate_slice::<SliceFatPtr64<u8>>(
+//             memory_mapping,
+//             vals_addr,
+//             vals_len,
+//             invoke_context.get_check_aligned(),
+//         )?;
+//         let inputs_vec = untranslated_inputs
+//             .iter()
+//             .map(|v| {
+//                 Ok(v.as_ref().to_vec_cloned())
+//             })
+//             .collect::<Result<Vec<_>, SvmError>>()?;
+//         let inputs = inputs_vec.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
+//
+//         let simplify_alt_bn128_syscall_error_codes = invoke_context
+//             .get_feature_set()
+//             .is_active(&simplify_alt_bn128_syscall_error_codes::id());
+//
+//         let hash = match solana_poseidon::hashv(parameters, endianness, inputs.as_slice()) {
+//             Ok(hash) => hash,
+//             Err(e) => {
+//                 return if simplify_alt_bn128_syscall_error_codes {
+//                     Ok(1)
+//                 } else {
+//                     Ok(e.into())
+//                 };
+//             }
+//         };
+//         hash_result.copy_from_slice(&hash.to_bytes());
+//
+//         Ok(SUCCESS)
+//     }
+// );
+
 declare_builtin_function!(
     // Poseidon
     SyscallPoseidon<SDK: SharedAPI>,
@@ -818,12 +880,7 @@ declare_builtin_function!(
         result_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use crate::error::RuntimeError;
-        let parameters: solana_poseidon::Parameters = parameters.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
-        let endianness: solana_poseidon::Endianness = endianness.try_into().map_err(|_| RuntimeError::InvalidConversion)?;
-
         if vals_len > 12 {
-            debug_log_ext!("Poseidon hashing {} sequences is not supported", vals_len);
             return Err(SyscallError::InvalidLength.into());
         }
 
@@ -839,29 +896,31 @@ declare_builtin_function!(
             vals_len,
             invoke_context.get_check_aligned(),
         )?;
-        let inputs_vec = untranslated_inputs
-            .iter()
-            .map(|v| {
-                Ok(v.as_ref().to_vec_cloned())
-            })
-            .collect::<Result<Vec<_>, SvmError>>()?;
-        let inputs = inputs_vec.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
+        let mut inputs = Vec::<u8>::with_capacity(vals_len as usize * HASH_BYTES);
+        for v in untranslated_inputs.iter() {
+            let v_slice = v.as_ref().as_slice();
+            if v_slice.len() != HASH_BYTES {
+                debug_log_ext!();
+                return Err(SvmError::ExitCode(ExitCode::MalformedBuiltinParams).into());
+            }
+            inputs.extend_from_slice(v_slice);
+        }
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
             .is_active(&simplify_alt_bn128_syscall_error_codes::id());
 
-        let hash = match solana_poseidon::hashv(parameters, endianness, inputs.as_slice()) {
+        let hash = match SDK::poseidon(parameters as u32, endianness as u32, &inputs) {
             Ok(hash) => hash,
             Err(e) => {
                 return if simplify_alt_bn128_syscall_error_codes {
                     Ok(1)
                 } else {
-                    Ok(e.into())
+                    Err(SvmError::ExitCode(e).into())
                 };
             }
         };
-        hash_result.copy_from_slice(&hash.to_bytes());
+        hash_result.copy_from_slice(&hash.as_slice());
 
         Ok(SUCCESS)
     }

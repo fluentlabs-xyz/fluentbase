@@ -26,6 +26,7 @@ pub mod keccak256;
 pub mod keccak256_permute;
 pub mod math_big_mod_exp;
 pub mod output_size;
+pub mod poseidon;
 pub mod preimage_copy;
 pub mod preimage_size;
 pub mod read;
@@ -75,6 +76,7 @@ use crate::{
         keccak256_permute::SyscallKeccak256Permute,
         math_big_mod_exp::SyscallMathBigModExp,
         output_size::SyscallOutputSize,
+        poseidon::SyscallPoseidon,
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
@@ -142,6 +144,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller, params, result),
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller, params, result),
         SysFuncIdx::BLAKE3 => SyscallBlake3::fn_handler(caller, params, result),
+        SysFuncIdx::POSEIDON => SyscallPoseidon::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_EDWARDS_DECOMPRESS_VALIDATE => SyscallED25519EdwardsDecompressValidate::fn_handler(caller, params, result),

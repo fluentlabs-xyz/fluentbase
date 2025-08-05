@@ -13,6 +13,7 @@ mod curves;
 pub mod evm;
 mod exit_code;
 pub mod genesis;
+pub mod hashes;
 pub mod helpers;
 pub mod macroses;
 pub mod native_api;

@@ -23,6 +23,7 @@ use crate::{
         keccak256::SyscallKeccak256,
         math_big_mod_exp::SyscallMathBigModExp,
         output_size::SyscallOutputSize,
+        poseidon::SyscallPoseidon,
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
@@ -85,6 +86,9 @@ impl NativeAPI for RuntimeContextWrapper {
     }
     fn blake3(_data: &[u8]) -> B256 {
         todo!("not implemented")
+    }
+    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
+        SyscallPoseidon::fn_impl(parameters as u64, endianness as u64, data)
     }
 
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {

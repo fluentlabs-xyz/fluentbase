@@ -238,6 +238,10 @@ impl SharedAPI for HostTestingContext {
         RuntimeContextWrapper::blake3(data)
     }
 
+    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
+        RuntimeContextWrapper::poseidon(parameters, endianness, data)
+    }
+
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         RuntimeContextWrapper::secp256k1_recover(digest, sig, rec_id)
     }

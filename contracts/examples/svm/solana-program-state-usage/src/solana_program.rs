@@ -322,6 +322,7 @@ pub fn process_instruction(
         TestCommand::Poseidon(p) => {
             let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
             let expected_result = p.expected_result;
+            msg!("data1 {:?}", &data);
             let result = sol_poseidon_native(p.parameters, p.endianness, data.as_slice());
             assert_eq!(&p.expected_ret, &result.0);
             assert_eq!(expected_result.as_slice(), &result.1);

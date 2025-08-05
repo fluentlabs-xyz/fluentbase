@@ -17,6 +17,12 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
     }
     import_function!("_keccak256", KECCAK256, &[ValType::I32; 3], &[]);
     import_function!("_blake3", BLAKE3, &[ValType::I32; 3], &[]);
+    import_function!(
+        "_poseidon",
+        POSEIDON,
+        &[ValType::I32; 5],
+        &[ValType::I32; 1]
+    );
     import_function!("_exit", EXIT, &[ValType::I32; 1], &[]);
     import_function!("_state", STATE, &[], &[ValType::I32; 1]);
     import_function!("_read", READ_INPUT, &[ValType::I32; 3], &[]);
