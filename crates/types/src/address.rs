@@ -64,6 +64,14 @@ mod tests {
             todo!()
         }
 
+        fn blake3(data: &[u8]) -> B256 {
+            todo!()
+        }
+
+        fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
+            todo!()
+        }
+
         fn secp256k1_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> Option<[u8; 65]> {
             todo!()
         }
