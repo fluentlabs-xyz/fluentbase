@@ -24,7 +24,10 @@ use fluentbase_examples_svm_bindings::{
     sol_sha256_native,
     sol_sha256_original_native,
 };
-use fluentbase_svm_shared::{bincode_helpers::deserialize, test_structs::TestCommand};
+use fluentbase_svm_shared::{
+    bincode_helpers::deserialize,
+    test_structs::{TestCommand, EXPECTED_RET_OK},
+};
 use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
@@ -322,10 +325,11 @@ pub fn process_instruction(
         TestCommand::Poseidon(p) => {
             let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
             let expected_result = p.expected_result;
-            msg!("data1 {:?}", &data);
             let result = sol_poseidon_native(p.parameters, p.endianness, data.as_slice());
             assert_eq!(&p.expected_ret, &result.0);
-            assert_eq!(expected_result.as_slice(), &result.1);
+            if p.expected_ret == EXPECTED_RET_OK {
+                assert_eq!(expected_result.as_slice(), &result.1);
+            }
         }
         TestCommand::SetGetReturnData(p) => {
             let data: &[u8] = p.data.as_slice();

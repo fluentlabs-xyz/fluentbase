@@ -27,8 +27,8 @@ use crate::{
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
-use fluentbase_sdk::{debug_log_ext, SharedAPI, B256};
-use fluentbase_types::{helpers::convert_endianness_flexible, ExitCode};
+use fluentbase_sdk::{SharedAPI, B256};
+use fluentbase_types::helpers::convert_endianness_flexible;
 use itertools::Itertools;
 use solana_bn254::{
     compression::prelude::convert_endianness,
@@ -44,7 +44,6 @@ use solana_bn254::{
 };
 use solana_curve25519::{edwards, ristretto, scalar};
 use solana_feature_set::{abort_on_invalid_curve, simplify_alt_bn128_syscall_error_codes};
-use solana_poseidon::HASH_BYTES;
 use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_rbpf::{
@@ -896,28 +895,19 @@ declare_builtin_function!(
             vals_len,
             invoke_context.get_check_aligned(),
         )?;
-        let mut inputs = Vec::<u8>::with_capacity(vals_len as usize * HASH_BYTES);
+        let mut inputs = Vec::<u8>::with_capacity(vals_len as usize * solana_poseidon::HASH_BYTES);
         for v in untranslated_inputs.iter() {
             let v_slice = v.as_ref().as_slice();
-            if v_slice.len() != HASH_BYTES {
-                debug_log_ext!();
-                return Err(SvmError::ExitCode(ExitCode::MalformedBuiltinParams).into());
+            if v_slice.len() != solana_poseidon::HASH_BYTES {
+                return Ok(1);
             }
             inputs.extend_from_slice(v_slice);
         }
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .is_active(&simplify_alt_bn128_syscall_error_codes::id());
-
         let hash = match SDK::poseidon(parameters as u32, endianness as u32, &inputs) {
             Ok(hash) => hash,
-            Err(e) => {
-                return if simplify_alt_bn128_syscall_error_codes {
-                    Ok(1)
-                } else {
-                    Err(SvmError::ExitCode(e).into())
-                };
+            Err(_e) => {
+                return Ok(1);
             }
         };
         hash_result.copy_from_slice(&hash.as_slice());

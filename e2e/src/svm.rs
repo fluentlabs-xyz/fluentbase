@@ -928,6 +928,23 @@ mod tests {
                 }
                 .into(),
             );
+            test_commands.push(
+                Poseidon {
+                    parameters: Parameters::Bn254X5.into(),
+                    endianness: Endianness::BigEndian.into(),
+                    data: inputs
+                        .iter()
+                        .map(|v| {
+                            let mut v = v.to_vec();
+                            v.push(0xa);
+                            v
+                        })
+                        .collect(),
+                    expected_result: hash.to_bytes(),
+                    expected_ret: EXPECTED_RET_ERR,
+                }
+                .into(),
+            );
         }
 
         process_test_commands(
