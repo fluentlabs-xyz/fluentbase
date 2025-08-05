@@ -1,3 +1,4 @@
+pub mod blake3;
 pub mod charge_fuel;
 pub mod charge_fuel_manually;
 pub mod debug_log;
@@ -46,6 +47,7 @@ pub mod write;
 
 use crate::{
     instruction::{
+        blake3::SyscallBlake3,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
@@ -139,6 +141,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::KECCAK256_PERMUTE => SyscallKeccak256Permute::fn_handler(caller, params, result),
         SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller, params, result),
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller, params, result),
+        SysFuncIdx::BLAKE3 => SyscallBlake3::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_EDWARDS_DECOMPRESS_VALIDATE => SyscallED25519EdwardsDecompressValidate::fn_handler(caller, params, result),

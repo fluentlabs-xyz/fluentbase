@@ -206,6 +206,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::sha256(data)
     }
 
+    fn blake3(data: &[u8]) -> B256 {
+        API::blake3(data)
+    }
+
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         API::secp256k1_recover(digest, sig, rec_id)
     }

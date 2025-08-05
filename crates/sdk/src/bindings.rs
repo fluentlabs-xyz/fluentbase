@@ -126,6 +126,7 @@ extern "C" {
     pub fn _keccak256_permute(state_ptr: *mut [u64; 25]);
     pub fn _sha256_extend(w_ptr: *mut u8);
     pub fn _sha256_compress(w_ptr: *mut u8, h_ptr: *const u8);
+    pub fn _blake3(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
 
     pub fn _ed25519_add(p_ptr: *mut u8, q_ptr: *const u8);
     pub fn _ed25519_decompress(slice_ptr: *mut u8, sign: u32);

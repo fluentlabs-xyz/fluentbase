@@ -46,7 +46,7 @@ solana-bn254 = { workspace = true, default-features = false, features = [] }
 
 paste = { workspace = true }
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
-blake3 = { workspace = true, default-features = false, features = ["serde"] }
+blake3 = { workspace = true, default-features = false, features = [] }
 bitflags = { workspace = true, default-features = false, features = ["serde"] }
 spin = { workspace = true, default-features = false, features = ["spin_mutex", "rwlock"] }
 

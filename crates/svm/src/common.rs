@@ -9,6 +9,7 @@ use crate::{
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
 use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
+use fluentbase_types::default;
 use solana_bincode::limited_deserialize;
 use solana_instruction::error::InstructionError;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES, SVM_ADDRESS_PREFIX};
@@ -135,7 +136,8 @@ impl<SDK: SharedAPI> HasherImpl for Keccak256Hasher<SDK> {
 
 pub struct Blake3Hasher<SDK: SharedAPI> {
     _phantom: PhantomData<SDK>,
-    hasher: blake3::Hasher,
+    data: Vec<u8>,
+    hash: Option<[u8; 32]>,
 }
 impl<SDK: SharedAPI> HasherImpl for Blake3Hasher<SDK> {
     const NAME: &'static str = "Blake3";
@@ -143,17 +145,24 @@ impl<SDK: SharedAPI> HasherImpl for Blake3Hasher<SDK> {
 
     fn create_hasher() -> Self {
         Blake3Hasher {
-            _phantom: Default::default(),
-            hasher: blake3::Hasher::default(),
+            _phantom: default!(),
+            data: default!(),
+            hash: default!(),
         }
     }
 
     fn hash(&mut self, val: &[u8]) {
-        self.hasher.update(val);
+        self.data.extend_from_slice(val);
+        self.hash = None;
     }
 
-    fn result(self) -> Self::Output {
-        self.hasher.finalize().as_bytes().clone()
+    fn result(mut self) -> Self::Output {
+        if let Some(hash) = self.hash {
+            return hash;
+        }
+        let hash = SDK::blake3(&self.data).0;
+        self.hash = Some(hash);
+        hash
     }
 }
 

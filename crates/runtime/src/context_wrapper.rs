@@ -83,6 +83,9 @@ impl NativeAPI for RuntimeContextWrapper {
     fn sha256(_data: &[u8]) -> B256 {
         todo!("not implemented")
     }
+    fn blake3(_data: &[u8]) -> B256 {
+        todo!("not implemented")
+    }
 
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)

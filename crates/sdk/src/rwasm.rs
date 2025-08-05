@@ -1,6 +1,7 @@
 pub use crate::{
     bindings::{
         _big_mod_exp,
+        _blake3,
         _bn254_add,
         _bn254_double,
         _bn254_fp2_mul,
@@ -73,6 +74,18 @@ impl NativeAPI for RwasmContext {
     #[inline(always)]
     fn sha256(_data: &[u8]) -> B256 {
         todo!("not implemented")
+    }
+    #[inline(always)]
+    fn blake3(data: &[u8]) -> B256 {
+        unsafe {
+            let mut res = B256::ZERO;
+            _blake3(
+                data.as_ptr(),
+                data.len() as u32,
+                res.as_mut_slice().as_mut_ptr(),
+            );
+            res
+        }
     }
 
     #[inline(always)]

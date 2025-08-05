@@ -313,9 +313,7 @@ pub fn process_instruction(
             assert_eq!(expected_result.as_slice(), &result.1);
             if p.data.len() > 0 {
                 let mut data_solid = Vec::new();
-                for v in &p.data {
-                    data_solid.extend_from_slice(v);
-                }
+                p.data.iter().for_each(|v| data_solid.extend_from_slice(v));
                 let result = sol_blake3_native(&[data_solid.as_slice()]);
                 assert_eq!(&p.expected_ret, &result.0);
                 assert_eq!(expected_result.as_slice(), &result.1);
