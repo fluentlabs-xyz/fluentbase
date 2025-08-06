@@ -77,7 +77,6 @@ std = [
     "solana_rbpf/std",
 ]
 enable-solana-original-builtins = []
-enable-solana-extended-builtins = []
 debug-print = []
 do-not-validate-elf-on-deploy = []
 use-extended-debug-log = []
