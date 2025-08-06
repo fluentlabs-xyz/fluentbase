@@ -63,7 +63,7 @@ pub fn get_return_data() -> Option<(Pubkey, Vec<u8>)> {
 extern "C" {
     fn sol_keccak256(values_addr: *const u8, values_len: u64, result_addr: *mut u8) -> ReturnValue;
 }
-macro_rules! hash_impl {
+macro_rules! impl_hash {
     ($data:ident, $hash_fn:ident) => {{
         let hash_result = [0u8; 32];
         let ret = unsafe {
@@ -77,7 +77,7 @@ macro_rules! hash_impl {
     }};
 }
 pub fn sol_keccak256_native(data: &[&[u8]]) -> (ReturnValue, [u8; 32]) {
-    hash_impl!(data, sol_keccak256)
+    impl_hash!(data, sol_keccak256)
 }
 extern "C" {
     fn sol_sha256_original(
@@ -87,19 +87,19 @@ extern "C" {
     ) -> ReturnValue;
 }
 pub fn sol_sha256_original_native(data: &[&[u8]]) -> (ReturnValue, [u8; 32]) {
-    hash_impl!(data, sol_sha256_original)
+    impl_hash!(data, sol_sha256_original)
 }
 extern "C" {
     fn sol_sha256(values_addr: *const u8, values_len: u64, result_addr: *mut u8) -> ReturnValue;
 }
 pub fn sol_sha256_native(data: &[&[u8]]) -> (ReturnValue, [u8; 32]) {
-    hash_impl!(data, sol_sha256)
+    impl_hash!(data, sol_sha256)
 }
 extern "C" {
     fn sol_blake3(values_addr: *const u8, values_len: u64, result_addr: *mut u8) -> ReturnValue;
 }
 pub fn sol_blake3_native(data: &[&[u8]]) -> (ReturnValue, [u8; 32]) {
-    hash_impl!(data, sol_blake3)
+    impl_hash!(data, sol_blake3)
 }
 extern "C" {
     fn sol_poseidon(

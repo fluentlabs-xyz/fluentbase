@@ -29,6 +29,7 @@ pub enum SysFuncIdx {
     // POSEIDON_HASH = 0x0104,
     SHA256_EXTEND = 0x0105,
     SHA256_COMPRESS = 0x0106,
+    SHA256 = 0x0118,
     BLAKE3 = 0x0117,
 
     // ed25519

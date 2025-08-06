@@ -123,6 +123,7 @@ extern "C" {
     /// computations, and is often wrapped in a safer abstraction to ensure the correct usage of
     /// memory.
     pub fn _keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
+    pub fn _sha256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     pub fn _keccak256_permute(state_ptr: *mut [u64; 25]);
     pub fn _sha256_extend(w_ptr: *mut u8);
     pub fn _sha256_compress(w_ptr: *mut u8, h_ptr: *const u8);

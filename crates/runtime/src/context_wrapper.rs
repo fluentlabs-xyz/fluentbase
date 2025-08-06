@@ -1,5 +1,6 @@
 use crate::{
     instruction::{
+        blake3::SyscallBlake3,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
@@ -30,6 +31,7 @@ use crate::{
         read_output::SyscallReadOutput,
         resume::SyscallResume,
         secp256k1_recover::SyscallSecp256k1Recover,
+        sha256::SyscallSha256,
         state::SyscallState,
         weierstrass_add::SyscallWeierstrassAddAssign,
         weierstrass_compress_decompress::{
@@ -81,11 +83,12 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallKeccak256::fn_impl(data)
     }
 
-    fn sha256(_data: &[u8]) -> B256 {
-        todo!("not implemented")
+    fn sha256(data: &[u8]) -> B256 {
+        SyscallSha256::fn_impl(data)
     }
-    fn blake3(_data: &[u8]) -> B256 {
-        todo!("not implemented")
+
+    fn blake3(data: &[u8]) -> B256 {
+        SyscallBlake3::fn_impl(data)
     }
     fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
         SyscallPoseidon::fn_impl(parameters as u64, endianness as u64, data)

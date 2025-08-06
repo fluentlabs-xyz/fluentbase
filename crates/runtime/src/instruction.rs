@@ -33,6 +33,7 @@ pub mod read;
 pub mod read_output;
 pub mod resume;
 pub mod secp256k1_recover;
+pub mod sha256;
 pub mod sha256_compress;
 pub mod sha256_extend;
 pub mod state;
@@ -83,6 +84,7 @@ use crate::{
         read_output::SyscallReadOutput,
         resume::SyscallResume,
         secp256k1_recover::SyscallSecp256k1Recover,
+        sha256::SyscallSha256,
         sha256_compress::SyscallSha256Compress,
         sha256_extend::SyscallSha256Extend,
         state::SyscallState,
@@ -143,6 +145,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::KECCAK256_PERMUTE => SyscallKeccak256Permute::fn_handler(caller, params, result),
         SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller, params, result),
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller, params, result),
+        SysFuncIdx::SHA256 => SyscallSha256::fn_handler(caller, params, result),
         SysFuncIdx::BLAKE3 => SyscallBlake3::fn_handler(caller, params, result),
         SysFuncIdx::POSEIDON => SyscallPoseidon::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller, params, result),

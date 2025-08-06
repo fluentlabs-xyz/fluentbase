@@ -15,6 +15,7 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
             );
         };
     }
+    import_function!("_sha256", SHA256, &[ValType::I32; 3], &[]);
     import_function!("_keccak256", KECCAK256, &[ValType::I32; 3], &[]);
     import_function!("_blake3", BLAKE3, &[ValType::I32; 3], &[]);
     import_function!(

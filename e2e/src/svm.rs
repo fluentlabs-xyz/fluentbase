@@ -54,6 +54,7 @@ mod tests {
             Keccak256,
             Poseidon,
             SetGetReturnData,
+            Sha256,
             Sha256Original,
             SolBigModExp,
             SolBigModExpOriginal,
@@ -77,8 +78,6 @@ mod tests {
     use hex_literal::hex;
     use rand::random_range;
     use serde::Deserialize;
-    #[cfg(feature = "enable-solana-extended-builtins")]
-    use solana_bn254::prelude::ALT_BN128_MUL;
     use solana_bn254::{
         compression::prelude::{
             alt_bn128_g1_compress,
@@ -577,12 +576,7 @@ mod tests {
         };
         #[cfg(feature = "enable-solana-original-builtins")]
         test_commands.push(original_test_case.clone().into());
-        // TODO uncomment when fluent's sha256 implemented
-        // test_commands.push(Sha256 {
-        //     data: original_test_case.data,
-        //     expected_result: original_test_case.expected_result,
-        //     expected_ret: original_test_case.expected_ret,
-        // }.into());
+        test_commands.push(<Sha256 as From<_>>::from(original_test_case).into());
 
         process_test_commands(
             &mut ctx,

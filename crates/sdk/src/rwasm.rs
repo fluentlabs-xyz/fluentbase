@@ -39,6 +39,7 @@ pub use crate::{
         _read_output,
         _resume,
         _secp256k1_recover,
+        _sha256,
         _state,
         _write,
     },
@@ -73,8 +74,16 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn sha256(_data: &[u8]) -> B256 {
-        todo!("not implemented")
+    fn sha256(data: &[u8]) -> B256 {
+        unsafe {
+            let mut res = B256::ZERO;
+            _sha256(
+                data.as_ptr(),
+                data.len() as u32,
+                res.as_mut_slice().as_mut_ptr(),
+            );
+            res
+        }
     }
     #[inline(always)]
     fn blake3(data: &[u8]) -> B256 {
