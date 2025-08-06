@@ -59,9 +59,6 @@ default = [
 enable-solana-original-builtins = [
     "fluentbase-svm/enable-solana-original-builtins"
 ]
-enable-solana-extended-builtins = [
-    "fluentbase-svm/enable-solana-extended-builtins"
-]
 enable-svm = [
     "fluentbase-genesis/enable-svm",
     "fluentbase-svm/use-extended-debug-log"
