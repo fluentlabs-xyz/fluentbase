@@ -280,6 +280,7 @@ mod tests {
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
+        let deployer_balance_before = ctx.get_balance(DEPLOYER_ADDRESS);
         let measure = Instant::now();
         let result = ctx.call_evm_tx_simple(
             DEPLOYER_ADDRESS,
@@ -289,6 +290,13 @@ mod tests {
             Some(evm_balance_from_lamports(lamports_to_send)),
         );
         println!("exec took: {:.2?}", measure.elapsed());
+        let deployer_balance_after = ctx.get_balance(DEPLOYER_ADDRESS);
+        // not precise, rounded
+        let deployer_balance_decrease_lamports =
+            lamports_from_evm_balance(deployer_balance_before - deployer_balance_after);
+        assert!(
+            (lamports_to_send..lamports_to_send + 1).contains(&deployer_balance_decrease_lamports)
+        );
         let output = result.output().unwrap();
         if output.len() > 0 {
             let out_text = from_utf8(output).unwrap();
