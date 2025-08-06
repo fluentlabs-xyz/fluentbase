@@ -1,6 +1,11 @@
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
-    common::{lamports_from_evm_balance, pubkey_from_evm_address},
+    common::{
+        evm_address_from_pubkey,
+        evm_balance_from_lamports,
+        lamports_from_evm_balance,
+        pubkey_from_evm_address,
+    },
     fluentbase::{
         common::{extract_account_data_or_default, flush_accounts, process_svm_result},
         helpers::exec_encoded_svm_batch_message,
@@ -16,9 +21,12 @@ use crate::{
         loader_v4::{LoaderV4State, LoaderV4Status},
     },
     system_program,
+    types::BalanceHistorySnapshot,
 };
+use alloc::vec::Vec;
 pub use deploy_entry_simplified as deploy_entry;
 use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI};
+use fluentbase_types::default;
 use hashbrown::HashMap;
 use solana_clock::Epoch;
 use solana_pubkey::Pubkey;
@@ -129,12 +137,11 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     .expect("failed to write loader_v4");
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
-    let (result_accounts, _balance_changes): (
+    let (result_accounts, balance_changes): (
         HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, (u64, u64)>,
+        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
     ) = match process_svm_result(result) {
         Ok((result_accounts, balance_changes)) => {
-            debug_log_ext!("exec ok");
             if result_accounts.len() > 0 {
                 let mut api: Option<&mut SDK> = None;
                 flush_accounts(&mut sdk, &mut api, &result_accounts)
@@ -156,7 +163,59 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // TODO figure out balance changes and apply them to evm
     // TODO need optimal balance sync logic
     // TODO to make this work - need implementations for accounts based on OwnableAccount
-    // settle_balances(&mut sdk, balance_changes);
+
+    // reorder balance changes so we have balance transfers like 'from->to'
+    let mut balance_decreases: Vec<(&Pubkey, u64)> = default!();
+    let mut balance_increases: Vec<(&Pubkey, u64)> = default!();
+    for (pk, snapshot) in &balance_changes {
+        let descriptor = snapshot.get_descriptor();
+        if descriptor.amount <= 0 {
+            continue;
+        }
+        debug_log_ext!("descriptor.amount={}", descriptor.amount);
+        if descriptor.direction.is_decrease() {
+            balance_decreases.push((pk, descriptor.amount));
+        } else if descriptor.direction.is_increase() {
+            balance_increases.push((pk, descriptor.amount));
+        }
+    }
+
+    if !balance_decreases.is_empty() || !balance_increases.is_empty() {
+        let mut from_iter = balance_decreases.iter_mut();
+        let mut to_iter = balance_increases.iter_mut();
+        let mut from = from_iter.next();
+        let mut to = to_iter.next();
+        while from.is_some() && to.is_some() {
+            let from_value = from.as_deref_mut().unwrap();
+            let to_value = to.as_deref_mut().unwrap();
+
+            let amount = core::cmp::min(from_value.1, to_value.1);
+            let address_from = evm_address_from_pubkey::<true>(from_value.0).unwrap();
+            let address_to = evm_address_from_pubkey::<true>(to_value.0).unwrap();
+
+            if contract_caller == address_from {
+                sdk.call(address_to, evm_balance_from_lamports(amount), &[], None)
+                    .expect("failed to transfer balance");
+                debug_log_ext!("from {} to {} sent {}", contract_caller, address_to, amount);
+                from_value.1 -= amount;
+                to_value.1 -= amount;
+                if from_value.1 <= 0 {
+                    from = from_iter.next();
+                }
+                if to_value.1 <= 0 {
+                    to = to_iter.next();
+                }
+            } else {
+                panic!("balance transfers from non-caller are not supported");
+            }
+        }
+        assert!(
+            from.is_none() && to.is_none(),
+            "some balances left unsettled: from {} to {}",
+            from.is_some(),
+            to.is_some()
+        );
+    }
 
     let out = Bytes::new();
     sdk.write(out.as_ref());

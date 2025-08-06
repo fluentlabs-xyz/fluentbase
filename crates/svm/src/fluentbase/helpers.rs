@@ -35,9 +35,11 @@ use crate::{
     system_processor,
     system_program,
     sysvar_cache::SysvarCache,
+    types::BalanceHistorySnapshot,
 };
 use alloc::{sync::Arc, vec::Vec};
 use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
+use fluentbase_types::default;
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;
@@ -65,7 +67,7 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
 ) -> Result<
     (
         HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, (u64, u64)>,
+        HashMap<Pubkey, BalanceHistorySnapshot<u64>>, // balance changes
     ),
     SvmError,
 > {
@@ -80,22 +82,26 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
 ) -> Result<
     (
         HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, (u64, u64)>,
+        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
     ),
     SvmError,
 > {
-    let mut result_accounts: HashMap<Pubkey, AccountSharedData> = Default::default();
-    let mut balance_changes: HashMap<Pubkey, (u64, u64)> = Default::default();
-    for message in batch_message.messages() {
+    let mut result_accounts: HashMap<Pubkey, AccountSharedData> = default!();
+    let mut balance_changes: HashMap<Pubkey, BalanceHistorySnapshot<u64>> = default!();
+    for (idx, message) in batch_message.messages().iter().enumerate() {
         let (ra, bhs) = exec_svm_message(sdk, api, message.clone(), do_flush)?;
         result_accounts.extend(ra);
-        for (account_key, balance_change) in bhs {
-            match balance_changes.entry(account_key) {
-                Entry::Occupied(v) => {
-                    v.into_mut().1 = balance_change.1;
-                }
-                Entry::Vacant(v) => {
-                    v.insert(balance_change);
+        if idx <= 0 {
+            balance_changes = bhs
+        } else {
+            for (account_key, balance_change) in bhs {
+                match balance_changes.entry(account_key) {
+                    Entry::Occupied(v) => {
+                        v.into_mut().after = balance_change.after;
+                    }
+                    Entry::Vacant(v) => {
+                        v.insert(balance_change);
+                    }
                 }
             }
         }
@@ -110,7 +116,7 @@ pub fn exec_encoded_svm_message<SDK: SharedAPI, API: MetadataAPI>(
 ) -> Result<
     (
         HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, (u64, u64)>,
+        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
     ),
     SvmError,
 > {
@@ -388,7 +394,7 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
 ) -> Result<
     (
         HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, (u64, u64)>,
+        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
     ),
     SvmError,
 > {

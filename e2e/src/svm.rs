@@ -26,7 +26,12 @@ mod tests {
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        common::{evm_address_from_pubkey, evm_balance_from_lamports, pubkey_from_evm_address},
+        common::{
+            evm_address_from_pubkey,
+            evm_balance_from_lamports,
+            lamports_from_evm_balance,
+            pubkey_from_evm_address,
+        },
         fluentbase::common::BatchMessage,
         helpers::storage_read_account_data,
         pubkey::Pubkey,
@@ -245,9 +250,10 @@ mod tests {
         // exec
 
         let space: u32 = 101;
+        let lamports_to_send = 12;
 
         let test_command_data = CreateAccountAndModifySomeData1 {
-            lamports_to_send: 12,
+            lamports_to_send,
             space,
             seeds: vec![seed1.to_vec()],
             byte_n_to_set: random_range(0..space),
@@ -275,8 +281,13 @@ mod tests {
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
         let measure = Instant::now();
-        let result =
-            ctx.call_evm_tx_simple(DEPLOYER_ADDRESS, contract_address, input.into(), None, None);
+        let result = ctx.call_evm_tx_simple(
+            DEPLOYER_ADDRESS,
+            contract_address,
+            input.into(),
+            None,
+            Some(evm_balance_from_lamports(lamports_to_send)),
+        );
         println!("exec took: {:.2?}", measure.elapsed());
         let output = result.output().unwrap();
         if output.len() > 0 {
@@ -297,7 +308,7 @@ mod tests {
 
         let exec_account: AccountSharedData = storage_read_account_data(&ctx.sdk, &pk_exec)
             .expect(format!("failed to read exec account data: {}", pk_exec).as_str());
-        assert_eq!(exec_account.lamports(), 0);
+        assert_eq!(exec_account.lamports(), 12);
         assert_eq!(
             exec_account.data().len(),
             LoaderV4State::program_data_offset() + account_with_program.data().len()
@@ -318,7 +329,7 @@ mod tests {
         );
         assert_eq!(
             payer_account.lamports(),
-            payer_lamports - 1 - test_command_data.lamports_to_send
+            payer_lamports - 1 - test_command_data.lamports_to_send - lamports_to_send
         );
         assert_eq!(payer_account.data().len(), 0);
 

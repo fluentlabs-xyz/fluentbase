@@ -42,6 +42,7 @@ pub mod system_program;
 pub mod sysvar_cache;
 #[cfg(test)]
 pub mod test_helpers;
+mod types;
 pub mod word_size;
 
 pub use bincode;

@@ -20,6 +20,7 @@ mod tests {
         },
         system_program,
         test_helpers::load_program_account_from_elf_file,
+        types::BalanceHistorySnapshot,
     };
     use core::str::from_utf8;
     use fluentbase_sdk::{
@@ -42,7 +43,7 @@ mod tests {
         mut api: Option<&mut API>,
     ) -> (
         HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, (u64, u64)>,
+        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
     ) {
         let input = sdk.input();
 
@@ -58,7 +59,7 @@ mod tests {
         mut api: Option<&mut API>,
     ) -> (
         HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, (u64, u64)>,
+        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
     ) {
         let input = sdk.input();
 

@@ -22,7 +22,7 @@ clean:
 
 .PHONY: test
 test:
-	cargo test --no-fail-fast #-q
+	cargo test #--no-fail-fast #-q
 
 .PHONY: custom_tests
 custom_tests:
