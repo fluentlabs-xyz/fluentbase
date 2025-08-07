@@ -11,6 +11,7 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
 
 num-traits = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
@@ -45,7 +46,7 @@ solana-bn254 = { workspace = true, default-features = false, features = [] }
 
 paste = { workspace = true }
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
-blake3 = { workspace = true, default-features = false, features = ["serde"] }
+blake3 = { workspace = true, default-features = false, features = [] }
 bitflags = { workspace = true, default-features = false, features = ["serde"] }
 spin = { workspace = true, default-features = false, features = ["spin_mutex", "rwlock"] }
 
@@ -57,6 +58,7 @@ lazy_static = { workspace = true, default-features = false }
 itertools = { workspace = true, default-features = false, features = ["use_alloc"] }
 libsecp256k1 = { workspace = true, features = ["static-context"] }
 num-bigint = { workspace = true, default-features = false }
+ark-bn254 = { workspace = true }
 
 [dev-dependencies]
 rand = { version = "0.9.0", default-features = false, features = ["alloc", "thread_rng"] }
@@ -74,10 +76,11 @@ std = [
     "itertools/use_std",
     "solana_rbpf/std",
 ]
+enable-solana-original-builtins = []
 debug-print = []
 do-not-validate-elf-on-deploy = []
 use-extended-debug-log = []
 json = [
-	"fluentbase-sdk/json",
-	"fluentbase-sdk-testing/json"
+    "fluentbase-sdk/json",
+    "fluentbase-sdk-testing/json"
 ]

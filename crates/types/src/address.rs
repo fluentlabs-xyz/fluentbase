@@ -43,7 +43,14 @@ pub fn calc_create4_address(owner: &Address, salt: &U256, hash_func: fn(&[u8]) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BytecodeOrHash, ExitCode};
+    use crate::{
+        BytecodeOrHash,
+        ExitCode,
+        BN254_G1_POINT_COMPRESSED_SIZE,
+        BN254_G1_POINT_DECOMPRESSED_SIZE,
+        BN254_G2_POINT_COMPRESSED_SIZE,
+        BN254_G2_POINT_DECOMPRESSED_SIZE,
+    };
     use alloy_primitives::{address, b256, keccak256};
 
     struct TestContext;
@@ -57,7 +64,113 @@ mod tests {
             todo!()
         }
 
+        fn blake3(data: &[u8]) -> B256 {
+            todo!()
+        }
+
+        fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
+            todo!()
+        }
+
         fn secp256k1_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> Option<[u8; 65]> {
+            todo!()
+        }
+
+        fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_edwards_multiscalar_mul(
+            pairs: &[([u8; 32], [u8; 32])],
+            out: &mut [u8; 32],
+        ) -> bool {
+            todo!()
+        }
+
+        fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+            todo!()
+        }
+
+        fn ed25519_ristretto_multiscalar_mul(
+            pairs: &[([u8; 32], [u8; 32])],
+            out: &mut [u8; 32],
+        ) -> bool {
+            todo!()
+        }
+
+        fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
+            todo!()
+        }
+
+        fn bn254_double(p: &mut [u8; 64]) {
+            todo!()
+        }
+
+        fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+            todo!()
+        }
+
+        fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+            todo!()
+        }
+
+        fn bn254_g1_compress(
+            point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+        ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
+            todo!()
+        }
+
+        fn bn254_g1_decompress(
+            point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
+        ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+            todo!()
+        }
+
+        fn bn254_g2_compress(
+            point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+        ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
+            todo!()
+        }
+
+        fn bn254_g2_decompress(
+            point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
+        ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
+            todo!()
+        }
+
+        fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+            todo!()
+        }
+
+        fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+            todo!()
+        }
+
+        fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
             todo!()
         }
 

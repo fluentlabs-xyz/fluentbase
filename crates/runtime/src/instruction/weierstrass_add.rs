@@ -28,11 +28,13 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
             params[1].i32().unwrap() as u32,
         );
         let num_words = <E::BaseField as NumWords>::WordsCurvePoint::USIZE;
+        const WORD_SIZE: usize = 4;
+        let param_len = num_words * WORD_SIZE;
 
         // Read p and q values from memory
-        let mut p = vec![0u8; num_words * 4];
+        let mut p = vec![0u8; param_len];
         caller.memory_read(p_ptr as usize, &mut p)?;
-        let mut q = vec![0u8; num_words * 4];
+        let mut q = vec![0u8; param_len];
         caller.memory_read(q_ptr as usize, &mut q)?;
 
         // Write the result back to memory at the p_ptr location

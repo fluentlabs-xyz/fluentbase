@@ -1,8 +1,30 @@
 pub use crate::{
     bindings::{
+        _big_mod_exp,
+        _blake3,
+        _bn254_add,
+        _bn254_double,
+        _bn254_fp2_mul,
+        _bn254_fp_mul,
+        _bn254_g1_compress,
+        _bn254_g1_decompress,
+        _bn254_g2_compress,
+        _bn254_g2_decompress,
+        _bn254_mul,
+        _bn254_multi_pairing,
         _charge_fuel,
         _charge_fuel_manually,
         _debug_log,
+        _ed25519_edwards_add,
+        _ed25519_edwards_decompress_validate,
+        _ed25519_edwards_mul,
+        _ed25519_edwards_multiscalar_mul,
+        _ed25519_edwards_sub,
+        _ed25519_ristretto_add,
+        _ed25519_ristretto_decompress_validate,
+        _ed25519_ristretto_mul,
+        _ed25519_ristretto_multiscalar_mul,
+        _ed25519_ristretto_sub,
         _exec,
         _exit,
         _forward_output,
@@ -10,18 +32,29 @@ pub use crate::{
         _input_size,
         _keccak256,
         _output_size,
+        _poseidon,
         _preimage_copy,
         _preimage_size,
         _read,
         _read_output,
         _resume,
         _secp256k1_recover,
+        _sha256,
         _state,
         _write,
     },
     B256,
 };
-use fluentbase_types::{native_api::NativeAPI, BytecodeOrHash, ExitCode};
+use fluentbase_types::{
+    bn254_add_common_impl,
+    native_api::NativeAPI,
+    BytecodeOrHash,
+    ExitCode,
+    BN254_G1_POINT_COMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE,
+};
 
 #[derive(Default)]
 pub struct RwasmContext;
@@ -41,8 +74,45 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn sha256(_data: &[u8]) -> B256 {
-        todo!("not implemented")
+    fn sha256(data: &[u8]) -> B256 {
+        unsafe {
+            let mut res = B256::ZERO;
+            _sha256(
+                data.as_ptr(),
+                data.len() as u32,
+                res.as_mut_slice().as_mut_ptr(),
+            );
+            res
+        }
+    }
+    #[inline(always)]
+    fn blake3(data: &[u8]) -> B256 {
+        unsafe {
+            let mut res = B256::ZERO;
+            _blake3(
+                data.as_ptr(),
+                data.len() as u32,
+                res.as_mut_slice().as_mut_ptr(),
+            );
+            res
+        }
+    }
+    #[inline(always)]
+    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
+        unsafe {
+            let mut res = B256::ZERO;
+            if _poseidon(
+                parameters,
+                endianness,
+                data.as_ptr() as *const u8,
+                data.len() as u32,
+                res.as_mut_ptr(),
+            ) != 0
+            {
+                return Err(ExitCode::MalformedBuiltinParams);
+            };
+            Ok(res)
+        }
     }
 
     #[inline(always)]
@@ -61,6 +131,184 @@ impl NativeAPI for RwasmContext {
                 None
             }
         }
+    }
+    #[inline(always)]
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        unsafe { _ed25519_edwards_decompress_validate(p.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_edwards_add(p.as_mut_ptr(), q.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_edwards_sub(p.as_mut_ptr(), q.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_edwards_mul(p.as_mut_ptr(), q.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool {
+        unsafe {
+            _ed25519_edwards_multiscalar_mul(
+                pairs.as_ptr() as *const u8,
+                pairs.len() as u32,
+                out.as_mut_ptr(),
+            ) == 0
+        }
+    }
+    #[inline(always)]
+    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+        unsafe { _ed25519_ristretto_decompress_validate(p.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_ristretto_add(p.as_mut_ptr(), q.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_ristretto_sub(p.as_mut_ptr(), q.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        unsafe { _ed25519_ristretto_mul(p.as_mut_ptr(), q.as_ptr()) == 0 }
+    }
+    #[inline(always)]
+    fn ed25519_ristretto_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
+        unsafe {
+            _ed25519_ristretto_multiscalar_mul(
+                pairs.as_ptr() as *const u8,
+                pairs.len() as u32,
+                out.as_mut_ptr(),
+            ) == 0
+        }
+    }
+
+    #[inline(always)]
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
+        bn254_add_common_impl!(
+            p,
+            q,
+            {
+                unsafe {
+                    _bn254_double(p.as_ptr() as u32);
+                }
+            },
+            {
+                unsafe {
+                    _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
+                }
+            }
+        )
+    }
+
+    #[inline(always)]
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        unsafe {
+            _bn254_mul(p.as_ptr() as u32, q.as_ptr() as u32);
+        }
+    }
+
+    #[inline(always)]
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+        let mut result = [0u8; 32];
+        unsafe {
+            _bn254_multi_pairing(
+                elements.as_ptr() as *const u8,
+                elements.len() as u32,
+                result.as_mut_ptr(),
+            );
+        }
+        result
+    }
+
+    #[inline(always)]
+    fn bn254_g1_compress(
+        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
+        let mut result_point = [0u8; BN254_G1_POINT_COMPRESSED_SIZE];
+        unsafe {
+            if _bn254_g1_compress(point.as_ptr() as *const u8, result_point.as_mut_ptr()) != 0 {
+                return Err(ExitCode::MalformedBuiltinParams);
+            };
+        }
+        Ok(result_point)
+    }
+
+    #[inline(always)]
+    fn bn254_g1_decompress(
+        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        let mut result_point = [0u8; BN254_G1_POINT_DECOMPRESSED_SIZE];
+        unsafe {
+            _bn254_g1_decompress(point.as_ptr() as *const u8, result_point.as_mut_ptr());
+        }
+        Ok(result_point)
+    }
+
+    #[inline(always)]
+    fn bn254_g2_compress(
+        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
+        let mut result_point = [0u8; BN254_G2_POINT_COMPRESSED_SIZE];
+        unsafe {
+            _bn254_g2_compress(point.as_ptr() as *const u8, result_point.as_mut_ptr());
+        }
+        Ok(result_point)
+    }
+
+    #[inline(always)]
+    fn bn254_g2_decompress(
+        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        let mut result_point = [0u8; BN254_G2_POINT_DECOMPRESSED_SIZE];
+        unsafe {
+            _bn254_g2_decompress(point.as_ptr() as *const u8, result_point.as_mut_ptr());
+        }
+        Ok(result_point)
+    }
+
+    #[inline(always)]
+    fn bn254_double(p: &mut [u8; 64]) {
+        unsafe {
+            _bn254_double(p.as_ptr() as u32);
+        }
+    }
+
+    #[inline(always)]
+    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        unsafe {
+            _bn254_fp_mul(p.as_ptr() as u32, q.as_ptr() as u32);
+        }
+    }
+
+    #[inline(always)]
+    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        unsafe {
+            _bn254_fp2_mul(p.as_ptr() as u32, q.as_ptr() as u32);
+        }
+    }
+
+    #[inline(always)]
+    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
+        unsafe {
+            if _big_mod_exp(
+                base.as_ptr(),
+                base.len() as u32,
+                exponent.as_ptr(),
+                exponent.len() as u32,
+                modulus.as_mut_ptr(),
+                modulus.len() as u32,
+            ) != 0
+            {
+                return Err(ExitCode::MalformedBuiltinParams);
+            };
+        }
+        Ok(())
     }
 
     #[inline(always)]

@@ -22,6 +22,10 @@ use fluentbase_types::{
     StorageAPI,
     SyscallResult,
     B256,
+    BN254_G1_POINT_COMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE,
     STATE_MAIN,
     SYSCALL_ID_BALANCE,
     SYSCALL_ID_BLOCK_HASH,
@@ -196,6 +200,117 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
 
     fn keccak256(&self, data: &[u8]) -> B256 {
         API::keccak256(data)
+    }
+
+    fn sha256(data: &[u8]) -> B256 {
+        API::sha256(data)
+    }
+
+    fn blake3(data: &[u8]) -> B256 {
+        API::blake3(data)
+    }
+
+    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
+        API::poseidon(parameters, endianness, data)
+    }
+
+    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
+        API::secp256k1_recover(digest, sig, rec_id)
+    }
+
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        API::ed25519_edwards_decompress_validate(p)
+    }
+
+    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        API::ed25519_edwards_add(p, q)
+    }
+
+    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        API::ed25519_edwards_sub(p, q)
+    }
+
+    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        API::ed25519_edwards_mul(p, q)
+    }
+
+    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool {
+        API::ed25519_edwards_multiscalar_mul(pairs, out)
+    }
+
+    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+        API::ed25519_ristretto_decompress_validate(p)
+    }
+
+    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        API::ed25519_ristretto_add(p, q)
+    }
+
+    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        API::ed25519_ristretto_sub(p, q)
+    }
+
+    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        API::ed25519_ristretto_mul(p, q)
+    }
+
+    fn ed25519_ristretto_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
+        API::ed25519_ristretto_multiscalar_mul(pairs, out)
+    }
+
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
+        API::bn254_add(p, q)
+    }
+
+    fn bn254_double(p: &mut [u8; 64]) {
+        API::bn254_double(p)
+    }
+
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        API::bn254_mul(p, q)
+    }
+
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+        API::bn254_multi_pairing(elements)
+    }
+
+    fn bn254_g1_compress(
+        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
+        API::bn254_g1_compress(point)
+    }
+
+    fn bn254_g1_decompress(
+        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        API::bn254_g1_decompress(point)
+    }
+
+    fn bn254_g2_compress(
+        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
+        API::bn254_g2_compress(point)
+    }
+
+    fn bn254_g2_decompress(
+        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        API::bn254_g2_decompress(point)
+    }
+
+    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        API::bn254_fp_mul(p, q)
+    }
+
+    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        API::bn254_fp2_mul(p, q)
+    }
+
+    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
+        API::big_mod_exp(base, exponent, modulus)
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {

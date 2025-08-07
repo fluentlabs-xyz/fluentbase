@@ -20,7 +20,7 @@ fluentbase-svm = { workspace = true }
 fluentbase-svm-shared = { workspace = true }
 fluentbase-erc20 = { workspace = true }
 fluentbase-contracts = { workspace = true }
-curve25519-dalek = { version = "4.1.3", default-features = false, features = ["alloc"] }
+curve25519-dalek = { workspace = true }
 
 rwasm = { workspace = true }
 revm = { workspace = true }
@@ -35,12 +35,12 @@ rand = { version = "0.9.1" }
 
 [dev-dependencies]
 fluentbase-svm = { workspace = true }
+fluentbase-types = { workspace = true }
 criterion = "0.6.0"
 solana-curve25519 = { workspace = true, default-features = false, features = [] }
 solana-bn254 = { workspace = true, default-features = false, features = [] }
 solana-poseidon = { workspace = true, default-features = false, features = [] }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 array-bytes = { workspace = true }
 ark-bn254 = { workspace = true }
@@ -52,6 +52,11 @@ default = [
     "wasmtime",
     #    "debug-print",
     "enable-svm",
+    # when enabling enable-solana-* - enable corresponding in 'contracts' crate
+    #    "enable-solana-original-builtins",
+]
+enable-solana-original-builtins = [
+    "fluentbase-svm/enable-solana-original-builtins"
 ]
 enable-svm = [
     "fluentbase-genesis/enable-svm",
@@ -77,15 +82,15 @@ wasmtime = [
     "rwasm-revm/wasmtime",
 ]
 json = [
-	"fluentbase-contracts/json",
-	"fluentbase-erc20/json",
-	"fluentbase-sdk/json",
-	"fluentbase-sdk-testing/json",
-	"fluentbase-svm/json",
-	"op-revm/json",
-	"revm/json",
-	"rwasm-revm/json",
-	"fluentbase-genesis/json"
+    "fluentbase-contracts/json",
+    "fluentbase-erc20/json",
+    "fluentbase-sdk/json",
+    "fluentbase-sdk-testing/json",
+    "fluentbase-svm/json",
+    "op-revm/json",
+    "revm/json",
+    "rwasm-revm/json",
+    "fluentbase-genesis/json"
 ]
 
 

@@ -1,34 +1,68 @@
 use crate::{
     instruction::{
+        blake3::SyscallBlake3,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
+        ed25519_edwards_add::SyscallED25519EdwardsAdd,
+        ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
+        ed25519_edwards_mul::SyscallED25519EdwardsMul,
+        ed25519_edwards_multiscalar_mul::SyscallED25519EdwardsMultiscalarMul,
+        ed25519_edwards_sub::SyscallED25519EdwardsSub,
+        ed25519_ristretto_add::SyscallED25519RistrettoAdd,
+        ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
+        ed25519_ristretto_mul::SyscallED25519RistrettoMul,
+        ed25519_ristretto_multiscalar_mul::SyscallED25519RistrettoMultiscalarMul,
+        ed25519_ristretto_sub::SyscallED25519RistrettoSub,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
+        fp2_mul::SyscallFp2Mul,
+        fp_op::SyscallFpOp,
         fuel::SyscallFuel,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
+        math_big_mod_exp::SyscallMathBigModExp,
         output_size::SyscallOutputSize,
+        poseidon::SyscallPoseidon,
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
         secp256k1_recover::SyscallSecp256k1Recover,
+        sha256::SyscallSha256,
         state::SyscallState,
+        weierstrass_add::SyscallWeierstrassAddAssign,
+        weierstrass_compress_decompress::{
+            ConfigG1Compress,
+            ConfigG1Decompress,
+            ConfigG2Compress,
+            ConfigG2Decompress,
+            SyscallWeierstrassCompressDecompressAssign,
+        },
+        weierstrass_double::SyscallWeierstrassDoubleAssign,
+        weierstrass_mul::SyscallWeierstrassMulAssign,
+        weierstrass_multi_pairing::SyscallWeierstrassMultiPairingAssign,
         write::SyscallWrite,
+        FieldMul,
     },
     RuntimeContext,
 };
 use fluentbase_types::{
+    bn254_add_common_impl,
     native_api::NativeAPI,
     BytecodeOrHash,
     Bytes,
     ExitCode,
     UnwrapExitCode,
     B256,
+    BN254_G1_POINT_COMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
+use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 #[derive(Default, Clone)]
@@ -49,12 +83,150 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallKeccak256::fn_impl(data)
     }
 
-    fn sha256(_data: &[u8]) -> B256 {
-        todo!("not implemented")
+    fn sha256(data: &[u8]) -> B256 {
+        SyscallSha256::fn_impl(data)
+    }
+
+    fn blake3(data: &[u8]) -> B256 {
+        SyscallBlake3::fn_impl(data)
+    }
+    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode> {
+        SyscallPoseidon::fn_impl(parameters as u64, endianness as u64, data)
     }
 
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
+    }
+
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        SyscallED25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
+    }
+
+    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519EdwardsAdd::fn_impl(p, q).is_ok()
+    }
+
+    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519EdwardsSub::fn_impl(p, q).is_ok()
+    }
+
+    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519EdwardsMul::fn_impl(p, q).is_ok()
+    }
+
+    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool {
+        let result = SyscallED25519EdwardsMultiscalarMul::fn_impl(pairs);
+        match result {
+            Ok(v) => {
+                *out = v.compress().to_bytes();
+            }
+            Err(_) => return false,
+        }
+        true
+    }
+
+    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+        SyscallED25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
+    }
+
+    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519RistrettoAdd::fn_impl(p, q).is_ok()
+    }
+
+    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519RistrettoSub::fn_impl(p, q).is_ok()
+    }
+
+    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        SyscallED25519RistrettoMul::fn_impl(p, q).is_ok()
+    }
+    fn ed25519_ristretto_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
+        let result = SyscallED25519RistrettoMultiscalarMul::fn_impl(pairs);
+        match result {
+            Ok(v) => {
+                *out = v.compress().to_bytes();
+            }
+            Err(_) => return false,
+        }
+        true
+    }
+
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
+        let result = bn254_add_common_impl!(
+            p,
+            q,
+            { SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p) },
+            { SyscallWeierstrassAddAssign::<Bn254>::fn_impl(p, q) }
+        );
+        let min = core::cmp::min(p.len(), result.len());
+        p[..min].copy_from_slice(&result[..min]);
+    }
+
+    fn bn254_double(p: &mut [u8; 64]) {
+        let result = SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p);
+        let min = core::cmp::min(p.len(), result.len());
+        p[..min].copy_from_slice(&result[..min]);
+    }
+
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        let result = SyscallWeierstrassMulAssign::<Bn254>::fn_impl(p, q);
+        p.copy_from_slice(&result);
+    }
+
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+        let result = SyscallWeierstrassMultiPairingAssign::<Bn254>::fn_impl(elements);
+        result.try_into().unwrap()
+    }
+
+    fn bn254_g1_compress(
+        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode> {
+        let result =
+            SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_impl(point)?;
+        result.try_into().map_err(|_| ExitCode::UnknownError)
+    }
+
+    fn bn254_g1_decompress(
+        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        let result =
+            SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_impl(point)?;
+        result.try_into().map_err(|_| ExitCode::UnknownError)
+    }
+
+    fn bn254_g2_compress(
+        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode> {
+        let result =
+            SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_impl(point)?;
+        result.try_into().map_err(|_| ExitCode::UnknownError)
+    }
+
+    fn bn254_g2_decompress(
+        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode> {
+        let result =
+            SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_impl(point)?;
+        result.try_into().map_err(|_| ExitCode::UnknownError)
+    }
+
+    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        let result = SyscallFpOp::<Bn254BaseField, FieldMul>::fn_impl(p, q);
+        let min = core::cmp::min(p.len(), result.len());
+        p[..min].copy_from_slice(&result[..min]);
+    }
+
+    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+        let result = SyscallFp2Mul::<Bn254BaseField>::fn_impl(p, q);
+        let min = core::cmp::min(p.len(), result.len());
+        p[..min].copy_from_slice(&result[..min]);
+    }
+
+    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode> {
+        SyscallMathBigModExp::fn_impl(base, exponent, modulus)
     }
 
     fn debug_log(message: &str) {

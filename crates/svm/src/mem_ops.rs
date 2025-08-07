@@ -1,8 +1,7 @@
 use super::*;
 use crate::{
     context::InvokeContext,
-    error::{Error, SvmError},
-    helpers::SyscallError,
+    error::{Error, SvmError, SyscallError},
     word_size::{
         addr_type::AddrType,
         common::MemoryMappingHelper,

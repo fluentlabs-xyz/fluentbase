@@ -1232,7 +1232,6 @@ dependencies = [
  "cfg-if",
  "constant_time_eq",
  "digest 0.10.7",
- "serde",
 ]
 
 [[package]]
@@ -2641,7 +2640,6 @@ dependencies = [
  "rwasm",
  "rwasm-revm",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-bn254",
  "solana-curve25519",
@@ -2683,6 +2681,12 @@ dependencies = [
 name = "fluentbase-runtime"
 version = "0.4.0-dev"
 dependencies = [
+ "ark-bn254 0.5.0",
+ "ark-ec 0.5.0",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "blake3",
+ "curve25519-dalek",
  "fluentbase-codec",
  "fluentbase-types",
  "fs2",
@@ -2691,9 +2695,13 @@ dependencies = [
  "hex-literal",
  "k256",
  "num",
+ "num-bigint 0.4.6",
+ "num-traits",
+ "paste",
  "rwasm",
  "secp256k1 0.29.1",
  "sha2 0.10.9",
+ "solana-poseidon",
  "sp1-curves",
  "sp1-primitives",
  "tiny-keccak",
@@ -2768,6 +2776,7 @@ dependencies = [
 name = "fluentbase-svm"
 version = "0.4.0-dev"
 dependencies = [
+ "ark-bn254 0.5.0",
  "array-bytes",
  "bincode 2.0.1",
  "bitflags",
@@ -2775,6 +2784,7 @@ dependencies = [
  "byteorder",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
+ "fluentbase-types",
  "hashbrown 0.15.4",
  "itertools 0.14.0",
  "lazy_static",
@@ -6756,9 +6766,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-curves"
-version = "5.1.0"
+version = "5.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9208e3831da02d1327bd33d852d06770a1c6dbd291591e5a6f0f6a3f4fc44ff9"
+checksum = "32e5ba85ba65466ee85d4c8b75b81b49f4655033619fb1cfd6cdf62348795944"
 dependencies = [
  "cfg-if",
  "dashu",
@@ -6778,9 +6788,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-derive"
-version = "5.1.0"
+version = "5.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5efc1439094c4dc86e35e2ded63ef2b56b2717671adc0582373e9a7ac76c8b34"
+checksum = "7cbcb7af61418d18b4f240385cf9c119195f758e8b81c3e981d954d4a4fc8e2e"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -6799,9 +6809,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-primitives"
-version = "5.1.0"
+version = "5.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5504d5a422be065fa8f1fc49ff5208017d6e3fe7e392a7761e73178581f5f35d"
+checksum = "7637ebeb85d03da7d6aa9ec34dfedd9efbe61241f7a7f3fc5924355e48bf4f4c"
 dependencies = [
  "bincode 1.3.3",
  "blake3",
@@ -6819,9 +6829,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-stark"
-version = "5.1.0"
+version = "5.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbe80bdd3bb89d1543c1ad53a47fd902fe20293d4e1ccc20ca2ecff600f32477"
+checksum = "b19d54b33843cc419d51b6d946be30b8efb9fc51d8207e67e564d9f4cbd3a655"
 dependencies = [
  "arrayref",
  "hashbrown 0.14.5",

@@ -1,0 +1,47 @@
+use cargo_metadata::MetadataCommand;
+use std::{env, path::PathBuf, process::Command};
+
+const CARGO_PROFILE_RELEASE: &str = "release";
+const CARGO_PROFILE_DEBUG: &str = "debug";
+const SOLANA_PROGRAM_EXTENSION: &str = ".so";
+const RUST_LIB_PREFIX: &str = "lib";
+
+fn main() {
+    let manifest_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let root_dir = manifest_path.join("../../../..");
+    let root_metadata = MetadataCommand::new()
+        .manifest_path(&root_dir.join("Cargo.toml"))
+        .exec()
+        .unwrap();
+    let target_dir: PathBuf = root_metadata.target_directory.into();
+    let _cargo_toml_manifest_path = manifest_path.join("Cargo.toml");
+    let cargo_profile = env::var("PROFILE").unwrap();
+    let _is_debug_profile = cargo_profile == CARGO_PROFILE_DEBUG;
+    let cargo_cargo_pkg_name = env::var("CARGO_PKG_NAME").unwrap();
+    let so_program_name = cargo_cargo_pkg_name.replace('-', "_");
+    let _so_program_file_name = so_program_name.clone() + SOLANA_PROGRAM_EXTENSION;
+    let _so_program_lib_file_name =
+        RUST_LIB_PREFIX.to_string() + so_program_name.as_str() + SOLANA_PROGRAM_EXTENSION;
+
+    let args = vec![
+        "build-sbf", //
+        // "--no-default-features",
+        "--",
+        "-Znext-lockfile-bump",
+    ];
+
+    let contracts_dir = root_dir.join("contracts");
+    println!("cargo:rerun-if-changed={}", contracts_dir.to_str().unwrap());
+    let status = Command::new("cargo")
+        // .env("PROFILE", CARGO_PROFILE_RELEASE)
+        .args(args)
+        .current_dir(target_dir)
+        .status()
+        .expect("Solana program compilation failed: failed to run build");
+    if !status.success() {
+        panic!(
+            "Solana program compilation failed: cargo exited with code: {}",
+            status.code().unwrap_or(1)
+        );
+    }
+}

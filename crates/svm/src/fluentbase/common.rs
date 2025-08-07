@@ -1,6 +1,7 @@
 use crate::{
-    account::AccountSharedData,
-    error::SvmError,
+    account::{AccountSharedData, ReadableAccount},
+    common::is_evm_pubkey,
+    error::{RuntimeError, SvmError},
     helpers::{storage_read_account_data, storage_write_account_data},
     native_loader,
     select_api,
@@ -8,8 +9,8 @@ use crate::{
     system_program,
 };
 use alloc::{string::String, vec::Vec};
-use fluentbase_sdk::{MetadataAPI, SharedAPI};
-use hashbrown::{HashMap, HashSet};
+use fluentbase_sdk::{debug_log_ext, MetadataAPI, SharedAPI};
+use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
@@ -47,13 +48,20 @@ impl BatchMessage {
 }
 
 lazy_static! {
-    pub static ref SYSTEM_PROGRAMS_KEYS: HashSet<Pubkey> = {
-        let mut set = HashSet::new();
-        set.insert(system_program::id());
-        set.insert(native_loader::id());
-        set.insert(loader_v4::id());
-        set.insert(sysvar::clock::id());
-        set
+    pub static ref SYSTEM_PROGRAMS_KEYS: Vec<Pubkey> = {
+        // let mut items = HashSet::new();
+        // items.insert(system_program::id());
+        // items.insert(native_loader::id());
+        // items.insert(loader_v4::id());
+        // items.insert(sysvar::clock::id());
+        // items
+        use alloc::vec;
+        vec![
+            system_program::id(),
+            native_loader::id(),
+            loader_v4::id(),
+            sysvar::clock::id(),
+        ]
     };
 }
 
@@ -65,17 +73,30 @@ pub(crate) fn extract_account_data_or_default<API: MetadataAPI>(
         .unwrap_or_else(|_e| AccountSharedData::new(0, 0, &system_program::id())))
 }
 
-pub(crate) fn flush_accounts<SDK: SharedAPI, API: MetadataAPI>(
+/// Stores provided accounts using specified storage api or alt api
+/// Filters out system accounts
+/// Returns error if some accounts are not evm compatible
+pub(crate) fn flush_not_system_accounts<SDK: SharedAPI, API: MetadataAPI>(
     sdk: &mut SDK,
     api: &mut Option<&mut API>,
     accounts: &HashMap<Pubkey, AccountSharedData>,
-) -> Result<(), SvmError> {
-    for (pk, data) in accounts {
-        select_api!(api, sdk, |storage| {
-            storage_write_account_data(storage, pk, data)
-        })?;
-    }
-    Ok(())
+) -> Result<u64, SvmError> {
+    let mut accounts_flushed = 0;
+    select_api!(api, sdk, |storage: &mut _| -> Result<(), SvmError> {
+        for (pk, account_data) in accounts {
+            if SYSTEM_PROGRAMS_KEYS.contains(&pk) {
+                continue;
+            }
+            // if !is_evm_pubkey(&pk) {
+            //     return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
+            // }
+            storage_write_account_data(storage, pk, account_data)?;
+            accounts_flushed += 1;
+        }
+        Ok(())
+    })?;
+    debug_log_ext!("accounts flushed {}", accounts_flushed);
+    Ok(accounts_flushed)
 }
 
 pub fn process_svm_result<T>(result: Result<T, SvmError>) -> Result<T, String> {

@@ -123,9 +123,18 @@ extern "C" {
     /// computations, and is often wrapped in a safer abstraction to ensure the correct usage of
     /// memory.
     pub fn _keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
+    pub fn _sha256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     pub fn _keccak256_permute(state_ptr: *mut [u64; 25]);
     pub fn _sha256_extend(w_ptr: *mut u8);
     pub fn _sha256_compress(w_ptr: *mut u8, h_ptr: *const u8);
+    pub fn _blake3(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
+    pub fn _poseidon(
+        parameters: u32,
+        endianness: u32,
+        data_offset: *const u8,
+        data_len: u32,
+        output32_offset: *mut u8,
+    ) -> u32;
 
     pub fn _ed25519_add(p_ptr: *mut u8, q_ptr: *const u8);
     pub fn _ed25519_decompress(slice_ptr: *mut u8, sign: u32);
@@ -151,8 +160,32 @@ extern "C" {
     pub fn _bls12381_fp2_sub(arg1: u32, arg2: u32);
     pub fn _bls12381_fp2_mul(arg1: u32, arg2: u32);
 
+    pub fn _ed25519_edwards_decompress_validate(arg1: *const u8) -> u32;
+    pub fn _ed25519_edwards_add(arg1: *mut u8, arg2: *const u8) -> u32;
+    pub fn _ed25519_edwards_sub(arg1: *mut u8, arg2: *const u8) -> u32;
+    pub fn _ed25519_edwards_mul(arg1: *mut u8, arg2: *const u8) -> u32;
+    pub fn _ed25519_edwards_multiscalar_mul(
+        pairs_ptr: *const u8,
+        pairs_count: u32,
+        out_ptr: *mut u8,
+    ) -> u32;
+    pub fn _ed25519_ristretto_decompress_validate(arg1: *const u8) -> u32;
+    pub fn _ed25519_ristretto_add(arg1: *mut u8, arg2: *const u8) -> u32;
+    pub fn _ed25519_ristretto_sub(arg1: *mut u8, arg2: *const u8) -> u32;
+    pub fn _ed25519_ristretto_mul(arg1: *mut u8, arg2: *const u8) -> u32;
+    pub fn _ed25519_ristretto_multiscalar_mul(
+        pairs_ptr: *const u8,
+        pairs_count: u32,
+        out_ptr: *mut u8,
+    ) -> u32;
     pub fn _bn254_add(arg1: u32, arg2: u32);
     pub fn _bn254_double(p_ptr: u32);
+    pub fn _bn254_mul(arg1: u32, arg2: u32);
+    pub fn _bn254_multi_pairing(elements_ptr: *const u8, elements_count: u32, ret_ptr: *mut u8);
+    pub fn _bn254_g1_compress(point_ptr: *const u8, ret_ptr: *mut u8) -> u32;
+    pub fn _bn254_g1_decompress(point_ptr: *const u8, ret_ptr: *mut u8) -> u32;
+    pub fn _bn254_g2_compress(point_ptr: *const u8, ret_ptr: *mut u8) -> u32;
+    pub fn _bn254_g2_decompress(point_ptr: *const u8, ret_ptr: *mut u8) -> u32;
     pub fn _bn254_fp_add(arg1: u32, arg2: u32);
     pub fn _bn254_fp_sub(arg1: u32, arg2: u32);
     pub fn _bn254_fp_mul(arg1: u32, arg2: u32);
@@ -161,4 +194,12 @@ extern "C" {
     pub fn _bn254_fp2_mul(arg1: u32, arg2: u32);
 
     pub fn _uint256_mul(x_ptr: u32, y_ptr: u32, m_ptr: u32);
+    pub fn _big_mod_exp(
+        base_ptr: *const u8,
+        base_len: u32,
+        exponent_ptr: *const u8,
+        exponent_len: u32,
+        modulus_out_ptr: *mut u8,
+        modulus_out_len: u32,
+    ) -> u32;
 }

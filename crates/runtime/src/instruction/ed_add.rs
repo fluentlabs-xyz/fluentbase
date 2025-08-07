@@ -1,14 +1,14 @@
 use crate::{instruction::cast_u8_to_u32, RuntimeContext};
 use k256::elliptic_curve::generic_array::typenum::Unsigned;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
-use sp1_curves::{edwards::EdwardsParameters, params::NumWords, AffinePoint, EllipticCurve};
+use sp1_curves::{params::NumWords, AffinePoint, EllipticCurve};
 use std::marker::PhantomData;
 
-pub(crate) struct SyscallEdwardsAddAssign<E: EllipticCurve + EdwardsParameters> {
+pub(crate) struct SyscallEdwardsAddAssign<E: EllipticCurve> {
     _phantom: PhantomData<E>,
 }
 
-impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
+impl<E: EllipticCurve> SyscallEdwardsAddAssign<E> {
     /// Create a new instance of the [`SyscallEdwardsAddAssign`].
     pub const fn new() -> Self {
         Self {
@@ -17,7 +17,7 @@ impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
     }
 }
 
-impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
+impl<E: EllipticCurve> SyscallEdwardsAddAssign<E> {
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],

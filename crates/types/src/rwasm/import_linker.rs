@@ -5,7 +5,7 @@ use rwasm::{ImportLinker, ImportName, ValType};
 pub fn create_import_linker() -> Rc<ImportLinker> {
     let mut import_linker = ImportLinker::default();
     macro_rules! import_function {
-        ($func_name:literal, $sys_func_idx:ident, $params:expr, $results:expr) => {
+        ($func_name:literal, $sys_func_idx:ident, $params:expr, $results:expr $(,)?) => {
             import_linker.insert_function(
                 ImportName::new("fluentbase_v1preview", $func_name),
                 SysFuncIdx::$sys_func_idx as u32,
@@ -15,7 +15,15 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
             );
         };
     }
+    import_function!("_sha256", SHA256, &[ValType::I32; 3], &[]);
     import_function!("_keccak256", KECCAK256, &[ValType::I32; 3], &[]);
+    import_function!("_blake3", BLAKE3, &[ValType::I32; 3], &[]);
+    import_function!(
+        "_poseidon",
+        POSEIDON,
+        &[ValType::I32; 5],
+        &[ValType::I32; 1]
+    );
     import_function!("_exit", EXIT, &[ValType::I32; 1], &[]);
     import_function!("_state", STATE, &[], &[ValType::I32; 1]);
     import_function!("_read", READ_INPUT, &[ValType::I32; 3], &[]);
@@ -46,6 +54,107 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
         "_secp256k1_recover",
         SECP256K1_RECOVER,
         &[ValType::I32; 4],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_edwards_decompress_validate",
+        ED25519_EDWARDS_DECOMPRESS_VALIDATE,
+        &[ValType::I32; 1],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_edwards_add",
+        ED25519_EDWARDS_ADD,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_edwards_sub",
+        ED25519_EDWARDS_SUB,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_edwards_mul",
+        ED25519_EDWARDS_MUL,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_edwards_multiscalar_mul",
+        ED25519_EDWARDS_MULTISCALAR_MUL,
+        &[ValType::I32; 3],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_ristretto_decompress_validate",
+        ED25519_RISTRETTO_DECOMPRESS_VALIDATE,
+        &[ValType::I32; 1],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_ristretto_add",
+        ED25519_RISTRETTO_ADD,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_ristretto_sub",
+        ED25519_RISTRETTO_SUB,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_ristretto_mul",
+        ED25519_RISTRETTO_MUL,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_ed25519_ristretto_multiscalar_mul",
+        ED25519_RISTRETTO_MULTISCALAR_MUL,
+        &[ValType::I32; 3],
+        &[ValType::I32; 1]
+    );
+    import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);
+    import_function!("_bn254_double", BN254_DOUBLE, &[ValType::I32; 1], &[]);
+    import_function!("_bn254_mul", BN254_MUL, &[ValType::I32; 2], &[]);
+    import_function!(
+        "_bn254_multi_pairing",
+        BN254_MULTI_PAIRING,
+        &[ValType::I32; 3],
+        &[]
+    );
+    import_function!(
+        "_bn254_g1_compress",
+        BN254_G1_COMPRESS,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_bn254_g1_decompress",
+        BN254_G1_DECOMPRESS,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_bn254_g2_compress",
+        BN254_G2_COMPRESS,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!(
+        "_bn254_g2_decompress",
+        BN254_G2_DECOMPRESS,
+        &[ValType::I32; 2],
+        &[ValType::I32; 1]
+    );
+    import_function!("_bn254_fp_mul", BN254_FP_MUL, &[ValType::I32; 2], &[]);
+    import_function!("_bn254_fp2_mul", BN254_FP2_MUL, &[ValType::I32; 2], &[]);
+    import_function!(
+        "_big_mod_exp",
+        BIG_MOD_EXP,
+        &[ValType::I32; 6],
         &[ValType::I32; 1]
     );
     Rc::new(import_linker)

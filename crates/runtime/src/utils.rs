@@ -34,3 +34,15 @@
 //         );
 //     }
 // }
+
+use crate::RuntimeContext;
+use fluentbase_types::ExitCode;
+use rwasm::{Store, TrapCode, TypedCaller};
+
+pub(crate) fn syscall_process_exit_code(
+    caller: &mut TypedCaller<RuntimeContext>,
+    exit_code: ExitCode,
+) -> TrapCode {
+    caller.context_mut(|ctx| ctx.execution_result.exit_code = exit_code.into());
+    TrapCode::ExecutionHalted
+}

@@ -1,22 +1,33 @@
 extern crate alloc;
 use fluentbase_examples_svm_bindings::{
     alt_bn128_compression_native,
+    alt_bn128_compression_original_native,
     alt_bn128_group_op_native,
+    alt_bn128_group_op_original_native,
     big_mod_exp_3,
+    big_mod_exp_3_original,
     curve_group_op_native,
+    curve_group_op_original_native,
     curve_multiscalar_mul_native,
+    curve_multiscalar_mul_original_native,
     curve_validate_point_native,
+    curve_validate_point_original_native,
     get_return_data,
     log_data_native,
     log_pubkey_native,
     secp256k1_recover_native,
+    secp256k1_recover_original_native,
     set_return_data_native,
     sol_blake3_native,
     sol_keccak256_native,
     sol_poseidon_native,
     sol_sha256_native,
+    sol_sha256_original_native,
 };
-use fluentbase_svm_shared::{bincode_helpers::deserialize, test_structs::TestCommand};
+use fluentbase_svm_shared::{
+    bincode_helpers::deserialize,
+    test_structs::{TestCommand, EXPECTED_RET_OK},
+};
 use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
@@ -72,7 +83,6 @@ pub fn process_instruction(
     //     );
     // }
 
-    msg!("deserialize(instruction_data) into Vec<u8>");
     let instruction_data: Vec<u8> = deserialize(instruction_data).map_err(|e| {
         msg!(
             "process_instruction: failed to deserialize 'instruction_data' (len: {}): {}",
@@ -81,7 +91,6 @@ pub fn process_instruction(
         );
         ProgramError::InvalidInstructionData
     })?;
-    msg!("deserialize(&instruction_data) into TestCommand");
     let test_command: TestCommand =
         deserialize(&instruction_data).expect("failed to deserialize test command");
     msg!("processing test_command: {:x?}", test_command);
@@ -172,13 +181,19 @@ pub fn process_instruction(
 
             msg!("Create account: end");
         }
+        TestCommand::SolBigModExpOriginal(p) => {
+            let modulus: [u8; 32] = p.modulus.try_into().unwrap();
+            let result = big_mod_exp_3_original(&p.base, &p.exponent, &modulus);
+            assert_eq!(&p.expected_ret, &result.0);
+            assert_eq!(&p.expected, &result.1);
+        }
         TestCommand::SolBigModExp(p) => {
             let modulus: [u8; 32] = p.modulus.try_into().unwrap();
             let result = big_mod_exp_3(&p.base, &p.exponent, &modulus);
             assert_eq!(&p.expected_ret, &result.0);
             assert_eq!(&p.expected, &result.1);
         }
-        TestCommand::SolSecp256k1Recover(p) => {
+        TestCommand::SolSecp256k1RecoverOriginal(p) => {
             let message = p.message;
             let message_hash = {
                 let mut hasher = solana_program::keccak::Hasher::default();
@@ -197,21 +212,51 @@ pub fn process_instruction(
             let alt_signature_bytes = alt_signature.serialize();
             let alt_recovery_id = alt_recovery_id.serialize();
 
-            let recovered_pubkey = secp256k1_recover_native(
+            let recovered_pubkey = secp256k1_recover_original_native(
                 &message_hash.0,
                 p.recovery_id as u64,
                 &p.signature_bytes.try_into().unwrap(),
             );
-            msg!("recovered_pubkey {:x?}", &recovered_pubkey);
             assert_eq!(&p.expected_ret, &recovered_pubkey.0);
             assert_eq!(&recovered_pubkey.1, p.pubkey_bytes.as_slice());
 
+            let alt_recovered_pubkey = secp256k1_recover_original_native(
+                &message_hash.0,
+                alt_recovery_id as u64,
+                &alt_signature_bytes,
+            );
+            assert_eq!(&p.expected_ret, &alt_recovered_pubkey.0);
+            assert_eq!(alt_recovered_pubkey.1, p.pubkey_bytes.as_slice());
+        }
+        TestCommand::SolSecp256k1Recover(p) => {
+            let message = p.message;
+            let message_hash = {
+                let mut hasher = solana_program::keccak::Hasher::default();
+                hasher.hash(&message);
+                hasher.result()
+            };
+
+            let recovered_pubkey = secp256k1_recover_native(
+                &message_hash.0,
+                p.recovery_id as u64,
+                &p.signature_bytes.clone().try_into().unwrap(),
+            );
+            assert_eq!(&p.expected_ret, &recovered_pubkey.0);
+            assert_eq!(&recovered_pubkey.1, p.pubkey_bytes.as_slice());
+
+            let signature =
+                libsecp256k1::Signature::parse_standard_slice(&p.signature_bytes).unwrap();
+            // Flip the S value in the signature to make a different but valid signature.
+            let mut alt_signature = signature;
+            alt_signature.s = -alt_signature.s;
+            let alt_recovery_id = libsecp256k1::RecoveryId::parse(p.recovery_id ^ 1).unwrap();
+            let alt_signature_bytes = alt_signature.serialize();
+            let alt_recovery_id = alt_recovery_id.serialize();
             let alt_recovered_pubkey = secp256k1_recover_native(
                 &message_hash.0,
                 alt_recovery_id as u64,
                 &alt_signature_bytes,
             );
-            msg!("alt_recovered_pubkey {:x?}", &alt_recovered_pubkey);
             assert_eq!(&p.expected_ret, &alt_recovered_pubkey.0);
             assert_eq!(alt_recovered_pubkey.1, p.pubkey_bytes.as_slice());
         }
@@ -227,6 +272,22 @@ pub fn process_instruction(
                     data_solid.extend_from_slice(v);
                 }
                 let result = sol_keccak256_native(&[data_solid.as_slice()]);
+                assert_eq!(&p.expected_ret, &result.0);
+                assert_eq!(expected_result.as_slice(), &result.1);
+            }
+        }
+        TestCommand::Sha256Original(p) => {
+            let data: Vec<&[u8]> = p.data.iter().map(|v| v.as_slice()).collect();
+            let expected_result = p.expected_result;
+            let result = sol_sha256_original_native(&data);
+            assert_eq!(&p.expected_ret, &result.0);
+            assert_eq!(expected_result.as_slice(), &result.1);
+            if p.data.len() > 0 {
+                let mut data_solid = Vec::new();
+                for v in &p.data {
+                    data_solid.extend_from_slice(v);
+                }
+                let result = sol_sha256_original_native(&[data_solid.as_slice()]);
                 assert_eq!(&p.expected_ret, &result.0);
                 assert_eq!(expected_result.as_slice(), &result.1);
             }
@@ -255,9 +316,7 @@ pub fn process_instruction(
             assert_eq!(expected_result.as_slice(), &result.1);
             if p.data.len() > 0 {
                 let mut data_solid = Vec::new();
-                for v in &p.data {
-                    data_solid.extend_from_slice(v);
-                }
+                p.data.iter().for_each(|v| data_solid.extend_from_slice(v));
                 let result = sol_blake3_native(&[data_solid.as_slice()]);
                 assert_eq!(&p.expected_ret, &result.0);
                 assert_eq!(expected_result.as_slice(), &result.1);
@@ -268,7 +327,9 @@ pub fn process_instruction(
             let expected_result = p.expected_result;
             let result = sol_poseidon_native(p.parameters, p.endianness, data.as_slice());
             assert_eq!(&p.expected_ret, &result.0);
-            assert_eq!(expected_result.as_slice(), &result.1);
+            if p.expected_ret == EXPECTED_RET_OK {
+                assert_eq!(expected_result.as_slice(), &result.1);
+            }
         }
         TestCommand::SetGetReturnData(p) => {
             let data: &[u8] = p.data.as_slice();
@@ -279,9 +340,25 @@ pub fn process_instruction(
                 get_return_data().expect("return data must exists as it has already been set");
             assert_eq!(&return_data_after_set.1, data);
         }
+        TestCommand::CurvePointValidationOriginal(p) => {
+            let result = curve_validate_point_original_native(p.curve_id, &p.point);
+            assert_eq!(result, p.expected_ret);
+        }
         TestCommand::CurvePointValidation(p) => {
             let result = curve_validate_point_native(p.curve_id, &p.point);
             assert_eq!(result, p.expected_ret);
+        }
+        TestCommand::CurveGroupOpOriginal(p) => {
+            let mut result_point = [0u8; 32];
+            let result = curve_group_op_original_native(
+                p.curve_id,
+                p.group_op,
+                &p.left_input,
+                &p.right_input,
+                &mut result_point,
+            );
+            assert_eq!(result, p.expected_ret);
+            assert_eq!(&p.expected_point, &result_point);
         }
         TestCommand::CurveGroupOp(p) => {
             let mut result_point = [0u8; 32];
@@ -295,6 +372,17 @@ pub fn process_instruction(
             assert_eq!(result, p.expected_ret);
             assert_eq!(&p.expected_point, &result_point);
         }
+        TestCommand::CurveMultiscalarMultiplicationOriginal(p) => {
+            let mut result_point = [0u8; 32];
+            let result = curve_multiscalar_mul_original_native(
+                p.curve_id,
+                &p.scalars,
+                &p.points,
+                &mut result_point,
+            );
+            assert_eq!(result, p.expected_ret);
+            assert_eq!(&p.expected_point, &result_point)
+        }
         TestCommand::CurveMultiscalarMultiplication(p) => {
             let mut result_point = [0u8; 32];
             let result =
@@ -302,11 +390,40 @@ pub fn process_instruction(
             assert_eq!(result, p.expected_ret);
             assert_eq!(&p.expected_point, &result_point)
         }
+        TestCommand::SyscallAltBn128Original(p) => {
+            let mut result_point = [0u8; 64]; // can hold to 64 (32 or 64)
+            let ret = alt_bn128_group_op_original_native(p.group_op, &p.input, &mut result_point);
+            assert_eq!(ret, p.expected_ret);
+            let mut expected_result_point = [0u8; 64];
+            expected_result_point[..p.expected_result.as_slice().len()]
+                .copy_from_slice(p.expected_result.as_slice());
+            msg!(
+                "expected_result_point {:x?} result_point {:x?}",
+                &expected_result_point,
+                &result_point
+            );
+            assert_eq!(&expected_result_point, &result_point)
+        }
         TestCommand::SyscallAltBn128(p) => {
             let mut result_point = [0u8; 64]; // can hold to 64 (32 or 64)
             let ret = alt_bn128_group_op_native(p.group_op, &p.input, &mut result_point);
             assert_eq!(ret, p.expected_ret);
             let mut expected_result_point = [0u8; 64];
+            expected_result_point[..p.expected_result.as_slice().len()]
+                .copy_from_slice(p.expected_result.as_slice());
+            msg!(
+                "expected_result_point {:x?} result_point {:x?}",
+                &expected_result_point,
+                &result_point
+            );
+            assert_eq!(&expected_result_point, &result_point)
+        }
+        TestCommand::AltBn128CompressionOriginal(p) => {
+            let mut result_point = [0u8; 128]; // can be 32, 64, 128
+            let result =
+                alt_bn128_compression_original_native(p.group_op, &p.input, &mut result_point);
+            assert_eq!(result, p.expected_ret);
+            let mut expected_result_point = [0u8; 128];
             expected_result_point[..p.expected_result.as_slice().len()]
                 .copy_from_slice(p.expected_result.as_slice());
             assert_eq!(&expected_result_point, &result_point)

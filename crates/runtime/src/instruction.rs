@@ -1,6 +1,17 @@
+pub mod blake3;
 pub mod charge_fuel;
 pub mod charge_fuel_manually;
 pub mod debug_log;
+pub mod ed25519_edwards_add;
+pub mod ed25519_edwards_decompress_validate;
+pub mod ed25519_edwards_mul;
+pub mod ed25519_edwards_multiscalar_mul;
+pub mod ed25519_edwards_sub;
+pub mod ed25519_ristretto_add;
+pub mod ed25519_ristretto_decompress_validate;
+pub mod ed25519_ristretto_mul;
+pub mod ed25519_ristretto_multiscalar_mul;
+pub mod ed25519_ristretto_sub;
 pub mod ed_add;
 pub mod ed_decompress;
 pub mod exec;
@@ -13,27 +24,45 @@ pub mod fuel;
 pub mod input_size;
 pub mod keccak256;
 pub mod keccak256_permute;
+pub mod math_big_mod_exp;
 pub mod output_size;
+pub mod poseidon;
 pub mod preimage_copy;
 pub mod preimage_size;
 pub mod read;
 pub mod read_output;
 pub mod resume;
 pub mod secp256k1_recover;
+pub mod sha256;
 pub mod sha256_compress;
 pub mod sha256_extend;
 pub mod state;
 pub mod uint256_mul;
 pub mod weierstrass_add;
+pub mod weierstrass_compress_decompress;
 pub mod weierstrass_decompress;
 pub mod weierstrass_double;
+pub mod weierstrass_helpers;
+pub mod weierstrass_mul;
+pub mod weierstrass_multi_pairing;
 pub mod write;
 
 use crate::{
     instruction::{
+        blake3::SyscallBlake3,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         debug_log::SyscallDebugLog,
+        ed25519_edwards_add::SyscallED25519EdwardsAdd,
+        ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
+        ed25519_edwards_mul::SyscallED25519EdwardsMul,
+        ed25519_edwards_multiscalar_mul::SyscallED25519EdwardsMultiscalarMul,
+        ed25519_edwards_sub::SyscallED25519EdwardsSub,
+        ed25519_ristretto_add::SyscallED25519RistrettoAdd,
+        ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
+        ed25519_ristretto_mul::SyscallED25519RistrettoMul,
+        ed25519_ristretto_multiscalar_mul::SyscallED25519RistrettoMultiscalarMul,
+        ed25519_ristretto_sub::SyscallED25519RistrettoSub,
         ed_add::SyscallEdwardsAddAssign,
         ed_decompress::SyscallEdwardsDecompress,
         exec::SyscallExec,
@@ -46,20 +75,32 @@ use crate::{
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
         keccak256_permute::SyscallKeccak256Permute,
+        math_big_mod_exp::SyscallMathBigModExp,
         output_size::SyscallOutputSize,
+        poseidon::SyscallPoseidon,
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
         secp256k1_recover::SyscallSecp256k1Recover,
+        sha256::SyscallSha256,
         sha256_compress::SyscallSha256Compress,
         sha256_extend::SyscallSha256Extend,
         state::SyscallState,
         uint256_mul::SyscallUint256Mul,
         weierstrass_add::SyscallWeierstrassAddAssign,
+        weierstrass_compress_decompress::{
+            ConfigG1Compress,
+            ConfigG1Decompress,
+            ConfigG2Compress,
+            ConfigG2Decompress,
+            SyscallWeierstrassCompressDecompressAssign,
+        },
         weierstrass_decompress::SyscallWeierstrassDecompressAssign,
         weierstrass_double::SyscallWeierstrassDoubleAssign,
+        weierstrass_mul::SyscallWeierstrassMulAssign,
+        weierstrass_multi_pairing::SyscallWeierstrassMultiPairingAssign,
         write::SyscallWrite,
     },
     RuntimeContext,
@@ -71,7 +112,7 @@ use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{
         bls12_381::{Bls12381, Bls12381BaseField},
-        bn254::{Bn254, Bn254BaseField},
+        bn254::{Bn254, Bn254BaseField, Bn254Parameters},
         secp256k1::Secp256k1,
     },
 };
@@ -104,8 +145,21 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::KECCAK256_PERMUTE => SyscallKeccak256Permute::fn_handler(caller, params, result),
         SysFuncIdx::SHA256_EXTEND => SyscallSha256Extend::fn_handler(caller, params, result),
         SysFuncIdx::SHA256_COMPRESS => SyscallSha256Compress::fn_handler(caller, params, result),
+        SysFuncIdx::SHA256 => SyscallSha256::fn_handler(caller, params, result),
+        SysFuncIdx::BLAKE3 => SyscallBlake3::fn_handler(caller, params, result),
+        SysFuncIdx::POSEIDON => SyscallPoseidon::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_DECOMPRESS_VALIDATE => SyscallED25519EdwardsDecompressValidate::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_ADD => SyscallED25519EdwardsAdd::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_SUB => SyscallED25519EdwardsSub::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_MUL => SyscallED25519EdwardsMul::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_MULTISCALAR_MUL => SyscallED25519EdwardsMultiscalarMul::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_DECOMPRESS_VALIDATE => SyscallED25519RistrettoDecompressValidate::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_ADD => SyscallED25519RistrettoAdd::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_SUB => SyscallED25519RistrettoSub::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_MUL => SyscallED25519RistrettoMul::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_MULTISCALAR_MUL => SyscallED25519RistrettoMultiscalarMul::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_RECOVER => SyscallSecp256k1Recover::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_DECOMPRESS => SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller, params, result),
@@ -121,12 +175,19 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::BLS12381_FP2_MUL => SyscallFp2Mul::<Bls12381BaseField>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_ADD => SyscallWeierstrassAddAssign::<Bn254>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_DOUBLE => SyscallWeierstrassDoubleAssign::<Bn254>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_MUL => SyscallWeierstrassMulAssign::<Bn254Parameters>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_MULTI_PAIRING => SyscallWeierstrassMultiPairingAssign::<Bn254Parameters>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G1_COMPRESS => SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G1_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G2_COMPRESS => SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_G2_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP_ADD => SyscallFpOp::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP_SUB => SyscallFpOp::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP_MUL => SyscallFpOp::<Bn254BaseField, FieldMul>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP2_ADD => SyscallFp2AddSub::<Bn254BaseField, FieldAdd>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP2_SUB => SyscallFp2AddSub::<Bn254BaseField, FieldSub>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_FP2_MUL => SyscallFp2Mul::<Bn254BaseField>::fn_handler(caller, params, result),
+        SysFuncIdx::BIG_MOD_EXP => SyscallMathBigModExp::fn_handler(caller, params, result),
         SysFuncIdx::UINT256_MUL => SyscallUint256Mul::fn_handler(caller, params, result),
         _ => unreachable!("unknown system function ({})", sys_func_idx),
     }

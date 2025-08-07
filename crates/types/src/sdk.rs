@@ -6,6 +6,10 @@ use crate::{
     ExitCode,
     SyscallResult,
     B256,
+    BN254_G1_POINT_COMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE,
     FUEL_DENOM_RATE,
     U256,
 };
@@ -36,8 +40,44 @@ pub trait MetadataAPI {
 
 pub trait SharedAPI: StorageAPI + MetadataAPI {
     fn context(&self) -> impl ContextReader;
-
     fn keccak256(&self, data: &[u8]) -> B256;
+    fn sha256(data: &[u8]) -> B256;
+    fn blake3(data: &[u8]) -> B256;
+    fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode>;
+    fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
+    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool;
+    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool;
+    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool;
+    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn ed25519_ristretto_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool;
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]);
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]);
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32];
+    fn bn254_g1_compress(
+        point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode>;
+    fn bn254_g1_decompress(
+        point: &[u8; BN254_G1_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode>;
+    fn bn254_g2_compress(
+        point: &[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_COMPRESSED_SIZE], ExitCode>;
+    fn bn254_g2_decompress(
+        point: &[u8; BN254_G2_POINT_COMPRESSED_SIZE],
+    ) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE], ExitCode>;
+    fn bn254_double(p: &mut [u8; 64]);
+    fn bn254_fp_mul(p: &mut [u8; 64], q: &[u8; 32]);
+    fn bn254_fp2_mul(p: &mut [u8; 64], q: &[u8; 32]);
+
+    fn big_mod_exp(base: &[u8], exponent: &[u8], modulus: &mut [u8]) -> Result<(), ExitCode>;
 
     fn read(&self, target: &mut [u8], offset: u32);
     fn input_size(&self) -> u32;

@@ -1,13 +1,9 @@
 extern crate solana_rbpf;
 
 use crate::solana_program;
-use alloc::{boxed::Box, str::Utf8Error, string::String, vec, vec::Vec};
-use core::{
-    fmt,
-    fmt::{Display, Formatter},
-};
+use alloc::{boxed::Box, vec, vec::Vec};
 use solana_bincode::{deserialize, serialize, serialized_size};
-use solana_pubkey::{Pubkey, PubkeyError};
+use solana_pubkey::Pubkey;
 use solana_rbpf::{
     ebpf,
     elf::Executable,
@@ -54,86 +50,8 @@ use crate::{
     error::SvmError,
     solana_program::sysvar::Sysvar,
 };
-use fluentbase_sdk::{calc_create4_address, keccak256, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
+use fluentbase_sdk::{calc_create4_address, keccak256, Bytes, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
 use solana_rbpf::ebpf::MM_HEAP_START;
-
-/// Error definitions
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum SyscallError {
-    InvalidString(Utf8Error, Vec<u8>),
-    Abort,
-    Panic(String, u64, u64),
-    InvokeContextBorrowFailed,
-    MalformedSignerSeed(Utf8Error, Vec<u8>),
-    BadSeeds(PubkeyError),
-    ProgramNotSupported(Pubkey),
-    UnalignedPointer,
-    TooManySigners,
-    InstructionTooLarge(usize, usize),
-    TooManyAccounts,
-    CopyOverlapping,
-    ReturnDataTooLarge(u64, u64),
-    TooManySlices,
-    InvalidLength,
-    MaxInstructionDataLenExceeded {
-        data_len: u64,
-        max_data_len: u64,
-    },
-    MaxInstructionAccountsExceeded {
-        num_accounts: u64,
-        max_accounts: u64,
-    },
-    MaxInstructionAccountInfosExceeded {
-        num_account_infos: u64,
-        max_account_infos: u64,
-    },
-    InvalidAttribute,
-    InvalidPointer,
-    ArithmeticOverflow,
-}
-
-impl Display for SyscallError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            SyscallError::InvalidString(_, _) => write!(f, "SyscallError::InvalidString"),
-            SyscallError::Abort => write!(f, "SyscallError::Abort"),
-            SyscallError::Panic(_, _, _) => write!(f, "SyscallError::Panic"),
-            SyscallError::InvokeContextBorrowFailed => {
-                write!(f, "SyscallError::InvokeContextBorrowFailed")
-            }
-            SyscallError::MalformedSignerSeed(_, _) => {
-                write!(f, "SyscallError::MalformedSignerSeed")
-            }
-            SyscallError::BadSeeds(_) => write!(f, "SyscallError::BadSeeds"),
-            SyscallError::ProgramNotSupported(_) => write!(f, "SyscallError::ProgramNotSupported"),
-            SyscallError::UnalignedPointer => write!(f, "SyscallError::UnalignedPointer"),
-            SyscallError::TooManySigners => write!(f, "SyscallError::TooManySigners"),
-            SyscallError::InstructionTooLarge(_, _) => {
-                write!(f, "SyscallError::InstructionTooLarge")
-            }
-            SyscallError::TooManyAccounts => write!(f, "SyscallError::TooManyAccounts"),
-            SyscallError::CopyOverlapping => write!(f, "SyscallError::CopyOverlapping"),
-            SyscallError::ReturnDataTooLarge(_, _) => write!(f, "SyscallError::ReturnDataTooLarge"),
-            SyscallError::TooManySlices => write!(f, "SyscallError::TooManySlices"),
-            SyscallError::InvalidLength => write!(f, "SyscallError::InvalidLength"),
-            SyscallError::MaxInstructionDataLenExceeded { .. } => {
-                write!(f, "SyscallError::MaxInstructionDataLenExceeded")
-            }
-            SyscallError::MaxInstructionAccountsExceeded { .. } => {
-                write!(f, "SyscallError::MaxInstructionAccountsExceeded")
-            }
-            SyscallError::MaxInstructionAccountInfosExceeded { .. } => {
-                write!(f, "SyscallError::MaxInstructionAccountInfosExceeded")
-            }
-            SyscallError::InvalidAttribute => write!(f, "SyscallError::InvalidAttribute"),
-            SyscallError::InvalidPointer => write!(f, "SyscallError::InvalidPointer"),
-            SyscallError::ArithmeticOverflow => write!(f, "SyscallError::ArithmeticOverflow"),
-        }
-    }
-}
-
-impl core::error::Error for SyscallError {}
 
 pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
     executable: &'a Executable<C>,
@@ -288,10 +206,10 @@ macro_rules! select_api {
     };
 }
 
-pub fn storage_read_account_data<API: MetadataAPI>(
+pub fn storage_read_metadata<API: MetadataAPI>(
     api: &API,
     pubkey: &Pubkey,
-) -> Result<AccountSharedData, SvmError> {
+) -> Result<Bytes, SvmError> {
     let pubkey_hash = keccak256(pubkey.as_ref());
     let derived_metadata_address =
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
@@ -307,16 +225,23 @@ pub fn storage_read_account_data<API: MetadataAPI>(
         return Err(metadata_copy.status.into());
     }
     let buffer = metadata_copy.data;
+    Ok(buffer)
+}
+
+pub fn storage_read_account_data<API: MetadataAPI>(
+    api: &API,
+    pubkey: &Pubkey,
+) -> Result<AccountSharedData, SvmError> {
+    let buffer = storage_read_metadata(api, pubkey)?;
     let deserialize_result = deserialize(&buffer);
     Ok(deserialize_result?)
 }
 
-pub fn storage_write_account_data<API: MetadataAPI>(
+pub fn storage_write_metadata<API: MetadataAPI>(
     api: &mut API,
     pubkey: &Pubkey,
-    account_data: &AccountSharedData,
+    metadata: Bytes,
 ) -> Result<(), SvmError> {
-    let account_data = serialize(account_data)?;
     let pubkey_hash = keccak256(pubkey.as_ref());
     let derived_metadata_address =
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
@@ -327,11 +252,21 @@ pub fn storage_write_account_data<API: MetadataAPI>(
         .expect("metadata size")
         .data;
     if metadata_size == 0 {
-        api.metadata_create(&pubkey_hash.into(), account_data.into())
+        api.metadata_create(&pubkey_hash.into(), metadata)
             .expect("metadata creation failed");
     } else {
-        api.metadata_write(&derived_metadata_address, 0, account_data.into())
+        api.metadata_write(&derived_metadata_address, 0, metadata)
             .expect("metadata write failed");
     }
+    Ok(())
+}
+
+pub fn storage_write_account_data<API: MetadataAPI>(
+    api: &mut API,
+    pubkey: &Pubkey,
+    account_data: &AccountSharedData,
+) -> Result<(), SvmError> {
+    let account_data = serialize(account_data)?;
+    storage_write_metadata(api, pubkey, account_data.into())?;
     Ok(())
 }
