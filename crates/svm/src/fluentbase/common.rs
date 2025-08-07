@@ -87,11 +87,9 @@ pub(crate) fn flush_not_system_accounts<SDK: SharedAPI, API: MetadataAPI>(
             if SYSTEM_PROGRAMS_KEYS.contains(&pk) {
                 continue;
             }
-            if !is_evm_pubkey(&pk) {
-                return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
-            }
-            let account_data_owner = account_data.owner();
-            debug_log_ext!("account_data_owner {:x?}", account_data_owner);
+            // if !is_evm_pubkey(&pk) {
+            //     return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
+            // }
             storage_write_account_data(storage, pk, account_data)?;
             accounts_flushed += 1;
         }
