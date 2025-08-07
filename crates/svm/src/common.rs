@@ -8,7 +8,7 @@ use crate::{
 };
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_sdk::{debug_log_ext, keccak256, Address, SharedAPI, U256};
+use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
 use fluentbase_types::default;
 use solana_bincode::limited_deserialize;
 use solana_instruction::error::InstructionError;

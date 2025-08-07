@@ -7,7 +7,7 @@ use crate::{
         pubkey_from_evm_address,
     },
     fluentbase::{
-        common::{extract_account_data_or_default, flush_accounts, process_svm_result},
+        common::{extract_account_data_or_default, flush_not_system_accounts, process_svm_result},
         helpers::exec_encoded_svm_batch_message,
         loader_common::{read_contract_data, write_contract_data},
         mem_storage::MemStorage,
@@ -91,8 +91,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     let contract_data =
         read_contract_data(&sdk, &pk_contract).expect("failed to read contract executable");
-    // let pk_authority = &contract_data.data[0..PUBKEY_BYTES];
-    // let elf_program_bytes = &contract_data.data[PUBKEY_BYTES..];
     let elf_program_bytes = &contract_data.data;
     let contract_balance = lamports_from_evm_balance(
         sdk.balance(&contract_address)
@@ -108,9 +106,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let state = get_state_mut(contract_account_data.data_as_mut_slice())
         .expect("contract account has not enough data len");
     // state.slot = block_number;
-    // state.authority_address_or_next_version = pk_authority
-    //     .try_into()
-    //     .expect("metadata doesnt contain pk_authority");
+    // state.authority_address_or_next_version = pk_authority;
     state.status = LoaderV4Status::Deployed;
     contract_account_data.data_as_mut_slice()[LoaderV4State::program_data_offset()..]
         .copy_from_slice(elf_program_bytes);
@@ -144,7 +140,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         Ok((result_accounts, balance_changes)) => {
             if result_accounts.len() > 0 {
                 let mut api: Option<&mut SDK> = None;
-                flush_accounts(&mut sdk, &mut api, &result_accounts)
+                flush_not_system_accounts(&mut sdk, &mut api, &result_accounts)
                     .expect("failed to save result accounts");
             }
             (result_accounts, balance_changes)

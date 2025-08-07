@@ -50,7 +50,7 @@ use crate::{
     error::SvmError,
     solana_program::sysvar::Sysvar,
 };
-use fluentbase_sdk::{calc_create4_address, keccak256, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
+use fluentbase_sdk::{calc_create4_address, keccak256, Bytes, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
@@ -206,10 +206,10 @@ macro_rules! select_api {
     };
 }
 
-pub fn storage_read_account_data<API: MetadataAPI>(
+pub fn storage_read_metadata<API: MetadataAPI>(
     api: &API,
     pubkey: &Pubkey,
-) -> Result<AccountSharedData, SvmError> {
+) -> Result<Bytes, SvmError> {
     let pubkey_hash = keccak256(pubkey.as_ref());
     let derived_metadata_address =
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
@@ -225,16 +225,23 @@ pub fn storage_read_account_data<API: MetadataAPI>(
         return Err(metadata_copy.status.into());
     }
     let buffer = metadata_copy.data;
+    Ok(buffer)
+}
+
+pub fn storage_read_account_data<API: MetadataAPI>(
+    api: &API,
+    pubkey: &Pubkey,
+) -> Result<AccountSharedData, SvmError> {
+    let buffer = storage_read_metadata(api, pubkey)?;
     let deserialize_result = deserialize(&buffer);
     Ok(deserialize_result?)
 }
 
-pub fn storage_write_account_data<API: MetadataAPI>(
+pub fn storage_write_metadata<API: MetadataAPI>(
     api: &mut API,
     pubkey: &Pubkey,
-    account_data: &AccountSharedData,
+    metadata: Bytes,
 ) -> Result<(), SvmError> {
-    let account_data = serialize(account_data)?;
     let pubkey_hash = keccak256(pubkey.as_ref());
     let derived_metadata_address =
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
@@ -245,11 +252,21 @@ pub fn storage_write_account_data<API: MetadataAPI>(
         .expect("metadata size")
         .data;
     if metadata_size == 0 {
-        api.metadata_create(&pubkey_hash.into(), account_data.into())
+        api.metadata_create(&pubkey_hash.into(), metadata)
             .expect("metadata creation failed");
     } else {
-        api.metadata_write(&derived_metadata_address, 0, account_data.into())
+        api.metadata_write(&derived_metadata_address, 0, metadata)
             .expect("metadata write failed");
     }
+    Ok(())
+}
+
+pub fn storage_write_account_data<API: MetadataAPI>(
+    api: &mut API,
+    pubkey: &Pubkey,
+    account_data: &AccountSharedData,
+) -> Result<(), SvmError> {
+    let account_data = serialize(account_data)?;
+    storage_write_metadata(api, pubkey, account_data.into())?;
     Ok(())
 }

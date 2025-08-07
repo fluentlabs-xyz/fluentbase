@@ -2644,7 +2644,6 @@ dependencies = [
  "solana-bn254",
  "solana-curve25519",
  "solana-poseidon",
- "sp1-curves",
  "wat",
 ]
 

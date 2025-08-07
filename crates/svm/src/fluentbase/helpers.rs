@@ -12,7 +12,11 @@ use crate::{
     compute_budget::compute_budget::ComputeBudget,
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
     error::SvmError,
-    fluentbase::common::{extract_account_data_or_default, flush_accounts, BatchMessage},
+    fluentbase::common::{
+        extract_account_data_or_default,
+        flush_not_system_accounts,
+        BatchMessage,
+    },
     helpers::storage_read_account_data,
     loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     loaders::bpf_loader_v4,
@@ -506,7 +510,7 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
         );
     }
     if flush_result_accounts {
-        flush_accounts(sdk, api, &result_accounts)?;
+        flush_not_system_accounts(sdk, api, &result_accounts)?;
     }
 
     Ok((result_accounts, balance_changes))
