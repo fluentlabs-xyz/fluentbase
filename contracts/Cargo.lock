@@ -2126,6 +2126,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-revm"
+version = "0.4.0-dev"
+dependencies = [
+ "fluentbase-runtime",
+ "fluentbase-sdk",
+ "revm",
+ "rwasm",
+ "serde",
+]
+
+[[package]]
 name = "fluentbase-runtime"
 version = "0.4.0-dev"
 dependencies = [
@@ -2203,13 +2214,13 @@ name = "fluentbase-sdk-testing"
 version = "0.4.0-dev"
 dependencies = [
  "fluentbase-codec",
+ "fluentbase-revm",
  "fluentbase-runtime",
  "fluentbase-sdk",
  "hashbrown 0.15.4",
  "hex",
  "revm",
  "rwasm",
- "rwasm-revm",
 ]
 
 [[package]]
@@ -4399,17 +4410,6 @@ dependencies = [
  "wasmi",
  "wasmparser-nostd",
  "wasmtime",
-]
-
-[[package]]
-name = "rwasm-revm"
-version = "0.4.0-dev"
-dependencies = [
- "fluentbase-runtime",
- "fluentbase-sdk",
- "revm",
- "rwasm",
- "serde",
 ]
 
 [[package]]

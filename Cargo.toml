@@ -33,6 +33,7 @@ fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = f
 fluentbase-contracts = { path = "./crates/contracts", default-features = false }
 fluentbase-evm = { path = "./crates/evm", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
+fluentbase-revm = { path = "./crates/revm", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
@@ -42,6 +43,7 @@ fluentbase-svm = { path = "./crates/svm", default-features = false }
 fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
 fluentbase-erc20 = { path = "./crates/erc20", default-features = false }
 
+# solana
 solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-instruction = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-account-info = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
@@ -149,6 +151,7 @@ bincode = { version = "2.0.1", default-features = false, features = ["alloc", "d
 convert_case = "0.8.0"
 proc-macro2 = { version = "1.0", default-features = false }
 quote = { version = "1.0" }
+
 # revm
 revm = { path = "revm/crates/revm", default-features = false, features = ["secp256r1"] }
 primitives = { path = "revm/crates/primitives", package = "revm-primitives", default-features = false }
@@ -164,7 +167,6 @@ context = { path = "revm/crates/context", package = "revm-context", default-feat
 context-interface = { path = "revm/crates/context/interface", package = "revm-context-interface", default-features = false }
 handler = { path = "revm/crates/handler", package = "revm-handler", default-features = false }
 op-revm = { path = "revm/crates/op-revm", default-features = false }
-rwasm-revm = { path = "revm/crates/rwasm-revm", default-features = false }
 
 # alloy
 alloy-eip2930 = { version = "0.2.0", default-features = false }

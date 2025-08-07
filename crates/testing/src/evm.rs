@@ -1,40 +1,24 @@
 use crate::{HostTestingContext, HostTestingContextNativeAPI};
 use core::{borrow::Borrow, mem::take, str::from_utf8};
+use fluentbase_revm::{RwasmBuilder, RwasmContext};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
-    bytes::BytesMut,
-    calc_create_address,
-    compile_wasm_to_rwasm,
-    Address,
-    BytecodeOrHash,
-    Bytes,
-    ContextReader,
-    ExitCode,
-    GenesisContract,
-    MetadataAPI,
-    SharedAPI,
-    SharedContextInputV1,
-    STATE_MAIN,
-    U256,
+    bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, Address, BytecodeOrHash, Bytes,
+    ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI, SharedContextInputV1,
+    STATE_MAIN, U256,
 };
 use revm::{
     context::{
         result::{ExecutionResult, ExecutionResult::Success, Output},
-        BlockEnv,
-        CfgEnv,
-        TransactTo,
-        TxEnv,
+        BlockEnv, CfgEnv, TransactTo, TxEnv,
     },
     database::InMemoryDB,
     handler::MainnetContext,
     primitives::{hardfork::PRAGUE, keccak256, map::DefaultHashBuilder, HashMap},
     state::{Account, AccountInfo, Bytecode},
-    DatabaseCommit,
-    ExecuteCommitEvm,
-    MainBuilder,
+    DatabaseCommit, ExecuteCommitEvm, MainBuilder,
 };
 use rwasm::{RwasmModule, Store};
-use rwasm_revm::{RwasmBuilder, RwasmContext};
 
 #[allow(dead_code)]
 pub struct EvmTestingContext {

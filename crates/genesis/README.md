@@ -13,4 +13,6 @@ use fluentbase_genesis::devnet_genesis_from_file;
 let genesis = devnet_genesis_from_file();
 ```
 
+---
+
 This crate is part of the [Fluentbase](https://github.com/fluentlabs-xyz/fluentbase) project.

@@ -16,7 +16,7 @@ rwasm = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-rlp = { workspace = true }
 strum_macros = { workspace = true }
-precompile.workspace = true
+precompile = { workspace = true }
 hashbrown = { workspace = true }
 fluentbase-codec = { workspace = true }
 auto_impl = { workspace = true }

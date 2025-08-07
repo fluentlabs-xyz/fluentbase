@@ -24,7 +24,7 @@ curve25519-dalek = { workspace = true }
 
 rwasm = { workspace = true }
 revm = { workspace = true }
-rwasm-revm = { workspace = true }
+fluentbase-revm = { workspace = true }
 op-revm = { workspace = true }
 hex-literal = { workspace = true }
 hex = { workspace = true }
@@ -73,13 +73,13 @@ std = [
 debug-print = [
     "fluentbase-runtime/debug-print",
     "revm/debug-print",
-    "rwasm-revm/debug-print",
+    "fluentbase-revm/debug-print",
     "fluentbase-svm/debug-print",
     "rwasm/debug-print",
 ]
 wasmtime = [
     "fluentbase-runtime/wasmtime",
-    "rwasm-revm/wasmtime",
+    "fluentbase-revm/wasmtime",
 ]
 json = [
     "fluentbase-contracts/json",
@@ -89,7 +89,7 @@ json = [
     "fluentbase-svm/json",
     "op-revm/json",
     "revm/json",
-    "rwasm-revm/json",
+    "fluentbase-revm/json",
     "fluentbase-genesis/json"
 ]
 

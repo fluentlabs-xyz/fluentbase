@@ -20,6 +20,9 @@ hashbrown = { workspace = true }
 
 [features]
 default = ["std"]
+serde = [
+    "fluentbase-types/serde",
+]
 std = [
     "fluentbase-types/std",
     "fluentbase-codec/std",

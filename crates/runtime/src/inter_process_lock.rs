@@ -50,6 +50,7 @@ impl InterProcessLock {
 
 impl Drop for InterProcessLock {
     fn drop(&mut self) {
+        #[allow(unstable_name_collisions)]
         let _ = self.file.unlock();
     }
 }
