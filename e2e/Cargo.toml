@@ -50,7 +50,7 @@ ark-serialize = { workspace = true }
 default = [
     "std",
     "wasmtime",
-    "debug-print",
+    #    "debug-print",
     "enable-svm",
     # when enabling enable-solana-* - enable corresponding in 'contracts' crate
     #    "enable-solana-original-builtins",

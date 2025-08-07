@@ -28,5 +28,8 @@ crate-type = ["cdylib"]
 path = "lib.rs"
 
 [features]
-default = ["std", "fluentbase-sdk/debug-print"]
+default = [
+    "std",
+    #    "fluentbase-sdk/debug-print"
+]
 std = ["fluentbase-sdk/std"]
