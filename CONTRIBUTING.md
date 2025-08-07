@@ -1,32 +1,33 @@
 # Contributing Guide
 
-Thank you for considering contributing to this project! This guide will help you understand our development workflow and standards.
+Thank you for considering contributing to this project! This guide will help you understand our development workflow and
+standards.
 
 ## Table of Contents
 
 - [Contributing Guide](#contributing-guide)
-  - [Table of Contents](#table-of-contents)
-  - [Code of Conduct](#code-of-conduct)
-  - [Getting Started](#getting-started)
-    - [Prerequisites](#prerequisites)
-    - [Development Setup](#development-setup)
-    - [Development Commands](#development-commands)
-  - [Development Workflow](#development-workflow)
-    - [1. Creating Issues](#1-creating-issues)
-    - [2. Branch Creation](#2-branch-creation)
-    - [3. Development Process](#3-development-process)
-    - [4. Pull Request Process](#4-pull-request-process)
-  - [Commit Guidelines](#commit-guidelines)
-  - [Release Process](#release-process)
-    - [Version Numbering](#version-numbering)
-    - [Creating a Release](#creating-a-release)
-    - [Managing Published Versions](#managing-published-versions)
-      - [Yanking a Release](#yanking-a-release)
-  - [Getting Help](#getting-help)
+    - [Table of Contents](#table-of-contents)
+    - [Code of Conduct](#code-of-conduct)
+    - [Getting Started](#getting-started)
+        - [Prerequisites](#prerequisites)
+        - [Development Setup](#development-setup)
+    - [Development Workflow](#development-workflow)
+        - [1. Creating Issues](#1-creating-issues)
+        - [2. Branch Creation](#2-branch-creation)
+        - [3. Development Process](#3-development-process)
+        - [4. Pull Request Process](#4-pull-request-process)
+    - [Commit Guidelines](#commit-guidelines)
+    - [Release Process](#release-process)
+        - [Version Numbering](#version-numbering)
+        - [Creating a Release](#creating-a-release)
+        - [Managing Published Versions](#managing-published-versions)
+            - [Yanking a Release](#yanking-a-release)
+    - [Getting Help](#getting-help)
 
 ## Code of Conduct
 
-We follow the [Contributor Covenant](https://www.contributor-covenant.org/). We expect all contributors to be respectful and inclusive in all interactions. Key points:
+We follow the [Contributor Covenant](https://www.contributor-covenant.org/). We expect all contributors to be respectful
+and inclusive in all interactions. Key points:
 
 - Use welcoming and inclusive language
 - Respect different viewpoints and experiences
@@ -45,39 +46,22 @@ We follow the [Contributor Covenant](https://www.contributor-covenant.org/). We 
 
 1. **Fork and Clone**
 
-   ```bash
-   git clone https://github.com/fluentlabs-xyz/fluentbase.git
-   cd fluentbase
-   ```
+    ```bash
+    git clone https://github.com/fluentlabs-xyz/fluentbase.git
+    cd fluentbase
+    ```
 
 2. **Install Tools**
 
-   ```bash
-   make setup
-   ```
+    ```bash
+    make
+    ```
 
-   This installs:
-   - `cargo-audit`: Security vulnerability scanning
-   - `cargo-edit`: Dependency management
-   - `git-cliff`: Changelog generation
+   Make sure you have `wasm32-unknown-unknown` target installed using rustup.
 
-### Development Commands
-
-```bash
-# Build commands
-make build                                   # Build all components (examples, contracts, genesis)
-make clean                                   # Clean build artifacts and cargo cache
-make test                                    # Run all tests in quiet mode
-
-# Node operations
-make run_fluent_node                        # Run Fluent node with clean data directory
-make build_contracts_and_run_fluent_node    # Build all contracts and start Fluent node
-
-# Build options
-SKIP_CONTRACTS=y make build                 # Skip building contracts
-SKIP_EXAMPLES=y make build                  # Skip building examples
-SKIP_GENESIS=y make build                   # Skip building genesis
-```
+    ```bash
+    rustup target add wasm32-unknown-unknown
+    ```
 
 ## Development Workflow
 
@@ -105,40 +89,41 @@ git checkout -b docs/setup-guide
 ### 3. Development Process
 
 1. **Make Changes**
-   - Write code
-   - Add tests
-   - Update documentation
+    - Write code
+    - Add tests
+    - Update documentation
 
 2. **Local Verification**
 
    ```bash
-   make check    # Run all checks
+   make check # Run all checks
+   make test # Run all tests
    ```
 
 3. **Staying Updated**
 
    ```bash
-   git remote add upstream https://github.com/fluentlabs-xyz/fluentbase.git
-   git pull upstream main
+   git remote add fluentbase https://github.com/fluentlabs-xyz/fluentbase.git
+   git pull fluentbase main
    ```
 
 ### 4. Pull Request Process
 
 1. **Prepare Changes**
-   - Ensure all checks pass
-   - Update documentation if needed
-   - Add tests for new functionality
+    - Ensure all checks pass
+    - Update documentation if needed
+    - Add tests for new functionality
 
 2. **Create Pull Request**
-   - Use a clear title following commit conventions
-   - Fill out the PR template
-   - Link related issues
-   - Request reviews
+    - Use a clear title following commit conventions
+    - Fill out the PR template
+    - Link related issues
+    - Request reviews
 
 3. **Review Process**
-   - Address review feedback
-   - Keep changes focused
-   - Maintain a respectful dialogue
+    - Address review feedback
+    - Keep changes focused
+    - Maintain a respectful dialogue
 
 ## Commit Guidelines
 
@@ -229,8 +214,8 @@ Important notes:
    > pushing the tag.
 
 5. **Verify Publication**
-   - Check GitHub Actions for successful workflow completion
-   - Verify the new version appears on crates.io
+    - Check GitHub Actions for successful workflow completion
+    - Verify the new version appears on crates.io
 
 6. **Reverting Release Preparation** (if needed before publishing)
 
@@ -267,10 +252,10 @@ Important notes about yanking:
 - Existing projects can still use yanked versions
 - New projects cannot add yanked versions as dependencies
 - Use yanking for versions with:
-  - Critical bugs
-  - Security vulnerabilities
-  - Compatibility issues
-  - Accidental publications
+    - Critical bugs
+    - Security vulnerabilities
+    - Compatibility issues
+    - Accidental publications
 
 When yanking a version:
 
@@ -302,4 +287,4 @@ We value all contributions, whether they're:
 - Documentation improvements
 - Review comments
 
-Every contributor was once a beginner - don't hesitate to ask for help!
+Every contributor was once a beginner—don't hesitate to ask for help!
