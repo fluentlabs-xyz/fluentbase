@@ -16,7 +16,7 @@ fluentbase-sdk = { workspace = true }
 
 hashbrown = { workspace = true }
 revm = { workspace = true }
-rwasm-revm = { workspace = true }
+fluentbase-revm = { workspace = true }
 rwasm = { workspace = true }
 hex = { workspace = true }
 
@@ -28,16 +28,16 @@ std = [
     "fluentbase-sdk/std",
     "rwasm/std",
     "revm/std",
-    "rwasm-revm/std",
+    "fluentbase-revm/std",
 ]
 debug-print = [
     "fluentbase-sdk/debug-print",
     "fluentbase-runtime/debug-print",
     "revm/debug-print",
-    "rwasm-revm/debug-print",
+    "fluentbase-revm/debug-print",
 ]
 json = [
-	"fluentbase-sdk/json",
-	"revm/json",
-	"rwasm-revm/json"
+    "fluentbase-sdk/json",
+    "revm/json",
+    "fluentbase-revm/json"
 ]

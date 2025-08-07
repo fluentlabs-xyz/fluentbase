@@ -4,32 +4,20 @@ mod tests {
     use core::str::from_utf8;
     use curve25519_dalek::{
         constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT},
-        EdwardsPoint,
-        RistrettoPoint,
+        EdwardsPoint, RistrettoPoint,
     };
     use fluentbase_runtime::instruction::weierstrass_compress_decompress::{
-        ConfigG1Compress,
-        ConfigG1Decompress,
-        ConfigG2Compress,
-        ConfigG2Decompress,
+        ConfigG1Compress, ConfigG1Decompress, ConfigG2Compress, ConfigG2Decompress,
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{
-        address,
-        Address,
-        ContextReader,
-        ContractContextV1,
-        SharedAPI,
-        PRECOMPILE_SVM_RUNTIME,
-        U256,
+        address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
     };
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         common::{
-            evm_address_from_pubkey,
-            evm_balance_from_lamports,
-            lamports_from_evm_balance,
+            evm_address_from_pubkey, evm_balance_from_lamports, lamports_from_evm_balance,
             pubkey_from_evm_address,
         },
         fluentbase::common::BatchMessage,
@@ -46,38 +34,18 @@ mod tests {
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
-            AltBn128Compression,
-            AltBn128CompressionOriginal,
-            Blake3,
-            CreateAccountAndModifySomeData1,
-            CurveGroupOp,
-            CurveGroupOpOriginal,
-            CurveMultiscalarMultiplication,
-            CurveMultiscalarMultiplicationOriginal,
-            CurvePointValidation,
-            CurvePointValidationOriginal,
-            Keccak256,
-            Poseidon,
-            SetGetReturnData,
-            Sha256,
-            Sha256Original,
-            SolBigModExp,
-            SolBigModExpOriginal,
-            SolSecp256k1Recover,
-            SolSecp256k1RecoverOriginal,
-            SyscallAltBn128,
-            SyscallAltBn128Original,
-            TestCommand,
-            EXPECTED_RET_ERR,
-            EXPECTED_RET_OK,
+            AltBn128Compression, AltBn128CompressionOriginal, Blake3,
+            CreateAccountAndModifySomeData1, CurveGroupOp, CurveGroupOpOriginal,
+            CurveMultiscalarMultiplication, CurveMultiscalarMultiplicationOriginal,
+            CurvePointValidation, CurvePointValidationOriginal, Keccak256, Poseidon,
+            SetGetReturnData, Sha256, Sha256Original, SolBigModExp, SolBigModExpOriginal,
+            SolSecp256k1Recover, SolSecp256k1RecoverOriginal, SyscallAltBn128,
+            SyscallAltBn128Original, TestCommand, EXPECTED_RET_ERR, EXPECTED_RET_OK,
         },
     };
     use fluentbase_types::{
-        default,
-        helpers::convert_endianness_fixed,
-        BN254_G1_POINT_COMPRESSED_SIZE,
-        BN254_G1_POINT_DECOMPRESSED_SIZE,
-        BN254_G2_POINT_COMPRESSED_SIZE,
+        default, helpers::convert_endianness_fixed, BN254_G1_POINT_COMPRESSED_SIZE,
+        BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
         BN254_G2_POINT_DECOMPRESSED_SIZE,
     };
     use hex_literal::hex;
@@ -85,31 +53,20 @@ mod tests {
     use serde::Deserialize;
     use solana_bn254::{
         compression::prelude::{
-            alt_bn128_g1_compress,
-            alt_bn128_g1_decompress,
-            alt_bn128_g2_compress,
-            alt_bn128_g2_decompress,
-            ALT_BN128_G1_COMPRESS,
-            ALT_BN128_G1_DECOMPRESS,
-            ALT_BN128_G2_COMPRESS,
-            ALT_BN128_G2_DECOMPRESS,
+            alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
+            alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
+            ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS,
         },
         prelude::{alt_bn128_addition, ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING},
         target_arch::{alt_bn128_multiplication, alt_bn128_pairing},
     };
     use solana_curve25519::{
         edwards::{
-            add_edwards,
-            multiply_edwards,
-            multiscalar_multiply_edwards,
-            subtract_edwards,
+            add_edwards, multiply_edwards, multiscalar_multiply_edwards, subtract_edwards,
             PodEdwardsPoint,
         },
         ristretto::{
-            add_ristretto,
-            multiply_ristretto,
-            multiscalar_multiply_ristretto,
-            subtract_ristretto,
+            add_ristretto, multiply_ristretto, multiscalar_multiply_ristretto, subtract_ristretto,
             PodRistrettoPoint,
         },
         scalar::PodScalar,
@@ -646,7 +603,7 @@ mod tests {
     }
 
     #[test]
-    fn test_svm_sol_poseidon__input_ones_be() {
+    fn test_svm_sol_poseidon_input_ones_be() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -694,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    fn test_svm_sol_poseidon__input_ones_le() {
+    fn test_svm_sol_poseidon_input_ones_le() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -742,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn test_svm_sol_poseidon__input_ones_twos_be() {
+    fn test_svm_sol_poseidon_input_ones_twos_be() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -795,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    fn test_svm_sol_poseidon__input_ones_twos_le() {
+    fn test_svm_sol_poseidon_input_ones_twos_le() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -848,7 +805,7 @@ mod tests {
     }
 
     #[test]
-    fn test_svm_sol_poseidon__input_one() {
+    fn test_svm_sol_poseidon_input_one() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -1586,7 +1543,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sol_alt_bn128_group_op__addition() {
+    fn test_sol_alt_bn128_group_op_addition() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -1716,7 +1673,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sol_alt_bn128_group_op__multiplication() {
+    fn test_sol_alt_bn128_group_op_multiplication() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -1887,10 +1844,10 @@ mod tests {
     }
 
     type G1 = ark_bn254::g1::G1Affine;
-
     type G2 = ark_bn254::g2::G2Affine;
+
     #[test]
-    fn test_sol_alt_bn128__pairing() {
+    fn test_sol_alt_bn128_pairing() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -1997,7 +1954,7 @@ mod tests {
             expected: String,
         }
 
-        let mut test_cases: Vec<TestCase> = serde_json::from_str(test_data).unwrap();
+        let test_cases: Vec<TestCase> = serde_json::from_str(test_data).unwrap();
 
         test_cases.iter().for_each(|test| {
             let input = array_bytes::hex2bytes_unchecked(&test.input);
@@ -2031,7 +1988,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sol_alt_bn128_compression__g1_compress_decompress() {
+    fn test_sol_alt_bn128_compression_g1_compress_decompress() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -2143,7 +2100,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sol_alt_bn128_compression__g2_compress_decompress() {
+    fn test_sol_alt_bn128_compression_g2_compress_decompress() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -2258,7 +2215,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sol_alt_bn128_compression__pairing() {
+    fn test_sol_alt_bn128_compression_pairing() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();

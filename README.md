@@ -40,6 +40,7 @@ Core libraries and infrastructure:
 * `erc20` — ERC20 contract utilities (marked for deprecation).
 * `evm` — EVM execution support.
 * `genesis` — Build scripts for generating Fluent L2 genesis files with precompiled contracts.
+* `revm` — A driver for Revm integration.
 * `runtime` — rWASM/WebAssembly runtime enabling host function integrations.
 * `sdk` — Developer SDK with all necessary types, macros, entrypoint definitions, and allocators.
 * `svm` — SVM execution engine.

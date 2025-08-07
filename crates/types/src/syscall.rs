@@ -80,7 +80,7 @@ impl SyscallResult<()> {
     }
 }
 
-impl<T: Default> SyscallResult<T> {
+impl<T> SyscallResult<T> {
     pub fn new<I: Into<ExitCode>>(
         data: T,
         fuel_consumed: u64,
@@ -117,6 +117,9 @@ impl<T: Default> SyscallResult<T> {
         }
         self.data
     }
+}
+
+impl<T: Default> SyscallResult<T> {
     pub fn unwrap_or_default(self) -> T {
         if self.status.is_ok() {
             self.data
