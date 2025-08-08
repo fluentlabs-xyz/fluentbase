@@ -1,21 +1,20 @@
 use crate::{
-    instruction::ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
-    utils::syscall_process_exit_code,
-    RuntimeContext,
+    instruction::curve25519_ristretto_decompress_validate::SyscallCurve25519RistrettoDecompressValidate,
+    utils::syscall_process_exit_code, RuntimeContext,
 };
 use curve25519_dalek::RistrettoPoint;
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
-pub(crate) struct SyscallED25519RistrettoAdd {}
+pub(crate) struct SyscallCurve25519RistrettoSub {}
 
-impl SyscallED25519RistrettoAdd {
+impl SyscallCurve25519RistrettoSub {
     pub const fn new() -> Self {
         Self {}
     }
 }
 
-impl SyscallED25519RistrettoAdd {
+impl SyscallCurve25519RistrettoSub {
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
@@ -41,10 +40,10 @@ impl SyscallED25519RistrettoAdd {
     }
 
     pub fn fn_impl(p: &[u8; 32], q: &[u8; 32]) -> Result<RistrettoPoint, ExitCode> {
-        let p = SyscallED25519RistrettoDecompressValidate::fn_impl(p)?;
-        let q = SyscallED25519RistrettoDecompressValidate::fn_impl(q)?;
+        let p = SyscallCurve25519RistrettoDecompressValidate::fn_impl(p)?;
+        let q = SyscallCurve25519RistrettoDecompressValidate::fn_impl(q)?;
 
-        let result = p + q;
+        let result = p - q;
 
         Ok(result)
     }

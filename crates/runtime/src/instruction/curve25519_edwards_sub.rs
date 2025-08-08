@@ -1,21 +1,20 @@
 use crate::{
-    instruction::ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
-    utils::syscall_process_exit_code,
-    RuntimeContext,
+    instruction::curve25519_edwards_decompress_validate::SyscallCurve25519EdwardsDecompressValidate,
+    utils::syscall_process_exit_code, RuntimeContext,
 };
 use curve25519_dalek::EdwardsPoint;
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
-pub(crate) struct SyscallED25519EdwardsMul {}
+pub(crate) struct SyscallCurve25519EdwardsSub {}
 
-impl SyscallED25519EdwardsMul {
+impl SyscallCurve25519EdwardsSub {
     pub const fn new() -> Self {
         Self {}
     }
 }
 
-impl SyscallED25519EdwardsMul {
+impl SyscallCurve25519EdwardsSub {
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
@@ -41,10 +40,10 @@ impl SyscallED25519EdwardsMul {
     }
 
     pub fn fn_impl(p: &[u8; 32], q: &[u8; 32]) -> Result<EdwardsPoint, ExitCode> {
-        let p = SyscallED25519EdwardsDecompressValidate::fn_impl(p)?;
-        let q = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(*q);
+        let p = SyscallCurve25519EdwardsDecompressValidate::fn_impl(p)?;
+        let q = SyscallCurve25519EdwardsDecompressValidate::fn_impl(q)?;
 
-        let result = p * q;
+        let result = p - q;
 
         Ok(result)
     }

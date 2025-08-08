@@ -1,17 +1,17 @@
 pub mod blake3;
 pub mod charge_fuel;
 pub mod charge_fuel_manually;
+pub mod curve25519_edwards_add;
+pub mod curve25519_edwards_decompress_validate;
+pub mod curve25519_edwards_mul;
+pub mod curve25519_edwards_multiscalar_mul;
+pub mod curve25519_edwards_sub;
+pub mod curve25519_ristretto_add;
+pub mod curve25519_ristretto_decompress_validate;
+pub mod curve25519_ristretto_mul;
+pub mod curve25519_ristretto_multiscalar_mul;
+pub mod curve25519_ristretto_sub;
 pub mod debug_log;
-pub mod ed25519_edwards_add;
-pub mod ed25519_edwards_decompress_validate;
-pub mod ed25519_edwards_mul;
-pub mod ed25519_edwards_multiscalar_mul;
-pub mod ed25519_edwards_sub;
-pub mod ed25519_ristretto_add;
-pub mod ed25519_ristretto_decompress_validate;
-pub mod ed25519_ristretto_mul;
-pub mod ed25519_ristretto_multiscalar_mul;
-pub mod ed25519_ristretto_sub;
 pub mod ed_add;
 pub mod ed_decompress;
 pub mod exec;
@@ -52,17 +52,17 @@ use crate::{
         blake3::SyscallBlake3,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
+        curve25519_edwards_add::SyscallCurve25519EdwardsAdd,
+        curve25519_edwards_decompress_validate::SyscallCurve25519EdwardsDecompressValidate,
+        curve25519_edwards_mul::SyscallCurve25519EdwardsMul,
+        curve25519_edwards_multiscalar_mul::SyscallCurve25519EdwardsMultiscalarMul,
+        curve25519_edwards_sub::SyscallCurve25519EdwardsSub,
+        curve25519_ristretto_add::SyscallCurve25519RistrettoAdd,
+        curve25519_ristretto_decompress_validate::SyscallCurve25519RistrettoDecompressValidate,
+        curve25519_ristretto_mul::SyscallCurve25519RistrettoMul,
+        curve25519_ristretto_multiscalar_mul::SyscallCurve25519RistrettoMultiscalarMul,
+        curve25519_ristretto_sub::SyscallCurve25519RistrettoSub,
         debug_log::SyscallDebugLog,
-        ed25519_edwards_add::SyscallED25519EdwardsAdd,
-        ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
-        ed25519_edwards_mul::SyscallED25519EdwardsMul,
-        ed25519_edwards_multiscalar_mul::SyscallED25519EdwardsMultiscalarMul,
-        ed25519_edwards_sub::SyscallED25519EdwardsSub,
-        ed25519_ristretto_add::SyscallED25519RistrettoAdd,
-        ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
-        ed25519_ristretto_mul::SyscallED25519RistrettoMul,
-        ed25519_ristretto_multiscalar_mul::SyscallED25519RistrettoMultiscalarMul,
-        ed25519_ristretto_sub::SyscallED25519RistrettoSub,
         ed_add::SyscallEdwardsAddAssign,
         ed_decompress::SyscallEdwardsDecompress,
         exec::SyscallExec,
@@ -91,10 +91,7 @@ use crate::{
         uint256_mul::SyscallUint256Mul,
         weierstrass_add::SyscallWeierstrassAddAssign,
         weierstrass_compress_decompress::{
-            ConfigG1Compress,
-            ConfigG1Decompress,
-            ConfigG2Compress,
-            ConfigG2Decompress,
+            ConfigG1Compress, ConfigG1Decompress, ConfigG2Compress, ConfigG2Decompress,
             SyscallWeierstrassCompressDecompressAssign,
         },
         weierstrass_decompress::SyscallWeierstrassDecompressAssign,
@@ -150,16 +147,16 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::POSEIDON => SyscallPoseidon::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_EDWARDS_DECOMPRESS_VALIDATE => SyscallED25519EdwardsDecompressValidate::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_EDWARDS_ADD => SyscallED25519EdwardsAdd::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_EDWARDS_SUB => SyscallED25519EdwardsSub::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_EDWARDS_MUL => SyscallED25519EdwardsMul::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_EDWARDS_MULTISCALAR_MUL => SyscallED25519EdwardsMultiscalarMul::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_RISTRETTO_DECOMPRESS_VALIDATE => SyscallED25519RistrettoDecompressValidate::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_RISTRETTO_ADD => SyscallED25519RistrettoAdd::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_RISTRETTO_SUB => SyscallED25519RistrettoSub::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_RISTRETTO_MUL => SyscallED25519RistrettoMul::fn_handler(caller, params, result),
-        SysFuncIdx::ED25519_RISTRETTO_MULTISCALAR_MUL => SyscallED25519RistrettoMultiscalarMul::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_DECOMPRESS_VALIDATE => SyscallCurve25519EdwardsDecompressValidate::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_ADD => SyscallCurve25519EdwardsAdd::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_SUB => SyscallCurve25519EdwardsSub::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_MUL => SyscallCurve25519EdwardsMul::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_EDWARDS_MULTISCALAR_MUL => SyscallCurve25519EdwardsMultiscalarMul::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_DECOMPRESS_VALIDATE => SyscallCurve25519RistrettoDecompressValidate::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_ADD => SyscallCurve25519RistrettoAdd::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_SUB => SyscallCurve25519RistrettoSub::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_MUL => SyscallCurve25519RistrettoMul::fn_handler(caller, params, result),
+        SysFuncIdx::ED25519_RISTRETTO_MULTISCALAR_MUL => SyscallCurve25519RistrettoMultiscalarMul::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_RECOVER => SyscallSecp256k1Recover::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_DECOMPRESS => SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller, params, result),

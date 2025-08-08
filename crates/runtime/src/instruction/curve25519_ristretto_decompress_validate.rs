@@ -3,15 +3,15 @@ use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint};
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
-pub(crate) struct SyscallED25519RistrettoDecompressValidate {}
+pub(crate) struct SyscallCurve25519RistrettoDecompressValidate {}
 
-impl SyscallED25519RistrettoDecompressValidate {
+impl SyscallCurve25519RistrettoDecompressValidate {
     pub const fn new() -> Self {
         Self {}
     }
 }
 
-impl SyscallED25519RistrettoDecompressValidate {
+impl SyscallCurve25519RistrettoDecompressValidate {
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],

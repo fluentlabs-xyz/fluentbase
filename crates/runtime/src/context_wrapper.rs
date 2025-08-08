@@ -3,17 +3,17 @@ use crate::{
         blake3::SyscallBlake3,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
+        curve25519_edwards_add::SyscallCurve25519EdwardsAdd,
+        curve25519_edwards_decompress_validate::SyscallCurve25519EdwardsDecompressValidate,
+        curve25519_edwards_mul::SyscallCurve25519EdwardsMul,
+        curve25519_edwards_multiscalar_mul::SyscallCurve25519EdwardsMultiscalarMul,
+        curve25519_edwards_sub::SyscallCurve25519EdwardsSub,
+        curve25519_ristretto_add::SyscallCurve25519RistrettoAdd,
+        curve25519_ristretto_decompress_validate::SyscallCurve25519RistrettoDecompressValidate,
+        curve25519_ristretto_mul::SyscallCurve25519RistrettoMul,
+        curve25519_ristretto_multiscalar_mul::SyscallCurve25519RistrettoMultiscalarMul,
+        curve25519_ristretto_sub::SyscallCurve25519RistrettoSub,
         debug_log::SyscallDebugLog,
-        ed25519_edwards_add::SyscallED25519EdwardsAdd,
-        ed25519_edwards_decompress_validate::SyscallED25519EdwardsDecompressValidate,
-        ed25519_edwards_mul::SyscallED25519EdwardsMul,
-        ed25519_edwards_multiscalar_mul::SyscallED25519EdwardsMultiscalarMul,
-        ed25519_edwards_sub::SyscallED25519EdwardsSub,
-        ed25519_ristretto_add::SyscallED25519RistrettoAdd,
-        ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
-        ed25519_ristretto_mul::SyscallED25519RistrettoMul,
-        ed25519_ristretto_multiscalar_mul::SyscallED25519RistrettoMultiscalarMul,
-        ed25519_ristretto_sub::SyscallED25519RistrettoSub,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
@@ -35,10 +35,7 @@ use crate::{
         state::SyscallState,
         weierstrass_add::SyscallWeierstrassAddAssign,
         weierstrass_compress_decompress::{
-            ConfigG1Compress,
-            ConfigG1Decompress,
-            ConfigG2Compress,
-            ConfigG2Decompress,
+            ConfigG1Compress, ConfigG1Decompress, ConfigG2Compress, ConfigG2Decompress,
             SyscallWeierstrassCompressDecompressAssign,
         },
         weierstrass_double::SyscallWeierstrassDoubleAssign,
@@ -50,17 +47,9 @@ use crate::{
     RuntimeContext,
 };
 use fluentbase_types::{
-    bn254_add_common_impl,
-    native_api::NativeAPI,
-    BytecodeOrHash,
-    Bytes,
-    ExitCode,
-    UnwrapExitCode,
-    B256,
-    BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE,
+    bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, Bytes, ExitCode, UnwrapExitCode,
+    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
 use std::{cell::RefCell, mem::take, rc::Rc};
@@ -99,23 +88,23 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallED25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
+        SyscallCurve25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
     }
 
     fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallED25519EdwardsAdd::fn_impl(p, q).is_ok()
+        SyscallCurve25519EdwardsAdd::fn_impl(p, q).is_ok()
     }
 
     fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallED25519EdwardsSub::fn_impl(p, q).is_ok()
+        SyscallCurve25519EdwardsSub::fn_impl(p, q).is_ok()
     }
 
     fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallED25519EdwardsMul::fn_impl(p, q).is_ok()
+        SyscallCurve25519EdwardsMul::fn_impl(p, q).is_ok()
     }
 
     fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool {
-        let result = SyscallED25519EdwardsMultiscalarMul::fn_impl(pairs);
+        let result = SyscallCurve25519EdwardsMultiscalarMul::fn_impl(pairs);
         match result {
             Ok(v) => {
                 *out = v.compress().to_bytes();
@@ -126,25 +115,25 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        SyscallED25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
+        SyscallCurve25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
     }
 
     fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallED25519RistrettoAdd::fn_impl(p, q).is_ok()
+        SyscallCurve25519RistrettoAdd::fn_impl(p, q).is_ok()
     }
 
     fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallED25519RistrettoSub::fn_impl(p, q).is_ok()
+        SyscallCurve25519RistrettoSub::fn_impl(p, q).is_ok()
     }
 
     fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        SyscallED25519RistrettoMul::fn_impl(p, q).is_ok()
+        SyscallCurve25519RistrettoMul::fn_impl(p, q).is_ok()
     }
     fn ed25519_ristretto_multiscalar_mul(
         pairs: &[([u8; 32], [u8; 32])],
         out: &mut [u8; 32],
     ) -> bool {
-        let result = SyscallED25519RistrettoMultiscalarMul::fn_impl(pairs);
+        let result = SyscallCurve25519RistrettoMultiscalarMul::fn_impl(pairs);
         match result {
             Ok(v) => {
                 *out = v.compress().to_bytes();
