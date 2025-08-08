@@ -3,15 +3,15 @@ use curve25519_dalek::{edwards::CompressedEdwardsY, EdwardsPoint};
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
-pub(crate) struct SyscallED25519EdwardsDecompressValidate {}
+pub(crate) struct SyscallCurve25519EdwardsDecompressValidate {}
 
-impl SyscallED25519EdwardsDecompressValidate {
+impl SyscallCurve25519EdwardsDecompressValidate {
     pub const fn new() -> Self {
         Self {}
     }
 }
 
-impl SyscallED25519EdwardsDecompressValidate {
+impl SyscallCurve25519EdwardsDecompressValidate {
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],

@@ -1,9 +1,8 @@
 use crate::{
-    instruction::ed25519_ristretto_decompress_validate::SyscallED25519RistrettoDecompressValidate,
-    utils::syscall_process_exit_code,
-    RuntimeContext,
+    instruction::curve25519_edwards_decompress_validate::SyscallCurve25519EdwardsDecompressValidate,
+    utils::syscall_process_exit_code, RuntimeContext,
 };
-use curve25519_dalek::{traits::MultiscalarMul, RistrettoPoint, Scalar};
+use curve25519_dalek::{traits::MultiscalarMul, EdwardsPoint, Scalar};
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
@@ -11,15 +10,15 @@ pub const POINT_LEN: usize = 32;
 pub const SCALAR_LEN: usize = 32;
 const PAIR_LEN: usize = POINT_LEN + SCALAR_LEN;
 
-pub(crate) struct SyscallED25519RistrettoMultiscalarMul {}
+pub(crate) struct SyscallCurve25519EdwardsMultiscalarMul {}
 
-impl SyscallED25519RistrettoMultiscalarMul {
+impl SyscallCurve25519EdwardsMultiscalarMul {
     pub const fn new() -> Self {
         Self {}
     }
 }
 
-impl SyscallED25519RistrettoMultiscalarMul {
+impl SyscallCurve25519EdwardsMultiscalarMul {
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
@@ -72,17 +71,17 @@ impl SyscallED25519RistrettoMultiscalarMul {
 
     pub fn fn_impl(
         pairs: &[([u8; POINT_LEN], [u8; SCALAR_LEN])],
-    ) -> Result<RistrettoPoint, ExitCode> {
-        let points: Result<Vec<RistrettoPoint>, ExitCode> = pairs
+    ) -> Result<EdwardsPoint, ExitCode> {
+        let points: Result<Vec<EdwardsPoint>, ExitCode> = pairs
             .iter()
-            .map(|v| SyscallED25519RistrettoDecompressValidate::fn_impl(&v.0))
+            .map(|v| SyscallCurve25519EdwardsDecompressValidate::fn_impl(&v.0))
             .collect();
         let points = points?;
         let scalars: Vec<Scalar> = pairs
             .iter()
             .map(|v| Scalar::from_bytes_mod_order(v.1))
             .collect();
-        let result = RistrettoPoint::multiscalar_mul(scalars, points);
+        let result = EdwardsPoint::multiscalar_mul(scalars, points);
 
         Ok(result)
     }

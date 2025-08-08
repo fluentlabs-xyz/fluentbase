@@ -1,5 +1,3 @@
-#[cfg(feature = "enable-solana-original-builtins")]
-use crate::common::Sha256HasherOriginal;
 use crate::{
     alloc::string::ToString,
     big_mod_exp::{big_mod_exp, BigModExpParams},
@@ -10,14 +8,8 @@ use crate::{
     hash::{SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH},
     loaders::syscalls::cpi::cpi_common,
     mem_ops::{
-        is_nonoverlapping,
-        memcmp,
-        memmove,
-        translate_and_check_program_address_inputs,
-        translate_slice,
-        translate_slice_mut,
-        translate_string_and_do,
-        translate_type,
+        is_nonoverlapping, memcmp, memmove, translate_and_check_program_address_inputs,
+        translate_slice, translate_slice_mut, translate_string_and_do, translate_type,
         translate_type_mut,
     },
     word_size::{
@@ -33,11 +25,8 @@ use itertools::Itertools;
 use solana_bn254::{
     compression::prelude::convert_endianness,
     prelude::{
-        alt_bn128_multiplication,
-        alt_bn128_pairing,
-        ALT_BN128_ADDITION_OUTPUT_LEN,
-        ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
-        ALT_BN128_PAIRING_OUTPUT_LEN,
+        alt_bn128_multiplication, alt_bn128_pairing, ALT_BN128_ADDITION_OUTPUT_LEN,
+        ALT_BN128_MULTIPLICATION_OUTPUT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
     },
     target_arch::alt_bn128_addition,
     AltBn128Error,
@@ -114,44 +103,11 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
         .unwrap();
 
-    #[cfg(feature = "enable-solana-original-builtins")]
-    function_registry
-        .register_function_hashed(
-            "sol_secp256k1_recover_original",
-            SyscallSecp256k1RecoverOriginal::vm,
-        )
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-original-builtins"))]
-    function_registry
-        .register_function_hashed("sol_secp256k1_recover_original", SyscallStub::vm)
-        .unwrap();
     function_registry
         .register_function_hashed("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)
         .unwrap();
-    #[cfg(feature = "enable-solana-original-builtins")]
-    function_registry
-        .register_function_hashed(
-            "sol_curve_group_op_original",
-            SyscallCurveGroupOpsOriginal::vm,
-        )
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-original-builtins"))]
-    function_registry
-        .register_function_hashed("sol_curve_group_op_original", SyscallStub::vm)
-        .unwrap();
     function_registry
         .register_function_hashed("sol_curve_group_op", SyscallCurveGroupOps::vm)
-        .unwrap();
-    #[cfg(feature = "enable-solana-original-builtins")]
-    function_registry
-        .register_function_hashed(
-            "sol_curve_multiscalar_mul_original",
-            SyscallCurveMultiscalarMultiplicationOriginal::vm,
-        )
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-original-builtins"))]
-    function_registry
-        .register_function_hashed("sol_curve_multiscalar_mul_original", SyscallStub::vm)
         .unwrap();
     function_registry
         .register_function_hashed(
@@ -159,61 +115,16 @@ pub fn register_builtins<SDK: SharedAPI>(
             SyscallCurveMultiscalarMultiplication::vm,
         )
         .unwrap();
-    #[cfg(feature = "enable-solana-original-builtins")]
-    function_registry
-        .register_function_hashed(
-            "sol_curve_validate_point_original",
-            SyscallCurvePointValidationOriginal::vm,
-        )
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-original-builtins"))]
-    function_registry
-        .register_function_hashed("sol_curve_validate_point_original", SyscallStub::vm)
-        .unwrap();
     function_registry
         .register_function_hashed("sol_curve_validate_point", SyscallCurvePointValidation::vm)
         .unwrap();
 
-    #[cfg(feature = "enable-solana-original-builtins")]
-    function_registry
-        .register_function_hashed(
-            "sol_alt_bn128_group_op_original",
-            SyscallAltBn128Original::vm,
-        )
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-original-builtins"))]
-    function_registry
-        .register_function_hashed("sol_alt_bn128_group_op_original", SyscallStub::vm)
-        .unwrap();
     function_registry
         .register_function_hashed("sol_alt_bn128_group_op", SyscallAltBn128::vm)
         .unwrap();
 
-    #[cfg(feature = "enable-solana-original-builtins")]
-    function_registry
-        .register_function_hashed(
-            "sol_alt_bn128_compression_original",
-            SyscallAltBn128CompressionOriginal::vm,
-        )
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-original-builtins"))]
-    function_registry
-        .register_function_hashed("sol_alt_bn128_compression_original", SyscallStub::vm)
-        .unwrap();
     function_registry
         .register_function_hashed("sol_alt_bn128_compression", SyscallAltBn128Compression::vm)
-        .unwrap();
-
-    #[cfg(feature = "enable-solana-original-builtins")]
-    function_registry
-        .register_function_hashed(
-            "sol_sha256_original",
-            SyscallHash::vm::<SDK, Sha256HasherOriginal>,
-        )
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-original-builtins"))]
-    function_registry
-        .register_function_hashed("sol_sha256_original", SyscallStub::vm)
         .unwrap();
 
     function_registry
@@ -229,14 +140,6 @@ pub fn register_builtins<SDK: SharedAPI>(
         .register_function_hashed("sol_blake3", SyscallHash::vm::<SDK, Blake3Hasher<SDK>>)
         .unwrap();
 
-    #[cfg(feature = "enable-solana-original-builtins")]
-    function_registry
-        .register_function_hashed("sol_big_mod_exp_original", SyscallBigModExpOriginal::vm)
-        .unwrap();
-    #[cfg(not(feature = "enable-solana-original-builtins"))]
-    function_registry
-        .register_function_hashed("sol_big_mod_exp_original", SyscallStub::vm)
-        .unwrap();
     function_registry
         .register_function_hashed("sol_big_mod_exp", SyscallBigModExp::vm)
         .unwrap();

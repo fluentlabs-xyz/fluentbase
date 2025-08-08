@@ -21,14 +21,6 @@ pub struct CreateAccountAndModifySomeData1 {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SolBigModExpOriginal {
-    pub base: Vec<u8>,
-    pub exponent: Vec<u8>,
-    pub modulus: Vec<u8>,
-    pub expected: Vec<u8>,
-    pub expected_ret: u64,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SolBigModExp {
     pub base: Vec<u8>,
     pub exponent: Vec<u8>,
@@ -36,19 +28,7 @@ pub struct SolBigModExp {
     pub expected: Vec<u8>,
     pub expected_ret: u64,
 }
-impl From<SolBigModExpOriginal> for SolBigModExp {
-    fn from(value: SolBigModExpOriginal) -> Self {
-        Self {
-            base: value.base,
-            exponent: value.exponent,
-            modulus: value.modulus,
-            expected: value.expected,
-            expected_ret: value.expected_ret,
-        }
-    }
-}
-
-impl SolBigModExpOriginal {
+impl SolBigModExp {
     pub fn from_hex(
         base_hex: &str,
         exponent_hex: &str,
@@ -76,22 +56,7 @@ pub struct SolSecp256k1Recover {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SolSecp256k1RecoverOriginal {
-    pub message: Vec<u8>,
-    pub signature_bytes: Vec<u8>,
-    pub recovery_id: u8,
-    pub pubkey_bytes: Vec<u8>,
-    pub expected_ret: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Keccak256 {
-    pub data: Vec<Vec<u8>>,
-    pub expected_result: [u8; 32],
-    pub expected_ret: u64,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Sha256Original {
     pub data: Vec<Vec<u8>>,
     pub expected_result: [u8; 32],
     pub expected_ret: u64,
@@ -101,15 +66,6 @@ pub struct Sha256 {
     pub data: Vec<Vec<u8>>,
     pub expected_result: [u8; 32],
     pub expected_ret: u64,
-}
-impl From<Sha256Original> for Sha256 {
-    fn from(value: Sha256Original) -> Self {
-        Self {
-            data: value.data,
-            expected_result: value.expected_result,
-            expected_ret: value.expected_ret,
-        }
-    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Blake3 {
@@ -130,33 +86,9 @@ pub struct SetGetReturnData {
     pub data: Vec<u8>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CurvePointValidationOriginal {
-    pub curve_id: u64,
-    pub point: [u8; 32],
-    pub expected_ret: u64,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurvePointValidation {
     pub curve_id: u64,
     pub point: [u8; 32],
-    pub expected_ret: u64,
-}
-impl From<CurvePointValidationOriginal> for CurvePointValidation {
-    fn from(value: CurvePointValidationOriginal) -> Self {
-        Self {
-            curve_id: value.curve_id,
-            point: value.point,
-            expected_ret: value.expected_ret,
-        }
-    }
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CurveGroupOpOriginal {
-    pub curve_id: u64,
-    pub group_op: u64,
-    pub left_input: [u8; 32],
-    pub right_input: [u8; 32],
-    pub expected_point: [u8; 32],
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -168,26 +100,6 @@ pub struct CurveGroupOp {
     pub expected_point: [u8; 32],
     pub expected_ret: u64,
 }
-impl From<CurveGroupOpOriginal> for CurveGroupOp {
-    fn from(value: CurveGroupOpOriginal) -> Self {
-        Self {
-            curve_id: value.curve_id,
-            group_op: value.group_op,
-            left_input: value.left_input,
-            right_input: value.right_input,
-            expected_point: value.expected_point,
-            expected_ret: value.expected_ret,
-        }
-    }
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CurveMultiscalarMultiplicationOriginal {
-    pub curve_id: u64,
-    pub scalars: Vec<[u8; 32]>,
-    pub points: Vec<[u8; 32]>,
-    pub expected_point: [u8; 32],
-    pub expected_ret: u64,
-}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurveMultiscalarMultiplication {
     pub curve_id: u64,
@@ -196,43 +108,8 @@ pub struct CurveMultiscalarMultiplication {
     pub expected_point: [u8; 32],
     pub expected_ret: u64,
 }
-impl From<CurveMultiscalarMultiplicationOriginal> for CurveMultiscalarMultiplication {
-    fn from(value: CurveMultiscalarMultiplicationOriginal) -> Self {
-        Self {
-            curve_id: value.curve_id,
-            scalars: value.scalars,
-            points: value.points,
-            expected_point: value.expected_point,
-            expected_ret: value.expected_ret,
-        }
-    }
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SyscallAltBn128Original {
-    pub group_op: u64,
-    pub input: Vec<u8>,
-    pub expected_result: Vec<u8>,
-    pub expected_ret: u64,
-}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyscallAltBn128 {
-    pub group_op: u64,
-    pub input: Vec<u8>,
-    pub expected_result: Vec<u8>,
-    pub expected_ret: u64,
-}
-impl From<SyscallAltBn128Original> for SyscallAltBn128 {
-    fn from(value: SyscallAltBn128Original) -> Self {
-        Self {
-            group_op: value.group_op,
-            input: value.input,
-            expected_result: value.expected_result,
-            expected_ret: value.expected_ret,
-        }
-    }
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AltBn128CompressionOriginal {
     pub group_op: u64,
     pub input: Vec<u8>,
     pub expected_result: Vec<u8>,
@@ -245,40 +122,22 @@ pub struct AltBn128Compression {
     pub expected_result: Vec<u8>,
     pub expected_ret: u64,
 }
-impl From<AltBn128CompressionOriginal> for AltBn128Compression {
-    fn from(value: AltBn128CompressionOriginal) -> Self {
-        Self {
-            group_op: value.group_op,
-            input: value.input,
-            expected_result: value.expected_result,
-            expected_ret: value.expected_ret,
-        }
-    }
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TestCommand {
     ModifyAccount1(ModifyAccount1),
     CreateAccountAndModifySomeData1(CreateAccountAndModifySomeData1),
-    SolBigModExpOriginal(SolBigModExpOriginal),
     SolBigModExp(SolBigModExp),
     SolSecp256k1Recover(SolSecp256k1Recover),
-    SolSecp256k1RecoverOriginal(SolSecp256k1RecoverOriginal),
     Keccak256(Keccak256),
-    Sha256Original(Sha256Original),
     Sha256(Sha256),
     Blake3(Blake3),
     Poseidon(Poseidon),
     SetGetReturnData(SetGetReturnData),
-    CurvePointValidationOriginal(CurvePointValidationOriginal),
     CurvePointValidation(CurvePointValidation),
-    CurveGroupOpOriginal(CurveGroupOpOriginal),
     CurveGroupOp(CurveGroupOp),
-    CurveMultiscalarMultiplicationOriginal(CurveMultiscalarMultiplicationOriginal),
     CurveMultiscalarMultiplication(CurveMultiscalarMultiplication),
-    SyscallAltBn128Original(SyscallAltBn128Original),
     SyscallAltBn128(SyscallAltBn128),
-    AltBn128CompressionOriginal(AltBn128CompressionOriginal),
     AltBn128Compression(AltBn128Compression),
 }
 
@@ -301,23 +160,15 @@ macro_rules! impl_from {
 
 impl_from!(ModifyAccount1);
 impl_from!(CreateAccountAndModifySomeData1);
-impl_from!(SolBigModExpOriginal);
 impl_from!(SolBigModExp);
-impl_from!(SolSecp256k1RecoverOriginal);
 impl_from!(SolSecp256k1Recover);
 impl_from!(Keccak256);
-impl_from!(Sha256Original);
 impl_from!(Sha256);
 impl_from!(Blake3);
 impl_from!(Poseidon);
 impl_from!(SetGetReturnData);
-impl_from!(CurvePointValidationOriginal);
 impl_from!(CurvePointValidation);
-impl_from!(CurveGroupOpOriginal);
 impl_from!(CurveGroupOp);
-impl_from!(CurveMultiscalarMultiplicationOriginal);
 impl_from!(CurveMultiscalarMultiplication);
-impl_from!(SyscallAltBn128Original);
 impl_from!(SyscallAltBn128);
-impl_from!(AltBn128CompressionOriginal);
 impl_from!(AltBn128Compression);

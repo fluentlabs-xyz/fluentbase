@@ -52,11 +52,6 @@ default = [
     "wasmtime",
     #    "debug-print",
     "enable-svm",
-    # when enabling enable-solana-* - enable corresponding in 'contracts' crate
-    #    "enable-solana-original-builtins",
-]
-enable-solana-original-builtins = [
-    "fluentbase-svm/enable-solana-original-builtins"
 ]
 enable-svm = [
     "fluentbase-genesis/enable-svm",
