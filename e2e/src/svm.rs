@@ -330,7 +330,7 @@ mod tests {
             "0A7074864588D6847F33A168209E516F60005A0CEC3F33AAF70E8002FE964BCD",
             0,
         );
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = SolBigModExp::from_hex(
             "2222222222222222222222222222222222222222222222222222222222222222",
             "2222222222222222222222222222222222222222222222222222222222222222",
@@ -338,7 +338,7 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000000000000",
             0,
         );
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = SolBigModExp::from_hex(
             "3333333333333333333333333333333333333333333333333333333333333333",
             "3333333333333333333333333333333333333333333333333333333333333333",
@@ -346,7 +346,7 @@ mod tests {
             "1111111111111111111111111111111111111111111111111111111111111111",
             0,
         );
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = SolBigModExp::from_hex(
             "9874231472317432847923174392874918237439287492374932871937289719",
             "0948403985401232889438579475812347232099080051356165126166266222",
@@ -354,7 +354,7 @@ mod tests {
             "220ECE1C42624E98AEE7EB86578B2FE5C4855DFFACCB43CCBB708A3AB37F184D",
             0,
         );
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = SolBigModExp::from_hex(
             "3494396663463663636363662632666565656456646566786786676786768766",
             "2324324333246536456354655645656616169896565698987033121934984955",
@@ -362,7 +362,7 @@ mod tests {
             "012F2865E8B9E79B645FCE3A9E04156483AE1F9833F6BFCF86FCA38FC2D5BEF0",
             0,
         );
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = SolBigModExp::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000005",
             "0000000000000000000000000000000000000000000000000000000000000002",
@@ -370,7 +370,7 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000000000004",
             0,
         );
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = SolBigModExp::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000019",
             "0000000000000000000000000000000000000000000000000000000000000019",
@@ -378,7 +378,7 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000000000019",
             0,
         );
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = SolBigModExp::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000019",
             "0000000000000000000000000000000000000000000000000000000000000019",
@@ -386,7 +386,7 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000000000000",
             0,
         );
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = SolBigModExp::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000019",
             "0000000000000000000000000000000000000000000000000000000000000019",
@@ -394,7 +394,7 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000000000000",
             0,
         );
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         process_test_commands(
             &mut ctx,
@@ -527,7 +527,7 @@ mod tests {
             ),
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<Sha256 as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         process_test_commands(
             &mut ctx,
@@ -959,7 +959,7 @@ mod tests {
             point: ED25519_BASEPOINT_POINT.compress().as_bytes().clone(),
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurvePointValidation as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = CurvePointValidation {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             point: [
@@ -968,13 +968,13 @@ mod tests {
             ],
             expected_ret: EXPECTED_RET_ERR,
         };
-        test_commands.push(<CurvePointValidation as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = CurvePointValidation {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             point: RISTRETTO_BASEPOINT_POINT.compress().as_bytes().clone(),
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurvePointValidation as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = CurvePointValidation {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             point: [
@@ -983,7 +983,7 @@ mod tests {
             ],
             expected_ret: EXPECTED_RET_ERR,
         };
-        test_commands.push(<CurvePointValidation as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         process_test_commands(
             &mut ctx,
@@ -1032,7 +1032,7 @@ mod tests {
             expected_point: point.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
@@ -1042,7 +1042,7 @@ mod tests {
             expected_point: point.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         let scalar: [u8; 32] = [
             254, 198, 23, 138, 67, 243, 184, 110, 236, 115, 236, 205, 205, 215, 79, 114, 45, 250,
@@ -1064,7 +1064,7 @@ mod tests {
             expected_point,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         // associativity cases
         let point_a = PodEdwardsPoint([
@@ -1092,7 +1092,7 @@ mod tests {
             expected_point: add_edwards(&point_a, &point_b).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = CurveGroupOp {
             // (a + b) + c
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
@@ -1104,7 +1104,7 @@ mod tests {
                 .0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         let test_case = CurveGroupOp {
             // b + c
@@ -1115,7 +1115,7 @@ mod tests {
             expected_point: add_edwards(&point_b, &point_c).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         let test_case = CurveGroupOp {
             // a + (b + c)
@@ -1128,7 +1128,7 @@ mod tests {
                 .0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         let test_case = CurveGroupOp {
             // (a + b) + c = a + (b + c)
@@ -1141,7 +1141,7 @@ mod tests {
                 .0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         // commutativity
         assert_eq!(
@@ -1157,7 +1157,7 @@ mod tests {
             expected_point: add_edwards(&point_b, &point_a).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         let test_case = CurveGroupOp {
             // b + a = a + b
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
@@ -1167,7 +1167,7 @@ mod tests {
             expected_point: add_edwards(&point_a, &point_b).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         // subtraction
         let point = PodEdwardsPoint(ED25519_BASEPOINT_POINT.compress().to_bytes());
@@ -1181,7 +1181,7 @@ mod tests {
             expected_point: point_negated.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         // RISTRETTO
         // identity
@@ -1199,7 +1199,7 @@ mod tests {
             expected_point: add_ristretto(&point, &identity).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         assert_eq!(subtract_ristretto(&point, &identity).unwrap(), point);
         let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
@@ -1209,7 +1209,7 @@ mod tests {
             expected_point: subtract_ristretto(&point, &identity).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         // associativity
         let point_a = PodRistrettoPoint([
@@ -1238,7 +1238,7 @@ mod tests {
                 .0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
         assert_eq!(
             subtract_ristretto(&subtract_ristretto(&point_a, &point_b).unwrap(), &point_c),
             subtract_ristretto(&point_a, &add_ristretto(&point_b, &point_c).unwrap()),
@@ -1256,7 +1256,7 @@ mod tests {
             .0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         // commutativity
         assert_eq!(
@@ -1271,7 +1271,7 @@ mod tests {
             expected_point: add_ristretto(&point_b, &point_a).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         // subtraction
         let point = PodRistrettoPoint(RISTRETTO_BASEPOINT_POINT.compress().to_bytes());
@@ -1288,7 +1288,7 @@ mod tests {
             expected_point: point_negated.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         let scalar_x = PodScalar([
             254, 198, 23, 138, 67, 243, 184, 110, 236, 115, 236, 205, 205, 215, 79, 114, 45, 250,
@@ -1316,7 +1316,7 @@ mod tests {
             expected_point: add_ristretto(&ax, &bx).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         process_test_commands(
             &mut ctx,
@@ -1366,7 +1366,7 @@ mod tests {
             expected_point: basic_product.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        test_commands.push(<CurveMultiscalarMultiplication as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         let scalar_a = PodScalar([
             246, 154, 34, 110, 31, 185, 50, 1, 252, 194, 163, 56, 211, 18, 101, 192, 57, 225, 207,
@@ -1398,7 +1398,7 @@ mod tests {
             expected_ret: EXPECTED_RET_OK,
         };
 
-        test_commands.push(<CurveMultiscalarMultiplication as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         let scalar = PodScalar([
             123, 108, 109, 66, 154, 185, 88, 122, 178, 43, 17, 154, 201, 223, 31, 238, 59, 215, 71,
@@ -1419,7 +1419,7 @@ mod tests {
             expected_ret: EXPECTED_RET_OK,
         };
 
-        test_commands.push(<CurveMultiscalarMultiplication as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         let scalar_a = PodScalar([
             8, 161, 219, 155, 192, 137, 153, 26, 27, 40, 30, 17, 124, 194, 26, 41, 32, 7, 161, 45,
@@ -1451,7 +1451,7 @@ mod tests {
             expected_ret: EXPECTED_RET_OK,
         };
 
-        test_commands.push(<CurveMultiscalarMultiplication as From<_>>::from(test_case).into());
+        test_commands.push(test_case.into());
 
         process_test_commands(
             &mut ctx,
@@ -1578,7 +1578,7 @@ mod tests {
                 expected_ret: EXPECTED_RET_OK,
             };
 
-            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case).into());
+            test_commands.push(test_case.into());
         });
 
         process_test_commands(
@@ -1748,7 +1748,7 @@ mod tests {
                 expected_ret: EXPECTED_RET_OK,
             };
 
-            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case).into());
+            test_commands.push(test_case.into());
         });
 
         process_test_commands(
@@ -1891,7 +1891,7 @@ mod tests {
                 expected_ret: EXPECTED_RET_OK,
             };
 
-            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case).into());
+            test_commands.push(test_case.into());
         });
 
         process_test_commands(
@@ -1968,7 +1968,7 @@ mod tests {
                 expected_ret: EXPECTED_RET_OK,
             };
 
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
+            test_commands.push(test_case.into());
             let syscall_decompressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_impl(
                     &convert_endianness_fixed::<
@@ -1989,7 +1989,7 @@ mod tests {
                 expected_ret: EXPECTED_RET_OK,
             };
 
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
+            test_commands.push(test_case.into());
             let syscall_compressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_impl(
                     &convert_endianness_fixed::<
@@ -2081,7 +2081,7 @@ mod tests {
                 expected_ret: EXPECTED_RET_OK,
             };
 
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
+            test_commands.push(test_case.into());
             let syscall_decompressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_impl(
                     &convert_endianness_fixed::<
@@ -2102,7 +2102,7 @@ mod tests {
                 expected_ret: EXPECTED_RET_OK,
             };
 
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
+            test_commands.push(test_case.into());
             let syscall_compressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_impl(
                     &convert_endianness_fixed::<
@@ -2178,7 +2178,7 @@ mod tests {
                 expected_ret: EXPECTED_RET_OK,
             };
 
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
+            test_commands.push(test_case.into());
 
             let g2 = input[64..192].to_vec();
             let g2_compressed = alt_bn128_g2_compress(&g2).unwrap();
@@ -2191,7 +2191,7 @@ mod tests {
                 expected_ret: EXPECTED_RET_OK,
             };
 
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
+            test_commands.push(test_case.into());
         });
 
         process_test_commands(
