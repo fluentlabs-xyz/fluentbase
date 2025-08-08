@@ -1,3 +1,4 @@
+use crate::{ERC20_MAGIC_BYTES, SVM_ELF_MAGIC_BYTES, WASM_MAGIC_BYTES};
 use alloy_primitives::{address, hex, Address, Bytes, B256};
 
 /// An address of EVM runtime that is used to execute EVM program
@@ -94,6 +95,32 @@ pub const fn is_resumable_precompile(address: &Address) -> bool {
         | &PRECOMPILE_WRAPPED_ETH
         | &SVM_EXECUTABLE_PREIMAGE => true,
         _ => false,
+    }
+}
+
+/// Resolves and returns the account owner `Address` based on the provided input byte slice.
+///
+/// # Parameters
+/// - `input`: A byte slice (`&[u8]`) used to determine the runtime owner. The function
+///   inspects the beginning of the `input` slice to match specific magic byte sequences
+///   associated with predefined runtime owners.
+///
+/// # Notes
+/// - This function provides a mechanism to associate specific runtime types with accounts
+///   based on their initialization input data.
+pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
+    if input.len() > WASM_MAGIC_BYTES.len() && input[..WASM_MAGIC_BYTES.len()] == WASM_MAGIC_BYTES {
+        PRECOMPILE_WASM_RUNTIME
+    } else if input.len() > SVM_ELF_MAGIC_BYTES.len()
+        && input[..SVM_ELF_MAGIC_BYTES.len()] == SVM_ELF_MAGIC_BYTES
+    {
+        PRECOMPILE_SVM_RUNTIME
+    } else if input.len() > ERC20_MAGIC_BYTES.len()
+        && input[..ERC20_MAGIC_BYTES.len()] == ERC20_MAGIC_BYTES
+    {
+        PRECOMPILE_ERC20_RUNTIME
+    } else {
+        PRECOMPILE_EVM_RUNTIME
     }
 }
 

@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-precompile = { workspace = true, features = ["secp256r1"] }
+precompile = { workspace = true }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }

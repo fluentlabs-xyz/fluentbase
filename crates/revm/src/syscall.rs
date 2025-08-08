@@ -1,7 +1,4 @@
-use crate::{
-    frame::{ContextTrDbError, RwasmFrame},
-    types::{SystemInterruptionInputs, SystemInterruptionOutcome},
-};
+use crate::api::RwasmFrame;
 use core::cmp::min;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
@@ -16,61 +13,56 @@ use fluentbase_sdk::{
     SYSCALL_ID_STORAGE_READ, SYSCALL_ID_STORAGE_WRITE, SYSCALL_ID_TRANSIENT_READ,
     SYSCALL_ID_TRANSIENT_WRITE, U256, WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
 };
+use revm::context::ContextError;
+use revm::handler::{SystemInterruptionInputs, SystemInterruptionOutcome};
+use revm::interpreter::MAX_INITCODE_SIZE;
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
-    context::{result::FromStringError, Cfg, ContextTr, CreateScheme, JournalTr},
-    handler::EvmTr,
+    context::{Cfg, ContextTr, CreateScheme, JournalTr},
     interpreter::{
         gas,
         gas::{sload_cost, sstore_cost, sstore_refund, warm_cold_cost, CALL_STIPEND},
-        interpreter::EthInterpreter,
         interpreter_types::InputsTr,
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, Gas, Host,
         InstructionResult, InterpreterAction, InterpreterResult,
     },
-    primitives::{
-        hardfork::{SpecId, BERLIN, ISTANBUL, TANGERINE},
-        MAX_INITCODE_SIZE,
-    },
+    primitives::hardfork::{SpecId, BERLIN, ISTANBUL, TANGERINE},
+    Database,
 };
 use std::{boxed::Box, vec::Vec};
 
-pub(crate) fn execute_rwasm_interruption<
-    EVM: EvmTr,
-    ERROR: From<ContextTrDbError<EVM::Context>> + FromStringError,
->(
-    frame: &mut RwasmFrame<EVM, ERROR, EthInterpreter>,
-    evm: &mut EVM,
+pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
+    frame: &mut RwasmFrame,
+    evm: &mut CTX,
     inputs: SystemInterruptionInputs,
-) -> Result<InterpreterAction, ERROR> {
+) -> Result<InterpreterAction, ContextError<<CTX::Db as Database>::Error>> {
     let mut local_gas = Gas::new(inputs.gas.remaining());
-    let spec_id: SpecId = evm.ctx().cfg().spec().into();
-    let journal = evm.ctx().journal();
+    let spec_id: SpecId = evm.cfg().spec().into();
+    let journal = evm.journal_mut();
     let current_target_address = frame.interpreter.input.target_address();
     let account_owner_address = frame.interpreter.input.account_owner_address();
-
     macro_rules! return_result {
-        ($result:expr, $error:ident) => {{
+        ($output:expr, $result:ident) => {{
             let result =
-                InterpreterResult::new(InstructionResult::$error, $result.into(), local_gas);
+                InterpreterResult::new(InstructionResult::$result, $output.into(), local_gas);
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
                 inputs: Box::new(inputs),
                 // we have to clone result, because we don't know do we need to resume or not
                 result: result.clone(),
                 is_frame: false,
             });
-            return Ok(InterpreterAction::Return { result });
+            return Ok(InterpreterAction::Return(result));
         }};
-        ($error:ident) => {{
+        ($result:ident) => {{
             let result =
-                InterpreterResult::new(InstructionResult::$error, Default::default(), local_gas);
+                InterpreterResult::new(InstructionResult::$result, Default::default(), local_gas);
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
                 inputs: Box::new(inputs),
                 // we have to clone result, because we don't know do we need to resume or not
                 result: result.clone(),
                 is_frame: false,
             });
-            return Ok(InterpreterAction::Return { result });
+            return Ok(InterpreterAction::Return(result));
         }};
     }
     macro_rules! return_frame {
@@ -78,7 +70,7 @@ pub(crate) fn execute_rwasm_interruption<
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
                 inputs: Box::new(inputs),
                 result: InterpreterResult::new(
-                    InstructionResult::Continue,
+                    InstructionResult::default(),
                     Bytes::default(),
                     local_gas,
                 ),
@@ -198,7 +190,6 @@ pub(crate) fn execute_rwasm_interruption<
                 value: CallValue::Transfer(value),
                 scheme: CallScheme::Call,
                 is_static: inputs.is_static,
-                is_eof: false,
                 return_memory_offset: Default::default(),
             });
             return_frame!(InterpreterAction::NewFrame(FrameInput::Call(call_inputs)));
@@ -241,7 +232,6 @@ pub(crate) fn execute_rwasm_interruption<
                 value: CallValue::Transfer(U256::ZERO),
                 scheme: CallScheme::StaticCall,
                 is_static: true,
-                is_eof: false,
                 return_memory_offset: Default::default(),
             });
             return_frame!(InterpreterAction::NewFrame(FrameInput::Call(call_inputs)));
@@ -290,7 +280,6 @@ pub(crate) fn execute_rwasm_interruption<
                 value: CallValue::Transfer(value),
                 scheme: CallScheme::CallCode,
                 is_static: inputs.is_static,
-                is_eof: false,
                 return_memory_offset: Default::default(),
             });
             return_frame!(InterpreterAction::NewFrame(FrameInput::Call(call_inputs)));
@@ -332,7 +321,6 @@ pub(crate) fn execute_rwasm_interruption<
                 value: CallValue::Apparent(frame.interpreter.input.call_value()),
                 scheme: CallScheme::DelegateCall,
                 is_static: inputs.is_static,
-                is_eof: false,
                 return_memory_offset: Default::default(),
             });
             return_frame!(InterpreterAction::NewFrame(FrameInput::Call(call_inputs)));
@@ -814,7 +802,7 @@ pub(crate) fn execute_rwasm_interruption<
             charge_gas!(gas::BLOCKHASH);
 
             let requested_block = LittleEndian::read_u64(&inputs.syscall_params.input[0..8]);
-            let current_block = evm.ctx().block_number();
+            let current_block = evm.block_number().as_limbs()[0];
 
             #[cfg(feature = "debug-print")]
             println!(
@@ -824,7 +812,7 @@ pub(crate) fn execute_rwasm_interruption<
             // https://ethervm.io/#40
             let hash = match current_block.checked_sub(requested_block) {
                 Some(diff) if diff > 0 && diff <= 256 => {
-                    evm.ctx().block_hash(requested_block).unwrap_or(B256::ZERO)
+                    evm.block_hash(requested_block).unwrap_or(B256::ZERO)
                 }
                 _ => B256::ZERO,
             };
