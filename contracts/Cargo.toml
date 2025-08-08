@@ -19,9 +19,7 @@ fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 precompile = { path = "../revm/crates/precompile", package = "revm-precompile", default-features = false }
 fluentbase-erc20 = { path = "../crates/erc20", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
-fluentbase-svm = { path = "../crates/svm", default-features = false, features = [
-    #    "enable-solana-original-builtins",
-] }
+fluentbase-svm = { path = "../crates/svm", default-features = false }
 hex-literal = { version = "0.4.1", default-features = false }
 alloy-sol-types = { version = "1.2.0", default-features = false }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }

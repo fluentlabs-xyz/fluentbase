@@ -34,13 +34,10 @@ mod tests {
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
-            AltBn128Compression, AltBn128CompressionOriginal, Blake3,
-            CreateAccountAndModifySomeData1, CurveGroupOp, CurveGroupOpOriginal,
-            CurveMultiscalarMultiplication, CurveMultiscalarMultiplicationOriginal,
-            CurvePointValidation, CurvePointValidationOriginal, Keccak256, Poseidon,
-            SetGetReturnData, Sha256, Sha256Original, SolBigModExp, SolBigModExpOriginal,
-            SolSecp256k1Recover, SolSecp256k1RecoverOriginal, SyscallAltBn128,
-            SyscallAltBn128Original, TestCommand, EXPECTED_RET_ERR, EXPECTED_RET_OK,
+            AltBn128Compression, Blake3, CreateAccountAndModifySomeData1, CurveGroupOp,
+            CurveMultiscalarMultiplication, CurvePointValidation, Keccak256, Poseidon,
+            SetGetReturnData, Sha256, SolBigModExp, SolSecp256k1Recover, SyscallAltBn128,
+            TestCommand, EXPECTED_RET_ERR, EXPECTED_RET_OK,
         },
     };
     use fluentbase_types::{
@@ -326,96 +323,78 @@ mod tests {
         // exec
 
         let mut test_commands: Vec<TestCommand> = default!();
-        let test_case_original = SolBigModExpOriginal::from_hex(
+        let test_case = SolBigModExp::from_hex(
             "1111111111111111111111111111111111111111111111111111111111111111",
             "1111111111111111111111111111111111111111111111111111111111111111",
             "111111111111111111111111111111111111111111111111111111111111110A",
             "0A7074864588D6847F33A168209E516F60005A0CEC3F33AAF70E8002FE964BCD",
             0,
         );
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
-        let test_case_original = SolBigModExpOriginal::from_hex(
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        let test_case = SolBigModExp::from_hex(
             "2222222222222222222222222222222222222222222222222222222222222222",
             "2222222222222222222222222222222222222222222222222222222222222222",
             "1111111111111111111111111111111111111111111111111111111111111111",
             "0000000000000000000000000000000000000000000000000000000000000000",
             0,
         );
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
-        let test_case_original = SolBigModExpOriginal::from_hex(
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        let test_case = SolBigModExp::from_hex(
             "3333333333333333333333333333333333333333333333333333333333333333",
             "3333333333333333333333333333333333333333333333333333333333333333",
             "2222222222222222222222222222222222222222222222222222222222222222",
             "1111111111111111111111111111111111111111111111111111111111111111",
             0,
         );
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
-        let test_case_original = SolBigModExpOriginal::from_hex(
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        let test_case = SolBigModExp::from_hex(
             "9874231472317432847923174392874918237439287492374932871937289719",
             "0948403985401232889438579475812347232099080051356165126166266222",
             "25532321a214321423124212222224222b242222222222222222222222222444",
             "220ECE1C42624E98AEE7EB86578B2FE5C4855DFFACCB43CCBB708A3AB37F184D",
             0,
         );
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
-        let test_case_original = SolBigModExpOriginal::from_hex(
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        let test_case = SolBigModExp::from_hex(
             "3494396663463663636363662632666565656456646566786786676786768766",
             "2324324333246536456354655645656616169896565698987033121934984955",
             "0218305479243590485092843590249879879842313131156656565565656566",
             "012F2865E8B9E79B645FCE3A9E04156483AE1F9833F6BFCF86FCA38FC2D5BEF0",
             0,
         );
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
-        let test_case_original = SolBigModExpOriginal::from_hex(
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        let test_case = SolBigModExp::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000005",
             "0000000000000000000000000000000000000000000000000000000000000002",
             "0000000000000000000000000000000000000000000000000000000000000007",
             "0000000000000000000000000000000000000000000000000000000000000004",
             0,
         );
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
-        let test_case_original = SolBigModExpOriginal::from_hex(
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        let test_case = SolBigModExp::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000019",
             "0000000000000000000000000000000000000000000000000000000000000019",
             "0000000000000000000000000000000000000000000000000000000000000064",
             "0000000000000000000000000000000000000000000000000000000000000019",
             0,
         );
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
-        let test_case_original = SolBigModExpOriginal::from_hex(
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        let test_case = SolBigModExp::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000019",
             "0000000000000000000000000000000000000000000000000000000000000019",
             "0000000000000000000000000000000000000000000000000000000000000000",
             "0000000000000000000000000000000000000000000000000000000000000000",
             0,
         );
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
-        let test_case_original = SolBigModExpOriginal::from_hex(
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
+        let test_case = SolBigModExp::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000019",
             "0000000000000000000000000000000000000000000000000000000000000019",
             "0000000000000000000000000000000000000000000000000000000000000001",
             "0000000000000000000000000000000000000000000000000000000000000000",
             0,
         );
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<SolBigModExp as From<_>>::from(test_case_original).into());
+        test_commands.push(<SolBigModExp as From<_>>::from(test_case).into());
 
         process_test_commands(
             &mut ctx,
@@ -447,7 +426,7 @@ mod tests {
 
         let mut test_commands: Vec<TestCommand> = vec![];
 
-        let original_test_case = SolSecp256k1RecoverOriginal {
+        let test_case = SolSecp256k1Recover {
             message: b"hello world".to_vec(),
             signature_bytes: vec![
                 0x93, 0x92, 0xC4, 0x6C, 0x42, 0xF6, 0x31, 0x73, 0x81, 0xD4, 0xB2, 0x44, 0xE9, 0x2F,
@@ -466,14 +445,12 @@ mod tests {
             ],
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(original_test_case.clone().into());
         let fluent_test_case = SolSecp256k1Recover {
-            message: original_test_case.message,
-            signature_bytes: original_test_case.signature_bytes,
-            recovery_id: original_test_case.recovery_id,
-            pubkey_bytes: original_test_case.pubkey_bytes,
-            expected_ret: original_test_case.expected_ret,
+            message: test_case.message,
+            signature_bytes: test_case.signature_bytes,
+            recovery_id: test_case.recovery_id,
+            pubkey_bytes: test_case.pubkey_bytes,
+            expected_ret: test_case.expected_ret,
         };
         test_commands.push(fluent_test_case.into());
 
@@ -543,16 +520,14 @@ mod tests {
         // exec
 
         let mut test_commands: Vec<TestCommand> = vec![];
-        let original_test_case = Sha256Original {
+        let test_case = Sha256 {
             data: vec![vec![1u8, 2, 3], vec![4, 5, 6]],
             expected_result: hex!(
                 "7192385c3c0605de55bb9476ce1d90748190ecb32a8eed7f5207b30cf6a1fe89"
             ),
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(original_test_case.clone().into());
-        test_commands.push(<Sha256 as From<_>>::from(original_test_case).into());
+        test_commands.push(<Sha256 as From<_>>::from(test_case).into());
 
         process_test_commands(
             &mut ctx,
@@ -979,15 +954,13 @@ mod tests {
         // exec
 
         let mut test_commands: Vec<TestCommand> = default!();
-        let test_case_original = CurvePointValidationOriginal {
+        let test_case = CurvePointValidation {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             point: ED25519_BASEPOINT_POINT.compress().as_bytes().clone(),
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurvePointValidation as From<_>>::from(test_case_original).into());
-        let test_case_original = CurvePointValidationOriginal {
+        test_commands.push(<CurvePointValidation as From<_>>::from(test_case).into());
+        let test_case = CurvePointValidation {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             point: [
                 120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117, 38,
@@ -995,18 +968,14 @@ mod tests {
             ],
             expected_ret: EXPECTED_RET_ERR,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurvePointValidation as From<_>>::from(test_case_original).into());
-        let test_case_original = CurvePointValidationOriginal {
+        test_commands.push(<CurvePointValidation as From<_>>::from(test_case).into());
+        let test_case = CurvePointValidation {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             point: RISTRETTO_BASEPOINT_POINT.compress().as_bytes().clone(),
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurvePointValidation as From<_>>::from(test_case_original).into());
-        let test_case_original = CurvePointValidationOriginal {
+        test_commands.push(<CurvePointValidation as From<_>>::from(test_case).into());
+        let test_case = CurvePointValidation {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             point: [
                 120, 140, 152, 233, 41, 227, 203, 27, 87, 115, 25, 251, 219, 5, 84, 148, 117, 38,
@@ -1014,9 +983,7 @@ mod tests {
             ],
             expected_ret: EXPECTED_RET_ERR,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurvePointValidation as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurvePointValidation as From<_>>::from(test_case).into());
 
         process_test_commands(
             &mut ctx,
@@ -1057,7 +1024,7 @@ mod tests {
         ]);
         assert_eq!(add_edwards(&point, &identity).unwrap(), point);
         assert_eq!(subtract_edwards(&point, &identity).unwrap(), point);
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
             left_input: point.0,
@@ -1065,11 +1032,9 @@ mod tests {
             expected_point: point.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::SUB,
             left_input: point.0,
@@ -1077,9 +1042,7 @@ mod tests {
             expected_point: point.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
         let scalar: [u8; 32] = [
             254, 198, 23, 138, 67, 243, 184, 110, 236, 115, 236, 205, 205, 215, 79, 114, 45, 250,
@@ -1093,7 +1056,7 @@ mod tests {
             64, 150, 40, 55, 80, 49, 217, 209, 105, 229, 181, 65, 241, 68, 2, 106, 220, 234, 211,
             71, 159, 76, 156, 114, 242, 68, 147, 31, 243, 211, 191, 124,
         ];
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::MUL,
             left_input: scalar,
@@ -1101,9 +1064,7 @@ mod tests {
             expected_point,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
         // associativity cases
         let point_a = PodEdwardsPoint([
@@ -1122,7 +1083,7 @@ mod tests {
             add_edwards(&add_edwards(&point_a, &point_b).unwrap(), &point_c),
             add_edwards(&point_a, &add_edwards(&point_b, &point_c).unwrap()),
         );
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             // a + b
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
@@ -1131,10 +1092,8 @@ mod tests {
             expected_point: add_edwards(&point_a, &point_b).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
-        let test_case_original = CurveGroupOpOriginal {
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        let test_case = CurveGroupOp {
             // (a + b) + c
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
@@ -1145,11 +1104,9 @@ mod tests {
                 .0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             // b + c
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
@@ -1158,11 +1115,9 @@ mod tests {
             expected_point: add_edwards(&point_b, &point_c).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             // a + (b + c)
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
@@ -1173,11 +1128,9 @@ mod tests {
                 .0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             // (a + b) + c = a + (b + c)
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
@@ -1188,16 +1141,14 @@ mod tests {
                 .0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
         // commutativity
         assert_eq!(
             add_edwards(&point_a, &point_b).unwrap(),
             add_edwards(&point_b, &point_a).unwrap(),
         );
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             // a + b = b + a
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
@@ -1206,10 +1157,8 @@ mod tests {
             expected_point: add_edwards(&point_b, &point_a).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
-        let test_case_original = CurveGroupOpOriginal {
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
+        let test_case = CurveGroupOp {
             // b + a = a + b
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
@@ -1218,15 +1167,13 @@ mod tests {
             expected_point: add_edwards(&point_a, &point_b).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
         // subtraction
         let point = PodEdwardsPoint(ED25519_BASEPOINT_POINT.compress().to_bytes());
         let point_negated = PodEdwardsPoint((-ED25519_BASEPOINT_POINT).compress().to_bytes());
         assert_eq!(point_negated, subtract_edwards(&identity, &point).unwrap(),);
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             group_op: solana_curve25519::curve_syscall_traits::SUB,
             left_input: identity.0,
@@ -1234,9 +1181,7 @@ mod tests {
             expected_point: point_negated.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
         // RISTRETTO
         // identity
@@ -1246,7 +1191,7 @@ mod tests {
             232, 229, 220, 249, 213, 232, 61, 238, 152, 249, 83, 225, 206, 16,
         ]);
         assert_eq!(add_ristretto(&point, &identity).unwrap(), point);
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
             left_input: point.0,
@@ -1254,11 +1199,9 @@ mod tests {
             expected_point: add_ristretto(&point, &identity).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
         assert_eq!(subtract_ristretto(&point, &identity).unwrap(), point);
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             group_op: solana_curve25519::curve_syscall_traits::SUB,
             left_input: point.0,
@@ -1266,9 +1209,7 @@ mod tests {
             expected_point: subtract_ristretto(&point, &identity).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
         // associativity
         let point_a = PodRistrettoPoint([
@@ -1287,7 +1228,7 @@ mod tests {
             add_ristretto(&add_ristretto(&point_a, &point_b).unwrap(), &point_c),
             add_ristretto(&point_a, &add_ristretto(&point_b, &point_c).unwrap()),
         );
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
             left_input: add_ristretto(&point_a, &point_b).unwrap().0,
@@ -1297,14 +1238,12 @@ mod tests {
                 .0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
         assert_eq!(
             subtract_ristretto(&subtract_ristretto(&point_a, &point_b).unwrap(), &point_c),
             subtract_ristretto(&point_a, &add_ristretto(&point_b, &point_c).unwrap()),
         );
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             group_op: solana_curve25519::curve_syscall_traits::SUB,
             left_input: subtract_ristretto(&point_a, &point_b).unwrap().0,
@@ -1317,16 +1256,14 @@ mod tests {
             .0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
         // commutativity
         assert_eq!(
             add_ristretto(&point_a, &point_b).unwrap(),
             add_ristretto(&point_b, &point_a).unwrap(),
         );
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             group_op: solana_curve25519::curve_syscall_traits::ADD,
             left_input: point_a.0,
@@ -1334,9 +1271,7 @@ mod tests {
             expected_point: add_ristretto(&point_b, &point_a).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
         // subtraction
         let point = PodRistrettoPoint(RISTRETTO_BASEPOINT_POINT.compress().to_bytes());
@@ -1345,7 +1280,7 @@ mod tests {
             point_negated,
             subtract_ristretto(&identity, &point).unwrap(),
         );
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             group_op: solana_curve25519::curve_syscall_traits::SUB,
             left_input: identity.0,
@@ -1353,9 +1288,7 @@ mod tests {
             expected_point: point_negated.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
         let scalar_x = PodScalar([
             254, 198, 23, 138, 67, 243, 184, 110, 236, 115, 236, 205, 205, 215, 79, 114, 45, 250,
@@ -1375,7 +1308,7 @@ mod tests {
             add_ristretto(&ax, &bx),
             multiply_ristretto(&scalar_x, &add_ristretto(&point_a, &point_b).unwrap()),
         );
-        let test_case_original = CurveGroupOpOriginal {
+        let test_case = CurveGroupOp {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             group_op: solana_curve25519::curve_syscall_traits::MUL,
             left_input: scalar_x.0,
@@ -1383,9 +1316,7 @@ mod tests {
             expected_point: add_ristretto(&ax, &bx).unwrap().0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands.push(<CurveGroupOp as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveGroupOp as From<_>>::from(test_case).into());
 
         process_test_commands(
             &mut ctx,
@@ -1428,17 +1359,14 @@ mod tests {
         let basic_product = multiply_edwards(&scalar, &point).unwrap();
         let msm_product = multiscalar_multiply_edwards(&[scalar], &[point]).unwrap();
         assert_eq!(basic_product, msm_product);
-        let test_case_original = CurveMultiscalarMultiplicationOriginal {
+        let test_case = CurveMultiscalarMultiplication {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             scalars: vec![scalar.0],
             points: vec![point.0],
             expected_point: basic_product.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands
-            .push(<CurveMultiscalarMultiplication as From<_>>::from(test_case_original).into());
+        test_commands.push(<CurveMultiscalarMultiplication as From<_>>::from(test_case).into());
 
         let scalar_a = PodScalar([
             246, 154, 34, 110, 31, 185, 50, 1, 252, 194, 163, 56, 211, 18, 101, 192, 57, 225, 207,
@@ -1462,17 +1390,15 @@ mod tests {
         let msm_product =
             multiscalar_multiply_edwards(&[scalar_a, scalar_b], &[point_x, point_y]).unwrap();
         assert_eq!(basic_product, msm_product);
-        let test_case_original = CurveMultiscalarMultiplicationOriginal {
+        let test_case = CurveMultiscalarMultiplication {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             scalars: vec![scalar_a.0, scalar_b.0],
             points: vec![point_x.0, point_y.0],
             expected_point: basic_product.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands
-            .push(<CurveMultiscalarMultiplication as From<_>>::from(test_case_original).into());
+
+        test_commands.push(<CurveMultiscalarMultiplication as From<_>>::from(test_case).into());
 
         let scalar = PodScalar([
             123, 108, 109, 66, 154, 185, 88, 122, 178, 43, 17, 154, 201, 223, 31, 238, 59, 215, 71,
@@ -1485,17 +1411,15 @@ mod tests {
         let basic_product = multiply_ristretto(&scalar, &point).unwrap();
         let msm_product = multiscalar_multiply_ristretto(&[scalar], &[point]).unwrap();
         assert_eq!(basic_product, msm_product);
-        let test_case_original = CurveMultiscalarMultiplicationOriginal {
+        let test_case = CurveMultiscalarMultiplication {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             scalars: vec![scalar.0],
             points: vec![point.0],
             expected_point: basic_product.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands
-            .push(<CurveMultiscalarMultiplication as From<_>>::from(test_case_original).into());
+
+        test_commands.push(<CurveMultiscalarMultiplication as From<_>>::from(test_case).into());
 
         let scalar_a = PodScalar([
             8, 161, 219, 155, 192, 137, 153, 26, 27, 40, 30, 17, 124, 194, 26, 41, 32, 7, 161, 45,
@@ -1519,17 +1443,15 @@ mod tests {
         let msm_product =
             multiscalar_multiply_ristretto(&[scalar_a, scalar_b], &[point_x, point_y]).unwrap();
         assert_eq!(basic_product, msm_product);
-        let test_case_original = CurveMultiscalarMultiplicationOriginal {
+        let test_case = CurveMultiscalarMultiplication {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO,
             scalars: vec![scalar_a.0, scalar_b.0],
             points: vec![point_x.0, point_y.0],
             expected_point: basic_product.0,
             expected_ret: EXPECTED_RET_OK,
         };
-        #[cfg(feature = "enable-solana-original-builtins")]
-        test_commands.push(test_case_original.clone().into());
-        test_commands
-            .push(<CurveMultiscalarMultiplication as From<_>>::from(test_case_original).into());
+
+        test_commands.push(<CurveMultiscalarMultiplication as From<_>>::from(test_case).into());
 
         process_test_commands(
             &mut ctx,
@@ -1649,16 +1571,14 @@ mod tests {
 
             assert_eq!(result.unwrap(), expected);
 
-            let test_case_original = SyscallAltBn128Original {
+            let test_case = SyscallAltBn128 {
                 group_op: ALT_BN128_ADD,
                 input: input.clone(),
                 expected_result: expected,
                 expected_ret: EXPECTED_RET_OK,
             };
 
-            #[cfg(feature = "enable-solana-original-builtins")]
-            test_commands.push(test_case_original.clone().into());
-            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case_original).into());
+            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case).into());
         });
 
         process_test_commands(
@@ -1821,15 +1741,14 @@ mod tests {
 
             assert_eq!(result.unwrap(), expected);
 
-            let test_case_original = SyscallAltBn128Original {
+            let test_case = SyscallAltBn128 {
                 group_op: ALT_BN128_MUL,
                 input: input.clone(),
                 expected_result: expected,
                 expected_ret: EXPECTED_RET_OK,
             };
-            #[cfg(feature = "enable-solana-original-builtins")]
-            test_commands.push(test_case_original.clone().into());
-            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case_original).into());
+
+            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case).into());
         });
 
         process_test_commands(
@@ -1965,15 +1884,14 @@ mod tests {
 
             assert_eq!(result.unwrap(), expected);
 
-            let test_case_original = SyscallAltBn128Original {
+            let test_case = SyscallAltBn128 {
                 group_op: ALT_BN128_PAIRING,
                 input: input.clone(),
                 expected_result: expected,
                 expected_ret: EXPECTED_RET_OK,
             };
-            #[cfg(feature = "enable-solana-original-builtins")]
-            test_commands.push(test_case_original.clone().into());
-            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case_original).into());
+
+            test_commands.push(<SyscallAltBn128 as From<_>>::from(test_case).into());
         });
 
         process_test_commands(
@@ -2043,15 +1961,14 @@ mod tests {
             );
             assert_eq!(decompressed, *g1_be);
 
-            let test_case_original = AltBn128CompressionOriginal {
+            let test_case = AltBn128Compression {
                 group_op: ALT_BN128_G1_COMPRESS,
                 input: decompressed.to_vec(),
                 expected_result: compressed_ref.to_vec(),
                 expected_ret: EXPECTED_RET_OK,
             };
-            #[cfg(feature = "enable-solana-original-builtins")]
-            test_commands.push(test_case_original.clone().into());
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
+
+            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
             let syscall_decompressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_impl(
                     &convert_endianness_fixed::<
@@ -2065,15 +1982,14 @@ mod tests {
                 convert_endianness_fixed::<32, 64>(&syscall_decompressed.try_into().unwrap(),)
             );
 
-            let test_case_original = AltBn128CompressionOriginal {
+            let test_case = AltBn128Compression {
                 group_op: ALT_BN128_G1_DECOMPRESS,
                 input: compressed_ref.to_vec(),
                 expected_result: decompressed.to_vec(),
                 expected_ret: EXPECTED_RET_OK,
             };
-            #[cfg(feature = "enable-solana-original-builtins")]
-            test_commands.push(test_case_original.clone().into());
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
+
+            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
             let syscall_compressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_impl(
                     &convert_endianness_fixed::<
@@ -2158,15 +2074,14 @@ mod tests {
             );
             assert_eq!(decompressed, *g2_be);
 
-            let test_case_original = AltBn128CompressionOriginal {
+            let test_case = AltBn128Compression {
                 group_op: ALT_BN128_G2_COMPRESS,
                 input: decompressed.to_vec(),
                 expected_result: alt_bn128_g2_compress(&decompressed).unwrap().to_vec(),
                 expected_ret: EXPECTED_RET_OK,
             };
-            #[cfg(feature = "enable-solana-original-builtins")]
-            test_commands.push(test_case_original.clone().into());
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
+
+            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
             let syscall_decompressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG2Decompress>::fn_impl(
                     &convert_endianness_fixed::<
@@ -2180,15 +2095,14 @@ mod tests {
                 convert_endianness_fixed::<64, 128>(&syscall_decompressed.try_into().unwrap(),)
             );
 
-            let test_case_original = AltBn128CompressionOriginal {
+            let test_case = AltBn128Compression {
                 group_op: ALT_BN128_G2_DECOMPRESS,
                 input: alt_bn128_g2_compress(&decompressed).unwrap().to_vec(),
                 expected_result: decompressed.to_vec(),
                 expected_ret: EXPECTED_RET_OK,
             };
-            #[cfg(feature = "enable-solana-original-builtins")]
-            test_commands.push(test_case_original.clone().into());
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
+
+            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
             let syscall_compressed =
                 SyscallWeierstrassCompressDecompressAssign::<ConfigG2Compress>::fn_impl(
                     &convert_endianness_fixed::<
@@ -2257,29 +2171,27 @@ mod tests {
             let g1_compressed = alt_bn128_g1_compress(&g1).unwrap();
             assert_eq!(g1, alt_bn128_g1_decompress(&g1_compressed).unwrap());
 
-            let test_case_original = AltBn128CompressionOriginal {
+            let test_case = AltBn128Compression {
                 group_op: ALT_BN128_G1_DECOMPRESS,
                 input: g1_compressed.to_vec(),
                 expected_result: g1.to_vec(),
                 expected_ret: EXPECTED_RET_OK,
             };
-            #[cfg(feature = "enable-solana-original-builtins")]
-            test_commands.push(test_case_original.clone().into());
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
+
+            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
 
             let g2 = input[64..192].to_vec();
             let g2_compressed = alt_bn128_g2_compress(&g2).unwrap();
             assert_eq!(g2, alt_bn128_g2_decompress(&g2_compressed).unwrap());
 
-            let test_case_original = AltBn128CompressionOriginal {
+            let test_case = AltBn128Compression {
                 group_op: ALT_BN128_G2_DECOMPRESS,
                 input: g2_compressed.to_vec(),
                 expected_result: g2.to_vec(),
                 expected_ret: EXPECTED_RET_OK,
             };
-            #[cfg(feature = "enable-solana-original-builtins")]
-            test_commands.push(test_case_original.clone().into());
-            test_commands.push(<AltBn128Compression as From<_>>::from(test_case_original).into());
+
+            test_commands.push(<AltBn128Compression as From<_>>::from(test_case).into());
         });
 
         process_test_commands(

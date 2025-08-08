@@ -76,7 +76,6 @@ std = [
     "itertools/use_std",
     "solana_rbpf/std",
 ]
-enable-solana-original-builtins = []
 debug-print = []
 do-not-validate-elf-on-deploy = []
 use-extended-debug-log = []
