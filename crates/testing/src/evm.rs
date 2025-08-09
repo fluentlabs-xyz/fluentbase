@@ -270,7 +270,7 @@ impl<'a> TxBuilder<'a> {
     fn block_env(ctx: &EvmTestingContext) -> BlockEnv {
         let mut block_env = BlockEnv::default();
         let ctx = ctx.sdk.borrow().context();
-        block_env.number = ctx.block_number();
+        block_env.number = U256::from(ctx.block_number());
         block_env
     }
 
@@ -300,7 +300,7 @@ impl<'a> TxBuilder<'a> {
     }
 
     pub fn timestamp(mut self, timestamp: u64) -> Self {
-        self.block.timestamp = timestamp;
+        self.block.timestamp = U256::from(timestamp);
         self
     }
 

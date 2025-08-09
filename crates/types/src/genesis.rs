@@ -1,25 +1,28 @@
+use crate::{ERC20_MAGIC_BYTES, SVM_ELF_MAGIC_BYTES, WASM_MAGIC_BYTES};
 use alloy_primitives::{address, hex, Address, Bytes, B256};
 
-/// An address of EVM runtime that is used to execute EVM program
-pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0000000000000000000000000000000000520001");
+/// An address of EVM runtime that is used to execute an EVM program
+pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520001");
 /// A verifier for Fairblock attestations
 pub const PRECOMPILE_FAIRBLOCK_VERIFIER: Address =
-    address!("0000000000000000000000000000000000005202");
+    address!("0x0000000000000000000000000000000000052002");
 
 /// An address for SVM runtime
-pub const PRECOMPILE_SVM_RUNTIME: Address = address!("0000000000000000000000000000000000520003");
-pub const SVM_EXECUTABLE_PREIMAGE: Address = address!("0000000000000000000000000000000000520010");
-pub const PRECOMPILE_WRAPPED_ETH: Address = address!("0000000000000000000000000000000000520004");
+pub const PRECOMPILE_SVM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520003");
+pub const SVM_EXECUTABLE_PREIMAGE: Address = address!("0x0000000000000000000000000000000000520010");
+pub const PRECOMPILE_WRAPPED_ETH: Address = address!("0x0000000000000000000000000000000000520004");
 pub const PRECOMPILE_WEBAUTHN_VERIFIER: Address =
-    address!("0000000000000000000000000000000000520005");
+    address!("0x0000000000000000000000000000000000520005");
 pub const PRECOMPILE_OAUTH2_VERIFIER: Address =
-    address!("0000000000000000000000000000000000520006");
-pub const PRECOMPILE_NITRO_VERIFIER: Address = address!("0000000000000000000000000000000000520007");
-pub const PRECOMPILE_ERC20_RUNTIME: Address = address!("0000000000000000000000000000000000520008");
-pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0000000000000000000000000000000000520009");
-pub const PRECOMPILE_EIP2935: Address = address!("0000F90827F1C53a10cb7A02335B175320002935");
+    address!("0x0000000000000000000000000000000000520006");
+pub const PRECOMPILE_NITRO_VERIFIER: Address =
+    address!("0x0000000000000000000000000000000000520007");
+pub const PRECOMPILE_ERC20_RUNTIME: Address =
+    address!("0x0000000000000000000000000000000000520008");
+pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520009");
+pub const PRECOMPILE_EIP2935: Address = address!("0x0000F90827F1C53a10cb7A02335B175320002935");
 
-pub const SYSTEM_ADDRESS: Address = address!("fffffffffffffffffffffffffffffffffffffffe");
+pub const SYSTEM_ADDRESS: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
 
 const fn evm_address(value: u8) -> Address {
     Address::with_last_byte(value)
@@ -45,7 +48,7 @@ pub const PRECOMPILE_BLS12_381_MAP_G2: Address = evm_address(0x11);
 
 // "R native" + keccak256("multicall(bytes[])")[..4]
 pub const PRECOMPILE_NATIVE_MULTICALL: Address =
-    address!("52206e61746976650000000000000000ac9650d8");
+    address!("0x52206e61746976650000000000000000ac9650d8");
 
 pub const PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_BIG_MODEXP,
@@ -97,6 +100,32 @@ pub const fn is_resumable_precompile(address: &Address) -> bool {
     }
 }
 
+/// Resolves and returns the account owner `Address` based on the provided input byte slice.
+///
+/// # Parameters
+/// - `input`: A byte slice (`&[u8]`) used to determine the runtime owner. The function
+///   inspects the beginning of the `input` slice to match specific magic byte sequences
+///   associated with predefined runtime owners.
+///
+/// # Notes
+/// - This function provides a mechanism to associate specific runtime types with accounts
+///   based on their initialization input data.
+pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
+    if input.len() > WASM_MAGIC_BYTES.len() && input[..WASM_MAGIC_BYTES.len()] == WASM_MAGIC_BYTES {
+        PRECOMPILE_WASM_RUNTIME
+    } else if input.len() > SVM_ELF_MAGIC_BYTES.len()
+        && input[..SVM_ELF_MAGIC_BYTES.len()] == SVM_ELF_MAGIC_BYTES
+    {
+        PRECOMPILE_SVM_RUNTIME
+    } else if input.len() > ERC20_MAGIC_BYTES.len()
+        && input[..ERC20_MAGIC_BYTES.len()] == ERC20_MAGIC_BYTES
+    {
+        PRECOMPILE_ERC20_RUNTIME
+    } else {
+        PRECOMPILE_EVM_RUNTIME
+    }
+}
+
 /// Checks if the function call should be redirected to a native precompiled contract.
 ///
 /// When the first four bytes of the input (function selector) match a precompile's address
@@ -122,7 +151,7 @@ pub fn try_resolve_precompile_account_from_input(input: &[u8]) -> Option<Address
 /// The authority address that is allowed to update the code of arbitrary accounts
 pub const UPDATE_GENESIS_AUTH: Address = address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
 
-/// The prefix that must appear at the beginning of the transaction `call data`
+/// The prefix that must appear at the beginning of the transaction `calldata`
 /// to signal that the transaction is intended to perform an account update.
 pub const UPDATE_GENESIS_PREFIX: [u8; 4] = hex!("0x69bc6f64");
 
