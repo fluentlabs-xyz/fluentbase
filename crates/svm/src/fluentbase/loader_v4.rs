@@ -1,3 +1,4 @@
+use crate::fluentbase::common::GlobalBalance;
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     common::{
@@ -81,18 +82,30 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log_ext!(
         "pk_caller {:x?} lamports_balance (before) {}",
         &pk_caller.to_bytes(),
-        sdk.metadata_storage_read(&U256::from_le_bytes(pk_caller.to_bytes()))
-            .expect("failed to get lamports balance")
-            .data
+        GlobalBalance::<SDK>::get(&sdk, &pk_caller)
     );
-    sdk.metadata_storage_write(&U256::from_le_bytes(pk_caller.to_bytes()), U256::from(12))
-        .expect("failed to set lamports balance");
+    GlobalBalance::<SDK>::change::<true>(&mut sdk, &pk_caller, 12);
     debug_log_ext!(
-        "pk_caller {:x?} lamports_balance (after) {}",
+        "pk_caller {:x?} lamports_balance (after add) {}",
         &pk_caller.to_bytes(),
-        sdk.metadata_storage_read(&U256::from_le_bytes(pk_caller.to_bytes()))
-            .expect("failed to get lamports balance")
-            .data
+        GlobalBalance::<SDK>::get(&sdk, &pk_caller)
+    );
+    GlobalBalance::<SDK>::change::<false>(&mut sdk, &pk_caller, 2);
+    debug_log_ext!(
+        "pk_caller {:x?} lamports_balance (after sub) {}",
+        &pk_caller.to_bytes(),
+        GlobalBalance::<SDK>::get(&sdk, &pk_caller)
+    );
+    GlobalBalance::<SDK>::transfer(&mut sdk, &pk_caller, &pk_contract, 3);
+    debug_log_ext!(
+        "pk_caller {:x?} lamports_balance (after transfer) {}",
+        &pk_caller.to_bytes(),
+        GlobalBalance::<SDK>::get(&sdk, &pk_caller)
+    );
+    debug_log_ext!(
+        "pk_contract {:x?} lamports_balance (after transfer) {}",
+        &pk_contract.to_bytes(),
+        GlobalBalance::<SDK>::get(&sdk, &pk_contract)
     );
 
     let caller_account_balance = lamports_from_evm_balance(

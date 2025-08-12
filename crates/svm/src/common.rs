@@ -389,6 +389,14 @@ pub fn pubkey_from_evm_address(value: &Address) -> Pubkey {
     Pubkey::new_from_array(new_pk)
 }
 
+pub fn pubkey_from_u256(value: &U256) -> Pubkey {
+    Pubkey::new_from_array(value.to_le_bytes())
+}
+
+pub fn pubkey_to_u256(value: &Pubkey) -> U256 {
+    U256::from_le_bytes(value.to_bytes())
+}
+
 #[inline(always)]
 pub fn is_evm_pubkey(pk: &Pubkey) -> bool {
     pk.as_ref().starts_with(&SVM_ADDRESS_PREFIX)
