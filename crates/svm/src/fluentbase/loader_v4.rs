@@ -81,45 +81,16 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     debug_log_ext!(
         "pk_caller {:x?} lamports_balance (before) {}",
         &pk_caller.to_bytes(),
-        sdk.lamports_balance_get(&pk_caller.to_bytes())
+        sdk.metadata_storage_read(&U256::from_le_bytes(pk_caller.to_bytes()))
             .expect("failed to get lamports balance")
             .data
     );
-    sdk.lamports_balance_add(&pk_caller.to_bytes(), &U256::from(12))
-        .expect("failed to add lamports balance");
+    sdk.metadata_storage_write(&U256::from_le_bytes(pk_caller.to_bytes()), U256::from(12))
+        .expect("failed to set lamports balance");
     debug_log_ext!(
-        "pk_caller {:x?} lamports_balance (after add) {}",
+        "pk_caller {:x?} lamports_balance (after) {}",
         &pk_caller.to_bytes(),
-        sdk.lamports_balance_get(&pk_caller.to_bytes())
-            .expect("failed to get lamports balance")
-            .data
-    );
-    sdk.lamports_balance_sub(&pk_caller.to_bytes(), &U256::from(2))
-        .expect("failed to add lamports balance");
-    debug_log_ext!(
-        "pk_caller {:x?} lamports_balance (after sub) {}",
-        &pk_caller.to_bytes(),
-        sdk.lamports_balance_get(&pk_caller.to_bytes())
-            .expect("failed to get lamports balance")
-            .data
-    );
-    sdk.lamports_balance_transfer(
-        &pk_caller.to_bytes(),
-        &pk_contract.to_bytes(),
-        &U256::from(2),
-    )
-    .expect("failed to add lamports balance");
-    debug_log_ext!(
-        "pk_caller {:x?} lamports_balance (after transfer) {}",
-        &pk_caller.to_bytes(),
-        sdk.lamports_balance_get(&pk_caller.to_bytes())
-            .expect("failed to get lamports balance")
-            .data
-    );
-    debug_log_ext!(
-        "pk_contract {:x?} lamports_balance (after transfer) {}",
-        &pk_contract.to_bytes(),
-        sdk.lamports_balance_get(&pk_contract.to_bytes())
+        sdk.metadata_storage_read(&U256::from_le_bytes(pk_caller.to_bytes()))
             .expect("failed to get lamports balance")
             .data
     );

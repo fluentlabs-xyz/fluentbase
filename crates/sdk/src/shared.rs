@@ -9,16 +9,15 @@ use alloc::vec;
 use core::cell::RefCell;
 use fluentbase_types::{
     native_api::NativeAPI, Address, Bytes, ContextReader, ExitCode, IsAccountEmpty,
-    IsAccountOwnable, IsColdAccess, LamportsBalanceAPI, MetadataAPI, SharedAPI,
+    IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, SharedAPI,
     SharedContextInputV1, StorageAPI, SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, STATE_MAIN, SYSCALL_ID_BALANCE, SYSCALL_ID_BLOCK_HASH,
     SYSCALL_ID_CALL, SYSCALL_ID_CALL_CODE, SYSCALL_ID_CODE_COPY, SYSCALL_ID_CODE_HASH,
     SYSCALL_ID_CODE_SIZE, SYSCALL_ID_CREATE, SYSCALL_ID_CREATE2, SYSCALL_ID_DELEGATE_CALL,
-    SYSCALL_ID_DESTROY_ACCOUNT, SYSCALL_ID_EMIT_LOG, SYSCALL_ID_LAMPORTS_BALANCE_ADD,
-    SYSCALL_ID_LAMPORTS_BALANCE_GET, SYSCALL_ID_LAMPORTS_BALANCE_SUB,
-    SYSCALL_ID_LAMPORTS_BALANCE_TRANSFER, SYSCALL_ID_METADATA_COPY, SYSCALL_ID_METADATA_CREATE,
-    SYSCALL_ID_METADATA_SIZE, SYSCALL_ID_METADATA_WRITE, SYSCALL_ID_SELF_BALANCE,
+    SYSCALL_ID_DESTROY_ACCOUNT, SYSCALL_ID_EMIT_LOG, SYSCALL_ID_METADATA_COPY,
+    SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_SIZE, SYSCALL_ID_METADATA_STORAGE_READ,
+    SYSCALL_ID_METADATA_STORAGE_WRITE, SYSCALL_ID_METADATA_WRITE, SYSCALL_ID_SELF_BALANCE,
     SYSCALL_ID_STATIC_CALL, SYSCALL_ID_STORAGE_READ, SYSCALL_ID_STORAGE_WRITE,
     SYSCALL_ID_TRANSIENT_READ, SYSCALL_ID_TRANSIENT_WRITE, U256,
 };
@@ -163,31 +162,14 @@ impl<API: NativeAPI> MetadataAPI for SharedContextImpl<API> {
     }
 }
 
-impl<API: NativeAPI> LamportsBalanceAPI for SharedContextImpl<API> {
-    fn lamports_balance_add(&mut self, pk: &[u8; 32], change: &U256) -> SyscallResult<()> {
-        let mut input = [0u8; size_of::<[u8; 32]>() + U256::BYTES];
-        input[..size_of::<[u8; 32]>()].copy_from_slice(pk);
-        input[size_of::<[u8; 32]>()..].copy_from_slice(&change.to_le_bytes::<{ U256::BYTES }>());
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk
-                .exec(SYSCALL_ID_LAMPORTS_BALANCE_ADD, &input, None, STATE_MAIN);
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn lamports_balance_sub(&mut self, pk: &[u8; 32], change: &U256) -> SyscallResult<()> {
-        let mut input = [0u8; size_of::<[u8; 32]>() + U256::BYTES];
-        input[..size_of::<[u8; 32]>()].copy_from_slice(pk);
-        input[size_of::<[u8; 32]>()..].copy_from_slice(&change.to_le_bytes::<{ U256::BYTES }>());
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk
-                .exec(SYSCALL_ID_LAMPORTS_BALANCE_SUB, &input, None, STATE_MAIN);
-        SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
-    }
-
-    fn lamports_balance_get(&self, pk: &[u8; 32]) -> SyscallResult<U256> {
-        let (fuel_consumed, fuel_refunded, exit_code) =
-            self.native_sdk
-                .exec(SYSCALL_ID_LAMPORTS_BALANCE_GET, pk, None, STATE_MAIN);
+impl<API: NativeAPI> MetadataStorageAPI for SharedContextImpl<API> {
+    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256> {
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            SYSCALL_ID_METADATA_STORAGE_READ,
+            &slot.to_le_bytes::<{ U256::BYTES }>(),
+            None,
+            STATE_MAIN,
+        );
         let value = self.native_sdk.return_data();
         SyscallResult::new(
             U256::from_le_slice(value.as_ref()),
@@ -197,23 +179,13 @@ impl<API: NativeAPI> LamportsBalanceAPI for SharedContextImpl<API> {
         )
     }
 
-    fn lamports_balance_transfer(
-        &mut self,
-        pk_from: &[u8; 32],
-        pk_to: &[u8; 32],
-        change: &U256,
-    ) -> SyscallResult<()> {
-        let mut input = [0u8; size_of::<[u8; 32]>() * 2 + U256::BYTES];
-        input[..size_of::<[u8; 32]>()].copy_from_slice(pk_from);
-        input[size_of::<[u8; 32]>()..size_of::<[u8; 32]>() * 2].copy_from_slice(pk_to);
-        input[size_of::<[u8; 32]>() * 2..]
-            .copy_from_slice(&change.to_le_bytes::<{ U256::BYTES }>());
-        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
-            SYSCALL_ID_LAMPORTS_BALANCE_TRANSFER,
-            &input,
-            None,
-            STATE_MAIN,
-        );
+    fn metadata_storage_write(&self, slot: &U256, value: U256) -> SyscallResult<()> {
+        let mut input = [0u8; U256::BYTES * 2];
+        input[..U256::BYTES].copy_from_slice(slot.as_le_slice());
+        input[U256::BYTES..].copy_from_slice(&value.to_le_bytes::<{ U256::BYTES }>());
+        let (fuel_consumed, fuel_refunded, exit_code) =
+            self.native_sdk
+                .exec(SYSCALL_ID_METADATA_STORAGE_WRITE, &input, None, STATE_MAIN);
         SyscallResult::new((), fuel_consumed, fuel_refunded, exit_code)
     }
 }

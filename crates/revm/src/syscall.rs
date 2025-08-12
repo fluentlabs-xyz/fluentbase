@@ -3,18 +3,16 @@ use core::cmp::min;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, default, is_system_precompile, keccak256, Address, Bytes, Log, LogData,
-    B256, FUEL_DENOM_RATE, PRECOMPILE_SVM_RUNTIME, STATE_MAIN, SVM_ELF_MAGIC_BYTES,
-    SVM_EXECUTABLE_PREIMAGE, SVM_MAX_CODE_SIZE, SYSCALL_ID_BALANCE, SYSCALL_ID_BLOCK_HASH,
-    SYSCALL_ID_CALL, SYSCALL_ID_CALL_CODE, SYSCALL_ID_CODE_COPY, SYSCALL_ID_CODE_HASH,
-    SYSCALL_ID_CODE_SIZE, SYSCALL_ID_CREATE, SYSCALL_ID_CREATE2, SYSCALL_ID_DELEGATE_CALL,
-    SYSCALL_ID_DESTROY_ACCOUNT, SYSCALL_ID_EMIT_LOG, SYSCALL_ID_LAMPORTS_BALANCE_ADD,
-    SYSCALL_ID_LAMPORTS_BALANCE_GET, SYSCALL_ID_LAMPORTS_BALANCE_SUB,
-    SYSCALL_ID_LAMPORTS_BALANCE_TRANSFER, SYSCALL_ID_METADATA_COPY, SYSCALL_ID_METADATA_CREATE,
-    SYSCALL_ID_METADATA_SIZE, SYSCALL_ID_METADATA_WRITE, SYSCALL_ID_SELF_BALANCE,
-    SYSCALL_ID_STATIC_CALL, SYSCALL_ID_STORAGE_READ, SYSCALL_ID_STORAGE_WRITE,
-    SYSCALL_ID_TRANSIENT_READ, SYSCALL_ID_TRANSIENT_WRITE, U256, WASM_MAGIC_BYTES,
-    WASM_MAX_CODE_SIZE,
+    calc_create4_address, is_system_precompile, keccak256, Address, Bytes, Log, LogData, B256,
+    FUEL_DENOM_RATE, STATE_MAIN, SVM_ELF_MAGIC_BYTES, SVM_MAX_CODE_SIZE, SYSCALL_ID_BALANCE,
+    SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_CALL, SYSCALL_ID_CALL_CODE, SYSCALL_ID_CODE_COPY,
+    SYSCALL_ID_CODE_HASH, SYSCALL_ID_CODE_SIZE, SYSCALL_ID_CREATE, SYSCALL_ID_CREATE2,
+    SYSCALL_ID_DELEGATE_CALL, SYSCALL_ID_DESTROY_ACCOUNT, SYSCALL_ID_EMIT_LOG,
+    SYSCALL_ID_METADATA_COPY, SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_SIZE,
+    SYSCALL_ID_METADATA_STORAGE_READ, SYSCALL_ID_METADATA_STORAGE_WRITE, SYSCALL_ID_METADATA_WRITE,
+    SYSCALL_ID_SELF_BALANCE, SYSCALL_ID_STATIC_CALL, SYSCALL_ID_STORAGE_READ,
+    SYSCALL_ID_STORAGE_WRITE, SYSCALL_ID_TRANSIENT_READ, SYSCALL_ID_TRANSIENT_WRITE, U256,
+    WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
 };
 use revm::context::ContextError;
 use revm::handler::{SystemInterruptionInputs, SystemInterruptionOutcome};
@@ -760,119 +758,56 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             }
         }
 
-        SYSCALL_ID_LAMPORTS_BALANCE_GET => {
-            // input: pk
-            const PK_SIZE: usize = 32;
-            const INPUT_LEN: usize = PK_SIZE;
-            let syscall_params = &inputs.syscall_params;
-            assert_return!(
-                syscall_params.input.len() == INPUT_LEN && syscall_params.state == STATE_MAIN,
-                MalformedBuiltinParams
-            );
-
-            let Ok(pk): Result<[u8; PK_SIZE], _> =
-                syscall_params.input.as_ref()[..PK_SIZE].try_into()
-            else {
-                return_result!(MalformedBuiltinParams)
-            };
-            let pk_u256 = U256::from_le_bytes(pk);
-            let balance = journal.sload(PRECOMPILE_SVM_RUNTIME, pk_u256)?;
-            charge_gas!(sload_cost(spec_id, balance.is_cold));
-            let output: [u8; U256::BYTES] = balance.to_le_bytes();
-            return_result!(output, Return);
-        }
-
-        SYSCALL_ID_LAMPORTS_BALANCE_ADD | SYSCALL_ID_LAMPORTS_BALANCE_SUB => {
-            if !account_owner_address.is_some()
-                || account_owner_address.unwrap() != PRECOMPILE_SVM_RUNTIME
-            {
+        SYSCALL_ID_METADATA_STORAGE_READ => {
+            // input: slot
+            let Some(account_owner_address) = account_owner_address else {
                 return_result!(MalformedBuiltinParams);
             };
-            // input: pk + balance_change
-            const PK_SIZE: usize = 32;
-            const INPUT_LEN: usize = size_of::<[u8; PK_SIZE]>() + U256::BYTES;
+            const INPUT_LEN: usize = U256::BYTES;
             let syscall_params = &inputs.syscall_params;
             assert_return!(
                 syscall_params.input.len() == INPUT_LEN && syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
 
-            let Ok(pk): Result<[u8; PK_SIZE], _> =
+            let Ok(slot): Result<[u8; U256::BYTES], _> =
                 syscall_params.input.as_ref()[..U256::BYTES].try_into()
             else {
                 return_result!(MalformedBuiltinParams)
             };
-            let Ok(balance_change): Result<[u8; U256::BYTES], _> =
-                syscall_params.input.as_ref()[U256::BYTES..].try_into()
-            else {
-                return_result!(MalformedBuiltinParams)
-            };
-            let pk_u256 = U256::from_le_bytes(pk);
-            let balance_change_u256 = U256::from_le_bytes(balance_change);
-            let balance = journal.sload(PRECOMPILE_SVM_RUNTIME, pk_u256)?;
-            let balance_u256 = U256::from_le_bytes(balance.to_le_bytes::<{ U256::BYTES }>());
-            let balance_new = if syscall_params.code_hash == SYSCALL_ID_LAMPORTS_BALANCE_ADD {
-                balance_u256.checked_add(balance_change_u256)
-            } else {
-                balance_u256.checked_sub(balance_change_u256)
-            };
-            let Some(balance_new) = balance_new else {
-                return_result!(IntegerOverflow);
-            };
-            journal.sstore(PRECOMPILE_SVM_RUNTIME, pk_u256, balance_new)?;
-
-            return_result!(Bytes::default(), Return);
+            let slot_u256 = U256::from_le_bytes(slot);
+            let value = journal.sload(account_owner_address, slot_u256)?;
+            let output: [u8; U256::BYTES] = value.to_le_bytes();
+            return_result!(output, Return);
         }
 
-        SYSCALL_ID_LAMPORTS_BALANCE_TRANSFER => {
-            if !account_owner_address.is_some()
-                || account_owner_address.unwrap() != PRECOMPILE_SVM_RUNTIME
-            {
+        SYSCALL_ID_METADATA_STORAGE_WRITE => {
+            let Some(account_owner_address) = account_owner_address else {
                 return_result!(MalformedBuiltinParams);
             };
-            // input: from_pk + to_pk + balance_change
-            const PK_SIZE: usize = 32;
-            const INPUT_LEN: usize = PK_SIZE * 2 + U256::BYTES;
+            // input: slot + value
+            const INPUT_LEN: usize = size_of::<[u8; U256::BYTES]>() + U256::BYTES;
             let syscall_params = &inputs.syscall_params;
             assert_return!(
                 syscall_params.input.len() == INPUT_LEN && syscall_params.state == STATE_MAIN,
                 MalformedBuiltinParams
             );
 
-            let Ok(pk_from): Result<[u8; PK_SIZE], _> =
-                syscall_params.input.as_ref()[..PK_SIZE].try_into()
+            let Ok(slot): Result<[u8; U256::BYTES], _> =
+                syscall_params.input.as_ref()[..U256::BYTES].try_into()
             else {
                 return_result!(MalformedBuiltinParams)
             };
-            let Ok(pk_to): Result<[u8; PK_SIZE], _> =
-                syscall_params.input.as_ref()[PK_SIZE..PK_SIZE * 2].try_into()
+            let Ok(value): Result<[u8; U256::BYTES], _> =
+                syscall_params.input.as_ref()[U256::BYTES..].try_into()
             else {
                 return_result!(MalformedBuiltinParams)
             };
-            let Ok(balance_change): Result<[u8; U256::BYTES], _> =
-                syscall_params.input.as_ref()[PK_SIZE * 2..].try_into()
-            else {
-                return_result!(MalformedBuiltinParams)
-            };
-            let pk_from_u256 = U256::from_le_bytes(pk_from);
-            let pk_to_u256 = U256::from_le_bytes(pk_to);
-            let balance_change_u256 = U256::from_le_bytes(balance_change);
-            let balance_from = journal.sload(PRECOMPILE_SVM_RUNTIME, pk_from_u256)?;
-            let balance_from_u256 =
-                U256::from_le_bytes(balance_from.to_le_bytes::<{ U256::BYTES }>());
-            let balance_to = journal.sload(PRECOMPILE_SVM_RUNTIME, pk_to_u256)?;
-            let balance_to_u256 = U256::from_le_bytes(balance_to.to_le_bytes::<{ U256::BYTES }>());
-            let Some(balance_from_new) = balance_from_u256.checked_sub(balance_change_u256) else {
-                return_result!(IntegerOverflow);
-            };
-            let Some(balance_to_new) = balance_to_u256.checked_add(balance_change_u256) else {
-                return_result!(IntegerOverflow);
-            };
-            journal.sstore(PRECOMPILE_SVM_RUNTIME, pk_from_u256, balance_from_new)?;
-            journal.sstore(PRECOMPILE_SVM_RUNTIME, pk_to_u256, balance_to_new)?;
+            let slot_u256 = U256::from_le_bytes(slot);
+            let value_u256 = U256::from_le_bytes(value);
+            journal.sstore(account_owner_address, slot_u256, value_u256)?;
 
-            let output: [u8; U256::BYTES] = default!();
-            return_result!(output, Return);
+            return_result!(Bytes::default(), Return);
         }
 
         SYSCALL_ID_TRANSIENT_READ => {

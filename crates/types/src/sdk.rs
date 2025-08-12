@@ -29,19 +29,12 @@ pub trait MetadataAPI {
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
 }
 
-pub trait LamportsBalanceAPI {
-    fn lamports_balance_add(&mut self, pk: &[u8; 32], change: &U256) -> SyscallResult<()>;
-    fn lamports_balance_sub(&mut self, pk: &[u8; 32], change: &U256) -> SyscallResult<()>;
-    fn lamports_balance_get(&self, pk: &[u8; 32]) -> SyscallResult<U256>;
-    fn lamports_balance_transfer(
-        &mut self,
-        pk_from: &[u8; 32],
-        pk_to: &[u8; 32],
-        change: &U256,
-    ) -> SyscallResult<()>;
+pub trait MetadataStorageAPI {
+    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256>;
+    fn metadata_storage_write(&self, slot: &U256, value: U256) -> SyscallResult<()>;
 }
 
-pub trait SharedAPI: StorageAPI + MetadataAPI + LamportsBalanceAPI {
+pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn context(&self) -> impl ContextReader;
     fn keccak256(&self, data: &[u8]) -> B256;
     fn sha256(data: &[u8]) -> B256;
