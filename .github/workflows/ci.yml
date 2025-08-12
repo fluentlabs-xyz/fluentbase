@@ -28,7 +28,7 @@ jobs:
         with:
           root-reserve-mb: '30720'
           remove-dotnet: 'true'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: "recursive"
       - name: Install Rust toolchain
@@ -53,7 +53,7 @@ jobs:
         with:
           root-reserve-mb: '30720'
           remove-dotnet: 'true'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: "recursive"
       - name: Install Rust toolchain
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-amd64-8core
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -111,7 +111,7 @@ jobs:
         with:
           root-reserve-mb: '30720'
           remove-dotnet: 'true'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: "recursive"
       - name: Install Rust toolchain
