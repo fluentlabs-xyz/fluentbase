@@ -79,35 +79,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let pk_caller = pubkey_from_evm_address(&contract_caller);
     let pk_contract = pubkey_from_evm_address(&contract_address);
 
-    debug_log_ext!(
-        "pk_caller {:x?} lamports_balance (before) {}",
-        &pk_caller.to_bytes(),
-        GlobalBalance::<SDK>::get(&sdk, &pk_caller)
-    );
-    GlobalBalance::<SDK>::change::<true>(&mut sdk, &pk_caller, 12);
-    debug_log_ext!(
-        "pk_caller {:x?} lamports_balance (after add) {}",
-        &pk_caller.to_bytes(),
-        GlobalBalance::<SDK>::get(&sdk, &pk_caller)
-    );
-    GlobalBalance::<SDK>::change::<false>(&mut sdk, &pk_caller, 2);
-    debug_log_ext!(
-        "pk_caller {:x?} lamports_balance (after sub) {}",
-        &pk_caller.to_bytes(),
-        GlobalBalance::<SDK>::get(&sdk, &pk_caller)
-    );
-    GlobalBalance::<SDK>::transfer(&mut sdk, &pk_caller, &pk_contract, 3);
-    debug_log_ext!(
-        "pk_caller {:x?} lamports_balance (after transfer) {}",
-        &pk_caller.to_bytes(),
-        GlobalBalance::<SDK>::get(&sdk, &pk_caller)
-    );
-    debug_log_ext!(
-        "pk_contract {:x?} lamports_balance (after transfer) {}",
-        &pk_contract.to_bytes(),
-        GlobalBalance::<SDK>::get(&sdk, &pk_contract)
-    );
-
     let caller_account_balance = lamports_from_evm_balance(
         sdk.balance(&contract_caller)
             .expect("balance for caller must exist")
