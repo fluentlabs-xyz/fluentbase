@@ -1,8 +1,6 @@
 name: Cleanup Old Docker Images
 
 on:
-   schedule:
-       - cron: "0 0 * * 0"
    workflow_dispatch:
        inputs:
            min_versions_to_keep:
@@ -38,7 +36,7 @@ jobs:
                  package-type: "container"
                  min-versions-to-keep: ${{ github.event.inputs.min_versions_to_keep || '20' }}
                  delete-only-untagged-versions: "false"
-                 ignore-versions: '^v[0-9]+\.[0-9]+\.[0-9]+.*|latest|devel$'
+                 ignore-versions: '^v[0-9]+\.[0-9]+\.[0-9]+.*|latest|dev$'
                  token: ${{ secrets.GITHUB_TOKEN }}
 
            - name: Delete old untagged versions
