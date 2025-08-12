@@ -1,9 +1,7 @@
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     common::{
-        evm_address_from_pubkey,
-        evm_balance_from_lamports,
-        lamports_from_evm_balance,
+        evm_address_from_pubkey, evm_balance_from_lamports, lamports_from_evm_balance,
         pubkey_from_evm_address,
     },
     fluentbase::{
@@ -25,7 +23,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 pub use deploy_entry_simplified as deploy_entry;
-use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI};
+use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI, U256};
 use fluentbase_types::default;
 use hashbrown::HashMap;
 use solana_clock::Epoch;
@@ -79,6 +77,52 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     let pk_caller = pubkey_from_evm_address(&contract_caller);
     let pk_contract = pubkey_from_evm_address(&contract_address);
+
+    debug_log_ext!(
+        "pk_caller {:x?} lamports_balance (before) {}",
+        &pk_caller.to_bytes(),
+        sdk.lamports_balance_get(&pk_caller.to_bytes())
+            .expect("failed to get lamports balance")
+            .data
+    );
+    sdk.lamports_balance_add(&pk_caller.to_bytes(), &U256::from(12))
+        .expect("failed to add lamports balance");
+    debug_log_ext!(
+        "pk_caller {:x?} lamports_balance (after add) {}",
+        &pk_caller.to_bytes(),
+        sdk.lamports_balance_get(&pk_caller.to_bytes())
+            .expect("failed to get lamports balance")
+            .data
+    );
+    sdk.lamports_balance_sub(&pk_caller.to_bytes(), &U256::from(2))
+        .expect("failed to add lamports balance");
+    debug_log_ext!(
+        "pk_caller {:x?} lamports_balance (after sub) {}",
+        &pk_caller.to_bytes(),
+        sdk.lamports_balance_get(&pk_caller.to_bytes())
+            .expect("failed to get lamports balance")
+            .data
+    );
+    sdk.lamports_balance_transfer(
+        &pk_caller.to_bytes(),
+        &pk_contract.to_bytes(),
+        &U256::from(2),
+    )
+    .expect("failed to add lamports balance");
+    debug_log_ext!(
+        "pk_caller {:x?} lamports_balance (after transfer) {}",
+        &pk_caller.to_bytes(),
+        sdk.lamports_balance_get(&pk_caller.to_bytes())
+            .expect("failed to get lamports balance")
+            .data
+    );
+    debug_log_ext!(
+        "pk_contract {:x?} lamports_balance (after transfer) {}",
+        &pk_contract.to_bytes(),
+        sdk.lamports_balance_get(&pk_contract.to_bytes())
+            .expect("failed to get lamports balance")
+            .data
+    );
 
     let caller_account_balance = lamports_from_evm_balance(
         sdk.balance(&contract_caller)

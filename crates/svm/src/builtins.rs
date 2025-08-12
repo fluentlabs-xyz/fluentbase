@@ -1157,7 +1157,7 @@ declare_builtin_function!(
                     false,
                 )?;
 
-                if SDK::ed25519_edwards_decompress_validate(point) {
+                if SDK::curve25519_edwards_decompress_validate(point) {
                     Ok(0)
                 } else {
                     Ok(1)
@@ -1171,7 +1171,7 @@ declare_builtin_function!(
                     false,
                 )?;
 
-                if SDK::ed25519_ristretto_decompress_validate(point) {
+                if SDK::curve25519_ristretto_decompress_validate(point) {
                     Ok(0)
                 } else {
                     Ok(1)
@@ -1437,7 +1437,7 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = left_point.0.clone();
-                    if SDK::ed25519_edwards_add(&mut left_point_or_result, &right_point.0) {
+                    if SDK::curve25519_edwards_add(&mut left_point_or_result, &right_point.0) {
                         *translate_type_mut::<[u8; 32]>(
                             memory_mapping,
                             result_point_addr,
@@ -1465,7 +1465,7 @@ declare_builtin_function!(
 
                     let mut left_point_or_result = left_point.0.clone();
 
-                    if SDK::ed25519_edwards_sub(&mut left_point_or_result, &right_point.0) {
+                    if SDK::curve25519_edwards_sub(&mut left_point_or_result, &right_point.0) {
                         *translate_type_mut::<[u8; 32]>(
                             memory_mapping,
                             result_point_addr,
@@ -1492,7 +1492,7 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = input_point.0.clone();
-                    if SDK::ed25519_edwards_mul(&mut left_point_or_result, &scalar.0) {
+                    if SDK::curve25519_edwards_mul(&mut left_point_or_result, &scalar.0) {
                         *translate_type_mut::<[u8; 32]>(
                             memory_mapping,
                             result_point_addr,
@@ -1532,7 +1532,7 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = left_point.0.clone();
-                    if SDK::ed25519_ristretto_add(&mut left_point_or_result, &right_point.0) {
+                    if SDK::curve25519_ristretto_add(&mut left_point_or_result, &right_point.0) {
                         *translate_type_mut::<[u8; 32]>(
                             memory_mapping,
                             result_point_addr,
@@ -1559,7 +1559,7 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = left_point.0.clone();
-                    if SDK::ed25519_ristretto_sub(&mut left_point_or_result, &right_point.0) {
+                    if SDK::curve25519_ristretto_sub(&mut left_point_or_result, &right_point.0) {
                         *translate_type_mut::<[u8; 32]>(
                             memory_mapping,
                             result_point_addr,
@@ -1586,7 +1586,7 @@ declare_builtin_function!(
                     )?;
 
                     let mut left_point_or_result = input_point.0.clone();
-                    if SDK::ed25519_ristretto_mul(&mut left_point_or_result, &scalar.0) {
+                    if SDK::curve25519_ristretto_mul(&mut left_point_or_result, &scalar.0) {
                         *translate_type_mut::<[u8; 32]>(
                             memory_mapping,
                             result_point_addr,
@@ -1792,7 +1792,7 @@ declare_builtin_function!(
                 let pairs = points.as_slice().iter()
                     .zip(scalars.as_slice().iter())
                     .map(|v| (v.0.0, v.1.0)).collect_vec();
-                if SDK::ed25519_edwards_multiscalar_mul(&pairs, &mut result) {
+                if SDK::curve25519_edwards_multiscalar_mul(&pairs, &mut result) {
                     *translate_type_mut::<[u8; 32]>(
                         memory_mapping,
                         result_point_addr,
@@ -1824,7 +1824,7 @@ declare_builtin_function!(
                 let pairs = points.as_slice().iter()
                     .zip(scalars.as_slice().iter())
                     .map(|v| (v.0.0, v.1.0)).collect_vec();
-                if SDK::ed25519_ristretto_multiscalar_mul(&pairs, &mut result) {
+                if SDK::curve25519_ristretto_multiscalar_mul(&pairs, &mut result) {
                     *translate_type_mut::<[u8; 32]>(
                         memory_mapping,
                         result_point_addr,

@@ -1,29 +1,11 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_sdk::{
-    bytes::Buf,
-    calc_create4_address,
-    native_api::NativeAPI,
-    Address,
-    Bytes,
-    ContextReader,
-    ContractContextV1,
-    ExitCode,
-    IsAccountEmpty,
-    IsAccountOwnable,
-    IsColdAccess,
-    MetadataAPI,
-    SharedAPI,
-    SharedContextInputV1,
-    StorageAPI,
-    SyscallResult,
-    B256,
-    BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE,
-    FUEL_DENOM_RATE,
-    U256,
+    bytes::Buf, calc_create4_address, default, native_api::NativeAPI, Address, Bytes,
+    ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess,
+    LamportsBalanceAPI, MetadataAPI, SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult,
+    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
 use std::rc::Rc;
@@ -103,6 +85,7 @@ struct TestingContextInner {
     native_sdk: RuntimeContextWrapper,
     persistent_storage: HashMap<(Address, U256), U256>,
     metadata: HashMap<(Address, Address), Vec<u8>>,
+    lamports_balance: HashMap<[u8; 32], U256>,
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     ownable_account_address: Option<Address>,
@@ -114,9 +97,10 @@ impl Default for HostTestingContext {
             inner: Rc::new(RefCell::new(TestingContextInner {
                 shared_context_input_v1: SharedContextInputV1::default(),
                 native_sdk: RuntimeContextWrapper::new(RuntimeContext::root(0)),
-                persistent_storage: Default::default(),
-                metadata: Default::default(),
-                transient_storage: Default::default(),
+                persistent_storage: default!(),
+                metadata: default!(),
+                lamports_balance: default!(),
+                transient_storage: default!(),
                 logs: vec![],
                 ownable_account_address: None,
             })),
@@ -221,6 +205,62 @@ impl MetadataAPI for HostTestingContext {
     }
 }
 
+impl LamportsBalanceAPI for HostTestingContext {
+    fn lamports_balance_add(&mut self, pk: &[u8; 32], balance_change: &U256) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        let current_balance = ctx.lamports_balance.get(pk).unwrap_or(&U256::ZERO).clone();
+        if let Some(new_balance) = current_balance.checked_add(*balance_change) {
+            ctx.lamports_balance.insert(*pk, new_balance);
+            return SyscallResult::new((), 0, 0, ExitCode::Ok);
+        };
+        SyscallResult::new((), 0, 0, ExitCode::Err)
+    }
+
+    fn lamports_balance_sub(&mut self, pk: &[u8; 32], balance_change: &U256) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        let current_balance = ctx.lamports_balance.get(pk).unwrap_or(&U256::ZERO).clone();
+        if let Some(new_balance) = current_balance.checked_sub(*balance_change) {
+            ctx.lamports_balance.insert(*pk, new_balance);
+            return SyscallResult::new((), 0, 0, ExitCode::Ok);
+        };
+        SyscallResult::new((), 0, 0, ExitCode::Err)
+    }
+
+    fn lamports_balance_get(&self, pk: &[u8; 32]) -> SyscallResult<U256> {
+        let ctx = self.inner.borrow();
+        let current_balance = ctx.lamports_balance.get(pk).unwrap_or(&U256::ZERO).clone();
+        SyscallResult::new(current_balance, 0, 0, ExitCode::Ok)
+    }
+
+    fn lamports_balance_transfer(
+        &mut self,
+        pk_from: &[u8; 32],
+        pk_to: &[u8; 32],
+        change: &U256,
+    ) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        let balance_from = ctx
+            .lamports_balance
+            .get(pk_from)
+            .unwrap_or(&U256::ZERO)
+            .clone();
+        let balance_to = ctx
+            .lamports_balance
+            .get(pk_to)
+            .unwrap_or(&U256::ZERO)
+            .clone();
+        let Some(balance_from_new) = balance_from.checked_sub(*change) else {
+            return SyscallResult::new((), 0, 0, ExitCode::Err);
+        };
+        let Some(balance_to_new) = balance_to.checked_add(*change) else {
+            return SyscallResult::new((), 0, 0, ExitCode::Err);
+        };
+        ctx.lamports_balance.insert(*pk_from, balance_from_new);
+        ctx.lamports_balance.insert(*pk_to, balance_to_new);
+        SyscallResult::new((), 0, 0, ExitCode::Ok)
+    }
+}
+
 impl SharedAPI for HostTestingContext {
     fn context(&self) -> impl ContextReader {
         self.inner.borrow().shared_context_input_v1.clone()
@@ -245,38 +285,41 @@ impl SharedAPI for HostTestingContext {
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         RuntimeContextWrapper::secp256k1_recover(digest, sig, rec_id)
     }
-    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_edwards_decompress_validate(p)
+    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_edwards_decompress_validate(p)
     }
-    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_edwards_add(p, q)
+    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_edwards_add(p, q)
     }
-    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_edwards_sub(p, q)
+    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_edwards_sub(p, q)
     }
-    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_edwards_mul(p, q)
+    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_edwards_mul(p, q)
     }
-    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_edwards_multiscalar_mul(pairs, out)
-    }
-    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_ristretto_decompress_validate(p)
-    }
-    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_ristretto_add(p, q)
-    }
-    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_ristretto_sub(p, q)
-    }
-    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_ristretto_mul(p, q)
-    }
-    fn ed25519_ristretto_multiscalar_mul(
+    fn curve25519_edwards_multiscalar_mul(
         pairs: &[([u8; 32], [u8; 32])],
         out: &mut [u8; 32],
     ) -> bool {
-        RuntimeContextWrapper::ed25519_ristretto_multiscalar_mul(pairs, out)
+        RuntimeContextWrapper::curve25519_edwards_multiscalar_mul(pairs, out)
+    }
+    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_ristretto_decompress_validate(p)
+    }
+    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_ristretto_add(p, q)
+    }
+    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_ristretto_sub(p, q)
+    }
+    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_ristretto_mul(p, q)
+    }
+    fn curve25519_ristretto_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
+        RuntimeContextWrapper::curve25519_ristretto_multiscalar_mul(pairs, out)
     }
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
         RuntimeContextWrapper::bn254_add(p, q);

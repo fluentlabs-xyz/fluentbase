@@ -1,17 +1,8 @@
 use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
-    Address,
-    Bytes,
-    ContextReader,
-    ExitCode,
-    SyscallResult,
-    B256,
-    BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE,
-    FUEL_DENOM_RATE,
-    U256,
+    Address, Bytes, ContextReader, ExitCode, SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
 
 pub type IsAccountOwnable = bool;
@@ -38,23 +29,38 @@ pub trait MetadataAPI {
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
 }
 
-pub trait SharedAPI: StorageAPI + MetadataAPI {
+pub trait LamportsBalanceAPI {
+    fn lamports_balance_add(&mut self, pk: &[u8; 32], change: &U256) -> SyscallResult<()>;
+    fn lamports_balance_sub(&mut self, pk: &[u8; 32], change: &U256) -> SyscallResult<()>;
+    fn lamports_balance_get(&self, pk: &[u8; 32]) -> SyscallResult<U256>;
+    fn lamports_balance_transfer(
+        &mut self,
+        pk_from: &[u8; 32],
+        pk_to: &[u8; 32],
+        change: &U256,
+    ) -> SyscallResult<()>;
+}
+
+pub trait SharedAPI: StorageAPI + MetadataAPI + LamportsBalanceAPI {
     fn context(&self) -> impl ContextReader;
     fn keccak256(&self, data: &[u8]) -> B256;
     fn sha256(data: &[u8]) -> B256;
     fn blake3(data: &[u8]) -> B256;
     fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode>;
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
-    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool;
-    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool;
-    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool;
-    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
-    fn ed25519_ristretto_multiscalar_mul(
+    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool;
+    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn curve25519_edwards_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool;
+    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool;
+    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
+    fn curve25519_ristretto_multiscalar_mul(
         pairs: &[([u8; 32], [u8; 32])],
         out: &mut [u8; 32],
     ) -> bool;

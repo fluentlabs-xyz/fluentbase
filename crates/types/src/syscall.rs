@@ -172,3 +172,8 @@ pub const SYSCALL_ID_METADATA_WRITE: B256 = B256::with_last_byte(0x40);
 pub const SYSCALL_ID_METADATA_SIZE: B256 = B256::with_last_byte(0x41);
 pub const SYSCALL_ID_METADATA_CREATE: B256 = B256::with_last_byte(0x42);
 pub const SYSCALL_ID_METADATA_COPY: B256 = B256::with_last_byte(0x43);
+
+pub const SYSCALL_ID_LAMPORTS_BALANCE_ADD: B256 = B256::with_last_byte(0x44);
+pub const SYSCALL_ID_LAMPORTS_BALANCE_SUB: B256 = B256::with_last_byte(0x45);
+pub const SYSCALL_ID_LAMPORTS_BALANCE_TRANSFER: B256 = B256::with_last_byte(0x46);
+pub const SYSCALL_ID_LAMPORTS_BALANCE_GET: B256 = B256::with_last_byte(0x47);

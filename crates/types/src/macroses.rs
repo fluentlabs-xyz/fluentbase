@@ -3,4 +3,7 @@ macro_rules! default {
     () => {
         Default::default()
     };
+    ($typ:ty) => {
+        <$typ>::default()
+    };
 }
