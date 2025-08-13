@@ -62,10 +62,10 @@ ark-bn254 = { workspace = true }
 
 [dev-dependencies]
 rand = { version = "0.9.0", default-features = false, features = ["alloc", "thread_rng"] }
-memoffset = { workspace = true, default-features = false, features = [] }
+memoffset = { workspace = true, default-features = false }
 fluentbase-sdk-testing = { workspace = true }
-serde_derive = { workspace = true, default-features = false }
-array-bytes = { workspace = true, default-features = false, features = [] }
+serde_derive = { workspace = true }
+array-bytes = { workspace = true }
 
 [features]
 default = [

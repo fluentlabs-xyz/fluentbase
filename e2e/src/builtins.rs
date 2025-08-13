@@ -1,4 +1,5 @@
 use crate::EvmTestingContextWithGenesis;
+use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{Address, Bytes};
 use fluentbase_sdk_testing::{EvmTestingContext, HostTestingContextNativeAPI, TxBuilder};
 use fluentbase_types::{
@@ -12,7 +13,7 @@ use fluentbase_types::{
     SECP256K1_RECOVER_BASE_FUEL_COST,
 };
 use revm::{
-    context::result::{ExecutionResult, HaltReason},
+    context::result::ExecutionResult,
     interpreter::gas::calculate_initial_tx_gas,
     primitives::hardfork::SpecId,
 };
@@ -46,7 +47,7 @@ const WAT_TEMPLATE: &str = r#"
     )
 "#;
 
-fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult {
+fn run_main(main_function_wat: &str, call_data_size: usize) -> ExecutionResult<RwasmHaltReason> {
     let wat = WAT_TEMPLATE.replace("            {{MAIN_BODY}}", main_function_wat);
     let wasm = wat::parse_str(&wat).unwrap();
     let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -122,7 +123,7 @@ fn test_write_builtin_overflow() {
     assert!(matches!(
         result2,
         ExecutionResult::Halt {
-            reason: HaltReason::IntegerOverflow,
+            reason: RwasmHaltReason::IntegerOverflow,
             ..
         }
     ));

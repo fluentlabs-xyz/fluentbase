@@ -43,7 +43,6 @@ use crate::{
 };
 use alloc::{sync::Arc, vec::Vec};
 use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
-use fluentbase_types::default;
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;
@@ -90,8 +89,8 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
     ),
     SvmError,
 > {
-    let mut result_accounts: HashMap<Pubkey, AccountSharedData> = default!();
-    let mut balance_changes: HashMap<Pubkey, BalanceHistorySnapshot<u64>> = default!();
+    let mut result_accounts: HashMap<Pubkey, AccountSharedData> = Default::default();
+    let mut balance_changes: HashMap<Pubkey, BalanceHistorySnapshot<u64>> = Default::default();
     for (idx, message) in batch_message.messages().iter().enumerate() {
         let (ra, bhs) = exec_svm_message(sdk, api, message.clone(), do_flush)?;
         result_accounts.extend(ra);

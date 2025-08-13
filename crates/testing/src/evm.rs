@@ -1,22 +1,38 @@
 use crate::{HostTestingContext, HostTestingContextNativeAPI};
 use core::{borrow::Borrow, mem::take, str::from_utf8};
-use fluentbase_revm::{RwasmBuilder, RwasmContext};
+use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
-    bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, Address, BytecodeOrHash, Bytes,
-    ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI, SharedContextInputV1,
-    STATE_MAIN, U256,
+    bytes::BytesMut,
+    calc_create_address,
+    compile_wasm_to_rwasm,
+    Address,
+    BytecodeOrHash,
+    Bytes,
+    ContextReader,
+    ExitCode,
+    GenesisContract,
+    MetadataAPI,
+    SharedAPI,
+    SharedContextInputV1,
+    STATE_MAIN,
+    U256,
 };
 use revm::{
     context::{
         result::{ExecutionResult, ExecutionResult::Success, Output},
-        BlockEnv, CfgEnv, TransactTo, TxEnv,
+        BlockEnv,
+        CfgEnv,
+        TransactTo,
+        TxEnv,
     },
     database::InMemoryDB,
     handler::MainnetContext,
     primitives::{hardfork::PRAGUE, keccak256, map::DefaultHashBuilder, HashMap},
     state::{Account, AccountInfo, Bytecode},
-    DatabaseCommit, ExecuteCommitEvm, MainBuilder,
+    DatabaseCommit,
+    ExecuteCommitEvm,
+    MainBuilder,
 };
 use rwasm::{RwasmModule, Store};
 
@@ -205,7 +221,7 @@ impl EvmTestingContext {
         input: Bytes,
         gas_limit: Option<u64>,
         value: Option<U256>,
-    ) -> ExecutionResult {
+    ) -> ExecutionResult<RwasmHaltReason> {
         let mut tx_builder = TxBuilder::call(self, caller, callee, value).input(input);
         if let Some(gas_limit) = gas_limit {
             tx_builder = tx_builder.gas_limit(gas_limit);
@@ -220,7 +236,7 @@ impl EvmTestingContext {
         input: Bytes,
         gas_limit: Option<u64>,
         value: Option<U256>,
-    ) -> ExecutionResult {
+    ) -> ExecutionResult<RwasmHaltReason> {
         self.add_balance(caller, U256::from(1e18));
         self.call_evm_tx_simple(caller, callee, input, gas_limit, value)
     }
@@ -304,7 +320,7 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
-    pub fn exec(&mut self) -> ExecutionResult {
+    pub fn exec(&mut self) -> ExecutionResult<RwasmHaltReason> {
         self.tx.nonce = self.ctx.nonce(self.tx.caller);
         let db = take(&mut self.ctx.db);
         if self.ctx.disabled_rwasm {
@@ -316,7 +332,7 @@ impl<'a> TxBuilder<'a> {
             let result = evm.transact_commit(self.tx.clone()).unwrap();
             let new_db = &mut evm.journaled_state.database;
             self.ctx.db = take(new_db);
-            result
+            result.map_haltreason(RwasmHaltReason::from)
         } else {
             let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, PRAGUE);
             context.cfg = self.ctx.cfg.clone();

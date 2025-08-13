@@ -1,13 +1,14 @@
 //!Handler related to a Fluent chain
 
-use revm::context::result::HaltReason;
-use revm::context::{ContextTr, JournalTr};
-use revm::handler::{EthFrame, EvmTr, EvmTrError, FrameResult, FrameTr, Handler};
-use revm::inspector::{InspectorEvmTr, InspectorHandler};
-use revm::interpreter::interpreter::EthInterpreter;
-use revm::interpreter::interpreter_action::FrameInit;
-use revm::state::EvmState;
-use revm::Inspector;
+use crate::{RwasmFrame, RwasmHaltReason};
+use revm::{
+    context::{ContextTr, JournalTr},
+    handler::{EvmTr, EvmTrError, FrameResult, FrameTr, Handler},
+    inspector::{InspectorEvmTr, InspectorHandler},
+    interpreter::{interpreter::EthInterpreter, interpreter_action::FrameInit},
+    state::EvmState,
+    Inspector,
+};
 
 /// Rwasm handler that implements the default [`Handler`] trait for the Evm.
 #[derive(Debug, Clone)]
@@ -24,7 +25,7 @@ where
 {
     type Evm = EVM;
     type Error = ERROR;
-    type HaltReason = HaltReason;
+    type HaltReason = RwasmHaltReason;
 }
 
 impl<CTX, ERROR, FRAME> Default for RwasmHandler<CTX, ERROR, FRAME> {
@@ -35,11 +36,11 @@ impl<CTX, ERROR, FRAME> Default for RwasmHandler<CTX, ERROR, FRAME> {
     }
 }
 
-impl<EVM, ERROR> InspectorHandler for RwasmHandler<EVM, ERROR, EthFrame<EthInterpreter>>
+impl<EVM, ERROR> InspectorHandler for RwasmHandler<EVM, ERROR, RwasmFrame>
 where
     EVM: InspectorEvmTr<
         Context: ContextTr<Journal: JournalTr<State = EvmState>>,
-        Frame = EthFrame<EthInterpreter>,
+        Frame = RwasmFrame,
         Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context, EthInterpreter>,
     >,
     ERROR: EvmTrError<EVM>,

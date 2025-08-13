@@ -1,30 +1,71 @@
-use crate::api::RwasmFrame;
+use crate::{
+    api::RwasmFrame,
+    instruction_result_from_exit_code,
+    types::{SystemInterruptionInputs, SystemInterruptionOutcome},
+    ExecutionResult,
+    NextAction,
+};
 use core::cmp::min;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, is_system_precompile, keccak256, Address, Bytes, Log, LogData, B256,
-    FUEL_DENOM_RATE, STATE_MAIN, SVM_ELF_MAGIC_BYTES, SVM_MAX_CODE_SIZE, SYSCALL_ID_BALANCE,
-    SYSCALL_ID_BLOCK_HASH, SYSCALL_ID_CALL, SYSCALL_ID_CALL_CODE, SYSCALL_ID_CODE_COPY,
-    SYSCALL_ID_CODE_HASH, SYSCALL_ID_CODE_SIZE, SYSCALL_ID_CREATE, SYSCALL_ID_CREATE2,
-    SYSCALL_ID_DELEGATE_CALL, SYSCALL_ID_DESTROY_ACCOUNT, SYSCALL_ID_EMIT_LOG,
-    SYSCALL_ID_METADATA_COPY, SYSCALL_ID_METADATA_CREATE, SYSCALL_ID_METADATA_SIZE,
-    SYSCALL_ID_METADATA_WRITE, SYSCALL_ID_SELF_BALANCE, SYSCALL_ID_STATIC_CALL,
-    SYSCALL_ID_STORAGE_READ, SYSCALL_ID_STORAGE_WRITE, SYSCALL_ID_TRANSIENT_READ,
-    SYSCALL_ID_TRANSIENT_WRITE, U256, WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
+    calc_create4_address,
+    is_system_precompile,
+    keccak256,
+    syscall::{
+        SYSCALL_ID_BALANCE,
+        SYSCALL_ID_BLOCK_HASH,
+        SYSCALL_ID_CALL,
+        SYSCALL_ID_CALL_CODE,
+        SYSCALL_ID_CODE_COPY,
+        SYSCALL_ID_CODE_HASH,
+        SYSCALL_ID_CODE_SIZE,
+        SYSCALL_ID_CREATE,
+        SYSCALL_ID_CREATE2,
+        SYSCALL_ID_DELEGATE_CALL,
+        SYSCALL_ID_DESTROY_ACCOUNT,
+        SYSCALL_ID_EMIT_LOG,
+        SYSCALL_ID_METADATA_COPY,
+        SYSCALL_ID_METADATA_CREATE,
+        SYSCALL_ID_METADATA_SIZE,
+        SYSCALL_ID_METADATA_WRITE,
+        SYSCALL_ID_SELF_BALANCE,
+        SYSCALL_ID_STATIC_CALL,
+        SYSCALL_ID_STORAGE_READ,
+        SYSCALL_ID_STORAGE_WRITE,
+        SYSCALL_ID_TRANSIENT_READ,
+        SYSCALL_ID_TRANSIENT_WRITE,
+    },
+    Address,
+    Bytes,
+    ExitCode,
+    Log,
+    LogData,
+    B256,
+    FUEL_DENOM_RATE,
+    STATE_MAIN,
+    SVM_ELF_MAGIC_BYTES,
+    SVM_MAX_CODE_SIZE,
+    U256,
+    WASM_MAGIC_BYTES,
+    WASM_MAX_CODE_SIZE,
 };
-use revm::context::ContextError;
-use revm::handler::{SystemInterruptionInputs, SystemInterruptionOutcome};
-use revm::interpreter::MAX_INITCODE_SIZE;
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
-    context::{Cfg, ContextTr, CreateScheme, JournalTr},
+    context::{Cfg, ContextError, ContextTr, CreateScheme, JournalTr},
     interpreter::{
         gas,
-        gas::{sload_cost, sstore_cost, sstore_refund, warm_cold_cost, CALL_STIPEND},
+        gas::{sload_cost, sstore_cost, sstore_refund, warm_cold_cost},
         interpreter_types::InputsTr,
-        CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, Gas, Host,
-        InstructionResult, InterpreterAction, InterpreterResult,
+        CallInput,
+        CallInputs,
+        CallScheme,
+        CallValue,
+        CreateInputs,
+        FrameInput,
+        Gas,
+        Host,
+        MAX_INITCODE_SIZE,
     },
     primitives::hardfork::{SpecId, BERLIN, ISTANBUL, TANGERINE},
     Database,
@@ -35,45 +76,38 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
     frame: &mut RwasmFrame,
     evm: &mut CTX,
     inputs: SystemInterruptionInputs,
-) -> Result<InterpreterAction, ContextError<<CTX::Db as Database>::Error>> {
+) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let mut local_gas = Gas::new(inputs.gas.remaining());
     let spec_id: SpecId = evm.cfg().spec().into();
     let journal = evm.journal_mut();
     let current_target_address = frame.interpreter.input.target_address();
     let account_owner_address = frame.interpreter.input.account_owner_address();
+
     macro_rules! return_result {
         ($output:expr, $result:ident) => {{
-            let result =
-                InterpreterResult::new(InstructionResult::$result, $output.into(), local_gas);
+            let result = ExecutionResult {
+                result: instruction_result_from_exit_code(ExitCode::$result),
+                output: $output.into(),
+                gas: local_gas,
+            };
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
                 inputs: Box::new(inputs),
-                // we have to clone result, because we don't know do we need to resume or not
-                result: result.clone(),
+                remaining_gas: local_gas,
+                result: Some(result),
                 is_frame: false,
             });
-            return Ok(InterpreterAction::Return(result));
+            return Ok(NextAction::InterruptionResult);
         }};
         ($result:ident) => {{
-            let result =
-                InterpreterResult::new(InstructionResult::$result, Default::default(), local_gas);
-            frame.insert_interrupted_outcome(SystemInterruptionOutcome {
-                inputs: Box::new(inputs),
-                // we have to clone result, because we don't know do we need to resume or not
-                result: result.clone(),
-                is_frame: false,
-            });
-            return Ok(InterpreterAction::Return(result));
+            return_result!(Bytes::default(), $result)
         }};
     }
     macro_rules! return_frame {
         ($action:expr) => {{
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
                 inputs: Box::new(inputs),
-                result: InterpreterResult::new(
-                    InstructionResult::default(),
-                    Bytes::default(),
-                    local_gas,
-                ),
+                remaining_gas: local_gas,
+                result: None,
                 is_frame: true,
             });
             return Ok($action);
@@ -89,7 +123,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
     macro_rules! charge_gas {
         ($value:expr) => {{
             if !local_gas.record_cost($value) {
-                return_result!(OutOfGas);
+                return_result!(OutOfFuel);
             }
         }};
     }
@@ -108,7 +142,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             let value = journal.sload(current_target_address, slot)?;
             charge_gas!(sload_cost(spec_id, value.is_cold));
             let output: [u8; 32] = value.to_le_bytes();
-            return_result!(output, Return)
+            return_result!(output, Ok)
         }
 
         SYSCALL_ID_STORAGE_WRITE => {
@@ -125,13 +159,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             println!("SYSCALL_STORAGE_WRITE: slot={slot}, new_value={new_value}");
             // execute sstore
             let value = journal.sstore(current_target_address, slot, new_value)?;
-            if local_gas.remaining() <= CALL_STIPEND {
-                return_result!(ReentrancySentryOOG);
+            if local_gas.remaining() <= gas::CALL_STIPEND {
+                return_result!(OutOfFuel);
             }
             let gas_cost = sstore_cost(spec_id.clone(), &value.data, value.is_cold);
             charge_gas!(gas_cost);
             local_gas.record_refund(sstore_refund(spec_id, &value.data));
-            return_result!(Bytes::default(), Return)
+            return_result!(Ok)
         }
 
         SYSCALL_ID_CALL => {
@@ -148,10 +182,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             // for static calls with value greater than 0 - revert
             let has_transfer = !value.is_zero();
             if inputs.is_static && has_transfer {
-                return_result!(CallNotAllowedInsideStatic);
+                return_result!(StateChangeDuringStaticCall);
             }
             let Ok(mut account_load) = journal.load_account_delegated(target_address) else {
-                return_result!(FatalExternalError);
+                return_result!(UnknownError);
             };
             // In EVM, there exists an issue with precompiled contracts.
             // These contracts are preloaded and initially empty.
@@ -192,7 +226,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 is_static: inputs.is_static,
                 return_memory_offset: Default::default(),
             });
-            return_frame!(InterpreterAction::NewFrame(FrameInput::Call(call_inputs)));
+            return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
 
         SYSCALL_ID_STATIC_CALL => {
@@ -204,7 +238,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             let target_address = Address::from_slice(&inputs.syscall_params.input[0..20]);
             let contract_input = inputs.syscall_params.input.slice(20..);
             let Ok(mut account_load) = journal.load_account_delegated(target_address) else {
-                return_result!(FatalExternalError);
+                return_result!(UnknownError);
             };
             // set is_empty to false as we are not creating this account.
             account_load.is_empty = false;
@@ -234,7 +268,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 is_static: true,
                 return_memory_offset: Default::default(),
             });
-            return_frame!(InterpreterAction::NewFrame(FrameInput::Call(call_inputs)));
+            return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
 
         SYSCALL_ID_CALL_CODE => {
@@ -249,7 +283,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             #[cfg(feature = "debug-print")]
             println!("SYSCALL_CALL_CODE: target_address={target_address}, value={value}");
             let Ok(mut account_load) = journal.load_account_delegated(target_address) else {
-                return_result!(FatalExternalError);
+                return_result!(UnknownError);
             };
             // set is_empty to false as we are not creating this account
             account_load.is_empty = false;
@@ -282,7 +316,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 is_static: inputs.is_static,
                 return_memory_offset: Default::default(),
             });
-            return_frame!(InterpreterAction::NewFrame(FrameInput::Call(call_inputs)));
+            return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
 
         SYSCALL_ID_DELEGATE_CALL => {
@@ -296,7 +330,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             #[cfg(feature = "debug-print")]
             println!("SYSCALL_DELEGATE_CALL: target_address={target_address}");
             let Ok(mut account_load) = journal.load_account_delegated(target_address) else {
-                return_result!(FatalExternalError);
+                return_result!(UnknownError);
             };
             // set is_empty to false as we are not creating this account.
             account_load.is_empty = false;
@@ -323,7 +357,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 is_static: inputs.is_static,
                 return_memory_offset: Default::default(),
             });
-            return_frame!(InterpreterAction::NewFrame(FrameInput::Call(call_inputs)));
+            return_frame!(NextAction::NewFrame(FrameInput::Call(call_inputs)));
         }
 
         SYSCALL_ID_CREATE | SYSCALL_ID_CREATE2 => {
@@ -376,7 +410,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             }
             if is_create2 {
                 let Some(gas) = gas::create2_cost(init_code.len().try_into().unwrap()) else {
-                    return_result!(OutOfGas);
+                    return_result!(OutOfFuel);
                 };
                 charge_gas!(gas);
             } else {
@@ -393,9 +427,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 init_code,
                 gas_limit,
             });
-            return_frame!(InterpreterAction::NewFrame(FrameInput::Create(
-                create_inputs
-            )));
+            return_frame!(NextAction::NewFrame(FrameInput::Create(create_inputs)));
         }
 
         SYSCALL_ID_EMIT_LOG => {
@@ -426,16 +458,16 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 .slice((1 + topics_len * B256::len_bytes())..);
             // make sure we have enough gas to cover this operation
             let Some(gas_cost) = gas::log_cost(topics_len as u8, data.len() as u64) else {
-                return_result!(OutOfGas);
+                return_result!(OutOfFuel);
             };
             charge_gas!(gas_cost);
             // write new log into the journal
             journal.log(Log {
                 address: current_target_address,
-                // it's safe to go unchecked here because we do topics check upper
+                // it's safe to go unchecked here because we do topic check upper
                 data: LogData::new_unchecked(topics, data),
             });
-            return_result!(Bytes::new(), Return);
+            return_result!(Ok);
         }
 
         SYSCALL_ID_DESTROY_ACCOUNT => {
@@ -454,7 +486,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             // charge gas cost
             charge_gas!(gas::selfdestruct_cost(spec_id, result));
             // return value as bytes with success exit code
-            return_result!(Bytes::new(), Return);
+            return_result!(Ok);
         }
 
         SYSCALL_ID_BALANCE => {
@@ -479,7 +511,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             });
             // write the result
             let output: [u8; 32] = value.data.to_le_bytes();
-            return_result!(output, Return);
+            return_result!(output, Ok);
         }
 
         SYSCALL_ID_SELF_BALANCE => {
@@ -492,7 +524,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 .map(|acc| acc.map(|a| a.info.balance))?;
             charge_gas!(gas::LOW);
             let output: [u8; 32] = value.data.to_le_bytes();
-            return_result!(output, Return)
+            return_result!(output, Ok)
         }
 
         SYSCALL_ID_CODE_SIZE => {
@@ -520,7 +552,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             }
             let code_size = U256::from(code_len);
             let output = code_size.to_le_bytes::<32>();
-            return_result!(output, Return);
+            return_result!(output, Ok);
         }
 
         SYSCALL_ID_CODE_HASH => {
@@ -549,7 +581,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             if is_system_precompile(&address) {
                 code_hash = B256::ZERO;
             }
-            return_result!(code_hash, Return);
+            return_result!(code_hash, Ok);
         }
 
         SYSCALL_ID_CODE_COPY => {
@@ -567,11 +599,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             let code = journal.code(address)?;
             let Some(gas_cost) = gas::extcodecopy_cost(spec_id, code_length as usize, code.is_cold)
             else {
-                return_result!(OutOfGas);
+                return_result!(OutOfFuel);
             };
             charge_gas!(gas_cost);
             if code_length == 0 {
-                return_result!(Bytes::new(), Return);
+                return_result!(Bytes::new(), Ok);
             }
             let mut bytecode = code.data;
             // we store system precompile bytecode in the state trie,
@@ -580,7 +612,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 bytecode = Bytes::new();
             }
             // TODO(dmitry123): "add offset/length checks"
-            return_result!(bytecode, Return);
+            return_result!(bytecode, Ok);
         }
 
         SYSCALL_ID_METADATA_SIZE => {
@@ -596,7 +628,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             // read an account from its address
             let address = Address::from_slice(&inputs.syscall_params.input[..20]);
             let Ok(mut account) = journal.load_account_code(address) else {
-                return_result!(FatalExternalError);
+                return_result!(UnknownError);
             };
             // to make sure this account is ownable and owner by the same runtime, that allows
             // a runtime to modify any account it owns
@@ -622,7 +654,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                     account.is_cold as u8,
                     account.is_empty() as u8,
                 ]);
-                return_result!(output, Return);
+                return_result!(output, Ok);
             };
             // execute a syscall
             assert_return!(
@@ -639,7 +671,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             output[4] = 0x01u8; // the account belongs to the same runtime
             output[5] = account.is_cold as u8;
             output[6] = account.is_empty() as u8;
-            return_result!(output, Return)
+            return_result!(output, Ok)
         }
         SYSCALL_ID_METADATA_CREATE => {
             assert_return!(
@@ -657,7 +689,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             let derived_metadata_address =
                 calc_create4_address(&account_owner_address, &salt, |v| keccak256(v));
             let Ok(account) = journal.load_account_code(derived_metadata_address) else {
-                return_result!(FatalExternalError);
+                return_result!(UnknownError);
             };
             #[cfg(feature = "debug-print")]
             println!(
@@ -666,9 +698,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             );
             // make sure there is no account create collision
             if !account.is_empty() {
-                return_result!(CreateCollision);
+                return_result!(CreateContractCollision);
             }
-            // create new derived ownable account
+            // create a new derived ownable account
             journal.set_code(
                 derived_metadata_address,
                 Bytecode::OwnableAccount(OwnableAccountBytecode::new(
@@ -676,7 +708,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                     metadata.clone(),
                 )),
             );
-            return_result!(Bytes::new(), Return)
+            return_result!(Bytes::new(), Ok)
         }
 
         SYSCALL_ID_METADATA_WRITE | SYSCALL_ID_METADATA_COPY => {
@@ -692,7 +724,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             // read an account from its address
             let address = Address::from_slice(&inputs.syscall_params.input[..20]);
             let Ok(mut account) = journal.load_account_code(address) else {
-                return_result!(FatalExternalError);
+                return_result!(UnknownError);
             };
             // to make sure this account is ownable and owner by the same runtime, that allows
             // a runtime to modify any account it owns
@@ -732,7 +764,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                         metadata.into(),
                     ));
                     journal.set_code(address, new_bytecode);
-                    return_result!(Bytes::new(), Return)
+                    return_result!(Bytes::new(), Ok)
                 }
                 SYSCALL_ID_METADATA_COPY => {
                     assert_return!(
@@ -751,7 +783,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                     let metadata = ownable_account_bytecode
                         .metadata
                         .slice(offset as usize..(offset + length) as usize);
-                    return_result!(metadata, Return)
+                    return_result!(metadata, Ok)
                 }
                 _ => unreachable!(),
             }
@@ -772,7 +804,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             charge_gas!(gas::WARM_STORAGE_READ_COST);
             // return value
             let output: [u8; 32] = value.to_le_bytes();
-            return_result!(output, Return);
+            return_result!(output, Ok);
         }
 
         SYSCALL_ID_TRANSIENT_WRITE => {
@@ -791,7 +823,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             charge_gas!(gas::WARM_STORAGE_READ_COST);
             journal.tstore(current_target_address, slot, value);
             // empty result
-            return_result!(Bytes::new(), Return);
+            return_result!(Bytes::new(), Ok);
         }
 
         SYSCALL_ID_BLOCK_HASH => {
@@ -817,7 +849,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 _ => B256::ZERO,
             };
 
-            return_result!(hash, Return);
+            return_result!(hash, Ok);
         }
 
         _ => return_result!(MalformedBuiltinParams),

@@ -26,7 +26,6 @@ use crate::{
 use alloc::vec::Vec;
 pub use deploy_entry_simplified as deploy_entry;
 use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI};
-use fluentbase_types::default;
 use hashbrown::HashMap;
 use solana_clock::Epoch;
 use solana_pubkey::Pubkey;
@@ -161,8 +160,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // TODO to make this work - need implementations for accounts based on OwnableAccount
 
     // reorder balance changes so we have balance transfers like 'from->to'
-    let mut balance_decreases: Vec<(&Pubkey, u64)> = default!();
-    let mut balance_increases: Vec<(&Pubkey, u64)> = default!();
+    let mut balance_decreases: Vec<(&Pubkey, u64)> = Default::default();
+    let mut balance_increases: Vec<(&Pubkey, u64)> = Default::default();
     for (pk, snapshot) in &balance_changes {
         let descriptor = snapshot.get_descriptor();
         if descriptor.amount <= 0 {

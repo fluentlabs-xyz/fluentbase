@@ -1,10 +1,10 @@
 use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
+    syscall::SyscallResult,
     Address,
     Bytes,
     ContextReader,
     ExitCode,
-    SyscallResult,
     B256,
     BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE,

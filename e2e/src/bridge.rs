@@ -1,5 +1,6 @@
 use crate::EvmTestingContextWithGenesis;
 use core::str::from_utf8;
+use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{address, bytes, calc_create_address, Address, Bytes, U256};
 use fluentbase_sdk_testing::{EvmTestingContext, HostTestingContextNativeAPI, TxBuilder};
 use hex_literal::hex;
@@ -238,7 +239,7 @@ fn test_bridge_contract_with_call() {
     assert!(result.is_success());
 }
 
-fn print_result_error(result: &ExecutionResult) {
+fn print_result_error(result: &ExecutionResult<RwasmHaltReason>) {
     if result.is_success() {
         return;
     }

@@ -1,26 +1,47 @@
-use crate::{api::RwasmFrame, syscall::execute_rwasm_interruption};
+use crate::{
+    api::RwasmFrame,
+    instruction_result_from_exit_code,
+    syscall::execute_rwasm_interruption,
+    types::{SystemInterruptionInputs, SystemInterruptionOutcome},
+    ExecutionResult,
+    NextAction,
+};
 use core::cell::RefCell;
 use fluentbase_runtime::{
     instruction::{exec::SyscallExec, resume::SyscallResume},
     RuntimeContext,
 };
-use fluentbase_sdk::rwasm_core::RwasmModule;
 use fluentbase_sdk::{
-    codec::CompactABI, is_delegated_runtime_address, keccak256, BlockContextV1, BytecodeOrHash,
-    Bytes, ContractContextV1, ExitCode, SharedContextInput, SharedContextInputV1,
-    SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
+    is_delegated_runtime_address,
+    keccak256,
+    rwasm_core::RwasmModule,
+    syscall::SyscallInvocationParams,
+    BlockContextV1,
+    BytecodeOrHash,
+    Bytes,
+    ContractContextV1,
+    ExitCode,
+    SharedContextInput,
+    SharedContextInputV1,
+    TxContextV1,
+    FUEL_DENOM_RATE,
+    STATE_DEPLOY,
+    STATE_MAIN,
+    U256,
 };
-use revm::context::{ContextError, JournalTr};
-use revm::handler::{FrameData, SystemInterruptionInputs, SystemInterruptionOutcome};
-use revm::interpreter::interpreter::ExtBytecode;
-use revm::interpreter::CallInput;
 use revm::{
     bytecode::Bytecode,
-    context::{Block, Cfg, ContextTr, Transaction},
+    context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
+    handler::FrameData,
     interpreter::{
+        interpreter::ExtBytecode,
         interpreter_types::{InputsTr, RuntimeFlag},
-        return_ok, return_revert, FrameInput, Gas, InstructionResult, InterpreterAction,
-        InterpreterResult,
+        return_ok,
+        return_revert,
+        CallInput,
+        FrameInput,
+        Gas,
+        InstructionResult,
     },
     Database,
 };
@@ -28,26 +49,24 @@ use revm::{
 pub(crate) fn run_rwasm_loop<CTX: ContextTr>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
-) -> Result<InterpreterAction, ContextError<<CTX::Db as Database>::Error>> {
+) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let next_action = loop {
-        let next_action = if let Some(interrupted_outcome) = frame.take_interrupted_outcome() {
-            execute_rwasm_resume(frame, ctx, interrupted_outcome)
+        let next_action = if let Some(interruption_outcome) = frame.take_interrupted_outcome() {
+            execute_rwasm_resume(frame, ctx, interruption_outcome)
         } else {
             execute_rwasm_frame(frame, ctx)
         }?;
-        let result = match next_action {
-            InterpreterAction::Return(result) => result,
+        match next_action {
+            NextAction::InterruptionResult => continue,
             _ => break next_action,
-        };
-        if !frame.is_interrupted_call() {
-            break InterpreterAction::Return(result);
         }
     };
     let interpreter_result = match &next_action {
-        InterpreterAction::NewFrame(_) => {
+        NextAction::NewFrame(_) => {
             return Ok(next_action);
         }
-        InterpreterAction::Return(result) => result,
+        NextAction::Return(result) => result,
+        NextAction::InterruptionResult => unreachable!(),
     };
     let create_frame = match &frame.data {
         FrameData::Call(_) => {
@@ -77,35 +96,33 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr>(
         } else {
             false
         };
-    if !overwrite_delegated_bytecode_with_rwasm {
-        return Ok(next_action);
+    if overwrite_delegated_bytecode_with_rwasm {
+        // TODO(dmitry123): "optimize me, store RwasmModule inside Bytecode"
+        let (_, bytes_read) = RwasmModule::new(interpreter_result.output.as_ref());
+        let (rwasm_module_raw, constructor_params_raw) = (
+            interpreter_result.output.slice(..bytes_read),
+            interpreter_result.output.slice(bytes_read..),
+        );
+        let bytecode_hash = keccak256(rwasm_module_raw.as_ref());
+        // Rewrite overridden rWasm bytecode
+        let bytecode = Bytecode::Rwasm(rwasm_module_raw);
+        ctx.journal_mut()
+            .set_code(create_frame.created_address, bytecode.clone());
+        // Change input params
+        frame.interpreter.input.input = CallInput::Bytes(constructor_params_raw);
+        frame.interpreter.input.account_owner = None;
+        frame.interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, bytecode_hash);
+        frame.interpreter.gas = interpreter_result.gas;
+        // Re-run deploy function using rWasm
+        return run_rwasm_loop(frame, ctx);
     }
-
-    // TODO(dmitry123): "optimize me, store RwasmModule inside Bytecode"
-    let (_, bytes_read) = RwasmModule::new(interpreter_result.output.as_ref());
-    let (rwasm_module_raw, constructor_params_raw) = (
-        interpreter_result.output.slice(..bytes_read),
-        interpreter_result.output.slice(bytes_read..),
-    );
-    let bytecode_hash = keccak256(rwasm_module_raw.as_ref());
-    // Rewrite overridden rWasm bytecode
-    let bytecode = Bytecode::Rwasm(rwasm_module_raw);
-    ctx.journal_mut()
-        .set_code(create_frame.created_address, bytecode.clone());
-    // Change input params
-    frame.interpreter.input.input = CallInput::Bytes(constructor_params_raw);
-    frame.interpreter.input.account_owner = None;
-    frame.interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, bytecode_hash);
-    frame.interpreter.gas = interpreter_result.gas;
-
-    // Re-run deploy function using rWasm
-    run_rwasm_loop(frame, ctx)
+    Ok(next_action)
 }
 
 fn execute_rwasm_frame<CTX: ContextTr>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
-) -> Result<InterpreterAction, ContextError<<CTX::Db as Database>::Error>> {
+) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let interpreter = &mut frame.interpreter;
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
     let is_static: bool = interpreter.runtime_flag.is_static();
@@ -162,15 +179,13 @@ fn execute_rwasm_frame<CTX: ContextTr>(
         _ => {
             #[cfg(feature = "std")]
             eprintln!(
-                "WARNING: unexpected bytecode type: {:?}, need investigation",
+                "WARNING: unexpected bytecode type: {:?}, need investigation, this should never happen",
                 interpreter.bytecode
             );
-            return Ok(InterpreterAction::Return(InterpreterResult {
-                // we don't have an exit code for this case, but it should never happen
-                result: InstructionResult::CreateContractStartingWithEF,
-                output: Bytes::default(),
-                gas: interpreter.gas,
-            }));
+            return Ok(NextAction::error(
+                ExitCode::NotSupportedBytecode,
+                interpreter.gas,
+            ));
         }
     };
     let bytecode_hash = BytecodeOrHash::Bytecode {
@@ -205,11 +220,7 @@ fn execute_rwasm_frame<CTX: ContextTr>(
 
     // make sure we have enough gas to charge from the call
     if !interpreter.gas.record_denominated_cost(fuel_consumed) {
-        return Ok(InterpreterAction::Return(InterpreterResult {
-            result: InstructionResult::OutOfGas,
-            output: Bytes::default(),
-            gas: interpreter.gas,
-        }));
+        return Ok(NextAction::error(ExitCode::OutOfFuel, interpreter.gas));
     }
     interpreter.gas.record_denominated_refund(fuel_refunded);
 
@@ -233,13 +244,15 @@ fn execute_rwasm_frame<CTX: ContextTr>(
 fn execute_rwasm_resume<CTX: ContextTr>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
-    interrupted_outcome: SystemInterruptionOutcome,
-) -> Result<InterpreterAction, ContextError<<CTX::Db as Database>::Error>> {
+    interruption_outcome: SystemInterruptionOutcome,
+) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let SystemInterruptionOutcome {
         inputs,
         result,
         is_frame,
-    } = interrupted_outcome;
+        ..
+    } = interruption_outcome;
+    let result = result.unwrap();
 
     let fuel_consumed = result
         .gas
@@ -262,6 +275,7 @@ fn execute_rwasm_resume<CTX: ContextTr>(
         _ if is_frame => ExitCode::Err,
         // out of gas error codes
         InstructionResult::OutOfGas
+        | InstructionResult::OutOfFuel
         | InstructionResult::MemoryOOG
         | InstructionResult::MemoryLimitOOG
         | InstructionResult::PrecompileOOG
@@ -297,11 +311,7 @@ fn execute_rwasm_resume<CTX: ContextTr>(
 
     // make sure we have enough gas to charge from the call
     if !gas.record_denominated_cost(fuel_consumed) {
-        return Ok(InterpreterAction::Return(InterpreterResult {
-            result: InstructionResult::OutOfGas,
-            output: Bytes::default(),
-            gas,
-        }));
+        return Ok(NextAction::error(ExitCode::OutOfFuel, gas));
     }
     // accumulate refunds (can be forwarded from an interrupted call)
     gas.record_denominated_refund(fuel_refunded);
@@ -327,27 +337,23 @@ fn process_exec_result<CTX: ContextTr>(
     is_create: bool,
     is_static: bool,
     is_gas_free: bool,
-) -> Result<InterpreterAction, ContextError<<CTX::Db as Database>::Error>> {
+) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // if we have success or failed exit code
     if exit_code <= 0 {
-        return Ok(process_halt(exit_code, return_data.clone(), is_create, gas));
+        return Ok(process_halt(exit_code, return_data.clone(), gas));
     }
 
     // otherwise, exit code is a "call_id" that identifies saved context
     let call_id = exit_code as u32;
 
     // try to parse execution params, if it's not possible, then return an error
-    let Ok(syscall_params) = CompactABI::<SyscallInvocationParams>::decode(&return_data, 0) else {
-        unreachable!("revm: can't decode invocation params");
+    let Some(syscall_params) = SyscallInvocationParams::decode(&return_data) else {
+        unreachable!("can't decode invocation params");
     };
 
     // if there is no enough gas for execution, then fail fast
     if !is_gas_free && syscall_params.fuel_limit / FUEL_DENOM_RATE > gas.remaining() {
-        return Ok(InterpreterAction::Return(InterpreterResult {
-            result: InstructionResult::OutOfGas,
-            output: Bytes::default(),
-            gas,
-        }));
+        return Ok(NextAction::error(ExitCode::OutOfFuel, gas));
     }
 
     let inputs = SystemInterruptionInputs {
@@ -362,66 +368,10 @@ fn process_exec_result<CTX: ContextTr>(
     execute_rwasm_interruption::<CTX>(frame, ctx, inputs)
 }
 
-fn process_halt(
-    exit_code: i32,
-    return_data: Bytes,
-    is_create: bool,
-    gas: Gas,
-) -> InterpreterAction {
-    #[cfg(feature = "debug-print")]
-    let trace_output = |mut output: &[u8]| {
-        use core::str::from_utf8;
-        use fluentbase_sdk::hex;
-        if output.starts_with(&[0x08, 0xc3, 0x79, 0xa0]) {
-            output = &output[68..];
-        }
-        println!(
-            "output: 0x{} ({})",
-            hex::encode(&output),
-            from_utf8(output)
-                .unwrap_or("can't decode utf-8")
-                .trim_end_matches("\0")
-        );
-    };
+fn process_halt(exit_code: i32, return_data: Bytes, gas: Gas) -> NextAction {
     let exit_code = ExitCode::from(exit_code);
-    if exit_code == ExitCode::Panic {
-        #[cfg(feature = "debug-print")]
-        trace_output(return_data.as_ref());
-    }
-    let result = match exit_code {
-        ExitCode::Ok => {
-            if is_create {
-                InstructionResult::Return
-            } else if return_data.is_empty() {
-                InstructionResult::Stop
-            } else {
-                InstructionResult::Return
-            }
-        }
-        ExitCode::Panic => InstructionResult::Revert,
-        ExitCode::Err => InstructionResult::UnknownError,
-        // rwasm failure codes
-        ExitCode::RootCallOnly => InstructionResult::RootCallOnly,
-        ExitCode::MalformedBuiltinParams => InstructionResult::MalformedBuiltinParams,
-        ExitCode::CallDepthOverflow => InstructionResult::CallDepthOverflow,
-        ExitCode::NonNegativeExitCode => InstructionResult::NonNegativeExitCode,
-        ExitCode::UnknownError => InstructionResult::UnknownError,
-        ExitCode::InputOutputOutOfBounds => InstructionResult::InputOutputOutOfBounds,
-        ExitCode::PrecompileError => InstructionResult::PrecompileError,
-        ExitCode::UnreachableCodeReached => InstructionResult::UnreachableCodeReached,
-        ExitCode::MemoryOutOfBounds => InstructionResult::MemoryOutOfBounds,
-        ExitCode::TableOutOfBounds => InstructionResult::TableOutOfBounds,
-        ExitCode::IndirectCallToNull => InstructionResult::IndirectCallToNull,
-        ExitCode::IntegerDivisionByZero => InstructionResult::IntegerDivisionByZero,
-        ExitCode::IntegerOverflow => InstructionResult::IntegerOverflow,
-        ExitCode::BadConversionToInteger => InstructionResult::BadConversionToInteger,
-        ExitCode::StackOverflow => InstructionResult::StackOverflow,
-        ExitCode::BadSignature => InstructionResult::BadSignature,
-        ExitCode::OutOfFuel => InstructionResult::OutOfFuel,
-        ExitCode::UnknownExternalFunction => InstructionResult::UnknownExternalFunction,
-    };
-    InterpreterAction::Return(InterpreterResult {
-        result,
+    NextAction::Return(ExecutionResult {
+        result: instruction_result_from_exit_code(exit_code),
         output: return_data,
         gas,
     })

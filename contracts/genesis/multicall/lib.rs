@@ -8,10 +8,10 @@ use fluentbase_sdk::{
     bytes::Buf,
     codec::{bytes::BytesMut, encoder::SolidityABI},
     entrypoint,
+    syscall::SyscallResult,
     Bytes,
     ContextReader,
     SharedAPI,
-    SyscallResult,
 };
 
 /// A selector for "multicall(bytes[])" - 0xac9650d8

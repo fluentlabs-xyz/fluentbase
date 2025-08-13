@@ -5,10 +5,10 @@ use fluentbase_sdk::{
     address,
     byteorder::ByteOrder,
     bytes,
+    syscall::SYSCALL_ID_CALL,
     Address,
     SysFuncIdx,
     STATE_MAIN,
-    SYSCALL_ID_CALL,
     U256,
 };
 use fluentbase_sdk_testing::{EvmTestingContext, TxBuilder};

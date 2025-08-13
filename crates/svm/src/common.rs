@@ -9,7 +9,6 @@ use crate::{
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
 use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
-use fluentbase_types::default;
 use solana_bincode::limited_deserialize;
 use solana_instruction::error::InstructionError;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES, SVM_ADDRESS_PREFIX};
@@ -145,9 +144,9 @@ impl<SDK: SharedAPI> HasherImpl for Blake3Hasher<SDK> {
 
     fn create_hasher() -> Self {
         Blake3Hasher {
-            _phantom: default!(),
-            data: default!(),
-            hash: default!(),
+            _phantom: Default::default(),
+            data: Default::default(),
+            hash: Default::default(),
         }
     }
 

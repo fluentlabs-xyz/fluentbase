@@ -68,34 +68,62 @@ use strum_macros::{Display, FromRepr};
 /// * `OutOfFuel` - Insufficient gas/fuel for execution
 /// * `GrowthOperationLimited` - Growth operation exceeded limits
 /// * `UnresolvedFunction` - Function not found
-#[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Display, FromRepr)]
+#[derive(Default, Debug, Copy, Clone, Hash, Eq, PartialEq, Display, FromRepr)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(i32)]
 pub enum ExitCode {
-    // warning: when adding new codes doesn't forget to add them to impls below
+    /* Basic Error Codes */
+    /// Execution is finished without errors
     #[default]
     Ok = 0,
+    /// Panic is produced by a program (aka revert)
     Panic = -1,
+    /// An internal error (mapped from the errors below for nested EVM calls)
     Err = -2,
-    // fluentbase error codes
+
+    /* Fluentbase Runtime Error Codes */
+    /// Function can only be invoked as the root entry call
     RootCallOnly = -1002,
+    /// Builtin function received malformed or invalid parameters
     MalformedBuiltinParams = -1003,
+    /// Exceeded maximum allowed call stack depth
     CallDepthOverflow = -1004,
+    /// Exit code must be non-negative, but a negative value was used
     NonNegativeExitCode = -1005,
+    /// Generic catch-all error for unknown failures
     UnknownError = -1006,
+    /// I/O operation tried to read/write outside allowed buffer bounds
     InputOutputOutOfBounds = -1007,
+    /// An error happens inside a precompiled contract
     PrecompileError = -1008,
-    // trap error codes
+    /// Passed bytecode into executor is not supported
+    NotSupportedBytecode = -1009,
+    StateChangeDuringStaticCall = -1010,
+    CreateContractSizeLimit = -1011,
+    CreateContractCollision = -1012,
+
+    /* Trap Error Codes */
+    /// Execution reached a code path marked as unreachable
     UnreachableCodeReached = -2001,
+    /// Memory access outside the allocated memory range
     MemoryOutOfBounds = -2002,
+    /// Table index access outside the allocated table range
     TableOutOfBounds = -2003,
+    /// Indirect function call attempted with a null function reference
     IndirectCallToNull = -2004,
+    /// Division or remainder by zero occurred
     IntegerDivisionByZero = -2005,
+    /// Integer arithmetic operation overflowed the allowed range
     IntegerOverflow = -2006,
+    /// Invalid conversion to integer (e.g., from NaN or out-of-range value)
     BadConversionToInteger = -2007,
+    /// Stack reached its limit (overflow or underflow)
     StackOverflow = -2008,
+    /// Function signature mismatch in a call
     BadSignature = -2009,
+    /// Execution ran out of allocated fuel/gas
     OutOfFuel = -2010,
+    /// Call an undefined or unregistered external function
     UnknownExternalFunction = -2011,
 }
 
