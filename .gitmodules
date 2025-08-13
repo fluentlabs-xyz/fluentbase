@@ -1,6 +1,3 @@
 [submodule "revm"]
 	path = revm
 	url = https://github.com/fluentlabs-xyz/revm-rwasm.git
-[submodule "crates/rwasm/e2e/testsuite"]
-	path = crates/rwasm/e2e/testsuite
-	url = https://github.com/fluentlabs-xyz/testsuite-rwasm.git
