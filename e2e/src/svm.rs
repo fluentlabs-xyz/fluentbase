@@ -4,20 +4,32 @@ mod tests {
     use core::str::from_utf8;
     use curve25519_dalek::{
         constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT},
-        EdwardsPoint, RistrettoPoint,
+        EdwardsPoint,
+        RistrettoPoint,
     };
     use fluentbase_runtime::instruction::weierstrass_compress_decompress::{
-        ConfigG1Compress, ConfigG1Decompress, ConfigG2Compress, ConfigG2Decompress,
+        ConfigG1Compress,
+        ConfigG1Decompress,
+        ConfigG2Compress,
+        ConfigG2Decompress,
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{
-        address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
+        address,
+        Address,
+        ContextReader,
+        ContractContextV1,
+        SharedAPI,
+        PRECOMPILE_SVM_RUNTIME,
+        U256,
     };
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         common::{
-            evm_address_from_pubkey, evm_balance_from_lamports, lamports_from_evm_balance,
+            evm_address_from_pubkey,
+            evm_balance_from_lamports,
+            lamports_from_evm_balance,
             pubkey_from_evm_address,
         },
         fluentbase::common::BatchMessage,
@@ -34,15 +46,29 @@ mod tests {
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
-            AltBn128Compression, Blake3, CreateAccountAndModifySomeData1, CurveGroupOp,
-            CurveMultiscalarMultiplication, CurvePointValidation, Keccak256, Poseidon,
-            SetGetReturnData, Sha256, SolBigModExp, SolSecp256k1Recover, SyscallAltBn128,
-            TestCommand, EXPECTED_RET_ERR, EXPECTED_RET_OK,
+            AltBn128Compression,
+            Blake3,
+            CreateAccountAndModifySomeData1,
+            CurveGroupOp,
+            CurveMultiscalarMultiplication,
+            CurvePointValidation,
+            Keccak256,
+            Poseidon,
+            SetGetReturnData,
+            Sha256,
+            SolBigModExp,
+            SolSecp256k1Recover,
+            SyscallAltBn128,
+            TestCommand,
+            EXPECTED_RET_ERR,
+            EXPECTED_RET_OK,
         },
     };
     use fluentbase_types::{
-        default, helpers::convert_endianness_fixed, BN254_G1_POINT_COMPRESSED_SIZE,
-        BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
+        helpers::convert_endianness_fixed,
+        BN254_G1_POINT_COMPRESSED_SIZE,
+        BN254_G1_POINT_DECOMPRESSED_SIZE,
+        BN254_G2_POINT_COMPRESSED_SIZE,
         BN254_G2_POINT_DECOMPRESSED_SIZE,
     };
     use hex_literal::hex;
@@ -50,20 +76,31 @@ mod tests {
     use serde::Deserialize;
     use solana_bn254::{
         compression::prelude::{
-            alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
-            alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
-            ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS,
+            alt_bn128_g1_compress,
+            alt_bn128_g1_decompress,
+            alt_bn128_g2_compress,
+            alt_bn128_g2_decompress,
+            ALT_BN128_G1_COMPRESS,
+            ALT_BN128_G1_DECOMPRESS,
+            ALT_BN128_G2_COMPRESS,
+            ALT_BN128_G2_DECOMPRESS,
         },
         prelude::{alt_bn128_addition, ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING},
         target_arch::{alt_bn128_multiplication, alt_bn128_pairing},
     };
     use solana_curve25519::{
         edwards::{
-            add_edwards, multiply_edwards, multiscalar_multiply_edwards, subtract_edwards,
+            add_edwards,
+            multiply_edwards,
+            multiscalar_multiply_edwards,
+            subtract_edwards,
             PodEdwardsPoint,
         },
         ristretto::{
-            add_ristretto, multiply_ristretto, multiscalar_multiply_ristretto, subtract_ristretto,
+            add_ristretto,
+            multiply_ristretto,
+            multiscalar_multiply_ristretto,
+            subtract_ristretto,
             PodRistrettoPoint,
         },
         scalar::PodScalar,
@@ -322,7 +359,7 @@ mod tests {
 
         // exec
 
-        let mut test_commands: Vec<TestCommand> = default!();
+        let mut test_commands: Vec<TestCommand> = Default::default();
         let test_case = SolBigModExp::from_hex(
             "1111111111111111111111111111111111111111111111111111111111111111",
             "1111111111111111111111111111111111111111111111111111111111111111",
@@ -953,7 +990,7 @@ mod tests {
 
         // exec
 
-        let mut test_commands: Vec<TestCommand> = default!();
+        let mut test_commands: Vec<TestCommand> = Default::default();
         let test_case = CurvePointValidation {
             curve_id: solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS,
             point: ED25519_BASEPOINT_POINT.compress().as_bytes().clone(),

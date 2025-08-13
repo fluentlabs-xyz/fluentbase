@@ -76,18 +76,6 @@ wasmtime = [
     "fluentbase-runtime/wasmtime",
     "fluentbase-revm/wasmtime",
 ]
-json = [
-    "fluentbase-contracts/json",
-    "fluentbase-erc20/json",
-    "fluentbase-sdk/json",
-    "fluentbase-sdk-testing/json",
-    "fluentbase-svm/json",
-    "op-revm/json",
-    "revm/json",
-    "fluentbase-revm/json",
-    "fluentbase-genesis/json"
-]
-
 
 [[bench]]
 name = "erc20"

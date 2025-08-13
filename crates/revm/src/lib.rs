@@ -13,6 +13,7 @@ mod precompiles;
 mod result;
 mod spec;
 mod syscall;
+mod types;
 mod upgrade;
 
 pub use api::*;

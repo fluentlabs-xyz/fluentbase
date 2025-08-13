@@ -1,28 +1,49 @@
 //! Contains the `[RwasmEvm]` type and its implementation of the execution EVM traits.
 
-use crate::api::RwasmFrame;
-use crate::executor::run_rwasm_loop;
-use crate::precompiles::RwasmPrecompiles;
-use crate::upgrade::upgrade_runtime_hook;
-use fluentbase_sdk::{resolve_precompiled_runtime_from_input, Bytes};
-use fluentbase_sdk::{UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX};
-use revm::bytecode::ownable_account::OwnableAccountBytecode;
-use revm::bytecode::Bytecode;
-use revm::context::JournalTr;
-use revm::handler::evm::ContextDbError;
-use revm::interpreter::interpreter::ExtBytecode;
-use revm::interpreter::{CallInput, FrameInput};
+use crate::{
+    api::RwasmFrame,
+    executor::run_rwasm_loop,
+    precompiles::RwasmPrecompiles,
+    types::SystemInterruptionOutcome,
+    upgrade::upgrade_runtime_hook,
+};
+use fluentbase_sdk::{
+    resolve_precompiled_runtime_from_input,
+    Address,
+    Bytes,
+    UPDATE_GENESIS_AUTH,
+    UPDATE_GENESIS_PREFIX,
+};
 use revm::{
-    context::{ContextError, ContextSetters, Evm, FrameStack},
+    bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
+    context::{ContextError, ContextSetters, Evm, FrameStack, JournalTr},
     context_interface::ContextTr,
     handler::{
-        evm::FrameTr,
+        evm::{ContextDbError, FrameInitResult, FrameTr},
         instructions::{EthInstructions, InstructionProvider},
-        EvmTr, FrameInitOrResult, ItemOrResult, PrecompileProvider,
+        EvmTr,
+        FrameInitOrResult,
+        FrameResult,
+        ItemOrResult,
+        PrecompileProvider,
     },
-    inspector::{InspectorEvmTr, JournalExt},
-    interpreter::{interpreter::EthInterpreter, InterpreterResult},
-    Database, Inspector,
+    inspector::{
+        handler::{frame_end, frame_start},
+        inspect_instructions,
+        InspectorEvmTr,
+        JournalExt,
+    },
+    interpreter::{
+        interpreter::{EthInterpreter, ExtBytecode},
+        return_ok,
+        return_revert,
+        CallInput,
+        FrameInput,
+        InstructionResult,
+        InterpreterResult,
+    },
+    Database,
+    Inspector,
 };
 
 /// Rwasm EVM extends the [`Evm`] type with Rwasm specific types and logic.
@@ -111,6 +132,53 @@ where
             self.0.frame_stack.get(),
             &mut self.0.instruction,
         )
+    }
+
+    #[inline]
+    fn inspect_frame_init(
+        &mut self,
+        mut frame_init: <Self::Frame as FrameTr>::FrameInit,
+    ) -> Result<FrameInitResult<'_, Self::Frame>, ContextDbError<Self::Context>> {
+        let (ctx, inspector) = self.ctx_inspector();
+        if let Some(mut output) = frame_start(ctx, inspector, &mut frame_init.frame_input) {
+            frame_end(ctx, inspector, &frame_init.frame_input, &mut output);
+            return Ok(ItemOrResult::Result(output));
+        }
+
+        let frame_input = frame_init.frame_input.clone();
+        if let ItemOrResult::Result(mut output) = self.frame_init(frame_init)? {
+            let (ctx, inspector) = self.ctx_inspector();
+            frame_end(ctx, inspector, &frame_input, &mut output);
+            return Ok(ItemOrResult::Result(output));
+        }
+
+        // if it is new frame, initialize the interpreter.
+        let (ctx, inspector, frame) = self.ctx_inspector_frame();
+        let interp = &mut frame.interpreter;
+        inspector.initialize_interp(interp, ctx);
+        Ok(ItemOrResult::Item(frame))
+    }
+
+    #[inline]
+    fn inspect_frame_run(
+        &mut self,
+    ) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<Self::Context>> {
+        let (ctx, inspector, frame, instructions) = self.ctx_inspector_frame_instructions();
+
+        let next_action = inspect_instructions(
+            ctx,
+            &mut frame.interpreter,
+            inspector,
+            instructions.instruction_table(),
+        );
+        let mut result = frame.process_next_action(ctx, next_action);
+
+        if let Ok(ItemOrResult::Result(frame_result)) = &mut result {
+            let (ctx, inspector, frame) = self.ctx_inspector_frame();
+            frame_end(ctx, inspector, &frame.input, frame_result);
+            frame.set_finished(true);
+        };
+        result
     }
 }
 
@@ -226,7 +294,7 @@ where
     > {
         let frame = self.0.frame_stack.get();
         let context = &mut self.0.ctx;
-        let action = run_rwasm_loop(frame, context)?;
+        let action = run_rwasm_loop(frame, context)?.into_interpreter_action();
         frame.process_next_action(context, action).inspect(|i| {
             if i.is_result() {
                 frame.set_finished(true);
@@ -247,10 +315,66 @@ where
         if self.0.frame_stack.index().is_none() {
             return Ok(Some(result));
         }
-        self.0
-            .frame_stack
-            .get()
-            .return_result::<_, ContextDbError<Self::Context>>(&mut self.0.ctx, result)?;
+
+        let frame = self.0.frame_stack.get();
+        // TODO(dmitry123): "it seems we can't eliminate interpreter (revm is not ready for this yet)"
+        frame.interpreter.memory.free_child_context();
+        // P.S: we can skip frame's error check here because we don't use Host
+
+        // if call is interrupted then we need to remember the interrupted state;
+        // the execution can be continued
+        // since the state is updated already
+        Self::insert_interrupted_result(frame.interrupted_outcome.as_mut().unwrap(), result);
         Ok(None)
+    }
+}
+
+impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
+    ///
+    pub fn insert_interrupted_result(
+        interrupted_outcome: &mut SystemInterruptionOutcome,
+        result: FrameResult,
+    ) {
+        let created_address = if let FrameResult::Create(create_outcome) = &result {
+            create_outcome.address.or_else(|| {
+                // I don't know why EVM returns empty address and ok status in case of nonce
+                // overflow, I think nobody knows...
+                let is_nonce_overflow = create_outcome.result.result == InstructionResult::Return
+                    && create_outcome.address.is_none();
+                if is_nonce_overflow {
+                    Some(Address::ZERO)
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+        let mut result = result.into_interpreter_result();
+        // for the frame result we take gas from the result field
+        // because it stores information about gas consumed before the call as well
+        let mut gas = interrupted_outcome.remaining_gas;
+        match result.result {
+            return_ok!() => {
+                let remaining = result.gas.remaining();
+                gas.erase_cost(remaining);
+                let refunded = result.gas.refunded();
+                gas.record_refund(refunded);
+                // for CREATE/CREATE2 calls, we need to write the created address into output
+                if let Some(created_address) = created_address {
+                    result.output = created_address.into_array().into();
+                }
+            }
+            return_revert!() => {
+                gas.erase_cost(result.gas.remaining());
+            }
+            InstructionResult::FatalExternalError => {
+                panic!("revm: fatal external error");
+            }
+            _ => {}
+        }
+        // we can rewrite here gas since it's adjusted with the consumed value
+        result.gas = gas;
+        interrupted_outcome.result = Some(result);
     }
 }

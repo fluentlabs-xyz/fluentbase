@@ -2,16 +2,30 @@ use crate::{
     context::RuntimeContext,
     instruction::{exec::SysExecResumable, invoke_runtime_handler},
 };
-use fluentbase_codec::{bytes::BytesMut, CompactABI};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    create_import_linker, Address, BytecodeOrHash, Bytes, ExitCode, SysFuncIdx, B256, STATE_DEPLOY,
+    create_import_linker,
+    Address,
+    BytecodeOrHash,
+    Bytes,
+    ExitCode,
+    SysFuncIdx,
+    B256,
+    STATE_DEPLOY,
     STATE_MAIN,
 };
 use hashbrown::{hash_map::Entry, HashMap};
 use rwasm::{
-    ExecutionEngine, ExecutorConfig, ImportLinker, RwasmModule, Store, Strategy, TrapCode,
-    TypedCaller, TypedStore, Value,
+    ExecutionEngine,
+    ExecutorConfig,
+    ImportLinker,
+    RwasmModule,
+    Store,
+    Strategy,
+    TrapCode,
+    TypedCaller,
+    TypedStore,
+    Value,
 };
 use std::{cell::RefCell, fmt::Debug, mem::take, rc::Rc, sync::Arc};
 
@@ -306,12 +320,8 @@ impl Runtime {
         // but we don't serialize registers and stack state,
         // instead we remember it inside the internal structure
         // and assign a special identifier for recovery
-        let mut encoded_state = BytesMut::new();
-        CompactABI::encode(&sys_exec_resumable.params, &mut encoded_state, 0)
-            .expect("runtime: can't encode resumable state");
-        execution_result
-            .output
-            .extend(encoded_state.freeze().to_vec());
+        let encoded_state = sys_exec_resumable.params.encode();
+        execution_result.output.extend(encoded_state.to_vec());
         // interruption is a special exit code that indicates to the root what happened inside
         // the call
         execution_result.interrupted = true;

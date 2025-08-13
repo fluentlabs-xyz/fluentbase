@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 use fluentbase_sdk::{
     calc_create4_address,
     keccak256,
+    syscall::SyscallResult,
     Address,
     Bytes,
     ExitCode,
@@ -9,7 +10,6 @@ use fluentbase_sdk::{
     IsAccountOwnable,
     IsColdAccess,
     MetadataAPI,
-    SyscallResult,
     PRECOMPILE_SVM_RUNTIME,
     U256,
 };

@@ -11,7 +11,7 @@ use crate::{
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
 use fluentbase_sdk::{debug_log_ext, MetadataAPI, SharedAPI, U256};
-use fluentbase_types::{default, ExitCode, SyscallResult};
+use fluentbase_types::{syscall::SyscallResult, ExitCode};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -115,7 +115,7 @@ pub struct GlobalBalance<SDK: SharedAPI> {
 impl<SDK: SharedAPI> GlobalBalance<SDK> {
     pub fn new() -> Self {
         Self {
-            _phantom_data: default!(),
+            _phantom_data: Default::default(),
         }
     }
 

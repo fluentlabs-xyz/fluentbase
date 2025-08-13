@@ -15,13 +15,12 @@ mod exit_code;
 pub mod genesis;
 pub mod hashes;
 pub mod helpers;
-pub mod macroses;
 pub mod native_api;
 mod preimage;
 mod rwasm;
 mod sdk;
 mod sys_func_idx;
-mod syscall;
+pub mod syscall;
 
 pub use address::*;
 pub use alloy_primitives::*;
@@ -36,7 +35,6 @@ pub use preimage::*;
 pub use rwasm::*;
 pub use sdk::*;
 pub use sys_func_idx::SysFuncIdx;
-pub use syscall::*;
 
 pub const KECCAK_EMPTY: B256 =
     b256!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
@@ -74,26 +72,26 @@ pub fn is_delegated_runtime_address(address: &Address) -> bool {
         || address == &PRECOMPILE_WASM_RUNTIME
 }
 
-/// rWASM max code size
+/// WASM max code size
 ///
 /// This value is temporary for testing purposes, requires recalculation.
 /// The limit is equal to 2Mb.
-pub const WASM_MAX_CODE_SIZE: usize = 0x200000;
-pub const SVM_MAX_CODE_SIZE: usize = 0x200000;
+pub const WASM_MAX_CODE_SIZE: usize = primitives::wasm::WASM_MAX_CODE_SIZE;
+pub const SVM_MAX_CODE_SIZE: usize = primitives::wasm::SVM_MAX_CODE_SIZE;
 
 /// WebAssembly magic bytes
 ///
 /// These values are equal to \0ASM
-pub const WASM_MAGIC_BYTES: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
+pub const WASM_MAGIC_BYTES: [u8; 4] = primitives::wasm::WASM_MAGIC_BYTES;
 /// Solana magic bytes
-pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
+pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = primitives::wasm::SVM_ELF_MAGIC_BYTES;
 /// ERC20 magic bytes: as char codes for "ERC" and the number 0x20
-pub const ERC20_MAGIC_BYTES: [u8; 4] = [0x45, 0x52, 0x43, 0x20];
+pub const ERC20_MAGIC_BYTES: [u8; 4] = primitives::wasm::ERC20_MAGIC_BYTES;
 
 /// EIP-170: Contract code size limit
 ///
 /// By default, the limit is `0x6000` (~25kb)
-pub const EVM_MAX_CODE_SIZE: usize = 0x6000;
+pub const EVM_MAX_CODE_SIZE: usize = primitives::eip170::MAX_CODE_SIZE;
 
 /// EIP-3860: Limit and meter initcode
 ///

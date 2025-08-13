@@ -12,7 +12,7 @@ repository.workspace = true
 version.workspace = true
 
 [dependencies]
-alloy-sol-macro-input = { version = "1.1.0", default-features = false }
+alloy-sol-macro-input = { version = "1.1.0", default-features = false, features = ["json"] }
 anyhow.workspace = true
 convert_case = "0.8.0"
 crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
@@ -36,4 +36,3 @@ prettyplease = "0.2.32"
 
 [features]
 default = []
-json = ["alloy-sol-macro-input/json"]

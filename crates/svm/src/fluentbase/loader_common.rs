@@ -1,10 +1,10 @@
 use fluentbase_sdk::{
     calc_create4_address,
     keccak256,
+    syscall::SyscallResult,
     Address,
     Bytes,
     MetadataAPI,
-    SyscallResult,
     PRECOMPILE_SVM_RUNTIME,
     SVM_EXECUTABLE_PREIMAGE,
     U256,

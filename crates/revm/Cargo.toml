@@ -83,7 +83,3 @@ bn = ["revm/bn"]
 # fluentbase
 debug-print = ["fluentbase-runtime/debug-print"]
 wasmtime = ["fluentbase-runtime/wasmtime"]
-json = [
-    "fluentbase-sdk/json",
-    "revm/json"
-]

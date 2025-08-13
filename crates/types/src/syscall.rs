@@ -1,8 +1,7 @@
 use crate::{Bytes, ExitCode, B256};
 use alloc::string::String;
-use fluentbase_codec::Codec;
 
-#[derive(Codec, Clone, Default, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SyscallInvocationParams {
     pub code_hash: B256,

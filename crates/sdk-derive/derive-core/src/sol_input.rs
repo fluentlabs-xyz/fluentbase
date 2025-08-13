@@ -95,7 +95,6 @@ fn convert_sol_to_rust(
                 "Expected Solidity interface or contract, not type",
             ));
         }
-        #[cfg(feature = "json")]
         SolInputKind::Json(_, _) => {
             return Err(syn::Error::new(
                 Span::call_site(),

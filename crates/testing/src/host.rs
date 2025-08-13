@@ -1,9 +1,9 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, default, native_api::NativeAPI, Address, Bytes,
+    bytes::Buf, calc_create4_address, native_api::NativeAPI, Address, Bytes,
     ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess,
-    MetadataAPI, MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult,
+    MetadataAPI, MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, syscall::SyscallResult,
     B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
@@ -97,10 +97,10 @@ impl Default for HostTestingContext {
             inner: Rc::new(RefCell::new(TestingContextInner {
                 shared_context_input_v1: SharedContextInputV1::default(),
                 native_sdk: RuntimeContextWrapper::new(RuntimeContext::root(0)),
-                persistent_storage: default!(),
-                metadata: default!(),
-                metadata_storage: default!(),
-                transient_storage: default!(),
+                persistent_storage: Default::default(),
+                metadata: Default::default(),
+                metadata_storage: Default::default(),
+                transient_storage: Default::default(),
                 logs: vec![],
                 ownable_account_address: None,
             })),

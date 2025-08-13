@@ -130,8 +130,8 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Sync ethereum tests
-        working-directory: revm/e2e
+        working-directory: evm-e2e
         run: make sync_tests
       - name: Run ethereum tests
-        working-directory: revm/e2e
+        working-directory: evm-e2e
         run: make run_general_state_tests

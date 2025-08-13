@@ -253,7 +253,7 @@ impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
             }
         }
         let result = self.sdk.call(contract_address, value, &input, Some(gas_limit));
-        if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
+        if !fluentbase_sdk::syscall::SyscallResult::is_ok(result.status) {
             ::core::panic!("Contract call failed");
         }
         FirstMethodReturn::decode(&result.data).expect("failed to decode result").0.0
@@ -278,7 +278,7 @@ impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
             }
         }
         let result = self.sdk.call(contract_address, value, &input, Some(gas_limit));
-        if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
+        if !fluentbase_sdk::syscall::SyscallResult::is_ok(result.status) {
             ::core::panic!("Contract call failed");
         }
         SecondMethodReturn::decode(&result.data).expect("failed to decode result").0

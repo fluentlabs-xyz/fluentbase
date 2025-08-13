@@ -11,11 +11,11 @@ use crate::{
 };
 use core::{cmp::min, ops::Range};
 use fluentbase_sdk::{
+    syscall::SyscallResult,
     Address,
     Bytes,
     ExitCode,
     SharedAPI,
-    SyscallResult,
     B256,
     FUEL_DENOM_RATE,
     U256,

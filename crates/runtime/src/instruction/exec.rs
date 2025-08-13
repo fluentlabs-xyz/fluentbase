@@ -1,10 +1,10 @@
 use crate::{Runtime, RuntimeContext};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
+    syscall::SyscallInvocationParams,
     BytecodeOrHash,
     Bytes,
     ExitCode,
-    SyscallInvocationParams,
     B256,
     CALL_STACK_LIMIT,
 };
