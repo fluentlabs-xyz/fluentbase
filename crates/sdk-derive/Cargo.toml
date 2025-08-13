@@ -16,7 +16,7 @@ proc-macro-error = { version = "1", default-features = false }
 quote = "1.0"
 fluentbase-sdk-derive-core = { path = "./derive-core", default-features = false }
 syn = { workspace = true, features = ["full", "visit"] }
-alloy-sol-macro-input = "1.1.0"
+alloy-sol-macro-input = { version = "1.1.0", default-features = false, features = ["json"] }
 
 [dev-dependencies]
 trybuild = "1.0.104"
@@ -27,7 +27,3 @@ proc-macro = true
 
 [features]
 default = []
-json = [
-	"fluentbase-sdk-derive-core/json",
-	"fluentbase-sdk/json"
-]

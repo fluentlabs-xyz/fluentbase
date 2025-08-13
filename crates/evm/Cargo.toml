@@ -22,7 +22,3 @@ default = ["std"]
 std = [
     "fluentbase-sdk/std",
 ]
-json = [
-	"fluentbase-sdk/json",
-	"fluentbase-sdk-testing/json"
-]

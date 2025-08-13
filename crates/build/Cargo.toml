@@ -36,4 +36,3 @@ std = [
     "fluentbase-types/std",
     "rwasm/std",
 ]
-json = ["fluentbase-sdk-derive-core/json"]

@@ -36,8 +36,3 @@ debug-print = [
     "revm/debug-print",
     "fluentbase-revm/debug-print",
 ]
-json = [
-    "fluentbase-sdk/json",
-    "revm/json",
-    "fluentbase-revm/json"
-]

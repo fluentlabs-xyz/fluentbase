@@ -79,7 +79,3 @@ std = [
 debug-print = []
 do-not-validate-elf-on-deploy = []
 use-extended-debug-log = []
-json = [
-    "fluentbase-sdk/json",
-    "fluentbase-sdk-testing/json"
-]

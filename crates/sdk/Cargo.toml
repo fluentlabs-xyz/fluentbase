@@ -29,4 +29,3 @@ std = [
 ]
 debug-print = []
 fast-panic = []
-json = ["fluentbase-sdk-derive/json"]

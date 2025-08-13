@@ -480,7 +480,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
             // destroy an account
             let target = Address::from_slice(&inputs.syscall_params.input[0..20]);
-            let result = journal.selfdestruct(current_target_address, target)?;
+            let mut result = journal.selfdestruct(current_target_address, target)?;
+            // system precompiles are always empty...
+            if result.data.target_exists && is_system_precompile(&target) {
+                result.data.target_exists = false;
+            }
             #[cfg(feature = "debug-print")]
             println!("SYSCALL_DESTROY_ACCOUNT: target={target} result={result:?}",);
             // charge gas cost

@@ -107,7 +107,7 @@ rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", rev = "9923a95b", def
 # alloy
 alloy-primitives = { version = "1.2.0", default-features = false, features = ["sha3-keccak"] }
 alloy-rlp = { version = "0.3.12", default-features = false }
-alloy-sol-types = { version = "1.2.0", default-features = false }
+alloy-sol-types = { version = "1.2.0", default-features = false, features = ["json"] }
 alloy-consensus = { version = "1.0.12", default-features = false }
 alloy-eips = { version = "1.0.12", default-features = false }
 alloy-genesis = { version = "1.0.11", default-features = false }
