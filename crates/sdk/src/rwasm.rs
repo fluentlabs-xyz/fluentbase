@@ -1,59 +1,21 @@
 pub use crate::{
     bindings::{
-        _big_mod_exp,
-        _blake3,
-        _bn254_add,
-        _bn254_double,
-        _bn254_fp2_mul,
-        _bn254_fp_mul,
-        _bn254_g1_compress,
-        _bn254_g1_decompress,
-        _bn254_g2_compress,
-        _bn254_g2_decompress,
-        _bn254_mul,
-        _bn254_multi_pairing,
-        _charge_fuel,
-        _charge_fuel_manually,
-        _debug_log,
-        _ed25519_edwards_add,
-        _ed25519_edwards_decompress_validate,
-        _ed25519_edwards_mul,
-        _ed25519_edwards_multiscalar_mul,
-        _ed25519_edwards_sub,
-        _ed25519_ristretto_add,
-        _ed25519_ristretto_decompress_validate,
-        _ed25519_ristretto_mul,
-        _ed25519_ristretto_multiscalar_mul,
-        _ed25519_ristretto_sub,
-        _exec,
-        _exit,
-        _forward_output,
-        _fuel,
-        _input_size,
-        _keccak256,
-        _output_size,
-        _poseidon,
-        _preimage_copy,
-        _preimage_size,
-        _read,
-        _read_output,
-        _resume,
-        _secp256k1_recover,
-        _sha256,
-        _state,
-        _write,
+        _big_mod_exp, _blake3, _bn254_add, _bn254_double, _bn254_fp2_mul, _bn254_fp_mul,
+        _bn254_g1_compress, _bn254_g1_decompress, _bn254_g2_compress, _bn254_g2_decompress,
+        _bn254_mul, _bn254_multi_pairing, _charge_fuel, _charge_fuel_manually, _debug_log,
+        _ed25519_edwards_add, _ed25519_edwards_decompress_validate, _ed25519_edwards_mul,
+        _ed25519_edwards_multiscalar_mul, _ed25519_edwards_sub, _ed25519_ristretto_add,
+        _ed25519_ristretto_decompress_validate, _ed25519_ristretto_mul,
+        _ed25519_ristretto_multiscalar_mul, _ed25519_ristretto_sub, _exec, _exit, _forward_output,
+        _fuel, _input_size, _keccak256, _output_size, _poseidon, _preimage_copy, _preimage_size,
+        _read, _read_output, _resume, _secp256k1_recover, _sha256, _state, _write,
     },
     B256,
 };
 use fluentbase_types::{
-    bn254_add_common_impl,
-    native_api::NativeAPI,
-    BytecodeOrHash,
-    ExitCode,
-    BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE,
+    bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, ExitCode,
+    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 
 #[derive(Default)]
@@ -133,23 +95,26 @@ impl NativeAPI for RwasmContext {
         }
     }
     #[inline(always)]
-    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
         unsafe { _ed25519_edwards_decompress_validate(p.as_ptr()) == 0 }
     }
     #[inline(always)]
-    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         unsafe { _ed25519_edwards_add(p.as_mut_ptr(), q.as_ptr()) == 0 }
     }
     #[inline(always)]
-    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         unsafe { _ed25519_edwards_sub(p.as_mut_ptr(), q.as_ptr()) == 0 }
     }
     #[inline(always)]
-    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         unsafe { _ed25519_edwards_mul(p.as_mut_ptr(), q.as_ptr()) == 0 }
     }
     #[inline(always)]
-    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool {
+    fn curve25519_edwards_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
         unsafe {
             _ed25519_edwards_multiscalar_mul(
                 pairs.as_ptr() as *const u8,
@@ -159,23 +124,23 @@ impl NativeAPI for RwasmContext {
         }
     }
     #[inline(always)]
-    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
         unsafe { _ed25519_ristretto_decompress_validate(p.as_ptr()) == 0 }
     }
     #[inline(always)]
-    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         unsafe { _ed25519_ristretto_add(p.as_mut_ptr(), q.as_ptr()) == 0 }
     }
     #[inline(always)]
-    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         unsafe { _ed25519_ristretto_sub(p.as_mut_ptr(), q.as_ptr()) == 0 }
     }
     #[inline(always)]
-    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         unsafe { _ed25519_ristretto_mul(p.as_mut_ptr(), q.as_ptr()) == 0 }
     }
     #[inline(always)]
-    fn ed25519_ristretto_multiscalar_mul(
+    fn curve25519_ristretto_multiscalar_mul(
         pairs: &[([u8; 32], [u8; 32])],
         out: &mut [u8; 32],
     ) -> bool {

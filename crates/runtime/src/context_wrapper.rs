@@ -87,23 +87,26 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
     }
 
-    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
         SyscallCurve25519EdwardsDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
     }
 
-    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         SyscallCurve25519EdwardsAdd::fn_impl(p, q).is_ok()
     }
 
-    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         SyscallCurve25519EdwardsSub::fn_impl(p, q).is_ok()
     }
 
-    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         SyscallCurve25519EdwardsMul::fn_impl(p, q).is_ok()
     }
 
-    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool {
+    fn curve25519_edwards_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
         let result = SyscallCurve25519EdwardsMultiscalarMul::fn_impl(pairs);
         match result {
             Ok(v) => {
@@ -114,22 +117,22 @@ impl NativeAPI for RuntimeContextWrapper {
         true
     }
 
-    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
         SyscallCurve25519RistrettoDecompressValidate::fn_impl(p).map_or_else(|_| false, |_| true)
     }
 
-    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         SyscallCurve25519RistrettoAdd::fn_impl(p, q).is_ok()
     }
 
-    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         SyscallCurve25519RistrettoSub::fn_impl(p, q).is_ok()
     }
 
-    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
         SyscallCurve25519RistrettoMul::fn_impl(p, q).is_ok()
     }
-    fn ed25519_ristretto_multiscalar_mul(
+    fn curve25519_ristretto_multiscalar_mul(
         pairs: &[([u8; 32], [u8; 32])],
         out: &mut [u8; 32],
     ) -> bool {

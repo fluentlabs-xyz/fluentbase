@@ -2,53 +2,15 @@ use crate::{
     api::RwasmFrame,
     instruction_result_from_exit_code,
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
-    ExecutionResult,
-    NextAction,
+    ExecutionResult, NextAction,
 };
 use core::cmp::min;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address,
-    is_system_precompile,
-    keccak256,
-    syscall::{
-        SYSCALL_ID_BALANCE,
-        SYSCALL_ID_BLOCK_HASH,
-        SYSCALL_ID_CALL,
-        SYSCALL_ID_CALL_CODE,
-        SYSCALL_ID_CODE_COPY,
-        SYSCALL_ID_CODE_HASH,
-        SYSCALL_ID_CODE_SIZE,
-        SYSCALL_ID_CREATE,
-        SYSCALL_ID_CREATE2,
-        SYSCALL_ID_DELEGATE_CALL,
-        SYSCALL_ID_DESTROY_ACCOUNT,
-        SYSCALL_ID_EMIT_LOG,
-        SYSCALL_ID_METADATA_COPY,
-        SYSCALL_ID_METADATA_CREATE,
-        SYSCALL_ID_METADATA_SIZE,
-        SYSCALL_ID_METADATA_WRITE,
-        SYSCALL_ID_SELF_BALANCE,
-        SYSCALL_ID_STATIC_CALL,
-        SYSCALL_ID_STORAGE_READ,
-        SYSCALL_ID_STORAGE_WRITE,
-        SYSCALL_ID_TRANSIENT_READ,
-        SYSCALL_ID_TRANSIENT_WRITE,
-    },
-    Address,
-    Bytes,
-    ExitCode,
-    Log,
-    LogData,
-    B256,
-    FUEL_DENOM_RATE,
-    STATE_MAIN,
-    SVM_ELF_MAGIC_BYTES,
-    SVM_MAX_CODE_SIZE,
-    U256,
-    WASM_MAGIC_BYTES,
-    WASM_MAX_CODE_SIZE,
+    calc_create4_address, is_system_precompile, keccak256, Address, Bytes, ExitCode, Log, LogData,
+    B256, FUEL_DENOM_RATE, STATE_MAIN, SVM_ELF_MAGIC_BYTES, SVM_MAX_CODE_SIZE, U256,
+    WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
 };
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
@@ -57,14 +19,7 @@ use revm::{
         gas,
         gas::{sload_cost, sstore_cost, sstore_refund, warm_cold_cost},
         interpreter_types::InputsTr,
-        CallInput,
-        CallInputs,
-        CallScheme,
-        CallValue,
-        CreateInputs,
-        FrameInput,
-        Gas,
-        Host,
+        CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, Gas, Host,
         MAX_INITCODE_SIZE,
     },
     primitives::hardfork::{SpecId, BERLIN, ISTANBUL, TANGERINE},
@@ -128,6 +83,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
         }};
     }
 
+    use fluentbase_sdk::syscall::*;
     match inputs.syscall_params.code_hash {
         SYSCALL_ID_STORAGE_READ => {
             assert_return!(
@@ -791,6 +747,58 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 }
                 _ => unreachable!(),
             }
+        }
+
+        SYSCALL_ID_METADATA_STORAGE_READ => {
+            // input: slot
+            let Some(account_owner_address) = account_owner_address else {
+                return_result!(MalformedBuiltinParams);
+            };
+            const INPUT_LEN: usize = U256::BYTES;
+            let syscall_params = &inputs.syscall_params;
+            assert_return!(
+                syscall_params.input.len() == INPUT_LEN && syscall_params.state == STATE_MAIN,
+                MalformedBuiltinParams
+            );
+
+            let Ok(slot): Result<[u8; U256::BYTES], _> =
+                syscall_params.input.as_ref()[..U256::BYTES].try_into()
+            else {
+                return_result!(MalformedBuiltinParams)
+            };
+            let slot_u256 = U256::from_le_bytes(slot);
+            let value = journal.sload(account_owner_address, slot_u256)?;
+            let output: [u8; U256::BYTES] = value.to_le_bytes();
+            return_result!(output, Ok);
+        }
+
+        SYSCALL_ID_METADATA_STORAGE_WRITE => {
+            let Some(account_owner_address) = account_owner_address else {
+                return_result!(MalformedBuiltinParams);
+            };
+            // input: slot + value
+            const INPUT_LEN: usize = size_of::<[u8; U256::BYTES]>() + U256::BYTES;
+            let syscall_params = &inputs.syscall_params;
+            assert_return!(
+                syscall_params.input.len() == INPUT_LEN && syscall_params.state == STATE_MAIN,
+                MalformedBuiltinParams
+            );
+
+            let Ok(slot): Result<[u8; U256::BYTES], _> =
+                syscall_params.input.as_ref()[..U256::BYTES].try_into()
+            else {
+                return_result!(MalformedBuiltinParams)
+            };
+            let Ok(value): Result<[u8; U256::BYTES], _> =
+                syscall_params.input.as_ref()[U256::BYTES..].try_into()
+            else {
+                return_result!(MalformedBuiltinParams)
+            };
+            let slot_u256 = U256::from_le_bytes(slot);
+            let value_u256 = U256::from_le_bytes(value);
+            journal.sstore(account_owner_address, slot_u256, value_u256)?;
+
+            return_result!(Bytes::default(), Ok);
         }
 
         SYSCALL_ID_TRANSIENT_READ => {

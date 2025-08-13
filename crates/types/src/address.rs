@@ -72,46 +72,46 @@ mod tests {
             todo!()
         }
 
-        fn ed25519_edwards_decompress_validate(_p: &[u8; 32]) -> bool {
+        fn curve25519_edwards_decompress_validate(_p: &[u8; 32]) -> bool {
             todo!()
         }
 
-        fn ed25519_edwards_add(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        fn curve25519_edwards_add(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
             todo!()
         }
 
-        fn ed25519_edwards_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        fn curve25519_edwards_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
             todo!()
         }
 
-        fn ed25519_edwards_mul(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        fn curve25519_edwards_mul(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
             todo!()
         }
 
-        fn ed25519_edwards_multiscalar_mul(
+        fn curve25519_edwards_multiscalar_mul(
             _pairs: &[([u8; 32], [u8; 32])],
             _out: &mut [u8; 32],
         ) -> bool {
             todo!()
         }
 
-        fn ed25519_ristretto_decompress_validate(_p: &[u8; 32]) -> bool {
+        fn curve25519_ristretto_decompress_validate(_p: &[u8; 32]) -> bool {
             todo!()
         }
 
-        fn ed25519_ristretto_add(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        fn curve25519_ristretto_add(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
             todo!()
         }
 
-        fn ed25519_ristretto_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        fn curve25519_ristretto_sub(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
             todo!()
         }
 
-        fn ed25519_ristretto_mul(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
+        fn curve25519_ristretto_mul(_p: &mut [u8; 32], _q: &[u8; 32]) -> bool {
             todo!()
         }
 
-        fn ed25519_ristretto_multiscalar_mul(
+        fn curve25519_ristretto_multiscalar_mul(
             _pairs: &[([u8; 32], [u8; 32])],
             _out: &mut [u8; 32],
         ) -> bool {

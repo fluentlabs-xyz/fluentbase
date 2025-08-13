@@ -1,29 +1,11 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_sdk::{
-    bytes::Buf,
-    calc_create4_address,
-    native_api::NativeAPI,
-    syscall::SyscallResult,
-    Address,
-    Bytes,
-    ContextReader,
-    ContractContextV1,
-    ExitCode,
-    IsAccountEmpty,
-    IsAccountOwnable,
-    IsColdAccess,
-    MetadataAPI,
-    SharedAPI,
-    SharedContextInputV1,
-    StorageAPI,
-    B256,
-    BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE,
-    FUEL_DENOM_RATE,
-    U256,
+    bytes::Buf, calc_create4_address, native_api::NativeAPI, Address, Bytes,
+    ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess,
+    MetadataAPI, MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, syscall::SyscallResult,
+    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
 use std::rc::Rc;
@@ -103,6 +85,7 @@ struct TestingContextInner {
     native_sdk: RuntimeContextWrapper,
     persistent_storage: HashMap<(Address, U256), U256>,
     metadata: HashMap<(Address, Address), Vec<u8>>,
+    metadata_storage: HashMap<U256, U256>,
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     ownable_account_address: Option<Address>,
@@ -116,6 +99,7 @@ impl Default for HostTestingContext {
                 native_sdk: RuntimeContextWrapper::new(RuntimeContext::root(0)),
                 persistent_storage: Default::default(),
                 metadata: Default::default(),
+                metadata_storage: Default::default(),
                 transient_storage: Default::default(),
                 logs: vec![],
                 ownable_account_address: None,
@@ -221,6 +205,24 @@ impl MetadataAPI for HostTestingContext {
     }
 }
 
+impl MetadataStorageAPI for HostTestingContext {
+    fn metadata_storage_write(&self, slot: &U256, value: U256) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        ctx.metadata_storage.insert(*slot, value);
+        SyscallResult::new((), 0, 0, ExitCode::Ok)
+    }
+
+    fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256> {
+        let ctx = self.inner.borrow();
+        let current_balance = ctx
+            .metadata_storage
+            .get(slot)
+            .unwrap_or(&U256::ZERO)
+            .clone();
+        SyscallResult::new(current_balance, 0, 0, ExitCode::Ok)
+    }
+}
+
 impl SharedAPI for HostTestingContext {
     fn context(&self) -> impl ContextReader {
         self.inner.borrow().shared_context_input_v1.clone()
@@ -245,38 +247,41 @@ impl SharedAPI for HostTestingContext {
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         RuntimeContextWrapper::secp256k1_recover(digest, sig, rec_id)
     }
-    fn ed25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_edwards_decompress_validate(p)
+    fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_edwards_decompress_validate(p)
     }
-    fn ed25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_edwards_add(p, q)
+    fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_edwards_add(p, q)
     }
-    fn ed25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_edwards_sub(p, q)
+    fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_edwards_sub(p, q)
     }
-    fn ed25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_edwards_mul(p, q)
+    fn curve25519_edwards_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_edwards_mul(p, q)
     }
-    fn ed25519_edwards_multiscalar_mul(pairs: &[([u8; 32], [u8; 32])], out: &mut [u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_edwards_multiscalar_mul(pairs, out)
-    }
-    fn ed25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_ristretto_decompress_validate(p)
-    }
-    fn ed25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_ristretto_add(p, q)
-    }
-    fn ed25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_ristretto_sub(p, q)
-    }
-    fn ed25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
-        RuntimeContextWrapper::ed25519_ristretto_mul(p, q)
-    }
-    fn ed25519_ristretto_multiscalar_mul(
+    fn curve25519_edwards_multiscalar_mul(
         pairs: &[([u8; 32], [u8; 32])],
         out: &mut [u8; 32],
     ) -> bool {
-        RuntimeContextWrapper::ed25519_ristretto_multiscalar_mul(pairs, out)
+        RuntimeContextWrapper::curve25519_edwards_multiscalar_mul(pairs, out)
+    }
+    fn curve25519_ristretto_decompress_validate(p: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_ristretto_decompress_validate(p)
+    }
+    fn curve25519_ristretto_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_ristretto_add(p, q)
+    }
+    fn curve25519_ristretto_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_ristretto_sub(p, q)
+    }
+    fn curve25519_ristretto_mul(p: &mut [u8; 32], q: &[u8; 32]) -> bool {
+        RuntimeContextWrapper::curve25519_ristretto_mul(p, q)
+    }
+    fn curve25519_ristretto_multiscalar_mul(
+        pairs: &[([u8; 32], [u8; 32])],
+        out: &mut [u8; 32],
+    ) -> bool {
+        RuntimeContextWrapper::curve25519_ristretto_multiscalar_mul(pairs, out)
     }
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
         RuntimeContextWrapper::bn254_add(p, q);

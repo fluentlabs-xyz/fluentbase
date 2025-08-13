@@ -1,9 +1,8 @@
+use crate::fluentbase::common::GlobalBalance;
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     common::{
-        evm_address_from_pubkey,
-        evm_balance_from_lamports,
-        lamports_from_evm_balance,
+        evm_address_from_pubkey, evm_balance_from_lamports, lamports_from_evm_balance,
         pubkey_from_evm_address,
     },
     fluentbase::{
@@ -25,7 +24,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 pub use deploy_entry_simplified as deploy_entry;
-use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI};
+use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI, U256};
 use hashbrown::HashMap;
 use solana_clock::Epoch;
 use solana_pubkey::Pubkey;
