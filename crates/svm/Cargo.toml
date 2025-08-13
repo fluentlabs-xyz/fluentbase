@@ -70,13 +70,16 @@ array-bytes = { workspace = true, default-features = false, features = [] }
 [features]
 default = [
     "std",
+    #    "debug-print",
 ]
 std = [
     "fluentbase-sdk/std",
     "itertools/use_std",
     "solana_rbpf/std",
 ]
-debug-print = []
+debug-print = [
+    "fluentbase-sdk/debug-print",
+]
 do-not-validate-elf-on-deploy = []
 use-extended-debug-log = []
 json = [
