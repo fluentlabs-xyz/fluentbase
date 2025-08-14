@@ -1,0 +1,617 @@
+---
+source: crates/build/tests/abi_generation.rs
+expression: abi
+---
+[
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "address",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "string",
+                "name": "name",
+                "type": "string"
+              },
+              {
+                "internalType": "uint256",
+                "name": "level",
+                "type": "uint256"
+              },
+              {
+                "internalType": "bool",
+                "name": "verified",
+                "type": "bool"
+              }
+            ],
+            "internalType": "struct UserProfile",
+            "name": "profile",
+            "type": "tuple"
+          },
+          {
+            "internalType": "uint256",
+            "name": "balance",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct User",
+        "name": "user",
+        "type": "tuple"
+      }
+    ],
+    "name": "createUser",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "_0",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "id",
+            "type": "uint256"
+          },
+          {
+            "components": [
+              {
+                "internalType": "address",
+                "name": "address",
+                "type": "address"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "string",
+                    "name": "name",
+                    "type": "string"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "level",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "bool",
+                    "name": "verified",
+                    "type": "bool"
+                  }
+                ],
+                "internalType": "struct UserProfile",
+                "name": "profile",
+                "type": "tuple"
+              },
+              {
+                "internalType": "uint256",
+                "name": "balance",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct User",
+            "name": "buyer",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "address",
+                "name": "address",
+                "type": "address"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "string",
+                    "name": "name",
+                    "type": "string"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "level",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "bool",
+                    "name": "verified",
+                    "type": "bool"
+                  }
+                ],
+                "internalType": "struct UserProfile",
+                "name": "profile",
+                "type": "tuple"
+              },
+              {
+                "internalType": "uint256",
+                "name": "balance",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct User",
+            "name": "seller",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "address",
+                "name": "token",
+                "type": "address"
+              },
+              {
+                "internalType": "uint256",
+                "name": "deadline",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct Payment",
+            "name": "payment",
+            "type": "tuple"
+          },
+          {
+            "internalType": "uint8",
+            "name": "status",
+            "type": "uint8"
+          }
+        ],
+        "internalType": "struct Order",
+        "name": "order",
+        "type": "tuple"
+      }
+    ],
+    "name": "submitOrder",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "_0",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "batch_id",
+            "type": "uint256"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "id",
+                "type": "uint256"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "address",
+                    "name": "address",
+                    "type": "address"
+                  },
+                  {
+                    "components": [
+                      {
+                        "internalType": "string",
+                        "name": "name",
+                        "type": "string"
+                      },
+                      {
+                        "internalType": "uint256",
+                        "name": "level",
+                        "type": "uint256"
+                      },
+                      {
+                        "internalType": "bool",
+                        "name": "verified",
+                        "type": "bool"
+                      }
+                    ],
+                    "internalType": "struct UserProfile",
+                    "name": "profile",
+                    "type": "tuple"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "balance",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct User",
+                "name": "buyer",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "address",
+                    "name": "address",
+                    "type": "address"
+                  },
+                  {
+                    "components": [
+                      {
+                        "internalType": "string",
+                        "name": "name",
+                        "type": "string"
+                      },
+                      {
+                        "internalType": "uint256",
+                        "name": "level",
+                        "type": "uint256"
+                      },
+                      {
+                        "internalType": "bool",
+                        "name": "verified",
+                        "type": "bool"
+                      }
+                    ],
+                    "internalType": "struct UserProfile",
+                    "name": "profile",
+                    "type": "tuple"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "balance",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct User",
+                "name": "seller",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "uint256",
+                    "name": "amount",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "address",
+                    "name": "token",
+                    "type": "address"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "deadline",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct Payment",
+                "name": "payment",
+                "type": "tuple"
+              },
+              {
+                "internalType": "uint8",
+                "name": "status",
+                "type": "uint8"
+              }
+            ],
+            "internalType": "struct Order",
+            "name": "primary_order",
+            "type": "tuple"
+          },
+          {
+            "internalType": "uint256",
+            "name": "total_value",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct OrderBatch",
+        "name": "batch",
+        "type": "tuple"
+      }
+    ],
+    "name": "processBatch",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "_0",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "addr",
+        "type": "address"
+      }
+    ],
+    "name": "getUser",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "address",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "string",
+                "name": "name",
+                "type": "string"
+              },
+              {
+                "internalType": "uint256",
+                "name": "level",
+                "type": "uint256"
+              },
+              {
+                "internalType": "bool",
+                "name": "verified",
+                "type": "bool"
+              }
+            ],
+            "internalType": "struct UserProfile",
+            "name": "profile",
+            "type": "tuple"
+          },
+          {
+            "internalType": "uint256",
+            "name": "balance",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct User",
+        "name": "_0",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "address",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "string",
+                "name": "name",
+                "type": "string"
+              },
+              {
+                "internalType": "uint256",
+                "name": "level",
+                "type": "uint256"
+              },
+              {
+                "internalType": "bool",
+                "name": "verified",
+                "type": "bool"
+              }
+            ],
+            "internalType": "struct UserProfile",
+            "name": "profile",
+            "type": "tuple"
+          },
+          {
+            "internalType": "uint256",
+            "name": "balance",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct User",
+        "name": "buyer",
+        "type": "tuple"
+      },
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "address",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "string",
+                "name": "name",
+                "type": "string"
+              },
+              {
+                "internalType": "uint256",
+                "name": "level",
+                "type": "uint256"
+              },
+              {
+                "internalType": "bool",
+                "name": "verified",
+                "type": "bool"
+              }
+            ],
+            "internalType": "struct UserProfile",
+            "name": "profile",
+            "type": "tuple"
+          },
+          {
+            "internalType": "uint256",
+            "name": "balance",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct User",
+        "name": "seller",
+        "type": "tuple"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "deadline",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct Payment",
+        "name": "payment",
+        "type": "tuple"
+      }
+    ],
+    "name": "matchOrder",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "id",
+            "type": "uint256"
+          },
+          {
+            "components": [
+              {
+                "internalType": "address",
+                "name": "address",
+                "type": "address"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "string",
+                    "name": "name",
+                    "type": "string"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "level",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "bool",
+                    "name": "verified",
+                    "type": "bool"
+                  }
+                ],
+                "internalType": "struct UserProfile",
+                "name": "profile",
+                "type": "tuple"
+              },
+              {
+                "internalType": "uint256",
+                "name": "balance",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct User",
+            "name": "buyer",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "address",
+                "name": "address",
+                "type": "address"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "string",
+                    "name": "name",
+                    "type": "string"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "level",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "bool",
+                    "name": "verified",
+                    "type": "bool"
+                  }
+                ],
+                "internalType": "struct UserProfile",
+                "name": "profile",
+                "type": "tuple"
+              },
+              {
+                "internalType": "uint256",
+                "name": "balance",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct User",
+            "name": "seller",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "address",
+                "name": "token",
+                "type": "address"
+              },
+              {
+                "internalType": "uint256",
+                "name": "deadline",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct Payment",
+            "name": "payment",
+            "type": "tuple"
+          },
+          {
+            "internalType": "uint8",
+            "name": "status",
+            "type": "uint8"
+          }
+        ],
+        "internalType": "struct Order",
+        "name": "_0",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]

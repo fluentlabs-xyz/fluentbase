@@ -2566,6 +2566,7 @@ dependencies = [
  "convert_case 0.8.0",
  "fluentbase-sdk-derive-core",
  "fluentbase-types",
+ "insta",
  "proc-macro2",
  "quote",
  "rwasm",

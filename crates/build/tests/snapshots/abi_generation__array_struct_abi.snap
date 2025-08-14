@@ -1,0 +1,339 @@
+---
+source: crates/build/tests/abi_generation.rs
+expression: abi
+---
+[
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "token0",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "token1",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "reserve0",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "reserve1",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "fee",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct Pool[]",
+        "name": "pools",
+        "type": "tuple[]"
+      }
+    ],
+    "name": "addPools",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "_0",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "components": [
+              {
+                "internalType": "address",
+                "name": "token0",
+                "type": "address"
+              },
+              {
+                "internalType": "address",
+                "name": "token1",
+                "type": "address"
+              },
+              {
+                "internalType": "uint256",
+                "name": "reserve0",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "reserve1",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "fee",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct Pool[]",
+            "name": "pools",
+            "type": "tuple[]"
+          },
+          {
+            "internalType": "address[]",
+            "name": "tokens",
+            "type": "address[]"
+          },
+          {
+            "internalType": "uint256",
+            "name": "input_amount",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct Route",
+        "name": "route",
+        "type": "tuple"
+      }
+    ],
+    "name": "executeRoute",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "_0",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getAllPools",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "token0",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "token1",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "reserve0",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "reserve1",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "fee",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct Pool[]",
+        "name": "_0",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "token0",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "token1",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "reserve0",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "reserve1",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "fee",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct Pool[]",
+        "name": "pools",
+        "type": "tuple[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "new_reserves",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "updateReserves",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "_0",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "address",
+                    "name": "token0",
+                    "type": "address"
+                  },
+                  {
+                    "internalType": "address",
+                    "name": "token1",
+                    "type": "address"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "reserve0",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "reserve1",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "fee",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct Pool",
+                "name": "pool",
+                "type": "tuple"
+              },
+              {
+                "internalType": "uint256",
+                "name": "timestamp",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct PoolUpdate[]",
+            "name": "updates",
+            "type": "tuple[]"
+          },
+          {
+            "internalType": "uint256",
+            "name": "batch_id",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct BatchUpdate",
+        "name": "batch",
+        "type": "tuple"
+      }
+    ],
+    "name": "applyBatchUpdate",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "_0",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "owner",
+        "type": "address"
+      }
+    ],
+    "name": "getPosition",
+    "outputs": [
+      {
+        "components": [
+          {
+            "components": [
+              {
+                "internalType": "address",
+                "name": "token0",
+                "type": "address"
+              },
+              {
+                "internalType": "address",
+                "name": "token1",
+                "type": "address"
+              },
+              {
+                "internalType": "uint256",
+                "name": "reserve0",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "reserve1",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "fee",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct Pool[]",
+            "name": "pools",
+            "type": "tuple[]"
+          },
+          {
+            "internalType": "uint256[]",
+            "name": "balances",
+            "type": "uint256[]"
+          },
+          {
+            "internalType": "address",
+            "name": "owner",
+            "type": "address"
+          }
+        ],
+        "internalType": "struct LiquidityPosition",
+        "name": "_0",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
