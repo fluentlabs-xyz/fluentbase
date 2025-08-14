@@ -17,7 +17,7 @@ pub(crate) fn parse_rustc_version<S: AsRef<str>>(output: S) -> String {
     }
 
     if !commit.is_empty() {
-        format!("{} ({})", version, commit)
+        format!("{version} ({commit})")
     } else {
         version
     }

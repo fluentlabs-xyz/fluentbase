@@ -230,17 +230,15 @@ impl BuildArgs {
 
         // Don't allow generic channels
         if matches!(normalized.as_str(), "stable" | "nightly" | "beta") {
-            eprintln!("Error: Generic channel '{}' not allowed. Use specific version like '1.85.0' or 'nightly-2024-12-01'", normalized);
+            eprintln!("Error: Generic channel '{normalized}' not allowed. Use specific version like '1.85.0' or 'nightly-2024-12-01'");
             return None;
         }
 
         // Basic validation for nightly format
-        if normalized.starts_with("nightly-") {
-            let date_part = &normalized[8..];
+        if let Some(date_part) = normalized.strip_prefix("nightly-") {
             if date_part.len() != 10 || date_part.matches('-').count() != 2 {
                 eprintln!(
-                    "Error: Invalid nightly format. Expected 'nightly-YYYY-MM-DD', got '{}'",
-                    normalized
+                    "Error: Invalid nightly format. Expected 'nightly-YYYY-MM-DD', got '{normalized}'"
                 );
                 return None;
             }

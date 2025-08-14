@@ -1,14 +1,14 @@
 // tests/abi_generation.rs
 // ABI generation tests with struct support using insta snapshots
 
-use fluentbase_build::solidity::{generate_abi, generate_interface};
-use insta::{assert_json_snapshot, assert_snapshot, Settings};
+use fluentbase_build::solidity::generate_abi;
+use insta::{assert_json_snapshot, Settings};
 use std::fs;
 use tempfile::TempDir;
 
 /// Helper to create the project from fixture
 fn fixture_to_project(fixture_name: &str) -> (TempDir, std::path::PathBuf) {
-    let content = fs::read_to_string(format!("tests/fixtures/{}.rs", fixture_name))
+    let content = fs::read_to_string(format!("tests/fixtures/{fixture_name}.rs"))
         .expect("fixture should exist");
 
     let temp_dir = TempDir::new().expect("create temp dir");

@@ -40,7 +40,7 @@ pub fn parse_structs_from_dir(dir: &Path) -> Result<HashMap<String, DeriveInput>
                 }
                 Err(e) => {
                     // Log warning but continue processing other files
-                    eprintln!("Warning: Failed to parse structs from {:?}: {}", path, e);
+                    eprintln!("Warning: Failed to parse structs from {path:?}: {e}");
                 }
             }
         }
@@ -197,7 +197,7 @@ fn enrich_single_parameter(
                         }
                         Err(e) => {
                             // Log warning but continue processing
-                            eprintln!("Warning: Failed to enrich struct {}: {:?}", struct_name, e);
+                            eprintln!("Warning: Failed to enrich struct {struct_name}: {e:?}");
                         }
                     }
                 }
@@ -231,8 +231,7 @@ fn enrich_single_parameter(
                         }
                         Err(e) => {
                             eprintln!(
-                                "Warning: Failed to enrich struct array {}: {:?}",
-                                struct_name, e
+                                "Warning: Failed to enrich struct array {struct_name}: {e:?}"
                             );
                         }
                     }
@@ -271,8 +270,7 @@ fn enrich_single_parameter(
                         }
                         Err(e) => {
                             eprintln!(
-                                "Warning: Failed to enrich struct array {}: {:?}",
-                                struct_name, e
+                                "Warning: Failed to enrich struct array {struct_name}: {e:?}"
                             );
                         }
                     }
