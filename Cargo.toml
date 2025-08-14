@@ -1,8 +1,6 @@
 [workspace]
 members = [
     "crates/*",
-    "revm/bins/revme",
-    "revm/crates/*",
     "e2e",
     "bins/cli"
 ]
@@ -153,20 +151,20 @@ proc-macro2 = { version = "1.0", default-features = false }
 quote = { version = "1.0" }
 
 # revm
-revm = { path = "revm/crates/revm", default-features = false }
-primitives = { path = "revm/crates/primitives", package = "revm-primitives", default-features = false }
-bytecode = { path = "revm/crates/bytecode", package = "revm-bytecode", default-features = false }
-database = { path = "revm/crates/database", package = "revm-database", default-features = false }
-database-interface = { path = "revm/crates/database/interface", package = "revm-database-interface", default-features = false }
-state = { path = "revm/crates/state", package = "revm-state", default-features = false }
-interpreter = { path = "revm/crates/interpreter", package = "revm-interpreter", default-features = false }
-inspector = { path = "revm/crates/inspector", package = "revm-inspector", default-features = false }
-precompile = { path = "revm/crates/precompile", package = "revm-precompile", default-features = false }
-statetest-types = { path = "revm/crates/statetest-types", package = "revm-statetest-types", default-features = false }
-context = { path = "revm/crates/context", package = "revm-context", default-features = false }
-context-interface = { path = "revm/crates/context/interface", package = "revm-context-interface", default-features = false }
-handler = { path = "revm/crates/handler", package = "revm-handler", default-features = false }
-op-revm = { path = "revm/crates/op-revm", default-features = false }
+revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-primitives", default-features = false }
+bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-bytecode", default-features = false }
+database = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-database", default-features = false }
+database-interface = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-database-interface", default-features = false }
+state = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-state", default-features = false }
+interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-interpreter", default-features = false }
+inspector = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-inspector", default-features = false }
+precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-precompile", default-features = false }
+statetest-types = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-statetest-types", default-features = false }
+context = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-context", default-features = false }
+context-interface = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-context-interface", default-features = false }
+handler = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-handler", default-features = false }
+op-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
 
 # alloy
 alloy-eip2930 = { version = "0.2.0", default-features = false }

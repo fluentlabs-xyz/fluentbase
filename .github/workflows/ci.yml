@@ -29,8 +29,6 @@ jobs:
           root-reserve-mb: '30720'
           remove-dotnet: 'true'
       - uses: actions/checkout@v4
-        with:
-          submodules: "recursive"
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -54,8 +52,6 @@ jobs:
           root-reserve-mb: '30720'
           remove-dotnet: 'true'
       - uses: actions/checkout@v4
-        with:
-          submodules: "recursive"
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -112,8 +108,6 @@ jobs:
           root-reserve-mb: '30720'
           remove-dotnet: 'true'
       - uses: actions/checkout@v4
-        with:
-          submodules: "recursive"
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:

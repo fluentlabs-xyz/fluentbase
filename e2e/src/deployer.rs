@@ -19,7 +19,13 @@ fn deploy_via_deployer(ctx: &mut EvmTestingContext, bytecode: Bytes) -> Address 
         function deploy(bytes memory bytecode) public returns (address contractAddress);
     }
     let encoded_call = deployCall { bytecode }.abi_encode();
-    let result = ctx.call_evm_tx(owner, contract_address, encoded_call.into(), None, None);
+    let result = ctx.call_evm_tx(
+        owner,
+        contract_address,
+        encoded_call.into(),
+        Some(10_000_000),
+        None,
+    );
     assert!(
         result.is_success(),
         "call to \"deploy\" method of ContractDeployer.sol failed"
