@@ -1,18 +1,12 @@
 //! Contains the `[RwasmEvm]` type and its implementation of the execution EVM traits.
 
 use crate::{
-    api::RwasmFrame,
-    executor::run_rwasm_loop,
-    precompiles::RwasmPrecompiles,
-    types::SystemInterruptionOutcome,
-    upgrade::upgrade_runtime_hook,
+    api::RwasmFrame, executor::run_rwasm_loop, precompiles::RwasmPrecompiles,
+    types::SystemInterruptionOutcome, upgrade::upgrade_runtime_hook,
 };
 use fluentbase_sdk::{
-    resolve_precompiled_runtime_from_input,
-    Address,
-    Bytes,
-    UPDATE_GENESIS_AUTH,
-    UPDATE_GENESIS_PREFIX,
+    resolve_precompiled_runtime_from_input, try_resolve_precompile_account_from_input, Address,
+    Bytes, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX,
 };
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
@@ -21,29 +15,17 @@ use revm::{
     handler::{
         evm::{ContextDbError, FrameInitResult, FrameTr},
         instructions::{EthInstructions, InstructionProvider},
-        EvmTr,
-        FrameInitOrResult,
-        FrameResult,
-        ItemOrResult,
-        PrecompileProvider,
+        EvmTr, FrameInitOrResult, FrameResult, ItemOrResult, PrecompileProvider,
     },
     inspector::{
         handler::{frame_end, frame_start},
-        inspect_instructions,
-        InspectorEvmTr,
-        JournalExt,
+        inspect_instructions, InspectorEvmTr, JournalExt,
     },
     interpreter::{
         interpreter::{EthInterpreter, ExtBytecode},
-        return_ok,
-        return_revert,
-        CallInput,
-        FrameInput,
-        InstructionResult,
-        InterpreterResult,
+        return_ok, return_revert, CallInput, FrameInput, InstructionResult, InterpreterResult,
     },
-    Database,
-    Inspector,
+    Database, Inspector,
 };
 
 /// Rwasm EVM extends the [`Evm`] type with Rwasm specific types and logic.
@@ -247,6 +229,20 @@ where
                             && inputs.input.bytes(ctx).starts_with(&UPDATE_GENESIS_PREFIX)
                         {
                             return upgrade_runtime_hook(ctx, inputs);
+                        }
+                        // TODO(dmitry123): "do we want to disable it for mainnet?"
+                        if let Some(precompiled_address) = try_resolve_precompile_account_from_input(
+                            inputs.input.bytes(ctx).as_ref(),
+                        ) {
+                            let account =
+                                &ctx.journal_mut().load_account_code(precompiled_address)?;
+                            // rewrite bytecode address
+                            inputs.bytecode_address = precompiled_address;
+                            // rewrite bytecode with code hash
+                            new_frame.interpreter.bytecode = ExtBytecode::new_with_hash(
+                                account.info.code.clone().unwrap_or_default(),
+                                account.info.code_hash,
+                            );
                         }
                     }
                     FrameInput::Create(inputs) => {
