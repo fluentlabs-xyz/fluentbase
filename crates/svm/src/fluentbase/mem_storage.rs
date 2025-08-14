@@ -23,6 +23,7 @@ impl MemStorage {
     #[allow(unused)]
     pub fn clear(&mut self) {
         self.metadata.clear();
+        self.metadata_storage.clear();
     }
 }
 
