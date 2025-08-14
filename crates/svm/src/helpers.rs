@@ -2,7 +2,9 @@ extern crate solana_rbpf;
 
 use crate::solana_program;
 use alloc::{boxed::Box, vec, vec::Vec};
+use bincode::error::DecodeError;
 use solana_bincode::{deserialize, serialize, serialized_size};
+use solana_clock::Epoch;
 use solana_pubkey::Pubkey;
 use solana_rbpf::{
     ebpf,
@@ -38,19 +40,22 @@ pub fn address_is_aligned<T>(address: u64) -> bool {
         .expect("T to be non-zero aligned")
 }
 
+use crate::account::{ReadableAccount, WritableAccount};
+use crate::common::GlobalLamportsBalance;
+use crate::error::RuntimeError;
 use crate::{
     account::{
-        to_account,
-        Account,
-        AccountSharedData,
-        InheritableAccountFields,
+        to_account, Account, AccountSharedData, InheritableAccountFields,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
     context::BpfAllocator,
     error::SvmError,
     solana_program::sysvar::Sysvar,
 };
-use fluentbase_sdk::{calc_create4_address, keccak256, Bytes, MetadataAPI, PRECOMPILE_SVM_RUNTIME};
+use fluentbase_sdk::{
+    calc_create4_address, debug_log_ext, keccak256, Bytes, MetadataAPI, PRECOMPILE_SVM_RUNTIME,
+};
+use fluentbase_types::{MetadataStorageAPI, SharedAPI, StorageAPI};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
@@ -228,17 +233,8 @@ pub fn storage_read_metadata<API: MetadataAPI>(
     Ok(buffer)
 }
 
-pub fn storage_read_account_data<API: MetadataAPI>(
-    api: &API,
-    pubkey: &Pubkey,
-) -> Result<AccountSharedData, SvmError> {
-    let buffer = storage_read_metadata(api, pubkey)?;
-    let deserialize_result = deserialize(&buffer);
-    Ok(deserialize_result?)
-}
-
-pub fn storage_write_metadata<API: MetadataAPI>(
-    api: &mut API,
+pub fn storage_write_metadata<MAPI: MetadataAPI>(
+    api: &mut MAPI,
     pubkey: &Pubkey,
     metadata: Bytes,
 ) -> Result<(), SvmError> {
@@ -261,12 +257,40 @@ pub fn storage_write_metadata<API: MetadataAPI>(
     Ok(())
 }
 
-pub fn storage_write_account_data<API: MetadataAPI>(
+pub fn storage_read_account_data<API: MetadataAPI + MetadataStorageAPI>(
+    api: &API,
+    pk: &Pubkey,
+) -> Result<AccountSharedData, SvmError> {
+    let buffer = storage_read_metadata(api, pk)?;
+    if buffer.len() < 1 + size_of::<Pubkey>() {
+        return Err(SvmError::RuntimeError(RuntimeError::InvalidLength));
+    }
+    let executable = buffer[0] > 0;
+    let owner = Pubkey::new_from_array(buffer[1..1 + size_of::<Pubkey>()].try_into().unwrap());
+    let data = &buffer[1 + size_of::<Pubkey>()..];
+    let lamports = GlobalLamportsBalance::get(api, &pk);
+    let account_data = AccountSharedData::create(
+        lamports,
+        data.to_vec(),
+        owner,
+        executable,
+        Default::default(),
+    );
+    debug_log_ext!("pk {} account_data {:?}", pk, account_data);
+    Ok(account_data)
+}
+
+pub fn storage_write_account_data<API: MetadataAPI + MetadataStorageAPI>(
     api: &mut API,
-    pubkey: &Pubkey,
+    pk: &Pubkey,
     account_data: &AccountSharedData,
 ) -> Result<(), SvmError> {
-    let account_data = serialize(account_data)?;
-    storage_write_metadata(api, pubkey, account_data.into())?;
+    let mut buffer = vec![0u8; 1 + size_of::<Pubkey>() + account_data.data().len()];
+    buffer[0] = account_data.executable() as u8;
+    buffer[1..1 + size_of::<Pubkey>()].copy_from_slice(account_data.owner().as_ref());
+    buffer[1 + size_of::<Pubkey>()..].copy_from_slice(account_data.data());
+    storage_write_metadata(api, pk, buffer.into())?;
+    GlobalLamportsBalance::set(api, &pk, account_data.lamports());
+    debug_log_ext!("pk {} account_data {:?}", pk, account_data);
     Ok(())
 }

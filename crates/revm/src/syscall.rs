@@ -777,7 +777,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 return_result!(MalformedBuiltinParams);
             };
             // input: slot + value
-            const INPUT_LEN: usize = size_of::<[u8; U256::BYTES]>() + U256::BYTES;
+            const INPUT_LEN: usize = U256::BYTES + U256::BYTES;
             let syscall_params = &inputs.syscall_params;
             assert_return!(
                 syscall_params.input.len() == INPUT_LEN && syscall_params.state == STATE_MAIN,
@@ -797,6 +797,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             let slot_u256 = U256::from_le_bytes(slot);
             let value_u256 = U256::from_le_bytes(value);
             journal.sstore(account_owner_address, slot_u256, value_u256)?;
+            journal.touch_account(account_owner_address);
 
             return_result!(Bytes::default(), Ok);
         }

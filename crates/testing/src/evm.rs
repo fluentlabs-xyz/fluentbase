@@ -3,36 +3,20 @@ use core::{borrow::Borrow, mem::take, str::from_utf8};
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
-    bytes::BytesMut,
-    calc_create_address,
-    compile_wasm_to_rwasm,
-    Address,
-    BytecodeOrHash,
-    Bytes,
-    ContextReader,
-    ExitCode,
-    GenesisContract,
-    MetadataAPI,
-    SharedAPI,
-    SharedContextInputV1,
-    STATE_MAIN,
-    U256,
+    bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, debug_log_ext, Address,
+    BytecodeOrHash, Bytes, ContextReader, ExitCode, GenesisContract, MetadataAPI, SharedAPI,
+    SharedContextInputV1, STATE_MAIN, U256,
 };
 use revm::{
     context::{
         result::{ExecutionResult, ExecutionResult::Success, Output},
-        BlockEnv,
-        CfgEnv,
-        TransactTo,
-        TxEnv,
+        BlockEnv, CfgEnv, TransactTo, TxEnv,
     },
     database::InMemoryDB,
     handler::MainnetContext,
     primitives::{hardfork::PRAGUE, keccak256, map::DefaultHashBuilder, HashMap},
     state::{Account, AccountInfo, Bytecode},
-    DatabaseCommit,
-    ExecuteCommitEvm,
-    MainBuilder,
+    DatabaseCommit, ExecuteCommitEvm, MainBuilder,
 };
 use rwasm::{RwasmModule, Store};
 
@@ -91,7 +75,7 @@ impl EvmTestingContext {
         }
     }
 
-    pub fn commit_storage(&mut self) {
+    pub fn commit_sdk_to_db(&mut self) {
         let storage = self.sdk.dump_storage();
         storage.iter().for_each(|((address, slot), value)| {
             self.db
@@ -100,10 +84,22 @@ impl EvmTestingContext {
         })
     }
 
-    pub fn db_storage_to_sdk(&mut self) {
+    pub fn commit_db_to_sdk(&mut self) {
         for (address, db_account) in &mut self.db.cache.accounts {
             self.sdk.visit_inner_storage_mut(|storage| {
                 for (k, v) in &db_account.storage {
+                    debug_log_ext!("db storage -> sdk storage ({}, {})={}", address, k, v);
+                    storage.insert((*address, *k), *v);
+                }
+            });
+            self.sdk.visit_inner_metadata_storage_mut(|storage| {
+                for (k, v) in &db_account.storage {
+                    debug_log_ext!(
+                        "db storage -> sdk metadata storage ({}, {})={}",
+                        address,
+                        k,
+                        v
+                    );
                     storage.insert((*address, *k), *v);
                 }
             });
@@ -332,7 +328,7 @@ impl<'a> TxBuilder<'a> {
             let result = evm.transact_commit(self.tx.clone()).unwrap();
             let new_db = &mut evm.journaled_state.database;
             self.ctx.db = take(new_db);
-            result.map_haltreason(RwasmHaltReason::from)
+            result
         } else {
             let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, PRAGUE);
             context.cfg = self.ctx.cfg.clone();
@@ -342,7 +338,7 @@ impl<'a> TxBuilder<'a> {
             let result = evm.transact_commit(self.tx.clone()).unwrap();
             let new_db = &mut evm.0.journaled_state.database;
             self.ctx.db = take(new_db);
-            result
+            result.map_haltreason(RwasmHaltReason::from)
         }
     }
 }

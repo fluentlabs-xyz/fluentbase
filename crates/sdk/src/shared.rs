@@ -8,18 +8,21 @@ use crate::{
 use alloc::vec;
 use core::cell::RefCell;
 use fluentbase_types::{
-    native_api::NativeAPI, Address, Bytes, ContextReader, ExitCode, IsAccountEmpty,
-    IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, SharedAPI,
-    SharedContextInputV1, StorageAPI, syscall::SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
-    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE, STATE_MAIN, syscall::SYSCALL_ID_BALANCE, syscall::SYSCALL_ID_BLOCK_HASH,
-    syscall::SYSCALL_ID_CALL, syscall::SYSCALL_ID_CALL_CODE, syscall::SYSCALL_ID_CODE_COPY, syscall::SYSCALL_ID_CODE_HASH,
-    syscall::SYSCALL_ID_CODE_SIZE, syscall::SYSCALL_ID_CREATE, syscall::SYSCALL_ID_CREATE2, syscall::SYSCALL_ID_DELEGATE_CALL,
-    syscall::SYSCALL_ID_DESTROY_ACCOUNT, syscall::SYSCALL_ID_EMIT_LOG, syscall::SYSCALL_ID_METADATA_COPY,
-    syscall::SYSCALL_ID_METADATA_CREATE, syscall::SYSCALL_ID_METADATA_SIZE, syscall::SYSCALL_ID_METADATA_STORAGE_READ,
-    syscall::SYSCALL_ID_METADATA_STORAGE_WRITE, syscall::SYSCALL_ID_METADATA_WRITE, syscall::SYSCALL_ID_SELF_BALANCE,
-    syscall::SYSCALL_ID_STATIC_CALL, syscall::SYSCALL_ID_STORAGE_READ, syscall::SYSCALL_ID_STORAGE_WRITE,
-    syscall::SYSCALL_ID_TRANSIENT_READ, syscall::SYSCALL_ID_TRANSIENT_WRITE, U256,
+    native_api::NativeAPI, syscall::SyscallResult, syscall::SYSCALL_ID_BALANCE,
+    syscall::SYSCALL_ID_BLOCK_HASH, syscall::SYSCALL_ID_CALL, syscall::SYSCALL_ID_CALL_CODE,
+    syscall::SYSCALL_ID_CODE_COPY, syscall::SYSCALL_ID_CODE_HASH, syscall::SYSCALL_ID_CODE_SIZE,
+    syscall::SYSCALL_ID_CREATE, syscall::SYSCALL_ID_CREATE2, syscall::SYSCALL_ID_DELEGATE_CALL,
+    syscall::SYSCALL_ID_DESTROY_ACCOUNT, syscall::SYSCALL_ID_EMIT_LOG,
+    syscall::SYSCALL_ID_METADATA_COPY, syscall::SYSCALL_ID_METADATA_CREATE,
+    syscall::SYSCALL_ID_METADATA_SIZE, syscall::SYSCALL_ID_METADATA_STORAGE_READ,
+    syscall::SYSCALL_ID_METADATA_STORAGE_WRITE, syscall::SYSCALL_ID_METADATA_WRITE,
+    syscall::SYSCALL_ID_SELF_BALANCE, syscall::SYSCALL_ID_STATIC_CALL,
+    syscall::SYSCALL_ID_STORAGE_READ, syscall::SYSCALL_ID_STORAGE_WRITE,
+    syscall::SYSCALL_ID_TRANSIENT_READ, syscall::SYSCALL_ID_TRANSIENT_WRITE, Address, Bytes,
+    ContextReader, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI,
+    MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, B256,
+    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, STATE_MAIN, U256,
 };
 
 pub struct SharedContextImpl<API: NativeAPI> {
@@ -170,16 +173,11 @@ impl<API: NativeAPI> MetadataStorageAPI for SharedContextImpl<API> {
             None,
             STATE_MAIN,
         );
-        let value = self.native_sdk.return_data();
-        SyscallResult::new(
-            U256::from_le_slice(value.as_ref()),
-            fuel_consumed,
-            fuel_refunded,
-            exit_code,
-        )
+        let value = U256::from_le_slice(&self.native_sdk.return_data());
+        SyscallResult::new(value, fuel_consumed, fuel_refunded, exit_code)
     }
 
-    fn metadata_storage_write(&self, slot: &U256, value: U256) -> SyscallResult<()> {
+    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()> {
         let mut input = [0u8; U256::BYTES * 2];
         input[..U256::BYTES].copy_from_slice(slot.as_le_slice());
         input[U256::BYTES..].copy_from_slice(&value.to_le_bytes::<{ U256::BYTES }>());

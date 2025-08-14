@@ -1,10 +1,6 @@
 use crate::{
     account::{
-        is_executable_by_account,
-        Account,
-        AccountSharedData,
-        ReadableAccount,
-        WritableAccount,
+        is_executable_by_account, Account, AccountSharedData, ReadableAccount, WritableAccount,
         PROGRAM_OWNERS,
     },
     builtins::register_builtins,
@@ -12,37 +8,28 @@ use crate::{
     compute_budget::compute_budget::ComputeBudget,
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
     error::SvmError,
-    fluentbase::common::{
-        extract_account_data_or_default,
-        flush_not_system_accounts,
-        BatchMessage,
-    },
+    fluentbase::common::{extract_account_data_or_default, flush_accounts, BatchMessage},
     helpers::storage_read_account_data,
     loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     loaders::bpf_loader_v4,
     message_processor::MessageProcessor,
-    native_loader,
-    saturating_add_assign,
-    select_api,
-    solana_program,
+    native_loader, saturating_add_assign, select_api, solana_program,
     solana_program::{
         feature_set::feature_set_default,
         loader_v4,
         message::{legacy, LegacyMessage, SanitizedMessage},
         svm_message::SVMMessage,
         sysvar::instructions::{
-            construct_instructions_data,
-            BorrowedAccountMeta,
-            BorrowedInstruction,
+            construct_instructions_data, BorrowedAccountMeta, BorrowedInstruction,
         },
     },
-    system_processor,
-    system_program,
+    system_processor, system_program,
     sysvar_cache::SysvarCache,
     types::BalanceHistorySnapshot,
 };
 use alloc::{sync::Arc, vec::Vec};
 use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
+use fluentbase_types::MetadataStorageAPI;
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
 use solana_clock::Clock;
@@ -62,7 +49,7 @@ pub fn init_config() -> Config {
     rbpf_config_default(None)
 }
 
-pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
+pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
     sdk: &mut SDK,
     batch_message: &[u8],
     flush_result_accounts: bool,
@@ -77,7 +64,7 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
     let batch_message = deserialize(batch_message)?;
     exec_svm_batch_message(sdk, batch_message, flush_result_accounts, api)
 }
-pub fn exec_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
+pub fn exec_svm_batch_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
     sdk: &mut SDK,
     batch_message: BatchMessage,
     do_flush: bool,
@@ -111,7 +98,7 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, API: MetadataAPI>(
     }
     Ok((result_accounts, balance_changes))
 }
-pub fn exec_encoded_svm_message<SDK: SharedAPI, API: MetadataAPI>(
+pub fn exec_encoded_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
     sdk: &mut SDK,
     message: &[u8],
     flush_result_accounts: bool,
@@ -181,7 +168,7 @@ fn account_shared_data_from_program(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI>(
+fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
     api: &API,
     message: &impl SVMMessage,
     account_key: &Pubkey,
@@ -248,7 +235,7 @@ fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI>(
     Ok((loaded_account, account_found))
 }
 
-pub fn prepare_data_for_tx_ctx<SDK: SharedAPI, API: MetadataAPI>(
+pub fn prepare_data_for_tx_ctx<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
     sdk: &mut SDK,
     message: &impl SVMMessage,
     api: &mut Option<&mut API>,
@@ -357,7 +344,7 @@ pub fn prepare_data_for_tx_ctx<SDK: SharedAPI, API: MetadataAPI>(
     Ok((accounts, program_indices))
 }
 
-fn filter_executable_program_accounts<'a, SDK: SharedAPI, API: MetadataAPI>(
+fn filter_executable_program_accounts<'a, SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
     sdk: &SDK,
     api: &mut Option<&mut API>,
     txs: &[&impl SVMMessage],
@@ -389,7 +376,7 @@ fn filter_executable_program_accounts<'a, SDK: SharedAPI, API: MetadataAPI>(
     result
 }
 
-pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
+pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
     sdk: &mut SDK,
     api: &mut Option<&mut API>,
     message: legacy::Message,
@@ -509,7 +496,7 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI>(
         );
     }
     if flush_result_accounts {
-        flush_not_system_accounts(sdk, api, &result_accounts)?;
+        flush_accounts::<true, _, _>(sdk, api, &result_accounts)?;
     }
 
     Ok((result_accounts, balance_changes))

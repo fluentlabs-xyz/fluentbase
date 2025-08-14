@@ -9,6 +9,7 @@ use crate::{
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
 use fluentbase_sdk::{keccak256, Address, SharedAPI, U256};
+use fluentbase_types::{ExitCode, MetadataStorageAPI};
 use solana_bincode::limited_deserialize;
 use solana_instruction::error::InstructionError;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES, SVM_ADDRESS_PREFIX};
@@ -429,13 +430,95 @@ pub fn evm_balance_from_lamports(value: u64) -> U256 {
     U256::from_be_bytes(bytes) * U256::from(ONE_GWEI)
 }
 
+pub struct GlobalLamportsBalance<SDK: MetadataStorageAPI> {
+    _phantom_data: PhantomData<SDK>,
+}
+
+impl<API: MetadataStorageAPI> GlobalLamportsBalance<API> {
+    pub fn new() -> Self {
+        Self {
+            _phantom_data: Default::default(),
+        }
+    }
+    pub fn get_u256(sdk: &API, pk: &U256) -> U256 {
+        sdk.metadata_storage_read(&pk)
+            .expect("failed to read balance")
+            .data
+    }
+    pub fn get(sdk: &API, pk: &Pubkey) -> u64 {
+        lamports_from_evm_balance(Self::get_u256(sdk, &pubkey_to_u256(pk)))
+    }
+    pub fn set_u256(sdk: &mut API, pk: &U256, balance: U256) {
+        let balance_current = sdk
+            .metadata_storage_write(&pk, balance)
+            .expect("failed to write balance");
+    }
+    pub fn set(sdk: &mut API, pk: &Pubkey, lamports: u64) {
+        Self::set_u256(
+            sdk,
+            &pubkey_to_u256(pk),
+            evm_balance_from_lamports(lamports),
+        )
+    }
+    pub fn change<const ADD_OR_SUB: bool>(
+        sdk: &mut API,
+        pk: &Pubkey,
+        lamports_change: u64,
+    ) -> Result<U256, SvmError> {
+        let pk_u256 = pubkey_to_u256(pk);
+        let balance_current = Self::get_u256(sdk, &pk_u256);
+        if lamports_change == 0 {
+            return Ok(balance_current);
+        }
+        let balance_change = evm_balance_from_lamports(lamports_change);
+
+        let balance_new = if ADD_OR_SUB {
+            balance_current.checked_add(balance_change)
+        } else {
+            balance_current.checked_sub(balance_change)
+        };
+        if let Some(balance_new) = balance_new {
+            Self::set_u256(sdk, &pk_u256, balance_new);
+            Ok(balance_new)
+        } else {
+            Err(ExitCode::IntegerOverflow.into())
+        }
+    }
+    pub fn transfer(
+        sdk: &mut API,
+        pk_from: &Pubkey,
+        pk_to: &Pubkey,
+        lamports_change: u64,
+    ) -> Result<(U256, U256), SvmError> {
+        let pk_from_u256 = pubkey_to_u256(pk_from);
+        let pk_to_u256 = pubkey_to_u256(pk_to);
+        let balance_from_current = Self::get_u256(sdk, &pk_from_u256);
+        let balance_to_current = Self::get_u256(sdk, &pk_to_u256);
+        if lamports_change == 0 {
+            return Ok((balance_from_current, balance_to_current));
+        }
+        let balance_change = evm_balance_from_lamports(lamports_change);
+
+        let Some(balance_from_new) = balance_from_current.checked_sub(balance_change) else {
+            return Err(ExitCode::IntegerOverflow.into());
+        };
+        let Some(balance_to_new) = balance_to_current.checked_add(balance_change) else {
+            return Err(ExitCode::IntegerOverflow.into());
+        };
+        Self::set_u256(sdk, &pk_from_u256, balance_from_new);
+        Self::set_u256(sdk, &pk_to_u256, balance_to_new);
+
+        Ok((balance_from_new, balance_to_new))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::common::{evm_balance_from_lamports, lamports_from_evm_balance, ONE_GWEI};
     use fluentbase_sdk::U256;
 
     #[test]
-    fn test_evm_balance_to_lamports_and_vice_versa() {
+    fn test_evm_balance_to_lamports_and_back() {
         let evm_balance = U256::from(ONE_GWEI);
         let lamports_balance = lamports_from_evm_balance(evm_balance);
         assert_eq!(lamports_balance, 1);

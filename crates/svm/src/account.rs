@@ -4,8 +4,7 @@ use crate::{
     helpers::is_zeroed,
     solana_program::{loader_v4, sysvar::Sysvar},
     system_instruction::{
-        MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
-        MAX_PERMITTED_DATA_LENGTH,
+        MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION, MAX_PERMITTED_DATA_LENGTH,
     },
 };
 use alloc::{rc::Rc, sync::Arc, vec, vec::Vec};
@@ -292,6 +291,7 @@ impl Debug for AccountSharedData {
             .field("owner", &self.owner)
             .field("executable", &self.executable)
             .field("rent_epoch", &self.rent_epoch)
+            .field("data.len", &self.data.len())
             .finish()
     }
 }

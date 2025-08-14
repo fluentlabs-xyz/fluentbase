@@ -4,34 +4,19 @@ mod tests {
     use core::str::from_utf8;
     use curve25519_dalek::{
         constants::{ED25519_BASEPOINT_POINT, RISTRETTO_BASEPOINT_POINT},
-        EdwardsPoint,
-        RistrettoPoint,
+        EdwardsPoint, RistrettoPoint,
     };
     use fluentbase_runtime::instruction::weierstrass_compress_decompress::{
-        ConfigG1Compress,
-        ConfigG1Decompress,
-        ConfigG2Compress,
-        ConfigG2Decompress,
+        ConfigG1Compress, ConfigG1Decompress, ConfigG2Compress, ConfigG2Decompress,
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{
-        address,
-        Address,
-        ContextReader,
-        ContractContextV1,
-        SharedAPI,
-        PRECOMPILE_SVM_RUNTIME,
-        U256,
+        address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
     };
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        common::{
-            evm_address_from_pubkey,
-            evm_balance_from_lamports,
-            lamports_from_evm_balance,
-            pubkey_from_evm_address,
-        },
+        common::{evm_balance_from_lamports, lamports_from_evm_balance, pubkey_from_evm_address},
         fluentbase::common::BatchMessage,
         helpers::storage_read_account_data,
         pubkey::Pubkey,
@@ -46,29 +31,15 @@ mod tests {
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
-            AltBn128Compression,
-            Blake3,
-            CreateAccountAndModifySomeData1,
-            CurveGroupOp,
-            CurveMultiscalarMultiplication,
-            CurvePointValidation,
-            Keccak256,
-            Poseidon,
-            SetGetReturnData,
-            Sha256,
-            SolBigModExp,
-            SolSecp256k1Recover,
-            SyscallAltBn128,
-            TestCommand,
-            EXPECTED_RET_ERR,
-            EXPECTED_RET_OK,
+            AltBn128Compression, Blake3, CreateAccountAndModifySomeData1, CurveGroupOp,
+            CurveMultiscalarMultiplication, CurvePointValidation, Keccak256, Poseidon,
+            SetGetReturnData, Sha256, SolBigModExp, SolSecp256k1Recover, SyscallAltBn128,
+            TestCommand, EXPECTED_RET_ERR, EXPECTED_RET_OK,
         },
     };
     use fluentbase_types::{
-        helpers::convert_endianness_fixed,
-        BN254_G1_POINT_COMPRESSED_SIZE,
-        BN254_G1_POINT_DECOMPRESSED_SIZE,
-        BN254_G2_POINT_COMPRESSED_SIZE,
+        helpers::convert_endianness_fixed, BN254_G1_POINT_COMPRESSED_SIZE,
+        BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
         BN254_G2_POINT_DECOMPRESSED_SIZE,
     };
     use hex_literal::hex;
@@ -76,31 +47,20 @@ mod tests {
     use serde::Deserialize;
     use solana_bn254::{
         compression::prelude::{
-            alt_bn128_g1_compress,
-            alt_bn128_g1_decompress,
-            alt_bn128_g2_compress,
-            alt_bn128_g2_decompress,
-            ALT_BN128_G1_COMPRESS,
-            ALT_BN128_G1_DECOMPRESS,
-            ALT_BN128_G2_COMPRESS,
-            ALT_BN128_G2_DECOMPRESS,
+            alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
+            alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
+            ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS,
         },
         prelude::{alt_bn128_addition, ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING},
         target_arch::{alt_bn128_multiplication, alt_bn128_pairing},
     };
     use solana_curve25519::{
         edwards::{
-            add_edwards,
-            multiply_edwards,
-            multiscalar_multiply_edwards,
-            subtract_edwards,
+            add_edwards, multiply_edwards, multiscalar_multiply_edwards, subtract_edwards,
             PodEdwardsPoint,
         },
         ristretto::{
-            add_ristretto,
-            multiply_ristretto,
-            multiscalar_multiply_ristretto,
-            subtract_ristretto,
+            add_ristretto, multiply_ristretto, multiscalar_multiply_ristretto, subtract_ristretto,
             PodRistrettoPoint,
         },
         scalar::PodScalar,
@@ -197,15 +157,18 @@ mod tests {
         ctx: &mut EvmTestingContext,
         account_with_program: &AccountSharedData,
         seed1: &[u8],
-        payer_lamports: u64,
+        payer_initial_lamports: u64,
     ) -> (Pubkey, Pubkey, Pubkey, Address) {
         ctx.sdk.set_ownable_account_address(PRECOMPILE_SVM_RUNTIME);
         assert_eq!(ctx.sdk.context().block_number(), 0);
 
         // setup initial accounts
 
-        let pk_payer = pubkey_from_evm_address(&DEPLOYER_ADDRESS);
-        ctx.add_balance(DEPLOYER_ADDRESS, evm_balance_from_lamports(payer_lamports));
+        let pk_deployer = pubkey_from_evm_address(&DEPLOYER_ADDRESS);
+        ctx.add_balance(
+            DEPLOYER_ADDRESS,
+            evm_balance_from_lamports(payer_initial_lamports),
+        );
 
         // deploy and get exec contract
 
@@ -215,12 +178,12 @@ mod tests {
             ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
         println!("deploy took: {:.2?}", measure.elapsed());
 
-        let pk_exec = pubkey_from_evm_address(&contract_address);
+        let pk_contract = pubkey_from_evm_address(&contract_address);
 
-        let seeds = &[seed1, pk_payer.as_ref()];
-        let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_exec);
+        let seeds = &[seed1, pk_deployer.as_ref()];
+        let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_contract);
 
-        (pk_payer, pk_exec, pk_new, contract_address)
+        (pk_deployer, pk_contract, pk_new, contract_address)
     }
 
     #[test]
@@ -232,16 +195,27 @@ mod tests {
             &loader_id,
             "../contracts/examples/svm/assets/solana_program_state_usage.so",
         );
-        let payer_lamports = 101;
+        let payer_initial_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_payer, pk_exec, pk_new, contract_address) =
-            svm_deploy(&mut ctx, &account_with_program, seed1, payer_lamports);
+        let (pk_deployer, pk_contract, pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &account_with_program,
+            seed1,
+            payer_initial_lamports,
+        );
+
+        ctx.commit_db_to_sdk();
+
+        // let payer_account = storage_read_account_data(&ctx.sdk, &pk_payer)
+        //     .expect("failed to read payer account data");
+        // assert_eq!(payer_account.lamports(), payer_initial_lamports);
 
         // exec
 
         let space: u32 = 101;
-        let lamports_to_send = 12;
+        let lamports_refill = 15;
+        let lamports_to_send = 8;
 
         let test_command_data = CreateAccountAndModifySomeData1 {
             lamports_to_send,
@@ -259,10 +233,10 @@ mod tests {
         );
 
         let instructions = vec![Instruction::new_with_bincode(
-            pk_exec.clone(),
+            pk_contract.clone(),
             &instruction_data,
             vec![
-                AccountMeta::new(pk_payer, true),
+                AccountMeta::new(pk_deployer, true),
                 AccountMeta::new(pk_new, false),
                 AccountMeta::new(system_program_id, false),
             ],
@@ -271,73 +245,58 @@ mod tests {
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
-        let deployer_balance_before = ctx.get_balance(DEPLOYER_ADDRESS);
+        let deployer_evm_balance_before = ctx.get_balance(DEPLOYER_ADDRESS);
         let measure = Instant::now();
         let result = ctx.call_evm_tx_simple(
             DEPLOYER_ADDRESS,
             contract_address,
-            input.into(),
+            input.clone().into(),
             None,
-            Some(evm_balance_from_lamports(lamports_to_send)),
+            Some(evm_balance_from_lamports(lamports_refill)),
         );
         println!("exec took: {:.2?}", measure.elapsed());
-        let deployer_balance_after = ctx.get_balance(DEPLOYER_ADDRESS);
-        // not precise, rounded
-        let deployer_balance_decrease_lamports =
-            lamports_from_evm_balance(deployer_balance_before - deployer_balance_after);
-        assert!(
-            (lamports_to_send..lamports_to_send + 1).contains(&deployer_balance_decrease_lamports)
-        );
         let output = result.output().unwrap();
         if output.len() > 0 {
             let out_text = from_utf8(output).unwrap();
             println!("output.len {} output '{}'", output.len(), out_text);
         }
-        let output = result.output().unwrap_or_default();
         assert!(result.is_success());
+        ctx.commit_db_to_sdk();
+        let deployer_evm_balance_after = ctx.get_balance(DEPLOYER_ADDRESS);
+        let deployer_balance_decrease_lamports =
+            lamports_from_evm_balance(deployer_evm_balance_before - deployer_evm_balance_after);
+        assert_eq!(deployer_balance_decrease_lamports, lamports_refill);
+        let output = result.output().unwrap_or_default();
         let expected_output = hex!("");
         assert_eq!(hex::encode(expected_output), hex::encode(output));
 
-        ctx.db_storage_to_sdk();
-
-        ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
-            address: contract_address,
-            ..Default::default()
-        });
-
-        let exec_account: AccountSharedData = storage_read_account_data(&ctx.sdk, &pk_exec)
-            .expect(format!("failed to read exec account data: {}", pk_exec).as_str());
-        assert_eq!(exec_account.lamports(), 12);
+        let contract_account = storage_read_account_data(&ctx.sdk, &pk_contract)
+            .expect(format!("failed to read exec account data: {}", pk_contract).as_str());
+        assert_eq!(contract_account.lamports(), 0);
         assert_eq!(
-            exec_account.data().len(),
+            contract_account.data().len(),
             LoaderV4State::program_data_offset() + account_with_program.data().len()
         );
         assert_eq!(
-            &exec_account.data()[LoaderV4State::program_data_offset()..],
+            &contract_account.data()[LoaderV4State::program_data_offset()..],
             account_with_program.data()
         );
 
-        let payer_account = storage_read_account_data(&ctx.sdk, &pk_payer).expect(
-            format!(
-                "failed to read payer {} (address:{}) account data",
-                pk_payer,
-                evm_address_from_pubkey::<true>(&pk_payer)
-                    .expect("pk payer must be evm compatible")
-            )
-            .as_str(),
-        );
+        let deployer_account = storage_read_account_data(&ctx.sdk, &pk_deployer)
+            .expect("failed to read payer account data");
         assert_eq!(
-            payer_account.lamports(),
-            payer_lamports - 1 - test_command_data.lamports_to_send - lamports_to_send
+            // 1 for gas (rounding)
+            lamports_refill - test_command_data.lamports_to_send,
+            deployer_account.lamports(),
         );
-        assert_eq!(payer_account.data().len(), 0);
+        assert_eq!(deployer_account.data().len(), 0);
 
-        let new_account = storage_read_account_data(&ctx.sdk, &pk_new)
+        let account_new = storage_read_account_data(&ctx.sdk, &pk_new)
             .expect(format!("failed to read new account data: {}", pk_new).as_str());
-        assert_eq!(new_account.lamports(), test_command_data.lamports_to_send);
-        assert_eq!(new_account.data().len(), space as usize);
+        assert_eq!(test_command_data.lamports_to_send, account_new.lamports());
+        assert_eq!(account_new.data().len(), space as usize);
         assert_eq!(
-            new_account.data()[test_command_data.byte_n_to_set as usize],
+            account_new.data()[test_command_data.byte_n_to_set as usize],
             test_command_data.byte_n_value
         );
     }

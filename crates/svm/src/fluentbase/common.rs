@@ -11,7 +11,7 @@ use crate::{
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
 use fluentbase_sdk::{debug_log_ext, MetadataAPI, SharedAPI, U256};
-use fluentbase_types::{syscall::SyscallResult, ExitCode};
+use fluentbase_types::{syscall::SyscallResult, ExitCode, MetadataStorageAPI};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -67,7 +67,7 @@ lazy_static! {
     };
 }
 
-pub(crate) fn extract_account_data_or_default<API: MetadataAPI>(
+pub(crate) fn extract_account_data_or_default<API: MetadataAPI + MetadataStorageAPI>(
     api: &API,
     account_key: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
@@ -76,17 +76,21 @@ pub(crate) fn extract_account_data_or_default<API: MetadataAPI>(
 }
 
 /// Stores provided accounts using specified storage api or alt api
-/// Filters out system accounts
+/// Filters out system accounts if set
 /// Returns error if some accounts are not evm compatible
-pub(crate) fn flush_not_system_accounts<SDK: SharedAPI, API: MetadataAPI>(
+pub(crate) fn flush_accounts<
+    const SKIP_SYS_ACCS: bool,
+    SDK: SharedAPI,
+    API: MetadataAPI + MetadataStorageAPI,
+>(
     sdk: &mut SDK,
-    api: &mut Option<&mut API>,
+    alt_api: &mut Option<&mut API>,
     accounts: &HashMap<Pubkey, AccountSharedData>,
 ) -> Result<u64, SvmError> {
     let mut accounts_flushed = 0;
-    select_api!(api, sdk, |storage: &mut _| -> Result<(), SvmError> {
+    select_api!(alt_api, sdk, |storage: &mut _| -> Result<(), SvmError> {
         for (pk, account_data) in accounts {
-            if SYSTEM_PROGRAMS_KEYS.contains(&pk) {
+            if SKIP_SYS_ACCS && SYSTEM_PROGRAMS_KEYS.contains(&pk) {
                 continue;
             }
             // if !is_evm_pubkey(&pk) {
