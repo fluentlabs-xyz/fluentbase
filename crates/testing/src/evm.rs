@@ -85,14 +85,7 @@ impl EvmTestingContext {
     }
 
     pub fn commit_db_to_sdk(&mut self) {
-        for (address, db_account) in &mut self.db.cache.accounts {
-            if db_account.storage.len() > 0 {
-                debug_log_ext!(
-                    "for address {} storage len {}",
-                    address,
-                    db_account.storage.len()
-                );
-            }
+        for (address, db_account) in &mut self.db.cache.accounts {oll
             self.sdk.visit_inner_storage_mut(|storage| {
                 for (k, v) in &db_account.storage {
                     debug_log_ext!("db storage -> sdk storage ({}, {})={}", address, k, v);
