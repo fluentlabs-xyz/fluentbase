@@ -338,7 +338,7 @@ impl<'a> TxBuilder<'a> {
             let result = evm.transact_commit(self.tx.clone()).unwrap();
             let new_db = &mut evm.0.journaled_state.database;
             self.ctx.db = take(new_db);
-            result
+            result.map_haltreason(RwasmHaltReason::from)
         }
     }
 }
