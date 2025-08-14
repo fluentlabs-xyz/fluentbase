@@ -5,16 +5,8 @@ use fluentbase_sdk_derive_core::abi::parameter::Parameter;
 use serde_json::Value;
 use std::{collections::HashMap, path::Path};
 use syn::{
-    parse::Parser,
-    parse_file,
-    punctuated::Punctuated,
-    visit::Visit,
-    Attribute,
-    DeriveInput,
-    ItemStruct,
-    Meta,
-    Path as SynPath,
-    Token,
+    parse::Parser, parse_file, punctuated::Punctuated, visit::Visit, Attribute, DeriveInput,
+    ItemStruct, Meta, Path as SynPath, Token,
 };
 
 /// Parse structs from all .rs files in a directory
