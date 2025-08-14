@@ -6,6 +6,7 @@ mod utils;
 
 use crate::build::build_internal;
 pub use build::{execute_build, BuildResult};
+pub use generators::*;
 use clap::{Parser, ValueEnum};
 pub use internal::*;
 use std::{

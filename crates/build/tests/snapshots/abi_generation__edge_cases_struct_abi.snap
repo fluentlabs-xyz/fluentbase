@@ -1,0 +1,395 @@
+---
+source: crates/build/tests/abi_generation.rs
+expression: abi
+---
+[
+  {
+    "inputs": [
+      {
+        "components": [],
+        "internalType": "struct Empty",
+        "name": "empty",
+        "type": "tuple"
+      }
+    ],
+    "name": "useEmpty",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "_0",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "value",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct Single",
+        "name": "single",
+        "type": "tuple"
+      }
+    ],
+    "name": "useSingle",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "_0",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "",
+            "type": "uint256"
+          },
+          {
+            "internalType": "bool",
+            "name": "",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct TupleStruct",
+        "name": "ts",
+        "type": "tuple"
+      }
+    ],
+    "name": "useTupleStruct",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "_0",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [],
+        "internalType": "struct UnitStruct",
+        "name": "_unit",
+        "type": "tuple"
+      }
+    ],
+    "name": "useUnit",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "_0",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "field1",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "field2",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "field3",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint8",
+            "name": "field4",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint16",
+            "name": "field5",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint32",
+            "name": "field6",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "field7",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "field8",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "string",
+            "name": "field9",
+            "type": "string"
+          },
+          {
+            "internalType": "uint256",
+            "name": "field10",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "field11",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "field12",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct LargeStruct",
+        "name": "large",
+        "type": "tuple"
+      }
+    ],
+    "name": "useLarge",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "_0",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "address_field",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "uint256_field",
+            "type": "uint256"
+          },
+          {
+            "internalType": "bool",
+            "name": "bool_field",
+            "type": "bool"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "bytes32_field",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "string",
+            "name": "string_field",
+            "type": "string"
+          },
+          {
+            "internalType": "uint8",
+            "name": "uint8_field",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint16",
+            "name": "uint16_field",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint32",
+            "name": "uint32_field",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "uint64_field",
+            "type": "uint64"
+          }
+        ],
+        "internalType": "struct AllTypes",
+        "name": "all",
+        "type": "tuple"
+      }
+    ],
+    "name": "useAllTypes",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "_0",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "components": [
+                      {
+                        "components": [
+                          {
+                            "internalType": "uint256",
+                            "name": "value",
+                            "type": "uint256"
+                          }
+                        ],
+                        "internalType": "struct Level1",
+                        "name": "inner",
+                        "type": "tuple"
+                      }
+                    ],
+                    "internalType": "struct Level2",
+                    "name": "inner",
+                    "type": "tuple"
+                  }
+                ],
+                "internalType": "struct Level3",
+                "name": "inner",
+                "type": "tuple"
+              }
+            ],
+            "internalType": "struct Level4",
+            "name": "inner",
+            "type": "tuple"
+          }
+        ],
+        "internalType": "struct Level5",
+        "name": "nested",
+        "type": "tuple"
+      }
+    ],
+    "name": "useDeeplyNested",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "_0",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getEmpty",
+    "outputs": [
+      {
+        "components": [],
+        "internalType": "struct Empty",
+        "name": "_0",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getTupleStruct",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "",
+            "type": "uint256"
+          },
+          {
+            "internalType": "bool",
+            "name": "",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct TupleStruct",
+        "name": "_0",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "value",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct Single",
+        "name": "single",
+        "type": "tuple"
+      },
+      {
+        "internalType": "address",
+        "name": "addr",
+        "type": "address"
+      },
+      {
+        "components": [],
+        "internalType": "struct Empty",
+        "name": "empty",
+        "type": "tuple"
+      },
+      {
+        "internalType": "uint256",
+        "name": "value",
+        "type": "uint256"
+      }
+    ],
+    "name": "mixedParams",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "_0",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
