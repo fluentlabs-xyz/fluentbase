@@ -42,13 +42,13 @@ pub fn run_in_docker(
 
     // Add environment variables
     for (key, value) in env_vars {
-        cmd.args(["-e", &format!("{}={}", key, value)]);
+        cmd.args(["-e", &format!("{key}={value}")]);
     }
 
     // Set the rust toolchain ONLY if it's explicitly provided.
     // If it's None, the container's default toolchain will be used.
     if let Some(toolchain) = rust_toolchain {
-        cmd.args(["-e", &format!("RUSTUP_TOOLCHAIN={}", toolchain)]);
+        cmd.args(["-e", &format!("RUSTUP_TOOLCHAIN={toolchain}")]);
     }
 
     cmd.arg(image);
@@ -69,17 +69,17 @@ pub fn ensure_rust_image(image: &str) -> Result<String> {
     verify_host_platform()?;
 
     // Ensure image exists (pull if needed)
-    if !image_exists(&image)? {
-        println!("Pulling base image: {} ...", image);
+    if !image_exists(image)? {
+        println!("Pulling base image: {image} ...");
         let status = Command::new("docker")
-            .args(["pull", "--platform", DOCKER_PLATFORM, &image])
+            .args(["pull", "--platform", DOCKER_PLATFORM, image])
             .status()?;
         if !status.success() {
             bail!("Failed to get image: {}", image);
         }
     }
 
-    println!("Using image: {}", image);
+    println!("Using image: {image}");
     Ok(image.to_string())
 }
 

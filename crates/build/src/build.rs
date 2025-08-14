@@ -60,7 +60,7 @@ pub(crate) fn build_internal(path: &str, args: Option<BuildArgs>) {
         Ok(path) => path,
         Err(_) => match std::env::current_dir() {
             Ok(cwd) => cwd.join(contract_dir),
-            Err(e) => panic!("Failed to determine contract directory: {}", e),
+            Err(e) => panic!("Failed to determine contract directory: {e}"),
         },
     };
 
@@ -215,7 +215,7 @@ fn build_wasm(
         .as_ref()
         .map(|image| (image.as_str(), mount_dir));
 
-    let rust_toolchain = args.toolchain_version(&contract_dir);
+    let rust_toolchain = args.toolchain_version(contract_dir);
 
     run_command(
         &cargo_args,
@@ -303,7 +303,7 @@ fn optimize_wasm(
 ) -> Result<()> {
     let work_dir = wasm_path.parent().unwrap();
     let wasm_filename = wasm_path.file_name().unwrap().to_str().unwrap();
-    let temp_filename = format!("{}.opt", wasm_filename);
+    let temp_filename = format!("{wasm_filename}.opt");
 
     run_command(
         &[
@@ -509,7 +509,7 @@ fn generate_artifacts(
                     rust_toolchain.as_deref(),
                 )?;
 
-                let interface_path = format!("{}.wasm/interface.sol", package_name);
+                let interface_path = format!("{package_name}.wasm/interface.sol");
                 let foundry_artifact = generators::foundry::generate_artifact(
                     package_name,
                     &serde_json::to_value(abi)?,
@@ -541,6 +541,6 @@ fn cargo_rerun_if_changed(metadata: &Metadata, contract_dir: &Path) {
     // Watch Cargo.lock
     let lock_path = metadata.workspace_root.join("Cargo.lock");
     if lock_path.exists() {
-        println!("cargo:rerun-if-changed={}", lock_path);
+        println!("cargo:rerun-if-changed={lock_path}");
     }
 }

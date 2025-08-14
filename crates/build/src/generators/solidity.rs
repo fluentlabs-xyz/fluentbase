@@ -1,13 +1,17 @@
 //! Solidity ABI and interface generation from Rust smart contracts
 
+use crate::generators::struct_parser::{enrich_abi_entry, parse_structs_from_dir};
 use anyhow::{Context, Result};
 use convert_case::{Case, Casing};
 use fluentbase_sdk_derive_core::router::{process_router, Router};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::ToTokens;
 use serde_json::Value;
-use std::{collections::HashSet, path::Path};
-use syn::{parse_file, visit::Visit, Attribute, ItemImpl};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
+use syn::{parse_file, visit::Visit, Attribute, DeriveInput, ItemImpl};
 
 /// Solidity ABI represented as JSON values
 pub type Abi = Vec<Value>;
@@ -33,11 +37,14 @@ pub fn generate_abi(contract_dir: &Path) -> Result<Abi> {
         ));
     };
 
-    // Parse routers from the file
+    // Parse all structs from the src directory
+    let structs = parse_structs_from_dir(&src_dir)?;
+
+    // Parse routers from the main file
     let routers = parse_routers(&main_file)?;
 
-    // Generate ABI from routers
-    generate_abi_from_routers(&routers)
+    // Generate ABI from routers with struct enrichment
+    generate_abi_from_routers(&routers, &structs)
 }
 
 /// Generate Solidity interface from ABI
@@ -116,8 +123,11 @@ fn parse_routers(path: &Path) -> Result<Vec<Router>> {
     Ok(finder.routers)
 }
 
-/// Generates ABI from parsed routers
-fn generate_abi_from_routers(routers: &[Router]) -> Result<Abi> {
+/// Generates ABI from parsed routers with struct enrichment
+fn generate_abi_from_routers(
+    routers: &[Router],
+    structs: &HashMap<String, DeriveInput>,
+) -> Result<Abi> {
     if routers.is_empty() {
         return Ok(Vec::new());
     }
@@ -128,7 +138,9 @@ fn generate_abi_from_routers(routers: &[Router]) -> Result<Abi> {
 
     for method in router.available_methods() {
         if let Ok(func_abi) = method.parsed_signature().function_abi() {
-            if let Ok(json) = func_abi.to_json_value() {
+            if let Ok(mut json) = func_abi.to_json_value() {
+                // Enrich the ABI entry with struct components
+                enrich_abi_entry(&mut json, structs)?;
                 entries.push(json);
             }
         }

@@ -14,10 +14,10 @@ impl ChangeDirection {
     pub fn is_no_change(&self) -> bool {
         self == &ChangeDirection::NoChange
     }
-    pub fn is_increase(&self) -> bool {
+    pub fn is_increased(&self) -> bool {
         self == &ChangeDirection::Increase
     }
-    pub fn is_decrease(&self) -> bool {
+    pub fn is_decreased(&self) -> bool {
         self == &ChangeDirection::Decrease
     }
 }

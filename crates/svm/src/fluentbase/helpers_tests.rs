@@ -24,21 +24,17 @@ mod tests {
     };
     use core::str::from_utf8;
     use fluentbase_sdk::{
-        address,
-        Address,
-        BlockContextV1,
-        ContractContextV1,
-        MetadataAPI,
-        SharedAPI,
+        address, Address, BlockContextV1, ContractContextV1, MetadataAPI, SharedAPI,
         SharedContextInputV1,
     };
     use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_types::MetadataStorageAPI;
     use hashbrown::HashMap;
     use solana_bincode::serialize;
     use solana_instruction::AccountMeta;
     use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 
-    fn main_single_message<API: MetadataAPI>(
+    fn main_single_message<API: MetadataAPI + MetadataStorageAPI>(
         mut sdk: impl SharedAPI,
         mut api: Option<&mut API>,
     ) -> (
@@ -54,7 +50,7 @@ mod tests {
         result.unwrap()
     }
 
-    fn main_batch_message<API: MetadataAPI>(
+    fn main_batch_message<API: MetadataAPI + MetadataStorageAPI>(
         mut sdk: impl SharedAPI,
         mut api: Option<&mut API>,
     ) -> (

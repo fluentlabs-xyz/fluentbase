@@ -34,6 +34,14 @@ impl SolType {
     pub fn abi_type_internal(&self) -> String {
         match self {
             Self::Struct { name, .. } => format!("struct {name}"),
+            Self::Array(inner) => match &**inner {
+                Self::Struct { name, .. } => format!("struct {name}[]"),
+                _ => self.to_string(),
+            },
+            Self::FixedArray(inner, size) => match &**inner {
+                Self::Struct { name, .. } => format!("struct {name}[{size}]"),
+                _ => self.to_string(),
+            },
             _ => self.to_string(),
         }
     }

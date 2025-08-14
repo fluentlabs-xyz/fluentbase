@@ -31,7 +31,7 @@ pub trait MetadataAPI {
 
 pub trait MetadataStorageAPI {
     fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256>;
-    fn metadata_storage_write(&self, slot: &U256, value: U256) -> SyscallResult<()>;
+    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()>;
 }
 
 pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
