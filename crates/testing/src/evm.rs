@@ -1,6 +1,6 @@
 use crate::{HostTestingContext, HostTestingContextNativeAPI};
 use core::{borrow::Borrow, mem::take, str::from_utf8};
-use fluentbase_revm::{RwasmBuilder, RwasmContext};
+use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_sdk::{
     bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, debug_log_ext, Address,
@@ -224,7 +224,7 @@ impl EvmTestingContext {
         input: Bytes,
         gas_limit: Option<u64>,
         value: Option<U256>,
-    ) -> ExecutionResult {
+    ) -> ExecutionResult<RwasmHaltReason> {
         let mut tx_builder = TxBuilder::call(self, caller, callee, value).input(input);
         if let Some(gas_limit) = gas_limit {
             tx_builder = tx_builder.gas_limit(gas_limit);
@@ -239,7 +239,7 @@ impl EvmTestingContext {
         input: Bytes,
         gas_limit: Option<u64>,
         value: Option<U256>,
-    ) -> ExecutionResult {
+    ) -> ExecutionResult<RwasmHaltReason> {
         self.add_balance(caller, U256::from(1e18));
         self.call_evm_tx_simple(caller, callee, input, gas_limit, value)
     }
@@ -323,7 +323,7 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
-    pub fn exec(&mut self) -> ExecutionResult {
+    pub fn exec(&mut self) -> ExecutionResult<RwasmHaltReason> {
         self.tx.nonce = self.ctx.nonce(self.tx.caller);
         let db = take(&mut self.ctx.db);
         if self.ctx.disabled_rwasm {

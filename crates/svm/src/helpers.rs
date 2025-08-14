@@ -211,8 +211,8 @@ macro_rules! select_api {
     };
 }
 
-pub fn storage_read_metadata<MAPI: MetadataAPI>(
-    api: &MAPI,
+pub fn storage_read_metadata<API: MetadataAPI>(
+    api: &API,
     pubkey: &Pubkey,
 ) -> Result<Bytes, SvmError> {
     let pubkey_hash = keccak256(pubkey.as_ref());
@@ -261,11 +261,6 @@ pub fn storage_read_account_data<API: MetadataAPI + MetadataStorageAPI>(
     api: &API,
     pk: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
-    // let buffer = storage_read_metadata(api, pk)?;
-    // let account_data: Result<AccountSharedData, DecodeError> = deserialize(&buffer);
-    // let account_data = account_data?;
-    // debug_log_ext!("pk {} account_data {:?}", pk, account_data);
-    // Ok(account_data)
     let buffer = storage_read_metadata(api, pk)?;
     if buffer.len() < 1 + size_of::<Pubkey>() {
         return Err(SvmError::RuntimeError(RuntimeError::InvalidLength));
@@ -290,10 +285,6 @@ pub fn storage_write_account_data<API: MetadataAPI + MetadataStorageAPI>(
     pk: &Pubkey,
     account_data: &AccountSharedData,
 ) -> Result<(), SvmError> {
-    // debug_log_ext!("pk {} account_data {:?}", pk, account_data);
-    // let account_data = serialize(account_data)?;
-    // storage_write_metadata(api, pk, account_data.into())?;
-    // Ok(())
     let mut buffer = vec![0u8; 1 + size_of::<Pubkey>() + account_data.data().len()];
     buffer[0] = account_data.executable() as u8;
     buffer[1..1 + size_of::<Pubkey>()].copy_from_slice(account_data.owner().as_ref());

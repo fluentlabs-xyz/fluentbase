@@ -43,7 +43,6 @@ pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
 
     let contract_value = ctx.contract_value();
     let tx_value = ctx.tx_value();
-    debug_log_ext!("contract_value {} tx_value {}", contract_value, tx_value);
     // let contract_caller = ctx.contract_caller();
     // let pk_caller = pubkey_from_evm_address(&contract_caller);
 
@@ -202,10 +201,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             let address_to = evm_address_from_pubkey::<true>(to_value.0).unwrap();
 
             if contract_caller == address_from {
-                // sdk.call(address_to, evm_balance_from_lamports(amount), &[], None)
-                //     .expect("failed to transfer balance");
                 GlobalLamportsBalance::transfer(&mut sdk, from_value.0, to_value.0, amount);
-                debug_log_ext!("from {} to {} sent {}", contract_caller, address_to, amount);
                 from_value.1 -= amount;
                 to_value.1 -= amount;
                 if from_value.1 <= 0 {
@@ -226,8 +222,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         );
     }
 
-    // let out = Bytes::new();
-    // sdk.write(out.as_ref());
+    let out = Bytes::new();
+    sdk.write(out.as_ref());
 }
 
 /*pub fn deploy_entry_original<SDK: SharedAPI>(mut sdk: SDK) {

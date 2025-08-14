@@ -180,7 +180,7 @@ impl<API: NativeAPI> MetadataStorageAPI for SharedContextImpl<API> {
     fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()> {
         let mut input = [0u8; U256::BYTES * 2];
         input[..U256::BYTES].copy_from_slice(slot.as_le_slice());
-        input[U256::BYTES..].copy_from_slice(&value.to_le_bytes::<32>());
+        input[U256::BYTES..].copy_from_slice(&value.to_le_bytes::<{ U256::BYTES }>());
         let (fuel_consumed, fuel_refunded, exit_code) =
             self.native_sdk
                 .exec(SYSCALL_ID_METADATA_STORAGE_WRITE, &input, None, STATE_MAIN);

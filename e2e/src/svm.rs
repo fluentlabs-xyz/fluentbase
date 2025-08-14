@@ -11,8 +11,7 @@ mod tests {
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{
-        address, debug_log_ext, Address, ContextReader, ContractContextV1, SharedAPI,
-        PRECOMPILE_SVM_RUNTIME, U256,
+        address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
     };
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
@@ -264,18 +263,13 @@ mod tests {
         assert!(result.is_success());
         ctx.commit_db_to_sdk();
         let deployer_evm_balance_after = ctx.get_balance(DEPLOYER_ADDRESS);
-        // not precise, rounded
         let deployer_balance_decrease_lamports =
             lamports_from_evm_balance(deployer_evm_balance_before - deployer_evm_balance_after);
-        assert!(
-            deployer_balance_decrease_lamports >= lamports_refill
-                && deployer_balance_decrease_lamports < lamports_refill + 1
-        );
+        assert_eq!(deployer_balance_decrease_lamports, lamports_refill);
         let output = result.output().unwrap_or_default();
         let expected_output = hex!("");
         assert_eq!(hex::encode(expected_output), hex::encode(output));
 
-        debug_log_ext!("pk_exec {}", pk_contract);
         let contract_account = storage_read_account_data(&ctx.sdk, &pk_contract)
             .expect(format!("failed to read exec account data: {}", pk_contract).as_str());
         assert_eq!(contract_account.lamports(), 0);

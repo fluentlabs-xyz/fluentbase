@@ -2,9 +2,9 @@ use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_sdk::syscall::SyscallResult;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, debug_log_ext, native_api::NativeAPI, Address, Bytes,
-    ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess,
-    MetadataAPI, MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, B256,
+    bytes::Buf, calc_create4_address, native_api::NativeAPI, Address, Bytes, ContextReader,
+    ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI,
+    MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, B256,
     BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
@@ -223,12 +223,6 @@ impl MetadataStorageAPI for HostTestingContext {
             .get(&(account_owner, *slot))
             .unwrap_or(&U256::ZERO)
             .clone();
-        debug_log_ext!(
-            "read (account_owner {}): slot {} value {}",
-            account_owner,
-            slot,
-            value
-        );
         SyscallResult::new(value, 0, 0, ExitCode::Ok)
     }
 
@@ -238,12 +232,6 @@ impl MetadataStorageAPI for HostTestingContext {
             .ownable_account_address
             .expect("expected ownable account address");
         ctx.metadata_storage.insert((account_owner, *slot), value);
-        debug_log_ext!(
-            "write (account_owner {}): slot {} value {}",
-            account_owner,
-            slot,
-            value
-        );
         SyscallResult::new((), 0, 0, ExitCode::Ok)
     }
 }
