@@ -1,6 +1,5 @@
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::{
-    fmt,
     fmt::{Display, Formatter},
     str::Utf8Error,
 };
@@ -47,7 +46,7 @@ pub enum SyscallError {
 }
 
 impl Display for SyscallError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             SyscallError::InvalidString(_, _) => write!(f, "SyscallError::InvalidString"),
             SyscallError::Abort => write!(f, "SyscallError::Abort"),
@@ -97,6 +96,7 @@ pub enum RuntimeError {
     InvalidType,
     InvalidPrefix,
     InvalidConversion,
+    InvalidInputValue,
 }
 
 impl core::error::Error for RuntimeError {}
@@ -110,6 +110,7 @@ impl Display for RuntimeError {
             RuntimeError::InvalidType => write!(f, "RuntimeError::InvalidType"),
             RuntimeError::InvalidPrefix => write!(f, "RuntimeError::InvalidPrefix"),
             RuntimeError::InvalidConversion => write!(f, "RuntimeError::InvalidConversion"),
+            RuntimeError::InvalidInputValue => write!(f, "RuntimeError::InvalidInputValue"),
         }
     }
 }

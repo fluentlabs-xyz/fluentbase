@@ -1,10 +1,11 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
+use fluentbase_sdk::syscall::SyscallResult;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, native_api::NativeAPI, Address, Bytes,
+    bytes::Buf, calc_create4_address, debug_log_ext, native_api::NativeAPI, Address, Bytes,
     ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess,
-    MetadataAPI, MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, syscall::SyscallResult,
-    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    MetadataAPI, MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, B256,
+    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
@@ -69,6 +70,12 @@ impl HostTestingContext {
     pub fn visit_inner_storage_mut<F: FnMut(&mut HashMap<(Address, U256), U256>)>(&self, mut f: F) {
         f(&mut self.inner.borrow_mut().persistent_storage)
     }
+    pub fn visit_inner_metadata_storage_mut<F: FnMut(&mut HashMap<(Address, U256), U256>)>(
+        &self,
+        mut f: F,
+    ) {
+        f(&mut self.inner.borrow_mut().metadata_storage)
+    }
     pub fn visit_inner_metadata_mut<F: FnMut(&mut HashMap<(Address, Address), Vec<u8>>)>(
         &self,
         mut f: F,
@@ -85,7 +92,7 @@ struct TestingContextInner {
     native_sdk: RuntimeContextWrapper,
     persistent_storage: HashMap<(Address, U256), U256>,
     metadata: HashMap<(Address, Address), Vec<u8>>,
-    metadata_storage: HashMap<U256, U256>,
+    metadata_storage: HashMap<(Address, U256), U256>,
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     ownable_account_address: Option<Address>,
@@ -206,20 +213,38 @@ impl MetadataAPI for HostTestingContext {
 }
 
 impl MetadataStorageAPI for HostTestingContext {
-    fn metadata_storage_write(&self, slot: &U256, value: U256) -> SyscallResult<()> {
-        let mut ctx = self.inner.borrow_mut();
-        ctx.metadata_storage.insert(*slot, value);
-        SyscallResult::new((), 0, 0, ExitCode::Ok)
-    }
-
     fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256> {
         let ctx = self.inner.borrow();
-        let current_balance = ctx
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        let value = ctx
             .metadata_storage
-            .get(slot)
+            .get(&(account_owner, *slot))
             .unwrap_or(&U256::ZERO)
             .clone();
-        SyscallResult::new(current_balance, 0, 0, ExitCode::Ok)
+        debug_log_ext!(
+            "read (account_owner {}): slot {} value {}",
+            account_owner,
+            slot,
+            value
+        );
+        SyscallResult::new(value, 0, 0, ExitCode::Ok)
+    }
+
+    fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()> {
+        let mut ctx = self.inner.borrow_mut();
+        let account_owner = ctx
+            .ownable_account_address
+            .expect("expected ownable account address");
+        ctx.metadata_storage.insert((account_owner, *slot), value);
+        debug_log_ext!(
+            "write (account_owner {}): slot {} value {}",
+            account_owner,
+            slot,
+            value
+        );
+        SyscallResult::new((), 0, 0, ExitCode::Ok)
     }
 }
 
