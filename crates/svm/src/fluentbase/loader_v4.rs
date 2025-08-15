@@ -24,7 +24,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 pub use deploy_entry_simplified as deploy_entry;
-use fluentbase_sdk::{debug_log_ext, Bytes, ContextReader, SharedAPI, U256};
+use fluentbase_sdk::{Bytes, ContextReader, SharedAPI, U256};
 use hashbrown::HashMap;
 use solana_clock::Epoch;
 use solana_pubkey::Pubkey;
@@ -92,14 +92,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         GlobalLamportsBalance::change::<true>(&mut sdk, &pk_caller, caller_lamports)
             .expect("failed to change lamports"),
     );
-    debug_log_ext!(
-        "contract_value {} tx_value {} pk_caller {} pk_caller_u256 {} caller_lamports {}",
-        contract_value,
-        tx_value,
-        pk_caller,
-        pubkey_to_u256(&pk_caller),
-        caller_lamports
-    );
     let mut caller_account_data = extract_account_data_or_default(&sdk, &pk_caller);
     // caller_account_data.set_lamports(caller_lamports);
 
@@ -152,7 +144,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
             result_accounts
         }
         Err(err_str) => {
-            debug_log_ext!("exec err: {}", err_str);
             panic!("failed to execute encoded svm batch message: {}", err_str);
         }
     };
