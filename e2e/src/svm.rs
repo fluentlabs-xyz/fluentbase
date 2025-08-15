@@ -11,8 +11,7 @@ mod tests {
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{
-        address, debug_log_ext, Address, ContextReader, ContractContextV1, SharedAPI,
-        PRECOMPILE_SVM_RUNTIME, U256,
+        address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
     };
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
@@ -298,8 +297,6 @@ mod tests {
             account_new.data()[test_command_data.byte_n_to_set as usize],
             test_command_data.byte_n_value
         );
-
-        debug_log_ext!("next part");
 
         let lamports_to_send = lamports_to_send - 1;
         let test_command_data = CreateAccountAndModifySomeData1 {

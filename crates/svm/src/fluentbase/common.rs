@@ -10,7 +10,7 @@ use crate::{
 };
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_sdk::{debug_log_ext, MetadataAPI, SharedAPI, U256};
+use fluentbase_sdk::{MetadataAPI, SharedAPI, U256};
 use fluentbase_types::{syscall::SyscallResult, ExitCode, MetadataStorageAPI};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
@@ -72,7 +72,6 @@ pub(crate) fn extract_account_data_or_default<API: MetadataAPI + MetadataStorage
     pk: &Pubkey,
 ) -> AccountSharedData {
     storage_read_account_data(api, pk).unwrap_or_else(|_e| {
-        debug_log_ext!("new account created for account_key {}", pk);
         let lamports = GlobalBalance::get(api, pk);
         AccountSharedData::new(lamports, 0, &system_program::id())
     })
@@ -96,7 +95,6 @@ pub(crate) fn flush_accounts<const SKIP_SYS_ACCS: bool, SDK: SharedAPI>(
         storage_write_account_data(sdk, pk, account_data)?;
         accounts_flushed += 1;
     }
-    debug_log_ext!("accounts flushed {}", accounts_flushed);
     Ok(accounts_flushed)
 }
 
