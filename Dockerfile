@@ -66,7 +66,6 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
-COPY revm/ ./revm/
 COPY bins/cli ./bins/cli/
 COPY e2e/ ./e2e/
 
@@ -83,7 +82,6 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
-COPY revm/ ./revm/
 COPY e2e/ ./e2e/
 COPY bins/ ./bins/
 COPY docker/contract ./docker/contract
