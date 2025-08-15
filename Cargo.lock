@@ -2243,7 +2243,6 @@ dependencies = [
  "fluentbase-types",
  "hex",
  "hex-literal",
- "op-revm",
  "paste",
  "rand 0.9.2",
  "revm",
@@ -3845,16 +3844,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
-name = "op-revm"
-version = "8.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#a62e70955bfb0d383279f0c0ed2e84955afaaff4"
-dependencies = [
- "auto_impl",
- "once_cell",
- "revm",
-]
-
-[[package]]
 name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5220,7 +5209,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?rev=9923a95b#9923a95bc04c4053725b7b7bc5ac5f98dd9f151f"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#9923a95bc04c4053725b7b7bc5ac5f98dd9f151f"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",

@@ -13,7 +13,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
     // call identity function
-    let result = precompile::modexp::berlin_run(&input, gas_limit)
+    let result = revm_precompile::modexp::berlin_run(&input, gas_limit)
         .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
     sdk.sync_evm_gas(result.gas_used, 0);
     // write output

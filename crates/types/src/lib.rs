@@ -76,22 +76,22 @@ pub fn is_delegated_runtime_address(address: &Address) -> bool {
 ///
 /// This value is temporary for testing purposes, requires recalculation.
 /// The limit is equal to 2Mb.
-pub const WASM_MAX_CODE_SIZE: usize = primitives::wasm::WASM_MAX_CODE_SIZE;
-pub const SVM_MAX_CODE_SIZE: usize = primitives::wasm::SVM_MAX_CODE_SIZE;
+pub const WASM_MAX_CODE_SIZE: usize = revm_primitives::wasm::WASM_MAX_CODE_SIZE;
+pub const SVM_MAX_CODE_SIZE: usize = revm_primitives::wasm::SVM_MAX_CODE_SIZE;
 
 /// WebAssembly magic bytes
 ///
 /// These values are equal to \0ASM
-pub const WASM_MAGIC_BYTES: [u8; 4] = primitives::wasm::WASM_MAGIC_BYTES;
+pub const WASM_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::WASM_MAGIC_BYTES;
 /// Solana magic bytes
-pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = primitives::wasm::SVM_ELF_MAGIC_BYTES;
+pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::SVM_ELF_MAGIC_BYTES;
 /// ERC20 magic bytes: as char codes for "ERC" and the number 0x20
-pub const ERC20_MAGIC_BYTES: [u8; 4] = primitives::wasm::ERC20_MAGIC_BYTES;
+pub const ERC20_MAGIC_BYTES: [u8; 4] = revm_primitives::wasm::ERC20_MAGIC_BYTES;
 
 /// EIP-170: Contract code size limit
 ///
 /// By default, the limit is `0x6000` (~25kb)
-pub const EVM_MAX_CODE_SIZE: usize = primitives::eip170::MAX_CODE_SIZE;
+pub const EVM_MAX_CODE_SIZE: usize = revm_primitives::eip170::MAX_CODE_SIZE;
 
 /// EIP-3860: Limit and meter initcode
 ///

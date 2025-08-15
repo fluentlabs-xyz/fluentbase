@@ -16,8 +16,8 @@ rwasm = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-rlp = { workspace = true }
 strum_macros = { workspace = true }
-precompile = { workspace = true }
-primitives = { workspace = true }
+revm-precompile = { workspace = true }
+revm-primitives = { workspace = true }
 hashbrown = { workspace = true }
 auto_impl = { workspace = true }
 bincode = { workspace = true }

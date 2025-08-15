@@ -99,26 +99,17 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", rev = "9923a95b", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 #rwasm = { path = "../rwasm", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.2.0", default-features = false, features = ["sha3-keccak"] }
 alloy-rlp = { version = "0.3.12", default-features = false }
 alloy-sol-types = { version = "1.2.0", default-features = false, features = ["json"] }
-alloy-consensus = { version = "1.0.12", default-features = false }
-alloy-eips = { version = "1.0.12", default-features = false }
 alloy-genesis = { version = "1.0.11", default-features = false }
-alloy-serde = { version = "1.0.12", default-features = false }
-alloy-provider = { version = "1.0.11", features = ["reqwest"], default-features = false }
-alloy-signer = { version = "1.0.11", default-features = false }
-alloy-signer-local = { version = "1.0.11", default-features = false }
-alloy-transport = { version = "1.0.11" }
 
 # misc
-scopeguard = { version = "1.2.0", default-features = false }
 blake3 = { version = "1.5.4", default-features = false }
-base64 = { version = "0.22.1", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
 itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
 
@@ -132,8 +123,6 @@ serde_bytes = { version = "0.11.15", default-features = false }
 spin = { version = "0.10.0", default-features = false }
 static_assertions = { version = "1.1.0", default-features = false }
 memoffset = { version = "0.9.1", default-features = false }
-serial_test = { version = "3.2.0", default-features = false }
-test-case = { version = "3.3.1", default-features = false }
 paste = { version = "1.0", default-features = false }
 auto_impl = { version = "1.2", default-features = false }
 bytes = { version = "1.10.1", default-features = false }
@@ -152,46 +141,18 @@ quote = { version = "1.0" }
 
 # revm
 revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-primitives", default-features = false }
-bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-bytecode", default-features = false }
-database = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-database", default-features = false }
-database-interface = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-database-interface", default-features = false }
-state = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-state", default-features = false }
-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-interpreter", default-features = false }
-inspector = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-inspector", default-features = false }
-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-precompile", default-features = false }
-statetest-types = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-statetest-types", default-features = false }
-context = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-context", default-features = false }
-context-interface = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-context-interface", default-features = false }
-handler = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-handler", default-features = false }
-op-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
-
-# alloy
-alloy-eip2930 = { version = "0.2.0", default-features = false }
-alloy-eip7702 = { version = "0.6.0", default-features = false }
+revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
 
 # precompiles
-ark-bls12-381 = { version = "0.5", default-features = false }
 ark-bn254 = { version = "0.5", default-features = false }
 ark-ec = { version = "0.5", default-features = false }
 ark-ff = { version = "0.5", default-features = false }
 ark-serialize = { version = "0.5", default-features = false }
-ark-std = { version = "0.5", default-features = false }
-aurora-engine-modexp = { version = "1.2", default-features = false }
-rug = { version = "1.27.0", default-features = false }
-blst = "0.3.15"
-bn = { package = "substrate-bn", version = "0.6", default-features = false }
-c-kzg = { version = "2.1.1", default-features = false }
 k256 = { version = "0.13.4", default-features = false }
 libsecp256k1 = { version = "0.7", default-features = false }
-kzg-rs = { version = "0.2.7", default-features = false }
 secp256k1 = { version = "0.31.0", default-features = false }
 sha2 = { version = "0.10.9", default-features = false }
-ripemd = { version = "0.1.3", default-features = false }
-p256 = { version = "0.13.2", default-features = false }
-
-# bytecode
-phf = { version = "0.11", default-features = false }
 
 # revme
 clap = { version = "4", features = ["derive"] }
@@ -199,25 +160,14 @@ criterion = { package = "codspeed-criterion-compat", version = "2.7" }
 
 # misc
 bitflags = { version = "2.6.0", default-features = false }
-cfg-if = { version = "1.0", default-features = false }
-derive-where = { version = "1.2.7", default-features = false }
 once_cell = { version = "1.19", default-features = false, features = ["alloc"] }
 rand = "0.8"
-tokio = "1.44"
-either = { version = "1.15.0", default-features = false }
 num-bigint = { version = "0.4.6", default-features = false, features = [] }
 curve25519-dalek = { version = "4.1.3", default-features = false, features = ["alloc"] }
 
 # dev-dependencies
-eyre = "0.6.12"
-hash-db = "0.15"
-indicatif = "0.17"
-plain_hasher = "0.2"
-rstest = "0.24.0"
 serde_derive = "1.0"
 thiserror = "2.0"
-triehash = "0.8"
-walkdir = "2.5"
 array-bytes = "1.6.0"
 
 [workspace.lints]
