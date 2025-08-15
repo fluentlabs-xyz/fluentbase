@@ -2165,6 +2165,7 @@ dependencies = [
  "fluentbase-sdk",
  "once_cell",
  "revm",
+ "rwasm",
  "serde",
 ]
 

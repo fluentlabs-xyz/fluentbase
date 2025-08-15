@@ -28,6 +28,9 @@ revm = { workspace = true }
 # static precompile sets.
 once_cell = { workspace = true, features = ["alloc"] }
 
+# rwasm (keep this dep here to enforce feature propagation)
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm.git", branch = "devel", default-features = false }
+
 # Optional
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
@@ -49,7 +52,8 @@ std = [
     "alloy-sol-types/std",
     "sha2/std",
     "serde_json/std",
-    "alloy-primitives/std"
+    "alloy-primitives/std",
+    "rwasm/std"
 ]
 hashbrown = ["revm/hashbrown"]
 serde = [
@@ -82,4 +86,4 @@ bn = ["revm/bn"]
 
 # fluentbase
 debug-print = ["fluentbase-runtime/debug-print"]
-wasmtime = ["fluentbase-runtime/wasmtime"]
+wasmtime = ["fluentbase-runtime/wasmtime", "rwasm/wasmtime"]

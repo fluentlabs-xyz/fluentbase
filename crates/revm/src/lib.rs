@@ -22,3 +22,5 @@ pub use handler::*;
 pub use precompiles::*;
 pub use result::*;
 pub use spec::*;
+
+use rwasm as _;

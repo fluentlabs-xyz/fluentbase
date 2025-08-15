@@ -316,7 +316,7 @@ mod tests {
         // no-op
         run(|stack| {
             stack.push_slice(b"").unwrap();
-            assert_eq!(stack.data, []);
+            assert!(stack.data.is_empty());
         });
 
         // one word
