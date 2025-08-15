@@ -20,10 +20,8 @@ impl MessageProcessor {
         message: &SanitizedMessage,
         program_indices: &[Vec<IndexOfAccount>],
         invoke_context: &mut InvokeContext<'_, SDK>,
-    ) -> Result<HashMap<Pubkey, BalanceHistorySnapshot<u64>>, TransactionError> {
+    ) -> Result<(), TransactionError> {
         debug_assert_eq!(program_indices.len(), message.instructions().len());
-        // TODO replace pubkey with index in transaction?
-        let mut balances_history: HashMap<Pubkey, BalanceHistorySnapshot<u64>> = Default::default();
         for (instruction_index, ((program_id, instruction), program_indices)) in message
             .program_instructions_iter()
             .zip(program_indices.iter())
@@ -82,11 +80,6 @@ impl MessageProcessor {
                     .transaction_context
                     .get_account_at_index(instruction_account.index_in_transaction)
                     .expect("instruction account must always exist");
-                let balance = account_data.borrow().lamports();
-                balances_history.insert(
-                    instruction_account_key.clone(),
-                    BalanceHistorySnapshot::new(balance, balance),
-                );
             }
 
             let result = if is_precompile {
@@ -113,25 +106,9 @@ impl MessageProcessor {
                 result
             };
 
-            for instruction_account in instruction_accounts.iter() {
-                let instruction_account_key = invoke_context
-                    .transaction_context
-                    .get_key_of_account_at_index(instruction_account.index_in_transaction)
-                    .expect("instruction account key must always exist");
-                let account_data = invoke_context
-                    .transaction_context
-                    .get_account_at_index(instruction_account.index_in_transaction)
-                    .expect("instruction account must always exist");
-                let balance = account_data.borrow().lamports();
-                let balance_change = balances_history
-                    .get_mut(instruction_account_key)
-                    .expect("balance history entry must exist");
-                balance_change.after = balance;
-            }
-
             result
                 .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
         }
-        Ok(balances_history)
+        Ok(())
     }
 }

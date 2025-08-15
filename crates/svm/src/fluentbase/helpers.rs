@@ -54,13 +54,7 @@ pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, API: MetadataAPI + Metadat
     batch_message: &[u8],
     flush_result_accounts: bool,
     api: &mut Option<&mut API>,
-) -> Result<
-    (
-        HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, BalanceHistorySnapshot<u64>>, // balance changes
-    ),
-    SvmError,
-> {
+) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let batch_message = deserialize(batch_message)?;
     exec_svm_batch_message(sdk, batch_message, flush_result_accounts, api)
 }
@@ -69,47 +63,20 @@ pub fn exec_svm_batch_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorage
     batch_message: BatchMessage,
     do_flush: bool,
     api: &mut Option<&mut API>,
-) -> Result<
-    (
-        HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
-    ),
-    SvmError,
-> {
+) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let mut result_accounts: HashMap<Pubkey, AccountSharedData> = Default::default();
-    let mut balance_changes: HashMap<Pubkey, BalanceHistorySnapshot<u64>> = Default::default();
     for (idx, message) in batch_message.messages().iter().enumerate() {
-        let (ra, bhs) = exec_svm_message(sdk, api, message.clone(), do_flush)?;
+        let ra = exec_svm_message(sdk, api, message.clone(), do_flush)?;
         result_accounts.extend(ra);
-        if idx <= 0 {
-            balance_changes = bhs
-        } else {
-            for (account_key, balance_change) in bhs {
-                match balance_changes.entry(account_key) {
-                    Entry::Occupied(v) => {
-                        v.into_mut().after = balance_change.after;
-                    }
-                    Entry::Vacant(v) => {
-                        v.insert(balance_change);
-                    }
-                }
-            }
-        }
     }
-    Ok((result_accounts, balance_changes))
+    Ok(result_accounts)
 }
 pub fn exec_encoded_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
     sdk: &mut SDK,
     message: &[u8],
     flush_result_accounts: bool,
     api: &mut Option<&mut API>,
-) -> Result<
-    (
-        HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
-    ),
-    SvmError,
-> {
+) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let message = deserialize(message)?;
     exec_svm_message(sdk, api, message, flush_result_accounts)
 }
@@ -381,13 +348,7 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
     api: &mut Option<&mut API>,
     message: legacy::Message,
     flush_result_accounts: bool,
-) -> Result<
-    (
-        HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
-    ),
-    SvmError,
-> {
+) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let config = init_config();
 
     let block_number = sdk.context().block_number();
@@ -451,10 +412,9 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
         INSTRUCTION_TRACE_CAPACITY,
     );
 
-    let (transaction_context, balance_changes) = {
+    let transaction_context = {
         let feature_set = feature_set_default();
 
-        // TODO need specific blockhash?
         let environment_config = EnvironmentConfig::new(
             *message.recent_blockhash(),
             Arc::new(feature_set),
@@ -478,9 +438,8 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
             };
         }
 
-        let balance_changes =
-            MessageProcessor::process_message(&message, &program_indices, &mut invoke_context)?;
-        (invoke_context.transaction_context, balance_changes)
+        MessageProcessor::process_message(&message, &program_indices, &mut invoke_context)?;
+        invoke_context.transaction_context
     };
 
     // TODO optimize accounts saving
@@ -499,5 +458,5 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
         flush_accounts::<true, _, _>(sdk, api, &result_accounts)?;
     }
 
-    Ok((result_accounts, balance_changes))
+    Ok(result_accounts)
 }

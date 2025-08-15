@@ -146,17 +146,14 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     .expect("failed to write loader_v4");
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
-    let (result_accounts, balance_changes): (
-        HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
-    ) = match process_svm_result(result) {
-        Ok((result_accounts, balance_changes)) => {
+    let result_accounts: HashMap<Pubkey, AccountSharedData> = match process_svm_result(result) {
+        Ok(result_accounts) => {
             if result_accounts.len() > 0 {
                 let mut api: Option<&mut SDK> = None;
                 flush_accounts::<true, _, _>(&mut sdk, &mut api, &result_accounts)
                     .expect("failed to save result accounts");
             }
-            (result_accounts, balance_changes)
+            result_accounts
         }
         Err(err_str) => {
             debug_log_ext!("exec err: {}", err_str);

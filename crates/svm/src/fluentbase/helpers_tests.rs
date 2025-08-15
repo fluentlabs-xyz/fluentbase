@@ -37,10 +37,7 @@ mod tests {
     fn main_single_message<API: MetadataAPI + MetadataStorageAPI>(
         mut sdk: impl SharedAPI,
         mut api: Option<&mut API>,
-    ) -> (
-        HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
-    ) {
+    ) -> HashMap<Pubkey, AccountSharedData> {
         let input = sdk.input();
 
         let result = exec_encoded_svm_message(&mut sdk, input, true, &mut api);
@@ -53,10 +50,7 @@ mod tests {
     fn main_batch_message<API: MetadataAPI + MetadataStorageAPI>(
         mut sdk: impl SharedAPI,
         mut api: Option<&mut API>,
-    ) -> (
-        HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
-    ) {
+    ) -> HashMap<Pubkey, AccountSharedData> {
         let input = sdk.input();
 
         let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut api);
