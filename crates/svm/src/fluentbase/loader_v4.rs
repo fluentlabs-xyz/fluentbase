@@ -170,58 +170,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         "exec account balance shouldn't change"
     );
 
-    // reorder balance changes so we have balance transfers like 'from->to'
-    let mut balance_senders: Vec<(&Pubkey, u64)> = Default::default();
-    let mut balance_receivers: Vec<(&Pubkey, u64)> = Default::default();
-    for (pk, snapshot) in &balance_changes {
-        let descriptor = snapshot.get_descriptor();
-        if descriptor.amount <= 0 {
-            continue;
-        }
-        if descriptor.direction.is_decreased() {
-            if pk != &pk_caller {
-                panic!("sending balance from non-caller accounts is not supported");
-            }
-            balance_senders.push((pk, descriptor.amount));
-        } else if descriptor.direction.is_increased() {
-            balance_receivers.push((pk, descriptor.amount));
-        }
-    }
-    if !balance_senders.is_empty() || !balance_receivers.is_empty() {
-        let mut from_iter = balance_senders.iter_mut();
-        let mut to_iter = balance_receivers.iter_mut();
-        let mut from = from_iter.next();
-        let mut to = to_iter.next();
-        while from.is_some() && to.is_some() {
-            let from_value = from.as_deref_mut().unwrap();
-            let to_value = to.as_deref_mut().unwrap();
-
-            let amount = core::cmp::min(from_value.1, to_value.1);
-            let address_from = evm_address_from_pubkey::<true>(from_value.0).unwrap();
-            let address_to = evm_address_from_pubkey::<true>(to_value.0).unwrap();
-
-            if contract_caller == address_from {
-                GlobalLamportsBalance::transfer(&mut sdk, from_value.0, to_value.0, amount);
-                from_value.1 -= amount;
-                to_value.1 -= amount;
-                if from_value.1 <= 0 {
-                    from = from_iter.next();
-                }
-                if to_value.1 <= 0 {
-                    to = to_iter.next();
-                }
-            } else {
-                panic!("balance transfers from non-caller are not supported");
-            }
-        }
-        assert!(
-            from.is_none() && to.is_none(),
-            "some balances left unsettled: from {} to {}",
-            from.is_some(),
-            to.is_some()
-        );
-    }
-
     let out = Bytes::new();
     sdk.write(out.as_ref());
 }
