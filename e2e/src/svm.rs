@@ -11,7 +11,8 @@ mod tests {
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{
-        address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
+        address, debug_log_ext, Address, ContextReader, ContractContextV1, SharedAPI,
+        PRECOMPILE_SVM_RUNTIME, U256,
     };
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
@@ -298,52 +299,45 @@ mod tests {
             test_command_data.byte_n_value
         );
 
+        debug_log_ext!("next part");
+
+        let lamports_to_send = lamports_to_send - 1;
+        let test_command_data = CreateAccountAndModifySomeData1 {
+            lamports_to_send,
+            space,
+            seeds: vec![seed1.to_vec()],
+            byte_n_to_set: random_range(0..space),
+            byte_n_value: rand::random(),
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        println!(
+            "instruction_data ({}): {:x?}",
+            instruction_data.len(),
+            &instruction_data
+        );
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![
+                AccountMeta::new(pk_deployer, true),
+                AccountMeta::new(pk_new, false),
+                AccountMeta::new(system_program_id, false),
+            ],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
         let result = ctx.call_evm_tx_simple(
             DEPLOYER_ADDRESS,
             contract_address,
             input.clone().into(),
             None,
             None,
-            // Some(evm_balance_from_lamports(lamports_refill)),
         );
-        let output = result.output().unwrap();
-        if output.len() > 0 {
-            let out_text = from_utf8(output).unwrap();
-            println!("output.len {} output '{}'", output.len(), out_text);
-        }
-        assert!(result.is_success());
-        ctx.commit_db_to_sdk();
-
-        let contract_account = storage_read_account_data(&ctx.sdk, &pk_contract)
-            .expect(format!("failed to read exec account data: {}", pk_contract).as_str());
-        assert_eq!(contract_account.lamports(), 0);
-        assert_eq!(
-            contract_account.data().len(),
-            LoaderV4State::program_data_offset() + account_with_program.data().len()
-        );
-        assert_eq!(
-            &contract_account.data()[LoaderV4State::program_data_offset()..],
-            account_with_program.data()
-        );
-
-        let deployer_account = storage_read_account_data(&ctx.sdk, &pk_deployer)
-            .expect("failed to read payer account data");
-        assert_eq!(
-            // 1 for gas (rounding)
-            lamports_refill - test_command_data.lamports_to_send * 2,
-            deployer_account.lamports(),
-        );
-        assert_eq!(deployer_account.data().len(), 0);
-
-        let account_new = storage_read_account_data(&ctx.sdk, &pk_new)
-            .expect(format!("failed to read new account data: {}", pk_new).as_str());
-        // TODO why balance is not lamports_to_send*2
-        assert_eq!(test_command_data.lamports_to_send, account_new.lamports());
-        assert_eq!(account_new.data().len(), space as usize);
-        assert_eq!(
-            account_new.data()[test_command_data.byte_n_to_set as usize],
-            test_command_data.byte_n_value
-        );
+        // tried to create the same new account (pk_new) inside solana app
+        assert!(!result.is_success());
     }
 
     #[test]

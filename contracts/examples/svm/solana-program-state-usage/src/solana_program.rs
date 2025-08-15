@@ -129,9 +129,10 @@ pub fn process_instruction(
             let signer_seeds = &[&p_seeds[0], payer.key.as_ref(), &[bump]];
 
             msg!(
-                "payer.key: {:x?} new_account.key: {:x?} lamports {} space {} program_id {:x?} signer_seeds {:x?}",
+                "payer.key: {:x?} new_account.key: {:x?} new_account.lamports {} lamports_to_send {} space {} program_id {:x?} signer_seeds {:x?}",
                 payer.key.to_bytes(),
-                new_account.key.to_bytes(),
+                new_account.key,
+                new_account.lamports(),
                 p.lamports_to_send,
                 p.space,
                 program_id.to_bytes(),

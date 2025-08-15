@@ -1,3 +1,5 @@
+use crate::common::pubkey_from_evm_address;
+use crate::error::RuntimeError;
 use crate::{
     account::{
         is_executable_by_account, Account, AccountSharedData, ReadableAccount, WritableAccount,
@@ -13,7 +15,7 @@ use crate::{
     loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     loaders::bpf_loader_v4,
     message_processor::MessageProcessor,
-    native_loader, saturating_add_assign, select_api, solana_program,
+    native_loader, saturating_add_assign, solana_program,
     solana_program::{
         feature_set::feature_set_default,
         loader_v4,
@@ -28,7 +30,7 @@ use crate::{
     types::BalanceHistorySnapshot,
 };
 use alloc::{sync::Arc, vec::Vec};
-use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
+use fluentbase_sdk::{debug_log_ext, ContextReader, MetadataAPI, SharedAPI};
 use fluentbase_types::MetadataStorageAPI;
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;
@@ -49,36 +51,33 @@ pub fn init_config() -> Config {
     rbpf_config_default(None)
 }
 
-pub fn exec_encoded_svm_batch_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
+pub fn exec_encoded_svm_batch_message<SDK: SharedAPI>(
     sdk: &mut SDK,
     batch_message: &[u8],
     flush_result_accounts: bool,
-    api: &mut Option<&mut API>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let batch_message = deserialize(batch_message)?;
-    exec_svm_batch_message(sdk, batch_message, flush_result_accounts, api)
+    exec_svm_batch_message(sdk, batch_message, flush_result_accounts)
 }
-pub fn exec_svm_batch_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
+pub fn exec_svm_batch_message<SDK: SharedAPI>(
     sdk: &mut SDK,
     batch_message: BatchMessage,
-    do_flush: bool,
-    api: &mut Option<&mut API>,
+    do_flush_result_accounts: bool,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let mut result_accounts: HashMap<Pubkey, AccountSharedData> = Default::default();
     for (idx, message) in batch_message.messages().iter().enumerate() {
-        let ra = exec_svm_message(sdk, api, message.clone(), do_flush)?;
+        let ra = exec_svm_message(sdk, message.clone(), do_flush_result_accounts)?;
         result_accounts.extend(ra);
     }
     Ok(result_accounts)
 }
-pub fn exec_encoded_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
+pub fn exec_encoded_svm_message<SDK: SharedAPI>(
     sdk: &mut SDK,
     message: &[u8],
     flush_result_accounts: bool,
-    api: &mut Option<&mut API>,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let message = deserialize(message)?;
-    exec_svm_message(sdk, api, message, flush_result_accounts)
+    exec_svm_message(sdk, message, flush_result_accounts)
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -202,10 +201,9 @@ fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI + MetadataStora
     Ok((loaded_account, account_found))
 }
 
-pub fn prepare_data_for_tx_ctx<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
+pub fn prepare_data_for_tx_ctx<SDK: SharedAPI>(
     sdk: &mut SDK,
     message: &impl SVMMessage,
-    api: &mut Option<&mut API>,
     feature_set: &FeatureSet,
     program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
     loaded_programs: &ProgramCacheForTxBatch<SDK>,
@@ -236,25 +234,21 @@ pub fn prepare_data_for_tx_ctx<SDK: SharedAPI, API: MetadataAPI + MetadataStorag
     // it's fine to use the fee payer directly here rather than checking account
     // overrides again.
     let fee_payer = message.fee_payer();
-    let loaded_fee_payer_account = select_api!(api, sdk, |s| {
-        extract_account_data_or_default(s, fee_payer)
-    })?;
+    let loaded_fee_payer_account = extract_account_data_or_default(sdk, fee_payer);
     collect_loaded_account(fee_payer, (loaded_fee_payer_account, true))?;
 
     // Attempt to load and collect remaining non-fee payer accounts
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
-        let (loaded_account, account_found) = select_api!(api, sdk, |s| {
-            load_transaction_account(
-                s,
-                message,
-                account_key,
-                account_index,
-                &instruction_accounts[..],
-                feature_set,
-                program_accounts,
-                loaded_programs,
-            )
-        })?;
+        let (loaded_account, account_found) = load_transaction_account(
+            sdk,
+            message,
+            account_key,
+            account_index,
+            &instruction_accounts[..],
+            feature_set,
+            program_accounts,
+            loaded_programs,
+        )?;
         collect_loaded_account(account_key, (loaded_account.account, account_found))?;
     }
 
@@ -291,9 +285,7 @@ pub fn prepare_data_for_tx_ctx<SDK: SharedAPI, API: MetadataAPI + MetadataStorag
                 .iter()
                 .any(|(key, _)| key == owner_id)
             {
-                if let Ok(owner_account) =
-                    select_api!(api, sdk, |s| { storage_read_account_data(s, owner_id) })
-                {
+                if let Ok(owner_account) = storage_read_account_data(sdk, owner_id) {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
                     {
@@ -311,9 +303,8 @@ pub fn prepare_data_for_tx_ctx<SDK: SharedAPI, API: MetadataAPI + MetadataStorag
     Ok((accounts, program_indices))
 }
 
-fn filter_executable_program_accounts<'a, SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
+fn filter_executable_program_accounts<'a, SDK: SharedAPI>(
     sdk: &SDK,
-    api: &mut Option<&mut API>,
     txs: &[&impl SVMMessage],
     program_owners: &'a [Pubkey],
 ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
@@ -329,7 +320,7 @@ fn filter_executable_program_accounts<'a, SDK: SharedAPI, API: MetadataAPI + Met
                     saturating_add_assign!(*count, 1);
                 }
                 Entry::Vacant(entry) => {
-                    let account = select_api!(api, sdk, |s| { storage_read_account_data(s, key) });
+                    let account = storage_read_account_data(sdk, key);
                     if let Ok(acc) = account {
                         if let Some(index) = program_owners.iter().position(|k| k == acc.owner()) {
                             if let Some(owner) = program_owners.get(index) {
@@ -343,12 +334,29 @@ fn filter_executable_program_accounts<'a, SDK: SharedAPI, API: MetadataAPI + Met
     result
 }
 
-pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
+pub fn exec_svm_message<SDK: SharedAPI>(
     sdk: &mut SDK,
-    api: &mut Option<&mut API>,
     message: legacy::Message,
     flush_result_accounts: bool,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
+    let message: SanitizedMessage =
+        SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
+
+    let contract_caller = sdk.context().contract_caller();
+    let pk_caller = pubkey_from_evm_address(&contract_caller);
+    let signer_count = message.num_total_signatures();
+    if signer_count > 1 {
+        panic!("max number of signers can be 1, given {}", signer_count);
+    }
+    for i in 0..message.account_keys().len() {
+        if message.is_signer(i) {
+            let pk_account = message.account_keys().get(i).unwrap();
+            if &pk_caller != pk_account {
+                panic!("only caller account can be signer: {}", pk_account);
+            }
+        }
+    }
+
     let config = init_config();
 
     let block_number = sdk.context().block_number();
@@ -362,9 +370,6 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
 
     let system_program_id = system_program::id();
     let loader_id = loader_v4::id();
-
-    let message: SanitizedMessage =
-        SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
 
     let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext<SDK>>>::default();
     register_builtins(&mut function_registry);
@@ -394,12 +399,10 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
     );
 
     let feature_set = feature_set_default();
-    let program_accounts =
-        filter_executable_program_accounts(sdk, api, &[&message], &PROGRAM_OWNERS);
+    let program_accounts = filter_executable_program_accounts(sdk, &[&message], &PROGRAM_OWNERS);
     let result = prepare_data_for_tx_ctx(
         sdk,
         &message,
-        api,
         &feature_set,
         &program_accounts,
         &program_cache_for_tx_batch,
@@ -442,7 +445,6 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
         invoke_context.transaction_context
     };
 
-    // TODO optimize accounts saving
     let mut result_accounts =
         HashMap::with_capacity(transaction_context.get_number_of_accounts() as usize);
 
@@ -455,7 +457,7 @@ pub fn exec_svm_message<SDK: SharedAPI, API: MetadataAPI + MetadataStorageAPI>(
         );
     }
     if flush_result_accounts {
-        flush_accounts::<true, _, _>(sdk, api, &result_accounts)?;
+        flush_accounts::<true, _>(sdk, &result_accounts)?;
     }
 
     Ok(result_accounts)

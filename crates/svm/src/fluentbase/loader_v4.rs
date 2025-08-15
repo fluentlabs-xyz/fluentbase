@@ -10,7 +10,6 @@ use crate::{
         common::{extract_account_data_or_default, process_svm_result},
         helpers::exec_encoded_svm_batch_message,
         loader_common::{read_contract_data, write_contract_data},
-        mem_storage::MemStorage,
     },
     helpers::storage_write_account_data,
     loaders::bpf_loader_v4::get_state_mut,
@@ -83,7 +82,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     drop(ctx);
 
-    let mut mem_storage = MemStorage::new();
     let loader_v4 = loader_v4::id();
 
     let pk_caller = pubkey_from_evm_address(&contract_caller);
@@ -102,9 +100,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
         pubkey_to_u256(&pk_caller),
         caller_lamports
     );
-    let mut caller_account_data =
-        extract_account_data_or_default(&sdk, &pk_caller).expect("caller must exist");
-    caller_account_data.set_lamports(caller_lamports);
+    let mut caller_account_data = extract_account_data_or_default(&sdk, &pk_caller);
+    // caller_account_data.set_lamports(caller_lamports);
 
     let contract_data =
         read_contract_data(&sdk, &pk_contract).expect("failed to read contract executable");
@@ -126,31 +123,30 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     let exec_account_balance_before = contract_lamports;
 
-    storage_write_account_data(&mut mem_storage, &pk_contract, &contract_account_data)
+    storage_write_account_data(&mut sdk, &pk_contract, &contract_account_data)
         .expect("failed to write contract account");
 
-    storage_write_account_data(&mut mem_storage, &pk_caller, &caller_account_data)
+    storage_write_account_data(&mut sdk, &pk_caller, &caller_account_data)
         .expect("failed to write caller account");
 
     storage_write_account_data(
-        &mut mem_storage,
+        &mut sdk,
         &system_program::id(),
         &create_loadable_account_with_fields2("system_program_id", &native_loader::id()),
     )
     .expect("failed to write system_program");
     storage_write_account_data(
-        &mut mem_storage,
+        &mut sdk,
         &loader_v4,
         &create_loadable_account_with_fields2("loader_v4_id", &native_loader::id()),
     )
     .expect("failed to write loader_v4");
 
-    let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
+    let result = exec_encoded_svm_batch_message(&mut sdk, input, true);
     let result_accounts: HashMap<Pubkey, AccountSharedData> = match process_svm_result(result) {
         Ok(result_accounts) => {
             if result_accounts.len() > 0 {
-                let mut api: Option<&mut SDK> = None;
-                flush_accounts::<true, _, _>(&mut sdk, &mut api, &result_accounts)
+                flush_accounts::<true, _>(&mut sdk, &result_accounts)
                     .expect("failed to save result accounts");
             }
             result_accounts

@@ -200,17 +200,6 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
-#[macro_export]
-macro_rules! select_api {
-    ($optional:expr, $alt:expr, $callback:expr) => {
-        if let Some(v) = $optional {
-            $callback(*v)
-        } else {
-            $callback($alt)
-        }
-    };
-}
-
 pub fn storage_read_metadata<API: MetadataAPI>(
     api: &API,
     pubkey: &Pubkey,
@@ -243,10 +232,7 @@ pub fn storage_write_metadata<MAPI: MetadataAPI>(
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
             keccak256(v)
         });
-    let (metadata_size, _, _, _) = api
-        .metadata_size(&derived_metadata_address)
-        .expect("metadata size")
-        .data;
+    let (metadata_size, _, _, _) = api.metadata_size(&derived_metadata_address).data;
     if metadata_size == 0 {
         api.metadata_create(&pubkey_hash.into(), metadata)
             .expect("metadata creation failed");
