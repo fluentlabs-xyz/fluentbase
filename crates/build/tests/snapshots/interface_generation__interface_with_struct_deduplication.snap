@@ -1,0 +1,18 @@
+---
+source: crates/build/tests/interface_generation.rs
+expression: interface
+---
+// SPDX-License-Identifier: MIT
+// Auto-generated from Rust source
+pragma solidity ^0.8.0;
+
+interface IUserManager {
+    struct User {
+        uint256 id;
+        address addr;
+    }
+
+    function setUser(User calldata user) external;
+    function getUser(uint256 id) external view returns (User memory user);
+    function updateUsers(User[] calldata users) external;
+}

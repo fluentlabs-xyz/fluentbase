@@ -119,7 +119,7 @@ pub fn generate_artifact(
     let bytecode_hex = format!("0x{}", hex::encode(wasm_bytecode));
     let deployed_bytecode_hex = format!("0x{}", hex::encode(rwasm));
 
-    // Create method identifiers from ABI (пока пустые)
+    // Create method identifiers from ABI
     let method_identifiers = create_method_identifiers(abi)?;
 
     // Create Foundry metadata
@@ -155,7 +155,7 @@ pub fn generate_artifact(
     })
 }
 
-/// Create method identifiers from ABI (пока возвращает пустую мапу)
+/// Create method identifiers from ABI
 fn create_method_identifiers(_abi: &serde_json::Value) -> Result<BTreeMap<String, String>> {
     // TODO: Implement proper method identifier calculation
     Ok(BTreeMap::new())

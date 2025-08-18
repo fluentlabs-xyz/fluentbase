@@ -207,6 +207,12 @@ fn extract_router_tokens(attr: &Attribute) -> syn::Result<TokenStream2> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ParameterKind {
+    Input,
+    Output,
+}
+
 fn format_function(func: &Value) -> Result<String> {
     let name = func["name"].as_str().unwrap_or_default();
     let empty_vec = Vec::new();
@@ -214,18 +220,20 @@ fn format_function(func: &Value) -> Result<String> {
     let outputs = func["outputs"].as_array().unwrap_or(&empty_vec);
     let mutability = func["stateMutability"].as_str().unwrap_or("nonpayable");
 
+    // Format input parameters with calldata location for external functions
     let params = inputs
         .iter()
-        .map(format_parameter)
+        .map(|p| format_parameter(p, ParameterKind::Input))
         .collect::<Vec<_>>()
         .join(", ");
 
+    // Format output parameters with memory location
     let returns = if outputs.is_empty() {
         String::new()
     } else {
         let ret_params = outputs
             .iter()
-            .map(format_parameter)
+            .map(|p| format_parameter(p, ParameterKind::Output))
             .collect::<Vec<_>>()
             .join(", ");
         format!(" returns ({ret_params})")
@@ -243,7 +251,7 @@ fn format_function(func: &Value) -> Result<String> {
     ))
 }
 
-fn format_parameter(param: &Value) -> String {
+fn format_parameter(param: &Value, param_kind: ParameterKind) -> String {
     let name = param["name"].as_str().unwrap_or("");
     let internal_type = param.get("internalType").and_then(Value::as_str);
 
@@ -259,7 +267,7 @@ fn format_parameter(param: &Value) -> String {
     };
 
     // Add data location for complex types
-    let location = get_data_location(&ty, internal_type);
+    let location = get_data_location(&ty, internal_type, param_kind);
     let location_str = match location {
         Some(DataLocation::Memory) => " memory",
         Some(DataLocation::Calldata) => " calldata",
@@ -276,27 +284,44 @@ fn format_parameter(param: &Value) -> String {
 fn format_sol_type(param: &Value) -> String {
     let param_type = param["type"].as_str().unwrap_or("unknown");
 
-    if param_type == "tuple" {
+    // Handle all tuple types (including multidimensional arrays)
+    if param_type.starts_with("tuple") {
         // Check if it's a named struct
         if let Some(internal_type) = param.get("internalType").and_then(Value::as_str) {
             if let Some(stripped) = internal_type.strip_prefix("struct ") {
+                // Return the struct name with all array suffixes preserved
                 return stripped.to_string();
             }
         }
 
         // Handle anonymous tuples
-        if let Some(components) = param.get("components").and_then(Value::as_array) {
-            let component_types = components
-                .iter()
-                .map(format_sol_type)
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("({component_types})")
-        } else {
-            "tuple".to_string()
+        if param_type == "tuple" {
+            // Simple tuple
+            if let Some(components) = param.get("components").and_then(Value::as_array) {
+                let component_types = components
+                    .iter()
+                    .map(format_sol_type)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                return format!("({component_types})");
+            }
+        } else if param_type.starts_with("tuple[") && param_type.ends_with("]") {
+            // Tuple array (any dimensionality)
+            let array_suffix = &param_type[5..]; // Remove "tuple" prefix
+            if let Some(components) = param.get("components").and_then(Value::as_array) {
+                let component_types = components
+                    .iter()
+                    .map(format_sol_type)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                return format!("({component_types}){array_suffix}");
+            }
         }
+
+        // Fallback
+        return param_type.to_string();
     } else if let Some(base_type) = param_type.strip_suffix("[]") {
-        // Handle array types
+        // Handle other array types (not tuple arrays)
         let formatted_base = format_sol_type(&serde_json::json!({ "type": base_type }));
         format!("{formatted_base}[]")
     } else {
@@ -311,21 +336,69 @@ enum DataLocation {
     Calldata,
 }
 
-fn get_data_location(ty: &str, internal_type: Option<&str>) -> Option<DataLocation> {
-    match (ty, internal_type) {
-        (_, Some(t)) if t.starts_with("struct ") => Some(DataLocation::Memory),
-        ("string", _) | ("bytes", _) => Some(DataLocation::Calldata),
-        (t, _) if t.ends_with("[]") => Some(DataLocation::Memory),
-        (t, _) if t.starts_with("(") && t.ends_with(")") => Some(DataLocation::Memory), // tuples
-        _ => None,
+fn get_data_location(
+    ty: &str,
+    internal_type: Option<&str>,
+    param_kind: ParameterKind,
+) -> Option<DataLocation> {
+    // For external functions in interfaces:
+    // - Input parameters: use calldata (more gas efficient, read-only)
+    // - Output parameters: use memory
+
+    // Simple types (uint256, address, bool, etc.) don't need data location
+    if !needs_data_location(ty, internal_type) {
+        return None;
     }
+
+    match param_kind {
+        ParameterKind::Input => Some(DataLocation::Calldata),
+        ParameterKind::Output => Some(DataLocation::Memory),
+    }
+}
+
+fn needs_data_location(ty: &str, internal_type: Option<&str>) -> bool {
+    // Data location is needed for:
+    // - Structs
+    // - Arrays (dynamic and fixed, any dimensionality)
+    // - Strings
+    // - Bytes (dynamic)
+    // - Tuples
+
+    match (ty, internal_type) {
+        (_, Some(t)) if t.starts_with("struct ") => true,
+        ("string", _) | ("bytes", _) => true,
+        (t, _) if t.contains("[") && t.contains("]") => true, // Any array (including multidimensional)
+        (t, _) if t.starts_with("(") && t.ends_with(")") => true, // Tuples
+        _ => false,
+    }
+}
+
+/// Helper function to strip all array suffixes from a string
+/// Example: "Cell[][]" -> "Cell", "Item[3][2]" -> "Item"
+fn strip_array_suffixes(s: &str) -> &str {
+    let mut result = s;
+    // Handle both dynamic arrays [] and fixed arrays [n]
+    while let Some(bracket_pos) = result.rfind('[') {
+        result = &result[..bracket_pos];
+    }
+    result
 }
 
 fn collect_structs(params: &[Value], seen: &mut HashSet<String>, structs: &mut Vec<String>) {
     for param in params {
-        if param["type"] == "tuple" {
+        let param_type = param["type"].as_str().unwrap_or("");
+
+        // Check if this parameter represents a struct (tuple or any tuple array)
+        let is_tuple_type = param_type == "tuple"
+            || (param_type.starts_with("tuple[") && param_type.ends_with("]"));
+
+        if is_tuple_type {
             if let Some(internal_type) = param.get("internalType").and_then(Value::as_str) {
-                if let Some(struct_name) = internal_type.strip_prefix("struct ") {
+                // Extract struct name from "struct Name" or "struct Name[]" or "struct Name[][]" etc.
+                if let Some(struct_name_with_arrays) = internal_type.strip_prefix("struct ") {
+                    // Remove all array suffixes to get the pure struct name
+                    let struct_name = strip_array_suffixes(struct_name_with_arrays);
+
                     if seen.insert(struct_name.to_string()) {
                         if let Some(components) = param.get("components").and_then(Value::as_array)
                         {
@@ -347,12 +420,13 @@ fn collect_structs(params: &[Value], seen: &mut HashSet<String>, structs: &mut V
                     }
                 }
             }
-        } else if param["type"]
-            .as_str()
-            .map(|t| t.ends_with("[]"))
-            .unwrap_or(false)
-        {
-            // For arrays, check the base type
+        } else if param_type.ends_with("]") {
+            // For other array types, just check components recursively
+            if let Some(components) = param.get("components").and_then(Value::as_array) {
+                collect_structs(components, seen, structs);
+            }
+        } else if param_type == "tuple" {
+            // For anonymous tuples, check components
             if let Some(components) = param.get("components").and_then(Value::as_array) {
                 collect_structs(components, seen, structs);
             }
@@ -422,7 +496,7 @@ mod tests {
         assert!(interface.contains("address user;"));
         assert!(interface.contains("bytes metadata;"));
         assert!(interface.contains(
-            "function submitOrder(Order memory order) external payable returns (bool success);"
+            "function submitOrder(Order calldata order) external payable returns (bool success);"
         ));
     }
 
@@ -472,7 +546,7 @@ mod tests {
             interface.contains("function pureFunction(uint256 x) external pure returns (uint256);")
         );
         assert!(
-            interface.contains("function viewFunction() external view returns (string calldata);")
+            interface.contains("function viewFunction() external view returns (string memory);")
         );
         assert!(
             interface.contains("function payableFunction(bytes calldata data) external payable;")

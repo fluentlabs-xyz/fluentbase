@@ -1,0 +1,23 @@
+---
+source: crates/build/tests/interface_generation.rs
+expression: interface
+---
+// SPDX-License-Identifier: MIT
+// Auto-generated from Rust source
+pragma solidity ^0.8.0;
+
+interface IFixedArrayContract {
+    struct FixedArrayData {
+        address[3] addresses;
+        uint256[5] values;
+        uint256[3][2] matrix;
+        bool[2] flags;
+    }
+
+    struct Item {
+        uint256 id;
+        bytes32 data;
+    }
+
+    function processFixedArrays(FixedArrayData calldata data, Item[3] calldata fixedStructArray) external;
+}
