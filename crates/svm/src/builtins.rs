@@ -1877,6 +1877,8 @@ declare_builtin_function!(
             }
         };
 
+
+
         let input = translate_slice::<u8>(
             memory_mapping,
             input_addr,
@@ -1951,6 +1953,10 @@ declare_builtin_function!(
                 return Err(SyscallError::InvalidAttribute.into());
             }
         };
+
+        if input_size <= 0 {
+            return Ok(SUCCESS);
+        }
 
         let input = translate_slice::<u8>(
             memory_mapping,
