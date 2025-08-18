@@ -16,7 +16,7 @@ mod tests {
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        common::{evm_balance_from_lamports, lamports_from_evm_balance, pubkey_from_evm_address},
+        common::{evm_balance_from_lamports, pubkey_from_evm_address},
         fluentbase::common::BatchMessage,
         helpers::storage_read_account_data,
         pubkey::Pubkey,
@@ -28,6 +28,7 @@ mod tests {
         },
         system_program,
     };
+    use fluentbase_svm_shared::test_structs::Transfer;
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
         test_structs::{
@@ -68,7 +69,8 @@ mod tests {
     use solana_poseidon::{Endianness, Parameters};
     use std::{fs::File, io::Read, ops::Neg, time::Instant};
 
-    const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    const DEPLOYER_ADDRESS1: Address = address!("1231238908230948230948209348203984029834");
+    const DEPLOYER_ADDRESS2: Address = address!("1231238928230949230948209148203584029234");
 
     pub fn process_test_commands(
         ctx: &mut EvmTestingContext,
@@ -98,7 +100,7 @@ mod tests {
             println!("exec started");
             let measure = Instant::now();
             let result = ctx.call_evm_tx_simple(
-                DEPLOYER_ADDRESS,
+                DEPLOYER_ADDRESS1,
                 contract_address.clone(),
                 input.into(),
                 None,
@@ -145,11 +147,11 @@ mod tests {
         );
 
         let program_bytes = account_with_program.data().to_vec();
-        ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1e18));
+        ctx.add_balance(DEPLOYER_ADDRESS1, U256::from(1e18));
 
         let measure = Instant::now();
         let (_contract_address, _gas_used) =
-            ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
+            ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS1, program_bytes.into());
         println!("deploy took: {:.2?}", measure.elapsed());
     }
 
@@ -164,9 +166,9 @@ mod tests {
 
         // setup initial accounts
 
-        let pk_deployer = pubkey_from_evm_address(&DEPLOYER_ADDRESS);
+        let pk_deployer1 = pubkey_from_evm_address(&DEPLOYER_ADDRESS1);
         ctx.add_balance(
-            DEPLOYER_ADDRESS,
+            DEPLOYER_ADDRESS1,
             evm_balance_from_lamports(payer_initial_lamports),
         );
 
@@ -175,15 +177,15 @@ mod tests {
         let program_bytes = account_with_program.data().to_vec();
         let measure = Instant::now();
         let (contract_address, _gas) =
-            ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, program_bytes.into());
+            ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS1, program_bytes.into());
         println!("deploy took: {:.2?}", measure.elapsed());
 
         let pk_contract = pubkey_from_evm_address(&contract_address);
 
-        let seeds = &[seed1, pk_deployer.as_ref()];
+        let seeds = &[seed1, pk_deployer1.as_ref()];
         let (pk_new, _bump) = Pubkey::find_program_address(seeds, &pk_contract);
 
-        (pk_deployer, pk_contract, pk_new, contract_address)
+        (pk_deployer1, pk_contract, pk_new, contract_address)
     }
 
     #[test]
@@ -198,27 +200,27 @@ mod tests {
         let payer_initial_lamports = 101;
         let seed1 = b"seed";
 
-        let (pk_deployer, pk_contract, pk_new, contract_address) = svm_deploy(
+        let (pk_deployer1, pk_contract, pk_new, contract_address) = svm_deploy(
             &mut ctx,
             &account_with_program,
             seed1,
             payer_initial_lamports,
         );
+        let pk_deployer2 = pubkey_from_evm_address(&DEPLOYER_ADDRESS2);
+        // some balance for gas payment
+        ctx.add_balance(DEPLOYER_ADDRESS2, evm_balance_from_lamports(1));
 
         ctx.commit_db_to_sdk();
 
-        // let payer_account = storage_read_account_data(&ctx.sdk, &pk_payer)
-        //     .expect("failed to read payer account data");
-        // assert_eq!(payer_account.lamports(), payer_initial_lamports);
-
         // exec
 
-        let space: u32 = 101;
-        let lamports_refill = 15;
-        let lamports_to_send = 6;
+        let space: u32 = 99;
+        let mut deployer1_lamports = 30;
+        let deployer1_lamports_to_send = 6;
 
+        let mut new_account_lamports = deployer1_lamports_to_send;
         let test_command_data = CreateAccountAndModifySomeData1 {
-            lamports_to_send,
+            lamports_to_send: deployer1_lamports_to_send,
             space,
             seeds: vec![seed1.to_vec()],
             byte_n_to_set: random_range(0..space),
@@ -236,7 +238,7 @@ mod tests {
             pk_contract.clone(),
             &instruction_data,
             vec![
-                AccountMeta::new(pk_deployer, true),
+                AccountMeta::new(pk_deployer1, true),
                 AccountMeta::new(pk_new, false),
                 AccountMeta::new(system_program_id, false),
             ],
@@ -245,25 +247,23 @@ mod tests {
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
-        let deployer_evm_balance_before = ctx.get_balance(DEPLOYER_ADDRESS);
         let result = ctx.call_evm_tx_simple(
-            DEPLOYER_ADDRESS,
+            DEPLOYER_ADDRESS1,
             contract_address,
             input.clone().into(),
             None,
-            Some(evm_balance_from_lamports(lamports_refill)),
+            Some(evm_balance_from_lamports(deployer1_lamports)),
         );
+        deployer1_lamports -= deployer1_lamports_to_send;
         let output = result.output().unwrap();
         if output.len() > 0 {
             let out_text = from_utf8(output).unwrap();
             println!("output.len {} output '{}'", output.len(), out_text);
         }
         assert!(result.is_success());
+
         ctx.commit_db_to_sdk();
-        let deployer_evm_balance_after = ctx.get_balance(DEPLOYER_ADDRESS);
-        let deployer_balance_decrease_lamports =
-            lamports_from_evm_balance(deployer_evm_balance_before - deployer_evm_balance_after);
-        assert_eq!(deployer_balance_decrease_lamports, lamports_refill);
+
         let output = result.output().unwrap_or_default();
         let expected_output = hex!("");
         assert_eq!(hex::encode(expected_output), hex::encode(output));
@@ -280,27 +280,24 @@ mod tests {
             account_with_program.data()
         );
 
-        let deployer_account = storage_read_account_data(&ctx.sdk, &pk_deployer)
+        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
             .expect("failed to read payer account data");
-        assert_eq!(
-            // 1 for gas (rounding)
-            lamports_refill - test_command_data.lamports_to_send,
-            deployer_account.lamports(),
-        );
-        assert_eq!(deployer_account.data().len(), 0);
+        assert_eq!(deployer1_lamports, deployer1_account.lamports(),);
+        assert_eq!(deployer1_account.data().len(), 0);
 
-        let account_new = storage_read_account_data(&ctx.sdk, &pk_new)
+        let new_account = storage_read_account_data(&ctx.sdk, &pk_new)
             .expect(format!("failed to read new account data: {}", pk_new).as_str());
-        assert_eq!(test_command_data.lamports_to_send, account_new.lamports());
-        assert_eq!(account_new.data().len(), space as usize);
+        assert_eq!(test_command_data.lamports_to_send, new_account.lamports());
+        assert_eq!(new_account.data().len(), space as usize);
         assert_eq!(
-            account_new.data()[test_command_data.byte_n_to_set as usize],
+            new_account.data()[test_command_data.byte_n_to_set as usize],
             test_command_data.byte_n_value
         );
 
-        let lamports_to_send = lamports_to_send - 1;
+        // create the same new account (pk_new) inside solana app - must fail
+
         let test_command_data = CreateAccountAndModifySomeData1 {
-            lamports_to_send,
+            lamports_to_send: deployer1_lamports_to_send,
             space,
             seeds: vec![seed1.to_vec()],
             byte_n_to_set: random_range(0..space),
@@ -317,7 +314,7 @@ mod tests {
             pk_contract.clone(),
             &instruction_data,
             vec![
-                AccountMeta::new(pk_deployer, true),
+                AccountMeta::new(pk_deployer1, true),
                 AccountMeta::new(pk_new, false),
                 AccountMeta::new(system_program_id, false),
             ],
@@ -327,14 +324,165 @@ mod tests {
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
         let result = ctx.call_evm_tx_simple(
-            DEPLOYER_ADDRESS,
+            DEPLOYER_ADDRESS1,
             contract_address,
             input.clone().into(),
             None,
             None,
         );
-        // tried to create the same new account (pk_new) inside solana app
         assert!(!result.is_success());
+
+        ctx.commit_db_to_sdk();
+
+        // transfer lamports to the previously created account (pk_new)
+
+        let deployer1_lamports_to_send = deployer1_lamports_to_send - 1;
+        deployer1_lamports -= deployer1_lamports_to_send;
+        new_account_lamports += deployer1_lamports_to_send;
+        let test_command_data = Transfer {
+            lamports: deployer1_lamports_to_send,
+            seeds: vec![seed1.to_vec()],
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        println!(
+            "instruction_data ({}): {:x?}",
+            instruction_data.len(),
+            &instruction_data
+        );
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![
+                AccountMeta::new(pk_deployer1, true),
+                AccountMeta::new(pk_new, false),
+                AccountMeta::new(system_program_id, false),
+            ],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let result = ctx.call_evm_tx_simple(
+            DEPLOYER_ADDRESS1,
+            contract_address,
+            input.clone().into(),
+            None,
+            None,
+        );
+        assert!(result.is_success());
+
+        ctx.commit_db_to_sdk();
+
+        let new_account = storage_read_account_data(&ctx.sdk, &pk_new)
+            .expect(format!("failed to read new account data: {}", pk_new).as_str());
+        assert_eq!(new_account_lamports, new_account.lamports());
+        assert_eq!(new_account.data().len(), space as usize);
+
+        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
+            .expect("failed to read payer account data");
+        assert_eq!(deployer1_lamports, deployer1_account.lamports(),);
+        assert_eq!(deployer1_account.data().len(), 0);
+
+        // transfer lamports DEPLOYER_ADDRESS1 -> DEPLOYER_ADDRESS2
+
+        let deployer1_lamports_to_send = deployer1_lamports_to_send - 1;
+        deployer1_lamports -= deployer1_lamports_to_send;
+        let mut deployer2_lamports = deployer1_lamports_to_send;
+        let test_command_data = Transfer {
+            lamports: deployer1_lamports_to_send,
+            seeds: vec![seed1.to_vec()],
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        println!(
+            "instruction_data ({}): {:x?}",
+            instruction_data.len(),
+            &instruction_data
+        );
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![
+                AccountMeta::new(pk_deployer1, true),
+                AccountMeta::new(pk_deployer2, false),
+                AccountMeta::new(system_program_id, false),
+            ],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let result = ctx.call_evm_tx_simple(
+            DEPLOYER_ADDRESS1,
+            contract_address,
+            input.clone().into(),
+            None,
+            None,
+        );
+        assert!(result.is_success());
+
+        ctx.commit_db_to_sdk();
+
+        let deployer2_account = storage_read_account_data(&ctx.sdk, &pk_deployer2)
+            .expect(format!("failed to read new account data: {}", pk_deployer2).as_str());
+        assert_eq!(deployer2_lamports, deployer2_account.lamports());
+        assert_eq!(deployer2_account.data().len(), 0);
+
+        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
+            .expect("failed to read payer account data");
+        assert_eq!(deployer1_lamports, deployer1_account.lamports(),);
+        assert_eq!(deployer1_account.data().len(), 0);
+
+        // transfer lamports DEPLOYER_ADDRESS2 -> DEPLOYER_ADDRESS1
+
+        let deployer2_lamports_to_send = deployer1_lamports_to_send - 1;
+        deployer1_lamports += deployer2_lamports_to_send;
+        deployer2_lamports -= deployer2_lamports_to_send;
+        let test_command_data = Transfer {
+            lamports: deployer2_lamports_to_send,
+            seeds: vec![seed1.to_vec()],
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        println!(
+            "instruction_data ({}): {:x?}",
+            instruction_data.len(),
+            &instruction_data
+        );
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![
+                AccountMeta::new(pk_deployer2, true),
+                AccountMeta::new(pk_deployer1, false),
+                AccountMeta::new(system_program_id, false),
+            ],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let result = ctx.call_evm_tx_simple(
+            DEPLOYER_ADDRESS2,
+            contract_address,
+            input.clone().into(),
+            None,
+            None,
+        );
+        assert!(result.is_success());
+
+        ctx.commit_db_to_sdk();
+
+        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
+            .expect("failed to read payer account data");
+        assert_eq!(deployer1_lamports, deployer1_account.lamports());
+        assert_eq!(deployer1_account.data().len(), 0);
+
+        let deployer2_account = storage_read_account_data(&ctx.sdk, &pk_deployer2)
+            .expect(format!("failed to read new account data: {}", pk_deployer2).as_str());
+        assert_eq!(deployer2_lamports, deployer2_account.lamports());
+        assert_eq!(deployer2_account.data().len(), 0);
     }
 
     #[test]

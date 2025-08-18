@@ -163,6 +163,26 @@ pub fn process_instruction(
 
             msg!("Create account: end");
         }
+        TestCommand::Transfer(p) => {
+            let account_info_iter = &mut accounts.iter();
+
+            let payer = next_account_info(account_info_iter)?;
+            let receiver = next_account_info(account_info_iter)?;
+
+            let account_infos = &[payer.clone(), receiver.clone()];
+            msg!(
+                "process_instruction: transfer: payer (key={:x?} owner={:x?}) receiver (key={:x?} owner={:x?})",
+                payer.key.to_bytes(),
+                payer.owner.to_bytes(),
+                receiver.key.to_bytes(),
+                receiver.owner.to_bytes(),
+            );
+            invoke_signed(
+                &system_instruction::transfer(payer.key, receiver.key, p.lamports),
+                account_infos,
+                &[], // optional, only if using PDA
+            )?;
+        }
         TestCommand::SolBigModExp(p) => {
             let modulus: [u8; 32] = p.modulus.try_into().unwrap();
             let result = big_mod_exp_3(&p.base, &p.exponent, &modulus);

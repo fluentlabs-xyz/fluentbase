@@ -67,16 +67,6 @@ lazy_static! {
     };
 }
 
-pub(crate) fn extract_account_data_or_default<API: MetadataAPI + MetadataStorageAPI>(
-    api: &API,
-    pk: &Pubkey,
-) -> AccountSharedData {
-    storage_read_account_data(api, pk).unwrap_or_else(|_e| {
-        let lamports = GlobalBalance::get(api, pk);
-        AccountSharedData::new(lamports, 0, &system_program::id())
-    })
-}
-
 /// Stores provided accounts using specified storage api or alt api
 /// Filters out system accounts if set
 /// Returns error if some accounts are not evm compatible

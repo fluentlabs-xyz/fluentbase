@@ -1,6 +1,6 @@
 extern crate solana_rbpf;
 
-use crate::solana_program;
+use crate::{solana_program, system_program};
 use alloc::{boxed::Box, vec, vec::Vec};
 use bincode::error::DecodeError;
 use solana_bincode::{deserialize, serialize, serialized_size};
@@ -43,6 +43,7 @@ pub fn address_is_aligned<T>(address: u64) -> bool {
 use crate::account::{ReadableAccount, WritableAccount};
 use crate::common::GlobalLamportsBalance;
 use crate::error::RuntimeError;
+use crate::fluentbase::common::GlobalBalance;
 use crate::{
     account::{
         to_account, Account, AccountSharedData, InheritableAccountFields,
@@ -55,7 +56,7 @@ use crate::{
 use fluentbase_sdk::{
     calc_create4_address, debug_log_ext, keccak256, Bytes, MetadataAPI, PRECOMPILE_SVM_RUNTIME,
 };
-use fluentbase_types::{MetadataStorageAPI, SharedAPI, StorageAPI};
+use fluentbase_types::{Address, MetadataStorageAPI, SharedAPI, StorageAPI, B256};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
@@ -200,11 +201,12 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
-pub fn storage_read_metadata<API: MetadataAPI>(
+pub fn storage_metadata_params<API: MetadataAPI>(
     api: &API,
     pubkey: &Pubkey,
-) -> Result<Bytes, SvmError> {
-    let pubkey_hash = keccak256(pubkey.as_ref());
+) -> Result<(B256, Address, u32), SvmError> {
+    // let pubkey_hash = keccak256(pubkey.as_ref());
+    let pubkey_hash: B256 = pubkey.to_bytes().into();
     let derived_metadata_address =
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
             keccak256(v)
@@ -214,6 +216,14 @@ pub fn storage_read_metadata<API: MetadataAPI>(
         return Err(metadata_size_result.status.into());
     }
     let metadata_len = metadata_size_result.data.0;
+    Ok((pubkey_hash, derived_metadata_address, metadata_len))
+}
+
+pub fn storage_read_metadata<API: MetadataAPI>(
+    api: &API,
+    pubkey: &Pubkey,
+) -> Result<Bytes, SvmError> {
+    let ((_, derived_metadata_address, metadata_len)) = storage_metadata_params(api, pubkey)?;
     let metadata_copy = api.metadata_copy(&derived_metadata_address, 0, metadata_len);
     if !metadata_copy.status.is_ok() {
         return Err(metadata_copy.status.into());
@@ -227,13 +237,9 @@ pub fn storage_write_metadata<MAPI: MetadataAPI>(
     pubkey: &Pubkey,
     metadata: Bytes,
 ) -> Result<(), SvmError> {
-    let pubkey_hash = keccak256(pubkey.as_ref());
-    let derived_metadata_address =
-        calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
-            keccak256(v)
-        });
-    let (metadata_size, _, _, _) = api.metadata_size(&derived_metadata_address).data;
-    if metadata_size == 0 {
+    let ((pubkey_hash, derived_metadata_address, metadata_len)) =
+        storage_metadata_params(api, pubkey)?;
+    if metadata_len == 0 {
         api.metadata_create(&pubkey_hash.into(), metadata)
             .expect("metadata creation failed");
     } else {
@@ -262,7 +268,6 @@ pub fn storage_read_account_data<API: MetadataAPI + MetadataStorageAPI>(
         executable,
         Default::default(),
     );
-    debug_log_ext!("pk {} account_data {:?}", pk, account_data);
     Ok(account_data)
 }
 
@@ -277,6 +282,21 @@ pub fn storage_write_account_data<API: MetadataAPI + MetadataStorageAPI>(
     buffer[1 + size_of::<Pubkey>()..].copy_from_slice(account_data.data());
     storage_write_metadata(api, pk, buffer.into())?;
     GlobalLamportsBalance::set(api, &pk, account_data.lamports());
-    debug_log_ext!("pk {} account_data {:?}", pk, account_data);
     Ok(())
+}
+
+pub(crate) fn storage_read_account_data_or_default<API: MetadataAPI + MetadataStorageAPI>(
+    api: &API,
+    pk: &Pubkey,
+    space_default: usize,
+    owner_default: Option<&Pubkey>,
+) -> AccountSharedData {
+    storage_read_account_data(api, pk).unwrap_or_else(|_e| {
+        let lamports = GlobalBalance::get(api, pk);
+        AccountSharedData::new(
+            lamports,
+            space_default,
+            owner_default.unwrap_or(&system_program::id()),
+        )
+    })
 }

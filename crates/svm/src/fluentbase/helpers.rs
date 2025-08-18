@@ -1,5 +1,6 @@
 use crate::common::pubkey_from_evm_address;
 use crate::error::RuntimeError;
+use crate::helpers::storage_read_account_data_or_default;
 use crate::{
     account::{
         is_executable_by_account, Account, AccountSharedData, ReadableAccount, WritableAccount,
@@ -10,7 +11,7 @@ use crate::{
     compute_budget::compute_budget::ComputeBudget,
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
     error::SvmError,
-    fluentbase::common::{extract_account_data_or_default, flush_accounts, BatchMessage},
+    fluentbase::common::{flush_accounts, BatchMessage},
     helpers::storage_read_account_data,
     loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     loaders::bpf_loader_v4,
@@ -54,19 +55,17 @@ pub fn init_config() -> Config {
 pub fn exec_encoded_svm_batch_message<SDK: SharedAPI>(
     sdk: &mut SDK,
     batch_message: &[u8],
-    flush_result_accounts: bool,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let batch_message = deserialize(batch_message)?;
-    exec_svm_batch_message(sdk, batch_message, flush_result_accounts)
+    exec_svm_batch_message(sdk, batch_message)
 }
 pub fn exec_svm_batch_message<SDK: SharedAPI>(
     sdk: &mut SDK,
     batch_message: BatchMessage,
-    do_flush_result_accounts: bool,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let mut result_accounts: HashMap<Pubkey, AccountSharedData> = Default::default();
     for (idx, message) in batch_message.messages().iter().enumerate() {
-        let ra = exec_svm_message(sdk, message.clone(), do_flush_result_accounts)?;
+        let ra = exec_svm_message(sdk, message.clone())?;
         result_accounts.extend(ra);
     }
     Ok(result_accounts)
@@ -74,10 +73,9 @@ pub fn exec_svm_batch_message<SDK: SharedAPI>(
 pub fn exec_encoded_svm_message<SDK: SharedAPI>(
     sdk: &mut SDK,
     message: &[u8],
-    flush_result_accounts: bool,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let message = deserialize(message)?;
-    exec_svm_message(sdk, message, flush_result_accounts)
+    exec_svm_message(sdk, message)
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -234,7 +232,7 @@ pub fn prepare_data_for_tx_ctx<SDK: SharedAPI>(
     // it's fine to use the fee payer directly here rather than checking account
     // overrides again.
     let fee_payer = message.fee_payer();
-    let loaded_fee_payer_account = extract_account_data_or_default(sdk, fee_payer);
+    let loaded_fee_payer_account = storage_read_account_data_or_default(sdk, fee_payer, 0, None);
     collect_loaded_account(fee_payer, (loaded_fee_payer_account, true))?;
 
     // Attempt to load and collect remaining non-fee payer accounts
@@ -337,7 +335,6 @@ fn filter_executable_program_accounts<'a, SDK: SharedAPI>(
 pub fn exec_svm_message<SDK: SharedAPI>(
     sdk: &mut SDK,
     message: legacy::Message,
-    flush_result_accounts: bool,
 ) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
     let message: SanitizedMessage =
         SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
@@ -455,9 +452,6 @@ pub fn exec_svm_message<SDK: SharedAPI>(
             account_key.clone(),
             account_data.borrow().to_account_shared_data(),
         );
-    }
-    if flush_result_accounts {
-        flush_accounts::<true, _>(sdk, &result_accounts)?;
     }
 
     Ok(result_accounts)

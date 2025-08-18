@@ -21,6 +21,12 @@ pub struct CreateAccountAndModifySomeData1 {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Transfer {
+    pub lamports: u64,
+    pub seeds: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SolBigModExp {
     pub base: Vec<u8>,
     pub exponent: Vec<u8>,
@@ -127,6 +133,7 @@ pub struct AltBn128Compression {
 pub enum TestCommand {
     ModifyAccount1(ModifyAccount1),
     CreateAccountAndModifySomeData1(CreateAccountAndModifySomeData1),
+    Transfer(Transfer),
     SolBigModExp(SolBigModExp),
     SolSecp256k1Recover(SolSecp256k1Recover),
     Keccak256(Keccak256),
@@ -160,6 +167,7 @@ macro_rules! impl_from {
 
 impl_from!(ModifyAccount1);
 impl_from!(CreateAccountAndModifySomeData1);
+impl_from!(Transfer);
 impl_from!(SolBigModExp);
 impl_from!(SolSecp256k1Recover);
 impl_from!(Keccak256);
