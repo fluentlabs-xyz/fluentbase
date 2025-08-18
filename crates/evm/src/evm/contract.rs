@@ -1,3 +1,4 @@
+use bitvec::macros::internal::funty::Integral;
 use crate::{
     as_usize_or_fail,
     gas,
@@ -102,7 +103,7 @@ pub fn call<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
         to,
         value,
         input.as_ref(),
-        Some(local_gas_limit * FUEL_DENOM_RATE),
+        Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE)),
     );
     insert_call_outcome(evm, result, return_memory_offset);
 }
@@ -123,7 +124,7 @@ pub fn call_code<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
         to,
         value,
         input.as_ref(),
-        Some(local_gas_limit * FUEL_DENOM_RATE),
+        Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE)),
     );
     insert_call_outcome(evm, result, return_memory_offset);
 }
@@ -141,7 +142,7 @@ pub fn delegate_call<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     evm.sync_evm_gas();
     let result = evm
         .sdk
-        .delegate_call(to, input.as_ref(), Some(local_gas_limit * FUEL_DENOM_RATE));
+        .delegate_call(to, input.as_ref(), Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE)));
     insert_call_outcome(evm, result, return_memory_offset);
 }
 
@@ -158,6 +159,6 @@ pub fn static_call<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     evm.sync_evm_gas();
     let result = evm
         .sdk
-        .static_call(to, input.as_ref(), Some(local_gas_limit * FUEL_DENOM_RATE));
+        .static_call(to, input.as_ref(), Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE)));
     insert_call_outcome(evm, result, return_memory_offset);
 }
