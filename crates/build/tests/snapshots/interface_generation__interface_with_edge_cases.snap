@@ -1,0 +1,20 @@
+---
+source: crates/build/tests/interface_generation.rs
+expression: interface
+---
+// SPDX-License-Identifier: MIT
+// Auto-generated from Rust source
+pragma solidity ^0.8.0;
+
+interface IEdgeCasesContract {
+    struct Empty {
+
+    }
+
+    struct Single {
+        uint256 value;
+    }
+
+    function processEmpty(Empty calldata empty) external;
+    function processSingle(Single calldata single) external;
+}

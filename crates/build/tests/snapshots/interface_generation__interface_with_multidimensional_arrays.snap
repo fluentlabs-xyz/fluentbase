@@ -1,0 +1,23 @@
+---
+source: crates/build/tests/interface_generation.rs
+expression: interface
+---
+// SPDX-License-Identifier: MIT
+// Auto-generated from Rust source
+pragma solidity ^0.8.0;
+
+interface IMultidimensionalArrayContract {
+    struct Cell {
+        uint256 value;
+        bytes32 metadata;
+    }
+
+    struct Point {
+        uint256 x;
+        uint256 y;
+        uint256 z;
+    }
+
+    function process2DMatrix(Cell[][] calldata matrix) external;
+    function process3DMatrix(Point[][][] calldata cube) external;
+}

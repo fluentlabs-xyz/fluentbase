@@ -1,0 +1,33 @@
+---
+source: crates/build/tests/interface_generation.rs
+expression: interface
+---
+// SPDX-License-Identifier: MIT
+// Auto-generated from Rust source
+pragma solidity ^0.8.0;
+
+interface IAllTypesContract {
+    struct AllTypes {
+        uint8 u8Val;
+        uint16 u16Val;
+        uint32 u32Val;
+        uint64 u64Val;
+        uint128 u128Val;
+        uint256 u256Val;
+        int8 i8Val;
+        int16 i16Val;
+        int32 i32Val;
+        int64 i64Val;
+        int128 i128Val;
+        int256 i256Val;
+        bool boolVal;
+        address addrVal;
+        bytes1 b1Val;
+        bytes16 b16Val;
+        bytes32 b32Val;
+        string strVal;
+        bytes bytesVal;
+    }
+
+    function processAllTypes(AllTypes calldata data) external;
+}

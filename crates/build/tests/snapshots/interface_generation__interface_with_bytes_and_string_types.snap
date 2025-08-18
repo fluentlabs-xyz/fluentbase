@@ -1,0 +1,19 @@
+---
+source: crates/build/tests/interface_generation.rs
+expression: interface
+---
+// SPDX-License-Identifier: MIT
+// Auto-generated from Rust source
+pragma solidity ^0.8.0;
+
+interface IMessageProcessor {
+    struct Message {
+        string content;
+        bytes signature;
+        bytes32 hash;
+        bytes4 shortData;
+        bytes16 mediumData;
+    }
+
+    function processMessage(Message calldata msg) external pure returns (bool verified);
+}
