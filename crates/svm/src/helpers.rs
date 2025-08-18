@@ -1,6 +1,6 @@
 extern crate solana_rbpf;
 
-use crate::{solana_program, system_program};
+use crate::{native_loader, solana_program, system_program};
 use alloc::{boxed::Box, vec, vec::Vec};
 use bincode::error::DecodeError;
 use solana_bincode::{deserialize, serialize, serialized_size};
@@ -44,6 +44,8 @@ use crate::account::{ReadableAccount, WritableAccount};
 use crate::common::GlobalLamportsBalance;
 use crate::error::RuntimeError;
 use crate::fluentbase::common::GlobalBalance;
+use crate::native_loader::create_loadable_account_with_fields2;
+use crate::solana_program::loader_v4;
 use crate::{
     account::{
         to_account, Account, AccountSharedData, InheritableAccountFields,
@@ -253,6 +255,17 @@ pub fn storage_read_account_data<API: MetadataAPI + MetadataStorageAPI>(
     api: &API,
     pk: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
+    if pk == &system_program::id() {
+        return Ok(create_loadable_account_with_fields2(
+            "system_program_id",
+            &native_loader::id(),
+        ));
+    } else if pk == &loader_v4::id() {
+        return Ok(create_loadable_account_with_fields2(
+            "loader_v4_id",
+            &native_loader::id(),
+        ));
+    };
     let buffer = storage_read_metadata(api, pk)?;
     if buffer.len() < 1 + size_of::<Pubkey>() {
         return Err(SvmError::RuntimeError(RuntimeError::InvalidLength));

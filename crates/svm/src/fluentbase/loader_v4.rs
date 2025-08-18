@@ -68,21 +68,6 @@ pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
         .copy_from_slice(&elf_program_bytes);
     storage_write_account_data(&mut sdk, &pk_contract, &contract_account_data)
         .expect("failed to write contract account");
-
-    // TODO move into genesis
-    storage_write_account_data(
-        &mut sdk,
-        &system_program::id(),
-        &create_loadable_account_with_fields2("system_program_id", &native_loader::id()),
-    )
-    .expect("failed to save system_program");
-    // TODO move into genesis
-    storage_write_account_data(
-        &mut sdk,
-        &loader_v4::id(),
-        &create_loadable_account_with_fields2("loader_v4_id", &native_loader::id()),
-    )
-    .expect("failed to save loader_v4");
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
