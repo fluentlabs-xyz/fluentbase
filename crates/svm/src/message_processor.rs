@@ -1,7 +1,6 @@
 use crate::{
     account::{ReadableAccount, WritableAccount},
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
-    precompiles::is_precompile,
     solana_program::{message::SanitizedMessage, sysvar::instructions},
 };
 use alloc::vec::Vec;
@@ -26,9 +25,9 @@ impl MessageProcessor {
             .zip(program_indices.iter())
             .enumerate()
         {
-            let is_precompile = is_precompile(program_id, |id| {
-                invoke_context.environment_config.feature_set.is_active(id)
-            });
+            // let is_precompile = is_precompile(program_id, |id| {
+            //     invoke_context.environment_config.feature_set.is_active(id)
+            // });
 
             // Fixup the special instructions key if present
             // before the account pre-values are taken care of
@@ -81,7 +80,7 @@ impl MessageProcessor {
                     .expect("instruction account must always exist");
             }
 
-            let result = if is_precompile {
+            let result = /*if is_precompile {
                 invoke_context
                     .transaction_context
                     .get_next_instruction_context()
@@ -96,7 +95,7 @@ impl MessageProcessor {
                         invoke_context.transaction_context.push()?;
                         invoke_context.transaction_context.pop()
                     })
-            } else {
+            } else*/ {
                 let result = invoke_context.process_instruction(
                     &instruction.data,
                     &instruction_accounts,

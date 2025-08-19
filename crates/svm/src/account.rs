@@ -51,7 +51,7 @@ fn shared_serialize_data<T: serde::Serialize, U: WritableAccount>(
 
 /// An Account with data that is stored on chain
 #[repr(C)]
-#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Default /*, AbiExample*/)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
     /// lamports in the account

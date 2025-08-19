@@ -19,7 +19,7 @@ pub trait State<T> {
     fn set_state(&self, state: &T) -> Result<(), InstructionError>;
 }
 
-macro_rules! impl_state_for {
+macro_rules! impl_state_mut_for {
     ($typ:ty) => {
         impl<T> StateMut<T> for $typ
         where
@@ -43,8 +43,8 @@ macro_rules! impl_state_for {
     };
 }
 
-impl_state_for!(Account);
-impl_state_for!(AccountSharedData);
+impl_state_mut_for!(Account);
+impl_state_mut_for!(AccountSharedData);
 
 impl<T> StateMut<T> for Ref<'_, AccountSharedData>
 where

@@ -19,7 +19,6 @@ use solana_rbpf::{
 
 pub type ProgramRuntimeEnvironment<'a, SDK> = Arc<BuiltinProgram<InvokeContext<'a, SDK>>>;
 
-pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
 pub const DELAY_VISIBILITY_SLOT_OFFSET: Slot = 1;
 
 /// Relationship between two fork IDs

@@ -1,14 +1,10 @@
-pub mod ed25519_program;
 pub mod feature_set;
 pub mod instruction;
 pub mod loader_v4;
-// pub mod loader_v4_instruction;
 pub mod message;
 pub mod program_error;
 pub mod program_stubs;
 pub mod rent_collector;
 pub mod runtime;
-pub mod secp256k1_program;
 pub mod svm_message;
 pub mod sysvar;
-pub mod transaction_processing_callback;

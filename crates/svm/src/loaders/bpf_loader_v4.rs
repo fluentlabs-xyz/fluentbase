@@ -1,6 +1,6 @@
 use crate::{
     account::BorrowedAccount,
-    common::{limited_deserialize_packet_size, rbpf_config_default},
+    common::rbpf_config_default,
     compute_budget::compute_budget::ComputeBudget,
     context::{InstructionContext, InvokeContext},
     error::Error,

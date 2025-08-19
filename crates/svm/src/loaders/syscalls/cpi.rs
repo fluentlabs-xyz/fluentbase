@@ -9,7 +9,6 @@ use crate::{
         translate, translate_slice, translate_slice_mut, translate_type, translate_type_mut,
     },
     native_loader,
-    precompiles::is_precompile,
     word_size::{
         addr_type::AddrType,
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
@@ -623,10 +622,10 @@ fn check_authorized_program<SDK: SharedAPI>(
     invoke_context: &InvokeContext<SDK>,
 ) -> Result<(), Error> {
     if native_loader::check_id(program_id)
-        // || bpf_loader::check_id(program_id)
-        || is_precompile(program_id, |feature_id: &Pubkey| {
-            invoke_context.get_feature_set().is_active(feature_id)
-        })
+    // || bpf_loader::check_id(program_id)
+    // || is_precompile(program_id, |feature_id: &Pubkey| {
+    //     invoke_context.get_feature_set().is_active(feature_id)
+    // })
     {
         return Err(Box::new(SyscallError::ProgramNotSupported(*program_id)));
     }

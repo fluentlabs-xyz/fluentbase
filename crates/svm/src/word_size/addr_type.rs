@@ -14,15 +14,6 @@ impl Default for AddrType {
     }
 }
 
-// impl Display for AddrType {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-//         match self {
-//             AddrType::Vm(v) => write!(f, "AddrType::Vm({})", v),
-//             AddrType::Host(v) => write!(f, "AddrType::Host({})", v),
-//         }
-//     }
-// }
-
 impl Add<u64> for AddrType {
     type Output = AddrType;
 

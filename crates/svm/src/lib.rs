@@ -23,7 +23,7 @@ pub mod message_processor;
 #[cfg(test)]
 mod message_processor_tests;
 pub mod native_loader;
-pub mod precompiles;
+// pub mod precompiles;
 #[cfg(test)]
 mod process_instruction_tests;
 // #[cfg(test)]
@@ -43,7 +43,6 @@ pub mod system_program;
 pub mod sysvar_cache;
 #[cfg(test)]
 pub mod test_helpers;
-mod types;
 pub mod word_size;
 
 pub use bincode;

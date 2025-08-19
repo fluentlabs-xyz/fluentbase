@@ -1,6 +1,5 @@
 use crate::{
     account::{AccountSharedData, BorrowedAccount, ReadableAccount},
-    common::limited_deserialize_packet_size,
     context::{IndexOfAccount, InstructionContext, InvokeContext, TransactionContext},
     declare_process_instruction,
     pubkey::Pubkey,
@@ -10,6 +9,7 @@ use crate::{
 use alloc::boxed::Box;
 use fluentbase_sdk::SharedAPI;
 use hashbrown::HashSet;
+use solana_bincode::deserialize;
 use solana_instruction::error::InstructionError;
 
 // represents an address that may or may not have been generated from a seed
@@ -253,14 +253,6 @@ fn transfer_with_seed<SDK: SharedAPI>(
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
     if !instruction_context.is_instruction_account_signer(from_base_account_index)? {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Transfer: 'from' account {:?} must sign",
-        //     transaction_context.get_key_of_account_at_index(
-        //         instruction_context
-        //             .get_index_of_instruction_account_in_transaction(from_base_account_index)?,
-        //     )?,
-        // );
         return Err(InstructionError::MissingRequiredSignature);
     }
     let address_from_seed = Pubkey::create_with_seed(
@@ -276,12 +268,6 @@ fn transfer_with_seed<SDK: SharedAPI>(
         instruction_context.get_index_of_instruction_account_in_transaction(from_account_index)?,
     )?;
     if *from_key != address_from_seed {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Transfer: 'from' address {} does not match derived address {}",
-        //     from_key,
-        //     address_from_seed
-        // );
         return Err(SystemError::AddressWithSeedMismatch.into());
     }
 
@@ -295,13 +281,12 @@ fn transfer_with_seed<SDK: SharedAPI>(
     )
 }
 
-pub const DEFAULT_COMPUTE_UNITS: u64 = 150;
-
 declare_process_instruction!(Entrypoint<SDK: SharedAPI>, DEFAULT_COMPUTE_UNITS, |invoke_context| {
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
-    let instruction = limited_deserialize_packet_size(instruction_data);
+    let instruction = deserialize(instruction_data)
+        .map_err(|_| InstructionError::InvalidInstructionData);
     let instruction = instruction?;
 
     let signers = instruction_context.get_signers(transaction_context)?;
