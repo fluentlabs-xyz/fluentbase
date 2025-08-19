@@ -1,0 +1,110 @@
+# .github/workflows/cache-diagnostic.yml
+name: Cache Growth Test
+
+on:
+    workflow_dispatch:
+        inputs:
+            run_number:
+                description: "Run identifier"
+                required: false
+                default: "test"
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    diagnose-cache:
+        name: "Diagnose Run #${{ github.run_number }}"
+        runs-on: ubuntu-amd64-8core
+        steps:
+            - name: "📊 Initial metrics"
+              run: |
+                  echo "========================================="
+                  echo "RUN NUMBER: ${{ github.run_number }}"
+                  echo "RUN ID: ${{ github.run_id }}"
+                  echo "========================================="
+                  echo "DISK SPACE BEFORE ANYTHING:"
+                  df -h
+                  echo "========================================="
+
+            - name: Maximize build space
+              uses: easimon/maximize-build-space@master
+              with:
+                  root-reserve-mb: "30720"
+                  remove-dotnet: "true"
+
+            - name: "📊 After maximize-build-space"
+              run: |
+                  echo "DISK SPACE AFTER CLEANUP:"
+                  df -h
+                  echo "Free space: $(df / | awk 'NR==2 {print $4}')"
+
+            - uses: actions/checkout@v4
+
+            - name: Install Rust
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: wasm32-unknown-unknown
+
+            - name: "📊 Before cache"
+              run: |
+                  echo "========================================="
+                  echo "BEFORE CACHE RESTORE:"
+                  echo "Target exists: $(test -d target && echo YES || echo NO)"
+                  echo "Disk free: $(df / | awk 'NR==2 {print $4}')"
+
+            - name: Setup cache
+              id: cache-step
+              uses: Swatinem/rust-cache@v2
+
+            - name: "📊 After cache restore"
+              run: |
+                  echo "========================================="
+                  echo "AFTER CACHE RESTORE:"
+                  echo "Cache hit: ${{ steps.cache-step.outputs.cache-hit }}"
+                  echo "Disk free: $(df / | awk 'NR==2 {print $4}')"
+                  if [ -d target ]; then
+                    echo "Target size: $(du -sh target | cut -f1)"
+                    echo "Files in target: $(find target -type f | wc -l)"
+                    echo "Incremental size: $(du -sh target/*/incremental 2>/dev/null | tail -1 | cut -f1 || echo 'none')"
+                  fi
+
+            - name: "🔨 Build"
+              run: cargo build --release
+
+            - name: "📊 After build"
+              run: |
+                  echo "========================================="
+                  echo "AFTER BUILD:"
+                  echo "Disk free: $(df / | awk 'NR==2 {print $4}')"
+                  echo "Target size: $(du -sh target | cut -f1)"
+                  echo "Files in target: $(find target -type f | wc -l)"
+                  echo "Incremental size: $(du -sh target/*/incremental 2>/dev/null | tail -1 | cut -f1)"
+
+            - name: "📊 Check for duplicates"
+              run: |
+                  echo "========================================="
+                  echo "CHECKING FOR DUPLICATE ARTIFACTS:"
+                  cd target/release/deps
+                  for lib in $(ls *.rlib 2>/dev/null | sed 's/-[a-f0-9]*\.rlib//' | sort -u); do
+                    count=$(ls ${lib}-*.rlib 2>/dev/null | wc -l)
+                    if [ $count -gt 1 ]; then
+                      echo "DUPLICATE: $lib has $count versions"
+                      ls -lh ${lib}-*.rlib | head -5
+                    fi
+                  done
+
+            - name: "📊 Final summary"
+              if: always()
+              run: |
+                  echo "========================================="
+                  echo "FINAL SUMMARY FOR RUN #${{ github.run_number }}:"
+                  echo "========================================="
+                  df -h | grep -E "Filesystem|/dev/"
+                  echo "----------------------------------------"
+                  if [ -d target ]; then
+                    echo "Target: $(du -sh target | cut -f1)"
+                    echo "Files: $(find target -type f | wc -l)"
+                    echo "Incremental: $(du -sh target/*/incremental 2>/dev/null | tail -1 | cut -f1 || echo 'none')"
+                  fi
+                  echo "========================================="
