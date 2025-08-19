@@ -1,6 +1,7 @@
 # Fluentbase Framework
 
 [![codecov](https://codecov.io/github/fluentlabs-xyz/fluentbase/graph/badge.svg?token=FCA43Y60LW)](https://codecov.io/github/fluentlabs-xyz/fluentbase)
+[![Test](https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/ci.yml/badge.svg)](https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/ci.yml)
 
 **Fluentbase** is a modular framework providing an SDK and proving system for Fluent State Transition Functions (STFs).
 It enables developers to build shared applications (smart contracts), dedicated applications, system precompiles, or
