@@ -3,7 +3,6 @@ use crate::{
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     precompiles::is_precompile,
     solana_program::{message::SanitizedMessage, sysvar::instructions},
-    types::BalanceHistorySnapshot,
 };
 use alloc::vec::Vec;
 use fluentbase_sdk::SharedAPI;

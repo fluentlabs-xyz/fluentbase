@@ -54,7 +54,6 @@ impl MetadataAPI for MemStorage {
         address: &Address,
     ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)> {
         let len = self.metadata.get(address).map_or_else(|| 0, |v| v.len()) as u32;
-        // TODO check bool flags
         SyscallResult::new((len, false, false, false), 0, 0, ExitCode::Ok)
     }
 
@@ -86,12 +85,10 @@ impl MetadataAPI for MemStorage {
 impl MetadataStorageAPI for MemStorage {
     fn metadata_storage_read(&self, slot: &U256) -> SyscallResult<U256> {
         let value = self.metadata_storage.get(slot).cloned().unwrap_or_default();
-        debug_log_ext!("read: slot {} value {}", slot, value);
         SyscallResult::new(value, 0, 0, ExitCode::Ok)
     }
 
     fn metadata_storage_write(&mut self, slot: &U256, value: U256) -> SyscallResult<()> {
-        debug_log_ext!("write: slot {} value {}", slot, value);
         self.metadata_storage.insert(*slot, value);
         SyscallResult::new((), 0, 0, ExitCode::Ok)
     }

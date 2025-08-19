@@ -24,10 +24,10 @@ clean:
 test:
 	cargo test #--no-fail-fast #-q
 
-.PHONY: custom_tests
-custom_tests:
-	cargo test --frozen --profile test --manifest-path crates/svm/Cargo.toml -- --exact --show-output --nocapture
-	cargo test --frozen --lib svm_loader_v4::tests::test_svm_deploy_exec --profile test --manifest-path e2e/Cargo.toml -- --exact --show-output --nocapture
+.PHONY: svm_tests
+svm_tests:
+	cargo test --frozen --profile test --manifest-path crates/svm/Cargo.toml --
+	cargo test --frozen --lib svm::tests --profile test --manifest-path e2e/Cargo.toml --
 
 .PHONY: wasm_contracts_sizes
 wasm_contracts_sizes:

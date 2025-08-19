@@ -185,11 +185,10 @@ pub fn morph_into_deployment_environment_v1<'a, SDK: SharedAPI>(
 }
 
 pub fn check_loader_id(id: &Pubkey) -> bool {
-    loader_v4::check_id(id) // || bpf_loader::check_id(id)
+    loader_v4::check_id(id)
 }
 
 pub fn rbpf_config_default(compute_budget: Option<&ComputeBudget>) -> Config {
-    // TODO validate all config variables usages
     Config {
         enable_instruction_tracing: false,
         reject_broken_elfs: true,
@@ -293,35 +292,6 @@ macro_rules! deploy_program {
         $drop
         $invoke_context.program_cache_for_tx_batch.replenish($program_id, Arc::new(executor));
     }};
-}
-
-pub fn common_close_account(
-    authority_address: &Option<Pubkey>,
-    transaction_context: &TransactionContext,
-    instruction_context: &InstructionContext,
-) -> Result<(), InstructionError> {
-    if authority_address.is_none() {
-        return Err(InstructionError::Immutable);
-    }
-    if *authority_address
-        != Some(*transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(2)?,
-        )?)
-    {
-        return Err(InstructionError::IncorrectAuthority);
-    }
-    if !instruction_context.is_instruction_account_signer(2)? {
-        return Err(InstructionError::MissingRequiredSignature);
-    }
-
-    let mut close_account =
-        instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-    let mut recipient_account =
-        instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
-
-    recipient_account.checked_add_lamports(close_account.get_lamports())?;
-    close_account.set_lamports(0)?;
-    Ok(())
 }
 
 /// Deserialize with a limit based the maximum amount of data a program can expect to get.

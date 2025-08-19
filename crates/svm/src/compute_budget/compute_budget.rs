@@ -41,7 +41,7 @@ impl ComputeBudget {
             sha256_max_slices: 20_000,
             max_call_depth: MAX_CALL_DEPTH,
             stack_frame_size: STACK_FRAME_SIZE,
-            max_cpi_instruction_size: 1280, // IPv6 Min MTU size
+            max_cpi_instruction_size: 1280,
             heap_size: u32::try_from(MAX_HEAP_FRAME_BYTES as usize).unwrap(),
         }
     }

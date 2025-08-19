@@ -7,7 +7,7 @@ use crate::{
         evm_address_from_pubkey, evm_balance_from_lamports, lamports_from_evm_balance,
         pubkey_from_evm_address,
     },
-    fluentbase::{common::process_svm_result, helpers::exec_encoded_svm_batch_message},
+    fluentbase::helpers::exec_encoded_svm_batch_message,
     helpers::storage_write_account_data,
     loaders::bpf_loader_v4::get_state_mut,
     native_loader,
@@ -17,7 +17,6 @@ use crate::{
         loader_v4::{LoaderV4State, LoaderV4Status},
     },
     system_program,
-    types::BalanceHistorySnapshot,
 };
 use alloc::vec::Vec;
 pub use deploy_entry_simplified as deploy_entry;
@@ -96,15 +95,15 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     }
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input);
-    match process_svm_result(result) {
+    match result {
         Ok(result_accounts) => {
             if result_accounts.len() > 0 {
                 flush_accounts::<true, _>(&mut sdk, &result_accounts)
                     .expect("failed to save result accounts");
             }
         }
-        Err(err_str) => {
-            panic!("failed to execute encoded svm batch message: {}", err_str);
+        Err(e) => {
+            panic!("failed to execute encoded svm batch message: {}", e);
         }
     };
 

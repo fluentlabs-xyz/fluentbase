@@ -51,12 +51,6 @@ impl BatchMessage {
 
 lazy_static! {
     pub static ref SYSTEM_PROGRAMS_KEYS: Vec<Pubkey> = {
-        // let mut items = HashSet::new();
-        // items.insert(system_program::id());
-        // items.insert(native_loader::id());
-        // items.insert(loader_v4::id());
-        // items.insert(sysvar::clock::id());
-        // items
         use alloc::vec;
         vec![
             system_program::id(),
@@ -79,20 +73,13 @@ pub(crate) fn flush_accounts<const SKIP_SYS_ACCS: bool, SDK: SharedAPI>(
         if SKIP_SYS_ACCS && SYSTEM_PROGRAMS_KEYS.contains(&pk) {
             continue;
         }
-        // if !is_evm_pubkey(&pk) {
-        //     return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
-        // }
+        if !is_evm_pubkey(&pk) {
+            return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
+        }
         storage_write_account_data(sdk, pk, account_data)?;
         accounts_flushed += 1;
     }
     Ok(accounts_flushed)
-}
-
-pub fn process_svm_result<T>(result: Result<T, SvmError>) -> Result<T, String> {
-    match result {
-        Ok(v) => Ok(v),
-        Err(ref err) => Err(alloc::format!("{}", &err)),
-    }
 }
 
 pub struct GlobalBalance<API: MetadataStorageAPI> {
@@ -151,11 +138,11 @@ impl<API: MetadataStorageAPI> GlobalBalance<API> {
         let slot_to = pubkey_to_u256(pk_to);
         let balance_from_current = sdk
             .metadata_storage_read(&slot_from)
-            .expect("failed to read current from balance")
+            .expect("failed to read current 'from' balance")
             .data;
         let balance_to_current = sdk
             .metadata_storage_read(&slot_to)
-            .expect("failed to read current to balance")
+            .expect("failed to read current 'to' balance")
             .data;
         let balance_change = evm_balance_from_lamports(lamports_change);
 
@@ -166,9 +153,9 @@ impl<API: MetadataStorageAPI> GlobalBalance<API> {
             return Err(ExitCode::IntegerOverflow.into());
         };
         sdk.metadata_storage_write(&slot_from, balance_from_new)
-            .expect("failed to write updated balance");
+            .expect("failed to write updated 'from' balance");
         sdk.metadata_storage_write(&slot_to, balance_to_new)
-            .expect("failed to write updated balance");
+            .expect("failed to write updated 'to' balance");
 
         Ok(())
     }

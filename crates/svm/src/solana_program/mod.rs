@@ -2,7 +2,7 @@ pub mod ed25519_program;
 pub mod feature_set;
 pub mod instruction;
 pub mod loader_v4;
-pub mod loader_v4_instruction;
+// pub mod loader_v4_instruction;
 pub mod message;
 pub mod program_error;
 pub mod program_stubs;

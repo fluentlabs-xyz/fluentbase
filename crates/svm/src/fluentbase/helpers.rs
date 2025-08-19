@@ -1,6 +1,6 @@
 use crate::common::pubkey_from_evm_address;
-use crate::error::RuntimeError;
 use crate::helpers::storage_read_account_data_or_default;
+use crate::solana_program::rent_collector::RENT_EXEMPT_RENT_EPOCH;
 use crate::{
     account::{
         is_executable_by_account, Account, AccountSharedData, ReadableAccount, WritableAccount,
@@ -11,7 +11,7 @@ use crate::{
     compute_budget::compute_budget::ComputeBudget,
     context::{EnvironmentConfig, IndexOfAccount, InvokeContext, TransactionContext},
     error::SvmError,
-    fluentbase::common::{flush_accounts, BatchMessage},
+    fluentbase::common::BatchMessage,
     helpers::storage_read_account_data,
     loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     loaders::bpf_loader_v4,
@@ -28,7 +28,6 @@ use crate::{
     },
     system_processor, system_program,
     sysvar_cache::SysvarCache,
-    types::BalanceHistorySnapshot,
 };
 use alloc::{sync::Arc, vec::Vec};
 use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
@@ -187,8 +186,7 @@ fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI + MetadataStora
                 // sets rent_epoch to u64::MAX, but initializing the account
                 // with this field already set would allow us to skip rent collection for these
                 // accounts.
-                default_account
-                    .set_rent_epoch(solana_program::rent_collector::RENT_EXEMPT_RENT_EPOCH);
+                default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
                 LoadedTransactionAccount {
                     loaded_size: default_account.data().len(),
                     account: default_account,
@@ -413,8 +411,6 @@ pub fn exec_svm_message<SDK: SharedAPI>(
     );
 
     let transaction_context = {
-        let feature_set = feature_set_default();
-
         let environment_config = EnvironmentConfig::new(
             *message.recent_blockhash(),
             Arc::new(feature_set),
