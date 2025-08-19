@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev", default-features = false }
+fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.3-dev", default-features = false }
 
 
 [lib]
