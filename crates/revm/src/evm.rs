@@ -145,15 +145,11 @@ where
     fn inspect_frame_run(
         &mut self,
     ) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<Self::Context>> {
-        let (ctx, inspector, frame, instructions) = self.ctx_inspector_frame_instructions();
+        let (context, _inspector, frame, _) = self.ctx_inspector_frame_instructions();
 
-        let next_action = inspect_instructions(
-            ctx,
-            &mut frame.interpreter,
-            inspector,
-            instructions.instruction_table(),
-        );
-        let mut result = frame.process_next_action(ctx, next_action);
+        // TODO(dmitry123): "add support of inspector for EVM-compatible syscalls"
+        let action = run_rwasm_loop(frame, context)?.into_interpreter_action();
+        let mut result = frame.process_next_action(context, action);
 
         if let Ok(ItemOrResult::Result(frame_result)) = &mut result {
             let (ctx, inspector, frame) = self.ctx_inspector_frame();
