@@ -17,6 +17,8 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CARGO_HOME: ${{ github.workspace }}/.cargo
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   unit-tests:
@@ -35,12 +37,16 @@ jobs:
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Run tests
         run: cargo test --release --no-fail-fast
+      - name: Show sccache stats
+        run: ${SCCACHE_PATH} --show-stats
 
   coverage:
     name: Coverage
@@ -58,6 +64,8 @@ jobs:
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
       - name: Install wasm32 target
@@ -118,6 +126,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "18"
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -130,3 +140,5 @@ jobs:
       - name: Run ethereum tests
         working-directory: evm-e2e
         run: make run_general_state_tests
+      - name: Show sccache stats
+        run: ${SCCACHE_PATH} --show-stats
