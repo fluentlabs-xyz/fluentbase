@@ -3,19 +3,20 @@ name: Test
 on:
   push:
     branches: [ main, devel ]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
+    paths-ignore: [ "**.md", "docs/**" ]
   pull_request:
     branches: [ main, devel ]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
+    paths-ignore: [ "**.md", "docs/**" ]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  CARGO_HOME: ${{ github.workspace }}/.cargo
+  RUSTUP_HOME: ${{ github.workspace }}/.rustup
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   unit-tests:
@@ -26,20 +27,44 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: '30720'
-          remove-dotnet: 'true'
+          root-reserve-mb: "30720"
+          remove-dotnet: "true"
+
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Speed up git fetches
+        run: git config --global net.git-fetch-with-cli true
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          targets: wasm32-unknown-unknown
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
+
       - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
-      - name: Run tests
-        run: cargo test --release --no-fail-fast
+        run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Rust cache (registries + git)
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          cache-all-crates: true
+          cache-workspace-crates: true
+          cache-on-failure: true
+
+      - name: Prefetch deps (root)
+        run: cargo fetch --locked
+
+      - name: Run tests (offline)
+        run: cargo test --release --no-fail-fast --frozen
+
+      - name: Show sccache stats
+        run: ${SCCACHE_PATH} --show-stats
 
   coverage:
     name: Coverage
@@ -49,29 +74,53 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: '30720'
-          remove-dotnet: 'true'
+          root-reserve-mb: "30720"
+          remove-dotnet: "true"
+
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Speed up git fetches
+        run: git config --global net.git-fetch-with-cli true
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          targets: wasm32-unknown-unknown
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
+
       - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
-      - name: Run cargo check
-        run: cargo check
+        run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Rust cache (registries + git)
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          cache-all-crates: true
+          cache-workspace-crates: true
+          cache-on-failure: true
+
+      - name: Prefetch deps (root)
+        run: cargo fetch --locked
+
+      - name: Run cargo check (offline)
+        run: cargo check --frozen
+
       - name: Generate code coverage
         run: |
           cargo install cargo-tarpaulin
           cargo tarpaulin --verbose --timeout 120 --out xml
+
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v5.4.3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
+
       - name: Archive code coverage results
         uses: actions/upload-artifact@v4
         with:
@@ -84,15 +133,38 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Speed up git fetches
+        run: git config --global net.git-fetch-with-cli true
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
-      - name: Check formatting
+
+      - name: Install wasm32 target
+        run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
+
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Rust cache (registries + git)
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          cache-all-crates: true
+          cache-workspace-crates: true
+          cache-on-failure: true
+
+      - name: Run fmt
         run: cargo fmt --all -- --check
         continue-on-error: true
+
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
         continue-on-error: true
@@ -105,27 +177,52 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: '30720'
-          remove-dotnet: 'true'
+          root-reserve-mb: "30720"
+          remove-dotnet: "true"
+
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Speed up git fetches
+        run: git config --global net.git-fetch-with-cli true
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          targets: wasm32-unknown-unknown
+
+      - name: Install wasm32 target
+        run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "18"
-      - name: Setup cache
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Rust cache (registries + git)
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "revm/e2e -> target"
-      - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
+          cache-targets: false
+          cache-all-crates: true
+          cache-workspace-crates: true
+          cache-on-failure: true
+
+      - name: Prefetch deps (evm-e2e)
+        working-directory: evm-e2e
+        run: cargo fetch
+
       - name: Sync ethereum tests
         working-directory: evm-e2e
         run: make sync_tests
+
       - name: Run ethereum tests
         working-directory: evm-e2e
         run: make run_general_state_tests
+
+      - name: Show sccache stats
+        run: ${SCCACHE_PATH} --show-stats
