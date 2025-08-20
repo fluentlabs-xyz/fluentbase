@@ -2250,6 +2250,7 @@ dependencies = [
  "rwasm",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "solana-bn254",
  "solana-curve25519",
  "solana-poseidon",

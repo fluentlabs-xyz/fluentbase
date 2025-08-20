@@ -4,6 +4,7 @@ use crate::{
     builtins::SyscallInvokeSignedRust,
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     error::{Error, SvmError, SyscallError},
+    evm_program,
     helpers::SerializedAccountMetadata,
     mem_ops::{
         translate, translate_slice, translate_slice_mut, translate_type, translate_type_mut,
@@ -19,7 +20,8 @@ use crate::{
 };
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{fmt::Debug, marker::PhantomData, ptr};
-use fluentbase_sdk::SharedAPI;
+use fluentbase_sdk::{debug_log_ext, Address, SharedAPI};
+use fluentbase_types::U256;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::SUCCESS;
@@ -646,8 +648,50 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     //
     // Translate the inputs to the syscall and synchronize the caller's account
     // changes so the callee can see them.
+    debug_log_ext!("cpi_common");
     let instruction: StableInstruction =
         S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
+    if instruction.program_id == evm_program::id() {
+        debug_log_ext!("calling evm_program");
+        let data = instruction.data;
+        const MIN_LEN: usize = size_of::<Address>() + size_of::<U256>() + size_of::<u64>();
+        if data.len() < MIN_LEN {
+            return Ok(1);
+        }
+        let address = Address::from_slice(&data[..size_of::<Address>()]);
+        let mut offset = size_of::<Address>();
+        let value = U256::from_le_bytes::<{ size_of::<U256>() }>(
+            data[offset..offset + size_of::<U256>()].try_into().unwrap(),
+        );
+        offset += size_of::<U256>();
+        let fuel_limit = {
+            let limit =
+                u64::from_le_bytes(data[offset..offset + size_of::<u64>()].try_into().unwrap());
+            if limit == u64::MAX {
+                None
+            } else {
+                Some(limit)
+            }
+        };
+        offset += size_of::<u64>();
+        let input = &data[offset..];
+        debug_log_ext!(
+            "invoke_context.sdk.call({}, {}, {:x?}, {:x?})",
+            address,
+            value,
+            input,
+            fuel_limit
+        );
+        let call_result = invoke_context.sdk.call(address, value, input, fuel_limit);
+        if !call_result.status.is_ok() {
+            return Ok(1);
+        };
+        let return_data = call_result.data.to_vec();
+        invoke_context
+            .transaction_context
+            .set_return_data(instruction.program_id, return_data);
+        return Ok(SUCCESS);
+    };
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let caller_program_id = instruction_context.get_last_program_key(transaction_context)?;
@@ -672,7 +716,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     )?;
 
     // Process the callee instruction
-    // let mut compute_units_consumed = 0;
     invoke_context.process_instruction(
         &instruction.data,
         &instruction_accounts,

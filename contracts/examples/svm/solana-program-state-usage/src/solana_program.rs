@@ -1,4 +1,7 @@
 extern crate alloc;
+extern crate core;
+
+use core::str::FromStr;
 use fluentbase_examples_svm_bindings::{
     alt_bn128_compression_native, alt_bn128_group_op_native, big_mod_exp_3, curve_group_op_native,
     curve_multiscalar_mul_native, curve_validate_point_native, get_return_data, log_data_native,
@@ -12,6 +15,7 @@ use fluentbase_svm_shared::{
 use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
+use solana_program::instruction::Instruction;
 use solana_program::{program::invoke_signed, system_instruction};
 use solana_program_entrypoint::{entrypoint_no_alloc, ProgramResult};
 use solana_program_error::ProgramError;
@@ -182,6 +186,38 @@ pub fn process_instruction(
                 account_infos,
                 &[], // optional, only if using PDA
             )?;
+        }
+        TestCommand::EvmCall(p) => {
+            let account_info_iter = &mut accounts.iter();
+
+            let payer = next_account_info(account_info_iter)?;
+            // let receiver = next_account_info(account_info_iter)?;
+
+            let account_infos = &[
+                // payer.clone(),
+                // receiver.clone(),
+            ];
+            msg!(
+                "process_instruction: EvmCall: payer (key={:x?} owner={:x?})",
+                payer.key.to_bytes(),
+                payer.owner.to_bytes(),
+            );
+            let evm_pk = Pubkey::from_str("EVM9999999999999999999999999999999999529991").unwrap();
+            invoke_signed(
+                &Instruction::new_with_bytes(evm_pk, &p.to_vec(), vec![]),
+                account_infos,
+                &[], // optional, only if using PDA
+            )?;
+            let return_data_result = get_return_data();
+            match return_data_result {
+                None => {
+                    msg!("EvmCall: err");
+                }
+                Some((pk, return_data)) => {
+                    msg!("EvmCall: pk {} return_data: {:x?}", pk, return_data);
+                    assert_eq!(return_data, p.result_data_expected);
+                }
+            }
         }
         TestCommand::SolBigModExp(p) => {
             let modulus: [u8; 32] = p.modulus.try_into().unwrap();

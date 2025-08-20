@@ -123,7 +123,7 @@ pub struct InvokeContext<'a, SDK: SharedAPI> {
     compute_budget: ComputeBudget,
     pub syscall_context: Vec<Option<SyscallContext>>,
     traces: Vec<Vec<[u64; 12]>>,
-    pub sdk: &'a SDK,
+    pub sdk: &'a mut SDK,
 }
 
 impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
@@ -133,7 +133,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         program_cache_for_tx_batch: ProgramCacheForTxBatch<'a, SDK>,
         environment_config: EnvironmentConfig,
         compute_budget: ComputeBudget,
-        sdk: &'a SDK,
+        sdk: &'a mut SDK,
     ) -> Self {
         Self {
             transaction_context,

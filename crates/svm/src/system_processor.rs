@@ -64,32 +64,16 @@ fn allocate<SDK: SharedAPI>(
     _invoke_context: &InvokeContext<SDK>,
 ) -> Result<(), InstructionError> {
     if !address.is_signer(signers) {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Allocate: 'to' account {:?} must sign",
-        //     address
-        // );
         return Err(InstructionError::MissingRequiredSignature);
     }
 
     // if it looks like the `to` account is already in use, bail
     //   (note that the id check is also enforced by message_processor)
     if !account.get_data().is_empty() || !system_program::check_id(account.get_owner()) {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Allocate: account {:?} already in use",
-        //     address
-        // );
         return Err(SystemError::AccountAlreadyInUse.into());
     }
 
     if space > MAX_PERMITTED_DATA_LENGTH {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Allocate: requested {}, max allowed {}",
-        //     space,
-        //     MAX_PERMITTED_DATA_LENGTH
-        // );
         return Err(SystemError::InvalidAccountDataLength.into());
     }
 
@@ -111,7 +95,6 @@ fn assign<SDK: SharedAPI>(
     }
 
     if !address.is_signer(signers) {
-        // ic_msg!(invoke_context, "Assign: account {:?} must sign", address);
         return Err(InstructionError::MissingRequiredSignature);
     }
 
@@ -149,12 +132,6 @@ fn create_account<SDK: SharedAPI>(
             .try_borrow_instruction_account(transaction_context, to_account_index)?;
 
         if to.get_lamports() > 0 {
-            // ic_msg!(
-            //     invoke_context,
-            //     "Create Account: account {:?} already in use",
-            //     to_address
-            // );
-
             return Err(SystemError::AccountAlreadyInUse.into());
         }
 
@@ -182,19 +159,10 @@ fn transfer_verified<SDK: SharedAPI>(
     let mut from = instruction_context
         .try_borrow_instruction_account(transaction_context, from_account_index)?;
     if !from.get_data().is_empty() {
-        // ic_msg!(invoke_context, "Transfer: `from` must not carry data");
-
         return Err(InstructionError::InvalidArgument);
     }
     let from_lamports = from.get_lamports();
     if lamports > from_lamports {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Transfer: insufficient lamports {}, need {}",
-        //     from.get_lamports(),
-        //     lamports
-        // );
-
         return Err(SystemError::ResultWithNegativeLamports.into());
     }
 
@@ -219,15 +187,6 @@ fn transfer<SDK: SharedAPI>(
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
     if !instruction_context.is_instruction_account_signer(from_account_index)? {
-        // ic_msg!(
-        //     invoke_context,
-        //     "Transfer: `from` account {} must sign",
-        //     transaction_context.get_key_of_account_at_index(
-        //         instruction_context
-        //             .get_index_of_instruction_account_in_transaction(from_account_index)?,
-        //     )?,
-        // );
-
         return Err(InstructionError::MissingRequiredSignature);
     }
 

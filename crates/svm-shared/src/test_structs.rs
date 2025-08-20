@@ -26,6 +26,34 @@ pub struct Transfer {
     pub seeds: Vec<Vec<u8>>,
 }
 
+type Address = [u8; 20];
+type U256 = [u8; 32];
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EvmCall {
+    pub address: [u8; 20],
+    pub value: [u8; 32],
+    pub gas_limit: u64,
+    pub data: Vec<u8>,
+    pub result_data_expected: Vec<u8>,
+}
+
+impl EvmCall {
+    pub fn to_vec(&self) -> Vec<u8> {
+        use core::mem::size_of;
+        let mut result = Vec::with_capacity(
+            size_of::<Address>() + size_of::<U256>() + size_of::<u64>() + self.data.len(),
+        );
+
+        result.extend_from_slice(&self.address);
+        result.extend_from_slice(&self.value);
+        result.extend_from_slice(&self.gas_limit.to_le_bytes());
+        result.extend_from_slice(&self.data);
+
+        result
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SolBigModExp {
     pub base: Vec<u8>,
@@ -129,25 +157,6 @@ pub struct AltBn128Compression {
     pub expected_ret: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum TestCommand {
-    ModifyAccount1(ModifyAccount1),
-    CreateAccountAndModifySomeData1(CreateAccountAndModifySomeData1),
-    Transfer(Transfer),
-    SolBigModExp(SolBigModExp),
-    SolSecp256k1Recover(SolSecp256k1Recover),
-    Keccak256(Keccak256),
-    Sha256(Sha256),
-    Blake3(Blake3),
-    Poseidon(Poseidon),
-    SetGetReturnData(SetGetReturnData),
-    CurvePointValidation(CurvePointValidation),
-    CurveGroupOp(CurveGroupOp),
-    CurveMultiscalarMultiplication(CurveMultiscalarMultiplication),
-    SyscallAltBn128(SyscallAltBn128),
-    AltBn128Compression(AltBn128Compression),
-}
-
 macro_rules! impl_from {
     ($typ_and_enum_branch:ident) => {
         impl From<$typ_and_enum_branch> for TestCommand {
@@ -165,18 +174,35 @@ macro_rules! impl_from {
     };
 }
 
-impl_from!(ModifyAccount1);
-impl_from!(CreateAccountAndModifySomeData1);
-impl_from!(Transfer);
-impl_from!(SolBigModExp);
-impl_from!(SolSecp256k1Recover);
-impl_from!(Keccak256);
-impl_from!(Sha256);
-impl_from!(Blake3);
-impl_from!(Poseidon);
-impl_from!(SetGetReturnData);
-impl_from!(CurvePointValidation);
-impl_from!(CurveGroupOp);
-impl_from!(CurveMultiscalarMultiplication);
-impl_from!(SyscallAltBn128);
-impl_from!(AltBn128Compression);
+macro_rules! impl_structs {
+    ($($typ:ident),+ $(,)?) => {
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        pub enum TestCommand {
+            $(
+                $typ($typ),
+            )+
+        }
+        $(
+            impl_from!($typ);
+        )+
+    };
+}
+
+impl_structs!(
+    ModifyAccount1,
+    CreateAccountAndModifySomeData1,
+    Transfer,
+    EvmCall,
+    SolBigModExp,
+    SolSecp256k1Recover,
+    Keccak256,
+    Sha256,
+    Blake3,
+    Poseidon,
+    SetGetReturnData,
+    CurvePointValidation,
+    CurveGroupOp,
+    CurveMultiscalarMultiplication,
+    SyscallAltBn128,
+    AltBn128Compression,
+);

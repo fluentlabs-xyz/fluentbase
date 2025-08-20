@@ -162,12 +162,12 @@ fn test_process_instruction() {
             is_writable: instruction_account_index < 2,
         })
         .collect::<Vec<_>>();
-    let sdk = new_test_sdk();
+    let mut sdk = new_test_sdk();
     let (_config, loader) = prepare_vars_for_tests();
     with_mock_invoke_context!(
         invoke_context,
         transaction_context,
-        &sdk,
+        &mut sdk,
         loader,
         transaction_accounts
     );
@@ -272,7 +272,7 @@ fn test_process_instruction() {
 }
 
 fn process_instruction<SDK: SharedAPI>(
-    sdk: &SDK,
+    sdk: &mut SDK,
     instruction_data: &[u8],
     transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
     instruction_accounts: Vec<AccountMeta>,
@@ -294,7 +294,7 @@ fn process_instruction<SDK: SharedAPI>(
 
 #[test]
 fn test_transfer_lamports() {
-    let sdk = new_test_sdk();
+    let mut sdk = new_test_sdk();
 
     let from = Pubkey::new_unique();
     let from_account = AccountSharedData::new(100, 0, &system_program::id());
@@ -319,7 +319,7 @@ fn test_transfer_lamports() {
 
     // Success case
     let accounts = process_instruction(
-        &sdk,
+        &mut sdk,
         &serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
         transaction_accounts.clone(),
         instruction_accounts.clone(),
@@ -332,7 +332,7 @@ fn test_transfer_lamports() {
 
     // Attempt to move more lamports than from_account has
     let accounts = process_instruction(
-        &sdk,
+        &mut sdk,
         &serialize(&SystemInstruction::Transfer { lamports: 101 }).unwrap(),
         transaction_accounts.clone(),
         instruction_accounts.clone(),
@@ -343,7 +343,7 @@ fn test_transfer_lamports() {
 
     // test signed transfer of zero
     let accounts = process_instruction(
-        &sdk,
+        &mut sdk,
         &serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
         transaction_accounts.clone(),
         instruction_accounts,
@@ -354,7 +354,7 @@ fn test_transfer_lamports() {
 
     // test unsigned transfer of zero
     let accounts = process_instruction(
-        &sdk,
+        &mut sdk,
         &serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
         transaction_accounts,
         vec![

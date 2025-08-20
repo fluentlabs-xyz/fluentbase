@@ -30,6 +30,7 @@ mod process_instruction_tests;
 // pub mod secp256k1_instruction;
 pub mod big_mod_exp;
 pub mod epoch_schedule;
+pub mod evm_program;
 pub mod fluentbase;
 pub mod hash;
 pub mod loaders;

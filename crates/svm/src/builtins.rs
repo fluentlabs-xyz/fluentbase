@@ -19,7 +19,7 @@ use crate::{
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::str::from_utf8;
-use fluentbase_sdk::{SharedAPI, B256};
+use fluentbase_sdk::{debug_log_ext, SharedAPI, B256};
 use fluentbase_types::helpers::convert_endianness_flexible;
 use itertools::Itertools;
 use solana_bn254::{
