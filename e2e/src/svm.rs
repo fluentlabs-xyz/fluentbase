@@ -11,7 +11,8 @@ mod tests {
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{
-        address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
+        address, debug_log_ext, Address, ContextReader, ContractContextV1, SharedAPI,
+        PRECOMPILE_SVM_RUNTIME, U256,
     };
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
@@ -509,7 +510,7 @@ mod tests {
 
         // exec
 
-        let deployer1_lamports = 30;
+        let deployer1_lamports = 0;
 
         let address = PRECOMPILE_SHA256;
         let value: U256 = U256::from(0);
@@ -543,13 +544,17 @@ mod tests {
         let mut batch_message = BatchMessage::new(None);
         batch_message.clear().append_one(message);
         let input = serialize(&batch_message).unwrap();
+        let deployer1_balance_before = ctx.get_balance(DEPLOYER_ADDRESS1);
         let result = ctx.call_evm_tx_simple(
             DEPLOYER_ADDRESS1,
             contract_address,
             input.clone().into(),
             None,
-            Some(evm_balance_from_lamports(deployer1_lamports)),
+            None,
         );
+        let deployer1_balance_after = ctx.get_balance(DEPLOYER_ADDRESS1);
+        let deployer1_balance_spent = deployer1_balance_before - deployer1_balance_after;
+        assert_eq!(U256::from(27320), deployer1_balance_spent);
         let output = result.output().unwrap();
         if output.len() > 0 {
             let out_text = from_utf8(output).unwrap();
@@ -577,7 +582,7 @@ mod tests {
 
         let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
             .expect("failed to read payer account data");
-        assert_eq!(deployer1_lamports, deployer1_account.lamports(),);
+        assert_eq!(deployer1_lamports, deployer1_account.lamports());
         assert_eq!(deployer1_account.data().len(), 0);
     }
 
