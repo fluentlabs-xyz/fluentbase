@@ -203,29 +203,27 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
-pub fn storage_metadata_params<API: MetadataAPI>(
+pub fn storage_read_metadata_params<API: MetadataAPI>(
     api: &API,
     pubkey: &Pubkey,
 ) -> Result<(B256, Address, u32), SvmError> {
     // let pubkey_hash = keccak256(pubkey.as_ref());
-    let pubkey_hash: B256 = pubkey.to_bytes().into();
+    let pubkey: B256 = pubkey.to_bytes().into();
     let derived_metadata_address =
-        calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
-            keccak256(v)
-        });
+        calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey.into(), |v| keccak256(v));
     let metadata_size_result = api.metadata_size(&derived_metadata_address);
     if !metadata_size_result.status.is_ok() {
         return Err(metadata_size_result.status.into());
     }
     let metadata_len = metadata_size_result.data.0;
-    Ok((pubkey_hash, derived_metadata_address, metadata_len))
+    Ok((pubkey, derived_metadata_address, metadata_len))
 }
 
 pub fn storage_read_metadata<API: MetadataAPI>(
     api: &API,
     pubkey: &Pubkey,
 ) -> Result<Bytes, SvmError> {
-    let ((_, derived_metadata_address, metadata_len)) = storage_metadata_params(api, pubkey)?;
+    let ((_, derived_metadata_address, metadata_len)) = storage_read_metadata_params(api, pubkey)?;
     let metadata_copy = api.metadata_copy(&derived_metadata_address, 0, metadata_len);
     if !metadata_copy.status.is_ok() {
         return Err(metadata_copy.status.into());
@@ -240,7 +238,7 @@ pub fn storage_write_metadata<MAPI: MetadataAPI>(
     metadata: Bytes,
 ) -> Result<(), SvmError> {
     let ((pubkey_hash, derived_metadata_address, metadata_len)) =
-        storage_metadata_params(api, pubkey)?;
+        storage_read_metadata_params(api, pubkey)?;
     if metadata_len == 0 {
         api.metadata_create(&pubkey_hash.into(), metadata)
             .expect("metadata creation failed");

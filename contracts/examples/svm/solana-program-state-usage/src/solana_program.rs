@@ -1,7 +1,6 @@
 extern crate alloc;
 extern crate core;
 
-use core::str::FromStr;
 use fluentbase_examples_svm_bindings::{
     alt_bn128_compression_native, alt_bn128_group_op_native, big_mod_exp_3, curve_group_op_native,
     curve_multiscalar_mul_native, curve_validate_point_native, get_return_data, log_data_native,
@@ -19,7 +18,7 @@ use solana_program::instruction::Instruction;
 use solana_program::{program::invoke_signed, system_instruction};
 use solana_program_entrypoint::{entrypoint_no_alloc, ProgramResult};
 use solana_program_error::ProgramError;
-use solana_pubkey::Pubkey;
+use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_sdk::decode_error::DecodeError;
 use std::str::from_utf8;
 
@@ -184,29 +183,18 @@ pub fn process_instruction(
             invoke_signed(
                 &system_instruction::transfer(payer.key, receiver.key, p.lamports),
                 account_infos,
-                &[], // optional, only if using PDA
+                &[],
             )?;
         }
         TestCommand::EvmCall(p) => {
-            let account_info_iter = &mut accounts.iter();
-
-            let payer = next_account_info(account_info_iter)?;
-            // let receiver = next_account_info(account_info_iter)?;
-
-            let account_infos = &[
-                // payer.clone(),
-                // receiver.clone(),
-            ];
-            msg!(
-                "process_instruction: EvmCall: payer (key={:x?} owner={:x?})",
-                payer.key.to_bytes(),
-                payer.owner.to_bytes(),
-            );
-            let evm_pk = Pubkey::from_str("EVM9999999999999999999999999999999999529991").unwrap();
+            let account_infos = &[];
+            let mut evm_address_pk = [0u8; PUBKEY_BYTES];
+            evm_address_pk[12..].copy_from_slice(&p.address);
+            let evm_address_pk = Pubkey::new_from_array(evm_address_pk);
             invoke_signed(
-                &Instruction::new_with_bytes(evm_pk, &p.to_vec(), vec![]),
+                &Instruction::new_with_bytes(evm_address_pk, &p.params_to_vec(), vec![]),
                 account_infos,
-                &[], // optional, only if using PDA
+                &[],
             )?;
             let return_data_result = get_return_data();
             match return_data_result {

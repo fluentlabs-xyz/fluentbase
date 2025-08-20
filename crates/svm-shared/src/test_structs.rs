@@ -31,26 +31,23 @@ type U256 = [u8; 32];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvmCall {
-    pub address: [u8; 20],
-    pub value: [u8; 32],
+    pub address: Address,
+    pub value: U256,
     pub gas_limit: u64,
     pub data: Vec<u8>,
     pub result_data_expected: Vec<u8>,
 }
 
 impl EvmCall {
-    pub fn to_vec(&self) -> Vec<u8> {
+    pub fn params_to_vec(&self) -> Vec<u8> {
         use core::mem::size_of;
-        let mut result = Vec::with_capacity(
-            size_of::<Address>() + size_of::<U256>() + size_of::<u64>() + self.data.len(),
-        );
+        let mut out = Vec::with_capacity(size_of::<U256>() + size_of::<u64>() + self.data.len());
 
-        result.extend_from_slice(&self.address);
-        result.extend_from_slice(&self.value);
-        result.extend_from_slice(&self.gas_limit.to_le_bytes());
-        result.extend_from_slice(&self.data);
+        out.extend_from_slice(&self.value);
+        out.extend_from_slice(&self.gas_limit.to_le_bytes());
+        out.extend_from_slice(&self.data);
 
-        result
+        out
     }
 }
 

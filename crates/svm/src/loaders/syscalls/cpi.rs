@@ -1,10 +1,12 @@
 use super::*;
+use crate::common::{evm_address_from_pubkey, pubkey_from_evm_address};
+use crate::fluentbase::common::SYSTEM_PROGRAMS_KEYS;
+use crate::helpers::{storage_read_account_data, storage_read_metadata_params};
 use crate::{
     account::BorrowedAccount,
     builtins::SyscallInvokeSignedRust,
     context::{IndexOfAccount, InstructionAccount, InvokeContext},
     error::{Error, SvmError, SyscallError},
-    evm_program,
     helpers::SerializedAccountMetadata,
     mem_ops::{
         translate, translate_slice, translate_slice_mut, translate_type, translate_type_mut,
@@ -648,18 +650,23 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     //
     // Translate the inputs to the syscall and synchronize the caller's account
     // changes so the callee can see them.
-    debug_log_ext!("cpi_common");
     let instruction: StableInstruction =
         S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
-    if instruction.program_id == evm_program::id() {
-        debug_log_ext!("calling evm_program");
+    let is_program_exists = if SYSTEM_PROGRAMS_KEYS.contains(&instruction.program_id) {
+        true
+    } else {
+        let account_metadata =
+            storage_read_metadata_params(invoke_context.sdk, &instruction.program_id);
+        account_metadata.is_ok() && account_metadata?.2 > 0
+    };
+    if !is_program_exists {
         let data = instruction.data;
-        const MIN_LEN: usize = size_of::<Address>() + size_of::<U256>() + size_of::<u64>();
+        const MIN_LEN: usize = size_of::<U256>() + size_of::<u64>();
         if data.len() < MIN_LEN {
             return Ok(1);
         }
-        let address = Address::from_slice(&data[..size_of::<Address>()]);
-        let mut offset = size_of::<Address>();
+        let mut offset = 0;
+        let address = evm_address_from_pubkey::<false>(&instruction.program_id)?;
         let value = U256::from_le_bytes::<{ size_of::<U256>() }>(
             data[offset..offset + size_of::<U256>()].try_into().unwrap(),
         );
