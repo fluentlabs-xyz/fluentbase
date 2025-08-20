@@ -11,8 +11,7 @@ mod tests {
         SyscallWeierstrassCompressDecompressAssign,
     };
     use fluentbase_sdk::{
-        address, debug_log_ext, Address, ContextReader, ContractContextV1, SharedAPI,
-        PRECOMPILE_SVM_RUNTIME, U256,
+        address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
     };
     use fluentbase_sdk_testing::EvmTestingContext;
     use fluentbase_svm::{
