@@ -70,7 +70,6 @@ array-bytes = { workspace = true }
 [features]
 default = [
     "std",
-    #    "debug-print",
 ]
 std = [
     "fluentbase-sdk/std",

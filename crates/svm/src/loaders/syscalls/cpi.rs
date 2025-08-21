@@ -1,7 +1,7 @@
 use super::*;
 use crate::common::{evm_address_from_pubkey, pubkey_from_evm_address};
 use crate::fluentbase::common::SYSTEM_PROGRAMS_KEYS;
-use crate::helpers::{storage_read_account_data, storage_read_metadata_params};
+use crate::helpers::{is_program_exists, storage_read_account_data, storage_read_metadata_params};
 use crate::{
     account::BorrowedAccount,
     builtins::SyscallInvokeSignedRust,
@@ -11,7 +11,7 @@ use crate::{
     mem_ops::{
         translate, translate_slice, translate_slice_mut, translate_type, translate_type_mut,
     },
-    native_loader,
+    native_loader, spl_token_2022,
     word_size::{
         addr_type::AddrType,
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
@@ -23,7 +23,7 @@ use crate::{
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{fmt::Debug, marker::PhantomData, ptr};
 use fluentbase_sdk::{debug_log_ext, Address, SharedAPI};
-use fluentbase_types::U256;
+use fluentbase_types::{PRECOMPILE_ERC20_RUNTIME, U256};
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::SUCCESS;
@@ -650,16 +650,14 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     //
     // Translate the inputs to the syscall and synchronize the caller's account
     // changes so the callee can see them.
-    let instruction: StableInstruction =
+    let mut instruction: StableInstruction =
         S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
-    let is_program_exists = if SYSTEM_PROGRAMS_KEYS.contains(&instruction.program_id) {
-        true
-    } else {
-        let account_metadata =
-            storage_read_metadata_params(invoke_context.sdk, &instruction.program_id);
-        account_metadata.is_ok() && account_metadata?.2 > 0
-    };
-    if !is_program_exists {
+    let mut reroute_to_evm = false;
+    if instruction.program_id == spl_token_2022::id() {
+        instruction.program_id = pubkey_from_evm_address(&PRECOMPILE_ERC20_RUNTIME);
+        reroute_to_evm = true;
+    }
+    if reroute_to_evm || !is_program_exists(invoke_context.sdk, &instruction.program_id)? {
         let data = instruction.data;
         const MIN_LEN: usize = size_of::<U256>() + size_of::<u64>();
         if data.len() < MIN_LEN {

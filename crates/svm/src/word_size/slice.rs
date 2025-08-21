@@ -1,13 +1,10 @@
 use crate::{
     error::RuntimeError,
-    map_addr,
-    typ_size,
+    map_addr, typ_size,
     word_size::{
         addr_type::AddrType,
         common::{
-            typecast_bytes,
-            MemoryMappingHelper,
-            FAT_PTR64_ELEM_BYTE_SIZE,
+            typecast_bytes, MemoryMappingHelper, FAT_PTR64_ELEM_BYTE_SIZE,
             SLICE_FAT_PTR64_SIZE_BYTES,
         },
     },
@@ -184,11 +181,17 @@ impl<'a, T: SpecMethods<'a>> Debug for SliceFatPtr64<'a, T> {
 
 #[inline(always)]
 pub fn reconstruct_slice<'a, T>(ptr: usize, len: usize) -> &'a [T] {
+    if len == 0 {
+        return &[];
+    }
     unsafe { core::slice::from_raw_parts::<'a>(ptr as *const T, len) }
 }
 
 #[inline(always)]
 pub fn reconstruct_slice_mut<'a, T>(ptr: usize, len: usize) -> &'a mut [T] {
+    if len == 0 {
+        return &mut [];
+    }
     unsafe { core::slice::from_raw_parts_mut::<'a>(ptr as *mut T, len) }
 }
 
@@ -518,17 +521,17 @@ impl<'a, const N: usize> SpecMethods<'a> for [u8; N] {
 
 #[cfg(test)]
 mod tests {
+    use crate::mem_ops::translate_slice;
     use crate::word_size::{
         common::MemoryMappingHelper,
         slice::{
-            SliceFatPtr64,
-            ACCOUNT_INFO_ITEM_SIZE_64BIT_WORD,
-            ACCOUNT_META_ITEM_SIZE_64BIT_WORD,
+            SliceFatPtr64, ACCOUNT_INFO_ITEM_SIZE_64BIT_WORD, ACCOUNT_META_ITEM_SIZE_64BIT_WORD,
         },
     };
     use solana_account_info::AccountInfo;
     use solana_instruction::AccountMeta;
     use solana_pubkey::Pubkey;
+    use solana_rbpf::memory_region::MemoryMapping;
     use solana_stable_layout::stable_vec::StableVec;
 
     #[test]
@@ -546,7 +549,7 @@ mod tests {
     #[test]
     fn u8_items_test() {
         type ElemType = u8;
-        let items = [1 as ElemType, 2, 3, 3, 2, 1].as_slice();
+        let items = &[1 as ElemType, 2, 3, 3, 2, 1];
         let items_first_item_ptr = items.as_ptr() as usize;
         let items_len = items.len();
 
@@ -561,6 +564,45 @@ mod tests {
             assert_eq!(&items[idx], &as_slice[idx]);
             assert_eq!(item.as_ref(), &items[idx]);
         }
+    }
+
+    #[test]
+    fn u8_slice_empty_test() {
+        type ElemType = u8;
+        let items: &[ElemType] = &[];
+        let items_first_item_ptr = items.as_ptr() as usize;
+        let items_len = items.len();
+
+        let slice_fat_ptr64 = SliceFatPtr64::<ElemType>::new(
+            MemoryMappingHelper::default(),
+            items_first_item_ptr.into(),
+            items_len,
+        );
+
+        let slice = slice_fat_ptr64.as_slice();
+        let expected: &[u8] = &[];
+        assert_eq!(slice, expected);
+    }
+
+    #[test]
+    fn translate_slice_u8_empty_test() {
+        type ElemType = u8;
+        let items: &[ElemType] = &[];
+        let items_first_item_ptr = items.as_ptr() as usize;
+        let items_len = items.len();
+
+        let memory_mapping = MemoryMapping::Identity;
+        let slice_fat_ptr64 = translate_slice::<u8>(
+            &memory_mapping,
+            items.as_ptr() as u64,
+            items.len() as u64,
+            false,
+        )
+        .unwrap();
+
+        let slice = slice_fat_ptr64.as_slice();
+        let expected: &[u8] = &[];
+        assert_eq!(slice, expected);
     }
 
     #[test]

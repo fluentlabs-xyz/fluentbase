@@ -9,6 +9,7 @@ fluentbase-sdk = { workspace = true, features = [
     #    "debug-print",
 ] }
 fluentbase-erc20 = { workspace = true }
+fluentbase-svm = { workspace = true }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }

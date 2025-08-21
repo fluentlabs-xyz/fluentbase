@@ -43,7 +43,7 @@ pub fn address_is_aligned<T>(address: u64) -> bool {
 use crate::account::{ReadableAccount, WritableAccount};
 use crate::common::GlobalLamportsBalance;
 use crate::error::RuntimeError;
-use crate::fluentbase::common::GlobalBalance;
+use crate::fluentbase::common::{GlobalBalance, SYSTEM_PROGRAMS_KEYS};
 use crate::native_loader::create_loadable_account_with_fields2;
 use crate::solana_program::loader_v4;
 use crate::{
@@ -203,6 +203,19 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
+pub fn is_program_exists<API: MetadataAPI>(
+    api: &API,
+    program_id: &Pubkey,
+) -> Result<bool, SvmError> {
+    let is_exists = if SYSTEM_PROGRAMS_KEYS.contains(program_id) {
+        true
+    } else {
+        let account_metadata = storage_read_metadata_params(api, program_id);
+        account_metadata.is_ok() && account_metadata?.2 > 0
+    };
+    Ok(is_exists)
+}
+
 pub fn storage_read_metadata_params<API: MetadataAPI>(
     api: &API,
     pubkey: &Pubkey,
@@ -212,9 +225,9 @@ pub fn storage_read_metadata_params<API: MetadataAPI>(
     let derived_metadata_address =
         calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey.into(), |v| keccak256(v));
     let metadata_size_result = api.metadata_size(&derived_metadata_address);
-    if !metadata_size_result.status.is_ok() {
-        return Err(metadata_size_result.status.into());
-    }
+    // if !metadata_size_result.status.is_ok() {
+    //     return Err(metadata_size_result.status.into());
+    // }
     let metadata_len = metadata_size_result.data.0;
     Ok((pubkey, derived_metadata_address, metadata_len))
 }

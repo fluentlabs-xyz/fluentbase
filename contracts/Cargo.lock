@@ -1872,6 +1872,7 @@ dependencies = [
  "fluentbase-erc20",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
+ "fluentbase-svm",
 ]
 
 [[package]]

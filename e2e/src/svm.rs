@@ -14,6 +14,7 @@ mod tests {
         address, Address, ContextReader, ContractContextV1, SharedAPI, PRECOMPILE_SVM_RUNTIME, U256,
     };
     use fluentbase_sdk_testing::EvmTestingContext;
+    use fluentbase_svm::helpers::storage_write_metadata;
     use fluentbase_svm::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         common::{evm_balance_from_lamports, pubkey_from_evm_address},
@@ -26,7 +27,7 @@ mod tests {
             loader_v4::LoaderV4State,
             message::Message,
         },
-        system_program,
+        spl_token_2022, system_program,
     };
     use fluentbase_svm_shared::test_structs::{EvmCall, Transfer};
     use fluentbase_svm_shared::{
@@ -41,7 +42,7 @@ mod tests {
     use fluentbase_types::{
         helpers::convert_endianness_fixed, BN254_G1_POINT_COMPRESSED_SIZE,
         BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-        BN254_G2_POINT_DECOMPRESSED_SIZE, PRECOMPILE_SHA256,
+        BN254_G2_POINT_DECOMPRESSED_SIZE, PRECOMPILE_ERC20_RUNTIME, PRECOMPILE_SHA256,
     };
     use hex_literal::hex;
     use rand::random_range;
@@ -487,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn test_svm_deploy_exec_evm_cross_call() {
+    fn test_svm_deploy_exec_cross_call_evm_sha256() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
@@ -554,6 +555,109 @@ mod tests {
         let deployer1_balance_after = ctx.get_balance(DEPLOYER_ADDRESS1);
         let deployer1_balance_spent = deployer1_balance_before - deployer1_balance_after;
         assert_eq!(U256::from(27320), deployer1_balance_spent);
+        let output = result.output().unwrap();
+        if output.len() > 0 {
+            let out_text = from_utf8(output).unwrap();
+            println!("output.len {} output '{}'", output.len(), out_text);
+        }
+        assert!(result.is_success());
+
+        ctx.commit_db_to_sdk();
+
+        let output = result.output().unwrap_or_default();
+        let expected_output = hex!("");
+        assert_eq!(hex::encode(expected_output), hex::encode(output));
+
+        let contract_account = storage_read_account_data(&ctx.sdk, &pk_contract)
+            .expect(format!("failed to read exec account data: {}", pk_contract).as_str());
+        assert_eq!(contract_account.lamports(), 0);
+        assert_eq!(
+            contract_account.data().len(),
+            LoaderV4State::program_data_offset() + account_with_program.data().len()
+        );
+        assert_eq!(
+            &contract_account.data()[LoaderV4State::program_data_offset()..],
+            account_with_program.data()
+        );
+
+        let deployer1_account = storage_read_account_data(&ctx.sdk, &pk_deployer1)
+            .expect("failed to read payer account data");
+        assert_eq!(deployer1_lamports, deployer1_account.lamports());
+        assert_eq!(deployer1_account.data().len(), 0);
+    }
+
+    #[ignore]
+    #[test]
+    fn test_svm_deploy_exec_cross_call_evm_erc20_shared() {
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let loader_id = loader_v4::id();
+        let system_program_id = system_program::id();
+        let account_with_program = load_program_account_from_elf_file(
+            &loader_id,
+            "../contracts/examples/svm/assets/solana_program_state_usage.so",
+        );
+        let payer_initial_lamports = 101;
+        let seed1 = b"seed";
+
+        let (pk_deployer1, pk_contract, _pk_new, contract_address) = svm_deploy(
+            &mut ctx,
+            &account_with_program,
+            seed1,
+            payer_initial_lamports,
+        );
+
+        ctx.commit_db_to_sdk();
+
+        // exec
+
+        let deployer1_lamports = 0;
+
+        let address = PRECOMPILE_ERC20_RUNTIME;
+        let value: U256 = U256::from(0);
+        let gas_limit: u64 = u64::MAX;
+        let call_data: Vec<u8> = vec![1, 2, 3];
+        let call_data_sha256_vec = sha2::Sha256::digest(call_data.as_slice()).to_vec();
+        // TODO do not use EvmCall, we must make pure svm invoke()
+        let test_command_data = EvmCall {
+            address: address.0 .0,
+            value: value.to_le_bytes(),
+            gas_limit,
+            data: call_data,
+            result_data_expected: call_data_sha256_vec,
+        };
+        let test_command: TestCommand = test_command_data.clone().into();
+        let instruction_data = serialize(&test_command).unwrap();
+        println!(
+            "instruction_data ({}): {:x?}",
+            instruction_data.len(),
+            &instruction_data
+        );
+
+        storage_write_metadata(&mut ctx.sdk, &spl_token_2022::id(), vec![1, 2, 3].into()).unwrap();
+
+        let instructions = vec![Instruction::new_with_bincode(
+            pk_contract.clone(),
+            &instruction_data,
+            vec![
+                AccountMeta::new(pk_deployer1, true),
+                AccountMeta::new(system_program_id, false),
+            ],
+        )];
+        let message = Message::new(&instructions, None);
+        let mut batch_message = BatchMessage::new(None);
+        batch_message.clear().append_one(message);
+        let input = serialize(&batch_message).unwrap();
+        let deployer1_balance_before = ctx.get_balance(DEPLOYER_ADDRESS1);
+        let result = ctx.call_evm_tx_simple(
+            DEPLOYER_ADDRESS1,
+            contract_address,
+            input.clone().into(),
+            None,
+            None,
+        );
+        let deployer1_balance_after = ctx.get_balance(DEPLOYER_ADDRESS1);
+        let deployer1_balance_spent = deployer1_balance_before - deployer1_balance_after;
+        assert_eq!(U256::from(27350), deployer1_balance_spent);
         let output = result.output().unwrap();
         if output.len() > 0 {
             let out_text = from_utf8(output).unwrap();

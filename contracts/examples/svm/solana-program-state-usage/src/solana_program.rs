@@ -15,6 +15,7 @@ use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
 use solana_program::instruction::Instruction;
+use solana_program::program::invoke;
 use solana_program::{program::invoke_signed, system_instruction};
 use solana_program_entrypoint::{entrypoint_no_alloc, ProgramResult};
 use solana_program_error::ProgramError;
@@ -180,10 +181,9 @@ pub fn process_instruction(
                 receiver.key.to_bytes(),
                 receiver.owner.to_bytes(),
             );
-            invoke_signed(
+            invoke(
                 &system_instruction::transfer(payer.key, receiver.key, p.lamports),
                 account_infos,
-                &[],
             )?;
         }
         TestCommand::EvmCall(p) => {
@@ -191,10 +191,9 @@ pub fn process_instruction(
             let mut evm_address_pk = [0u8; PUBKEY_BYTES];
             evm_address_pk[12..].copy_from_slice(&p.address);
             let evm_address_pk = Pubkey::new_from_array(evm_address_pk);
-            invoke_signed(
+            invoke(
                 &Instruction::new_with_bytes(evm_address_pk, &p.params_to_vec(), vec![]),
                 account_infos,
-                &[],
             )?;
             let return_data_result = get_return_data();
             match return_data_result {

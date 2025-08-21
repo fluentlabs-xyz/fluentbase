@@ -3,56 +3,24 @@ extern crate core;
 
 use fluentbase_erc20::{
     common::{
-        bytes_to_sig,
-        fixed_bytes_from_u256,
-        u256_from_bytes_slice_try,
-        u256_from_fixed_bytes,
+        bytes_to_sig, fixed_bytes_from_u256, u256_from_bytes_slice_try, u256_from_fixed_bytes,
     },
     consts::{
-        emit_approval_event,
-        emit_pause_event,
-        emit_transfer_event,
-        emit_unpause_event,
-        ERR_ALREADY_PAUSED,
-        ERR_ALREADY_UNPAUSED,
-        ERR_DECODE,
-        ERR_INSUFFICIENT_ALLOWANCE,
-        ERR_INVALID_META_NAME,
-        ERR_INVALID_META_SYMBOL,
-        ERR_INVALID_MINTER,
-        ERR_INVALID_PAUSER,
-        ERR_INVALID_RECIPIENT,
-        ERR_MALFORMED_INPUT,
-        ERR_MINTABLE_PLUGIN_NOT_ACTIVE,
-        ERR_OVERFLOW,
-        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE,
-        ERR_VALIDATION,
-        SIG_ALLOWANCE,
-        SIG_APPROVE,
-        SIG_BALANCE_OF,
-        SIG_DECIMALS,
-        SIG_MINT,
-        SIG_NAME,
-        SIG_PAUSE,
-        SIG_SYMBOL,
-        SIG_TOTAL_SUPPLY,
-        SIG_TRANSFER,
-        SIG_TRANSFER_FROM,
-        SIG_UNPAUSE,
+        emit_approval_event, emit_pause_event, emit_transfer_event, emit_unpause_event,
+        ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_DECODE, ERR_INSUFFICIENT_ALLOWANCE,
+        ERR_INVALID_META_NAME, ERR_INVALID_META_SYMBOL, ERR_INVALID_MINTER, ERR_INVALID_PAUSER,
+        ERR_INVALID_RECIPIENT, ERR_MALFORMED_INPUT, ERR_MINTABLE_PLUGIN_NOT_ACTIVE, ERR_OVERFLOW,
+        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, ERR_VALIDATION, SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE_OF,
+        SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_TRANSFER,
+        SIG_TRANSFER_FROM, SIG_UNPAUSE,
     },
     storage::{
-        Allowance,
-        Balance,
-        Config,
-        Feature,
-        InitialSettings,
-        Settings,
-        ADDRESS_LEN_BYTES,
-        SIG_LEN_BYTES,
-        U256_LEN_BYTES,
+        Allowance, Balance, Config, Feature, InitialSettings, Settings, ADDRESS_LEN_BYTES,
+        SIG_LEN_BYTES, U256_LEN_BYTES,
     },
 };
-use fluentbase_sdk::{entrypoint, Address, ContextReader, SharedAPI, U256};
+use fluentbase_sdk::{debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, U256};
+use fluentbase_svm::helpers::storage_read_metadata_params;
 
 fn symbol(mut sdk: impl SharedAPI, _input: &[u8]) {
     sdk.write(&Settings::symbol(&sdk));

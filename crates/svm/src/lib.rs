@@ -11,11 +11,8 @@ pub mod common;
 pub mod compute_budget;
 pub mod compute_budget_processor;
 pub mod context;
-// pub mod ed25519_instruction;
 pub mod error;
 pub mod helpers;
-// #[cfg(test)]
-// mod helpers_tests;
 pub mod loaded_programs;
 pub mod macros;
 pub mod mem_ops;
@@ -35,6 +32,7 @@ pub mod hash;
 pub mod loaders;
 pub mod serialization;
 pub mod solana_program;
+pub mod spl_token_2022;
 pub mod system_instruction;
 pub mod system_processor;
 #[cfg(test)]
