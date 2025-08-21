@@ -1,0 +1,42 @@
+---
+source: crates/build/tests/interface_generation.rs
+expression: interface
+---
+// SPDX-License-Identifier: MIT
+// Auto-generated from Rust source
+pragma solidity ^0.8.0;
+
+interface IDeepNestingContract {
+    struct ComplexData {
+        uint256 id;
+        Batch batch;
+    }
+
+    struct Batch {
+        uint256 timestamp;
+        Order[] orders;
+    }
+
+    struct Order {
+        uint256 orderId;
+        User user;
+        Item[] items;
+    }
+
+    struct User {
+        address addr;
+        Profile profile;
+    }
+
+    struct Profile {
+        string name;
+        uint256 level;
+    }
+
+    struct Item {
+        uint256 itemId;
+        uint256 quantity;
+    }
+
+    function processComplexData(ComplexData calldata data) external returns (bool success);
+}

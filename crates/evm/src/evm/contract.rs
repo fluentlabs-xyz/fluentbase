@@ -1,24 +1,12 @@
 use crate::{
-    as_usize_or_fail,
-    gas,
-    pop,
-    pop_address,
-    require_non_staticcall,
-    resize_memory,
+    as_usize_or_fail, gas, pop, pop_address, require_non_staticcall, resize_memory,
     result::InstructionResult,
     utils::{get_memory_input_and_out_ranges, insert_call_outcome, insert_create_outcome},
     EVM,
 };
 use fluentbase_sdk::{
-    Bytes,
-    SharedAPI,
-    EVM_MAX_INITCODE_SIZE,
-    FUEL_DENOM_RATE,
-    SVM_ELF_MAGIC_BYTES,
-    SVM_MAX_CODE_SIZE,
-    U256,
-    WASM_MAGIC_BYTES,
-    WASM_MAX_CODE_SIZE,
+    Bytes, SharedAPI, EVM_MAX_INITCODE_SIZE, FUEL_DENOM_RATE, SVM_ELF_MAGIC_BYTES,
+    SVM_MAX_CODE_SIZE, U256, WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
 };
 
 pub fn create<const IS_CREATE2: bool, SDK: SharedAPI>(evm: &mut EVM<SDK>) {
@@ -102,7 +90,7 @@ pub fn call<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
         to,
         value,
         input.as_ref(),
-        Some(local_gas_limit * FUEL_DENOM_RATE),
+        Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE)),
     );
     insert_call_outcome(evm, result, return_memory_offset);
 }
@@ -123,7 +111,7 @@ pub fn call_code<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
         to,
         value,
         input.as_ref(),
-        Some(local_gas_limit * FUEL_DENOM_RATE),
+        Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE)),
     );
     insert_call_outcome(evm, result, return_memory_offset);
 }
@@ -139,9 +127,11 @@ pub fn delegate_call<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     // we should sync gas before doing call
     // to make sure gas is synchronized between different runtimes
     evm.sync_evm_gas();
-    let result = evm
-        .sdk
-        .delegate_call(to, input.as_ref(), Some(local_gas_limit * FUEL_DENOM_RATE));
+    let result = evm.sdk.delegate_call(
+        to,
+        input.as_ref(),
+        Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE)),
+    );
     insert_call_outcome(evm, result, return_memory_offset);
 }
 
@@ -156,8 +146,10 @@ pub fn static_call<SDK: SharedAPI>(evm: &mut EVM<SDK>) {
     // we should sync gas before doing call
     // to make sure gas is synchronized between different runtimes
     evm.sync_evm_gas();
-    let result = evm
-        .sdk
-        .static_call(to, input.as_ref(), Some(local_gas_limit * FUEL_DENOM_RATE));
+    let result = evm.sdk.static_call(
+        to,
+        input.as_ref(),
+        Some(local_gas_limit.wrapping_mul(FUEL_DENOM_RATE)),
+    );
     insert_call_outcome(evm, result, return_memory_offset);
 }

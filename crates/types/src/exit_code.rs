@@ -1,4 +1,4 @@
-use precompile::PrecompileError;
+use revm_precompile::PrecompileError;
 use rwasm::TrapCode;
 use strum_macros::{Display, FromRepr};
 

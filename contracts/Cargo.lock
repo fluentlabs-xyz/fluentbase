@@ -1799,7 +1799,7 @@ checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1811,7 +1811,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2004,7 +2004,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-erc20"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "bincode 2.0.1",
  "fluentbase-sdk",
@@ -2012,7 +2012,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -2160,18 +2160,19 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk",
  "once_cell",
  "revm",
+ "rwasm",
  "serde",
 ]
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2198,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-sdk-derive",
@@ -2208,7 +2209,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2221,7 +2222,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2243,7 +2244,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-testing"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-revm",
@@ -2257,7 +2258,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "ark-bn254",
  "bincode 2.0.1",
@@ -2307,7 +2308,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.4.1-dev"
+version = "0.4.3-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -4461,7 +4462,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?rev=9923a95b#9923a95bc04c4053725b7b7bc5ac5f98dd9f151f"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#9923a95bc04c4053725b7b7bc5ac5f98dd9f151f"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",

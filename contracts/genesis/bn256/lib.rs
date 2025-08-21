@@ -4,17 +4,10 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    alloc_slice,
-    entrypoint,
-    Bytes,
-    ContextReader,
-    ExitCode,
-    SharedAPI,
-    PRECOMPILE_BN256_ADD,
-    PRECOMPILE_BN256_MUL,
-    PRECOMPILE_BN256_PAIR,
+    alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BN256_ADD,
+    PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
 };
-use precompile::bn128::{
+use revm_precompile::bn128::{
     add::ISTANBUL_ADD_GAS_COST,
     mul::ISTANBUL_MUL_GAS_COST,
     pair::{ISTANBUL_PAIR_BASE, ISTANBUL_PAIR_PER_POINT},
@@ -31,12 +24,12 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     // call precompiled function
     let result = match bytecode_address {
         PRECOMPILE_BN256_ADD => {
-            precompile::bn128::run_add(&input, ISTANBUL_ADD_GAS_COST, gas_limit)
+            revm_precompile::bn128::run_add(&input, ISTANBUL_ADD_GAS_COST, gas_limit)
         }
         PRECOMPILE_BN256_MUL => {
-            precompile::bn128::run_mul(&input, ISTANBUL_MUL_GAS_COST, gas_limit)
+            revm_precompile::bn128::run_mul(&input, ISTANBUL_MUL_GAS_COST, gas_limit)
         }
-        PRECOMPILE_BN256_PAIR => precompile::bn128::run_pair(
+        PRECOMPILE_BN256_PAIR => revm_precompile::bn128::run_pair(
             &input,
             ISTANBUL_PAIR_PER_POINT,
             ISTANBUL_PAIR_BASE,

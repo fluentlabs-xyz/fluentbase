@@ -1,0 +1,38 @@
+---
+source: crates/build/tests/interface_generation.rs
+expression: interface
+---
+// SPDX-License-Identifier: MIT
+// Auto-generated from Rust source
+pragma solidity ^0.8.0;
+
+interface IComprehensiveContract {
+    struct SlippageParams {
+        uint256 amount_in;
+        uint256 reserve_in;
+        uint256 reserve_out;
+        uint256 fee_rate;
+    }
+
+    struct OptimizationResult {
+        uint256 optimal_amount;
+        uint256 expected_output;
+        uint256 price_impact;
+    }
+
+    struct Pool {
+        uint256 reserve_in;
+        uint256 reserve_out;
+    }
+
+    struct Route {
+        Pool[] pools;
+        address[] tokens;
+        uint256 input_amount;
+    }
+
+    function calculateSlippage(SlippageParams calldata params) external returns (uint256 _0);
+    function optimizeSwap(uint256 total_amount, uint256 reserve_in, uint256 reserve_out) external returns (OptimizationResult memory _0);
+    function findOptimalRoute(uint256 amount_in, Pool[] calldata pools, uint256[] calldata fee_rates) external returns (uint256 _0);
+    function executeRoute(Route calldata route) external returns (uint256 _0);
+}

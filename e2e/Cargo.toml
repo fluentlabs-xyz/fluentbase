@@ -25,7 +25,6 @@ curve25519-dalek = { workspace = true }
 rwasm = { workspace = true }
 revm = { workspace = true }
 fluentbase-revm = { workspace = true }
-op-revm = { workspace = true }
 hex-literal = { workspace = true }
 hex = { workspace = true }
 alloy-sol-types = { workspace = true }

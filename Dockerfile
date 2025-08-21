@@ -2,7 +2,7 @@
 
 ARG RUST_TOOLCHAIN=1.88
 ARG PLATFORM=linux/amd64
-ARG SDK_VERSION=0.4.0-dev
+ARG SDK_VERSION=0.4.3-dev
 ARG BINARYEN_VERSION=120
 ARG WABT_VERSION=1.0.36
 ARG WABT_OS=ubuntu-20.04
@@ -66,7 +66,6 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
-COPY revm/ ./revm/
 COPY bins/cli ./bins/cli/
 COPY e2e/ ./e2e/
 
@@ -83,7 +82,6 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
-COPY revm/ ./revm/
 COPY e2e/ ./e2e/
 COPY bins/ ./bins/
 COPY docker/contract ./docker/contract
