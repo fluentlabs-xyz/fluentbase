@@ -181,17 +181,11 @@ impl<'a, T: SpecMethods<'a>> Debug for SliceFatPtr64<'a, T> {
 
 #[inline(always)]
 pub fn reconstruct_slice<'a, T>(ptr: usize, len: usize) -> &'a [T] {
-    if len == 0 {
-        return &[];
-    }
     unsafe { core::slice::from_raw_parts::<'a>(ptr as *const T, len) }
 }
 
 #[inline(always)]
 pub fn reconstruct_slice_mut<'a, T>(ptr: usize, len: usize) -> &'a mut [T] {
-    if len == 0 {
-        return &mut [];
-    }
     unsafe { core::slice::from_raw_parts_mut::<'a>(ptr as *mut T, len) }
 }
 
@@ -582,6 +576,27 @@ mod tests {
         let slice = slice_fat_ptr64.as_slice();
         let expected: &[u8] = &[];
         assert_eq!(slice, expected);
+    }
+
+    #[test]
+    fn translate_slice_u8_test() {
+        type ElemType = u8;
+        let items: &[ElemType] = &[1, 2, 3];
+        let items_first_item_ptr = items.as_ptr() as usize;
+        let items_len = items.len();
+
+        let memory_mapping = MemoryMapping::Identity;
+        let slice_fat_ptr64 = translate_slice::<u8>(
+            &memory_mapping,
+            items.as_ptr() as u64,
+            items.len() as u64,
+            false,
+        )
+        .unwrap();
+
+        let slice = slice_fat_ptr64.as_slice();
+        // let expected: &[u8] = &[];
+        assert_eq!(slice, items);
     }
 
     #[test]
