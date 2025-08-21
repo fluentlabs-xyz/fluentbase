@@ -31,3 +31,5 @@ hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 # Optimize WASM for size in debug to avoid massive binaries that slow compilation
 opt-level = "z"
 debug = false
+strip = "symbols"
+
