@@ -5,7 +5,13 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-evm = { workspace = true, default-features = false }
+#fluentbase-evm = { workspace = true, default-features = false }
+
+# revm
+revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+revm-bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+revm-context-interface = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
@@ -16,4 +22,4 @@ path = "lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "fluentbase-evm/std"]
+std = ["fluentbase-sdk/std"]

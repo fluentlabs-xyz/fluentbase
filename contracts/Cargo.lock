@@ -1878,9 +1878,12 @@ dependencies = [
 name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
- "fluentbase-evm",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
+ "revm-bytecode",
+ "revm-context-interface",
+ "revm-interpreter",
+ "revm-primitives",
 ]
 
 [[package]]
@@ -2006,15 +2009,6 @@ name = "fluentbase-erc20"
 version = "0.4.3-dev"
 dependencies = [
  "bincode 2.0.1",
- "fluentbase-sdk",
-]
-
-[[package]]
-name = "fluentbase-evm"
-version = "0.4.3-dev"
-dependencies = [
- "bincode 2.0.1",
- "bitvec",
  "fluentbase-sdk",
 ]
 

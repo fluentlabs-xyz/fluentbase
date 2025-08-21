@@ -443,10 +443,16 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             }
             #[cfg(feature = "debug-print")]
             println!("SYSCALL_DESTROY_ACCOUNT: target={target} result={result:?}",);
+            let output = [
+                result.is_cold as u8,
+                result.data.had_value as u8,
+                result.data.target_exists as u8,
+                result.data.previously_destroyed as u8,
+            ];
             // charge gas cost
             charge_gas!(gas::selfdestruct_cost(spec_id, result));
             // return value as bytes with success exit code
-            return_result!(Ok);
+            return_result!(output, Ok);
         }
 
         SYSCALL_ID_BALANCE => {

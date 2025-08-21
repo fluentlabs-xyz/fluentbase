@@ -3,19 +3,19 @@
 extern crate alloc;
 extern crate core;
 
-use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, result::InterpreterResult, EVM};
 use fluentbase_sdk::{
-    bytes::Buf,
-    entrypoint,
-    keccak256,
-    Bytes,
-    ContextReader,
-    ExitCode,
-    SharedAPI,
-    B256,
-    EVM_MAX_CODE_SIZE,
-    KECCAK_EMPTY,
+    bytes::Buf, entrypoint, keccak256, Address, Bytes, ContextReader, ExitCode, Log, SharedAPI,
+    B256, EVM_MAX_CODE_SIZE, KECCAK_EMPTY, U256, WASM_MAX_CODE_SIZE,
 };
+use revm_bytecode::Bytecode;
+use revm_context_interface::journaled_state::AccountLoad;
+use revm_interpreter::interpreter::{EthInterpreter, ExtBytecode};
+use revm_interpreter::{
+    gas, instruction_table, Host, InputsImpl, Instruction, Interpreter, InterpreterResult,
+    SStoreResult, SelfDestructResult, SharedMemory, StateLoad,
+};
+use revm_primitives::hardfork::SpecId;
+use revm_primitives::{StorageKey, StorageValue, BLOCK_HASH_HISTORY};
 
 /// Indicates whether analyzed EVM bytecode should be cached.
 /// Set to `false` to disable caching, which may result in repeated analysis and potentially slower
@@ -40,11 +40,10 @@ pub(crate) fn commit_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
 ) {
     let contract_address = sdk.context().contract_address();
     let evm_code_hash = keccak256(evm_bytecode.as_ref());
-    // write an EVM code hash into metadata at offset 0
-    sdk.metadata_write(&contract_address, 0, evm_code_hash.into())
-        .unwrap();
-    // write not analyzed EVM bytecode at offset 32
-    sdk.metadata_write(&contract_address, 32, evm_bytecode.into())
+    // write an EVM code hash & bytecode into metadata at offset 0
+    let mut metadata = evm_code_hash.as_slice().to_vec();
+    metadata.extend(evm_bytecode);
+    sdk.metadata_write(&contract_address, 0, metadata.into())
         .unwrap();
 }
 
@@ -125,6 +124,118 @@ fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult)
     });
 }
 
+struct HostAdapter<SDK: SharedAPI> {
+    sdk: SDK,
+}
+
+impl<SDK: SharedAPI> Host for HostAdapter<SDK> {
+    fn basefee(&self) -> U256 {
+        self.sdk.context().block_base_fee()
+    }
+
+    fn blob_gasprice(&self) -> U256 {
+        U256::ZERO
+    }
+
+    fn gas_limit(&self) -> U256 {
+        self.sdk.context().tx_gas_limit().into()
+    }
+
+    fn difficulty(&self) -> U256 {
+        self.sdk.context().block_difficulty()
+    }
+
+    fn prevrandao(&self) -> Option<U256> {
+        Some(self.sdk.context().block_prev_randao().into())
+    }
+
+    fn block_number(&self) -> U256 {
+        self.sdk.context().block_number().into()
+    }
+
+    fn timestamp(&self) -> U256 {
+        self.sdk.context().block_timestamp().into()
+    }
+
+    fn beneficiary(&self) -> Address {
+        self.sdk.context().block_coinbase()
+    }
+
+    fn chain_id(&self) -> U256 {
+        self.sdk.context().block_chain_id().into()
+    }
+
+    fn effective_gas_price(&self) -> U256 {
+        self.sdk.context().tx_gas_price()
+    }
+
+    fn caller(&self) -> Address {
+        self.sdk.context().contract_caller()
+    }
+
+    fn blob_hash(&self, _number: usize) -> Option<U256> {
+        None
+    }
+
+    fn max_initcode_size(&self) -> usize {
+        WASM_MAX_CODE_SIZE
+    }
+
+    fn block_hash(&mut self, number: u64) -> Option<B256> {
+        let hash = self.sdk.block_hash(number).unwrap();
+        Some(hash)
+    }
+
+    fn selfdestruct(
+        &mut self,
+        address: Address,
+        target: Address,
+    ) -> Option<StateLoad<SelfDestructResult>> {
+        self.sdk.destroy_account(target);
+    }
+
+    fn log(&mut self, log: Log) {
+        self.sdk.emit_log(log.topics(), log.data.data.as_ref());
+    }
+
+    fn sstore(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        value: StorageValue,
+    ) -> Option<StateLoad<SStoreResult>> {
+        todo!()
+    }
+
+    fn sload(&mut self, address: Address, key: StorageKey) -> Option<StateLoad<StorageValue>> {
+        todo!()
+    }
+
+    fn tstore(&mut self, address: Address, key: StorageKey, value: StorageValue) {
+        todo!()
+    }
+
+    fn tload(&mut self, address: Address, key: StorageKey) -> StorageValue {
+        todo!()
+    }
+
+    fn balance(&mut self, address: Address) -> Option<StateLoad<U256>> {
+        self.sdk.balance(&address);
+    }
+
+    fn load_account_delegated(&mut self, address: Address) -> Option<StateLoad<AccountLoad>> {
+        todo!()
+    }
+
+    fn load_account_code(&mut self, address: Address) -> Option<StateLoad<Bytes>> {
+        todo!()
+    }
+
+    fn load_account_code_hash(&mut self, address: Address) -> Option<StateLoad<B256>> {
+        todo!()
+    }
+}
+
 /// Deploys an EVM smart contract using the provided bytecode input.
 ///
 /// This function handles the deployment process for EVM-compatible smart contracts,
@@ -181,8 +292,40 @@ fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult)
 /// - Compatibility with EVM gas mechanisms is maintained to ensure Ethereum-like behavior.
 pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     let input: Bytes = sdk.input().into();
-    let analyzed_bytecode = AnalyzedBytecode::new(&input[..], B256::ZERO);
+
+    let is_static = sdk.context().contract_is_static();
     let gas_limit = sdk.context().contract_gas_limit();
+
+    let shared_memory = SharedMemory::new();
+
+    let bytecode = Bytecode::new_raw_checked(input)
+        .unwrap_or_else(|| unreachable!("can't decode evm init bytecode"));
+    match bytecode {
+        Bytecode::LegacyAnalyzed(_) => {}
+        _ => unreachable!("not supported evm init bytecode"),
+    }
+    let bytecode = ExtBytecode::new_with_hash(bytecode, B256::ZERO);
+
+    let inputs = InputsImpl {
+        target_address: Default::default(),
+        bytecode_address: None,
+        caller_address: Default::default(),
+        input: Default::default(),
+        call_value: Default::default(),
+        account_owner: None,
+    };
+
+    let mut interpreter = Interpreter::new(
+        shared_memory,
+        bytecode,
+        inputs,
+        is_static,
+        SpecId::PRAGUE,
+        gas_limit,
+    );
+    const INSTRUCTION_TABLE: [Instruction<EthInterpreter, HostAdapter<SDK>>; 256] =
+        instruction_table();
+    interpreter.run_plain();
 
     let mut result = EVM::new(&mut sdk, analyzed_bytecode, &[], gas_limit).exec();
     if !result.is_ok() {
