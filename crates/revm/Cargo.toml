@@ -49,6 +49,7 @@ default = ["std", "c-kzg", "secp256k1", "portable", "blst"]
 std = [
     "serde?/std",
     "revm/std",
+    "revm/serde-json",
     "alloy-sol-types/std",
     "sha2/std",
     "serde_json/std",
