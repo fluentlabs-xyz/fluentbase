@@ -1,10 +1,9 @@
+use crate::syscall::try_execute_rwasm_interruption_with_trace;
 use crate::{
     api::RwasmFrame,
     instruction_result_from_exit_code,
-    syscall::execute_rwasm_interruption,
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
-    ExecutionResult,
-    NextAction,
+    ExecutionResult, NextAction,
 };
 use core::cell::RefCell;
 use fluentbase_runtime::{
@@ -12,22 +11,10 @@ use fluentbase_runtime::{
     RuntimeContext,
 };
 use fluentbase_sdk::{
-    is_delegated_runtime_address,
-    keccak256,
-    rwasm_core::RwasmModule,
-    syscall::SyscallInvocationParams,
-    BlockContextV1,
-    BytecodeOrHash,
-    Bytes,
-    ContractContextV1,
-    ExitCode,
-    SharedContextInput,
-    SharedContextInputV1,
-    TxContextV1,
-    FUEL_DENOM_RATE,
-    STATE_DEPLOY,
-    STATE_MAIN,
-    U256,
+    is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule,
+    syscall::SyscallInvocationParams, BlockContextV1, BytecodeOrHash, Bytes, ContractContextV1,
+    ExitCode, SharedContextInput, SharedContextInputV1, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY,
+    STATE_MAIN, U256,
 };
 use revm::{
     bytecode::Bytecode,
@@ -36,25 +23,21 @@ use revm::{
     interpreter::{
         interpreter::ExtBytecode,
         interpreter_types::{InputsTr, RuntimeFlag},
-        return_ok,
-        return_revert,
-        CallInput,
-        FrameInput,
-        Gas,
-        InstructionResult,
+        return_ok, return_revert, CallInput, FrameInput, Gas, InstructionResult,
     },
-    Database,
+    Database, Inspector,
 };
 
-pub(crate) fn run_rwasm_loop<CTX: ContextTr>(
+pub(crate) fn run_rwasm_loop<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
+    mut inspector: Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let next_action = loop {
         let next_action = if let Some(interruption_outcome) = frame.take_interrupted_outcome() {
-            execute_rwasm_resume(frame, ctx, interruption_outcome)
+            execute_rwasm_resume(frame, ctx, interruption_outcome, inspector.as_mut())
         } else {
-            execute_rwasm_frame(frame, ctx)
+            execute_rwasm_frame(frame, ctx, inspector.as_mut())
         }?;
         match next_action {
             NextAction::InterruptionResult => continue,
@@ -114,14 +97,15 @@ pub(crate) fn run_rwasm_loop<CTX: ContextTr>(
         frame.interpreter.bytecode = ExtBytecode::new_with_hash(bytecode, bytecode_hash);
         frame.interpreter.gas = interpreter_result.gas;
         // Re-run deploy function using rWasm
-        return run_rwasm_loop(frame, ctx);
+        return run_rwasm_loop(frame, ctx, inspector);
     }
     Ok(next_action)
 }
 
-fn execute_rwasm_frame<CTX: ContextTr>(
+fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
+    inspector: Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let interpreter = &mut frame.interpreter;
     let is_create: bool = matches!(frame.input, FrameInput::Create(..));
@@ -232,6 +216,7 @@ fn execute_rwasm_frame<CTX: ContextTr>(
     process_exec_result(
         frame,
         ctx,
+        inspector,
         exit_code,
         gas,
         return_data,
@@ -241,10 +226,11 @@ fn execute_rwasm_frame<CTX: ContextTr>(
     )
 }
 
-fn execute_rwasm_resume<CTX: ContextTr>(
+fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
     interruption_outcome: SystemInterruptionOutcome,
+    inspector: Option<&mut INSP>,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let SystemInterruptionOutcome {
         inputs,
@@ -316,9 +302,10 @@ fn execute_rwasm_resume<CTX: ContextTr>(
     // accumulate refunds (can be forwarded from an interrupted call)
     gas.record_denominated_refund(fuel_refunded);
 
-    process_exec_result::<CTX>(
+    process_exec_result::<CTX, INSP>(
         frame,
         ctx,
+        inspector,
         exit_code,
         gas,
         return_data,
@@ -328,9 +315,10 @@ fn execute_rwasm_resume<CTX: ContextTr>(
     )
 }
 
-fn process_exec_result<CTX: ContextTr>(
+fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
+    inspector: Option<&mut INSP>,
     exit_code: i32,
     gas: Gas,
     return_data: Bytes,
@@ -365,7 +353,7 @@ fn process_exec_result<CTX: ContextTr>(
         is_gas_free,
     };
 
-    execute_rwasm_interruption::<CTX>(frame, ctx, inputs)
+    try_execute_rwasm_interruption_with_trace::<CTX, INSP>(frame, ctx, inspector, inputs)
 }
 
 fn process_halt(exit_code: i32, return_data: Bytes, gas: Gas) -> NextAction {

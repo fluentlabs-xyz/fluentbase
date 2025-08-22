@@ -12,6 +12,8 @@ use fluentbase_sdk::{
     B256, FUEL_DENOM_RATE, STATE_MAIN, SVM_ELF_MAGIC_BYTES, SVM_MAX_CODE_SIZE, U256,
     WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
 };
+use revm::bytecode::opcode;
+use revm::interpreter::interpreter::ExtBytecode;
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Cfg, ContextError, ContextTr, CreateScheme, JournalTr},
@@ -23,9 +25,37 @@ use revm::{
         MAX_INITCODE_SIZE,
     },
     primitives::hardfork::{SpecId, BERLIN, ISTANBUL, TANGERINE},
-    Database,
+    Database, Inspector,
 };
 use std::{boxed::Box, vec::Vec};
+
+pub(crate) fn try_execute_rwasm_interruption_with_trace<CTX: ContextTr, INSP: Inspector<CTX>>(
+    frame: &mut RwasmFrame,
+    ctx: &mut CTX,
+    inspector: Option<&mut INSP>,
+    inputs: SystemInterruptionInputs,
+) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
+    let Some(inspector) = inspector else {
+        return execute_rwasm_interruption::<CTX>(frame, ctx, inputs);
+    };
+    let Some(evm_opcode) = syscall_to_evm_opcode(&inputs.syscall_params.code_hash) else {
+        return execute_rwasm_interruption::<CTX>(frame, ctx, inputs);
+    };
+    frame.interpreter.gas = inputs.gas;
+    let prev_bytecode = frame.interpreter.bytecode.clone();
+    let prev_hash = frame.interpreter.bytecode.hash().clone();
+    let bytecode = Bytecode::Rwasm([evm_opcode].into());
+    frame.interpreter.bytecode = ExtBytecode::new(bytecode);
+    inspector.step(&mut frame.interpreter, ctx);
+    let result = execute_rwasm_interruption::<CTX>(frame, ctx, inputs)?;
+    inspector.step_end(&mut frame.interpreter, ctx);
+    if let Some(prev_hash) = prev_hash {
+        frame.interpreter.bytecode = ExtBytecode::new_with_hash(prev_bytecode, prev_hash);
+    } else {
+        frame.interpreter.bytecode = ExtBytecode::new(prev_bytecode);
+    }
+    Ok(result)
+}
 
 pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
     frame: &mut RwasmFrame,
@@ -867,4 +897,29 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
 
         _ => return_result!(MalformedBuiltinParams),
     }
+}
+
+pub(crate) fn syscall_to_evm_opcode(syscall: &B256) -> Option<u8> {
+    use fluentbase_sdk::syscall::*;
+    Some(match syscall {
+        &SYSCALL_ID_STORAGE_READ => opcode::SLOAD,
+        &SYSCALL_ID_STORAGE_WRITE => opcode::SSTORE,
+        &SYSCALL_ID_CALL => opcode::CALL,
+        &SYSCALL_ID_STATIC_CALL => opcode::STATICCALL,
+        &SYSCALL_ID_CALL_CODE => opcode::CALLCODE,
+        &SYSCALL_ID_DELEGATE_CALL => opcode::DELEGATECALL,
+        &SYSCALL_ID_CREATE => opcode::CREATE,
+        &SYSCALL_ID_CREATE2 => opcode::CREATE2,
+        &SYSCALL_ID_EMIT_LOG => opcode::LOG0,
+        &SYSCALL_ID_DESTROY_ACCOUNT => opcode::SELFDESTRUCT,
+        &SYSCALL_ID_BALANCE => opcode::BALANCE,
+        &SYSCALL_ID_SELF_BALANCE => opcode::SELFBALANCE,
+        &SYSCALL_ID_CODE_SIZE => opcode::EXTCODESIZE,
+        &SYSCALL_ID_CODE_HASH => opcode::EXTCODEHASH,
+        &SYSCALL_ID_CODE_COPY => opcode::EXTCODECOPY,
+        &SYSCALL_ID_TRANSIENT_READ => opcode::TLOAD,
+        &SYSCALL_ID_TRANSIENT_WRITE => opcode::TSTORE,
+        &SYSCALL_ID_BLOCK_HASH => opcode::BLOCKHASH,
+        _ => return None,
+    })
 }

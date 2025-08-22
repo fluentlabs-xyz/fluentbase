@@ -8,6 +8,7 @@ use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
 use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
 use hashbrown::HashSet;
 use indicatif::{ProgressBar, ProgressDrawTarget};
+use revm::inspector::inspectors::TracerEip3155;
 use revm::primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE;
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
@@ -20,9 +21,10 @@ use revm::{
     handler::MainnetContext,
     primitives::{hardfork::SpecId, keccak256, Bytes, B256, U256},
     state::AccountInfo,
-    ExecuteCommitEvm, MainBuilder, MainnetEvm,
+    ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
 };
 use serde_json::json;
+use std::io::stderr;
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},
@@ -123,15 +125,15 @@ fn skip_test(path: &Path) -> bool {
     ) || path_str.contains("stEOF")
 }
 
-fn check_evm_execution<ERROR: Debug + ToString + Clone>(
+fn check_evm_execution<ERROR: Debug + ToString + Clone, INSP>(
     test: &Test,
     _spec_name: &SpecName,
     expected_output: Option<&Bytes>,
     test_name: &str,
     exec_result1: &Result<ExecutionResult, ERROR>,
     exec_result2: &Result<ExecutionResult, ERROR>,
-    evm: &mut MainnetEvm<MainnetContext<State<InMemoryDB>>>,
-    evm2: &mut RwasmEvm<RwasmContext<State<InMemoryDB>>>,
+    evm: &mut MainnetEvm<MainnetContext<State<InMemoryDB>>, INSP>,
+    evm2: &mut RwasmEvm<RwasmContext<State<InMemoryDB>>, INSP>,
     print_json_outcome: bool,
     genesis_addresses: &HashSet<Address>,
 ) -> Result<(), TestError> {
@@ -717,55 +719,88 @@ pub fn execute_test_suite(
                     .with_cached_prestate(cache)
                     .with_bundle_update()
                     .build();
-
-                let cfg_env2 = cfg_env.clone();
-                let mut evm = MainnetContext::new(state, spec_id)
-                    .with_cfg(cfg_env2)
-                    .with_block(block_env.clone())
-                    .build_mainnet();
-
                 let state2: State<InMemoryDB> = StateBuilder::default()
                     .with_cached_prestate(cache2)
                     .with_bundle_update()
                     .build();
-                let mut evm2 = RwasmContext::new(state2, spec_id)
-                    .with_cfg(cfg_env.clone())
-                    .with_block(block_env.clone())
-                    .build_rwasm();
+                let output = if trace {
+                    let timer = Instant::now();
+                    print!("\n\nrunning original EVM tests... ");
+                    let mut evm = MainnetContext::new(state, spec_id)
+                        .with_cfg(cfg_env.clone())
+                        .with_block(block_env.clone())
+                        .build_mainnet_with_inspector(
+                            TracerEip3155::new(Box::new(stderr())).without_summary(),
+                        );
+                    let start = Instant::now();
+                    let result_native = evm.inspect_tx_commit(tx_env.clone());
+                    println!("{:?}", start.elapsed());
+                    let start = Instant::now();
+                    print!("\n\nrunning RWASM tests... ");
+                    let mut evm2 = RwasmContext::new(state2, spec_id)
+                        .with_cfg(cfg_env.clone())
+                        .with_block(block_env.clone())
+                        .build_rwasm_with_inspector(
+                            TracerEip3155::new(Box::new(stderr())).without_summary(),
+                        );
+                    let result_fluent = evm2.inspect_tx_commit(tx_env.clone());
+                    println!("{:?}", start.elapsed());
+                    *elapsed.lock().unwrap() += timer.elapsed();
+                    // dump state and traces if the test failed
+                    let start = Instant::now();
+                    print!("\n\ncomparing EVM<>RWASM state... ");
+                    let output = check_evm_execution(
+                        &test,
+                        &spec_name,
+                        unit.out.as_ref(),
+                        &name,
+                        &result_native,
+                        &result_fluent,
+                        &mut evm,
+                        &mut evm2,
+                        print_json_outcome,
+                        &genesis_addresses,
+                    );
+                    println!("{:?}", start.elapsed());
+                    output
+                } else {
+                    let timer = Instant::now();
+                    print!("\n\nrunning original EVM tests... ");
+                    let mut evm = MainnetContext::new(state, spec_id)
+                        .with_cfg(cfg_env.clone())
+                        .with_block(block_env.clone())
+                        .build_mainnet();
+                    let start = Instant::now();
+                    let result_native = evm.transact_commit(tx_env.clone());
+                    println!("{:?}", start.elapsed());
+                    print!("\n\nrunning RWASM tests... ");
+                    let mut evm2 = RwasmContext::new(state2, spec_id)
+                        .with_cfg(cfg_env.clone())
+                        .with_block(block_env.clone())
+                        .build_rwasm();
+                    let start = Instant::now();
+                    let result_fluent = evm2.transact_commit(tx_env.clone());
+                    println!("{:?}", start.elapsed());
+                    *elapsed.lock().unwrap() += timer.elapsed();
+                    // dump state and traces if the test failed
+                    let start = Instant::now();
+                    print!("\n\ncomparing EVM<>RWASM state... ");
+                    let output = check_evm_execution(
+                        &test,
+                        &spec_name,
+                        unit.out.as_ref(),
+                        &name,
+                        &result_native,
+                        &result_fluent,
+                        &mut evm,
+                        &mut evm2,
+                        print_json_outcome,
+                        &genesis_addresses,
+                    );
+                    println!("{:?}", start.elapsed());
+                    output
+                };
 
-                // do the deed
-                // if trace {
-                //     evm = evm.with_inspector(TracerEip3155::new(Box::new(stderr())).
-                // without_summary());     evm2 =
-                // evm2.with_inspector(TracerEip3155::new(Box::new(stderr())).without_summary());
-                // }
-                let timer = Instant::now();
-                print!("\n\nrunning original EVM tests... ");
-                let start = Instant::now();
-                let result_native = evm.transact_commit(tx_env.clone());
-                println!("{:?}", start.elapsed());
-                let start = Instant::now();
-                print!("\n\nrunning RWASM tests... ");
-                let result_fluent = evm2.transact_commit(tx_env.clone());
-                println!("{:?}", start.elapsed());
-                *elapsed.lock().unwrap() += timer.elapsed();
-
-                // dump state and traces if the test failed
-                let start = Instant::now();
-                print!("\n\ncomparing EVM<>RWASM state... ");
-                let output = check_evm_execution(
-                    &test,
-                    &spec_name,
-                    unit.out.as_ref(),
-                    &name,
-                    &result_native,
-                    &result_fluent,
-                    &mut evm,
-                    &mut evm2,
-                    print_json_outcome,
-                    &genesis_addresses,
-                );
-                println!("{:?}", start.elapsed());
                 let Err(e) = output else {
                     continue;
                 };
@@ -775,47 +810,6 @@ pub fn execute_test_suite(
                 if trace || FAILED.swap(true, Ordering::SeqCst) {
                     return Err(e);
                 }
-
-                // re-build to run with tracing
-                // let mut cache = cache_state.clone();
-                // cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
-                // let mut cache2 = cache_state2.clone();
-                // cache2.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
-                // let state = State::builder()
-                //     .with_cached_prestate(cache)
-                //     .with_bundle_update()
-                //     .build();
-                // let state2 = State::builder()
-                //     .with_cached_prestate(cache2)
-                //     .with_bundle_update()
-                //     .build();
-
-                let path = path.display();
-                // println!("\nTraces:");
-                // let mut evm = Evm::builder()
-                //     .with_spec_id(spec_id)
-                //     .with_db(state)
-                //     .with_env(env.clone())
-                //     .with_external_context(TracerEip3155::new(Box::new(stdout())).
-                // without_summary())
-                //     .append_handler_register(inspector_handle_register)
-                //     .build();
-                // let mut evm2 = Rwasm::builder()
-                //     .with_spec_id(spec_id)
-                //     .with_db(state2)
-                //     .with_external_context(TracerEip3155::new(Box::new(stdout())))
-                //     .append_handler_register(inspector_handle_register)
-                //     .build();
-                // let _ = evm.transact_commit();
-                // let _ = evm2.transact_commit();
-
-                println!("\nExecution result: {result_native:#?}");
-                println!("\nExpected exception: {:?}", test.expect_exception);
-                println!("\nState before: {cache_state:#?}");
-                println!("\nState after: {:#?}", evm.journaled_state.database.cache);
-                println!("\nSpecification: {spec_id:?}");
-                // println!("\nEnvironment: {env:#?}");
-                println!("\nTest name: {name:?} (index: {index}, path: {path}) failed:\n{e}");
 
                 return Err(e);
             }

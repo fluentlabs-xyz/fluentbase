@@ -8,6 +8,7 @@ use fluentbase_sdk::{
     resolve_precompiled_runtime_from_input, try_resolve_precompile_account_from_input, Address,
     Bytes, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX,
 };
+use revm::inspector::NoOpInspector;
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
     context::{ContextError, ContextSetters, Evm, FrameStack, JournalTr},
@@ -145,10 +146,10 @@ where
     fn inspect_frame_run(
         &mut self,
     ) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<Self::Context>> {
-        let (context, _inspector, frame, _) = self.ctx_inspector_frame_instructions();
+        let (context, inspector, frame, _) = self.ctx_inspector_frame_instructions();
 
         // TODO(dmitry123): "add support of inspector for EVM-compatible syscalls"
-        let action = run_rwasm_loop(frame, context)?.into_interpreter_action();
+        let action = run_rwasm_loop(frame, context, Some(inspector))?.into_interpreter_action();
         let mut result = frame.process_next_action(context, action);
 
         if let Ok(ItemOrResult::Result(frame_result)) = &mut result {
@@ -286,7 +287,8 @@ where
     > {
         let frame = self.0.frame_stack.get();
         let context = &mut self.0.ctx;
-        let action = run_rwasm_loop(frame, context)?.into_interpreter_action();
+        let action = run_rwasm_loop::<Self::Context, NoOpInspector>(frame, context, None)?
+            .into_interpreter_action();
         frame.process_next_action(context, action).inspect(|i| {
             if i.is_result() {
                 frame.set_finished(true);
