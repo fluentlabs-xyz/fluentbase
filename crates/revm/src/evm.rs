@@ -19,7 +19,7 @@ use revm::{
     },
     inspector::{
         handler::{frame_end, frame_start},
-        inspect_instructions, InspectorEvmTr, JournalExt,
+        InspectorEvmTr, JournalExt,
     },
     interpreter::{
         interpreter::{EthInterpreter, ExtBytecode},
