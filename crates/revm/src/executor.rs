@@ -1,4 +1,4 @@
-use crate::syscall::try_execute_rwasm_interruption_with_trace;
+use crate::syscall::execute_rwasm_interruption;
 use crate::{
     api::RwasmFrame,
     instruction_result_from_exit_code,
@@ -353,7 +353,7 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         is_gas_free,
     };
 
-    try_execute_rwasm_interruption_with_trace::<CTX, INSP>(frame, ctx, inspector, inputs)
+    execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inspector, inputs)
 }
 
 fn process_halt(exit_code: i32, return_data: Bytes, gas: Gas) -> NextAction {

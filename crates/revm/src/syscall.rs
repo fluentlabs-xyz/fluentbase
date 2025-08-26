@@ -1,3 +1,4 @@
+use crate::inspector::inspect_syscall;
 use crate::{
     api::RwasmFrame,
     instruction_result_from_exit_code,
@@ -13,7 +14,6 @@ use fluentbase_sdk::{
     WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
 };
 use revm::bytecode::opcode;
-use revm::interpreter::interpreter::ExtBytecode;
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
     context::{Cfg, ContextError, ContextTr, CreateScheme, JournalTr},
@@ -29,43 +29,17 @@ use revm::{
 };
 use std::{boxed::Box, vec::Vec};
 
-pub(crate) fn try_execute_rwasm_interruption_with_trace<CTX: ContextTr, INSP: Inspector<CTX>>(
+pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
     inspector: Option<&mut INSP>,
     inputs: SystemInterruptionInputs,
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
-    let Some(inspector) = inspector else {
-        return execute_rwasm_interruption::<CTX>(frame, ctx, inputs);
-    };
-    let Some(evm_opcode) = syscall_to_evm_opcode(&inputs.syscall_params.code_hash) else {
-        return execute_rwasm_interruption::<CTX>(frame, ctx, inputs);
-    };
-    frame.interpreter.gas = inputs.gas;
-    let prev_bytecode = frame.interpreter.bytecode.clone();
-    let prev_hash = frame.interpreter.bytecode.hash().clone();
-    let bytecode = Bytecode::Rwasm([evm_opcode].into());
-    frame.interpreter.bytecode = ExtBytecode::new(bytecode);
-    inspector.step(&mut frame.interpreter, ctx);
-    let result = execute_rwasm_interruption::<CTX>(frame, ctx, inputs)?;
-    inspector.step_end(&mut frame.interpreter, ctx);
-    if let Some(prev_hash) = prev_hash {
-        frame.interpreter.bytecode = ExtBytecode::new_with_hash(prev_bytecode, prev_hash);
-    } else {
-        frame.interpreter.bytecode = ExtBytecode::new(prev_bytecode);
-    }
-    Ok(result)
-}
-
-pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
-    frame: &mut RwasmFrame,
-    evm: &mut CTX,
-    inputs: SystemInterruptionInputs,
-) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     let mut local_gas = Gas::new(inputs.gas.remaining());
-    let spec_id: SpecId = evm.cfg().spec().into();
-    let journal = evm.journal_mut();
-    let current_target_address = frame.interpreter.input.target_address();
+    let spec_id: SpecId = ctx.cfg().spec().into();
+    let journal = ctx.journal_mut();
+
+    let target_address = frame.interpreter.input.target_address();
     let account_owner_address = frame.interpreter.input.account_owner_address();
 
     macro_rules! return_result {
@@ -112,6 +86,22 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             }
         }};
     }
+    macro_rules! inspect {
+        ($evm_opcode:expr, $inputs:expr, $outputs:expr) => {{
+            if let Some(inspector) = inspector {
+                inspect_syscall(
+                    frame,
+                    ctx,
+                    inspector,
+                    $evm_opcode,
+                    inputs.gas.remaining(),
+                    local_gas,
+                    $inputs,
+                    $outputs,
+                );
+            }
+        }};
+    }
 
     use fluentbase_sdk::syscall::*;
     match inputs.syscall_params.code_hash {
@@ -125,8 +115,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             #[cfg(feature = "debug-print")]
             println!("SYSCALL_STORAGE_READ: slot={}", slot);
             // execute sload
-            let value = journal.sload(current_target_address, slot)?;
+            let value = journal.sload(target_address, slot)?;
             charge_gas!(sload_cost(spec_id, value.is_cold));
+            inspect!(opcode::SLOAD, [slot], [value.data]);
             let output: [u8; 32] = value.to_le_bytes();
             return_result!(output, Ok)
         }
@@ -144,13 +135,14 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             #[cfg(feature = "debug-print")]
             println!("SYSCALL_STORAGE_WRITE: slot={slot}, new_value={new_value}");
             // execute sstore
-            let value = journal.sstore(current_target_address, slot, new_value)?;
+            let value = journal.sstore(target_address, slot, new_value)?;
             if local_gas.remaining() <= gas::CALL_STIPEND {
                 return_result!(OutOfFuel);
             }
             let gas_cost = sstore_cost(spec_id.clone(), &value.data, value.is_cold);
             charge_gas!(gas_cost);
             local_gas.record_refund(sstore_refund(spec_id, &value.data));
+            inspect!(opcode::SSTORE, [slot, new_value], []);
             return_result!(Ok)
         }
 
@@ -205,7 +197,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 input: CallInput::Bytes(contract_input),
                 gas_limit,
                 target_address,
-                caller: current_target_address,
+                caller: target_address,
                 bytecode_address: target_address,
                 value: CallValue::Transfer(value),
                 scheme: CallScheme::Call,
@@ -247,7 +239,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 input: CallInput::Bytes(contract_input),
                 gas_limit,
                 target_address,
-                caller: current_target_address,
+                caller: target_address,
                 bytecode_address: target_address,
                 value: CallValue::Transfer(U256::ZERO),
                 scheme: CallScheme::StaticCall,
@@ -294,8 +286,8 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             let call_inputs = Box::new(CallInputs {
                 input: CallInput::Bytes(contract_input),
                 gas_limit,
-                target_address: current_target_address,
-                caller: current_target_address,
+                target_address,
+                caller: target_address,
                 bytecode_address: target_address,
                 value: CallValue::Transfer(value),
                 scheme: CallScheme::CallCode,
@@ -335,7 +327,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             let call_inputs = Box::new(CallInputs {
                 input: CallInput::Bytes(contract_input),
                 gas_limit,
-                target_address: current_target_address,
+                target_address,
                 caller: frame.interpreter.input.caller_address(),
                 bytecode_address: target_address,
                 value: CallValue::Apparent(frame.interpreter.input.call_value()),
@@ -407,7 +399,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             charge_gas!(gas_limit);
             // create inputs
             let create_inputs = Box::new(CreateInputs {
-                caller: current_target_address,
+                caller: target_address,
                 scheme,
                 value,
                 init_code,
@@ -449,7 +441,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             charge_gas!(gas_cost);
             // write new log into the journal
             journal.log(Log {
-                address: current_target_address,
+                address: target_address,
                 // it's safe to go unchecked here because we do topic check upper
                 data: LogData::new_unchecked(topics, data),
             });
@@ -466,7 +458,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
             // destroy an account
             let target = Address::from_slice(&inputs.syscall_params.input[0..20]);
-            let mut result = journal.selfdestruct(current_target_address, target)?;
+            let mut result = journal.selfdestruct(target_address, target)?;
             // system precompiles are always empty...
             if result.data.target_exists && is_system_precompile(&target) {
                 result.data.target_exists = false;
@@ -510,7 +502,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
                 MalformedBuiltinParams
             );
             let value = journal
-                .load_account(current_target_address)
+                .load_account(target_address)
                 .map(|acc| acc.map(|a| a.info.balance))?;
             charge_gas!(gas::LOW);
             let output: [u8; 32] = value.data.to_le_bytes();
@@ -840,7 +832,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             );
             // read value from storage
             let slot = U256::from_le_slice(&inputs.syscall_params.input[0..32].as_ref());
-            let value = journal.tload(current_target_address, slot);
+            let value = journal.tload(target_address, slot);
             #[cfg(feature = "debug-print")]
             println!("SYSCALL_TRANSIENT_READ: slot={slot} value={value}");
             // charge gas
@@ -864,7 +856,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             println!("SYSCALL_TRANSIENT_WRITE: slot={slot} value={value}");
             // charge gas
             charge_gas!(gas::WARM_STORAGE_READ_COST);
-            journal.tstore(current_target_address, slot, value);
+            journal.tstore(target_address, slot, value);
             // empty result
             return_result!(Bytes::new(), Ok);
         }
@@ -877,7 +869,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             charge_gas!(gas::BLOCKHASH);
 
             let requested_block = LittleEndian::read_u64(&inputs.syscall_params.input[0..8]);
-            let current_block = evm.block_number().as_limbs()[0];
+            let current_block = ctx.block_number().as_limbs()[0];
 
             #[cfg(feature = "debug-print")]
             println!(
@@ -887,7 +879,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             // https://ethervm.io/#40
             let hash = match current_block.checked_sub(requested_block) {
                 Some(diff) if diff > 0 && diff <= 256 => {
-                    evm.block_hash(requested_block).unwrap_or(B256::ZERO)
+                    ctx.block_hash(requested_block).unwrap_or(B256::ZERO)
                 }
                 _ => B256::ZERO,
             };
@@ -897,29 +889,4 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
 
         _ => return_result!(MalformedBuiltinParams),
     }
-}
-
-pub(crate) fn syscall_to_evm_opcode(syscall: &B256) -> Option<u8> {
-    use fluentbase_sdk::syscall::*;
-    Some(match syscall {
-        &SYSCALL_ID_STORAGE_READ => opcode::SLOAD,
-        &SYSCALL_ID_STORAGE_WRITE => opcode::SSTORE,
-        &SYSCALL_ID_CALL => opcode::CALL,
-        &SYSCALL_ID_STATIC_CALL => opcode::STATICCALL,
-        &SYSCALL_ID_CALL_CODE => opcode::CALLCODE,
-        &SYSCALL_ID_DELEGATE_CALL => opcode::DELEGATECALL,
-        &SYSCALL_ID_CREATE => opcode::CREATE,
-        &SYSCALL_ID_CREATE2 => opcode::CREATE2,
-        &SYSCALL_ID_EMIT_LOG => opcode::LOG0,
-        &SYSCALL_ID_DESTROY_ACCOUNT => opcode::SELFDESTRUCT,
-        &SYSCALL_ID_BALANCE => opcode::BALANCE,
-        &SYSCALL_ID_SELF_BALANCE => opcode::SELFBALANCE,
-        &SYSCALL_ID_CODE_SIZE => opcode::EXTCODESIZE,
-        &SYSCALL_ID_CODE_HASH => opcode::EXTCODEHASH,
-        &SYSCALL_ID_CODE_COPY => opcode::EXTCODECOPY,
-        &SYSCALL_ID_TRANSIENT_READ => opcode::TLOAD,
-        &SYSCALL_ID_TRANSIENT_WRITE => opcode::TSTORE,
-        &SYSCALL_ID_BLOCK_HASH => opcode::BLOCKHASH,
-        _ => return None,
-    })
 }
