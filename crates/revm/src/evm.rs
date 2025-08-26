@@ -148,7 +148,6 @@ where
     ) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<Self::Context>> {
         let (context, inspector, frame, _) = self.ctx_inspector_frame_instructions();
 
-        // TODO(dmitry123): "add support of inspector for EVM-compatible syscalls"
         let action = run_rwasm_loop(frame, context, Some(inspector))?.into_interpreter_action();
         let mut result = frame.process_next_action(context, action);
 
