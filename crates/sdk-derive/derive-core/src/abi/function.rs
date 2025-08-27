@@ -43,7 +43,7 @@ pub enum StateMutability {
 
 impl From<ConversionError> for ABIError {
     fn from(err: ConversionError) -> Self {
-        ABIError::TypeConversion(err.to_string())
+        ABIError::TypeConversion(err.to_string().into())
     }
 }
 
@@ -126,7 +126,7 @@ impl FunctionABI {
     }
 
     pub fn to_json(&self) -> Result<String, ABIError> {
-        serde_json::to_string(self).map_err(|e| ABIError::Serialization(e.to_string()))
+        serde_json::to_string(self).map_err(|e| ABIError::Serialization(e.to_string().into()))
     }
 
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {

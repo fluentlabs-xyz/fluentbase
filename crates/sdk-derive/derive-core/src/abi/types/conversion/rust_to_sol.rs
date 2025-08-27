@@ -4,13 +4,13 @@ use syn::{self, GenericArgument, PathArguments, Type};
 #[derive(Debug, thiserror::Error, Clone, PartialEq)]
 pub enum ConversionError {
     #[error("Unsupported type: {0}")]
-    UnsupportedType(String),
+    UnsupportedType(Box<str>),
     #[error("Invalid array length: {0}")]
-    InvalidArrayLength(String),
+    InvalidArrayLength(Box<str>),
     #[error("Invalid fixed bytes size: {0}")]
-    InvalidBytesSize(String),
+    InvalidBytesSize(Box<str>),
     #[error("Parse error: {0}")]
-    ParseError(String),
+    ParseError(Box<str>),
 }
 
 impl From<ConversionError> for syn::Error {
@@ -29,7 +29,7 @@ pub fn rust_to_sol(ty: &Type) -> Result<SolType, ConversionError> {
         Type::Slice(slice) => convert_slice_type(slice),
         _ => Err(ConversionError::UnsupportedType(format!(
             "Unsupported type: {ty:?}"
-        ))),
+        ).into())),
     }
 }
 
@@ -77,7 +77,7 @@ fn convert_path_type(type_path: &syn::TypePath) -> Result<SolType, ConversionErr
             if !matches!(last_segment.arguments, PathArguments::None) {
                 return Err(ConversionError::UnsupportedType(format!(
                     "Generic parameters are not supported for type: {type_name}"
-                )));
+                ).into()));
             }
 
             // Get full path for better type identification
@@ -213,7 +213,7 @@ fn convert_fixed_bytes(type_name: &str, args: &PathArguments) -> Result<SolType,
     }
     Err(ConversionError::InvalidBytesSize(format!(
         "{type_name} requires a size parameter between 1 and 32"
-    )))
+    ).into()))
 }
 #[cfg(test)]
 mod tests {

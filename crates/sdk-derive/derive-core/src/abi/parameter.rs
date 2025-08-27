@@ -26,7 +26,7 @@ impl Parameter {
             syn::Data::Struct(data) => &data.fields,
             _ => {
                 return Err(ConversionError::UnsupportedType(
-                    "Only structs are supported".to_string(),
+                    "Only structs are supported".into(),
                 ))
             }
         };
@@ -190,7 +190,7 @@ impl Parameter {
     pub fn get_canonical_type(&self) -> Result<String, ConversionError> {
         if self.ty == "tuple" {
             let components = self.components.as_ref().ok_or_else(|| {
-                ConversionError::UnsupportedType("Tuple without components".to_string())
+                ConversionError::UnsupportedType("Tuple without components".into())
             })?;
 
             let inner_types = components

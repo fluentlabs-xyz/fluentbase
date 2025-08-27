@@ -72,7 +72,7 @@ fn to_rust_uint(bits: usize) -> Result<Type, ABIError> {
         248 => Ok(parse_quote!(U248)),
         256 => Ok(parse_quote!(U256)),
         512 => Ok(parse_quote!(U512)),
-        _ => Err(ABIError::UnsupportedType(format!("uint{bits}"))),
+        _ => Err(ABIError::UnsupportedType(format!("uint{bits}").into())),
     }
 }
 
@@ -111,7 +111,7 @@ fn to_rust_int(bits: usize) -> Result<Type, ABIError> {
         248 => Ok(parse_quote!(I248)),
         256 => Ok(parse_quote!(I256)),
         512 => Ok(parse_quote!(I512)),
-        _ => Err(ABIError::UnsupportedType(format!("int{bits}"))),
+        _ => Err(ABIError::UnsupportedType(format!("int{bits}").into())),
     }
 }
 
@@ -119,7 +119,7 @@ fn to_rust_fixed_bytes(size: usize) -> Result<Type, ABIError> {
     if !(1..=32).contains(&size) {
         return Err(ABIError::UnsupportedType(format!(
             "FixedBytes size must be between 1 and 32, got {size}"
-        )));
+        ).into()));
     }
     Ok(parse_quote!(FixedBytes<#size>))
 }

@@ -25,7 +25,7 @@ pub fn convert_solidity_type(sol_ty: &SolidityAstType) -> Result<SolType, ABIErr
                             ABIError::UnsupportedType(format!(
                                 "Invalid array size: {:?}",
                                 lit_num.base10_digits()
-                            ))
+                            ).into())
                         })?;
                         Ok(SolType::FixedArray(Box::new(inner), size))
                     }

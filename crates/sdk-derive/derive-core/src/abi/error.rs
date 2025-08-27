@@ -1,34 +1,34 @@
 #[derive(Debug, thiserror::Error)]
 pub enum ABIError {
     #[error("Invalid type: {0}")]
-    InvalidType(String),
+    InvalidType(Box<str>),
 
     #[error("Invalid type conversion: {0}")]
-    TypeConversion(String),
+    TypeConversion(Box<str>),
 
     #[error("Serialization error: {0}")]
-    Serialization(String),
+    Serialization(Box<str>),
 
     #[error("Deserialization error: {0}")]
-    Deserialization(String),
+    Deserialization(Box<str>),
 
     #[error("Unsupported type: {0}")]
-    UnsupportedType(String),
+    UnsupportedType(Box<str>),
 
     #[error("Unsupported pattern: {0}")]
-    UnsupportedPattern(String),
+    UnsupportedPattern(Box<str>),
 
     #[error("Syntax error: {0}")]
-    Syntax(String),
+    Syntax(Box<str>),
 
     #[error("Internal error: {0}")]
-    Internal(String),
+    Internal(Box<str>),
 
     #[error("Artifacts error: {0}")]
-    Artifacts(String),
+    Artifacts(Box<str>),
 
     #[error("Config error: {0}")]
-    Config(String),
+    Config(Box<str>),
 }
 
 impl From<ABIError> for syn::Error {
