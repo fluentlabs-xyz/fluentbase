@@ -1,5 +1,6 @@
 //! Contains the `[RwasmEvm]` type and its implementation of the execution EVM traits.
 
+use crate::eip7708::emit_native_transfer_log;
 use crate::{
     api::RwasmFrame, executor::run_rwasm_loop, precompiles::RwasmPrecompiles,
     types::SystemInterruptionOutcome, upgrade::upgrade_runtime_hook,
@@ -240,6 +241,17 @@ where
                                 account.info.code_hash,
                             );
                         }
+                        // emit native transfer event
+                        if let Some(transfer_value) =
+                            inputs.value.transfer().filter(|v| !v.is_zero())
+                        {
+                            emit_native_transfer_log(
+                                ctx,
+                                inputs.caller,
+                                inputs.target_address,
+                                transfer_value,
+                            );
+                        }
                     }
                     FrameInput::Create(inputs) => {
                         let precompile_runtime =
@@ -269,10 +281,20 @@ where
                             Bytecode::new_raw(bytecode.data),
                             code_hash.data,
                         );
+                        // emit native transfer event
+                        if !inputs.value.is_zero() {
+                            emit_native_transfer_log(
+                                ctx,
+                                inputs.caller,
+                                new_frame.interpreter.input.target_address,
+                                inputs.value,
+                            );
+                        }
                     }
                     _ => unreachable!(),
                 }
             }
+            ItemOrResult::Result(result) => if result.instruction_result().is_ok() {},
             _ => {}
         }
         Ok(res)

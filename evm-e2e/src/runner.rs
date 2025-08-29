@@ -5,7 +5,7 @@ use super::{
 };
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
-use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
+use fluentbase_sdk::{Address, NATIVE_TRANSFER_KECCAK, PRECOMPILE_EVM_RUNTIME, SYSTEM_ADDRESS};
 use hashbrown::HashSet;
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE;
@@ -140,7 +140,21 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone>(
     }
 
     let logs_root1 = log_rlp_hash(exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default());
-    let logs_root2 = log_rlp_hash(exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default());
+    let logs_root2 = log_rlp_hash(
+        &exec_result2
+            .as_ref()
+            .map(|r| {
+                let mut new_logs = vec![];
+                for log in r.logs() {
+                    if log.topics()[0] == NATIVE_TRANSFER_KECCAK && log.address == SYSTEM_ADDRESS {
+                        continue;
+                    }
+                    new_logs.push(log.clone());
+                }
+                new_logs
+            })
+            .unwrap_or_default(),
+    );
 
     let state_root1 = state_merkle_trie_root(
         evm.journaled_state

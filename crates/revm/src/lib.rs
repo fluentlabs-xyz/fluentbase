@@ -6,6 +6,7 @@
 extern crate alloc as std;
 
 mod api;
+mod eip7708;
 mod evm;
 mod executor;
 mod handler;

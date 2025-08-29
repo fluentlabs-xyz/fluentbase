@@ -1,3 +1,4 @@
+use crate::eip7708::emit_native_transfer_log;
 use crate::{
     api::RwasmFrame,
     instruction_result_from_exit_code,
@@ -435,6 +436,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             // not allowed for static calls
             assert_return!(!inputs.is_static, StateChangeDuringStaticCall);
             // destroy an account
+            let destroyed_account_balance = journal
+                .load_account(current_target_address)?
+                .data
+                .info
+                .balance;
             let target = Address::from_slice(&inputs.syscall_params.input[0..20]);
             let mut result = journal.selfdestruct(current_target_address, target)?;
             // system precompiles are always empty...
@@ -445,6 +451,12 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr>(
             println!("SYSCALL_DESTROY_ACCOUNT: target={target} result={result:?}",);
             // charge gas cost
             charge_gas!(gas::selfdestruct_cost(spec_id, result));
+            emit_native_transfer_log(
+                evm,
+                current_target_address,
+                target,
+                destroyed_account_balance,
+            );
             // return value as bytes with success exit code
             return_result!(Ok);
         }

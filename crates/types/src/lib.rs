@@ -43,10 +43,14 @@ pub const POSEIDON_EMPTY: B256 =
 
 /// keccak256 of "Transfer(address,address,uint256)" that notifies
 /// about native transfer of eth
+///
+/// EIP-7708 is a draft, but we need native events for efficient call trace extraction
 pub const NATIVE_TRANSFER_KECCAK: B256 =
     b256!("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
-pub const NATIVE_TRANSFER_ADDRESS: Address = address!("0000000000000000000000000000000000000000");
 
+/// A system address that is used to identify system contracts
+///
+/// It's used in EIP-2935
 pub const SYSTEM_ADDRESS: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
 
 pub const STATE_MAIN: u32 = 0;
