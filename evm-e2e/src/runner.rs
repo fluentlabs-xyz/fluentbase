@@ -3,12 +3,15 @@ use super::{
     models::{SpecName, Test, TestSuite},
     utils::recover_address,
 };
+use crate::inspector::{InspectorEvent, TraceInspector};
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
 use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
 use hashbrown::HashSet;
 use indicatif::{ProgressBar, ProgressDrawTarget};
-use revm::inspector::inspectors::TracerEip3155;
+use revm::bytecode::opcode;
+use revm::interpreter::gas::MemoryGas;
+use revm::interpreter::{return_error, return_ok, return_revert};
 use revm::primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE;
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
@@ -24,7 +27,6 @@ use revm::{
     ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
 };
 use serde_json::json;
-use std::io::stderr;
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},
@@ -125,9 +127,148 @@ fn skip_test(path: &Path) -> bool {
     ) || path_str.contains("stEOF")
 }
 
+#[allow(dead_code)]
+fn check_evm_trace(
+    inspector1: &mut TraceInspector,
+    inspector2: &mut TraceInspector,
+) -> Result<(), TestError> {
+    let mut it1 = inspector1.events.iter_mut().filter(|e| match e {
+        InspectorEvent::Step(step) => match step.opcode {
+            opcode::CALL
+            | opcode::STATICCALL
+            | opcode::CALLCODE
+            | opcode::DELEGATECALL
+            | opcode::CREATE
+            | opcode::CREATE2
+            | opcode::STOP
+            | opcode::RETURN
+            | opcode::REVERT => true,
+            _ => false,
+        },
+        _ => true,
+    });
+    let mut it2 = inspector2.events.iter_mut();
+    let mut e1 = it1.next().unwrap();
+    let mut e2 = it2.next().unwrap();
+    loop {
+        let (e1_next, e2_next) = match (&mut e1, &mut e2) {
+            (
+                InspectorEvent::Call {
+                    inputs: _inputs1,
+                    outcome: ref mut outcome1,
+                },
+                InspectorEvent::Call {
+                    inputs: _inputs2,
+                    outcome: ref mut outcome2,
+                },
+            ) => {
+                println!("Call == Call");
+                // assert_eq!(inputs1, inputs2);
+                *outcome1.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                *outcome2.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                match (
+                    &outcome1.as_ref().unwrap().result.result,
+                    &outcome2.as_ref().unwrap().result.result,
+                ) {
+                    (return_ok!(), return_ok!()) => {}
+                    (return_revert!(), return_revert!()) => {}
+                    (return_error!(), return_error!()) => {}
+                    (_, _) => assert_eq!(outcome1, outcome2),
+                }
+                assert_eq!(
+                    outcome1.as_ref().unwrap().gas(),
+                    outcome2.as_ref().unwrap().gas()
+                );
+                assert_eq!(
+                    outcome1.as_ref().unwrap().output(),
+                    outcome2.as_ref().unwrap().output()
+                );
+                (it1.next(), it2.next())
+            }
+            (
+                InspectorEvent::Create {
+                    inputs: _inputs1,
+                    outcome: ref mut outcome1,
+                },
+                InspectorEvent::Create {
+                    inputs: _inputs2,
+                    outcome: ref mut outcome2,
+                },
+            ) => {
+                println!("Create == Create");
+                // assert_eq!(inputs1, inputs2);
+                *outcome1.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                *outcome2.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                match (
+                    &outcome1.as_ref().unwrap().result.result,
+                    &outcome2.as_ref().unwrap().result.result,
+                ) {
+                    (return_ok!(), return_ok!()) => {}
+                    (return_revert!(), return_revert!()) => {}
+                    (return_error!(), return_error!()) => {}
+                    (_, _) => assert_eq!(outcome1, outcome2),
+                }
+                assert_eq!(
+                    outcome1.as_ref().unwrap().gas(),
+                    outcome2.as_ref().unwrap().gas()
+                );
+                // assert_eq!(
+                //     outcome1.as_ref().unwrap().output(),
+                //     outcome2.as_ref().unwrap().output()
+                // );
+                assert_eq!(
+                    outcome1.as_ref().unwrap().address,
+                    outcome2.as_ref().unwrap().address,
+                );
+                (it1.next(), it2.next())
+            }
+            (InspectorEvent::Selfdestruct { .. }, _) => {
+                // don't check selfdestruct events
+                e1 = it1.next().unwrap();
+                continue;
+            }
+            (InspectorEvent::Log(_), InspectorEvent::Log(_)) => {
+                println!("Log == Log");
+                assert_eq!(e1, e2);
+                (it1.next(), it2.next())
+            }
+            (InspectorEvent::Step(step1), InspectorEvent::Step(step2)) => {
+                println!(
+                    "Opcode({}) == Opcode({})",
+                    step1.opcode_name, step2.opcode_name
+                );
+                (it1.next(), it2.next())
+            }
+            (_, _) => {
+                eprintln!("\n{:?} == {:?}", e1, e2);
+                unreachable!()
+            }
+        };
+        match (e1_next, e2_next) {
+            (Some(e1_next), Some(e2_next)) => {
+                e1 = e1_next;
+                e2 = e2_next;
+            }
+            (None, None) => {
+                break;
+            }
+            (Some(extra), None) => {
+                eprintln!("{:?} == {:?}", e1, e2);
+                eprintln!("Extra (EVM): {:?}", extra);
+                unreachable!("oh, we have different number of events")
+            }
+            (None, Some(extra)) => {
+                eprintln!("{:?} == {:?}", e1, e2);
+                eprintln!("Extra (FLUENT): {:?}", extra);
+                unreachable!("oh, we have different number of events")
+            }
+        }
+    }
+    Ok(())
+}
+
 fn check_evm_execution<ERROR: Debug + ToString + Clone, INSP>(
     test: &Test,
-    _spec_name: &SpecName,
     expected_output: Option<&Bytes>,
     test_name: &str,
     exec_result1: &Result<ExecutionResult, ERROR>,
@@ -135,7 +276,6 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone, INSP>(
     evm: &mut MainnetEvm<MainnetContext<State<InMemoryDB>>, INSP>,
     evm2: &mut RwasmEvm<RwasmContext<State<InMemoryDB>>, INSP>,
     print_json_outcome: bool,
-    genesis_addresses: &HashSet<Address>,
 ) -> Result<(), TestError> {
     if !exec_result1.is_err() && exec_result2.is_err() {
         exec_result2.as_ref().unwrap();
@@ -150,15 +290,6 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone, INSP>(
             .cache
             .trie_account()
             .into_iter(),
-    );
-    let _state_root2 = state_merkle_trie_root(
-        evm2.0
-            .journaled_state
-            .database
-            .cache
-            .trie_account()
-            .into_iter()
-            .filter(|(addr, _)| !genesis_addresses.contains(addr)),
     );
 
     let print_json_output = |error: Option<String>| {
@@ -729,9 +860,7 @@ pub fn execute_test_suite(
                     let mut evm = MainnetContext::new(state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
-                        .build_mainnet_with_inspector(
-                            TracerEip3155::new(Box::new(stderr())).without_summary(),
-                        );
+                        .build_mainnet_with_inspector(TraceInspector::new());
                     let start = Instant::now();
                     let result_native = evm.inspect_tx_commit(tx_env.clone());
                     println!("{:?}", start.elapsed());
@@ -740,9 +869,7 @@ pub fn execute_test_suite(
                     let mut evm2 = RwasmContext::new(state2, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
-                        .build_rwasm_with_inspector(
-                            TracerEip3155::new(Box::new(stderr())).without_summary(),
-                        );
+                        .build_rwasm_with_inspector(TraceInspector::new());
                     let result_fluent = evm2.inspect_tx_commit(tx_env.clone());
                     println!("{:?}", start.elapsed());
                     *elapsed.lock().unwrap() += timer.elapsed();
@@ -751,7 +878,6 @@ pub fn execute_test_suite(
                     print!("\n\ncomparing EVM<>RWASM state... ");
                     let output = check_evm_execution(
                         &test,
-                        &spec_name,
                         unit.out.as_ref(),
                         &name,
                         &result_native,
@@ -759,8 +885,8 @@ pub fn execute_test_suite(
                         &mut evm,
                         &mut evm2,
                         print_json_outcome,
-                        &genesis_addresses,
                     );
+                    // check_evm_trace(evm.inspector(), evm2.inspector())?;
                     println!("{:?}", start.elapsed());
                     output
                 } else {
@@ -787,7 +913,6 @@ pub fn execute_test_suite(
                     print!("\n\ncomparing EVM<>RWASM state... ");
                     let output = check_evm_execution(
                         &test,
-                        &spec_name,
                         unit.out.as_ref(),
                         &name,
                         &result_native,
@@ -795,7 +920,6 @@ pub fn execute_test_suite(
                         &mut evm,
                         &mut evm2,
                         print_json_outcome,
-                        &genesis_addresses,
                     );
                     println!("{:?}", start.elapsed());
                     output

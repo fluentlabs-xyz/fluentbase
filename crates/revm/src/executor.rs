@@ -1,4 +1,5 @@
-use crate::syscall::execute_rwasm_interruption;
+use crate::inspector::inspect_syscall;
+use crate::syscall::{execute_rwasm_interruption, inspect_rwasm_interruption};
 use crate::{
     api::RwasmFrame,
     instruction_result_from_exit_code,
@@ -16,6 +17,7 @@ use fluentbase_sdk::{
     ExitCode, SharedContextInput, SharedContextInputV1, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY,
     STATE_MAIN, U256,
 };
+use revm::bytecode::opcode;
 use revm::{
     bytecode::Bytecode,
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
@@ -328,7 +330,14 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
 ) -> Result<NextAction, ContextError<<CTX::Db as Database>::Error>> {
     // if we have success or failed exit code
     if exit_code <= 0 {
-        return Ok(process_halt(exit_code, return_data.clone(), gas));
+        return Ok(process_halt(
+            frame,
+            ctx,
+            inspector,
+            exit_code,
+            return_data.clone(),
+            gas,
+        ));
     }
 
     // otherwise, exit code is a "call_id" that identifies saved context
@@ -353,13 +362,39 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
         is_gas_free,
     };
 
-    execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inspector, inputs)
+    if let Some(inspector) = inspector {
+        inspect_rwasm_interruption::<CTX, INSP>(frame, ctx, inspector, inputs)
+    } else {
+        execute_rwasm_interruption::<CTX, INSP>(frame, ctx, inputs)
+    }
 }
 
-fn process_halt(exit_code: i32, return_data: Bytes, gas: Gas) -> NextAction {
+fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
+    frame: &mut RwasmFrame,
+    ctx: &mut CTX,
+    inspector: Option<&mut INSP>,
+    exit_code: i32,
+    return_data: Bytes,
+    gas: Gas,
+) -> NextAction {
     let exit_code = ExitCode::from(exit_code);
+    let result = instruction_result_from_exit_code(exit_code, return_data.is_empty());
+    if let Some(inspector) = inspector {
+        let evm_opcode = match result {
+            InstructionResult::Stop => Some(opcode::STOP),
+            InstructionResult::Return => Some(opcode::RETURN),
+            return_revert!() => Some(opcode::REVERT),
+            _ => {
+                // emh, we can't return anything here, because EVM trace doesn't handle traps...
+                None
+            }
+        };
+        if let Some(evm_opcode) = evm_opcode {
+            inspect_syscall(frame, ctx, inspector, evm_opcode, 0, Gas::new(0), []);
+        }
+    }
     NextAction::Return(ExecutionResult {
-        result: instruction_result_from_exit_code(exit_code),
+        result,
         output: return_data,
         gas,
     })

@@ -56,12 +56,7 @@ use revm::Inspector;
 //     Ok(result)
 // }
 
-pub(crate) fn inspect_syscall<
-    CTX: ContextTr,
-    INSP: Inspector<CTX>,
-    IN: IntoIterator<Item = U256>,
-    OUT: IntoIterator<Item = U256>,
->(
+pub(crate) fn inspect_syscall<CTX: ContextTr, INSP: Inspector<CTX>, IN: IntoIterator<Item = U256>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
     inspector: &mut INSP,
@@ -69,10 +64,8 @@ pub(crate) fn inspect_syscall<
     gas_limit: u64,
     gas: Gas,
     input: IN,
-    output: OUT,
 ) where
     <IN as IntoIterator>::IntoIter: DoubleEndedIterator,
-    <OUT as IntoIterator>::IntoIter: DoubleEndedIterator,
 {
     frame.interpreter.gas = Gas::new(gas_limit);
     let prev_bytecode = frame.interpreter.bytecode.clone();
@@ -85,16 +78,12 @@ pub(crate) fn inspect_syscall<
     }
     inspector.step(&mut frame.interpreter, ctx);
     frame.interpreter.stack.clear();
-    for x in output.into_iter() {
-        debug_assert!(frame.interpreter.stack.push(x));
-    }
-    _ = frame.interpreter.gas.record_cost(gas.spent());
-    frame.interpreter.gas.record_refund(gas.refunded());
-    inspector.step_end(&mut frame.interpreter, ctx);
-    frame.interpreter.stack.clear();
     if let Some(prev_hash) = prev_hash {
         frame.interpreter.bytecode = ExtBytecode::new_with_hash(prev_bytecode, prev_hash);
     } else {
         frame.interpreter.bytecode = ExtBytecode::new(prev_bytecode);
     }
+    _ = frame.interpreter.gas.record_cost(gas.spent());
+    frame.interpreter.gas.record_refund(gas.refunded());
+    inspector.step_end(&mut frame.interpreter, ctx);
 }
