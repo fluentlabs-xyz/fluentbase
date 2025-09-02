@@ -53,7 +53,8 @@ std = [
     "sha2/std",
     "serde_json/std",
     "alloy-primitives/std",
-    "rwasm/std"
+    "rwasm/std",
+    "fluentbase-sdk/std"
 ]
 hashbrown = ["revm/hashbrown"]
 serde = [
