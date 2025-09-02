@@ -48,7 +48,7 @@ wat = { version = "1.0.69" }
 hex-literal = { workspace = true }
 
 [features]
-default = ["std", "cache-compiled-artifacts"]
+default = ["std"]
 std = [
     "rwasm/std",
 ]
@@ -62,5 +62,6 @@ cache-compiled-artifacts = [
 ]
 wasmtime = [
     "rwasm/wasmtime",
-    "dep:fs2"
+    "dep:fs2",
+    "cache-compiled-artifacts"
 ]
