@@ -7,7 +7,7 @@ members = [
 exclude = [
     "examples/svm",
     # exclude revm e2e testing suite to let it be a separate crate
-    "e2e/evm-testing-suite"
+    "evm-e2e"
 ]
 resolver = "2"
 

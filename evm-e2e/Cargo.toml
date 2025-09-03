@@ -1,5 +1,5 @@
 [package]
-name = "evm-testing-suite"
+name = "evm-e2e"
 version = "0.1.0"
 edition = "2021"
 resolver = "2"
