@@ -24,9 +24,9 @@ examples/**/lib.wasm
 revm/e2e/Cargo.lock
 revm/e2e/tests
 
-evm-e2e/target
-evm-e2e/Cargo.lock
+evm-testing-suite/target
+evm-testing-suite/Cargo.lock
 
 genesis-devnet.json
 node_modules
-evm-e2e/tests/
+evm-testing-suite/tests/

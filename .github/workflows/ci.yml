@@ -213,15 +213,15 @@ jobs:
           cache-on-failure: true
 
       - name: Prefetch deps (evm-e2e)
-        working-directory: evm-e2e
+        working-directory: e2e/evm-testing-suite
         run: cargo fetch
 
       - name: Sync ethereum tests
-        working-directory: evm-e2e
+        working-directory: e2e/evm-testing-suite
         run: make sync_tests
 
       - name: Run ethereum tests
-        working-directory: evm-e2e
+        working-directory: e2e/evm-testing-suite
         run: make run_general_state_tests
 
       - name: Show sccache stats

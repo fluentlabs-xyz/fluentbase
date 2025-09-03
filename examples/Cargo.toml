@@ -1,6 +1,6 @@
 [workspace]
-members = ["genesis/*"]
-exclude = ["genesis/fairblock"]
+members = ["*"]
+exclude = [".cargo", "svm"]
 resolver = "2"
 
 [workspace.package]
