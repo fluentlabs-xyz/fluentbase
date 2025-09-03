@@ -32,7 +32,7 @@ func deploy() {
 
 //export main
 func main() {
-	headerLen := 374
+	headerLen := 1024
 	pkLen := 48
 	skLen := 96
 	inputSize := _input_size()
