@@ -55,8 +55,9 @@ std = [
     "serde_json/std",
     "alloy-primitives/std",
     "rwasm/std",
-    "fluentbase-runtime/std",
     "fluentbase-sdk/std",
+    "rwasm/std",
+    "fluentbase-runtime/std",
 ]
 hashbrown = ["revm/hashbrown"]
 serde = [
