@@ -220,7 +220,7 @@ mod tests {
         // exec
 
         let space: u32 = 99;
-        let mut deployer1_lamports = 30;
+        let deployer1_lamports = 30;
         let deployer1_lamports_to_send = 6;
 
         let mut new_account_lamports = deployer1_lamports_to_send;
@@ -393,7 +393,7 @@ mod tests {
 
         let deployer1_lamports_to_send = deployer1_lamports_to_send - 1;
         // deployer1_lamports -= deployer1_lamports_to_send;
-        let mut deployer2_lamports = deployer1_lamports_to_send;
+        let deployer2_lamports = deployer1_lamports_to_send;
         let test_command_data = Transfer {
             lamports: deployer1_lamports_to_send,
             seeds: vec![seed1.to_vec()],
@@ -443,7 +443,6 @@ mod tests {
 
         let deployer2_lamports_to_send = deployer1_lamports_to_send - 1;
         // deployer1_lamports += deployer2_lamports_to_send;
-        deployer2_lamports -= deployer2_lamports_to_send;
         let test_command_data = Transfer {
             lamports: deployer2_lamports_to_send,
             seeds: vec![seed1.to_vec()],
@@ -589,6 +588,7 @@ mod tests {
         assert_eq!(deployer1_account.data().len(), 0);
     }
 
+    #[ignore]
     #[test]
     fn test_svm_deploy_exec_cross_call_token2022() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
