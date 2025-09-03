@@ -260,6 +260,34 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::curve25519_ristretto_multiscalar_mul(pairs, out)
     }
 
+    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
+        API::bls12_381_g1_add(p, q)
+    }
+
+    fn bls12_381_g1_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
+        API::bls12_381_g1_msm(pairs, out)
+    }
+
+    fn bls12_381_g2_add(p: &mut [u8; 64], q: &[u8; 64]) {
+        API::bls12_381_g2_add(p, q)
+    }
+
+    fn bls12_381_g2_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
+        API::bls12_381_g2_msm(pairs, out)
+    }
+
+    fn bls12_381_pairing(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
+        API::bls12_381_pairing(pairs, out)
+    }
+
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 64]) {
+        API::bls12_381_map_fp_to_g1(p, out)
+    }
+
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 64], out: &mut [u8; 64]) {
+        API::bls12_381_map_fp2_to_g2(p, out)
+    }
+
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
         API::bn254_add(p, q)
     }

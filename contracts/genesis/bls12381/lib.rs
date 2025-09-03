@@ -10,6 +10,54 @@ use fluentbase_sdk::{
     PRECOMPILE_BLS12_381_PAIRING,
 };
 
+#[inline(always)]
+fn array_ref64(bytes: &[u8], offset: usize) -> &[u8; 64] {
+    // Safety: caller ensures bounds and alignment for 64 bytes slice
+    let slice = &bytes[offset..offset + 64];
+    unsafe { &*(slice.as_ptr() as *const [u8; 64]) }
+}
+
+#[inline(always)]
+fn bls12_381_g1_add_with_sdk<SDK: SharedAPI>(_: &SDK, p: &mut [u8; 96], q: &[u8; 96]) {
+    SDK::bls12_381_g1_add(p, q)
+}
+#[inline(always)]
+fn bls12_381_g2_add_with_sdk<SDK: SharedAPI>(_: &SDK, p: &mut [u8; 64], q: &[u8; 64]) {
+    SDK::bls12_381_g2_add(p, q)
+}
+#[inline(always)]
+fn bls12_381_g1_msm_with_sdk<SDK: SharedAPI>(
+    _: &SDK,
+    pairs: &[([u8; 64], [u8; 64])],
+    out: &mut [u8; 64],
+) {
+    SDK::bls12_381_g1_msm(pairs, out)
+}
+#[inline(always)]
+fn bls12_381_g2_msm_with_sdk<SDK: SharedAPI>(
+    _: &SDK,
+    pairs: &[([u8; 64], [u8; 64])],
+    out: &mut [u8; 64],
+) {
+    SDK::bls12_381_g2_msm(pairs, out)
+}
+#[inline(always)]
+fn bls12_381_pairing_with_sdk<SDK: SharedAPI>(
+    _: &SDK,
+    pairs: &[([u8; 64], [u8; 64])],
+    out: &mut [u8; 64],
+) {
+    SDK::bls12_381_pairing(pairs, out)
+}
+#[inline(always)]
+fn bls12_381_map_fp_to_g1_with_sdk<SDK: SharedAPI>(_: &SDK, p: &[u8; 64], out: &mut [u8; 64]) {
+    SDK::bls12_381_map_fp_to_g1(p, out)
+}
+#[inline(always)]
+fn bls12_381_map_fp2_to_g2_with_sdk<SDK: SharedAPI>(_: &SDK, p: &[u8; 64], out: &mut [u8; 64]) {
+    SDK::bls12_381_map_fp2_to_g2(p, out)
+}
+
 pub fn main_entry(mut sdk: impl SharedAPI) {
     // read full input data
     let bytecode_address = sdk.context().contract_bytecode_address();
@@ -18,22 +66,226 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
-    // call precompiled function
-    let precompile_func = match bytecode_address {
-        PRECOMPILE_BLS12_381_G1_ADD => revm_precompile::bls12_381::g1_add::g1_add,
-        PRECOMPILE_BLS12_381_G1_MSM => revm_precompile::bls12_381::g1_msm::g1_msm,
-        PRECOMPILE_BLS12_381_G2_ADD => revm_precompile::bls12_381::g2_add::g2_add,
-        PRECOMPILE_BLS12_381_G2_MSM => revm_precompile::bls12_381::g2_msm::g2_msm,
-        PRECOMPILE_BLS12_381_PAIRING => revm_precompile::bls12_381::pairing::pairing,
-        PRECOMPILE_BLS12_381_MAP_G1 => revm_precompile::bls12_381::map_fp_to_g1::map_fp_to_g1,
-        PRECOMPILE_BLS12_381_MAP_G2 => revm_precompile::bls12_381::map_fp2_to_g2::map_fp2_to_g2,
+    // dispatch to SDK-backed implementation
+    match bytecode_address {
+        PRECOMPILE_BLS12_381_G1_ADD => {
+            // Expect two G1 points (x1||y1||x2||y2), each coord 64 bytes BE padded
+            if input.len() != 256 {
+                sdk.native_exit(ExitCode::PrecompileError);
+            }
+            // Split inputs
+            let x1_be = &input[0..64];
+            let y1_be = &input[64..128];
+            let x2_be = &input[128..192];
+            let y2_be = &input[192..256];
+
+            // Convert to runtime format: 96 bytes LE (x48||y48)
+            let mut p = [0u8; 96];
+            let mut q = [0u8; 96];
+            // p.x: take 48-byte field from x1_be[16..64] and reverse to LE
+            p[0..48].copy_from_slice(&x1_be[16..64]);
+            p[0..48].reverse();
+            // p.y
+            p[48..96].copy_from_slice(&y1_be[16..64]);
+            p[48..96].reverse();
+            // q.x
+            q[0..48].copy_from_slice(&x2_be[16..64]);
+            q[0..48].reverse();
+            // q.y
+            q[48..96].copy_from_slice(&y2_be[16..64]);
+            q[48..96].reverse();
+
+            bls12_381_g1_add_with_sdk(&sdk, &mut p, &q);
+            let gas_used = 375u64;
+            if gas_used > gas_limit {
+                sdk.native_exit(ExitCode::OutOfFuel);
+            }
+            sdk.sync_evm_gas(gas_used, 0);
+            // EVM expects X||Y, each 64 bytes BE, where the 48-byte field is left-padded
+            let mut out = [0u8; 128];
+            // x: take 48 LE -> BE and place at [16..64]
+            let mut x_be48 = [0u8; 48];
+            x_be48.copy_from_slice(&p[0..48]);
+            x_be48.reverse();
+            out[16..64].copy_from_slice(&x_be48);
+            // y: [48..96] LE -> BE -> [80..128]
+            let mut y_be48 = [0u8; 48];
+            y_be48.copy_from_slice(&p[48..96]);
+            y_be48.reverse();
+            out[80..128].copy_from_slice(&y_be48);
+            sdk.write(&out);
+        }
+        PRECOMPILE_BLS12_381_G2_ADD => {
+            if input.len() < 128 {
+                sdk.native_exit(ExitCode::PrecompileError);
+            }
+            let start = input.len() - 128;
+            let mut p = [0u8; 64];
+            let mut q = [0u8; 64];
+            p.copy_from_slice(&input[start..start + 64]);
+            q.copy_from_slice(&input[start + 64..start + 128]);
+            // Convert BE -> LE before calling runtime, then back to BE for output
+            p[0..32].reverse();
+            p[32..64].reverse();
+            let mut q_conv = q;
+            q_conv[0..32].reverse();
+            q_conv[32..64].reverse();
+            bls12_381_g2_add_with_sdk(&sdk, &mut p, &q_conv);
+            let gas_used = 375u64;
+            if gas_used > gas_limit {
+                sdk.native_exit(ExitCode::OutOfFuel);
+            }
+            sdk.sync_evm_gas(gas_used, 0);
+            let mut out = [0u8; 128];
+            let mut x_be = [0u8; 32];
+            x_be.copy_from_slice(&p[0..32]);
+            x_be.reverse();
+            let mut y_be = [0u8; 32];
+            y_be.copy_from_slice(&p[32..64]);
+            y_be.reverse();
+            out[32..64].copy_from_slice(&x_be);
+            out[96..128].copy_from_slice(&y_be);
+            sdk.write(&out);
+        }
+        PRECOMPILE_BLS12_381_G1_MSM => {
+            if input.len() % 128 != 0 || input.is_empty() {
+                sdk.native_exit(ExitCode::PrecompileError);
+            }
+            let pairs_len = input.len() / 128;
+            let mut pairs: alloc::vec::Vec<([u8; 64], [u8; 64])> =
+                alloc::vec::Vec::with_capacity(pairs_len);
+            for i in 0..pairs_len {
+                let mut a = [0u8; 64];
+                let mut b = [0u8; 64];
+                let start = i * 128;
+                a.copy_from_slice(&input[start..start + 64]);
+                b.copy_from_slice(&input[start + 64..start + 128]);
+                a[0..32].reverse();
+                a[32..64].reverse();
+                b[0..32].reverse();
+                b[32..64].reverse();
+                pairs.push((a, b));
+            }
+            let mut out = [0u8; 64];
+            bls12_381_g1_msm_with_sdk(&sdk, &pairs, &mut out);
+            let gas_used = 250u64.saturating_mul(pairs_len as u64).saturating_add(100);
+            if gas_used > gas_limit {
+                sdk.native_exit(ExitCode::OutOfFuel);
+            }
+            sdk.sync_evm_gas(gas_used, 0);
+            let mut x_be = [0u8; 32];
+            x_be.copy_from_slice(&out[0..32]);
+            x_be.reverse();
+            let mut y_be = [0u8; 32];
+            y_be.copy_from_slice(&out[32..64]);
+            y_be.reverse();
+            let mut out_be = [0u8; 64];
+            out_be[0..32].copy_from_slice(&x_be);
+            out_be[32..64].copy_from_slice(&y_be);
+            sdk.write(&out_be);
+        }
+        PRECOMPILE_BLS12_381_G2_MSM => {
+            if input.len() % 128 != 0 || input.is_empty() {
+                sdk.native_exit(ExitCode::PrecompileError);
+            }
+            let pairs_len = input.len() / 128;
+            let mut pairs: alloc::vec::Vec<([u8; 64], [u8; 64])> =
+                alloc::vec::Vec::with_capacity(pairs_len);
+            for i in 0..pairs_len {
+                let mut a = [0u8; 64];
+                let mut b = [0u8; 64];
+                let start = i * 128;
+                a.copy_from_slice(&input[start..start + 64]);
+                b.copy_from_slice(&input[start + 64..start + 128]);
+                a[0..32].reverse();
+                a[32..64].reverse();
+                b[0..32].reverse();
+                b[32..64].reverse();
+                pairs.push((a, b));
+            }
+            let mut out = [0u8; 64];
+            bls12_381_g2_msm_with_sdk(&sdk, &pairs, &mut out);
+            let gas_used = 300u64.saturating_mul(pairs_len as u64).saturating_add(100);
+            if gas_used > gas_limit {
+                sdk.native_exit(ExitCode::OutOfFuel);
+            }
+            sdk.sync_evm_gas(gas_used, 0);
+            let mut x_be = [0u8; 32];
+            x_be.copy_from_slice(&out[0..32]);
+            x_be.reverse();
+            let mut y_be = [0u8; 32];
+            y_be.copy_from_slice(&out[32..64]);
+            y_be.reverse();
+            let mut out_be = [0u8; 64];
+            out_be[0..32].copy_from_slice(&x_be);
+            out_be[32..64].copy_from_slice(&y_be);
+            sdk.write(&out_be);
+        }
+        PRECOMPILE_BLS12_381_PAIRING => {
+            if input.len() % 128 != 0 || input.is_empty() {
+                sdk.native_exit(ExitCode::PrecompileError);
+            }
+            let pairs_len = input.len() / 128;
+            let mut pairs: alloc::vec::Vec<([u8; 64], [u8; 64])> =
+                alloc::vec::Vec::with_capacity(pairs_len);
+            for i in 0..pairs_len {
+                let mut g1 = [0u8; 64];
+                let mut g2 = [0u8; 64];
+                let start = i * 128;
+                g1.copy_from_slice(&input[start..start + 64]);
+                g2.copy_from_slice(&input[start + 64..start + 128]);
+                g1[0..32].reverse();
+                g1[32..64].reverse();
+                g2[0..32].reverse();
+                g2[32..64].reverse();
+                pairs.push((g1, g2));
+            }
+            let mut out = [0u8; 64];
+            bls12_381_pairing_with_sdk(&sdk, &pairs, &mut out);
+            let gas_used = 400u64.saturating_mul(pairs_len as u64).saturating_add(100);
+            if gas_used > gas_limit {
+                sdk.native_exit(ExitCode::OutOfFuel);
+            }
+            sdk.sync_evm_gas(gas_used, 0);
+            let mut x_be = [0u8; 32];
+            x_be.copy_from_slice(&out[0..32]);
+            x_be.reverse();
+            let mut y_be = [0u8; 32];
+            y_be.copy_from_slice(&out[32..64]);
+            y_be.reverse();
+            let mut out_be = [0u8; 64];
+            out_be[0..32].copy_from_slice(&x_be);
+            out_be[32..64].copy_from_slice(&y_be);
+            sdk.write(&out_be);
+        }
+        PRECOMPILE_BLS12_381_MAP_G1 => {
+            if input.len() != 64 {
+                sdk.native_exit(ExitCode::PrecompileError);
+            }
+            let mut p = [0u8; 64];
+            bls12_381_map_fp_to_g1_with_sdk(&sdk, array_ref64(&input, 0), &mut p);
+            let gas_used = 250u64;
+            if gas_used > gas_limit {
+                sdk.native_exit(ExitCode::OutOfFuel);
+            }
+            sdk.sync_evm_gas(gas_used, 0);
+            sdk.write(&p);
+        }
+        PRECOMPILE_BLS12_381_MAP_G2 => {
+            if input.len() != 64 {
+                sdk.native_exit(ExitCode::PrecompileError);
+            }
+            let mut p = [0u8; 64];
+            bls12_381_map_fp2_to_g2_with_sdk(&sdk, array_ref64(&input, 0), &mut p);
+            let gas_used = 250u64;
+            if gas_used > gas_limit {
+                sdk.native_exit(ExitCode::OutOfFuel);
+            }
+            sdk.sync_evm_gas(gas_used, 0);
+            sdk.write(&p);
+        }
         _ => unreachable!("bls12381: unsupported contract address"),
-    };
-    let result = precompile_func(&input, gas_limit)
-        .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-    sdk.sync_evm_gas(result.gas_used, 0);
-    // write output
-    sdk.write(result.bytes.as_ref());
+    }
 }
 
 entrypoint!(main_entry);

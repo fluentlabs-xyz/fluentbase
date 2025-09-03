@@ -1,6 +1,7 @@
 use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
-    Address, Bytes, ContextReader, ExitCode, syscall::SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
+    syscall::SyscallResult,
+    Address, Bytes, ContextReader, ExitCode, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
@@ -57,6 +58,13 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
         pairs: &[([u8; 32], [u8; 32])],
         out: &mut [u8; 32],
     ) -> bool;
+    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]);
+    fn bls12_381_g1_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]);
+    fn bls12_381_g2_add(p: &mut [u8; 64], q: &[u8; 64]);
+    fn bls12_381_g2_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]);
+    fn bls12_381_pairing(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]);
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 64]);
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 64], out: &mut [u8; 64]);
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]);
     fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]);
     fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32];

@@ -2,7 +2,11 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{alloc_slice, entrypoint, ContextReader, ExitCode, SharedAPI};
+
+fn sha256_with_sdk<SDK: SharedAPI>(_: &SDK, data: &[u8]) -> fluentbase_sdk::B256 {
+    SDK::sha256(data)
+}
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     // read full input data
@@ -10,13 +14,22 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
-    let input = Bytes::copy_from_slice(input);
-    // call sha256 function
-    let result = revm_precompile::hash::sha256_run(&input, gas_limit)
-        .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-    sdk.sync_evm_gas(result.gas_used, 0);
-    // write output
-    sdk.write(result.bytes.as_ref());
+
+    let gas_used = estimate_gas(input.len());
+    if gas_used > gas_limit {
+        sdk.native_exit(ExitCode::OutOfFuel);
+    }
+    let result = sha256_with_sdk(&sdk, &input);
+    sdk.sync_evm_gas(gas_used, 0);
+    sdk.write(result.0.as_ref());
+}
+
+// Gas estimation for SHA-256 (based on EVM gas model)
+fn estimate_gas(input_len: usize) -> u64 {
+    // Base cost: 60 gas
+    // Per word (32 bytes): 12 gas
+    let words = (input_len + 31) / 32;
+    60 + (words as u64 * 12)
 }
 
 entrypoint!(main_entry);
@@ -24,7 +37,7 @@ entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex, ContractContextV1, FUEL_DENOM_RATE};
+    use fluentbase_sdk::{hex, Bytes, ContractContextV1, FUEL_DENOM_RATE};
     use fluentbase_sdk_testing::HostTestingContext;
 
     fn exec_evm_precompile(inputs: &[u8], expected: &[u8], expected_gas: u64) {

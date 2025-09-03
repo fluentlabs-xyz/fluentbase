@@ -118,6 +118,34 @@ mod tests {
             todo!()
         }
 
+        fn bls12_381_g1_add(_p: &mut [u8; 64], _q: &[u8; 64]) {
+            todo!()
+        }
+
+        fn bls12_381_g1_msm(_pairs: &[([u8; 64], [u8; 64])], _out: &mut [u8; 64]) {
+            todo!()
+        }
+
+        fn bls12_381_g2_add(_p: &mut [u8; 64], _q: &[u8; 64]) {
+            todo!()
+        }
+
+        fn bls12_381_g2_msm(_pairs: &[([u8; 64], [u8; 64])], _out: &mut [u8; 64]) {
+            todo!()
+        }
+
+        fn bls12_381_pairing(_pairs: &[([u8; 64], [u8; 64])], _out: &mut [u8; 64]) {
+            todo!()
+        }
+
+        fn bls12_381_map_fp_to_g1(_p: &[u8; 64], _out: &mut [u8; 64]) {
+            todo!()
+        }
+
+        fn bls12_381_map_fp2_to_g2(_p: &[u8; 64], _out: &mut [u8; 64]) {
+            todo!()
+        }
+
         fn bn254_add(_p: &mut [u8; 64], _q: &[u8; 64]) {
             todo!()
         }

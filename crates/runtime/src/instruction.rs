@@ -1,4 +1,11 @@
 pub mod blake3;
+pub mod bls12_381_g1_add;
+pub mod bls12_381_g1_msm;
+pub mod bls12_381_g2_add;
+pub mod bls12_381_g2_msm;
+pub mod bls12_381_map_fp2_to_g2;
+pub mod bls12_381_map_fp_to_g1;
+pub mod bls12_381_pairing;
 pub mod charge_fuel;
 pub mod charge_fuel_manually;
 pub mod curve25519_edwards_add;
@@ -50,6 +57,13 @@ pub mod write;
 use crate::{
     instruction::{
         blake3::SyscallBlake3,
+        bls12_381_g1_add::SyscallBls12381G1Add,
+        bls12_381_g1_msm::SyscallBls12381G1Msm,
+        bls12_381_g2_add::SyscallBls12381G2Add,
+        bls12_381_g2_msm::SyscallBls12381G2Msm,
+        bls12_381_map_fp2_to_g2::SyscallBls12381MapFp2ToG2,
+        bls12_381_map_fp_to_g1::SyscallBls12381MapFpToG1,
+        bls12_381_pairing::SyscallBls12381Pairing,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         curve25519_edwards_add::SyscallCurve25519EdwardsAdd,

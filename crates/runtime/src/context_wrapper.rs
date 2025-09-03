@@ -1,6 +1,13 @@
 use crate::{
     instruction::{
         blake3::SyscallBlake3,
+        bls12_381_g1_add::SyscallBls12381G1Add,
+        bls12_381_g1_msm::SyscallBls12381G1Msm,
+        bls12_381_g2_add::SyscallBls12381G2Add,
+        bls12_381_g2_msm::SyscallBls12381G2Msm,
+        bls12_381_map_fp2_to_g2::SyscallBls12381MapFp2ToG2,
+        bls12_381_map_fp_to_g1::SyscallBls12381MapFpToG1,
+        bls12_381_pairing::SyscallBls12381Pairing,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         curve25519_edwards_add::SyscallCurve25519EdwardsAdd,
@@ -51,7 +58,10 @@ use fluentbase_types::{
     B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
-use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
+use sp1_curves::weierstrass::{
+    bls12_381::Bls12381,
+    bn254::{Bn254, Bn254BaseField},
+};
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 #[derive(Default, Clone)]
@@ -144,6 +154,37 @@ impl NativeAPI for RuntimeContextWrapper {
             Err(_) => return false,
         }
         true
+    }
+
+    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
+        // Expect 96-byte (x48||y48) little-endian limbs
+        let result = SyscallWeierstrassAddAssign::<Bls12381>::fn_impl(p, q);
+        let min = core::cmp::min(p.len(), result.len());
+        p[..min].copy_from_slice(&result[..min]);
+    }
+
+    fn bls12_381_g1_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
+        SyscallBls12381G1Msm::fn_impl(pairs, out)
+    }
+
+    fn bls12_381_g2_add(p: &mut [u8; 64], q: &[u8; 64]) {
+        SyscallBls12381G2Add::fn_impl(p, q)
+    }
+
+    fn bls12_381_g2_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
+        SyscallBls12381G2Msm::fn_impl(pairs, out)
+    }
+
+    fn bls12_381_pairing(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
+        SyscallBls12381Pairing::fn_impl(pairs, out)
+    }
+
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 64]) {
+        SyscallBls12381MapFpToG1::fn_impl(p, out)
+    }
+
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 64], out: &mut [u8; 64]) {
+        SyscallBls12381MapFp2ToG2::fn_impl(p, out)
     }
 
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
