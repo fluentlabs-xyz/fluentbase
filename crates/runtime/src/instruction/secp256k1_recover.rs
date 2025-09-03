@@ -39,7 +39,7 @@ impl SyscallSecp256k1Recover {
     }
 
     pub fn fn_impl(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
-        let recid = match RecoveryId::from_i32(rec_id as i32) {
+        let recid = match RecoveryId::try_from(rec_id as i32) {
             Ok(recid) => recid,
             Err(_) => return None,
         };
