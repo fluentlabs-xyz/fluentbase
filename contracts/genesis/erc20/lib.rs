@@ -1,6 +1,8 @@
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
+extern crate alloc;
 extern crate core;
 
+use alloc::vec::Vec;
 use fluentbase_erc20::{
     common::{
         bytes_to_sig, fixed_bytes_from_u256, u256_from_bytes_slice_try, u256_from_fixed_bytes,
@@ -11,16 +13,22 @@ use fluentbase_erc20::{
         ERR_INVALID_META_NAME, ERR_INVALID_META_SYMBOL, ERR_INVALID_MINTER, ERR_INVALID_PAUSER,
         ERR_INVALID_RECIPIENT, ERR_MALFORMED_INPUT, ERR_MINTABLE_PLUGIN_NOT_ACTIVE, ERR_OVERFLOW,
         ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, ERR_VALIDATION, SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE_OF,
-        SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_TRANSFER,
-        SIG_TRANSFER_FROM, SIG_UNPAUSE,
+        SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOKEN2022, SIG_TOTAL_SUPPLY,
+        SIG_TRANSFER, SIG_TRANSFER_FROM, SIG_UNPAUSE,
     },
     storage::{
         Allowance, Balance, Config, Feature, InitialSettings, Settings, ADDRESS_LEN_BYTES,
         SIG_LEN_BYTES, U256_LEN_BYTES,
     },
 };
-use fluentbase_sdk::{debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, U256};
-use fluentbase_svm::helpers::storage_read_metadata_params;
+use fluentbase_sdk::{
+    debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, SVM_ELF_MAGIC_BYTES, U256,
+};
+use fluentbase_svm::account_info::AccountInfo;
+use fluentbase_svm::pubkey::{Pubkey, PUBKEY_BYTES};
+use fluentbase_svm::solana_program::instruction::AccountMeta;
+use fluentbase_svm::token_2022::processor::Processor;
+use solana_program_error::ProgramResult;
 
 fn symbol(mut sdk: impl SharedAPI, _input: &[u8]) {
     sdk.write(&Settings::symbol(&sdk));
@@ -200,6 +208,31 @@ fn unpause(mut sdk: impl SharedAPI, _input: &[u8]) {
     sdk.write(&fixed_bytes_from_u256(&U256::from(1)));
 }
 
+fn token2022(mut sdk: impl SharedAPI, input: &[u8]) -> ProgramResult {
+    debug_log_ext!("token2022(): input.len={} input={:x?}", input.len(), input);
+    // input: program_id (pk 32 bytes) + accounts_meta_number (u8) + account_meta[] (AccountMeta) + data ([u8])
+    let mut offset = 0;
+    let program_id =
+        Pubkey::new_from_array(input[offset..offset + PUBKEY_BYTES].try_into().unwrap());
+    offset += PUBKEY_BYTES;
+    let account_meta_count = input[offset] as usize;
+    let mut account_metas = Vec::with_capacity(account_meta_count);
+    offset += 1;
+    for i in 0..account_meta_count {
+        let account_meta: AccountMeta =
+            solana_bincode::deserialize(&input[offset..offset + size_of::<AccountMeta>()])
+                .expect("failed to deserialize AccountMeta");
+        // TODO extract data for account info
+        account_metas.push(account_meta);
+        offset += size_of::<AccountMeta>();
+    }
+    offset += size_of::<AccountMeta>() * account_meta_count;
+    let input = &input[offset..];
+    // Processor::process(&program_id, &account_metas, input)
+    // sdk.write(&fixed_bytes_from_u256(&U256::from(1)));
+    ProgramResult::Ok(())
+}
+
 pub fn deploy_entry(mut sdk: impl SharedAPI) {
     let input_size = sdk.input_size();
     if input_size < SIG_LEN_BYTES as u32 {
@@ -252,10 +285,19 @@ pub fn deploy_entry(mut sdk: impl SharedAPI) {
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
     let input_size = sdk.input_size();
+    let input = sdk.input();
+    // TODO 4tests, temp solution to route to token2022
+    if input.len() >= SVM_ELF_MAGIC_BYTES.len()
+        && input[..SVM_ELF_MAGIC_BYTES.len()] == SVM_ELF_MAGIC_BYTES
+    {
+        let spl_input = &input[SVM_ELF_MAGIC_BYTES.len()..];
+        debug_log_ext!("token2022 processing");
+        return;
+    }
     if input_size < SIG_LEN_BYTES as u32 {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     }
-    let (sig, input) = sdk.input().split_at(SIG_LEN_BYTES);
+    let (sig, input) = input.split_at(SIG_LEN_BYTES);
     let signature = bytes_to_sig(sig);
     match signature {
         SIG_SYMBOL => symbol(sdk, input),
@@ -270,6 +312,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         SIG_MINT => mint(sdk, input),
         SIG_PAUSE => pause(sdk, input),
         SIG_UNPAUSE => unpause(sdk, input),
+        SIG_TOKEN2022 => token2022(sdk, input).expect("failed to process token2022 input"),
         _ => {
             sdk.evm_exit(ERR_MALFORMED_INPUT);
         }

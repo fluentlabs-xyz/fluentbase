@@ -1,5 +1,5 @@
 use crate::common::pubkey_from_evm_address;
-use crate::helpers::storage_read_account_data_or_default;
+use crate::helpers::{extract_accounts, storage_read_account_data_or_default};
 use crate::solana_program::rent_collector::RENT_EXEMPT_RENT_EPOCH;
 use crate::{
     account::{
@@ -338,7 +338,7 @@ pub fn exec_svm_message<SDK: SharedAPI>(
         SanitizedMessage::Legacy(LegacyMessage::new(message, &Default::default()));
 
     let contract_caller = sdk.context().contract_caller();
-    let pk_caller = pubkey_from_evm_address(&contract_caller);
+    let pk_caller = pubkey_from_evm_address::<true>(&contract_caller);
     let signer_count = message.num_total_signatures();
     if signer_count > 1 {
         panic!("max number of signers can be 1, given {}", signer_count);
@@ -438,17 +438,7 @@ pub fn exec_svm_message<SDK: SharedAPI>(
         invoke_context.transaction_context
     };
 
-    let mut result_accounts =
-        HashMap::with_capacity(transaction_context.get_number_of_accounts() as usize);
-
-    for account_idx in 0..transaction_context.get_number_of_accounts() {
-        let account_key = transaction_context.get_key_of_account_at_index(account_idx)?;
-        let account_data = transaction_context.get_account_at_index(account_idx)?;
-        result_accounts.insert(
-            account_key.clone(),
-            account_data.borrow().to_account_shared_data(),
-        );
-    }
+    let mut result_accounts = extract_accounts(&transaction_context)?;
 
     Ok(result_accounts)
 }

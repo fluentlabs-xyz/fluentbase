@@ -61,6 +61,21 @@ lazy_static! {
     };
 }
 
+pub(crate) fn flush_account<const SKIP_SYS_ACCS: bool, SDK: SharedAPI>(
+    sdk: &mut SDK,
+    pk: &Pubkey,
+    account_data: &AccountSharedData,
+) -> Result<bool, SvmError> {
+    if SKIP_SYS_ACCS && SYSTEM_PROGRAMS_KEYS.contains(&pk) {
+        return Ok(false);
+    }
+    if !is_evm_pubkey(&pk) {
+        return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
+    }
+    storage_write_account_data(sdk, pk, account_data)?;
+    Ok(true)
+}
+
 /// Stores provided accounts using specified storage api or alt api
 /// Filters out system accounts if set
 /// Returns error if some accounts are not evm compatible
@@ -70,13 +85,7 @@ pub(crate) fn flush_accounts<const SKIP_SYS_ACCS: bool, SDK: SharedAPI>(
 ) -> Result<u64, SvmError> {
     let mut accounts_flushed = 0;
     for (pk, account_data) in accounts {
-        if SKIP_SYS_ACCS && SYSTEM_PROGRAMS_KEYS.contains(&pk) {
-            continue;
-        }
-        if !is_evm_pubkey(&pk) {
-            return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
-        }
-        storage_write_account_data(sdk, pk, account_data)?;
+        flush_account::<SKIP_SYS_ACCS, _>(sdk, pk, account_data)?;
         accounts_flushed += 1;
     }
     Ok(accounts_flushed)

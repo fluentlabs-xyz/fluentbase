@@ -11,7 +11,7 @@ use crate::{
     mem_ops::{
         translate, translate_slice, translate_slice_mut, translate_type, translate_type_mut,
     },
-    native_loader, spl_token_2022,
+    native_loader, token_2022,
     word_size::{
         addr_type::AddrType,
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
@@ -22,14 +22,17 @@ use crate::{
 };
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{fmt::Debug, marker::PhantomData, ptr};
+use fluentbase_erc20::common::sig_to_bytes;
+use fluentbase_erc20::consts::SIG_TOKEN2022;
 use fluentbase_sdk::{debug_log_ext, Address, SharedAPI};
-use fluentbase_types::{PRECOMPILE_ERC20_RUNTIME, U256};
+use fluentbase_types::{PRECOMPILE_ERC20_RUNTIME, SVM_ELF_MAGIC_BYTES, U256};
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::{Pubkey, MAX_SEEDS, PUBKEY_BYTES};
 use solana_rbpf::memory_region::MemoryMapping;
 use solana_stable_layout::stable_instruction::StableInstruction;
+use solana_stable_layout::stable_vec::StableVec;
 
 enum VmValue<'a, 'b, T> {
     #[allow(dead_code)]
@@ -652,33 +655,71 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     // changes so the callee can see them.
     let mut instruction: StableInstruction =
         S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
-    let mut reroute_to_evm = false;
-    if instruction.program_id == spl_token_2022::id() {
-        instruction.program_id = pubkey_from_evm_address(&PRECOMPILE_ERC20_RUNTIME);
-        reroute_to_evm = true;
+    let mut reroute_to_evm_input_prefix: Option<[u8; 4]> = None;
+    if instruction.program_id == token_2022::lib::id() {
+        instruction.program_id = pubkey_from_evm_address::<true>(&PRECOMPILE_ERC20_RUNTIME);
+        // TODO 4test, temp solution for routing to spl-token2022
+        let sig_token2022_bytes = sig_to_bytes(SIG_TOKEN2022);
+        // let mut data = Vec::with_capacity(sig_token2022_bytes.len() + instruction.data.len());
+        // data.extend_from_slice(&sig_token2022_bytes);
+        // data.extend_from_slice(&instruction.data);
+        // instruction.data = data.into();
+        reroute_to_evm_input_prefix = Some(sig_token2022_bytes);
     }
-    if reroute_to_evm || !is_program_exists(invoke_context.sdk, &instruction.program_id)? {
-        let data = instruction.data;
-        const MIN_LEN: usize = size_of::<U256>() + size_of::<u64>();
-        if data.len() < MIN_LEN {
-            return Ok(1);
-        }
+    if reroute_to_evm_input_prefix.is_some()
+        || !is_program_exists(invoke_context.sdk, &instruction.program_id)?
+    {
+        let mut data: StableVec<u8>;
         let mut offset = 0;
         let address = evm_address_from_pubkey::<false>(&instruction.program_id)?;
-        let value = U256::from_le_bytes::<{ size_of::<U256>() }>(
-            data[offset..offset + size_of::<U256>()].try_into().unwrap(),
-        );
-        offset += size_of::<U256>();
-        let fuel_limit = {
-            let limit =
-                u64::from_le_bytes(data[offset..offset + size_of::<u64>()].try_into().unwrap());
-            if limit == u64::MAX {
-                None
-            } else {
-                Some(limit)
+        let value;
+        let fuel_limit;
+        if let Some(prefix) = reroute_to_evm_input_prefix {
+            value = U256::ZERO;
+            fuel_limit = None;
+            // data: prefix ([u8; 4]) + program_id ([u8; 32]) + accounts_meta_number (u8) + account_meta[] (AccountMeta) + data ([u8])
+            let mut data_tmp = Vec::with_capacity(
+                prefix.len()
+                    + PUBKEY_BYTES
+                    + 1
+                    + instruction.accounts.len() * size_of::<AccountMeta>()
+                    + instruction.data.len(),
+            );
+            data_tmp.extend_from_slice(&prefix);
+            data_tmp.extend_from_slice(&instruction.program_id.to_bytes());
+            data_tmp.push(instruction.accounts.len() as u8);
+            let tmp_am = AccountMeta::new(instruction.program_id, false);
+            let tmp_am_ser = solana_bincode::serialize(&tmp_am)?;
+            debug_log_ext!("tmp_am_ser.len={}", tmp_am_ser.len());
+            for am in instruction.accounts.iter() {
+                let am_ser = solana_bincode::serialize(am)?;
+                debug_log_ext!("am_ser.len={}", am_ser.len());
+                data_tmp.extend_from_slice(&am_ser);
             }
-        };
-        offset += size_of::<u64>();
+            data_tmp.extend_from_slice(&instruction.data);
+            data = data_tmp.into();
+            debug_log_ext!("data.len={}", data.len());
+        } else {
+            data = instruction.data;
+            const MIN_LEN: usize = size_of::<U256>() + size_of::<u64>();
+            if data.len() < MIN_LEN {
+                return Ok(1);
+            }
+            value = U256::from_le_bytes::<{ size_of::<U256>() }>(
+                data[offset..offset + size_of::<U256>()].try_into().unwrap(),
+            );
+            offset += size_of::<U256>();
+            fuel_limit = {
+                let limit =
+                    u64::from_le_bytes(data[offset..offset + size_of::<u64>()].try_into().unwrap());
+                if limit == u64::MAX {
+                    None
+                } else {
+                    Some(limit)
+                }
+            };
+            offset += size_of::<u64>();
+        }
         let input = &data[offset..];
         debug_log_ext!(
             "invoke_context.sdk.call({}, {}, {:x?}, {:x?})",

@@ -4,6 +4,15 @@ use serde::{Deserialize, Serialize};
 pub const EXPECTED_RET_OK: u64 = 0;
 pub const EXPECTED_RET_ERR: u64 = 1;
 
+type Address = [u8; 20];
+type U256 = [u8; 32];
+type Pubkey = [u8; 32];
+type ECPoint32 = [u8; 32];
+type ECScalar32 = [u8; 32];
+type Hash32 = [u8; 32];
+type IsSigner = bool;
+type IsWritable = bool;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModifyAccount1 {
     pub account_idx: usize,
@@ -26,8 +35,14 @@ pub struct Transfer {
     pub seeds: Vec<Vec<u8>>,
 }
 
-type Address = [u8; 20];
-type U256 = [u8; 32];
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Invoke {
+    pub pubkey: Pubkey,
+    pub data: Vec<u8>,
+    pub account_info_idxs: Vec<usize>,
+    pub account_metas: Vec<(Pubkey, IsSigner, IsWritable)>,
+    pub result_data_expected: Vec<u8>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvmCall {
@@ -95,13 +110,13 @@ pub struct Keccak256 {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Sha256 {
     pub data: Vec<Vec<u8>>,
-    pub expected_result: [u8; 32],
+    pub expected_result: Hash32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Blake3 {
     pub data: Vec<Vec<u8>>,
-    pub expected_result: [u8; 32],
+    pub expected_result: Hash32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -109,7 +124,7 @@ pub struct Poseidon {
     pub parameters: u64,
     pub endianness: u64,
     pub data: Vec<Vec<u8>>,
-    pub expected_result: [u8; 32],
+    pub expected_result: Hash32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -119,24 +134,24 @@ pub struct SetGetReturnData {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurvePointValidation {
     pub curve_id: u64,
-    pub point: [u8; 32],
+    pub point: ECPoint32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurveGroupOp {
     pub curve_id: u64,
     pub group_op: u64,
-    pub left_input: [u8; 32],
-    pub right_input: [u8; 32],
-    pub expected_point: [u8; 32],
+    pub left_input: ECPoint32,
+    pub right_input: ECPoint32,
+    pub expected_point: ECPoint32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurveMultiscalarMultiplication {
     pub curve_id: u64,
-    pub scalars: Vec<[u8; 32]>,
-    pub points: Vec<[u8; 32]>,
-    pub expected_point: [u8; 32],
+    pub scalars: Vec<ECScalar32>,
+    pub points: Vec<ECPoint32>,
+    pub expected_point: ECPoint32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -189,6 +204,7 @@ impl_structs!(
     ModifyAccount1,
     CreateAccountAndModifySomeData1,
     Transfer,
+    Invoke,
     EvmCall,
     SolBigModExp,
     SolSecp256k1Recover,

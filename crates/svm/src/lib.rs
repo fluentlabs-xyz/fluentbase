@@ -32,7 +32,6 @@ pub mod hash;
 pub mod loaders;
 pub mod serialization;
 pub mod solana_program;
-pub mod spl_token_2022;
 pub mod system_instruction;
 pub mod system_processor;
 #[cfg(test)]
@@ -41,6 +40,7 @@ pub mod system_program;
 pub mod sysvar_cache;
 #[cfg(test)]
 pub mod test_helpers;
+pub mod token_2022;
 pub mod word_size;
 
 pub use bincode;

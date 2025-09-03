@@ -206,11 +206,13 @@ pub fn load_program_from_bytes<'a, SDK: SharedAPI>(
     Ok(loaded_program)
 }
 
-pub fn pubkey_from_evm_address(value: &Address) -> Pubkey {
-    let mut new_pk = [0u8; PUBKEY_BYTES];
-    new_pk[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
-    new_pk[SVM_ADDRESS_PREFIX.len()..].copy_from_slice(value.as_slice());
-    Pubkey::new_from_array(new_pk)
+pub fn pubkey_from_evm_address<const SVM_PREFIX: bool>(value: &Address) -> Pubkey {
+    let mut pk = [0u8; PUBKEY_BYTES];
+    if SVM_PREFIX {
+        pk[0..SVM_ADDRESS_PREFIX.len()].copy_from_slice(&SVM_ADDRESS_PREFIX);
+    }
+    pk[SVM_ADDRESS_PREFIX.len()..].copy_from_slice(value.as_slice());
+    Pubkey::new_from_array(pk)
 }
 
 pub fn pubkey_from_u256(value: &U256) -> Pubkey {

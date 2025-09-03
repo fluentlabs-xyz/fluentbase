@@ -3,6 +3,8 @@ extern crate solana_rbpf;
 use crate::{native_loader, solana_program, system_program};
 use alloc::{boxed::Box, vec, vec::Vec};
 use bincode::error::DecodeError;
+use hashbrown::HashMap;
+use solana_account_info::AccountInfo;
 use solana_bincode::{deserialize, serialize, serialized_size};
 use solana_clock::Epoch;
 use solana_pubkey::Pubkey;
@@ -42,6 +44,7 @@ pub fn address_is_aligned<T>(address: u64) -> bool {
 
 use crate::account::{ReadableAccount, WritableAccount};
 use crate::common::GlobalLamportsBalance;
+use crate::context::TransactionContext;
 use crate::error::RuntimeError;
 use crate::fluentbase::common::{GlobalBalance, SYSTEM_PROGRAMS_KEYS};
 use crate::native_loader::create_loadable_account_with_fields2;
@@ -136,6 +139,31 @@ pub fn create_account_shared_data_for_test<S: Sysvar>(sysvar: &S) -> AccountShar
         sysvar,
         DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     ))
+}
+
+pub fn create_account_for_test<S: Sysvar>(sysvar: &S) -> Account {
+    create_account_with_fields(sysvar, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
+}
+
+/// Create `AccountInfo`s
+pub fn create_is_signer_account_infos<'a>(
+    accounts: &'a mut [(&'a Pubkey, bool, &'a mut Account)],
+) -> Vec<AccountInfo<'a>> {
+    accounts
+        .iter_mut()
+        .map(|(key, is_signer, account)| {
+            AccountInfo::new(
+                key,
+                *is_signer,
+                false,
+                &mut account.lamports,
+                &mut account.data,
+                &account.owner,
+                account.executable,
+                account.rent_epoch,
+            )
+        })
+        .collect()
 }
 
 #[macro_export]
@@ -323,4 +351,36 @@ pub(crate) fn storage_read_account_data_or_default<API: MetadataAPI + MetadataSt
             owner_default.unwrap_or(&system_program::id()),
         )
     })
+}
+
+pub fn extract_accounts(
+    transaction_context: &TransactionContext,
+) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
+    let mut accounts =
+        HashMap::with_capacity(transaction_context.get_number_of_accounts() as usize);
+    for account_idx in 0..transaction_context.get_number_of_accounts() {
+        let account_key = transaction_context.get_key_of_account_at_index(account_idx)?;
+        let account_data = transaction_context.get_account_at_index(account_idx)?;
+        accounts.insert(
+            account_key.clone(),
+            account_data.borrow().to_account_shared_data(),
+        );
+    }
+    Ok(accounts)
+}
+
+pub fn update_accounts(
+    transaction_context: &mut TransactionContext,
+    accounts: &HashMap<Pubkey, AccountSharedData>,
+) {
+    for (pk, data) in accounts {
+        let idx = transaction_context
+            .find_index_of_account(pk)
+            .expect("each account must be presented");
+        let mut account = transaction_context
+            .get_account_at_index(idx)
+            .expect("each account must be presented");
+        // let mut_data = account.borrow_mut().data_as_mut_slice();
+        *account.borrow_mut() = data.clone();
+    }
 }

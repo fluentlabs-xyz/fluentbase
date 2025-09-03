@@ -12,6 +12,7 @@ categories.workspace = true
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false }
+fluentbase-erc20 = { workspace = true, default-features = false }
 
 num-traits = { workspace = true, default-features = false }
 byteorder = { workspace = true, default-features = false }
@@ -43,16 +44,23 @@ solana-precompile-error = { workspace = true, default-features = false, features
 solana-poseidon = { workspace = true, default-features = false, features = [] }
 solana-curve25519 = { workspace = true, default-features = false, features = [] }
 solana-bn254 = { workspace = true, default-features = false, features = [] }
+solana-program-option = { workspace = true, default-features = false, features = [] }
+solana-program-pack = { workspace = true, default-features = false, features = [] }
 
 paste = { workspace = true }
 serde_bytes = { workspace = true, default-features = false, features = ["alloc"] }
 blake3 = { workspace = true, default-features = false, features = [] }
 bitflags = { workspace = true, default-features = false, features = ["serde"] }
 spin = { workspace = true, default-features = false, features = ["spin_mutex", "rwlock"] }
+bytemuck = { workspace = true }
+bytemuck_derive = { workspace = true }
+num_enum = { workspace = true }
+arrayref = { workspace = true }
 
 num-derive = { workspace = true }
 serde = { workspace = true, default-features = false }
 serde_json = { workspace = true, default-features = false, features = ["alloc"] }
+serde_with = { workspace = true, default-features = false, features = ["alloc"] }
 bincode = { workspace = true }
 lazy_static = { workspace = true, default-features = false }
 itertools = { workspace = true, default-features = false, features = ["use_alloc"] }
@@ -66,6 +74,7 @@ memoffset = { workspace = true, default-features = false }
 fluentbase-sdk-testing = { workspace = true }
 serde_derive = { workspace = true }
 array-bytes = { workspace = true }
+proptest = { workspace = true }
 
 [features]
 default = [

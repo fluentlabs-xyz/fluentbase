@@ -1,5 +1,5 @@
 use crate::common::{pubkey_to_u256, GlobalLamportsBalance};
-use crate::fluentbase::common::flush_accounts;
+use crate::fluentbase::common::{flush_account, flush_accounts};
 use crate::helpers::{storage_read_account_data, storage_read_account_data_or_default};
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -53,7 +53,7 @@ pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
         Elf64::parse(bytes).expect("invalid elf executable");
     }
 
-    let pk_contract = pubkey_from_evm_address(&contract_address);
+    let pk_contract = pubkey_from_evm_address::<true>(&contract_address);
     let mut contract_account_data = storage_read_account_data_or_default(
         &sdk,
         &pk_contract,
@@ -84,8 +84,8 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     let loader_id = loader_v4::id();
 
-    let pk_caller = pubkey_from_evm_address(&contract_caller);
-    let pk_contract = pubkey_from_evm_address(&contract_address);
+    let pk_caller = pubkey_from_evm_address::<true>(&contract_caller);
+    let pk_contract = pubkey_from_evm_address::<true>(&contract_address);
 
     if !tx_value.is_zero() {
         let caller_lamports = lamports_from_evm_balance(tx_value);
@@ -96,10 +96,23 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     let result = exec_encoded_svm_batch_message(&mut sdk, input);
     match result {
-        Ok(result_accounts) => {
+        Ok(mut result_accounts) => {
             if result_accounts.len() > 0 {
-                flush_accounts::<true, _>(&mut sdk, &result_accounts)
-                    .expect("failed to save result accounts");
+                for (pk, account_data) in &mut result_accounts {
+                    if *pk == pk_caller {
+                        // return balance left
+                        let caller_lamports = account_data.lamports();
+                        account_data.set_lamports(0);
+                        sdk.call(
+                            contract_caller,
+                            evm_balance_from_lamports(caller_lamports),
+                            &[],
+                            None,
+                        );
+                    }
+                    flush_account::<true, _>(&mut sdk, pk, account_data)
+                        .expect("failed to save accounts");
+                }
             }
         }
         Err(e) => {

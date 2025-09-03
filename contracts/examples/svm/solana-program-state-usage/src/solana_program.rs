@@ -14,7 +14,7 @@ use fluentbase_svm_shared::{
 use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
-use solana_program::instruction::Instruction;
+use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::program::invoke;
 use solana_program::{program::invoke_signed, system_instruction};
 use solana_program_entrypoint::{entrypoint_no_alloc, ProgramResult};
@@ -203,6 +203,42 @@ pub fn process_instruction(
                 Some((pk, return_data)) => {
                     msg!("EvmCall: pk {} return_data: {:x?}", pk, return_data);
                     assert_eq!(return_data, p.result_data_expected);
+                }
+            }
+        }
+        TestCommand::Invoke(p) => {
+            let mut account_infos = vec![];
+            let mut account_metas = vec![];
+            let evm_address_pk = Pubkey::new_from_array(p.pubkey);
+            for i in p.account_info_idxs {
+                account_infos.push(accounts[i].clone())
+            }
+            for (pk, is_signer, is_writable) in p.account_metas {
+                account_metas.push(AccountMeta {
+                    pubkey: Pubkey::new_from_array(pk),
+                    is_signer,
+                    is_writable,
+                })
+            }
+            let invoke_result = invoke(
+                &Instruction::new_with_bytes(evm_address_pk, &p.data, account_metas),
+                &account_infos,
+            );
+            match invoke_result {
+                Ok(_) => {
+                    let return_data_result = get_return_data();
+                    match return_data_result {
+                        None => {
+                            msg!("Invoke: empty return data");
+                        }
+                        Some((pk, return_data)) => {
+                            msg!("Invoke: pk {} return_data: {:x?}", pk, return_data);
+                            assert_eq!(return_data, p.result_data_expected);
+                        }
+                    }
+                }
+                Err(v) => {
+                    return Err(v);
                 }
             }
         }
