@@ -1,6 +1,6 @@
 use crate::{
     account::BorrowedAccount,
-    common::{limited_deserialize_packet_size, rbpf_config_default},
+    common::rbpf_config_default,
     compute_budget::compute_budget::ComputeBudget,
     context::{InstructionContext, InvokeContext},
     error::Error,
@@ -9,7 +9,6 @@ use crate::{
     solana_program::{
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status, DEPLOYMENT_COOLDOWN_IN_SLOTS},
-        loader_v4_instruction::LoaderV4Instruction,
     },
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
@@ -368,25 +367,26 @@ pub fn process_instruction_inner<SDK: SharedAPI>(
 ) -> Result<u64, Error> {
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let instruction_data = instruction_context.get_instruction_data();
-    let program_id = instruction_context.get_last_program_key(transaction_context)?;
-    if loader_v4::check_id(program_id) {
-        match limited_deserialize_packet_size(instruction_data)? {
-            LoaderV4Instruction::Write { offset, bytes } => {
-                process_instruction_write(invoke_context, offset, bytes)
-            }
-            LoaderV4Instruction::Truncate { new_size } => {
-                process_instruction_truncate(invoke_context, new_size)
-            }
-            LoaderV4Instruction::Deploy => process_instruction_deploy(invoke_context),
-            LoaderV4Instruction::Retract => process_instruction_retract(invoke_context),
-            LoaderV4Instruction::TransferAuthority => {
-                process_instruction_transfer_authority(invoke_context)
-            }
-            LoaderV4Instruction::Finalize => process_instruction_finalize(invoke_context),
-        }
-        .map_err(|err| Box::new(err) as Error)
-    } else {
+    // let instruction_data = instruction_context.get_instruction_data();
+    // let program_id = instruction_context.get_last_program_key(transaction_context)?;
+    // if loader_v4::check_id(program_id) {
+    //     match limited_deserialize_packet_size(instruction_data)? {
+    //         LoaderV4Instruction::Write { offset, bytes } => {
+    //             process_instruction_write(invoke_context, offset, bytes)
+    //         }
+    //         LoaderV4Instruction::Truncate { new_size } => {
+    //             process_instruction_truncate(invoke_context, new_size)
+    //         }
+    //         LoaderV4Instruction::Deploy => process_instruction_deploy(invoke_context),
+    //         LoaderV4Instruction::Retract => process_instruction_retract(invoke_context),
+    //         LoaderV4Instruction::TransferAuthority => {
+    //             process_instruction_transfer_authority(invoke_context)
+    //         }
+    //         LoaderV4Instruction::Finalize => process_instruction_finalize(invoke_context),
+    //     }
+    //     .map_err(|err| Box::new(err) as Error)
+    // } else {
+    {
         let program = instruction_context.try_borrow_last_program_account(transaction_context)?;
         let program_owner = program.get_owner();
         if !loader_v4::check_id(program_owner) {

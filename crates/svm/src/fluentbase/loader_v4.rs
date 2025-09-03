@@ -1,17 +1,13 @@
 use crate::common::{pubkey_to_u256, GlobalLamportsBalance};
-use crate::fluentbase::common::flush_accounts;
+use crate::fluentbase::common::{flush_account, flush_accounts};
+use crate::helpers::{storage_read_account_data, storage_read_account_data_or_default};
 use crate::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     common::{
         evm_address_from_pubkey, evm_balance_from_lamports, lamports_from_evm_balance,
         pubkey_from_evm_address,
     },
-    fluentbase::{
-        common::{extract_account_data_or_default, process_svm_result},
-        helpers::exec_encoded_svm_batch_message,
-        loader_common::{read_contract_data, write_contract_data},
-        mem_storage::MemStorage,
-    },
+    fluentbase::helpers::exec_encoded_svm_batch_message,
     helpers::storage_write_account_data,
     loaders::bpf_loader_v4::get_state_mut,
     native_loader,
@@ -21,7 +17,6 @@ use crate::{
         loader_v4::{LoaderV4State, LoaderV4Status},
     },
     system_program,
-    types::BalanceHistorySnapshot,
 };
 use alloc::vec::Vec;
 pub use deploy_entry_simplified as deploy_entry;
@@ -43,8 +38,6 @@ pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
 
     let contract_value = ctx.contract_value();
     let tx_value = ctx.tx_value();
-    // let contract_caller = ctx.contract_caller();
-    // let pk_caller = pubkey_from_evm_address(&contract_caller);
 
     drop(ctx);
 
@@ -60,12 +53,20 @@ pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
         Elf64::parse(bytes).expect("invalid elf executable");
     }
 
-    let pk_contract = pubkey_from_evm_address(&contract_address); // may not exist
-
-    // let mut contract_data = pk_caller.to_bytes().to_vec();
-    // contract_data.extend_from_slice(elf_program_bytes.as_ref());
-    write_contract_data(&mut sdk, &pk_contract, elf_program_bytes)
-        .expect("failed to save contract data");
+    let pk_contract = pubkey_from_evm_address::<true>(&contract_address);
+    let mut contract_account_data = storage_read_account_data_or_default(
+        &sdk,
+        &pk_contract,
+        LoaderV4State::program_data_offset().saturating_add(elf_program_bytes.len()),
+        Some(&loader_v4::id()),
+    );
+    let state = get_state_mut(contract_account_data.data_as_mut_slice())
+        .expect("contract account has not enough data len");
+    state.status = LoaderV4Status::Deployed;
+    contract_account_data.data_as_mut_slice()[LoaderV4State::program_data_offset()..]
+        .copy_from_slice(&elf_program_bytes);
+    storage_write_account_data(&mut sdk, &pk_contract, &contract_account_data)
+        .expect("failed to write contract account");
 }
 
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
@@ -76,151 +77,48 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let contract_value = ctx.contract_value();
     let tx_value = ctx.tx_value();
 
-    let loader_id = loader_v4::id();
-
     let contract_caller = ctx.contract_caller();
     let contract_address = ctx.contract_address();
 
     drop(ctx);
 
-    let mut mem_storage = MemStorage::new();
-    let loader_v4 = loader_v4::id();
+    let loader_id = loader_v4::id();
 
-    let pk_caller = pubkey_from_evm_address(&contract_caller);
-    let pk_contract = pubkey_from_evm_address(&contract_address);
+    let pk_caller = pubkey_from_evm_address::<true>(&contract_caller);
+    let pk_contract = pubkey_from_evm_address::<true>(&contract_address);
 
-    let caller_lamports = lamports_from_evm_balance(tx_value);
-    let caller_lamports = lamports_from_evm_balance(
-        GlobalLamportsBalance::change::<true>(&mut sdk, &pk_caller, caller_lamports)
-            .expect("failed to change lamports"),
-    );
-    debug_log_ext!(
-        "contract_value {} tx_value {} pk_caller {} pk_caller_u256 {} caller_lamports {}",
-        contract_value,
-        tx_value,
-        pk_caller,
-        pubkey_to_u256(&pk_caller),
-        caller_lamports
-    );
-    let mut caller_account_data =
-        extract_account_data_or_default(&sdk, &pk_caller).expect("caller must exist");
-    caller_account_data.set_lamports(caller_lamports);
+    if !tx_value.is_zero() {
+        let caller_lamports = lamports_from_evm_balance(tx_value);
+        let caller_lamports =
+            GlobalLamportsBalance::change::<true>(&mut sdk, &pk_caller, caller_lamports)
+                .expect("failed to change caller lamports");
+    }
 
-    let contract_data =
-        read_contract_data(&sdk, &pk_contract).expect("failed to read contract executable");
-    let elf_program_bytes = &contract_data.data;
-    let contract_lamports = GlobalLamportsBalance::get(&sdk, &pk_contract);
-    let mut contract_account_data = AccountSharedData::new(
-        contract_lamports,
-        LoaderV4State::program_data_offset().saturating_add(elf_program_bytes.len()),
-        &loader_id,
-    );
-    contract_account_data.set_rent_epoch(Epoch::MAX);
-    let state = get_state_mut(contract_account_data.data_as_mut_slice())
-        .expect("contract account has not enough data len");
-    // state.slot = block_number;
-    // state.authority_address_or_next_version = pk_authority;
-    state.status = LoaderV4Status::Deployed;
-    contract_account_data.data_as_mut_slice()[LoaderV4State::program_data_offset()..]
-        .copy_from_slice(elf_program_bytes);
-
-    let exec_account_balance_before = contract_lamports;
-
-    storage_write_account_data(&mut mem_storage, &pk_contract, &contract_account_data)
-        .expect("failed to write contract account");
-
-    storage_write_account_data(&mut mem_storage, &pk_caller, &caller_account_data)
-        .expect("failed to write caller account");
-
-    storage_write_account_data(
-        &mut mem_storage,
-        &system_program::id(),
-        &create_loadable_account_with_fields2("system_program_id", &native_loader::id()),
-    )
-    .expect("failed to write system_program");
-    storage_write_account_data(
-        &mut mem_storage,
-        &loader_v4,
-        &create_loadable_account_with_fields2("loader_v4_id", &native_loader::id()),
-    )
-    .expect("failed to write loader_v4");
-
-    let result = exec_encoded_svm_batch_message(&mut sdk, input, true, &mut Some(&mut mem_storage));
-    let (result_accounts, balance_changes): (
-        HashMap<Pubkey, AccountSharedData>,
-        HashMap<Pubkey, BalanceHistorySnapshot<u64>>,
-    ) = match process_svm_result(result) {
-        Ok((result_accounts, balance_changes)) => {
+    let result = exec_encoded_svm_batch_message(&mut sdk, input);
+    match result {
+        Ok(mut result_accounts) => {
             if result_accounts.len() > 0 {
-                let mut api: Option<&mut SDK> = None;
-                flush_accounts::<true, _, _>(&mut sdk, &mut api, &result_accounts)
-                    .expect("failed to save result accounts");
+                for (pk, account_data) in &mut result_accounts {
+                    if *pk == pk_caller {
+                        // return balance left
+                        let caller_lamports = account_data.lamports();
+                        account_data.set_lamports(0);
+                        sdk.call(
+                            contract_caller,
+                            evm_balance_from_lamports(caller_lamports),
+                            &[],
+                            None,
+                        );
+                    }
+                    flush_account::<true, _>(&mut sdk, pk, account_data)
+                        .expect("failed to save accounts");
+                }
             }
-            (result_accounts, balance_changes)
         }
-        Err(err_str) => {
-            debug_log_ext!("exec err: {}", err_str);
-            panic!("failed to execute encoded svm batch message: {}", err_str);
+        Err(e) => {
+            panic!("failed to execute encoded svm batch message: {}", e);
         }
     };
-    let exec_account_data = result_accounts.get(&pk_contract).expect("no exec account");
-    let exec_account_balance_after = exec_account_data.lamports();
-    assert_eq!(
-        exec_account_balance_before, exec_account_balance_after,
-        "exec account balance shouldn't change"
-    );
-
-    // reorder balance changes so we have balance transfers like 'from->to'
-    let mut balance_senders: Vec<(&Pubkey, u64)> = Default::default();
-    let mut balance_receivers: Vec<(&Pubkey, u64)> = Default::default();
-    for (pk, snapshot) in &balance_changes {
-        let descriptor = snapshot.get_descriptor();
-        if descriptor.amount <= 0 {
-            continue;
-        }
-        if descriptor.direction.is_decreased() {
-            if pk != &pk_caller {
-                panic!("sending balance from non-caller accounts is not supported");
-            }
-            balance_senders.push((pk, descriptor.amount));
-        } else if descriptor.direction.is_increased() {
-            balance_receivers.push((pk, descriptor.amount));
-        }
-    }
-    if !balance_senders.is_empty() || !balance_receivers.is_empty() {
-        let mut from_iter = balance_senders.iter_mut();
-        let mut to_iter = balance_receivers.iter_mut();
-        let mut from = from_iter.next();
-        let mut to = to_iter.next();
-        while from.is_some() && to.is_some() {
-            let from_value = from.as_deref_mut().unwrap();
-            let to_value = to.as_deref_mut().unwrap();
-
-            let amount = core::cmp::min(from_value.1, to_value.1);
-            let address_from = evm_address_from_pubkey::<true>(from_value.0).unwrap();
-            let address_to = evm_address_from_pubkey::<true>(to_value.0).unwrap();
-
-            if contract_caller == address_from {
-                GlobalLamportsBalance::transfer(&mut sdk, from_value.0, to_value.0, amount);
-                from_value.1 -= amount;
-                to_value.1 -= amount;
-                if from_value.1 <= 0 {
-                    from = from_iter.next();
-                }
-                if to_value.1 <= 0 {
-                    to = to_iter.next();
-                }
-            } else {
-                panic!("balance transfers from non-caller are not supported");
-            }
-        }
-        assert!(
-            from.is_none() && to.is_none(),
-            "some balances left unsettled: from {} to {}",
-            from.is_some(),
-            to.is_some()
-        );
-    }
 
     let out = Bytes::new();
     sdk.write(out.as_ref());
@@ -270,7 +168,6 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
 
     let mut batch_message = BatchMessage::new(None);
 
-    // TODO need specific value?
     let balance_to_transfer = 0;
     let instructions = loader_v4::create_buffer(
         &pk_payer,
@@ -331,5 +228,4 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let contract_account_data: Bytes = contract_account_data.into();
     write_contract_data(&mut sdk, &pk_contract, contract_account_data)
         .expect("failed to save contract");
-    // TODO figure out balance changes and apply them to evm
 }*/

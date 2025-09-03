@@ -184,12 +184,13 @@ impl MetadataAPI for HostTestingContext {
         let derived_metadata_address =
             calc_create4_address(&account_owner, salt, HostTestingContextNativeAPI::keccak256);
         let target_address = ctx.shared_context_input_v1.contract.address;
-        ctx.metadata
-            .insert(
-                (target_address, derived_metadata_address),
-                metadata.to_vec(),
-            )
-            .expect("metadata account collision");
+        let res = ctx.metadata.insert(
+            (target_address, derived_metadata_address),
+            metadata.to_vec(),
+        );
+        if res.is_some() {
+            panic!("metadata account collision")
+        }
         SyscallResult::new(Default::default(), 0, 0, ExitCode::Ok)
     }
 

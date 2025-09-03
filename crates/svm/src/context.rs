@@ -1,21 +1,16 @@
 use crate::{
     account::{AccountSharedData, BorrowedAccount, ReadableAccount},
-    // bpf_loader,
     clock::Slot,
     common::load_program_from_bytes,
     compute_budget::compute_budget::ComputeBudget,
     hash::Hash,
     helpers::{AllocErr, SyscallContext},
     loaded_programs::{
-        ProgramCacheEntry,
-        ProgramCacheEntryOwner,
-        ProgramCacheEntryType,
-        ProgramCacheForTxBatch,
+        ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType, ProgramCacheForTxBatch,
         ProgramRuntimeEnvironments,
     },
     loaders::bpf_loader_v4,
     native_loader,
-    precompiles::Precompile,
     solana_program::{
         loader_v4,
         loader_v4::{LoaderV4State, LoaderV4Status},
@@ -128,7 +123,7 @@ pub struct InvokeContext<'a, SDK: SharedAPI> {
     compute_budget: ComputeBudget,
     pub syscall_context: Vec<Option<SyscallContext>>,
     traces: Vec<Vec<[u64; 12]>>,
-    pub sdk: &'a SDK,
+    pub sdk: &'a mut SDK,
 }
 
 impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
@@ -138,7 +133,7 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         program_cache_for_tx_batch: ProgramCacheForTxBatch<'a, SDK>,
         environment_config: EnvironmentConfig,
         compute_budget: ComputeBudget,
-        sdk: &'a SDK,
+        sdk: &'a mut SDK,
     ) -> Self {
         Self {
             transaction_context,
@@ -339,33 +334,33 @@ impl<'a, SDK: SharedAPI> InvokeContext<'a, SDK> {
         result
     }
 
-    /// Processes a precompile instruction
-    pub fn process_precompile<'ix_data>(
-        &mut self,
-        precompile: &Precompile,
-        instruction_data: &[u8],
-        instruction_accounts: &[InstructionAccount],
-        program_indices: &[IndexOfAccount],
-        message_instruction_datas_iter: impl Iterator<Item = &'ix_data [u8]>,
-    ) -> Result<(), InstructionError> {
-        self.transaction_context
-            .get_next_instruction_context()?
-            .configure(program_indices, instruction_accounts, instruction_data);
-        self.push()?;
-
-        let feature_set = self.get_feature_set();
-        let move_precompile_verification_to_svm =
-            feature_set.is_active(&move_precompile_verification_to_svm::id());
-        if move_precompile_verification_to_svm {
-            let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
-            precompile
-                .verify(instruction_data, &instruction_datas, feature_set)
-                .map_err(InstructionError::from)
-                .and(self.pop())
-        } else {
-            self.pop()
-        }
-    }
+    // /// Processes a precompile instruction
+    // pub fn process_precompile<'ix_data>(
+    //     &mut self,
+    //     precompile: &Precompile,
+    //     instruction_data: &[u8],
+    //     instruction_accounts: &[InstructionAccount],
+    //     program_indices: &[IndexOfAccount],
+    //     message_instruction_datas_iter: impl Iterator<Item = &'ix_data [u8]>,
+    // ) -> Result<(), InstructionError> {
+    //     self.transaction_context
+    //         .get_next_instruction_context()?
+    //         .configure(program_indices, instruction_accounts, instruction_data);
+    //     self.push()?;
+    //
+    //     let feature_set = self.get_feature_set();
+    //     let move_precompile_verification_to_svm =
+    //         feature_set.is_active(&move_precompile_verification_to_svm::id());
+    //     if move_precompile_verification_to_svm {
+    //         let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
+    //         precompile
+    //             .verify(instruction_data, &instruction_datas, feature_set)
+    //             .map_err(InstructionError::from)
+    //             .and(self.pop())
+    //     } else {
+    //         self.pop()
+    //     }
+    // }
 
     /// Calls the instruction's program entrypoint method
     fn process_executable_chain(&mut self) -> Result<(), InstructionError> {

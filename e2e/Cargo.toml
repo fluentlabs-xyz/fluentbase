@@ -31,6 +31,7 @@ alloy-sol-types = { workspace = true }
 wat = { version = "1.223.0" }
 paste = { workspace = true }
 rand = { version = "0.9.1" }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 fluentbase-svm = { workspace = true }

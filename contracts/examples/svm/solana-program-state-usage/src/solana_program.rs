@@ -1,4 +1,6 @@
 extern crate alloc;
+extern crate core;
+
 use fluentbase_examples_svm_bindings::{
     alt_bn128_compression_native, alt_bn128_group_op_native, big_mod_exp_3, curve_group_op_native,
     curve_multiscalar_mul_native, curve_validate_point_native, get_return_data, log_data_native,
@@ -12,10 +14,12 @@ use fluentbase_svm_shared::{
 use num_derive::FromPrimitive;
 use solana_account_info::{next_account_info, AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_msg::msg;
+use solana_program::instruction::{AccountMeta, Instruction};
+use solana_program::program::invoke;
 use solana_program::{program::invoke_signed, system_instruction};
 use solana_program_entrypoint::{entrypoint_no_alloc, ProgramResult};
 use solana_program_error::ProgramError;
-use solana_pubkey::Pubkey;
+use solana_pubkey::{Pubkey, PUBKEY_BYTES};
 use solana_sdk::decode_error::DecodeError;
 use std::str::from_utf8;
 
@@ -129,9 +133,10 @@ pub fn process_instruction(
             let signer_seeds = &[&p_seeds[0], payer.key.as_ref(), &[bump]];
 
             msg!(
-                "payer.key: {:x?} new_account.key: {:x?} lamports {} space {} program_id {:x?} signer_seeds {:x?}",
+                "payer.key: {:x?} new_account.key: {:x?} new_account.lamports {} lamports_to_send {} space {} program_id {:x?} signer_seeds {:x?}",
                 payer.key.to_bytes(),
-                new_account.key.to_bytes(),
+                new_account.key,
+                new_account.lamports(),
                 p.lamports_to_send,
                 p.space,
                 program_id.to_bytes(),
@@ -161,6 +166,81 @@ pub fn process_instruction(
             new_account.data.borrow_mut()[p.byte_n_to_set as usize] = p.byte_n_value;
 
             msg!("Create account: end");
+        }
+        TestCommand::Transfer(p) => {
+            let account_info_iter = &mut accounts.iter();
+
+            let payer = next_account_info(account_info_iter)?;
+            let receiver = next_account_info(account_info_iter)?;
+
+            let account_infos = &[payer.clone(), receiver.clone()];
+            msg!(
+                "process_instruction: transfer: payer (key={:x?} owner={:x?}) receiver (key={:x?} owner={:x?})",
+                payer.key.to_bytes(),
+                payer.owner.to_bytes(),
+                receiver.key.to_bytes(),
+                receiver.owner.to_bytes(),
+            );
+            invoke(
+                &system_instruction::transfer(payer.key, receiver.key, p.lamports),
+                account_infos,
+            )?;
+        }
+        TestCommand::EvmCall(p) => {
+            let account_infos = &[];
+            let mut evm_address_pk = [0u8; PUBKEY_BYTES];
+            evm_address_pk[12..].copy_from_slice(&p.address);
+            let evm_address_pk = Pubkey::new_from_array(evm_address_pk);
+            invoke(
+                &Instruction::new_with_bytes(evm_address_pk, &p.params_to_vec(), vec![]),
+                account_infos,
+            )?;
+            let return_data_result = get_return_data();
+            match return_data_result {
+                None => {
+                    msg!("EvmCall: err");
+                }
+                Some((pk, return_data)) => {
+                    msg!("EvmCall: pk {} return_data: {:x?}", pk, return_data);
+                    assert_eq!(return_data, p.result_data_expected);
+                }
+            }
+        }
+        TestCommand::Invoke(p) => {
+            let mut account_infos = vec![];
+            let mut account_metas = vec![];
+            let evm_address_pk = Pubkey::new_from_array(p.pubkey);
+            for i in p.account_info_idxs {
+                account_infos.push(accounts[i].clone())
+            }
+            for (pk, is_signer, is_writable) in p.account_metas {
+                account_metas.push(AccountMeta {
+                    pubkey: Pubkey::new_from_array(pk),
+                    is_signer,
+                    is_writable,
+                })
+            }
+            let invoke_result = invoke(
+                &Instruction::new_with_bytes(evm_address_pk, &p.data, account_metas),
+                &account_infos,
+            );
+            match invoke_result {
+                Ok(_) => {
+                    let return_data_result = get_return_data();
+                    match return_data_result {
+                        None => {
+                            msg!("Invoke: empty return data");
+                        }
+                        Some((pk, return_data)) => {
+                            msg!("Invoke: pk {} return_data: {:x?}", pk, return_data);
+                            assert_eq!(return_data, p.result_data_expected);
+                        }
+                    }
+                }
+                Err(v) => {
+                    return Err(v);
+                }
+            }
         }
         TestCommand::SolBigModExp(p) => {
             let modulus: [u8; 32] = p.modulus.try_into().unwrap();

@@ -16,8 +16,7 @@ pub mod tests {
             message::{AccountKeys, LegacyMessage, Message, SanitizedMessage},
         },
         system_instruction::{SystemError, SystemInstruction},
-        system_processor,
-        system_program,
+        system_processor, system_program,
         sysvar_cache::SysvarCache,
         test_helpers::journal_state,
     };
@@ -35,7 +34,7 @@ pub mod tests {
     fn test_process_message_readonly_handling_mocked() {
         let config = rbpf_config_default(None);
 
-        let sdk = journal_state();
+        let mut sdk = journal_state();
 
         let writable_pubkey = Pubkey::new_unique();
         let readonly_pubkey = Pubkey::new_unique();
@@ -150,7 +149,7 @@ pub mod tests {
             programs_cache_for_tx_batch,
             environment_config,
             compute_budget,
-            &sdk,
+            &mut sdk,
         );
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
@@ -232,7 +231,7 @@ pub mod tests {
     #[test]
     fn test_process_message_duplicate_accounts_mocked() {
         let config = rbpf_config_default(None);
-        let sdk = journal_state();
+        let mut sdk = journal_state();
 
         let blockhash = Hash::default();
 
@@ -370,7 +369,7 @@ pub mod tests {
             programs_cache_for_tx_batch,
             environment_config,
             compute_budget,
-            &sdk,
+            &mut sdk,
         );
         let result =
             MessageProcessor::process_message(&message, &program_indices, &mut invoke_context);
@@ -481,7 +480,7 @@ pub mod tests {
 
         let blockhash = Hash::default();
 
-        let sdk = journal_state();
+        let mut sdk = journal_state();
 
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
@@ -544,7 +543,7 @@ pub mod tests {
             programs_cache_for_tx_batch,
             environment_config,
             compute_budget,
-            &sdk,
+            &mut sdk,
         );
 
         let message = SanitizedMessage::Legacy(LegacyMessage::new(
@@ -601,7 +600,7 @@ pub mod tests {
 
         let blockhash = Hash::default();
 
-        let sdk = journal_state();
+        let mut sdk = journal_state();
 
         let from = Pubkey::new_unique();
         let to = Pubkey::from([3; PUBKEY_BYTES]);
@@ -657,7 +656,7 @@ pub mod tests {
             programs_cache_for_tx_batch,
             environment_config,
             compute_budget,
-            &sdk,
+            &mut sdk,
         );
 
         let message = SanitizedMessage::Legacy(LegacyMessage::new(
@@ -803,7 +802,7 @@ pub mod tests {
 
         let blockhash = Hash::default();
 
-        let sdk = journal_state();
+        let mut sdk = journal_state();
 
         let native_loader_id = native_loader::id();
         let system_program_id = system_program::id();
@@ -854,7 +853,7 @@ pub mod tests {
             programs_cache_for_tx_batch,
             environment_config,
             compute_budget,
-            &sdk,
+            &mut sdk,
         );
 
         let number_of_accounts = invoke_context.transaction_context.get_number_of_accounts();
@@ -1012,7 +1011,7 @@ pub mod tests {
 
         let blockhash = Hash::default();
 
-        let sdk = journal_state();
+        let mut sdk = journal_state();
 
         let native_loader_id = native_loader::id();
         let system_program_id = system_program::id();
@@ -1064,7 +1063,7 @@ pub mod tests {
             programs_cache_for_tx_batch,
             environment_config,
             compute_budget,
-            &sdk,
+            &mut sdk,
         );
 
         let number_of_accounts = invoke_context.transaction_context.get_number_of_accounts();

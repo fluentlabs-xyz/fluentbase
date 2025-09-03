@@ -17,7 +17,7 @@ mod tests {
     use solana_pubkey::PUBKEY_BYTES;
 
     fn process_instruction<SDK: SharedAPI>(
-        sdk: &SDK,
+        sdk: &mut SDK,
         instruction_data: &[u8],
         transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
         instruction_accounts: Vec<AccountMeta>,
@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn test_create_account() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
@@ -48,7 +48,7 @@ mod tests {
         let to_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn test_create_account_with_seed() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
@@ -88,7 +88,7 @@ mod tests {
         let to_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccountWithSeed {
                 base: from,
                 seed: seed.to_string(),
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_create_account_with_seed_separate_base_account() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
@@ -132,7 +132,7 @@ mod tests {
         let base_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccountWithSeed {
                 base,
                 seed: seed.to_string(),
@@ -169,13 +169,13 @@ mod tests {
 
     #[test]
     fn test_address_create_with_seed_mismatch() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         let (_config, loader) = prepare_vars_for_tests();
         with_mock_invoke_context!(
             invoke_context,
             transaction_context,
-            &sdk,
+            &mut sdk,
             loader,
             Vec::new()
         );
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_create_account_with_seed_missing_sig() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
@@ -202,7 +202,7 @@ mod tests {
         let to_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_create_with_zero_lamports() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         // create account with zero lamports transferred
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
@@ -240,7 +240,7 @@ mod tests {
         let to_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 0,
                 space: 2,
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_create_negative_lamports() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         // Attempt to create account with more lamports than from_account has
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
@@ -280,7 +280,7 @@ mod tests {
         let to_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 150,
                 space: 2,
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_request_more_than_allowed_data_length() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
@@ -327,7 +327,7 @@ mod tests {
 
         // Trying to request more data length than permitted will result in failure
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: MAX_PERMITTED_DATA_LENGTH + 1,
@@ -341,7 +341,7 @@ mod tests {
 
         // Trying to request equal or less data length than permitted will be successful
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: MAX_PERMITTED_DATA_LENGTH,
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_create_already_in_use() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let from = Pubkey::new_unique();
@@ -370,7 +370,7 @@ mod tests {
         let owned_account = AccountSharedData::new(0, 0, &original_program_owner);
         let unchanged_account = owned_account.clone();
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
@@ -399,7 +399,7 @@ mod tests {
         let owned_account = AccountSharedData::new(0, 1, &Pubkey::default());
         let unchanged_account = owned_account.clone();
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
@@ -428,7 +428,7 @@ mod tests {
         let owned_account = AccountSharedData::new(1, 0, &Pubkey::default());
         let unchanged_account = owned_account.clone();
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_create_unsigned() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         // Attempt to create an account without signing the transfer
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
@@ -467,7 +467,7 @@ mod tests {
 
         // Haven't signed from account
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
@@ -495,7 +495,7 @@ mod tests {
 
         // Haven't signed to account
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
@@ -521,7 +521,7 @@ mod tests {
         // Don't support unsigned creation with zero lamports (ephemeral account)
         let owned_account = AccountSharedData::new(0, 0, &Pubkey::default());
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_create_sysvar_invalid_id_with_feature() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         // Attempt to create system account in account already owned by another program
         let from = Pubkey::new_unique();
@@ -557,7 +557,7 @@ mod tests {
 
         // fail to create a sysvar::id() owned account
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
@@ -583,7 +583,7 @@ mod tests {
 
     #[test]
     fn test_create_data_populated() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         // Attempt to create system account in account with populated data
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
@@ -596,7 +596,7 @@ mod tests {
         });
 
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_assign() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         let new_owner = Pubkey::from([9; PUBKEY_BYTES]);
         let pubkey = Pubkey::new_unique();
@@ -630,7 +630,7 @@ mod tests {
 
         // owner does not change, no signature needed
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::Assign {
                 owner: system_program::id(),
             })
@@ -646,7 +646,7 @@ mod tests {
 
         // owner does change, signature needed
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::Assign { owner: new_owner }).unwrap(),
             vec![(pubkey, account.clone())],
             vec![AccountMeta {
@@ -658,7 +658,7 @@ mod tests {
         );
 
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::Assign { owner: new_owner }).unwrap(),
             vec![(pubkey, account.clone())],
             vec![AccountMeta {
@@ -671,7 +671,7 @@ mod tests {
 
         // assign to sysvar instead of system_program
         process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::Assign {
                 owner: sysvar::id(),
             })
@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn test_process_bogus_instruction() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         // Attempt to assign with no accounts
         let instruction = SystemInstruction::Assign {
@@ -696,7 +696,7 @@ mod tests {
         };
         let data = serialize(&instruction).unwrap();
         process_instruction(
-            &sdk,
+            &mut sdk,
             &data,
             Vec::new(),
             Vec::new(),
@@ -709,7 +709,7 @@ mod tests {
         let instruction = SystemInstruction::Transfer { lamports: 0 };
         let data = serialize(&instruction).unwrap();
         process_instruction(
-            &sdk,
+            &mut sdk,
             &data,
             vec![(from, from_account)],
             vec![AccountMeta {
@@ -723,7 +723,7 @@ mod tests {
 
     #[test]
     fn test_transfer_lamports() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
@@ -748,7 +748,7 @@ mod tests {
 
         // Success case
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -761,7 +761,7 @@ mod tests {
 
         // Attempt to move more lamports than from_account has
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::Transfer { lamports: 101 }).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -772,7 +772,7 @@ mod tests {
 
         // test signed transfer of zero
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts,
@@ -783,7 +783,7 @@ mod tests {
 
         // test unsigned transfer of zero
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::Transfer { lamports: 0 }).unwrap(),
             transaction_accounts,
             vec![
@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn test_transfer_with_seed() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         let base = Pubkey::new_unique();
         let base_account = AccountSharedData::new(100, 0, &Pubkey::from([2; PUBKEY_BYTES])); // account owner should not matter
@@ -838,7 +838,7 @@ mod tests {
 
         // Success case
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::TransferWithSeed {
                 lamports: 50,
                 from_seed: from_seed.clone(),
@@ -854,7 +854,7 @@ mod tests {
 
         // Attempt to move more lamports than from_account has
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::TransferWithSeed {
                 lamports: 101,
                 from_seed: from_seed.clone(),
@@ -870,7 +870,7 @@ mod tests {
 
         // Test unsigned transfer of zero
         let accounts = process_instruction(
-            &sdk,
+            &mut sdk,
             &serialize(&SystemInstruction::TransferWithSeed {
                 lamports: 0,
                 from_seed,
@@ -903,13 +903,13 @@ mod tests {
 
     #[test]
     fn test_assign_native_loader_and_transfer() {
-        let sdk = new_test_sdk();
+        let mut sdk = new_test_sdk();
 
         for size in [0, 10] {
             let pubkey = Pubkey::new_unique();
             let account = AccountSharedData::new(100, size, &system_program::id());
             let accounts = process_instruction(
-                &sdk,
+                &mut sdk,
                 &serialize(&SystemInstruction::Assign {
                     owner: native_loader::id(),
                 })
@@ -927,7 +927,7 @@ mod tests {
 
             let pubkey2 = Pubkey::new_unique();
             let accounts = process_instruction(
-                &sdk,
+                &mut sdk,
                 &serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
                 vec![
                     (

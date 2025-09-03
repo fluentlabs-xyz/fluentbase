@@ -1,4 +1,7 @@
 use super::*;
+use crate::common::{evm_address_from_pubkey, pubkey_from_evm_address};
+use crate::fluentbase::common::SYSTEM_PROGRAMS_KEYS;
+use crate::helpers::{is_program_exists, storage_read_account_data, storage_read_metadata_params};
 use crate::{
     account::BorrowedAccount,
     builtins::SyscallInvokeSignedRust,
@@ -6,14 +9,9 @@ use crate::{
     error::{Error, SvmError, SyscallError},
     helpers::SerializedAccountMetadata,
     mem_ops::{
-        translate,
-        translate_slice,
-        translate_slice_mut,
-        translate_type,
-        translate_type_mut,
+        translate, translate_slice, translate_slice_mut, translate_type, translate_type_mut,
     },
-    native_loader,
-    precompiles::is_precompile,
+    native_loader, token_2022,
     word_size::{
         addr_type::AddrType,
         common::{MemoryMappingHelper, STABLE_VEC_FAT_PTR64_BYTE_SIZE},
@@ -24,13 +22,17 @@ use crate::{
 };
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{fmt::Debug, marker::PhantomData, ptr};
-use fluentbase_sdk::SharedAPI;
+use fluentbase_erc20::common::sig_to_bytes;
+use fluentbase_erc20::consts::SIG_TOKEN2022;
+use fluentbase_sdk::{debug_log_ext, Address, SharedAPI};
+use fluentbase_types::{PRECOMPILE_ERC20_RUNTIME, SVM_ELF_MAGIC_BYTES, U256};
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::SUCCESS;
 use solana_pubkey::{Pubkey, MAX_SEEDS, PUBKEY_BYTES};
 use solana_rbpf::memory_region::MemoryMapping;
 use solana_stable_layout::stable_instruction::StableInstruction;
+use solana_stable_layout::stable_vec::StableVec;
 
 enum VmValue<'a, 'b, T> {
     #[allow(dead_code)]
@@ -407,242 +409,6 @@ impl<SDK: SharedAPI> SyscallInvokeSigned<SDK> for SyscallInvokeSignedRust {
     }
 }
 
-// /// Rust representation of C's SolInstruction
-// #[derive(Debug)]
-// #[repr(C)]
-// struct SolInstruction {
-//     program_id_addr: u64,
-//     accounts_addr: u64,
-//     accounts_len: u64,
-//     data_addr: u64,
-//     data_len: u64,
-// }
-//
-// /// Rust representation of C's SolAccountMeta
-// #[derive(Debug)]
-// #[repr(C)]
-// struct SolAccountMeta {
-//     pubkey_addr: u64,
-//     is_writable: bool,
-//     is_signer: bool,
-// }
-
-// /// Rust representation of C's SolAccountInfo
-// #[derive(Debug)]
-// #[repr(C)]
-// struct SolAccountInfo {
-//     key_addr: u64,
-//     lamports_addr: u64,
-//     data_len: u64,
-//     data_addr: u64,
-//     owner_addr: u64,
-//     rent_epoch: u64,
-//     is_signer: bool,
-//     is_writable: bool,
-//     executable: bool,
-// }
-
-// /// Rust representation of C's SolSignerSeed
-// #[derive(Debug)]
-// #[repr(C)]
-// struct SolSignerSeedC {
-//     addr: u64,
-//     len: u64,
-// }
-//
-// /// Rust representation of C's SolSignerSeeds
-// #[derive(Debug)]
-// #[repr(C)]
-// struct SolSignerSeedsC {
-//     addr: u64,
-//     len: u64,
-// }
-//
-// declare_builtin_function!(
-//     /// Cross-program invocation called from C
-//     SyscallInvokeSignedC,
-//     fn rust(
-//         invoke_context: &mut InvokeContext,
-//         instruction_addr: u64,
-//         account_infos_addr: u64,
-//         account_infos_len: u64,
-//         signers_seeds_addr: u64,
-//         signers_seeds_len: u64,
-//         memory_mapping: &mut MemoryMapping,
-//     ) -> Result<u64, Error> {
-//         cpi_common::<Self>(
-//             invoke_context,
-//             instruction_addr,
-//             account_infos_addr,
-//             account_infos_len,
-//             signers_seeds_addr,
-//             signers_seeds_len,
-//             memory_mapping,
-//         )
-//     }
-// );
-//
-// impl SyscallInvokeSigned for SyscallInvokeSignedC {
-//     fn translate_instruction(
-//         addr: u64,
-//         memory_mapping: &MemoryMapping,
-//         invoke_context: &mut InvokeContext,
-//     ) -> Result<StableInstruction, Error> {
-//         let ix_c = translate_type::<SolInstruction>(
-//             memory_mapping,
-//             addr,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//
-//         check_instruction_size(
-//             ix_c.accounts_len as usize,
-//             ix_c.data_len as usize,
-//             invoke_context,
-//         )?;
-//         let program_id = translate_type::<Pubkey>(
-//             memory_mapping,
-//             ix_c.program_id_addr,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//         let account_metas = translate_slice::<SolAccountMeta>(
-//             memory_mapping,
-//             ix_c.accounts_addr,
-//             ix_c.accounts_len,
-//             invoke_context.get_check_aligned(),
-//         )?;
-//
-//         let ix_data_len = ix_c.data_len;
-//         if invoke_context
-//             .get_feature_set()
-//             .is_active(&feature_set::loosen_cpi_size_restriction::id())
-//         {
-//             consume_compute_meter(
-//                 invoke_context,
-//                 (ix_data_len)
-//                     .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
-//                     .unwrap_or(u64::MAX),
-//             )?;
-//         }
-//
-//         let data = translate_slice::<u8>(
-//             memory_mapping,
-//             ix_c.data_addr,
-//             ix_data_len,
-//             invoke_context.get_check_aligned(),
-//         )?
-//         .to_vec();
-//
-//         let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
-//         #[allow(clippy::needless_range_loop)]
-//         for account_index in 0..ix_c.accounts_len as usize {
-//             #[allow(clippy::indexing_slicing)]
-//             let account_meta = &account_metas[account_index];
-//             if unsafe {
-//                 std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
-//                     || std::ptr::read_volatile(&account_meta.is_writable as *const _ as *const u8)
-//                         > 1
-//             } {
-//                 return Err(Box::new(InstructionError::InvalidArgument));
-//             }
-//             let pubkey = translate_type::<Pubkey>(
-//                 memory_mapping,
-//                 account_meta.pubkey_addr,
-//                 invoke_context.get_check_aligned(),
-//             )?;
-//             accounts.push(AccountMeta {
-//                 pubkey: *pubkey,
-//                 is_signer: account_meta.is_signer,
-//                 is_writable: account_meta.is_writable,
-//             });
-//         }
-//
-//         Ok(StableInstruction {
-//             accounts: accounts.into(),
-//             data: data.into(),
-//             program_id: *program_id,
-//         })
-//     }
-//
-//     fn translate_accounts<'a, 'b>(
-//         instruction_accounts: &[InstructionAccount],
-//         program_indices: &[IndexOfAccount],
-//         account_infos_addr: u64,
-//         account_infos_len: u64,
-//         is_loader_deprecated: bool,
-//         memory_mapping: &'b MemoryMapping<'a>,
-//         invoke_context: &mut InvokeContext,
-//     ) -> Result<TranslatedAccounts<'a, 'b>, Error> {
-//         let (account_infos, account_info_keys) = translate_account_infos(
-//             account_infos_addr,
-//             account_infos_len,
-//             |account_info: &SolAccountInfo| account_info.key_addr,
-//             memory_mapping,
-//             invoke_context,
-//         )?;
-//
-//         translate_and_update_accounts(
-//             instruction_accounts,
-//             program_indices,
-//             &account_info_keys,
-//             account_infos,
-//             account_infos_addr,
-//             is_loader_deprecated,
-//             invoke_context,
-//             memory_mapping,
-//             CallerAccount::from_sol_account_info,
-//         )
-//     }
-//
-//     fn translate_signers(
-//         program_id: &Pubkey,
-//         signers_seeds_addr: u64,
-//         signers_seeds_len: u64,
-//         memory_mapping: &MemoryMapping,
-//         invoke_context: &InvokeContext,
-//     ) -> Result<Vec<Pubkey>, Error> {
-//         if signers_seeds_len > 0 {
-//             let signers_seeds = translate_slice::<SolSignerSeedsC>(
-//                 memory_mapping,
-//                 signers_seeds_addr,
-//                 signers_seeds_len,
-//                 invoke_context.get_check_aligned(),
-//             )?;
-//             if signers_seeds.len() > MAX_SIGNERS {
-//                 return Err(Box::new(SyscallError::TooManySigners));
-//             }
-//             Ok(signers_seeds
-//                 .iter()
-//                 .map(|signer_seeds| {
-//                     let seeds = translate_slice::<SolSignerSeedC>(
-//                         memory_mapping,
-//                         signer_seeds.addr,
-//                         signer_seeds.len,
-//                         invoke_context.get_check_aligned(),
-//                     )?;
-//                     if seeds.len() > MAX_SEEDS {
-//                         return Err(Box::new(InstructionError::MaxSeedLengthExceeded) as Error);
-//                     }
-//                     let seeds_bytes = seeds
-//                         .iter()
-//                         .map(|seed| {
-//                             translate_slice::<u8>(
-//                                 memory_mapping,
-//                                 seed.addr,
-//                                 seed.len,
-//                                 invoke_context.get_check_aligned(),
-//                             )
-//                         })
-//                         .collect::<Result<Vec<_>, Error>>()?;
-//                     Pubkey::create_program_address(&seeds_bytes, program_id)
-//                         .map_err(|err| Box::new(SyscallError::BadSeeds(err)) as Error)
-//                 })
-//                 .collect::<Result<Vec<_>, Error>>()?)
-//         } else {
-//             Ok(vec![])
-//         }
-//     }
-// }
-
 fn translate_account_infos<'a, T: Clone + SpecMethods<'a> + Debug + 'a, F, SDK: SharedAPI>(
     account_infos_addr: u64,
     account_infos_len: u64,
@@ -863,10 +629,10 @@ fn check_authorized_program<SDK: SharedAPI>(
     invoke_context: &InvokeContext<SDK>,
 ) -> Result<(), Error> {
     if native_loader::check_id(program_id)
-        // || bpf_loader::check_id(program_id)
-        || is_precompile(program_id, |feature_id: &Pubkey| {
-            invoke_context.get_feature_set().is_active(feature_id)
-        })
+    // || bpf_loader::check_id(program_id)
+    // || is_precompile(program_id, |feature_id: &Pubkey| {
+    //     invoke_context.get_feature_set().is_active(feature_id)
+    // })
     {
         return Err(Box::new(SyscallError::ProgramNotSupported(*program_id)));
     }
@@ -887,8 +653,91 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     //
     // Translate the inputs to the syscall and synchronize the caller's account
     // changes so the callee can see them.
-    let instruction: StableInstruction =
+    let mut instruction: StableInstruction =
         S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
+    let mut reroute_to_evm_input_prefix: Option<[u8; 4]> = None;
+    if instruction.program_id == token_2022::lib::id() {
+        instruction.program_id = pubkey_from_evm_address::<true>(&PRECOMPILE_ERC20_RUNTIME);
+        // TODO 4test, temp solution for routing to spl-token2022
+        let sig_token2022_bytes = sig_to_bytes(SIG_TOKEN2022);
+        // let mut data = Vec::with_capacity(sig_token2022_bytes.len() + instruction.data.len());
+        // data.extend_from_slice(&sig_token2022_bytes);
+        // data.extend_from_slice(&instruction.data);
+        // instruction.data = data.into();
+        reroute_to_evm_input_prefix = Some(sig_token2022_bytes);
+    }
+    if reroute_to_evm_input_prefix.is_some()
+        || !is_program_exists(invoke_context.sdk, &instruction.program_id)?
+    {
+        let mut data: StableVec<u8>;
+        let mut offset = 0;
+        let address = evm_address_from_pubkey::<false>(&instruction.program_id)?;
+        let value;
+        let fuel_limit;
+        if let Some(prefix) = reroute_to_evm_input_prefix {
+            value = U256::ZERO;
+            fuel_limit = None;
+            // data: prefix ([u8; 4]) + program_id ([u8; 32]) + accounts_meta_number (u8) + account_meta[] (AccountMeta) + data ([u8])
+            let mut data_tmp = Vec::with_capacity(
+                prefix.len()
+                    + PUBKEY_BYTES
+                    + 1
+                    + instruction.accounts.len() * size_of::<AccountMeta>()
+                    + instruction.data.len(),
+            );
+            data_tmp.extend_from_slice(&prefix);
+            data_tmp.extend_from_slice(&instruction.program_id.to_bytes());
+            data_tmp.push(instruction.accounts.len() as u8);
+            let tmp_am = AccountMeta::new(instruction.program_id, false);
+            let tmp_am_ser = solana_bincode::serialize(&tmp_am)?;
+            debug_log_ext!("tmp_am_ser.len={}", tmp_am_ser.len());
+            for am in instruction.accounts.iter() {
+                let am_ser = solana_bincode::serialize(am)?;
+                debug_log_ext!("am_ser.len={}", am_ser.len());
+                data_tmp.extend_from_slice(&am_ser);
+            }
+            data_tmp.extend_from_slice(&instruction.data);
+            data = data_tmp.into();
+            debug_log_ext!("data.len={}", data.len());
+        } else {
+            data = instruction.data;
+            const MIN_LEN: usize = size_of::<U256>() + size_of::<u64>();
+            if data.len() < MIN_LEN {
+                return Ok(1);
+            }
+            value = U256::from_le_bytes::<{ size_of::<U256>() }>(
+                data[offset..offset + size_of::<U256>()].try_into().unwrap(),
+            );
+            offset += size_of::<U256>();
+            fuel_limit = {
+                let limit =
+                    u64::from_le_bytes(data[offset..offset + size_of::<u64>()].try_into().unwrap());
+                if limit == u64::MAX {
+                    None
+                } else {
+                    Some(limit)
+                }
+            };
+            offset += size_of::<u64>();
+        }
+        let input = &data[offset..];
+        debug_log_ext!(
+            "invoke_context.sdk.call({}, {}, {:x?}, {:x?})",
+            address,
+            value,
+            input,
+            fuel_limit
+        );
+        let call_result = invoke_context.sdk.call(address, value, input, fuel_limit);
+        if !call_result.status.is_ok() {
+            return Ok(1);
+        };
+        let return_data = call_result.data.to_vec();
+        invoke_context
+            .transaction_context
+            .set_return_data(instruction.program_id, return_data);
+        return Ok(SUCCESS);
+    };
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let caller_program_id = instruction_context.get_last_program_key(transaction_context)?;
@@ -913,7 +762,6 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     )?;
 
     // Process the callee instruction
-    // let mut compute_units_consumed = 0;
     invoke_context.process_instruction(
         &instruction.data,
         &instruction_accounts,

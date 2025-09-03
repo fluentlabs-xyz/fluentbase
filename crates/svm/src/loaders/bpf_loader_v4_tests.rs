@@ -10,13 +10,7 @@ mod tests {
             bpf_loader_v4,
             bpf_loader_v4::{create_program_runtime_environment, get_state_mut},
         },
-        solana_program::{
-            instruction::AccountMeta,
-            loader_v4,
-            loader_v4::LoaderV4Status,
-            loader_v4_instruction::LoaderV4Instruction,
-            sysvar,
-        },
+        solana_program::{instruction::AccountMeta, loader_v4, loader_v4::LoaderV4Status, sysvar},
         test_helpers::{mock_process_instruction, new_test_sdk},
     };
     use fluentbase_sdk::SharedAPI;

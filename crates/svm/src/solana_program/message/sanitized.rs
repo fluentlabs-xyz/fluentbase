@@ -1,8 +1,6 @@
 use crate::solana_program::{
-    ed25519_program,
     instruction::CompiledInstruction,
     message::{legacy, AccountKeys, MessageHeader},
-    secp256k1_program,
     sysvar::instructions::{BorrowedAccountMeta, BorrowedInstruction},
 };
 use alloc::{borrow::Cow, vec::Vec};
@@ -264,24 +262,24 @@ impl SanitizedMessage {
             ..TransactionSignatureDetails::default()
         };
 
-        // counting the number of pre-processor operations separately
-        for (program_id, instruction) in self.program_instructions_iter() {
-            if secp256k1_program::check_id(program_id) {
-                if let Some(num_verifies) = instruction.data.first() {
-                    transaction_signature_details.num_secp256k1_instruction_signatures =
-                        transaction_signature_details
-                            .num_secp256k1_instruction_signatures
-                            .saturating_add(u64::from(*num_verifies));
-                }
-            } else if ed25519_program::check_id(program_id) {
-                if let Some(num_verifies) = instruction.data.first() {
-                    transaction_signature_details.num_ed25519_instruction_signatures =
-                        transaction_signature_details
-                            .num_ed25519_instruction_signatures
-                            .saturating_add(u64::from(*num_verifies));
-                }
-            }
-        }
+        // // counting the number of pre-processor operations separately
+        // for (program_id, instruction) in self.program_instructions_iter() {
+        //     if secp256k1_program::check_id(program_id) {
+        //         if let Some(num_verifies) = instruction.data.first() {
+        //             transaction_signature_details.num_secp256k1_instruction_signatures =
+        //                 transaction_signature_details
+        //                     .num_secp256k1_instruction_signatures
+        //                     .saturating_add(u64::from(*num_verifies));
+        //         }
+        //     } else if ed25519_program::check_id(program_id) {
+        //         if let Some(num_verifies) = instruction.data.first() {
+        //             transaction_signature_details.num_ed25519_instruction_signatures =
+        //                 transaction_signature_details
+        //                     .num_ed25519_instruction_signatures
+        //                     .saturating_add(u64::from(*num_verifies));
+        //         }
+        //     }
+        // }
 
         transaction_signature_details
     }
@@ -292,8 +290,8 @@ impl SanitizedMessage {
 #[derive(Debug, Default)]
 pub struct TransactionSignatureDetails {
     num_transaction_signatures: u64,
-    num_secp256k1_instruction_signatures: u64,
-    num_ed25519_instruction_signatures: u64,
+    // num_secp256k1_instruction_signatures: u64,
+    // num_ed25519_instruction_signatures: u64,
 }
 
 impl TransactionSignatureDetails {
@@ -304,16 +302,16 @@ impl TransactionSignatureDetails {
     ) -> Self {
         Self {
             num_transaction_signatures,
-            num_secp256k1_instruction_signatures,
-            num_ed25519_instruction_signatures,
+            // num_secp256k1_instruction_signatures,
+            // num_ed25519_instruction_signatures,
         }
     }
 
     /// return total number of signature, treating pre-processor operations as signature
     pub fn total_signatures(&self) -> u64 {
         self.num_transaction_signatures
-            .saturating_add(self.num_secp256k1_instruction_signatures)
-            .saturating_add(self.num_ed25519_instruction_signatures)
+        // .saturating_add(self.num_secp256k1_instruction_signatures)
+        // .saturating_add(self.num_ed25519_instruction_signatures)
     }
 
     /// return the number of transaction signatures
@@ -321,21 +319,20 @@ impl TransactionSignatureDetails {
         self.num_transaction_signatures
     }
 
-    /// return the number of secp256k1 instruction signatures
-    pub fn num_secp256k1_instruction_signatures(&self) -> u64 {
-        self.num_secp256k1_instruction_signatures
-    }
-
-    /// return the number of ed25519 instruction signatures
-    pub fn num_ed25519_instruction_signatures(&self) -> u64 {
-        self.num_ed25519_instruction_signatures
-    }
+    // /// return the number of secp256k1 instruction signatures
+    // pub fn num_secp256k1_instruction_signatures(&self) -> u64 {
+    //     self.num_secp256k1_instruction_signatures
+    // }
+    //
+    // /// return the number of ed25519 instruction signatures
+    // pub fn num_ed25519_instruction_signatures(&self) -> u64 {
+    //     self.num_ed25519_instruction_signatures
+    // }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solana_program::{ed25519_program, secp256k1_program};
 
     #[test]
     fn test_try_from_legacy_message() {
@@ -433,27 +430,26 @@ mod tests {
         let loader_key = Pubkey::new_unique();
 
         let loader_instr = CompiledInstruction::new(2, &(), vec![0, 1]);
-        let mock_secp256k1_instr = CompiledInstruction::new(3, &[1u8; 10], vec![]);
-        let mock_ed25519_instr = CompiledInstruction::new(4, &[5u8; 10], vec![]);
+        // let mock_secp256k1_instr = CompiledInstruction::new(3, &[1u8; 10], vec![]);
+        // let mock_ed25519_instr = CompiledInstruction::new(4, &[5u8; 10], vec![]);
 
         let message = SanitizedMessage::try_from_legacy_message(
             legacy::Message::new_with_compiled_instructions(
                 2,
                 1,
-                2,
+                1,
                 vec![
-                    key0,
-                    key1,
+                    key0, key1,
                     loader_key,
-                    secp256k1_program::id(),
-                    ed25519_program::id(),
+                    // secp256k1_program::id(),
+                    // ed25519_program::id(),
                 ],
                 Hash::default(),
                 vec![
                     loader_instr,
-                    mock_secp256k1_instr.clone(),
-                    mock_ed25519_instr,
-                    mock_secp256k1_instr,
+                    // mock_secp256k1_instr.clone(),
+                    // mock_ed25519_instr,
+                    // mock_secp256k1_instr,
                 ],
             ),
             &HashSet::new(),
@@ -464,8 +460,8 @@ mod tests {
         // expect 2 required transaction signatures
         assert_eq!(2, signature_details.num_transaction_signatures);
         // expect 2 secp256k1 instruction signatures - 1 for each mock_secp2561k1_instr
-        assert_eq!(2, signature_details.num_secp256k1_instruction_signatures);
+        // assert_eq!(2, signature_details.num_secp256k1_instruction_signatures);
         // expect 5 ed25519 instruction signatures from mock_ed25519_instr
-        assert_eq!(5, signature_details.num_ed25519_instruction_signatures);
+        // assert_eq!(5, signature_details.num_ed25519_instruction_signatures);
     }
 }
