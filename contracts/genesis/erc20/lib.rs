@@ -286,14 +286,6 @@ pub fn deploy_entry(mut sdk: impl SharedAPI) {
 pub fn main_entry(mut sdk: impl SharedAPI) {
     let input_size = sdk.input_size();
     let input = sdk.input();
-    // TODO 4tests, temp solution to route to token2022
-    if input.len() >= SVM_ELF_MAGIC_BYTES.len()
-        && input[..SVM_ELF_MAGIC_BYTES.len()] == SVM_ELF_MAGIC_BYTES
-    {
-        let spl_input = &input[SVM_ELF_MAGIC_BYTES.len()..];
-        debug_log_ext!("token2022 processing");
-        return;
-    }
     if input_size < SIG_LEN_BYTES as u32 {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     }
@@ -312,7 +304,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         SIG_MINT => mint(sdk, input),
         SIG_PAUSE => pause(sdk, input),
         SIG_UNPAUSE => unpause(sdk, input),
-        SIG_TOKEN2022 => token2022(sdk, input).expect("failed to process token2022 input"),
+        // SIG_TOKEN2022 => token2022(sdk, input).expect("failed to process token2022 input"),
         _ => {
             sdk.evm_exit(ERR_MALFORMED_INPUT);
         }
