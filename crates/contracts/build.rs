@@ -103,8 +103,7 @@ fn main() {
         }
     }
 
-    let fairblock_fallback_dir =
-        fluentbase_root_dir.join("contracts/genesis/fairblock/fallback.wasm");
+    let fairblock_fallback_dir = fluentbase_root_dir.join("contracts/fairblock/fallback.wasm");
     paths.push((
         "fluentbase-contracts-fairblock".to_string(),
         fairblock_fallback_dir,
