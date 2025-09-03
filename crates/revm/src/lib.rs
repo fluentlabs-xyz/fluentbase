@@ -9,6 +9,7 @@ mod api;
 mod evm;
 mod executor;
 mod handler;
+mod inspector;
 mod precompiles;
 mod result;
 mod spec;

@@ -3,11 +3,15 @@ use super::{
     models::{SpecName, Test, TestSuite},
     utils::recover_address,
 };
+use crate::inspector::{InspectorEvent, TraceInspector};
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
 use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
 use hashbrown::HashSet;
 use indicatif::{ProgressBar, ProgressDrawTarget};
+use revm::bytecode::opcode;
+use revm::interpreter::gas::MemoryGas;
+use revm::interpreter::{return_error, return_ok, return_revert};
 use revm::primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE;
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
@@ -20,7 +24,7 @@ use revm::{
     handler::MainnetContext,
     primitives::{hardfork::SpecId, keccak256, Bytes, B256, U256},
     state::AccountInfo,
-    ExecuteCommitEvm, MainBuilder, MainnetEvm,
+    ExecuteCommitEvm, InspectCommitEvm, MainBuilder, MainnetEvm,
 };
 use serde_json::json;
 use std::{
@@ -123,17 +127,155 @@ fn skip_test(path: &Path) -> bool {
     ) || path_str.contains("stEOF")
 }
 
-fn check_evm_execution<ERROR: Debug + ToString + Clone>(
+#[allow(dead_code)]
+fn check_evm_trace(
+    inspector1: &mut TraceInspector,
+    inspector2: &mut TraceInspector,
+) -> Result<(), TestError> {
+    let mut it1 = inspector1.events.iter_mut().filter(|e| match e {
+        InspectorEvent::Step(step) => match step.opcode {
+            opcode::CALL
+            | opcode::STATICCALL
+            | opcode::CALLCODE
+            | opcode::DELEGATECALL
+            | opcode::CREATE
+            | opcode::CREATE2
+            | opcode::STOP
+            | opcode::RETURN
+            | opcode::REVERT => true,
+            _ => false,
+        },
+        _ => true,
+    });
+    let mut it2 = inspector2.events.iter_mut();
+    let mut e1 = it1.next().unwrap();
+    let mut e2 = it2.next().unwrap();
+    loop {
+        let (e1_next, e2_next) = match (&mut e1, &mut e2) {
+            (
+                InspectorEvent::Call {
+                    inputs: _inputs1,
+                    outcome: ref mut outcome1,
+                },
+                InspectorEvent::Call {
+                    inputs: _inputs2,
+                    outcome: ref mut outcome2,
+                },
+            ) => {
+                println!("Call == Call");
+                // assert_eq!(inputs1, inputs2);
+                *outcome1.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                *outcome2.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                match (
+                    &outcome1.as_ref().unwrap().result.result,
+                    &outcome2.as_ref().unwrap().result.result,
+                ) {
+                    (return_ok!(), return_ok!()) => {}
+                    (return_revert!(), return_revert!()) => {}
+                    (return_error!(), return_error!()) => {}
+                    (_, _) => assert_eq!(outcome1, outcome2),
+                }
+                assert_eq!(
+                    outcome1.as_ref().unwrap().gas(),
+                    outcome2.as_ref().unwrap().gas()
+                );
+                assert_eq!(
+                    outcome1.as_ref().unwrap().output(),
+                    outcome2.as_ref().unwrap().output()
+                );
+                (it1.next(), it2.next())
+            }
+            (
+                InspectorEvent::Create {
+                    inputs: _inputs1,
+                    outcome: ref mut outcome1,
+                },
+                InspectorEvent::Create {
+                    inputs: _inputs2,
+                    outcome: ref mut outcome2,
+                },
+            ) => {
+                println!("Create == Create");
+                // assert_eq!(inputs1, inputs2);
+                *outcome1.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                *outcome2.as_mut().unwrap().result.gas.memory_mut() = MemoryGas::new();
+                match (
+                    &outcome1.as_ref().unwrap().result.result,
+                    &outcome2.as_ref().unwrap().result.result,
+                ) {
+                    (return_ok!(), return_ok!()) => {}
+                    (return_revert!(), return_revert!()) => {}
+                    (return_error!(), return_error!()) => {}
+                    (_, _) => assert_eq!(outcome1, outcome2),
+                }
+                assert_eq!(
+                    outcome1.as_ref().unwrap().gas(),
+                    outcome2.as_ref().unwrap().gas()
+                );
+                // assert_eq!(
+                //     outcome1.as_ref().unwrap().output(),
+                //     outcome2.as_ref().unwrap().output()
+                // );
+                assert_eq!(
+                    outcome1.as_ref().unwrap().address,
+                    outcome2.as_ref().unwrap().address,
+                );
+                (it1.next(), it2.next())
+            }
+            (InspectorEvent::Selfdestruct { .. }, _) => {
+                // don't check selfdestruct events
+                e1 = it1.next().unwrap();
+                continue;
+            }
+            (InspectorEvent::Log(_), InspectorEvent::Log(_)) => {
+                println!("Log == Log");
+                assert_eq!(e1, e2);
+                (it1.next(), it2.next())
+            }
+            (InspectorEvent::Step(step1), InspectorEvent::Step(step2)) => {
+                println!(
+                    "Opcode({}) == Opcode({})",
+                    step1.opcode_name, step2.opcode_name
+                );
+                (it1.next(), it2.next())
+            }
+            (_, _) => {
+                eprintln!("\n{:?} == {:?}", e1, e2);
+                unreachable!()
+            }
+        };
+        match (e1_next, e2_next) {
+            (Some(e1_next), Some(e2_next)) => {
+                e1 = e1_next;
+                e2 = e2_next;
+            }
+            (None, None) => {
+                break;
+            }
+            (Some(extra), None) => {
+                eprintln!("{:?} == {:?}", e1, e2);
+                eprintln!("Extra (EVM): {:?}", extra);
+                unreachable!("oh, we have different number of events")
+            }
+            (None, Some(extra)) => {
+                eprintln!("{:?} == {:?}", e1, e2);
+                eprintln!("Extra (FLUENT): {:?}", extra);
+                unreachable!("oh, we have different number of events")
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_evm_execution<ERROR: Debug + ToString + Clone, INSP>(
     test: &Test,
-    _spec_name: &SpecName,
     expected_output: Option<&Bytes>,
     test_name: &str,
     exec_result1: &Result<ExecutionResult, ERROR>,
     exec_result2: &Result<ExecutionResult, ERROR>,
-    evm: &mut MainnetEvm<MainnetContext<State<InMemoryDB>>>,
-    evm2: &mut RwasmEvm<RwasmContext<State<InMemoryDB>>>,
+    evm: &mut MainnetEvm<MainnetContext<State<InMemoryDB>>, INSP>,
+    evm2: &mut RwasmEvm<RwasmContext<State<InMemoryDB>>, INSP>,
     print_json_outcome: bool,
-    genesis_addresses: &HashSet<Address>,
 ) -> Result<(), TestError> {
     if !exec_result1.is_err() && exec_result2.is_err() {
         exec_result2.as_ref().unwrap();
@@ -148,15 +290,6 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone>(
             .cache
             .trie_account()
             .into_iter(),
-    );
-    let _state_root2 = state_merkle_trie_root(
-        evm2.0
-            .journaled_state
-            .database
-            .cache
-            .trie_account()
-            .into_iter()
-            .filter(|(addr, _)| !genesis_addresses.contains(addr)),
     );
 
     let print_json_output = |error: Option<String>| {
@@ -717,55 +850,81 @@ pub fn execute_test_suite(
                     .with_cached_prestate(cache)
                     .with_bundle_update()
                     .build();
-
-                let cfg_env2 = cfg_env.clone();
-                let mut evm = MainnetContext::new(state, spec_id)
-                    .with_cfg(cfg_env2)
-                    .with_block(block_env.clone())
-                    .build_mainnet();
-
                 let state2: State<InMemoryDB> = StateBuilder::default()
                     .with_cached_prestate(cache2)
                     .with_bundle_update()
                     .build();
-                let mut evm2 = RwasmContext::new(state2, spec_id)
-                    .with_cfg(cfg_env.clone())
-                    .with_block(block_env.clone())
-                    .build_rwasm();
+                let output = if trace {
+                    let timer = Instant::now();
+                    print!("\n\nrunning original EVM tests... ");
+                    let mut evm = MainnetContext::new(state, spec_id)
+                        .with_cfg(cfg_env.clone())
+                        .with_block(block_env.clone())
+                        .build_mainnet_with_inspector(TraceInspector::new());
+                    let start = Instant::now();
+                    let result_native = evm.inspect_tx_commit(tx_env.clone());
+                    println!("{:?}", start.elapsed());
+                    let start = Instant::now();
+                    print!("\n\nrunning RWASM tests... ");
+                    let mut evm2 = RwasmContext::new(state2, spec_id)
+                        .with_cfg(cfg_env.clone())
+                        .with_block(block_env.clone())
+                        .build_rwasm_with_inspector(TraceInspector::new());
+                    let result_fluent = evm2.inspect_tx_commit(tx_env.clone());
+                    println!("{:?}", start.elapsed());
+                    *elapsed.lock().unwrap() += timer.elapsed();
+                    // dump state and traces if the test failed
+                    let start = Instant::now();
+                    print!("\n\ncomparing EVM<>RWASM state... ");
+                    let output = check_evm_execution(
+                        &test,
+                        unit.out.as_ref(),
+                        &name,
+                        &result_native,
+                        &result_fluent,
+                        &mut evm,
+                        &mut evm2,
+                        print_json_outcome,
+                    );
+                    // check_evm_trace(evm.inspector(), evm2.inspector())?;
+                    println!("{:?}", start.elapsed());
+                    output
+                } else {
+                    let timer = Instant::now();
+                    print!("\n\nrunning original EVM tests... ");
+                    let mut evm = MainnetContext::new(state, spec_id)
+                        .with_cfg(cfg_env.clone())
+                        .with_block(block_env.clone())
+                        .build_mainnet();
+                    let start = Instant::now();
+                    let result_native = evm.transact_commit(tx_env.clone());
+                    println!("{:?}", start.elapsed());
+                    print!("\n\nrunning RWASM tests... ");
+                    let mut evm2 = RwasmContext::new(state2, spec_id)
+                        .with_cfg(cfg_env.clone())
+                        .with_block(block_env.clone())
+                        .build_rwasm();
+                    let start = Instant::now();
+                    let result_fluent = evm2.transact_commit(tx_env.clone());
+                    println!("{:?}", start.elapsed());
+                    *elapsed.lock().unwrap() += timer.elapsed();
+                    // dump state and traces if the test failed
+                    let start = Instant::now();
+                    print!("\n\ncomparing EVM<>RWASM state... ");
+                    let output = check_evm_execution(
+                        &test,
+                        unit.out.as_ref(),
+                        &name,
+                        &result_native,
+                        &result_fluent,
+                        &mut evm,
+                        &mut evm2,
+                        print_json_outcome,
+                    );
+                    println!("{:?}", start.elapsed());
+                    output
+                };
 
-                // do the deed
-                // if trace {
-                //     evm = evm.with_inspector(TracerEip3155::new(Box::new(stderr())).
-                // without_summary());     evm2 =
-                // evm2.with_inspector(TracerEip3155::new(Box::new(stderr())).without_summary());
-                // }
-                let timer = Instant::now();
-                print!("\n\nrunning original EVM tests... ");
-                let start = Instant::now();
-                let result_native = evm.transact_commit(tx_env.clone());
-                println!("{:?}", start.elapsed());
-                let start = Instant::now();
-                print!("\n\nrunning RWASM tests... ");
-                let result_fluent = evm2.transact_commit(tx_env.clone());
-                println!("{:?}", start.elapsed());
-                *elapsed.lock().unwrap() += timer.elapsed();
-
-                // dump state and traces if the test failed
-                let start = Instant::now();
-                print!("\n\ncomparing EVM<>RWASM state... ");
-                let output = check_evm_execution(
-                    &test,
-                    &spec_name,
-                    unit.out.as_ref(),
-                    &name,
-                    &result_native,
-                    &result_fluent,
-                    &mut evm,
-                    &mut evm2,
-                    print_json_outcome,
-                    &genesis_addresses,
-                );
-                println!("{:?}", start.elapsed());
                 let Err(e) = output else {
                     continue;
                 };
@@ -775,47 +934,6 @@ pub fn execute_test_suite(
                 if trace || FAILED.swap(true, Ordering::SeqCst) {
                     return Err(e);
                 }
-
-                // re-build to run with tracing
-                // let mut cache = cache_state.clone();
-                // cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
-                // let mut cache2 = cache_state2.clone();
-                // cache2.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
-                // let state = State::builder()
-                //     .with_cached_prestate(cache)
-                //     .with_bundle_update()
-                //     .build();
-                // let state2 = State::builder()
-                //     .with_cached_prestate(cache2)
-                //     .with_bundle_update()
-                //     .build();
-
-                let path = path.display();
-                // println!("\nTraces:");
-                // let mut evm = Evm::builder()
-                //     .with_spec_id(spec_id)
-                //     .with_db(state)
-                //     .with_env(env.clone())
-                //     .with_external_context(TracerEip3155::new(Box::new(stdout())).
-                // without_summary())
-                //     .append_handler_register(inspector_handle_register)
-                //     .build();
-                // let mut evm2 = Rwasm::builder()
-                //     .with_spec_id(spec_id)
-                //     .with_db(state2)
-                //     .with_external_context(TracerEip3155::new(Box::new(stdout())))
-                //     .append_handler_register(inspector_handle_register)
-                //     .build();
-                // let _ = evm.transact_commit();
-                // let _ = evm2.transact_commit();
-
-                println!("\nExecution result: {result_native:#?}");
-                println!("\nExpected exception: {:?}", test.expect_exception);
-                println!("\nState before: {cache_state:#?}");
-                println!("\nState after: {:#?}", evm.journaled_state.database.cache);
-                println!("\nSpecification: {spec_id:?}");
-                // println!("\nEnvironment: {env:#?}");
-                println!("\nTest name: {name:?} (index: {index}, path: {path}) failed:\n{e}");
 
                 return Err(e);
             }

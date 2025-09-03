@@ -19,10 +19,19 @@ use revm::{
 
 pub type ExecutionResult = InterpreterResult;
 
-pub fn instruction_result_from_exit_code(exit_code: ExitCode) -> InstructionResult {
+pub fn instruction_result_from_exit_code(
+    exit_code: ExitCode,
+    is_empty_return_data: bool,
+) -> InstructionResult {
     match exit_code {
         /* Basic Error Codes */
-        ExitCode::Ok => InstructionResult::Return,
+        ExitCode::Ok => {
+            if is_empty_return_data {
+                InstructionResult::Stop
+            } else {
+                InstructionResult::Return
+            }
+        }
         ExitCode::Panic => InstructionResult::Revert,
         ExitCode::Err => InstructionResult::UnknownError,
         /* Fluentbase Runtime Error Codes */
@@ -75,7 +84,7 @@ impl NextAction {
 
     pub fn error(exit_code: ExitCode, gas: Gas) -> Self {
         NextAction::Return(ExecutionResult {
-            result: instruction_result_from_exit_code(exit_code),
+            result: instruction_result_from_exit_code(exit_code, true),
             output: Bytes::default(),
             gas,
         })

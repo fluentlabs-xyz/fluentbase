@@ -35,8 +35,8 @@ rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm.git", branch = "devel",
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
 # fluentbase
-fluentbase-runtime.workspace = true
-fluentbase-sdk.workspace = true
+fluentbase-runtime = { workspace = true }
+fluentbase-sdk = { workspace = true }
 
 [dev-dependencies]
 alloy-sol-types.workspace = true
@@ -49,12 +49,15 @@ default = ["std", "c-kzg", "secp256k1", "portable", "blst"]
 std = [
     "serde?/std",
     "revm/std",
+    "revm/serde-json",
     "alloy-sol-types/std",
     "sha2/std",
     "serde_json/std",
     "alloy-primitives/std",
     "rwasm/std",
-    "fluentbase-sdk/std"
+    "fluentbase-sdk/std",
+    "rwasm/std",
+    "fluentbase-runtime/std",
 ]
 hashbrown = ["revm/hashbrown"]
 serde = [
