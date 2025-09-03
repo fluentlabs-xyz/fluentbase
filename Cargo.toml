@@ -5,7 +5,7 @@ members = [
     "bins/cli"
 ]
 exclude = [
-    "contracts/examples/svm",
+    "examples/svm",
     # exclude revm e2e testing suite to let it be a separate crate
     "evm-e2e"
 ]

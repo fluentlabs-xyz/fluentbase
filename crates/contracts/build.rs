@@ -1,5 +1,29 @@
-use cargo_metadata::{CrateType, MetadataCommand, TargetKind};
+use cargo_metadata::{CrateType, MetadataCommand, Package, PackageId, TargetKind};
+use std::collections::HashSet;
 use std::{env, fs, path::PathBuf, process::Command};
+
+#[derive(Default, Debug)]
+struct PackagesResolver {
+    manifest_dirs: Vec<PathBuf>,
+    packages: Vec<Package>,
+    workspace_members: HashSet<PackageId>,
+}
+
+impl PackagesResolver {
+    fn find_packages(&mut self, contracts_dir: PathBuf) {
+        println!("cargo:rerun-if-changed={}", contracts_dir.to_str().unwrap());
+        let contracts_manifest_path = contracts_dir.join("Cargo.toml");
+        let metadata = MetadataCommand::new()
+            .manifest_path(&contracts_manifest_path)
+            .exec()
+            .unwrap();
+        self.manifest_dirs.push(contracts_manifest_path);
+        self.packages.extend_from_slice(&metadata.packages);
+        for x in metadata.workspace_members {
+            self.workspace_members.insert(x);
+        }
+    }
+}
 
 fn main() {
     let fluentbase_root_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
@@ -7,54 +31,49 @@ fn main() {
         .manifest_path(&fluentbase_root_dir.join("Cargo.toml"))
         .exec()
         .unwrap();
-    let target2_dir: PathBuf = root_metadata.target_directory.join("target2").into();
+    let target2_dir: PathBuf = root_metadata.target_directory.join("contracts").into();
 
-    let contracts_dir = fluentbase_root_dir.join("contracts");
-    println!("cargo:rerun-if-changed={}", contracts_dir.to_str().unwrap());
-    let contracts_manifest_path = contracts_dir.join("Cargo.toml");
+    let mut packages_resolver = PackagesResolver::default();
+    packages_resolver.find_packages(fluentbase_root_dir.join("contracts"));
+    packages_resolver.find_packages(fluentbase_root_dir.join("examples"));
+
     let is_debug_profile = env::var("PROFILE").unwrap() == "debug";
-    let metadata = MetadataCommand::new()
-        .manifest_path(&contracts_manifest_path)
-        .exec()
-        .unwrap();
 
-    let mut args = vec![
-        "build".to_string(),
-        "--target".to_string(),
-        "wasm32-unknown-unknown".to_string(),
-        "--manifest-path".to_string(),
-        contracts_manifest_path.to_str().unwrap().to_string(),
-        "--target-dir".to_string(),
-        target2_dir.to_str().unwrap().to_string(),
-        "--color=always".to_string(),
-        "--no-default-features".to_string(),
-    ];
-
-    if !is_debug_profile {
-        args.push("--release".to_string());
-    }
-
-    let flags = vec![
-        "-C".to_string(),
-        format!("link-arg=-zstack-size={}", 128 * 1024),
-        "-C".to_string(),
-        "panic=abort".to_string(),
-        "-C".to_string(),
-        "target-feature=+bulk-memory".to_string(),
-    ];
-    let encoded_flags = flags.join("\x1f");
-
-    let status = Command::new("cargo")
-        .env("CARGO_ENCODED_RUSTFLAGS", encoded_flags)
-        .args(args)
-        .status()
-        .expect("WASM compilation failure: failed to run cargo build");
-
-    if !status.success() {
-        panic!(
-            "WASM compilation failure: cargo exited with code: {}",
-            status.code().unwrap_or(1)
-        );
+    for contracts_manifest_path in packages_resolver.manifest_dirs {
+        let mut args = vec![
+            "build".to_string(),
+            "--target".to_string(),
+            "wasm32-unknown-unknown".to_string(),
+            "--manifest-path".to_string(),
+            contracts_manifest_path.to_str().unwrap().to_string(),
+            "--target-dir".to_string(),
+            target2_dir.to_str().unwrap().to_string(),
+            "--color=always".to_string(),
+            "--no-default-features".to_string(),
+        ];
+        if !is_debug_profile {
+            args.push("--release".to_string());
+        }
+        let flags = vec![
+            "-C".to_string(),
+            format!("link-arg=-zstack-size={}", 128 * 1024),
+            "-C".to_string(),
+            "panic=abort".to_string(),
+            "-C".to_string(),
+            "target-feature=+bulk-memory".to_string(),
+        ];
+        let encoded_flags = flags.join("\x1f");
+        let status = Command::new("cargo")
+            .env("CARGO_ENCODED_RUSTFLAGS", encoded_flags)
+            .args(args)
+            .status()
+            .expect("WASM compilation failure: failed to run cargo build");
+        if !status.success() {
+            panic!(
+                "WASM compilation failure: cargo exited with code: {}",
+                status.code().unwrap_or(1)
+            );
+        }
     }
 
     let artifacts_dir = target2_dir
@@ -63,8 +82,8 @@ fn main() {
 
     let mut paths: Vec<(String, PathBuf)> = Vec::new();
 
-    for package in &metadata.packages {
-        if !metadata.workspace_members.contains(&package.id) {
+    for package in &packages_resolver.packages {
+        if !packages_resolver.workspace_members.contains(&package.id) {
             continue;
         }
         for target in &package.targets {
@@ -84,9 +103,10 @@ fn main() {
         }
     }
 
+    let fairblock_fallback_dir = fluentbase_root_dir.join("contracts/fairblock/fallback.wasm");
     paths.push((
         "fluentbase-contracts-fairblock".to_string(),
-        contracts_dir.join("genesis/fairblock/fallback.wasm"),
+        fairblock_fallback_dir,
     ));
     paths.sort_by(|a, b| a.0.cmp(&b.0));
 

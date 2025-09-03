@@ -31,13 +31,13 @@ svm_tests:
 
 .PHONY: wasm_contracts_sizes
 wasm_contracts_sizes:
-	ls -al target/target2/wasm32-unknown-unknown/release/*.wasm
+	ls -al target/contracts/wasm32-unknown-unknown/release/*.wasm
 
 CONTRACT_NAME=svm
 .PHONY: wasm2wat
 wasm2wat:
 	mkdir -p tmp
-	wasm2wat target/target2/wasm32-unknown-unknown/release/fluentbase_contracts_$(CONTRACT_NAME).wasm > tmp/$(CONTRACT_NAME).wat
+	wasm2wat target/contracts/wasm32-unknown-unknown/release/fluentbase_contracts_$(CONTRACT_NAME).wasm > tmp/$(CONTRACT_NAME).wat
 
 .PHONY: check
 check:

@@ -49,7 +49,7 @@ pub fn rust_to_wasm(config: RustToWasmConfig) -> PathBuf {
         .exec()
         .unwrap();
     let target_dir: PathBuf = metadata.target_directory.clone().into();
-    let target2_dir = target_dir.join("target2");
+    let target2_dir = target_dir.join("contracts");
 
     let mut args = vec![
         "build".to_string(),
