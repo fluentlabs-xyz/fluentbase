@@ -27,6 +27,7 @@ use fluentbase_erc20::{
 use fluentbase_sdk::{debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, U256};
 use fluentbase_svm::pubkey::{Pubkey, PUBKEY_BYTES};
 use fluentbase_svm::solana_program::instruction::AccountMeta;
+use fluentbase_svm::token_2022::processor::Processor;
 use solana_program_error::ProgramResult;
 
 fn symbol(mut sdk: impl SharedAPI) {

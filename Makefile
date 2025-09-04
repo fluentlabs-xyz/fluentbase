@@ -15,10 +15,8 @@ examples:
 clean:
 	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE) clean; fi
 	cargo clean
-	cd contracts/examples/svm/solana-program && $(MAKE) clean
-	cd contracts/examples/svm/solana-program-state-usage && $(MAKE) clean
-	cd contracts/examples/svm/solana-program-transfer-with-cpi && $(MAKE) clean
-	cd revm/e2e && cargo clean
+	cd examples/svm/solana-program && $(MAKE) clean
+	cd examples/svm/solana-program-state-usage && $(MAKE) clean
 
 .PHONY: test
 test:
