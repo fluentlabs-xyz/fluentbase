@@ -1,3 +1,4 @@
+use crate::consts::ERR_OVERFLOW;
 use crate::{
     common::{address_from_u256, fixed_bytes_from_u256, u256_from_address, u256_from_fixed_bytes},
     consts::{ERR_INDEX_OUT_OF_BOUNDS, ERR_INSUFFICIENT_BALANCE, ERR_UNINIT},
@@ -296,27 +297,34 @@ impl Balance {
     pub fn get_for(sdk: &impl SharedAPI, address: Address) -> U256 {
         Balance::get(sdk, address)
     }
-    pub fn add(sdk: &mut impl SharedAPI, address: Address, amount: U256) {
+    pub fn add(sdk: &mut impl SharedAPI, address: Address, amount: U256) -> Result<(), u32> {
         let current_balance = Balance::get(sdk, address);
-        let new_balance = current_balance + amount;
+        let (new_balance, overflow) = current_balance.overflowing_add(amount);
+        if overflow {
+            return Err(ERR_OVERFLOW);
+        }
         Balance::set(sdk, address, new_balance);
+        Ok(())
     }
 
-    pub fn subtract(sdk: &mut impl SharedAPI, address: Address, amount: U256) -> bool {
+    pub fn subtract(sdk: &mut impl SharedAPI, address: Address, amount: U256) -> Result<(), u32> {
         let current_balance = Balance::get(sdk, address);
         if current_balance < amount {
-            return false;
+            return Err(ERR_INSUFFICIENT_BALANCE);
         }
         let new_balance = current_balance - amount;
         Balance::set(sdk, address, new_balance);
-        true
+        Ok(())
     }
 
-    pub fn send(sdk: &mut impl SharedAPI, from: Address, to: Address, amount: U256) {
-        if !Balance::subtract(sdk, from, amount) {
-            sdk.evm_exit(ERR_INSUFFICIENT_BALANCE);
-        }
-        Balance::add(sdk, to, amount);
+    pub fn send(
+        sdk: &mut impl SharedAPI,
+        from: Address,
+        to: Address,
+        amount: U256,
+    ) -> Result<(), u32> {
+        Balance::subtract(sdk, from, amount)?;
+        Balance::add(sdk, to, amount)
     }
 }
 

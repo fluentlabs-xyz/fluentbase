@@ -34,5 +34,5 @@ debug-print = [
     "fluentbase-sdk/debug-print",
     "fluentbase-runtime/debug-print",
     "revm/debug-print",
-    "fluentbase-revm/debug-print",
+    #    "fluentbase-revm/debug-print",
 ]

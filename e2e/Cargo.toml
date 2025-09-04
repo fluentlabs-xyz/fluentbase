@@ -50,7 +50,7 @@ ark-serialize = { workspace = true }
 default = [
     "std",
     "wasmtime",
-    #    "debug-print",
+    "debug-print",
     "enable-svm",
 ]
 enable-svm = [
@@ -67,10 +67,10 @@ std = [
 ]
 debug-print = [
     "fluentbase-runtime/debug-print",
-    "revm/debug-print",
-    "fluentbase-revm/debug-print",
+    #    "revm/debug-print",
+    #    "fluentbase-revm/debug-print",
     "fluentbase-svm/debug-print",
-    "rwasm/debug-print",
+    #    "rwasm/debug-print",
 ]
 wasmtime = [
     "fluentbase-runtime/wasmtime",

@@ -588,7 +588,7 @@ mod tests {
         assert_eq!(deployer1_account.data().len(), 0);
     }
 
-    #[ignore]
+    // #[ignore]
     #[test]
     fn test_svm_deploy_exec_cross_call_token2022() {
         let mut ctx = EvmTestingContext::default().with_full_genesis();

@@ -2061,7 +2061,6 @@ dependencies = [
 name = "fluentbase-svm"
 version = "0.4.3-dev"
 dependencies = [
- "ark-bn254",
  "arrayref",
  "bincode 2.0.1",
  "bitflags",
@@ -2075,8 +2074,6 @@ dependencies = [
  "hashbrown 0.15.4",
  "itertools 0.14.0",
  "lazy_static",
- "libsecp256k1 0.7.2",
- "num-bigint 0.4.6",
  "num-derive",
  "num-traits",
  "num_enum",
@@ -2096,7 +2093,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-poseidon",
- "solana-precompile-error",
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-program-memory",
@@ -4618,15 +4614,6 @@ dependencies = [
  "ark-bn254",
  "light-poseidon",
  "solana-define-syscall",
-]
-
-[[package]]
-name = "solana-precompile-error"
-version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
-dependencies = [
- "num-traits",
- "solana-decode-error",
 ]
 
 [[package]]
