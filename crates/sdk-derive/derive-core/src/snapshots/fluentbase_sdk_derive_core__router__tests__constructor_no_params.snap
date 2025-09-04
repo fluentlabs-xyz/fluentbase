@@ -1,34 +1,37 @@
 ---
-source: crates/sdk-derive/derive-core/src/client.rs
-expression: formatted.to_string()
+source: crates/sdk-derive/derive-core/src/router.rs
+expression: formatted
 ---
-#[derive(Debug)]
-pub struct TestContractClient<SDK> {
-    pub sdk: SDK,
+#[allow(unused_imports)]
+use ::fluentbase_sdk::derive::function_id;
+impl<SDK: SharedAPI> App<SDK> {
+    pub fn constructor(&mut self) {}
+    pub fn get_value(&self) -> u32 {
+        42
+    }
 }
-pub type FirstMethodCallArgs = (u32,);
+pub type GetValueCallArgs = ();
 #[derive(Debug, Clone, PartialEq)]
-pub struct FirstMethodCall(pub FirstMethodCallArgs);
-pub type FirstMethodReturnArgs = (u32,);
+pub struct GetValueCall(pub GetValueCallArgs);
+pub type GetValueReturnArgs = (u32,);
 #[derive(Debug, Clone, PartialEq)]
-pub struct FirstMethodReturn(pub FirstMethodReturnArgs);
+pub struct GetValueReturn(pub GetValueReturnArgs);
 const _: () = {
-    impl FirstMethodCall {
-        pub const SELECTOR: [u8; 4] = [90u8, 193u8, 6u8, 45u8];
-        pub const SIGNATURE: &'static str = "firstMethod(uint32)";
+    impl GetValueCall {
+        pub const SELECTOR: [u8; 4] = [32u8, 150u8, 82u8, 85u8];
+        pub const SIGNATURE: &'static str = "getValue()";
         /// Creates a new call instance from arguments
-        pub fn new(args: FirstMethodCallArgs) -> Self {
+        pub fn new(args: GetValueCallArgs) -> Self {
             Self(args)
         }
         /// Encodes with selector
         pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-            let args = self.0.clone();
-            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(args.0,), &mut buf, 0)
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(), &mut buf, 0)
                 .expect("Failed to encode values");
             let encoded_args = buf.freeze();
             let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
-                FirstMethodCallArgs,
+                GetValueCallArgs,
             >::is_dynamic() {
                 encoded_args[32..].to_vec()
             } else {
@@ -45,7 +48,7 @@ const _: () = {
             combined_buf
                 .put_slice(
                     &if fluentbase_sdk::codec::encoder::SolidityABI::<
-                        FirstMethodCallArgs,
+                        GetValueCallArgs,
                     >::is_dynamic() {
                         ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
                     } else {
@@ -54,20 +57,20 @@ const _: () = {
                 );
             combined_buf.put_slice(buf.chunk());
             let args = fluentbase_sdk::codec::encoder::SolidityABI::<
-                FirstMethodCallArgs,
+                GetValueCallArgs,
             >::decode(&combined_buf.freeze(), 0)?;
             Ok(Self(args))
         }
     }
-    impl ::core::ops::Deref for FirstMethodCall {
-        type Target = FirstMethodCallArgs;
+    impl ::core::ops::Deref for GetValueCall {
+        type Target = GetValueCallArgs;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
-    impl FirstMethodReturn {
+    impl GetValueReturn {
         /// Creates a new return instance from values
-        pub fn new(args: FirstMethodReturnArgs) -> Self {
+        pub fn new(args: GetValueReturnArgs) -> Self {
             Self(args)
         }
         /// Encodes the return values to bytes
@@ -78,7 +81,7 @@ const _: () = {
                 .expect("Failed to encode values");
             let encoded_args = buf.freeze();
             let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
-                FirstMethodReturnArgs,
+                GetValueReturnArgs,
             >::is_dynamic() {
                 encoded_args[32..].to_vec()
             } else {
@@ -95,7 +98,7 @@ const _: () = {
             combined_buf
                 .put_slice(
                     &if fluentbase_sdk::codec::encoder::SolidityABI::<
-                        FirstMethodReturnArgs,
+                        GetValueReturnArgs,
                     >::is_dynamic() {
                         ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
                     } else {
@@ -104,51 +107,46 @@ const _: () = {
                 );
             combined_buf.put_slice(buf.chunk());
             let args = fluentbase_sdk::codec::encoder::SolidityABI::<
-                FirstMethodReturnArgs,
+                GetValueReturnArgs,
             >::decode(&combined_buf.freeze(), 0)?;
             Ok(Self(args))
         }
     }
-    impl ::core::ops::Deref for FirstMethodReturn {
-        type Target = FirstMethodReturnArgs;
+    impl ::core::ops::Deref for GetValueReturn {
+        type Target = GetValueReturnArgs;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
 };
-pub type SecondMethodCallArgs = (String, bool);
+pub type ConstructorCallArgs = ();
 #[derive(Debug, Clone, PartialEq)]
-pub struct SecondMethodCall(pub SecondMethodCallArgs);
-pub type SecondMethodReturnArgs = (String, bool);
+pub struct ConstructorCall(pub ConstructorCallArgs);
+pub type ConstructorReturnArgs = ();
 #[derive(Debug, Clone, PartialEq)]
-pub struct SecondMethodReturn(pub SecondMethodReturnArgs);
+pub struct ConstructorReturn(pub ConstructorReturnArgs);
 const _: () = {
-    impl SecondMethodCall {
-        pub const SELECTOR: [u8; 4] = [92u8, 23u8, 35u8, 57u8];
-        pub const SIGNATURE: &'static str = "secondMethod(string,bool)";
+    impl ConstructorCall {
+        pub const SELECTOR: [u8; 4] = [0u8, 0u8, 0u8, 0u8];
+        pub const SIGNATURE: &'static str = "constructor()";
         /// Creates a new call instance from arguments
-        pub fn new(args: SecondMethodCallArgs) -> Self {
+        pub fn new(args: ConstructorCallArgs) -> Self {
             Self(args)
         }
-        /// Encodes with selector
+        /// Encodes without selector (for constructor)
         pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-            let args = self.0.clone();
-            fluentbase_sdk::codec::encoder::SolidityABI::encode(
-                    &(args.0, args.1),
-                    &mut buf,
-                    0,
-                )
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(), &mut buf, 0)
                 .expect("Failed to encode values");
             let encoded_args = buf.freeze();
             let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
-                SecondMethodCallArgs,
+                ConstructorCallArgs,
             >::is_dynamic() {
                 encoded_args[32..].to_vec()
             } else {
                 encoded_args.to_vec()
             };
-            Self::SELECTOR.iter().copied().chain(clean_args).collect()
+            clean_args.into()
         }
         /// Decodes call arguments from bytes
         pub fn decode(
@@ -159,7 +157,7 @@ const _: () = {
             combined_buf
                 .put_slice(
                     &if fluentbase_sdk::codec::encoder::SolidityABI::<
-                        SecondMethodCallArgs,
+                        ConstructorCallArgs,
                     >::is_dynamic() {
                         ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
                     } else {
@@ -168,31 +166,30 @@ const _: () = {
                 );
             combined_buf.put_slice(buf.chunk());
             let args = fluentbase_sdk::codec::encoder::SolidityABI::<
-                SecondMethodCallArgs,
+                ConstructorCallArgs,
             >::decode(&combined_buf.freeze(), 0)?;
             Ok(Self(args))
         }
     }
-    impl ::core::ops::Deref for SecondMethodCall {
-        type Target = SecondMethodCallArgs;
+    impl ::core::ops::Deref for ConstructorCall {
+        type Target = ConstructorCallArgs;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
-    impl SecondMethodReturn {
+    impl ConstructorReturn {
         /// Creates a new return instance from values
-        pub fn new(args: SecondMethodReturnArgs) -> Self {
+        pub fn new(args: ConstructorReturnArgs) -> Self {
             Self(args)
         }
         /// Encodes the return values to bytes
         pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-            let args = self.0.clone();
-            fluentbase_sdk::codec::encoder::SolidityABI::encode(&args, &mut buf, 0)
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(), &mut buf, 0)
                 .expect("Failed to encode values");
             let encoded_args = buf.freeze();
             let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
-                SecondMethodReturnArgs,
+                ConstructorReturnArgs,
             >::is_dynamic() {
                 encoded_args[32..].to_vec()
             } else {
@@ -209,7 +206,7 @@ const _: () = {
             combined_buf
                 .put_slice(
                     &if fluentbase_sdk::codec::encoder::SolidityABI::<
-                        SecondMethodReturnArgs,
+                        ConstructorReturnArgs,
                     >::is_dynamic() {
                         ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
                     } else {
@@ -218,69 +215,42 @@ const _: () = {
                 );
             combined_buf.put_slice(buf.chunk());
             let args = fluentbase_sdk::codec::encoder::SolidityABI::<
-                SecondMethodReturnArgs,
+                ConstructorReturnArgs,
             >::decode(&combined_buf.freeze(), 0)?;
             Ok(Self(args))
         }
     }
-    impl ::core::ops::Deref for SecondMethodReturn {
-        type Target = SecondMethodReturnArgs;
+    impl ::core::ops::Deref for ConstructorReturn {
+        type Target = ConstructorReturnArgs;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
 };
-impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
-    pub fn new(sdk: SDK) -> Self {
-        Self { sdk }
+impl<SDK: SharedAPI> App<SDK> {
+    pub fn main(&mut self) {
+        let input_length = self.sdk.input_size();
+        if input_length < 4 {
+            panic!("insufficient input length for method selector");
+        }
+        let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+        self.sdk.read(&mut call_data, 0);
+        let (selector, params) = call_data.split_at(4);
+        match [selector[0], selector[1], selector[2], selector[3]] {
+            [32u8, 150u8, 82u8, 85u8] => {
+                let output = self.get_value();
+                let encoded_output = GetValueReturn::new((output,)).encode();
+                self.sdk.write(&encoded_output);
+            }
+            _ => panic!("unsupported method selector"),
+        }
     }
-    pub fn first_method(
-        &mut self,
-        contract_address: fluentbase_sdk::Address,
-        value: fluentbase_sdk::U256,
-        gas_limit: u64,
-        value: u32,
-    ) -> u32 {
-        use fluentbase_sdk::ContextReader;
-        let input = fluentbase_sdk::Bytes::from(FirstMethodCall::new((value,)).encode());
-        {
-            let context = self.sdk.context();
-            if context.tx_value() < value {
-                ::core::panic!("Insufficient funds for transaction");
-            }
-            if context.tx_gas_limit() < gas_limit {
-                ::core::panic!("Insufficient gas limit for transaction");
-            }
-        }
-        let result = self.sdk.call(contract_address, value, &input, Some(gas_limit));
-        if !fluentbase_sdk::syscall::SyscallResult::is_ok(result.status) {
-            ::core::panic!("Contract call failed");
-        }
-        FirstMethodReturn::decode(&result.data).expect("failed to decode result").0.0
-    }
-    pub fn second_method(
-        &mut self,
-        contract_address: fluentbase_sdk::Address,
-        value: fluentbase_sdk::U256,
-        gas_limit: u64,
-        a: String,
-        b: bool,
-    ) -> (String, bool) {
-        use fluentbase_sdk::ContextReader;
-        let input = fluentbase_sdk::Bytes::from(SecondMethodCall::new((a, b)).encode());
-        {
-            let context = self.sdk.context();
-            if context.tx_value() < value {
-                ::core::panic!("Insufficient funds for transaction");
-            }
-            if context.tx_gas_limit() < gas_limit {
-                ::core::panic!("Insufficient gas limit for transaction");
-            }
-        }
-        let result = self.sdk.call(contract_address, value, &input, Some(gas_limit));
-        if !fluentbase_sdk::syscall::SyscallResult::is_ok(result.status) {
-            ::core::panic!("Contract call failed");
-        }
-        SecondMethodReturn::decode(&result.data).expect("failed to decode result").0
+}
+impl<SDK: SharedAPI> App<SDK> {
+    pub fn deploy(&mut self) {
+        let input_length = self.sdk.input_size();
+        let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+        self.sdk.read(&mut call_data, 0);
+        self.constructor();
     }
 }
