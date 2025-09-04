@@ -27,6 +27,8 @@ pub struct Router {
     impl_block: ItemImpl,
     /// Collection of available method routes
     routes: Vec<ParsedMethod<ImplItemFn>>,
+    /// Constructor method if defined
+    constructor: Option<ParsedMethod<ImplItemFn>>,
     /// Indicates whether this is a trait implementation
     is_trait_impl: bool,
 }
@@ -57,10 +59,10 @@ impl Router {
             MethodCollector::<ImplItemFn>::new_for_impl(impl_block.span(), is_trait_impl);
         visit::visit_item_impl(&mut collector, &impl_block);
 
-        if collector.methods.is_empty() {
+        if collector.methods.is_empty() && collector.constructor.is_none() {
             abort!(
                 collector.span,
-                "Router has no methods. Make sure your implementation contains at least one public method that is not named 'deploy'.";
+                "Router has no methods or constructor. Make sure your implementation contains at least one public method or a constructor.";
                 help = "Check that methods are public (pub fn) for regular implementations";
                 help = if is_trait_impl {
                     "For trait implementations, make sure the trait contains method declarations"
@@ -95,6 +97,7 @@ impl Router {
             attributes,
             impl_block,
             routes: collector.methods,
+            constructor: collector.constructor,
             is_trait_impl,
         })
     }
@@ -132,6 +135,16 @@ impl Router {
         self.routes
             .iter()
             .any(|r| r.parsed_signature().is_fallback())
+    }
+
+    /// Checks if the router has a constructor.
+    pub fn has_constructor(&self) -> bool {
+        self.constructor.is_some()
+    }
+
+    /// Returns the constructor method if present.
+    pub fn constructor(&self) -> Option<&ParsedMethod<ImplItemFn>> {
+        self.constructor.as_ref()
     }
 
     /// Returns the trait name if this is a trait implementation, None otherwise.
@@ -193,6 +206,13 @@ impl Router {
         // Generate dispatch method
         let dispatch_method = self.generate_dispatch_method()?;
 
+        // Generate deploy method if constructor exists
+        let deploy_method = if self.has_constructor() {
+            self.generate_deploy_method()?
+        } else {
+            quote! {}
+        };
+
         // Build the base output
         let output = quote! {
             #[allow(unused_imports)]
@@ -202,6 +222,7 @@ impl Router {
             #(#method_codecs)*
 
             #dispatch_method
+            #deploy_method
         };
 
         Ok(output)
@@ -209,14 +230,25 @@ impl Router {
 
     /// Generates codec implementations for all available methods.
     fn generate_codec_implementations(&self) -> Result<Vec<TokenStream2>> {
-        self.available_methods()
+        let mut codecs = self
+            .available_methods()
             .iter()
             .map(|route| {
                 CodecGenerator::new(*route, &self.attributes().mode)
                     .generate()
                     .map_err(|e| Error::new(route.parsed_signature().span(), e.to_string()))
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+
+        // Add codec for constructor if present
+        if let Some(constructor) = &self.constructor {
+            let constructor_codec = CodecGenerator::new(constructor, &self.attributes().mode)
+                .generate()
+                .map_err(|e| Error::new(constructor.parsed_signature().span(), e.to_string()))?;
+            codecs.push(constructor_codec);
+        }
+
+        Ok(codecs)
     }
 
     /// Generates the main dispatch method implementation.
@@ -246,6 +278,79 @@ impl Router {
         })
     }
 
+    /// Generates the deploy method implementation for constructor.
+    // В методе generate_deploy_method(), исправим обработку параметров:
+
+    fn generate_deploy_method(&self) -> Result<TokenStream2> {
+        let Some(constructor) = &self.constructor else {
+            return Ok(quote! {});
+        };
+
+        let target_type = &self.impl_block.self_ty;
+        let generic_params = &self.impl_block.generics;
+
+        let fn_name = format_ident!("constructor");
+        let params = constructor.parsed_signature().parameters();
+        let param_count = params.len();
+
+        // Generate struct name for codec
+        let call_struct = format_ident!("ConstructorCall");
+
+        // Generate parameter handling based on count
+        let (param_handling, fn_call) = match param_count {
+            0 => (quote! {}, quote! { self.#fn_name() }),
+            1 => (
+                quote! {
+                    let param0 = match #call_struct::decode(&call_data) {
+                        Ok(decoded) => decoded.0.0,
+                        Err(err) => {
+                            panic!("Failed to decode constructor parameters: {:?}", err);
+                        }
+                    };
+                },
+                quote! { self.#fn_name(param0) },
+            ),
+            _ => {
+                let param_names = (0..param_count)
+                    .map(|i| format_ident!("param{}", i))
+                    .collect::<Vec<_>>();
+
+                let param_indices = (0..param_count).map(syn::Index::from).collect::<Vec<_>>();
+
+                (
+                    quote! {
+                        let decoded = match #call_struct::decode(&call_data) {
+                            Ok(decoded) => decoded,
+                            Err(err) => {
+                                panic!("Failed to decode constructor parameters: {:?}", err);
+                            }
+                        };
+                        #(let #param_names = decoded.0.#param_indices;)*
+                    },
+                    quote! { self.#fn_name(#(#param_names),*) },
+                )
+            }
+        };
+
+        Ok(quote! {
+            impl #generic_params #target_type {
+                pub fn deploy(&mut self) {
+                    let input_length = self.sdk.input_size();
+
+                    if input_length > 0 {
+                        let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+                        self.sdk.read(&mut call_data, 0);
+
+                        #param_handling
+                        #fn_call;
+                    } else {
+                        // Constructor with no parameters
+                        #fn_call;
+                    }
+                }
+            }
+        })
+    }
     /// Generates input validation logic.
     fn generate_input_validation(&self) -> TokenStream2 {
         if self.has_fallback() {

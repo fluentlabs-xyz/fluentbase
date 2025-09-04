@@ -1,4 +1,5 @@
-use crate::abi::{error::ABIError, function::FunctionABI};
+use crate::abi::{error::ABIError, function::FunctionABI, constructor::ConstructorABI};
+use crate::method::CONSTRUCTOR_METHOD;
 use convert_case::{Case, Casing};
 use quote::ToTokens;
 use std::ops::Deref;
@@ -100,10 +101,18 @@ impl ParsedSignature {
     pub fn function_abi(&self) -> Result<FunctionABI, ABIError> {
         FunctionABI::from_signature(&self.0)
     }
+    pub fn constructor_abi(&self) -> Result<ConstructorABI, ABIError> {
+        ConstructorABI::from_signature(&self.0)
+    }
 
     pub fn is_fallback(&self) -> bool {
         self.0.ident == "fallback"
     }
+
+    pub fn is_constructor(&self) -> bool {
+        self.0.ident == CONSTRUCTOR_METHOD
+    }
+
 
     /// Get span information for the signature for error reporting
     pub fn span(&self) -> proc_macro2::Span {
