@@ -505,3 +505,102 @@ fn interface_with_all_solidity_types() {
     let interface = generate_interface("AllTypesContract", &abi).unwrap();
     assert_snapshot!(interface);
 }
+
+// do not add constructor to the interface
+#[test]
+fn interface_with_constructor_args() {
+    let abi = vec![
+        json!(
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "string",
+                  "name": "name",
+                  "type": "string"
+                },
+                {
+                  "internalType": "string",
+                  "name": "symbol",
+                  "type": "string"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "total_supply",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct TokenConfig",
+              "name": "config",
+              "type": "tuple"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "constructor"
+        }),
+        json!({
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "to",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "transfer",
+          "outputs": [
+            {
+              "internalType": "bool",
+              "name": "_0",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }),
+        json!({
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "account",
+              "type": "address"
+            }
+          ],
+          "name": "balanceOf",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "_0",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }),
+        json!({
+          "inputs": [],
+          "name": "totalSupply",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "_0",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }),
+    ];
+    let interface = generate_interface("AllTypesContract", &abi).unwrap();
+    assert_snapshot!(interface);
+}

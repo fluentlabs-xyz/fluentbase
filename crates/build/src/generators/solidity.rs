@@ -136,6 +136,18 @@ fn generate_abi_from_routers(
     let router = &routers[0];
     let mut entries = Vec::new();
 
+    // Add constructor if present
+    if let Some(constructor) = router.constructor() {
+        if let Ok(constructor_abi) = constructor.parsed_signature().constructor_abi() {
+            if let Ok(mut json) = constructor_abi.to_json_value() {
+                // Enrich the ABI entry with struct components
+                enrich_abi_entry(&mut json, structs)?;
+                entries.push(json);
+            }
+        }
+    }
+
+    // Add all functions
     for method in router.available_methods() {
         if let Ok(func_abi) = method.parsed_signature().function_abi() {
             if let Ok(mut json) = func_abi.to_json_value() {
