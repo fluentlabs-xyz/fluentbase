@@ -7,9 +7,7 @@ use core::u64;
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{client, router},
-    Address,
-    SharedAPI,
-    U256,
+    Address, SharedAPI, U256,
 };
 
 /// RouterAPIClient
@@ -25,6 +23,8 @@ trait RouterAPI {
 /// Create a contract for test purpose
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> RouterAPIClient<SDK> {
+    pub fn constructor(&mut self) {}
+
     pub fn greeting_client(
         &mut self,
         contract_address: Address,
@@ -33,10 +33,6 @@ impl<SDK: SharedAPI> RouterAPIClient<SDK> {
         message: String,
     ) -> String {
         self.greeting(contract_address, value, gas_limit, message)
-    }
-
-    pub fn deploy(&self) {
-        // any custom deployment logic here
     }
 }
 
