@@ -279,8 +279,6 @@ impl Router {
     }
 
     /// Generates the deploy method implementation for constructor.
-    // В методе generate_deploy_method(), исправим обработку параметров:
-
     fn generate_deploy_method(&self) -> Result<TokenStream2> {
         let Some(constructor) = &self.constructor else {
             return Ok(quote! {});
@@ -293,42 +291,44 @@ impl Router {
         let params = constructor.parsed_signature().parameters();
         let param_count = params.len();
 
-        // Generate struct name for codec
         let call_struct = format_ident!("ConstructorCall");
 
-        // Generate parameter handling based on count
-        let (param_handling, fn_call) = match param_count {
-            0 => (quote! {}, quote! { self.#fn_name() }),
-            1 => (
-                quote! {
-                    let param0 = match #call_struct::decode(&call_data) {
-                        Ok(decoded) => decoded.0.0,
-                        Err(err) => {
-                            panic!("Failed to decode constructor parameters: {:?}", err);
-                        }
-                    };
-                },
-                quote! { self.#fn_name(param0) },
-            ),
+        let param_handling = match param_count {
+            0 => quote! {},
+            1 => quote! {
+                let param0 = match #call_struct::decode(&&call_data[..]) {
+                    Ok(decoded) => decoded.0.0,
+                    Err(err) => {
+                        panic!("Failed to decode constructor parameters: {:?}", err);
+                    }
+                };
+            },
             _ => {
                 let param_names = (0..param_count)
                     .map(|i| format_ident!("param{}", i))
                     .collect::<Vec<_>>();
-
                 let param_indices = (0..param_count).map(syn::Index::from).collect::<Vec<_>>();
 
-                (
-                    quote! {
-                        let decoded = match #call_struct::decode(&call_data) {
-                            Ok(decoded) => decoded,
-                            Err(err) => {
-                                panic!("Failed to decode constructor parameters: {:?}", err);
-                            }
-                        };
-                        #(let #param_names = decoded.0.#param_indices;)*
-                    },
-                    quote! { self.#fn_name(#(#param_names),*) },
-                )
+                quote! {
+                    let (#(#param_names),*) = match #call_struct::decode(&&call_data[..]) {
+                        Ok(decoded) => (#(decoded.0.#param_indices),*),
+                        Err(err) => {
+                            panic!("Failed to decode constructor parameters: {:?}", err);
+                        }
+                    };
+                }
+            }
+        };
+
+        // Generate function call
+        let fn_call = match param_count {
+            0 => quote! { self.#fn_name() },
+            1 => quote! { self.#fn_name(param0) },
+            _ => {
+                let param_names = (0..param_count)
+                    .map(|i| format_ident!("param{}", i))
+                    .collect::<Vec<_>>();
+                quote! { self.#fn_name(#(#param_names),*) }
             }
         };
 
@@ -336,21 +336,16 @@ impl Router {
             impl #generic_params #target_type {
                 pub fn deploy(&mut self) {
                     let input_length = self.sdk.input_size();
+                    let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+                    self.sdk.read(&mut call_data, 0);
 
-                    if input_length > 0 {
-                        let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
-                        self.sdk.read(&mut call_data, 0);
-
-                        #param_handling
-                        #fn_call;
-                    } else {
-                        // Constructor with no parameters
-                        #fn_call;
-                    }
+                    #param_handling
+                    #fn_call;
                 }
             }
         })
     }
+
     /// Generates input validation logic.
     fn generate_input_validation(&self) -> TokenStream2 {
         if self.has_fallback() {
@@ -529,5 +524,90 @@ mod tests {
         let formatted = prettyplease::unparse(&file);
 
         assert_snapshot!("trait_router_generation", formatted);
+    }
+
+    #[test]
+    fn test_constructor_no_params() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn constructor(&mut self) {
+                    // Initialize without parameters
+                }
+
+                pub fn get_value(&self) -> u32 {
+                    42
+                }
+            }
+        };
+
+        let attr_tokens = quote! { mode = "solidity" };
+
+        let router = process_router(attr_tokens, impl_block.into_token_stream())
+            .expect("Failed to process router");
+
+        let generated = router.generate().expect("Failed to generate router code");
+
+        let file = parse_file(&generated.to_string()).unwrap();
+        let formatted = prettyplease::unparse(&file);
+
+        assert_snapshot!("constructor_no_params", formatted);
+    }
+
+    #[test]
+    fn test_constructor_single_param() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn constructor(&mut self, initial_value: U256) {
+                    // Initialize with single parameter
+                }
+
+                pub fn get_value(&self) -> U256 {
+                    U256::from(0)
+                }
+            }
+        };
+
+        let attr_tokens = quote! { mode = "solidity" };
+
+        let router = process_router(attr_tokens, impl_block.into_token_stream())
+            .expect("Failed to process router");
+
+        let generated = router.generate().expect("Failed to generate router code");
+
+        let file = parse_file(&generated.to_string()).unwrap();
+        let formatted = prettyplease::unparse(&file);
+
+        assert_snapshot!("constructor_single_param", formatted);
+    }
+
+    #[test]
+    fn test_constructor_two_params() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn constructor(&mut self, owner: Address, initial_supply: U256) {
+                    // Initialize with two parameters
+                }
+
+                pub fn balance_of(&self, account: Address) -> U256 {
+                    U256::from(0)
+                }
+
+                pub fn transfer(&mut self, to: Address, amount: U256) -> bool {
+                    true
+                }
+            }
+        };
+
+        let attr_tokens = quote! { mode = "solidity" };
+
+        let router = process_router(attr_tokens, impl_block.into_token_stream())
+            .expect("Failed to process router");
+
+        let generated = router.generate().expect("Failed to generate router code");
+
+        let file = parse_file(&generated.to_string()).unwrap();
+        let formatted = prettyplease::unparse(&file);
+
+        assert_snapshot!("constructor_two_params", formatted);
     }
 }

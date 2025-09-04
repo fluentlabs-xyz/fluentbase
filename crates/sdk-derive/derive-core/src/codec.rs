@@ -137,6 +137,30 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
             }
         };
 
+        let encode_method = if self.route.is_constructor() {
+            quote! {
+                /// Encodes without selector (for constructor)
+                pub fn encode(&self) -> #crate_path::bytes::Bytes {
+                    let mut buf = #crate_path::bytes::BytesMut::new();
+                    #encode_call_impl
+                    let encoded_args = buf.freeze();
+                    let clean_args = #call_encode_offset;
+                    clean_args.into()
+                }
+            }
+        } else {
+            quote! {
+                /// Encodes with selector
+                pub fn encode(&self) -> #crate_path::bytes::Bytes {
+                    let mut buf = #crate_path::bytes::BytesMut::new();
+                    #encode_call_impl
+                    let encoded_args = buf.freeze();
+                    let clean_args = #call_encode_offset;
+                    Self::SELECTOR.iter().copied().chain(clean_args).collect()
+                }
+            }
+        };
+
         Ok(quote! {
             const _: () = {
                 impl #call_struct {
@@ -148,14 +172,7 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
                         Self(args)
                     }
 
-                    /// Encodes this call to bytes including selector
-                    pub fn encode(&self) -> #crate_path::bytes::Bytes {
-                        let mut buf = #crate_path::bytes::BytesMut::new();
-                        #encode_call_impl
-                        let encoded_args = buf.freeze();
-                        let clean_args = #call_encode_offset;
-                        Self::SELECTOR.iter().copied().chain(clean_args).collect()
-                    }
+                    #encode_method
 
                     /// Decodes call arguments from bytes
                     pub fn decode(buf: &impl #crate_path::bytes::Buf) -> Result<Self, #crate_path::CodecError> {

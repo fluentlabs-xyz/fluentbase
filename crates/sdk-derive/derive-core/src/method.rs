@@ -405,7 +405,7 @@ impl Visit<'_> for MethodCollector<TraitItemFn> {
 impl Visit<'_> for MethodCollector<ImplItemFn> {
     fn visit_impl_item_fn(&mut self, method: &ImplItemFn) {
         match method.sig.ident.to_string().as_str() {
-            // Reserved methods that cannot be defined by user in router 
+            // Reserved methods that cannot be defined by user in router
             MAIN_METHOD => {
                 self.add_error(
                     method.sig.span(),
