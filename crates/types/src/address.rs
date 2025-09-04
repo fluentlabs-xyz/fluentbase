@@ -118,7 +118,7 @@ mod tests {
             todo!()
         }
 
-        fn bls12_381_g1_add(_p: &mut [u8; 64], _q: &[u8; 64]) {
+        fn bls12_381_g1_add(_p: &mut [u8; 96], _q: &[u8; 96]) {
             todo!()
         }
 
@@ -126,7 +126,7 @@ mod tests {
             todo!()
         }
 
-        fn bls12_381_g2_add(_p: &mut [u8; 64], _q: &[u8; 64]) {
+        fn bls12_381_g2_add(_p: &mut [u8; 192], _q: &[u8; 192]) {
             todo!()
         }
 

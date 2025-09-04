@@ -32,6 +32,9 @@ solana-poseidon = { workspace = true }
 num = "0.4.3"
 sp1-curves = { version = "5.1.0" }
 sp1-primitives = { version = "5.1.0" }
+blstrs = { version = "0.7" }
+group = { version = "0.13", default-features = false }
+ff = { version = "0.13", default-features = false }
 ark-ff = { workspace = true }
 ark-ec = { workspace = true }
 ark-serialize = { workspace = true }

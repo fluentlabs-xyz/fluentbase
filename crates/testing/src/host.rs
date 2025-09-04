@@ -302,7 +302,7 @@ impl SharedAPI for HostTestingContext {
     fn bls12_381_g1_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
         RuntimeContextWrapper::bls12_381_g1_msm(pairs, out);
     }
-    fn bls12_381_g2_add(p: &mut [u8; 64], q: &[u8; 64]) {
+    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
         RuntimeContextWrapper::bls12_381_g2_add(p, q);
     }
     fn bls12_381_g2_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
