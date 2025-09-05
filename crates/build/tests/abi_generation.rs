@@ -69,3 +69,29 @@ fn edge_cases_struct_abi() {
         assert_json_snapshot!(abi);
     });
 }
+
+#[test]
+fn direct_impl_constructor() {
+    let (_temp, project) = fixture_to_project("direct_impl_constructor");
+    let abi = generate_abi(&project).expect("generate ABI");
+
+    // Use insta with settings to make snapshots more stable
+    let mut settings = Settings::clone_current();
+    settings.set_sort_maps(true); // Sort JSON keys for the stable output
+    settings.bind(|| {
+        assert_json_snapshot!(abi);
+    });
+}
+
+#[test]
+fn trait_impl_constructor() {
+    let (_temp, project) = fixture_to_project("trait_impl_constructor");
+    let abi = generate_abi(&project).expect("generate ABI");
+
+    // Use insta with settings to make snapshots more stable
+    let mut settings = Settings::clone_current();
+    settings.set_sort_maps(true); // Sort JSON keys for the stable output
+    settings.bind(|| {
+        assert_json_snapshot!(abi);
+    });
+}

@@ -16,7 +16,7 @@ const _: () = {
         pub fn new(args: EmptyReturnCallArgs) -> Self {
             Self(args)
         }
-        /// Encodes this call to bytes including selector
+        /// Encodes with selector
         pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             fluentbase_sdk::codec::encoder::SolidityABI::encode(&(), &mut buf, 0)
