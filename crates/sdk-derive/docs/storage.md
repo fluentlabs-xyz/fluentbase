@@ -43,4 +43,4 @@ For each variable `Name`, the macro generates:
 - A struct `Name` with `SLOT` constant
 - Methods `get(sdk, ...)` and `set(sdk, ..., value)`
 
-For examples, see the [fluentbase examples repository](https://github.com/fluentlabs-xyz/fluentbase/tree/devel/contracts/examples/storage).
+For examples, see the [fluentbase examples repository](https://github.com/fluentlabs-xyz/fluentbase/tree/devel/examples/storage).
