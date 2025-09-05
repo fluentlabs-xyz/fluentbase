@@ -171,7 +171,7 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallBls12381G2Add::fn_impl(p, q)
     }
 
-    fn bls12_381_g2_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
+    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
         SyscallBls12381G2Msm::fn_impl(pairs, out)
     }
 

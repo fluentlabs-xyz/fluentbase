@@ -130,7 +130,7 @@ mod tests {
             todo!()
         }
 
-        fn bls12_381_g2_msm(_pairs: &[([u8; 64], [u8; 64])], _out: &mut [u8; 64]) {
+        fn bls12_381_g2_msm(_pairs: &[([u8; 192], [u8; 32])], _out: &mut [u8; 192]) {
             todo!()
         }
 

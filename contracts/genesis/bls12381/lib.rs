@@ -40,8 +40,8 @@ fn bls12_381_g1_msm_with_sdk<SDK: SharedAPI>(
 #[inline(always)]
 fn bls12_381_g2_msm_with_sdk<SDK: SharedAPI>(
     _: &SDK,
-    pairs: &[([u8; 64], [u8; 64])],
-    out: &mut [u8; 64],
+    pairs: &[([u8; 192], [u8; 32])],
+    out: &mut [u8; 192],
 ) {
     SDK::bls12_381_g2_msm(pairs, out)
 }
@@ -226,41 +226,30 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&out_be);
         }
         PRECOMPILE_BLS12_381_G2_MSM => {
-            if input.len() % 128 != 0 || input.is_empty() {
+            // Expect pairs of 224 bytes: 192-byte G2 point (x0||x1||y0||y1) LE limbs + 32-byte scalar LE
+            if input.len() % 224 != 0 || input.is_empty() {
                 sdk.native_exit(ExitCode::PrecompileError);
             }
-            let pairs_len = input.len() / 128;
-            let mut pairs: alloc::vec::Vec<([u8; 64], [u8; 64])> =
+            let pairs_len = input.len() / 224;
+            let mut pairs: alloc::vec::Vec<([u8; 192], [u8; 32])> =
                 alloc::vec::Vec::with_capacity(pairs_len);
             for i in 0..pairs_len {
-                let mut a = [0u8; 64];
-                let mut b = [0u8; 64];
-                let start = i * 128;
-                a.copy_from_slice(&input[start..start + 64]);
-                b.copy_from_slice(&input[start + 64..start + 128]);
-                a[0..32].reverse();
-                a[32..64].reverse();
-                b[0..32].reverse();
-                b[32..64].reverse();
-                pairs.push((a, b));
+                let mut p = [0u8; 192];
+                let mut s = [0u8; 32];
+                let start = i * 224;
+                p.copy_from_slice(&input[start..start + 192]);
+                s.copy_from_slice(&input[start + 192..start + 224]);
+                pairs.push((p, s));
             }
-            let mut out = [0u8; 64];
+            let mut out = [0u8; 192];
             bls12_381_g2_msm_with_sdk(&sdk, &pairs, &mut out);
-            let gas_used = 300u64.saturating_mul(pairs_len as u64).saturating_add(100);
+            let gas_used = 22500u64;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
             sdk.sync_evm_gas(gas_used, 0);
-            let mut x_be = [0u8; 32];
-            x_be.copy_from_slice(&out[0..32]);
-            x_be.reverse();
-            let mut y_be = [0u8; 32];
-            y_be.copy_from_slice(&out[32..64]);
-            y_be.reverse();
-            let mut out_be = [0u8; 64];
-            out_be[0..32].copy_from_slice(&x_be);
-            out_be[32..64].copy_from_slice(&y_be);
-            sdk.write(&out_be);
+            // Output 192-byte LE limbs
+            sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_PAIRING => {
             if input.len() % 128 != 0 || input.is_empty() {
@@ -404,4 +393,48 @@ mod tests {
     }
 
     // ==================================== G2 MSM ====================================
+
+    #[test]
+    fn bls_g2mul_0_g2_inf() {
+        // Build one 224B pair (192B point LE + 32B scalar LE = 0)
+        let a = hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be");
+        let mut p = [0u8; 192];
+        p[0..48].copy_from_slice(&a[0..64][16..64]);
+        p[0..48].reverse();
+        p[48..96].copy_from_slice(&a[64..128][16..64]);
+        p[48..96].reverse();
+        p[96..144].copy_from_slice(&a[128..192][16..64]);
+        p[96..144].reverse();
+        p[144..192].copy_from_slice(&a[192..256][16..64]);
+        p[144..192].reverse();
+
+        let mut input = [0u8; 224];
+        input[..192].copy_from_slice(&p);
+        // scalar is zeroed
+        let expected = [0u8; 192];
+        exec_evm_precompile(PRECOMPILE_BLS12_381_G2_MSM, &input, &expected, 22500);
+    }
+    #[test]
+    fn bls_g2mul_1_g2_g2() {
+        // scalar = 1 -> output equals input point (192 LE)
+        let a = hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be");
+        let mut p = [0u8; 192];
+        p[0..48].copy_from_slice(&a[0..64][16..64]);
+        p[0..48].reverse();
+        p[48..96].copy_from_slice(&a[64..128][16..64]);
+        p[48..96].reverse();
+        p[96..144].copy_from_slice(&a[128..192][16..64]);
+        p[96..144].reverse();
+        p[144..192].copy_from_slice(&a[192..256][16..64]);
+        p[144..192].reverse();
+
+        let mut input = [0u8; 224];
+        input[..192].copy_from_slice(&p);
+        let mut s = [0u8; 32];
+        s[0] = 1;
+        input[192..224].copy_from_slice(&s);
+
+        let expected = p;
+        exec_evm_precompile(PRECOMPILE_BLS12_381_G2_MSM, &input, &expected, 22500);
+    }
 }

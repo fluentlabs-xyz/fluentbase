@@ -1,6 +1,6 @@
 use crate::{instruction::weierstrass_add::SyscallWeierstrassAddAssign, RuntimeContext};
 use rwasm::{Store, TrapCode, TypedCaller, Value};
-use sp1_curves::weierstrass::bls12_381::Bls12381;
+use sp1_curves::{weierstrass::bls12_381::Bls12381, EllipticCurve};
 
 pub struct SyscallBls12381G1Add;
 
@@ -25,6 +25,7 @@ impl SyscallBls12381G1Add {
     }
 
     pub fn fn_impl(p: &mut [u8; 96], q: &[u8; 96]) {
+        // Bls12381::ec_add(p, q);
         // Both p and q are 96-byte little-endian limbs: x48||y48
         let result = SyscallWeierstrassAddAssign::<Bls12381>::fn_impl(p, q);
         let min = core::cmp::min(p.len(), result.len());

@@ -61,7 +61,7 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]);
     fn bls12_381_g1_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]);
     fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]);
-    fn bls12_381_g2_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]);
+    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]);
     fn bls12_381_pairing(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]);
     fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 64]);
     fn bls12_381_map_fp2_to_g2(p: &[u8; 64], out: &mut [u8; 64]);

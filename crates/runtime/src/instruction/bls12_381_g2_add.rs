@@ -76,6 +76,7 @@ impl SyscallBls12381G2Add {
 
         // Serialize to BE uncompressed and convert BE -> LE limbs back into p (swap back)
         let sum_be = sum_aff.to_uncompressed();
+
         // x0 <= c1, x1 <= c0
         limb.copy_from_slice(&sum_be[48..96]); // c1
         limb.reverse();
@@ -83,7 +84,8 @@ impl SyscallBls12381G2Add {
         limb.copy_from_slice(&sum_be[0..48]); // c0
         limb.reverse();
         p[48..96].copy_from_slice(&limb); // x1 LE
-                                          // y0 <= c1, y1 <= c0
+
+        // y0 <= c1, y1 <= c0
         limb.copy_from_slice(&sum_be[144..192]); // c1
         limb.reverse();
         p[96..144].copy_from_slice(&limb); // y0 LE

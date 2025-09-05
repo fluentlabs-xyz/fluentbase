@@ -272,7 +272,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::bls12_381_g2_add(p, q)
     }
 
-    fn bls12_381_g2_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
+    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
         API::bls12_381_g2_msm(pairs, out)
     }
 
