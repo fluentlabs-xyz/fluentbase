@@ -157,17 +157,14 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
-        // Expect 96-byte (x48||y48) little-endian limbs
-        let result = SyscallWeierstrassAddAssign::<Bls12381>::fn_impl(p, q);
-        let min = core::cmp::min(p.len(), result.len());
-        p[..min].copy_from_slice(&result[..min]);
+        SyscallBls12381G1Add::fn_impl(p, q);
     }
 
     fn bls12_381_g1_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
         SyscallBls12381G1Msm::fn_impl(pairs, out)
     }
 
-    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
+    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) -> [u8; 192] {
         SyscallBls12381G2Add::fn_impl(p, q)
     }
 
@@ -175,7 +172,7 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallBls12381G2Msm::fn_impl(pairs, out)
     }
 
-    fn bls12_381_pairing(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
+    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
         SyscallBls12381Pairing::fn_impl(pairs, out)
     }
 

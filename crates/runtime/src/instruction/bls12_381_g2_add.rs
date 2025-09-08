@@ -19,12 +19,13 @@ impl SyscallBls12381G2Add {
         let mut q = [0u8; 192];
         caller.memory_read(q_ptr, &mut q)?;
 
-        Self::fn_impl(&mut p, &q);
+        let result = Self::fn_impl(&mut p, &q);
+        caller.memory_write(p_ptr, &result)?;
         caller.memory_write(p_ptr, &p)?;
         Ok(())
     }
 
-    pub fn fn_impl(p: &mut [u8; 192], q: &[u8; 192]) {
+    pub fn fn_impl(p: &mut [u8; 192], q: &[u8; 192]) -> [u8; 192] {
         // p, q layout: x0||x1||y0||y1, each limb 48 bytes little-endian
         // Convert to blstrs uncompressed big-endian bytes with c0/c1 swapped, add, then convert back.
         let mut a_be = [0u8; 192];
@@ -76,7 +77,7 @@ impl SyscallBls12381G2Add {
 
         // Serialize to BE uncompressed and convert BE -> LE limbs back into p (swap back)
         let sum_be = sum_aff.to_uncompressed();
-
+        let result = sum_be;
         // x0 <= c1, x1 <= c0
         limb.copy_from_slice(&sum_be[48..96]); // c1
         limb.reverse();
@@ -92,5 +93,8 @@ impl SyscallBls12381G2Add {
         limb.copy_from_slice(&sum_be[96..144]); // c0
         limb.reverse();
         p[144..192].copy_from_slice(&limb); // y1 LE
+
+        // result.copy_from_slice(&sum_be);
+        result
     }
 }

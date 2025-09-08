@@ -3,6 +3,7 @@ pub mod bls12_381_g1_add;
 pub mod bls12_381_g1_msm;
 pub mod bls12_381_g2_add;
 pub mod bls12_381_g2_msm;
+pub mod bls12_381_helpers;
 pub mod bls12_381_map_fp2_to_g2;
 pub mod bls12_381_map_fp_to_g1;
 pub mod bls12_381_pairing;

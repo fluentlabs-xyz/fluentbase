@@ -126,7 +126,7 @@ mod tests {
             todo!()
         }
 
-        fn bls12_381_g2_add(_p: &mut [u8; 192], _q: &[u8; 192]) {
+        fn bls12_381_g2_add(_p: &mut [u8; 192], _q: &[u8; 192]) -> [u8; 192] {
             todo!()
         }
 
@@ -134,7 +134,7 @@ mod tests {
             todo!()
         }
 
-        fn bls12_381_pairing(_pairs: &[([u8; 64], [u8; 64])], _out: &mut [u8; 64]) {
+        fn bls12_381_pairing(_pairs: &[([u8; 48], [u8; 96])], _out: &mut [u8; 288]) {
             todo!()
         }
 
