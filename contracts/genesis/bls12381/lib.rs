@@ -16,6 +16,11 @@ pub const PAIRING_GAS: u64 = 288u64;
 pub const MAP_G1_GAS: u64 = 250u64;
 pub const MAP_G2_GAS: u64 = 250u64;
 
+/// SCALAR_LENGTH specifies the number of bytes needed to represent a scalar.
+///
+/// Note: The scalar is represented in little endian.
+pub const SCALAR_LENGTH: usize = 32;
+
 pub const FP_LENGTH: usize = 48;
 /// PADDED_FP_LENGTH specifies the number of bytes that the EVM will use
 /// to represent an Fp element according to EIP-2537.
@@ -67,12 +72,6 @@ pub const PADDED_G2_LENGTH: usize = 2 * PADDED_FP2_LENGTH;
 ///
 /// Note: The input to the G2 addition precompile is 2 G2 elements.
 pub const G2_ADD_INPUT_LENGTH: usize = 2 * PADDED_G2_LENGTH;
-
-// G1_ADD_BASE_GAS_FEE: u64 = 375;
-// G1_MSM_BASE_GAS_FEE: u64 = 12000;
-
-// G2_ADD_BASE_GAS_FEE: u64 = 600;
-// G2_MSM_BASE_GAS_FEE: u64 = 22500;
 
 #[inline(always)]
 fn array_ref64(bytes: &[u8], offset: usize) -> &[u8; 64] {
@@ -290,15 +289,18 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             }
         }
         PRECOMPILE_BLS12_381_G2_MSM => {
-            // Expect pairs of 224 bytes: 192-byte G2 point (x0||x1||y0||y1) LE limbs + 32-byte scalar LE
-            if input.len() % 224 != 0 || input.is_empty() {
+            // Expect pairs of 288 bytes: 256-byte padded G2 point (x0||x1||y0||y1) + 32-byte scalar (BE)
+            // Convert to runtime format: 192-byte LE limbs + 32-byte scalar LE
+            let input_length_requirement = PADDED_G2_LENGTH + 32; // 256 + 32
+
+            if input.len() % input_length_requirement != 0 || input.is_empty() {
                 sdk.native_exit(ExitCode::PrecompileError);
             }
-            let pairs_len = input.len() / 224;
+            let pairs_len = input.len() / input_length_requirement;
             let mut pairs: alloc::vec::Vec<([u8; 192], [u8; 32])> =
                 alloc::vec::Vec::with_capacity(pairs_len);
 
-            let gas_used = 22500u64;
+            let gas_used = G2_MSM_GAS;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
@@ -306,15 +308,64 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.sync_evm_gas(gas_used, 0);
             for i in 0..pairs_len {
                 let mut p = [0u8; 192];
-                let mut s = [0u8; 32];
-                let start = i * 224;
-                p.copy_from_slice(&input[start..start + 192]);
-                s.copy_from_slice(&input[start + 192..start + 224]);
+                let mut s = [0u8; SCALAR_LENGTH];
+                let start = i * input_length_requirement;
+                let g2_in = &input[start..start + PADDED_G2_LENGTH];
+
+                // Convert padded BE limbs → LE limbs (like G2 add path)
+                let mut limb = [0u8; 48];
+                // x0
+                limb.copy_from_slice(&g2_in[0..64][16..64]);
+                limb.reverse();
+                p[0..48].copy_from_slice(&limb);
+                // x1
+                limb.copy_from_slice(&g2_in[64..128][16..64]);
+                limb.reverse();
+                p[48..96].copy_from_slice(&limb);
+                // y0
+                limb.copy_from_slice(&g2_in[128..192][16..64]);
+                limb.reverse();
+                p[96..144].copy_from_slice(&limb);
+                // y1
+                limb.copy_from_slice(&g2_in[192..256][16..64]);
+                limb.reverse();
+                p[144..192].copy_from_slice(&limb);
+
+                // Scalar: 32B BE → 32B LE
+                s.copy_from_slice(
+                    &input[start + PADDED_G2_LENGTH..start + PADDED_G2_LENGTH + SCALAR_LENGTH],
+                );
+                s.reverse();
+
                 pairs.push((p, s));
             }
             let mut out = [0u8; 192];
             bls12_381_g2_msm_with_sdk(&sdk, &pairs, &mut out);
-            sdk.write(&out);
+            // Encode output to 256B padded BE like G2 add path
+            if out.iter().all(|&b| b == 0) {
+                let out_be = [0u8; 256];
+                sdk.write(&out_be);
+            } else {
+                let mut out_be = [0u8; 256];
+                let mut limb = [0u8; 48];
+                // x0
+                limb.copy_from_slice(&out[0..48]);
+                limb.reverse();
+                out_be[16..64].copy_from_slice(&limb);
+                // x1
+                limb.copy_from_slice(&out[48..96]);
+                limb.reverse();
+                out_be[80..128].copy_from_slice(&limb);
+                // y0
+                limb.copy_from_slice(&out[96..144]);
+                limb.reverse();
+                out_be[144..192].copy_from_slice(&limb);
+                // y1
+                limb.copy_from_slice(&out[144..192]);
+                limb.reverse();
+                out_be[208..256].copy_from_slice(&limb);
+                sdk.write(&out_be);
+            }
         }
         PRECOMPILE_BLS12_381_PAIRING => {
             if input.len() % 128 != 0 || input.is_empty() {
@@ -535,49 +586,59 @@ mod tests {
     }
     // ==================================== G2 MSM ====================================
     #[test]
-    fn bls_g2mul_0_g2_inf() {
-        // Build one 224B pair (192B point LE + 32B scalar LE = 0)
-        let a = hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be");
-        let mut p = [0u8; 192];
-        p[0..48].copy_from_slice(&a[0..64][16..64]);
-        p[0..48].reverse();
-        p[48..96].copy_from_slice(&a[64..128][16..64]);
-        p[48..96].reverse();
-        p[96..144].copy_from_slice(&a[128..192][16..64]);
-        p[96..144].reverse();
-        p[144..192].copy_from_slice(&a[192..256][16..64]);
-        p[144..192].reverse();
-
-        let mut input = [0u8; 224];
-        input[..192].copy_from_slice(&p);
-        // scalar is zeroed
-        let expected = [0u8; 192];
-        exec_evm_precompile(PRECOMPILE_BLS12_381_G2_MSM, &input, &expected, 22500);
+    fn bls_g2mul_g2_add_g2_2_g2() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G2_MSM,
+            &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be0000000000000000000000000000000000000000000000000000000000000002"),
+            &hex!("000000000000000000000000000000001638533957d540a9d2370f17cc7ed5863bc0b995b8825e0ee1ea1e1e4d00dbae81f14b0bf3611b78c952aacab827a053000000000000000000000000000000000a4edef9c1ed7f729f520e47730a124fd70662a904ba1074728114d1031e1572c6c886f6b57ec72a6178288c47c33577000000000000000000000000000000000468fb440d82b0630aeb8dca2b5256789a66da69bf91009cbfe6bd221e47aa8ae88dece9764bf3bd999d95d71e4c9899000000000000000000000000000000000f6d4552fa65dd2638b361543f887136a43253d9c66c411697003f7a13c308f5422e1aa0a59c8967acdefd8b6e36ccf3"),
+            22500,
+        );
     }
     #[test]
-    fn bls_g2mul_1_g2_g2() {
-        // scalar = 1 -> output equals input point (192 LE)
-        let a = hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be");
-        let mut p = [0u8; 192];
-        p[0..48].copy_from_slice(&a[0..64][16..64]);
-        p[0..48].reverse();
-        p[48..96].copy_from_slice(&a[64..128][16..64]);
-        p[48..96].reverse();
-        p[96..144].copy_from_slice(&a[128..192][16..64]);
-        p[96..144].reverse();
-        p[144..192].copy_from_slice(&a[192..256][16..64]);
-        p[144..192].reverse();
-
-        let mut input = [0u8; 224];
-        input[..192].copy_from_slice(&p);
-        let mut s = [0u8; 32];
-        s[0] = 1;
-        input[192..224].copy_from_slice(&s);
-
-        let expected = p;
-        exec_evm_precompile(PRECOMPILE_BLS12_381_G2_MSM, &input, &expected, 22500);
+    fn bls_g2mul_p2_add_p2_2_p2() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G2_MSM,
+            &hex!("00000000000000000000000000000000103121a2ceaae586d240843a398967325f8eb5a93e8fea99b62b9f88d8556c80dd726a4b30e84a36eeabaf3592937f2700000000000000000000000000000000086b990f3da2aeac0a36143b7d7c824428215140db1bb859338764cb58458f081d92664f9053b50b3fbd2e4723121b68000000000000000000000000000000000f9e7ba9a86a8f7624aa2b42dcc8772e1af4ae115685e60abc2c9b90242167acef3d0be4050bf935eed7c3b6fc7ba77e000000000000000000000000000000000d22c3652d0dc6f0fc9316e14268477c2049ef772e852108d269d9c38dba1d4802e8dae479818184c08f9a569d8784510000000000000000000000000000000000000000000000000000000000000002"),
+            &hex!("000000000000000000000000000000000b76fcbb604082a4f2d19858a7befd6053fa181c5119a612dfec83832537f644e02454f2b70d40985ebb08042d1620d40000000000000000000000000000000019a4a02c0ae51365d964c73be7babb719db1c69e0ddbf9a8a335b5bed3b0a4b070d2d5df01d2da4a3f1e56aae2ec106d000000000000000000000000000000000d18322f821ac72d3ca92f92b000483cf5b7d9e5d06873a44071c4e7e81efd904f210208fe0b9b4824f01c65bc7e62080000000000000000000000000000000004e563d53609a2d1e216aaaee5fbc14ef460160db8d1fdc5e1bd4e8b54cd2f39abf6f925969fa405efb9e700b01c7085"),
+            22500,
+        );
     }
-
+    #[test]
+    fn bls_g2mul_1_mul_g2_g2() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G2_MSM,
+            &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be0000000000000000000000000000000000000000000000000000000000000001"),
+            &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be"),
+            22500,
+        );
+    }
+    #[test]
+    fn bls_g2mul_1_mul_p2_p2() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G2_MSM,
+            &hex!("00000000000000000000000000000000103121a2ceaae586d240843a398967325f8eb5a93e8fea99b62b9f88d8556c80dd726a4b30e84a36eeabaf3592937f2700000000000000000000000000000000086b990f3da2aeac0a36143b7d7c824428215140db1bb859338764cb58458f081d92664f9053b50b3fbd2e4723121b68000000000000000000000000000000000f9e7ba9a86a8f7624aa2b42dcc8772e1af4ae115685e60abc2c9b90242167acef3d0be4050bf935eed7c3b6fc7ba77e000000000000000000000000000000000d22c3652d0dc6f0fc9316e14268477c2049ef772e852108d269d9c38dba1d4802e8dae479818184c08f9a569d8784510000000000000000000000000000000000000000000000000000000000000001"),
+            &hex!("00000000000000000000000000000000103121a2ceaae586d240843a398967325f8eb5a93e8fea99b62b9f88d8556c80dd726a4b30e84a36eeabaf3592937f2700000000000000000000000000000000086b990f3da2aeac0a36143b7d7c824428215140db1bb859338764cb58458f081d92664f9053b50b3fbd2e4723121b68000000000000000000000000000000000f9e7ba9a86a8f7624aa2b42dcc8772e1af4ae115685e60abc2c9b90242167acef3d0be4050bf935eed7c3b6fc7ba77e000000000000000000000000000000000d22c3652d0dc6f0fc9316e14268477c2049ef772e852108d269d9c38dba1d4802e8dae479818184c08f9a569d878451"),
+            22500,
+        );
+    }
+    #[test]
+    fn bls_g2mul_0_mul_g2_inf() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G2_MSM,
+            &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be0000000000000000000000000000000000000000000000000000000000000000"),
+            &hex!("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+            22500,
+        );
+    }
+    #[test]
+    fn bls_g2mul_0_mul_p2_inf() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G2_MSM,
+            &hex!("00000000000000000000000000000000103121a2ceaae586d240843a398967325f8eb5a93e8fea99b62b9f88d8556c80dd726a4b30e84a36eeabaf3592937f2700000000000000000000000000000000086b990f3da2aeac0a36143b7d7c824428215140db1bb859338764cb58458f081d92664f9053b50b3fbd2e4723121b68000000000000000000000000000000000f9e7ba9a86a8f7624aa2b42dcc8772e1af4ae115685e60abc2c9b90242167acef3d0be4050bf935eed7c3b6fc7ba77e000000000000000000000000000000000d22c3652d0dc6f0fc9316e14268477c2049ef772e852108d269d9c38dba1d4802e8dae479818184c08f9a569d8784510000000000000000000000000000000000000000000000000000000000000000"),
+            &hex!("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+            22500,
+        );
+    }
     // ==================================== Pairing ====================================
 
     // bls_pairing_e(2*G1,3*G2)=e(5*G1,G2)

@@ -1,4 +1,4 @@
-use crate::RuntimeContext;
+use crate::{instruction::bls12_381_helpers::parse_affine_g2, RuntimeContext};
 use blstrs::{G2Affine, G2Projective, Scalar};
 use group::Group;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
@@ -59,12 +59,8 @@ impl SyscallBls12381G2Msm {
             limb.reverse();
             be[144..192].copy_from_slice(&limb);
 
-            let a_aff_opt = G2Affine::from_uncompressed(&be);
-            if a_aff_opt.is_none().unwrap_u8() == 1 {
-                out.fill(0);
-                return;
-            }
-            let a = G2Projective::from(a_aff_opt.unwrap());
+            let a_aff = parse_affine_g2(&be);
+            let a = G2Projective::from(a_aff);
             let scalar_opt = Scalar::from_bytes_le(s32);
             if scalar_opt.is_none().unwrap_u8() == 1 {
                 continue;
