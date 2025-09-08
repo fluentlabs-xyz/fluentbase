@@ -1,4 +1,4 @@
-use blstrs::G1Affine;
+use blstrs::{G1Affine, G2Affine};
 use fluentbase_types::ExitCode;
 use group::prime::PrimeCurveAffine;
 
@@ -29,4 +29,35 @@ pub fn g1_128be_to_affine(input: &[u8; 128]) -> Result<G1Affine, ExitCode> {
         return Err(ExitCode::PrecompileError);
     }
     Ok(ct.unwrap())
+}
+
+pub fn parse_affine_g1(input: &[u8; 96]) -> G1Affine {
+    if input.iter().all(|&b| b == 0) {
+        // Treat all-zero 96B as identity (used by our ABI for infinity)
+        G1Affine::identity()
+    } else {
+        let ct = G1Affine::from_uncompressed(input);
+        if ct.is_none().unwrap_u8() == 1 {
+            // Invalid point encoding
+            // In this syscall context we don't have a Result; use identity to avoid panic
+            // and let higher layers enforce validity as needed.
+            G1Affine::identity()
+        } else {
+            ct.unwrap()
+        }
+    }
+}
+
+// Parse into affine points (validated), add in projective, and convert back to affine
+pub fn parse_affine_g2(be: &[u8; 192]) -> G2Affine {
+    if be.iter().all(|&b| b == 0) {
+        G2Affine::identity()
+    } else {
+        let ct = G2Affine::from_uncompressed(be);
+        if ct.is_none().unwrap_u8() == 1 {
+            G2Affine::identity()
+        } else {
+            ct.unwrap()
+        }
+    }
 }

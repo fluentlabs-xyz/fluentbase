@@ -58,10 +58,7 @@ use fluentbase_types::{
     B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
-use sp1_curves::weierstrass::{
-    bls12_381::Bls12381,
-    bn254::{Bn254, Bn254BaseField},
-};
+use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 #[derive(Default, Clone)]
@@ -160,7 +157,7 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallBls12381G1Add::fn_impl(p, q);
     }
 
-    fn bls12_381_g1_msm(pairs: &[([u8; 64], [u8; 64])], out: &mut [u8; 64]) {
+    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
         SyscallBls12381G1Msm::fn_impl(pairs, out)
     }
 

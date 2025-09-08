@@ -1,3 +1,4 @@
+use crate::instruction::bls12_381_helpers::parse_affine_g2;
 use crate::RuntimeContext;
 use blstrs::{G2Affine, G2Projective};
 use rwasm::{Store, TrapCode, TypedCaller, Value};
@@ -67,9 +68,8 @@ impl SyscallBls12381G2Add {
         limb.reverse();
         b_be[144..192].copy_from_slice(&limb); // c1
 
-        // Parse into affine points (validated), add in projective, and convert back to affine
-        let a_aff = G2Affine::from_uncompressed(&a_be).unwrap();
-        let b_aff = G2Affine::from_uncompressed(&b_be).unwrap();
+        let a_aff = parse_affine_g2(&a_be);
+        let b_aff = parse_affine_g2(&b_be);
         let a = G2Projective::from(a_aff);
         let b = G2Projective::from(b_aff);
         let sum = &a + &b;

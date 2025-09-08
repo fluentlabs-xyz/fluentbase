@@ -1,8 +1,7 @@
-use crate::{instruction::weierstrass_add::SyscallWeierstrassAddAssign, RuntimeContext};
+use crate::instruction::bls12_381_helpers::parse_affine_g1;
+use crate::RuntimeContext;
 use blstrs::{G1Affine, G1Projective};
-use group::prime::PrimeCurveAffine;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
-use sp1_curves::{weierstrass::bls12_381::Bls12381, EllipticCurve};
 
 pub struct SyscallBls12381G1Add;
 
@@ -28,26 +27,8 @@ impl SyscallBls12381G1Add {
     }
 
     pub fn fn_impl(p: &mut [u8; 96], q: &[u8; 96]) {
-        #[inline]
-        fn parse_affine(input: &[u8; 96]) -> G1Affine {
-            if input.iter().all(|&b| b == 0) {
-                // Treat all-zero 96B as identity (used by our ABI for infinity)
-                G1Affine::identity()
-            } else {
-                let ct = G1Affine::from_uncompressed(input);
-                if ct.is_none().unwrap_u8() == 1 {
-                    // Invalid point encoding
-                    // In this syscall context we don't have a Result; use identity to avoid panic
-                    // and let higher layers enforce validity as needed.
-                    G1Affine::identity()
-                } else {
-                    ct.unwrap()
-                }
-            }
-        }
-
-        let p_aff = parse_affine(p);
-        let q_aff = parse_affine(q);
+        let p_aff = parse_affine_g1(p);
+        let q_aff = parse_affine_g1(q);
 
         let p_proj = G1Projective::from(p_aff);
         let q_proj = G1Projective::from(q_aff);

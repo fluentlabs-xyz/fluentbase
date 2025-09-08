@@ -8,6 +8,14 @@ use fluentbase_sdk::{
     PRECOMPILE_BLS12_381_PAIRING,
 };
 
+pub const G1_ADD_GAS: u64 = 375u64;
+pub const G2_ADD_GAS: u64 = 600u64;
+pub const G1_MSM_GAS: u64 = 12000u64;
+pub const G2_MSM_GAS: u64 = 22500u64;
+pub const PAIRING_GAS: u64 = 288u64;
+pub const MAP_G1_GAS: u64 = 250u64;
+pub const MAP_G2_GAS: u64 = 250u64;
+
 pub const FP_LENGTH: usize = 48;
 /// PADDED_FP_LENGTH specifies the number of bytes that the EVM will use
 /// to represent an Fp element according to EIP-2537.
@@ -88,8 +96,8 @@ fn bls12_381_g2_add_with_sdk<SDK: SharedAPI>(
 #[inline(always)]
 fn bls12_381_g1_msm_with_sdk<SDK: SharedAPI>(
     _: &SDK,
-    pairs: &[([u8; 64], [u8; 64])],
-    out: &mut [u8; 64],
+    pairs: &[([u8; 96], [u8; 32])],
+    out: &mut [u8; 96],
 ) {
     SDK::bls12_381_g1_msm(pairs, out)
 }
@@ -129,7 +137,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     // dispatch to SDK-backed implementation
     match bytecode_address {
         PRECOMPILE_BLS12_381_G1_ADD => {
-            let gas_used = 375u64;
+            let gas_used = G1_ADD_GAS;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
@@ -171,7 +179,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G2_ADD => {
-            let gas_used = 600u64;
+            let gas_used = G2_ADD_GAS;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
@@ -241,44 +249,45 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G1_MSM => {
-            if input.len() % 128 != 0 || input.is_empty() {
+            if input.len() % (PADDED_G1_LENGTH + 32) != 0 || input.is_empty() {
                 sdk.native_exit(ExitCode::PrecompileError);
             }
-            let pairs_len = input.len() / 128;
-            let mut pairs: alloc::vec::Vec<([u8; 64], [u8; 64])> =
+            let pairs_len = input.len() / (PADDED_G1_LENGTH + 32);
+            let mut pairs: alloc::vec::Vec<([u8; 96], [u8; 32])> =
                 alloc::vec::Vec::with_capacity(pairs_len);
-
-            let gas_used = 250u64.saturating_mul(pairs_len as u64).saturating_add(100);
+            let gas_used = G1_MSM_GAS;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
             sdk.sync_evm_gas(gas_used, 0);
-
             for i in 0..pairs_len {
-                let mut a = [0u8; 64];
-                let mut b = [0u8; 64];
-                let start = i * 128;
-                a.copy_from_slice(&input[start..start + 64]);
-                b.copy_from_slice(&input[start + 64..start + 128]);
-                a[0..32].reverse();
-                a[32..64].reverse();
-                b[0..32].reverse();
-                b[32..64].reverse();
-                pairs.push((a, b));
+                let start = i * (PADDED_G1_LENGTH + 32);
+                let g1_in = &input[start..start + PADDED_G1_LENGTH];
+                let s_be = &input[start + PADDED_G1_LENGTH..start + PADDED_G1_LENGTH + 32];
+                let mut p = [0u8; 96];
+                p[0..48].copy_from_slice(&g1_in[16..64]);
+                p[48..96].copy_from_slice(&g1_in[80..128]);
+                let mut s_le = [0u8; 32];
+                for j in 0..32 {
+                    s_le[j] = s_be[31 - j];
+                }
+                pairs.push((p, s_le));
             }
-            let mut out = [0u8; 64];
-            bls12_381_g1_msm_with_sdk(&sdk, &pairs, &mut out);
-
-            let mut x_be = [0u8; 32];
-            x_be.copy_from_slice(&out[0..32]);
-            x_be.reverse();
-            let mut y_be = [0u8; 32];
-            y_be.copy_from_slice(&out[32..64]);
-            y_be.reverse();
-            let mut out_be = [0u8; 64];
-            out_be[0..32].copy_from_slice(&x_be);
-            out_be[32..64].copy_from_slice(&y_be);
-            sdk.write(&out_be);
+            let mut out96 = [0u8; 96];
+            bls12_381_g1_msm_with_sdk(&sdk, &pairs, &mut out96);
+            // Detect identity (blstrs sets flag bit for infinity in first byte of uncompressed)
+            if out96[0] & 0x40 != 0 {
+                let out = [0u8; 128];
+                sdk.write(&out);
+            } else {
+                let out = {
+                    let mut tmp = [0u8; 128];
+                    tmp[16..64].copy_from_slice(&out96[0..48]);
+                    tmp[80..128].copy_from_slice(&out96[48..96]);
+                    tmp
+                };
+                sdk.write(&out);
+            }
         }
         PRECOMPILE_BLS12_381_G2_MSM => {
             // Expect pairs of 224 bytes: 192-byte G2 point (x0||x1||y0||y1) LE limbs + 32-byte scalar LE
@@ -346,7 +355,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             // Decode compressed GT and return EIP-197 boolean (32-byte BE 0/1)
             let is_one = {
                 // Compare against compressed identity directly to avoid extra deps
-                let mut zero = [0u8; 288];
+                let zero = [0u8; 288];
                 // blstrs writes six Fp limbs (each 48B LE). For identity, compression output is zero.
                 // A zero buffer is a valid identity compression.
                 out == zero
@@ -441,6 +450,61 @@ mod tests {
             375,
         );
     }
+    // ==================================== G1 MSM ====================================
+    #[test]
+    fn bls_g1mul_g1_add_g1_2_g1() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G1_MSM,
+            &hex!("0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e10000000000000000000000000000000000000000000000000000000000000002"),
+            &hex!("000000000000000000000000000000000572cbea904d67468808c8eb50a9450c9721db309128012543902d0ac358a62ae28f75bb8f1c7c42c39a8c5529bf0f4e00000000000000000000000000000000166a9d8cabc673a322fda673779d8e3822ba3ecb8670e461f73bb9021d5fd76a4c56d9d4cd16bd1bba86881979749d28"),
+            12000,
+        );
+    }
+    #[test]
+    fn bls_g1mul_p1_add_p1_2_p1() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G1_MSM,
+            &hex!("00000000000000000000000000000000112b98340eee2777cc3c14163dea3ec97977ac3dc5c70da32e6e87578f44912e902ccef9efe28d4a78b8999dfbca942600000000000000000000000000000000186b28d92356c4dfec4b5201ad099dbdede3781f8998ddf929b4cd7756192185ca7b8f4ef7088f813270ac3d48868a210000000000000000000000000000000000000000000000000000000000000002"),
+            &hex!("0000000000000000000000000000000015222cddbabdd764c4bee0b3720322a65ff4712c86fc4b1588d0c209210a0884fa9468e855d261c483091b2bf7de6a630000000000000000000000000000000009f9edb99bc3b75d7489735c98b16ab78b9386c5f7a1f76c7e96ac6eb5bbde30dbca31a74ec6e0f0b12229eecea33c39"),
+            12000,
+        );
+    }
+    #[test]
+    fn bls_g1mul_1_mul_g1_g1() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G1_MSM,
+            &hex!("0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e10000000000000000000000000000000000000000000000000000000000000001"),
+            &hex!("0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1"),
+            12000,
+        );
+    }
+    #[test]
+    fn bls_g1mul_1_mul_p1_p1() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G1_MSM,
+            &hex!("00000000000000000000000000000000112b98340eee2777cc3c14163dea3ec97977ac3dc5c70da32e6e87578f44912e902ccef9efe28d4a78b8999dfbca942600000000000000000000000000000000186b28d92356c4dfec4b5201ad099dbdede3781f8998ddf929b4cd7756192185ca7b8f4ef7088f813270ac3d48868a210000000000000000000000000000000000000000000000000000000000000001"),
+            &hex!("00000000000000000000000000000000112b98340eee2777cc3c14163dea3ec97977ac3dc5c70da32e6e87578f44912e902ccef9efe28d4a78b8999dfbca942600000000000000000000000000000000186b28d92356c4dfec4b5201ad099dbdede3781f8998ddf929b4cd7756192185ca7b8f4ef7088f813270ac3d48868a21"),
+            12000,
+        );
+    }
+    #[test]
+    fn bls_g1mul_0_mul_g1_inf() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G1_MSM,
+            &hex!("0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e10000000000000000000000000000000000000000000000000000000000000000"),
+            &hex!("0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+            12000,
+        );
+    }
+    #[test]
+    fn bls_g1mul_0_mul_p1_inf() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G1_MSM,
+            &hex!("00000000000000000000000000000000112b98340eee2777cc3c14163dea3ec97977ac3dc5c70da32e6e87578f44912e902ccef9efe28d4a78b8999dfbca942600000000000000000000000000000000186b28d92356c4dfec4b5201ad099dbdede3781f8998ddf929b4cd7756192185ca7b8f4ef7088f813270ac3d48868a210000000000000000000000000000000000000000000000000000000000000000"),
+            &hex!("0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+            12000,
+        );
+    }
     // ==================================== G2 ADD ====================================
     #[test]
     fn bls_g2add_g2_g2_2_g2() {
@@ -460,9 +524,16 @@ mod tests {
             600,
         );
     }
-
+    #[test]
+    fn bls_g2add_inf_g2_g2() {
+        exec_evm_precompile(
+            PRECOMPILE_BLS12_381_G2_ADD,
+            &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+            &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be"),
+            600,
+        );
+    }
     // ==================================== G2 MSM ====================================
-
     #[test]
     fn bls_g2mul_0_g2_inf() {
         // Build one 224B pair (192B point LE + 32B scalar LE = 0)
