@@ -14,7 +14,7 @@ pub const G1_MSM_GAS: u64 = 12000u64;
 pub const G2_MSM_GAS: u64 = 22500u64;
 pub const G2_MSM_BASE_GAS_FEE: u64 = 22500u64;
 pub const PAIRING_GAS: u64 = 288u64;
-pub const MAP_G1_GAS: u64 = 250u64;
+pub const MAP_G1_GAS: u64 = 5500u64;
 pub const MAP_G2_GAS: u64 = 250u64;
 
 pub const MSM_MULTIPLIER: u64 = 1000;
@@ -43,6 +43,7 @@ pub const FP_LENGTH: usize = 48;
 /// Note: We only need FP_LENGTH number of bytes to represent it,
 /// but we pad the byte representation to be 32 byte aligned as specified in EIP 2537.
 pub const PADDED_FP_LENGTH: usize = 64;
+pub const FP_PAD_BY: usize = PADDED_FP_LENGTH - FP_LENGTH; // 16
 
 /// G1_LENGTH specifies the number of bytes needed to represent a G1 element.
 ///
@@ -96,6 +97,35 @@ fn array_ref64(bytes: &[u8], offset: usize) -> &[u8; 64] {
 }
 
 #[inline(always)]
+fn remove_fp_padding(input: &[u8]) -> Result<[u8; FP_LENGTH], ExitCode> {
+    if input.len() != PADDED_FP_LENGTH {
+        return Err(ExitCode::PrecompileError);
+    }
+    // Leading 16 bytes must be zero per EIP-2537
+    if input[..FP_PAD_BY].iter().any(|&b| b != 0) {
+        return Err(ExitCode::PrecompileError);
+    }
+    let mut out = [0u8; FP_LENGTH];
+    out.copy_from_slice(&input[FP_PAD_BY..PADDED_FP_LENGTH]);
+    Ok(out)
+}
+
+#[inline(always)]
+fn pad_g1_point(unpadded: &[u8; G1_LENGTH]) -> [u8; PADDED_G1_LENGTH] {
+    // Validate length assumptions
+    debug_assert_eq!(unpadded.len(), G1_LENGTH);
+    let mut padded = [0u8; PADDED_G1_LENGTH];
+    // x then y; each is 48B, pad to 64B with leading zeros
+    for i in 0..2 {
+        let src_start = i * FP_LENGTH;
+        let dst_start = i * PADDED_FP_LENGTH + FP_PAD_BY;
+        padded[dst_start..dst_start + FP_LENGTH]
+            .copy_from_slice(&unpadded[src_start..src_start + FP_LENGTH]);
+    }
+    padded
+}
+
+#[inline(always)]
 fn bls12_381_g1_add_with_sdk<SDK: SharedAPI>(_: &SDK, p: &mut [u8; 96], q: &[u8; 96]) {
     SDK::bls12_381_g1_add(p, q)
 }
@@ -132,7 +162,7 @@ fn bls12_381_pairing_with_sdk<SDK: SharedAPI>(
     SDK::bls12_381_pairing(pairs, out)
 }
 #[inline(always)]
-fn bls12_381_map_fp_to_g1_with_sdk<SDK: SharedAPI>(_: &SDK, p: &[u8; 64], out: &mut [u8; 64]) {
+fn bls12_381_map_fp_to_g1_with_sdk<SDK: SharedAPI>(_: &SDK, p: &[u8; 64], out: &mut [u8; 96]) {
     SDK::bls12_381_map_fp_to_g1(p, out)
 }
 #[inline(always)]
@@ -434,17 +464,33 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&out_be);
         }
         PRECOMPILE_BLS12_381_MAP_G1 => {
-            if input.len() != 64 {
+            if input.len() != PADDED_FP_LENGTH {
                 sdk.native_exit(ExitCode::PrecompileError);
             }
-            let mut p = [0u8; 64];
-            bls12_381_map_fp_to_g1_with_sdk(&sdk, array_ref64(&input, 0), &mut p);
-            let gas_used = 250u64;
+            // Remove padding and map
+            let unpadded_fp = match remove_fp_padding(&input) {
+                Ok(v) => v,
+                Err(e) => sdk.native_exit(e),
+            };
+            // Reconstruct padded 64B input for the syscall which expects 64B padded field
+            let mut padded_fp = [0u8; 64];
+            padded_fp[FP_PAD_BY..].copy_from_slice(&unpadded_fp);
+
+            let mut out96 = [0u8; 96];
+            bls12_381_map_fp_to_g1_with_sdk(&sdk, &padded_fp, &mut out96);
+
+            let gas_used = MAP_G1_GAS;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
             sdk.sync_evm_gas(gas_used, 0);
-            sdk.write(&p);
+
+            // Pad result for EVM: 96B -> 128B padded (x||y)
+            let mut unpadded_g1 = [0u8; G1_LENGTH];
+            unpadded_g1[0..48].copy_from_slice(&out96[0..48]);
+            unpadded_g1[48..96].copy_from_slice(&out96[48..96]);
+            let out128 = pad_g1_point(&unpadded_g1);
+            sdk.write(&out128);
         }
         PRECOMPILE_BLS12_381_MAP_G2 => {
             if input.len() != 64 {
@@ -684,6 +730,31 @@ mod tests {
         &hex!("000000000000000000000000000000000572cbea904d67468808c8eb50a9450c9721db309128012543902d0ac358a62ae28f75bb8f1c7c42c39a8c5529bf0f4e00000000000000000000000000000000166a9d8cabc673a322fda673779d8e3822ba3ecb8670e461f73bb9021d5fd76a4c56d9d4cd16bd1bba86881979749d2800000000000000000000000000000000122915c824a0857e2ee414a3dccb23ae691ae54329781315a0c75df1c04d6d7a50a030fc866f09d516020ef82324afae0000000000000000000000000000000009380275bbc8e5dcea7dc4dd7e0550ff2ac480905396eda55062650f8d251c96eb480673937cc6d9d6a44aaa56ca66dc000000000000000000000000000000000b21da7955969e61010c7a1abc1a6f0136961d1e3b20b1a7326ac738fef5c721479dfd948b52fdf2455e44813ecfd8920000000000000000000000000000000008f239ba329b3967fe48d718a36cfe5f62a7e42e0bf1c1ed714150a166bfbd6bcf6b3b58b975b9edea56d53f23a0e8490000000000000000000000000000000006e82f6da4520f85c5d27d8f329eccfa05944fd1096b20734c894966d12a9e2a9a9744529d7212d33883113a0cadb9090000000000000000000000000000000017d81038f7d60bee9110d9c0d6d1102fe2d998c957f28e31ec284cc04134df8e47e8f82ff3af2e60a6d9688a4563477c00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000d1b3cc2c7027888be51d9ef691d77bcb679afda66c73f17f9ee3837a55024f78c71363275a75d75d86bab79f74782aa0000000000000000000000000000000013fa4d4a0ad8b1ce186ed5061789213d993923066dddaf1040bc3ff59f825c78df74f2d75467e25e0f55f8a00fa030ed"),
         &hex!("0000000000000000000000000000000000000000000000000000000000000001"),
         161000,
+        );
+    }
+    // ==================================== MAP_FP_TO_G1 ====================================
+    #[test]
+    fn bls_map_g1() {
+        exec_evm_precompile(PRECOMPILE_BLS12_381_MAP_G1,
+        &hex!("00000000000000000000000000000000156c8a6a2c184569d69a76be144b5cdc5141d2d2ca4fe341f011e25e3969c55ad9e9b9ce2eb833c81a908e5fa4ac5f03"),
+        &hex!("00000000000000000000000000000000184bb665c37ff561a89ec2122dd343f20e0f4cbcaec84e3c3052ea81d1834e192c426074b02ed3dca4e7676ce4ce48ba0000000000000000000000000000000004407b8d35af4dacc809927071fc0405218f1401a6d15af775810e4e460064bcc9468beeba82fdc751be70476c888bf3"),
+        5500,
+        );
+    }
+    #[test]
+    fn bls_map_g1_616263() {
+        exec_evm_precompile(PRECOMPILE_BLS12_381_MAP_G1,
+        &hex!("00000000000000000000000000000000147e1ed29f06e4c5079b9d14fc89d2820d32419b990c1c7bb7dbea2a36a045124b31ffbde7c99329c05c559af1c6cc82"),
+        &hex!("00000000000000000000000000000000009769f3ab59bfd551d53a5f846b9984c59b97d6842b20a2c565baa167945e3d026a3755b6345df8ec7e6acb6868ae6d000000000000000000000000000000001532c00cf61aa3d0ce3e5aa20c3b531a2abd2c770a790a2613818303c6b830ffc0ecf6c357af3317b9575c567f11cd2c"),
+        5500,
+        );
+    }
+    #[test]
+    fn bls_g1map_6162636465663031() {
+        exec_evm_precompile(PRECOMPILE_BLS12_381_MAP_G1,
+        &hex!("0000000000000000000000000000000004090815ad598a06897dd89bcda860f25837d54e897298ce31e6947378134d3761dc59a572154963e8c954919ecfa82d"),
+        &hex!("000000000000000000000000000000001974dbb8e6b5d20b84df7e625e2fbfecb2cdb5f77d5eae5fb2955e5ce7313cae8364bc2fff520a6c25619739c6bdcb6a0000000000000000000000000000000015f9897e11c6441eaa676de141c8d83c37aab8667173cbe1dfd6de74d11861b961dccebcd9d289ac633455dfcc7013a3"),
+        5500,
         );
     }
 }

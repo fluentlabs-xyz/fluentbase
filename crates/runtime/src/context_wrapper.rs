@@ -173,8 +173,13 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallBls12381Pairing::fn_impl(pairs, out)
     }
 
-    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 64]) {
-        SyscallBls12381MapFpToG1::fn_impl(p, out)
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
+        // Convert padded BE Fp (64 bytes) into library 48B BE limb for x, then map via syscall
+        // Here syscall expects 64B input per EIP (Fp padded) and returns 96B uncompressed G1
+        // So delegate directly.
+        let mut tmp_out = [0u8; 96];
+        SyscallBls12381MapFpToG1::fn_impl(p, &mut tmp_out);
+        out.copy_from_slice(&tmp_out);
     }
 
     fn bls12_381_map_fp2_to_g2(p: &[u8; 64], out: &mut [u8; 64]) {

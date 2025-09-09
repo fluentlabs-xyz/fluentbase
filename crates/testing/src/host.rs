@@ -311,7 +311,7 @@ impl SharedAPI for HostTestingContext {
     fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
         RuntimeContextWrapper::bls12_381_pairing(pairs, out);
     }
-    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 64]) {
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
         RuntimeContextWrapper::bls12_381_map_fp_to_g1(p, out);
     }
     fn bls12_381_map_fp2_to_g2(p: &[u8; 64], out: &mut [u8; 64]) {

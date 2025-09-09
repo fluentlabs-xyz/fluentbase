@@ -138,7 +138,7 @@ mod tests {
             todo!()
         }
 
-        fn bls12_381_map_fp_to_g1(_p: &[u8; 64], _out: &mut [u8; 64]) {
+        fn bls12_381_map_fp_to_g1(_p: &[u8; 64], _out: &mut [u8; 96]) {
             todo!()
         }
 
