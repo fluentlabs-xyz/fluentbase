@@ -1,5 +1,6 @@
 use crate::RuntimeContext;
-use blstrs::{pairing, Compress as _, G1Affine, G2Affine, Gt};
+use blstrs::Compress as _;
+use blstrs::{pairing, G1Affine, G2Affine, Gt};
 use group::Group;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
@@ -9,16 +10,13 @@ const GT_COMPRESSED_SIZE: usize = 288;
 
 pub struct SyscallBls12381Pairing;
 
-/// Pairing call expects 384*k (k being a positive integer) bytes as an inputs
-/// that is interpreted as byte concatenation of k slices. Each slice has the
-/// following structure:
-///    * 128 bytes of G1 point encoding
-///    * 256 bytes of G2 point encoding
+/// Expects `pairs_len` pairs laid out in memory as contiguous chunks where each pair is:
+///  - 48 bytes: compressed G1 point (blstrs format)
+///  - 96 bytes: compressed G2 point (blstrs format)
 ///
-/// Each point is expected to be in the subgroup of order q.
-/// Output is 32 bytes where first 31 bytes are equal to 0x00 and the last byte
-/// is 0x01 if pairing result is equal to the multiplicative identity in a pairing
-/// target field and 0x00 otherwise.
+/// Writes a 288-byte compressed GT element (blstrs format) to `out_ptr` that
+/// represents the product of pairings over all provided pairs. If any input
+/// point fails to decompress/validate, the output buffer is filled with zeros.
 impl SyscallBls12381Pairing {
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
@@ -71,11 +69,16 @@ impl SyscallBls12381Pairing {
                 Some(a) => a + e,
                 None => e,
             });
-            e.compress().unwrap();
         }
         let res = acc.unwrap_or_else(Gt::identity);
-        // Write compressed GT (288 bytes) into the output buffer; remaining bytes stay zeroed
-        let mut cursor = std::io::Cursor::new(&mut out[..]);
-        res.write_compressed(&mut cursor).unwrap();
+        // For compatibility with the contract which checks for zeroed buffer to determine identity,
+        // write zeros when the accumulated pairing is the multiplicative identity.
+        if res == Gt::identity() {
+            out.fill(0);
+        } else {
+            // Write compressed GT (288 bytes) into the output buffer
+            let mut cursor = std::io::Cursor::new(&mut out[..]);
+            res.write_compressed(&mut cursor).unwrap();
+        }
     }
 }
