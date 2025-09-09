@@ -284,7 +284,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::bls12_381_map_fp_to_g1(p, out)
     }
 
-    fn bls12_381_map_fp2_to_g2(p: &[u8; 64], out: &mut [u8; 64]) {
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
         API::bls12_381_map_fp2_to_g2(p, out)
     }
 

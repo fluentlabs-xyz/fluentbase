@@ -182,7 +182,7 @@ impl NativeAPI for RuntimeContextWrapper {
         out.copy_from_slice(&tmp_out);
     }
 
-    fn bls12_381_map_fp2_to_g2(p: &[u8; 64], out: &mut [u8; 64]) {
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
         SyscallBls12381MapFp2ToG2::fn_impl(p, out)
     }
 

@@ -15,7 +15,7 @@ pub const G2_MSM_GAS: u64 = 22500u64;
 pub const G2_MSM_BASE_GAS_FEE: u64 = 22500u64;
 pub const PAIRING_GAS: u64 = 288u64;
 pub const MAP_G1_GAS: u64 = 5500u64;
-pub const MAP_G2_GAS: u64 = 250u64;
+pub const MAP_G2_GAS: u64 = 23800u64;
 
 pub const MSM_MULTIPLIER: u64 = 1000;
 
@@ -126,6 +126,25 @@ fn pad_g1_point(unpadded: &[u8; G1_LENGTH]) -> [u8; PADDED_G1_LENGTH] {
 }
 
 #[inline(always)]
+fn pad_g2_point(unpadded: &[u8; G2_LENGTH]) -> [u8; PADDED_G2_LENGTH] {
+    // Validate length assumptions
+    debug_assert_eq!(unpadded.len(), G2_LENGTH);
+    let mut padded = [0u8; PADDED_G2_LENGTH];
+    // For each coordinate (x then y), split FP2 limb into two FP limbs and pad each separately
+    // EIP-2537 expects FP2 limbs ordered as (c1, c0) within each coordinate
+    for coord_idx in 0..2 {
+        for limb_idx in 0..2 {
+            let limb = 1 - limb_idx; // reverse: 1, 0
+            let src_start = coord_idx * FP2_LENGTH + limb * FP_LENGTH;
+            let dst_start = coord_idx * PADDED_FP2_LENGTH + limb_idx * PADDED_FP_LENGTH + FP_PAD_BY;
+            padded[dst_start..dst_start + FP_LENGTH]
+                .copy_from_slice(&unpadded[src_start..src_start + FP_LENGTH]);
+        }
+    }
+    padded
+}
+
+#[inline(always)]
 fn bls12_381_g1_add_with_sdk<SDK: SharedAPI>(_: &SDK, p: &mut [u8; 96], q: &[u8; 96]) {
     SDK::bls12_381_g1_add(p, q)
 }
@@ -166,7 +185,7 @@ fn bls12_381_map_fp_to_g1_with_sdk<SDK: SharedAPI>(_: &SDK, p: &[u8; 64], out: &
     SDK::bls12_381_map_fp_to_g1(p, out)
 }
 #[inline(always)]
-fn bls12_381_map_fp2_to_g2_with_sdk<SDK: SharedAPI>(_: &SDK, p: &[u8; 64], out: &mut [u8; 64]) {
+fn bls12_381_map_fp2_to_g2_with_sdk<SDK: SharedAPI>(_: &SDK, p: &[u8; 128], out: &mut [u8; 192]) {
     SDK::bls12_381_map_fp2_to_g2(p, out)
 }
 
@@ -493,17 +512,32 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&out128);
         }
         PRECOMPILE_BLS12_381_MAP_G2 => {
-            if input.len() != 64 {
+            // Expect Fp2 padded: 128 bytes (64B c0 || 64B c1)
+            if input.len() != PADDED_FP2_LENGTH {
                 sdk.native_exit(ExitCode::PrecompileError);
             }
-            let mut p = [0u8; 64];
-            bls12_381_map_fp2_to_g2_with_sdk(&sdk, array_ref64(&input, 0), &mut p);
-            let gas_used = 250u64;
+            // Pass through the 128B padded Fp2 to the syscall
+            let mut padded_fp2 = [0u8; PADDED_FP2_LENGTH];
+            padded_fp2.copy_from_slice(&input);
+
+            let mut out192 = [0u8; 192];
+            bls12_381_map_fp2_to_g2_with_sdk(&sdk, &padded_fp2, &mut out192);
+
+            let gas_used = MAP_G2_GAS;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
             sdk.sync_evm_gas(gas_used, 0);
-            sdk.write(&p);
+
+            // Pad result for EVM: 192B -> 256B padded (x||y over Fp2)
+            let mut unpadded_g2 = [0u8; G2_LENGTH];
+            unpadded_g2[0..48].copy_from_slice(&out192[0..48]);
+            unpadded_g2[48..96].copy_from_slice(&out192[48..96]);
+            unpadded_g2[96..144].copy_from_slice(&out192[96..144]);
+            unpadded_g2[144..192].copy_from_slice(&out192[144..192]);
+
+            let out256 = pad_g2_point(&unpadded_g2);
+            sdk.write(&out256);
         }
         _ => unreachable!("bls12381: unsupported contract address"),
     }
@@ -732,7 +766,7 @@ mod tests {
         161000,
         );
     }
-    // ==================================== MAP_FP_TO_G1 ====================================
+    // ==================================== MAP_Fp1_TO_G1 ====================================
     #[test]
     fn bls_map_g1() {
         exec_evm_precompile(PRECOMPILE_BLS12_381_MAP_G1,
@@ -756,5 +790,30 @@ mod tests {
         &hex!("000000000000000000000000000000001974dbb8e6b5d20b84df7e625e2fbfecb2cdb5f77d5eae5fb2955e5ce7313cae8364bc2fff520a6c25619739c6bdcb6a0000000000000000000000000000000015f9897e11c6441eaa676de141c8d83c37aab8667173cbe1dfd6de74d11861b961dccebcd9d289ac633455dfcc7013a3"),
         5500,
         );
+    }
+    // ==================================== MAP_Fp2_TO_G2 ====================================
+    #[test]
+    fn bls_map_g2() {
+        exec_evm_precompile(PRECOMPILE_BLS12_381_MAP_G2,
+         &hex!("0000000000000000000000000000000007355d25caf6e7f2f0cb2812ca0e513bd026ed09dda65b177500fa31714e09ea0ded3a078b526bed3307f804d4b93b040000000000000000000000000000000002829ce3c021339ccb5caf3e187f6370e1e2a311dec9b75363117063ab2015603ff52c3d3b98f19c2f65575e99e8b78c"),
+         &hex!("0000000000000000000000000000000000e7f4568a82b4b7dc1f14c6aaa055edf51502319c723c4dc2688c7fe5944c213f510328082396515734b6612c4e7bb700000000000000000000000000000000126b855e9e69b1f691f816e48ac6977664d24d99f8724868a184186469ddfd4617367e94527d4b74fc86413483afb35b000000000000000000000000000000000caead0fd7b6176c01436833c79d305c78be307da5f6af6c133c47311def6ff1e0babf57a0fb5539fce7ee12407b0a42000000000000000000000000000000001498aadcf7ae2b345243e281ae076df6de84455d766ab6fcdaad71fab60abb2e8b980a440043cd305db09d283c895e3d"),
+         23800,
+         );
+    }
+    #[test]
+    fn bls_g2map_616263() {
+        exec_evm_precompile(PRECOMPILE_BLS12_381_MAP_G2,
+         &hex!("00000000000000000000000000000000138879a9559e24cecee8697b8b4ad32cced053138ab913b99872772dc753a2967ed50aabc907937aefb2439ba06cc50c000000000000000000000000000000000a1ae7999ea9bab1dcc9ef8887a6cb6e8f1e22566015428d220b7eec90ffa70ad1f624018a9ad11e78d588bd3617f9f2"),
+         &hex!("00000000000000000000000000000000108ed59fd9fae381abfd1d6bce2fd2fa220990f0f837fa30e0f27914ed6e1454db0d1ee957b219f61da6ff8be0d6441f000000000000000000000000000000000296238ea82c6d4adb3c838ee3cb2346049c90b96d602d7bb1b469b905c9228be25c627bffee872def773d5b2a2eb57d00000000000000000000000000000000033f90f6057aadacae7963b0a0b379dd46750c1c94a6357c99b65f63b79e321ff50fe3053330911c56b6ceea08fee65600000000000000000000000000000000153606c417e59fb331b7ae6bce4fbf7c5190c33ce9402b5ebe2b70e44fca614f3f1382a3625ed5493843d0b0a652fc3f"),
+         23800,
+         );
+    }
+    #[test]
+    fn bls_g2map_6162636465663031() {
+        exec_evm_precompile(PRECOMPILE_BLS12_381_MAP_G2,
+         &hex!("0000000000000000000000000000000018c16fe362b7dbdfa102e42bdfd3e2f4e6191d479437a59db4eb716986bf08ee1f42634db66bde97d6c16bbfd342b3b8000000000000000000000000000000000e37812ce1b146d998d5f92bdd5ada2a31bfd63dfe18311aa91637b5f279dd045763166aa1615e46a50d8d8f475f184e"),
+         &hex!("00000000000000000000000000000000038af300ef34c7759a6caaa4e69363cafeed218a1f207e93b2c70d91a1263d375d6730bd6b6509dcac3ba5b567e85bf3000000000000000000000000000000000da75be60fb6aa0e9e3143e40c42796edf15685cafe0279afd2a67c3dff1c82341f17effd402e4f1af240ea90f4b659b0000000000000000000000000000000019b148cbdf163cf0894f29660d2e7bfb2b68e37d54cc83fd4e6e62c020eaa48709302ef8e746736c0e19342cc1ce3df4000000000000000000000000000000000492f4fed741b073e5a82580f7c663f9b79e036b70ab3e51162359cec4e77c78086fe879b65ca7a47d34374c8315ac5e"),
+         23800,
+         );
     }
 }

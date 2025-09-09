@@ -2279,6 +2279,7 @@ dependencies = [
 name = "fluentbase-contracts-bls12381"
 version = "0.1.0"
 dependencies = [
+ "blst",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "revm-precompile",
