@@ -32,8 +32,6 @@ impl SyscallBls12381G1Add {
         let q_aff = parse_affine_g1(q);
 
         let result_proj = G1Projective::from(p_aff) + G1Projective::from(q_aff);
-        let result = G1Affine::from(result_proj);
-        let result = result.to_uncompressed();
-        p.copy_from_slice(&result);
+        p.copy_from_slice(&G1Affine::from(result_proj).to_uncompressed());
     }
 }

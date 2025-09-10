@@ -1,7 +1,8 @@
-use crate::instruction::bls12_381_consts::{
-    FP2_LENGTH, FP_LENGTH, G2_UNCOMPRESSED_LENGTH, SCALAR_LENGTH,
+use crate::instruction::bls12_381_consts::{G2_UNCOMPRESSED_LENGTH, SCALAR_LENGTH};
+use crate::instruction::bls12_381_helpers::{
+    g2_be_uncompressed_to_le_limbs, g2_le_limbs_to_be_uncompressed, parse_affine_g2,
 };
-use crate::{instruction::bls12_381_helpers::parse_affine_g2, RuntimeContext};
+use crate::RuntimeContext;
 use blstrs::{G2Affine, G2Projective, Scalar};
 use group::Group;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
@@ -51,24 +52,9 @@ impl SyscallBls12381G2Msm {
     ) {
         let mut acc = G2Projective::identity();
 
-        let mut limb = [0u8; FP_LENGTH];
         for (p, s32) in pairs.iter() {
-            // Convert point to BE uncompressed (swap c0/c1 like in add)
-            let mut be = [0u8; G2_UNCOMPRESSED_LENGTH];
-            // x: c0 <= x1, c1 <= x0
-            limb.copy_from_slice(&p[FP_LENGTH..FP2_LENGTH]);
-            limb.reverse();
-            be[0..FP_LENGTH].copy_from_slice(&limb);
-            limb.copy_from_slice(&p[0..FP_LENGTH]);
-            limb.reverse();
-            be[FP_LENGTH..FP2_LENGTH].copy_from_slice(&limb);
-            // y: c0 <= y1, c1 <= y0
-            limb.copy_from_slice(&p[3 * FP_LENGTH..4 * FP_LENGTH]);
-            limb.reverse();
-            be[FP2_LENGTH..3 * FP_LENGTH].copy_from_slice(&limb);
-            limb.copy_from_slice(&p[FP2_LENGTH..3 * FP_LENGTH]);
-            limb.reverse();
-            be[3 * FP_LENGTH..4 * FP_LENGTH].copy_from_slice(&limb);
+            // Convert point to BE uncompressed using shared helper
+            let be = g2_le_limbs_to_be_uncompressed(p);
 
             let a_aff = parse_affine_g2(&be);
             let a = G2Projective::from(a_aff);
@@ -86,24 +72,8 @@ impl SyscallBls12381G2Msm {
             return;
         }
 
-        // Serialize acc to BE uncompressed and map back to LE limbs
+        // Serialize acc to BE uncompressed and convert back to LE limbs
         let sum_aff = G2Affine::from(acc);
-        let be = sum_aff.to_uncompressed();
-
-        // x0 <= c1, x1 <= c0
-        limb.copy_from_slice(&be[FP_LENGTH..FP2_LENGTH]);
-        limb.reverse();
-        out[0..FP_LENGTH].copy_from_slice(&limb);
-        limb.copy_from_slice(&be[0..FP_LENGTH]);
-        limb.reverse();
-        out[FP_LENGTH..FP2_LENGTH].copy_from_slice(&limb);
-
-        // y0 <= c1, y1 <= c0
-        limb.copy_from_slice(&be[3 * FP_LENGTH..4 * FP_LENGTH]);
-        limb.reverse();
-        out[3 * FP_LENGTH..4 * FP_LENGTH].copy_from_slice(&limb);
-        limb.copy_from_slice(&be[3 * FP_LENGTH..4 * FP_LENGTH]);
-        limb.reverse();
-        out[4 * FP_LENGTH..5 * FP_LENGTH].copy_from_slice(&limb);
+        out.copy_from_slice(&g2_be_uncompressed_to_le_limbs(&sum_aff.to_uncompressed()));
     }
 }

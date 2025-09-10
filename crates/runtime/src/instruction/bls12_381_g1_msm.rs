@@ -58,8 +58,6 @@ impl SyscallBls12381G1Msm {
             let term = G1Projective::from(p_aff) * s_opt.unwrap();
             acc += term;
         }
-        let result_aff = G1Affine::from(acc);
-        let result = result_aff.to_uncompressed();
-        out.copy_from_slice(&result);
+        out.copy_from_slice(&G1Affine::from(acc).to_uncompressed());
     }
 }
