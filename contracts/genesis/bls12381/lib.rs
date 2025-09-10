@@ -28,46 +28,46 @@ use fluentbase_sdk::{
 /// ==== Fp Element ====
 
 /// The scalar is represented in little endian.
-pub const SCALAR_LENGTH: usize = 32;
+const SCALAR_LENGTH: usize = 32;
 
-pub const FP_LENGTH: usize = 48;
+const FP_LENGTH: usize = 48;
 
 /// It represent an Fp element according to EIP-2537 that EVM will use.
-pub const PADDED_FP_LENGTH: usize = 64;
-pub const FP_PAD_BY: usize = PADDED_FP_LENGTH - FP_LENGTH;
+const PADDED_FP_LENGTH: usize = 64;
+const FP_PAD_BY: usize = PADDED_FP_LENGTH - FP_LENGTH;
 
 /// ==== G1 Element ====
 
 /// G1 element length in bytes, it contains 2 Fp elements.
-pub const G1_LENGTH: usize = 2 * FP_LENGTH;
+const G1_LENGTH: usize = 2 * FP_LENGTH;
 
 /// It represent a G1 element according to EIP-2537 that EVM will use.
-pub const PADDED_G1_LENGTH: usize = 2 * PADDED_FP_LENGTH;
+const PADDED_G1_LENGTH: usize = 2 * PADDED_FP_LENGTH;
 
 // ==== Fp2 Element ====
 
 /// Number of bytes needed to represent a Fp^2 element
-pub const FP2_LENGTH: usize = 2 * FP_LENGTH;
+const FP2_LENGTH: usize = 2 * FP_LENGTH;
 
 /// ==== G2 Element ====
 
 /// G2 element contains 2 Fp^2 elements.
-pub const G2_LENGTH: usize = 2 * FP2_LENGTH;
+const G2_LENGTH: usize = 2 * FP2_LENGTH;
 
 /// It represent a Fp^2 element according to EIP-2537 that EVM will use.
-pub const PADDED_FP2_LENGTH: usize = 2 * PADDED_FP_LENGTH;
-pub const PADDED_G2_LENGTH: usize = 2 * PADDED_FP2_LENGTH;
+const PADDED_FP2_LENGTH: usize = 2 * PADDED_FP_LENGTH;
+const PADDED_G2_LENGTH: usize = 2 * PADDED_FP2_LENGTH;
 
 ///  Gas Constants for the BLS12-381 precompile contract.
 
-pub const G1_ADD_GAS: u64 = 375u64;
-pub const G2_ADD_GAS: u64 = 600u64;
+const G1_ADD_GAS: u64 = 375u64;
+const G2_ADD_GAS: u64 = 600u64;
 
 /// ==== MSM gas constants ====
 
-pub const MSM_MULTIPLIER: u64 = 1000;
-pub const G1_MSM_GAS: u64 = 12000u64;
-pub const G2_MSM_GAS: u64 = 22500u64;
+const MSM_MULTIPLIER: u64 = 1000;
+const G1_MSM_GAS: u64 = 12000u64;
+const G2_MSM_GAS: u64 = 22500u64;
 
 pub static DISCOUNT_TABLE_G1_MSM: [u16; 128] = [
     1000, 949, 848, 797, 764, 750, 738, 728, 719, 712, 705, 698, 692, 687, 682, 677, 673, 669, 665,
@@ -91,16 +91,29 @@ pub static DISCOUNT_TABLE_G2_MSM: [u16; 128] = [
 
 /// ==== Pairing gas constants ====
 
-pub const PAIRING_OFFSET_BASE: u64 = 37700;
-pub const PAIRING_MULTIPLIER_BASE: u64 = 32600;
+const PAIRING_OFFSET_BASE: u64 = 37700;
+const PAIRING_MULTIPLIER_BASE: u64 = 32600;
 
 /// ==== Map gas constants ====
 
-pub const MAP_G1_GAS: u64 = 5500u64;
-pub const MAP_G2_GAS: u64 = 23800u64;
+const MAP_G1_GAS: u64 = 5500u64;
+const MAP_G2_GAS: u64 = 23800u64;
+
+/// ==== Input lengths requirements ====
+
+const G1_ADD_INPUT_LENGTH: usize = 2 * PADDED_G1_LENGTH;
+const G2_ADD_INPUT_LENGTH: usize = 2 * PADDED_G2_LENGTH;
+
+const G1_MSM_INPUT_LENGTH: usize = PADDED_G1_LENGTH + 32;
+const G2_MSM_INPUT_LENGTH: usize = PADDED_G2_LENGTH + 32;
+
+const PAIRING_INPUT_LENGTH: usize = PADDED_G1_LENGTH + PADDED_G2_LENGTH;
+
+const MAP_G1_INPUT_LENGTH: usize = PADDED_FP_LENGTH;
+const MAP_G2_INPUT_LENGTH: usize = PADDED_FP2_LENGTH;
 
 #[inline(always)]
-pub fn msm_required_gas(k: usize, discount_table: &[u16], multiplication_cost: u64) -> u64 {
+fn msm_required_gas(k: usize, discount_table: &[u16], multiplication_cost: u64) -> u64 {
     if k == 0 {
         return 0;
     }
@@ -108,19 +121,6 @@ pub fn msm_required_gas(k: usize, discount_table: &[u16], multiplication_cost: u
     let discount = discount_table[index] as u64;
     (k as u64 * discount * multiplication_cost) / MSM_MULTIPLIER
 }
-
-/// ==== Input lengths requirements ====
-
-pub const G1_ADD_INPUT_LENGTH: usize = 2 * PADDED_G1_LENGTH;
-pub const G2_ADD_INPUT_LENGTH: usize = 2 * PADDED_G2_LENGTH;
-
-pub const G1_MSM_INPUT_LENGTH: usize = PADDED_G1_LENGTH + 32;
-pub const G2_MSM_INPUT_LENGTH: usize = PADDED_G2_LENGTH + 32;
-
-const PAIRING_INPUT_LENGTH: usize = PADDED_G1_LENGTH + PADDED_G2_LENGTH;
-
-pub const MAP_G1_INPUT_LENGTH: usize = PADDED_FP_LENGTH;
-pub const MAP_G2_INPUT_LENGTH: usize = PADDED_FP2_LENGTH;
 
 #[inline(always)]
 fn remove_fp_padding(input: &[u8]) -> Result<[u8; FP_LENGTH], ExitCode> {
@@ -177,43 +177,59 @@ fn pad_g2_point(unpadded: &[u8; G2_LENGTH]) -> [u8; PADDED_G2_LENGTH] {
 }
 
 #[inline(always)]
-fn bls12_381_g1_add_with_sdk<SDK: SharedAPI>(_: &SDK, p: &mut [u8; 96], q: &[u8; 96]) {
+fn bls12_381_g1_add_with_sdk<SDK: SharedAPI>(
+    _: &SDK,
+    p: &mut [u8; G1_LENGTH],
+    q: &[u8; G1_LENGTH],
+) {
     SDK::bls12_381_g1_add(p, q)
 }
 #[inline(always)]
-fn bls12_381_g2_add_with_sdk<SDK: SharedAPI>(_: &SDK, p: &mut [u8; 192], q: &[u8; 192]) {
+fn bls12_381_g2_add_with_sdk<SDK: SharedAPI>(
+    _: &SDK,
+    p: &mut [u8; G2_LENGTH],
+    q: &[u8; G2_LENGTH],
+) {
     SDK::bls12_381_g2_add(p, q)
 }
 #[inline(always)]
 fn bls12_381_g1_msm_with_sdk<SDK: SharedAPI>(
     _: &SDK,
-    pairs: &[([u8; 96], [u8; 32])],
-    out: &mut [u8; 96],
+    pairs: &[([u8; G1_LENGTH], [u8; SCALAR_LENGTH])],
+    out: &mut [u8; G1_LENGTH],
 ) {
     SDK::bls12_381_g1_msm(pairs, out)
 }
 #[inline(always)]
 fn bls12_381_g2_msm_with_sdk<SDK: SharedAPI>(
     _: &SDK,
-    pairs: &[([u8; 192], [u8; 32])],
-    out: &mut [u8; 192],
+    pairs: &[([u8; G2_LENGTH], [u8; SCALAR_LENGTH])],
+    out: &mut [u8; G2_LENGTH],
 ) {
     SDK::bls12_381_g2_msm(pairs, out)
 }
 #[inline(always)]
 fn bls12_381_pairing_with_sdk<SDK: SharedAPI>(
     _: &SDK,
-    pairs: &[([u8; 48], [u8; 96])],
+    pairs: &[([u8; FP_LENGTH], [u8; G1_LENGTH])],
     out: &mut [u8; 288],
 ) {
     SDK::bls12_381_pairing(pairs, out)
 }
 #[inline(always)]
-fn bls12_381_map_fp_to_g1_with_sdk<SDK: SharedAPI>(_: &SDK, p: &[u8; 64], out: &mut [u8; 96]) {
+fn bls12_381_map_fp_to_g1_with_sdk<SDK: SharedAPI>(
+    _: &SDK,
+    p: &[u8; PADDED_FP_LENGTH],
+    out: &mut [u8; G1_LENGTH],
+) {
     SDK::bls12_381_map_fp_to_g1(p, out)
 }
 #[inline(always)]
-fn bls12_381_map_fp2_to_g2_with_sdk<SDK: SharedAPI>(_: &SDK, p: &[u8; 128], out: &mut [u8; 192]) {
+fn bls12_381_map_fp2_to_g2_with_sdk<SDK: SharedAPI>(
+    _: &SDK,
+    p: &[u8; PADDED_FP2_LENGTH],
+    out: &mut [u8; G2_LENGTH],
+) {
     SDK::bls12_381_map_fp2_to_g2(p, out)
 }
 
@@ -239,16 +255,22 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             }
             sdk.sync_evm_gas(gas_used, 0);
             // Split into two 128-byte points
-            let a = &input[0..128];
-            let b = &input[128..256];
+            let a = &input[0..PADDED_G1_LENGTH];
+            let b = &input[PADDED_G1_LENGTH..2 * PADDED_G1_LENGTH];
 
             // a = x1||y1, b = x2||y2 (each limb 64B BE padded, 48B value)
-            let (x1_be, y1_be) = (&a[0..64], &a[64..128]);
-            let (x2_be, y2_be) = (&b[0..64], &b[64..128]);
+            let (x1_be, y1_be) = (
+                &a[0..PADDED_FP_LENGTH],
+                &a[PADDED_FP_LENGTH..2 * PADDED_FP_LENGTH],
+            );
+            let (x2_be, y2_be) = (
+                &b[0..PADDED_FP_LENGTH],
+                &b[PADDED_FP_LENGTH..2 * PADDED_FP_LENGTH],
+            );
 
             // Convert to runtime format: 96 bytes BE (x48||y48) as expected by blstrs::G1Affine::from_uncompressed
-            let mut p = [0u8; 96];
-            let mut q = [0u8; 96];
+            let mut p = [0u8; G1_LENGTH];
+            let mut q = [0u8; G1_LENGTH];
             // p.x
             p[0..48].copy_from_slice(&x1_be[16..64]);
             // p.y
@@ -261,11 +283,11 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             bls12_381_g1_add_with_sdk(&sdk, &mut p, &q);
 
             // EVM expects X||Y, each 64 bytes BE, where the 48-byte field is left-padded
-            let mut out = [0u8; 128];
+            let mut out = [0u8; PADDED_G1_LENGTH];
             // x: 48 LE -> BE and place at [16..64]
-            out[16..64].copy_from_slice(&p[0..48]);
+            out[16..64].copy_from_slice(&p[0..FP_LENGTH]);
             // y: 48 LE -> BE and place at [80..128]
-            out[80..128].copy_from_slice(&p[48..96]);
+            out[80..128].copy_from_slice(&p[FP_LENGTH..G1_LENGTH]);
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G2_ADD => {
@@ -280,14 +302,24 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             }
             sdk.sync_evm_gas(gas_used, 0);
             // Split inputs: each G2 is x0||x1||y0||y1 (each 64-byte padded BE, 48-byte value)
-            let a = &input[0..256];
-            let b = &input[256..512];
-            let (a_x0, a_x1, a_y0, a_y1) = (&a[0..64], &a[64..128], &a[128..192], &a[192..256]);
-            let (b_x0, b_x1, b_y0, b_y1) = (&b[0..64], &b[64..128], &b[128..192], &b[192..256]);
+            let a = &input[0..PADDED_G2_LENGTH];
+            let b = &input[PADDED_G2_LENGTH..2 * PADDED_G2_LENGTH];
+            let (a_x0, a_x1, a_y0, a_y1) = (
+                &a[0..PADDED_FP2_LENGTH],
+                &a[PADDED_FP2_LENGTH..2 * PADDED_FP2_LENGTH],
+                &a[2 * PADDED_FP2_LENGTH..3 * PADDED_FP2_LENGTH],
+                &a[3 * PADDED_FP2_LENGTH..4 * PADDED_FP2_LENGTH],
+            );
+            let (b_x0, b_x1, b_y0, b_y1) = (
+                &b[0..PADDED_FP2_LENGTH],
+                &b[PADDED_FP2_LENGTH..2 * PADDED_FP2_LENGTH],
+                &b[2 * PADDED_FP2_LENGTH..3 * PADDED_FP2_LENGTH],
+                &b[3 * PADDED_FP2_LENGTH..4 * PADDED_FP2_LENGTH],
+            );
 
             // Convert to runtime format: 192 bytes LE (x0||x1||y0||y1), each limb 48 bytes
-            let mut p = [0u8; 192];
-            let mut q = [0u8; 192];
+            let mut p = [0u8; G2_LENGTH];
+            let mut q = [0u8; G2_LENGTH];
             // a.x0
             p[0..48].copy_from_slice(&a_x0[16..64]);
             p[0..48].reverse();
@@ -482,24 +514,24 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             let mut pairs: alloc::vec::Vec<([u8; 48], [u8; 96])> =
                 alloc::vec::Vec::with_capacity(pairs_len);
             for i in 0..pairs_len {
-                let mut g1 = [0u8; 48];
-                let mut g2 = [0u8; 96];
+                let mut g1 = [0u8; FP_LENGTH];
+                let mut g2 = [0u8; FP2_LENGTH];
                 let start = i * PAIRING_INPUT_LENGTH;
                 // Parse G1: x||y (each 32-byte BE padded, 48-byte value)
                 // Extract 48B limbs (skip leading 16 zero bytes per limb) and convert to LE
-                g1[0..48].copy_from_slice(&input[start..start + 64][16..64]);
-                g1[0..48].reverse();
+                g1[0..FP_LENGTH].copy_from_slice(&input[start..start + 64][16..64]);
+                g1[0..FP_LENGTH].reverse();
                 // Parse G2: x0||x1||y0||y1, each limb 64B BE padded
                 let g2_in = &input[start + 64..start + PAIRING_INPUT_LENGTH];
                 // x0: 32B BE -> 48B LE (zero-extended)
-                let mut limb = [0u8; 48];
+                let mut limb = [0u8; FP_LENGTH];
                 limb[0..32].copy_from_slice(&g2_in[0..32]);
                 limb[0..32].reverse();
-                g2[0..48].copy_from_slice(&limb);
+                g2[0..FP_LENGTH].copy_from_slice(&limb);
                 // x1: 32B BE -> 48B LE (zero-extended)
                 limb[0..32].copy_from_slice(&g2_in[32..64]);
                 limb[0..32].reverse();
-                limb[32..48].fill(0);
+                limb[32..FP_LENGTH].fill(0);
                 g2[48..96].copy_from_slice(&limb);
                 pairs.push((g1, g2));
             }
