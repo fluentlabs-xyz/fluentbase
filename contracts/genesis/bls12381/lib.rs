@@ -303,18 +303,18 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.sync_evm_gas(gas_used, 0);
             // Split inputs: each G2 is x0||x1||y0||y1 (each 64-byte padded BE, 48-byte value)
             let a = &input[0..PADDED_G2_LENGTH];
-            let b = &input[PADDED_G2_LENGTH..2 * PADDED_G2_LENGTH];
+            let b = &input[PADDED_G2_LENGTH..(2 * PADDED_G2_LENGTH)];
             let (a_x0, a_x1, a_y0, a_y1) = (
-                &a[0..PADDED_FP2_LENGTH],
-                &a[PADDED_FP2_LENGTH..2 * PADDED_FP2_LENGTH],
-                &a[2 * PADDED_FP2_LENGTH..3 * PADDED_FP2_LENGTH],
-                &a[3 * PADDED_FP2_LENGTH..4 * PADDED_FP2_LENGTH],
+                &a[0..PADDED_FP_LENGTH],
+                &a[PADDED_FP_LENGTH..(2 * PADDED_FP_LENGTH)],
+                &a[(2 * PADDED_FP_LENGTH)..(3 * PADDED_FP_LENGTH)],
+                &a[(3 * PADDED_FP_LENGTH)..(4 * PADDED_FP_LENGTH)],
             );
             let (b_x0, b_x1, b_y0, b_y1) = (
-                &b[0..PADDED_FP2_LENGTH],
-                &b[PADDED_FP2_LENGTH..2 * PADDED_FP2_LENGTH],
-                &b[2 * PADDED_FP2_LENGTH..3 * PADDED_FP2_LENGTH],
-                &b[3 * PADDED_FP2_LENGTH..4 * PADDED_FP2_LENGTH],
+                &b[0..PADDED_FP_LENGTH],
+                &b[PADDED_FP_LENGTH..(2 * PADDED_FP_LENGTH)],
+                &b[(2 * PADDED_FP_LENGTH)..(3 * PADDED_FP_LENGTH)],
+                &b[(3 * PADDED_FP_LENGTH)..(4 * PADDED_FP_LENGTH)],
             );
 
             // Convert to runtime format: 192 bytes LE (x0||x1||y0||y1), each limb 48 bytes
@@ -906,7 +906,7 @@ mod tests {
          );
         }
     }
-
+    // ==================================== Fail Cases: G1 Add ====================================
     mod fail_cases_g1_add {
         use super::*;
         #[test]
