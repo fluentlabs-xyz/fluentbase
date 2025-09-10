@@ -271,21 +271,25 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             // Convert to runtime format: 96 bytes BE (x48||y48) as expected by blstrs::G1Affine::from_uncompressed
             let mut p = [0u8; G1_LENGTH];
             let mut q = [0u8; G1_LENGTH];
-            // p.x
-            p[0..48].copy_from_slice(&x1_be[16..64]);
-            // p.y
-            p[48..96].copy_from_slice(&y1_be[16..64]);
-            // q.x
-            q[0..48].copy_from_slice(&x2_be[16..64]);
-            // q.y
-            q[48..96].copy_from_slice(&y2_be[16..64]);
+
+            // Helper function to copy 48-byte field from padded input
+            let copy_field = |dst: &mut [u8], src: &[u8]| {
+                dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
+            };
+
+            // p (x, y)
+            copy_field(&mut p[0..FP_LENGTH], x1_be);
+            copy_field(&mut p[FP_LENGTH..G1_LENGTH], y1_be);
+            // q (x, y)
+            copy_field(&mut q[0..FP_LENGTH], x2_be);
+            copy_field(&mut q[FP_LENGTH..G1_LENGTH], y2_be);
 
             bls12_381_g1_add_with_sdk(&sdk, &mut p, &q);
 
             // EVM expects X||Y, each 64 bytes BE, where the 48-byte field is left-padded
             let mut out = [0u8; PADDED_G1_LENGTH];
             // x: 48 LE -> BE and place at [16..64]
-            out[16..64].copy_from_slice(&p[0..FP_LENGTH]);
+            out[FP_PAD_BY..PADDED_FP_LENGTH].copy_from_slice(&p[0..FP_LENGTH]);
             // y: 48 LE -> BE and place at [80..128]
             out[80..128].copy_from_slice(&p[FP_LENGTH..G1_LENGTH]);
             sdk.write(&out);
@@ -323,39 +327,39 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 
             // Helper function to copy and reverse 48-byte limbs
             let copy_and_reverse_limb = |dst: &mut [u8], src: &[u8]| {
-                dst.copy_from_slice(&src[16..64]);
+                dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
                 dst.reverse();
             };
 
             // Convert a (x0, x1, y0, y1)
-            copy_and_reverse_limb(&mut p[0..48], a_x0);
-            copy_and_reverse_limb(&mut p[48..96], a_x1);
-            copy_and_reverse_limb(&mut p[96..144], a_y0);
-            copy_and_reverse_limb(&mut p[144..192], a_y1);
+            copy_and_reverse_limb(&mut p[0..FP_LENGTH], a_x0);
+            copy_and_reverse_limb(&mut p[FP_LENGTH..2 * FP_LENGTH], a_x1);
+            copy_and_reverse_limb(&mut p[2 * FP_LENGTH..3 * FP_LENGTH], a_y0);
+            copy_and_reverse_limb(&mut p[3 * FP_LENGTH..4 * FP_LENGTH], a_y1);
 
             // Convert b (x0, x1, y0, y1)
-            copy_and_reverse_limb(&mut q[0..48], b_x0);
-            copy_and_reverse_limb(&mut q[48..96], b_x1);
-            copy_and_reverse_limb(&mut q[96..144], b_y0);
-            copy_and_reverse_limb(&mut q[144..192], b_y1);
+            copy_and_reverse_limb(&mut q[0..FP_LENGTH], b_x0);
+            copy_and_reverse_limb(&mut q[FP_LENGTH..2 * FP_LENGTH], b_x1);
+            copy_and_reverse_limb(&mut q[2 * FP_LENGTH..3 * FP_LENGTH], b_y0);
+            copy_and_reverse_limb(&mut q[3 * FP_LENGTH..4 * FP_LENGTH], b_y1);
 
             // Call the Fluent SDK, syscall bls12_381_g2_add
             bls12_381_g2_add_with_sdk(&sdk, &mut p, &q);
 
             // Encode output: 256 bytes (x0||x1||y0||y1), each limb is 64-byte BE padded (16 zeros + 48 value)
-            let mut out = [0u8; 256];
-            let mut limb = [0u8; 48];
+            let mut out = [0u8; PADDED_G2_LENGTH];
+            let mut limb = [0u8; FP_LENGTH];
             let mut copy_reverse_and_place = |src: &[u8], dst_start: usize| {
                 limb.copy_from_slice(src);
                 limb.reverse();
-                out[dst_start..dst_start + 48].copy_from_slice(&limb);
+                out[dst_start..dst_start + FP_LENGTH].copy_from_slice(&limb);
             };
 
             // x0, x1, y0, y1
-            copy_reverse_and_place(&p[0..48], 16);
-            copy_reverse_and_place(&p[48..96], 80);
-            copy_reverse_and_place(&p[96..144], 144);
-            copy_reverse_and_place(&p[144..192], 208);
+            copy_reverse_and_place(&p[0..FP_LENGTH], 16);
+            copy_reverse_and_place(&p[FP_LENGTH..2 * FP_LENGTH], 80);
+            copy_reverse_and_place(&p[2 * FP_LENGTH..3 * FP_LENGTH], 144);
+            copy_reverse_and_place(&p[3 * FP_LENGTH..4 * FP_LENGTH], 208);
 
             sdk.write(&out);
         }
@@ -380,27 +384,26 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 let start = i * input_length_requirement;
                 let g1_in = &input[start..start + PADDED_G1_LENGTH];
                 let s_be = &input[start + PADDED_G1_LENGTH..start + input_length_requirement];
-                let mut p = [0u8; 96];
-                p[0..48].copy_from_slice(&g1_in[16..64]);
-                p[48..96].copy_from_slice(&g1_in[80..128]);
-                let mut s_le = [0u8; 32];
-                for j in 0..32 {
-                    s_le[j] = s_be[31 - j];
-                }
+                let mut p = [0u8; G1_LENGTH];
+                p[0..FP_LENGTH].copy_from_slice(&g1_in[FP_PAD_BY..PADDED_FP_LENGTH]);
+                p[FP_LENGTH..G1_LENGTH].copy_from_slice(&g1_in[80..128]);
+                let mut s_le = [0u8; SCALAR_LENGTH];
+                s_le.copy_from_slice(s_be);
+                s_le.reverse();
                 pairs.push((p, s_le));
             }
-            let mut out96 = [0u8; 96];
+            let mut out96 = [0u8; G1_LENGTH];
             // Call the Fluent SDK, syscall bls12_381_g1_msm
             bls12_381_g1_msm_with_sdk(&sdk, &pairs, &mut out96);
             // Detect identity (blstrs sets flag bit for infinity in first byte of uncompressed)
             if out96[0] & 0x40 != 0 {
-                let out = [0u8; 128];
+                let out = [0u8; PADDED_G1_LENGTH];
                 sdk.write(&out);
             } else {
                 let out = {
-                    let mut tmp = [0u8; 128];
+                    let mut tmp = [0u8; PADDED_G1_LENGTH];
                     tmp[16..64].copy_from_slice(&out96[0..48]);
-                    tmp[80..128].copy_from_slice(&out96[48..96]);
+                    tmp[80..PADDED_G1_LENGTH].copy_from_slice(&out96[48..96]);
                     tmp
                 };
                 sdk.write(&out);
@@ -415,7 +418,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 sdk.native_exit(ExitCode::PrecompileError);
             }
             let pairs_len = input.len() / input_length_requirement;
-            let mut pairs: alloc::vec::Vec<([u8; 192], [u8; 32])> =
+            let mut pairs: alloc::vec::Vec<([u8; G2_LENGTH], [u8; SCALAR_LENGTH])> =
                 alloc::vec::Vec::with_capacity(pairs_len);
 
             let k = pairs_len;
@@ -426,24 +429,24 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 
             sdk.sync_evm_gas(gas_used, 0);
             for i in 0..pairs_len {
-                let mut p = [0u8; 192];
+                let mut p = [0u8; G2_LENGTH];
                 let mut s = [0u8; SCALAR_LENGTH];
                 let start = i * input_length_requirement;
                 let g2_in = &input[start..start + PADDED_G2_LENGTH];
 
                 // Convert padded BE limbs → LE limbs (like G2 add path)
-                let mut limb = [0u8; 48];
+                let mut limb = [0u8; FP_LENGTH];
                 let mut copy_and_reverse_limb = |src: &[u8], dst: &mut [u8]| {
-                    limb.copy_from_slice(&src[16..64]);
+                    limb.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
                     limb.reverse();
                     dst.copy_from_slice(&limb);
                 };
 
                 // x0, x1, y0, y1
-                copy_and_reverse_limb(&g2_in[0..64], &mut p[0..48]);
-                copy_and_reverse_limb(&g2_in[64..128], &mut p[48..96]);
-                copy_and_reverse_limb(&g2_in[128..192], &mut p[96..144]);
-                copy_and_reverse_limb(&g2_in[192..256], &mut p[144..192]);
+                copy_and_reverse_limb(&g2_in[0..64], &mut p[0..FP_LENGTH]);
+                copy_and_reverse_limb(&g2_in[64..128], &mut p[FP_LENGTH..2 * FP_LENGTH]);
+                copy_and_reverse_limb(&g2_in[128..192], &mut p[2 * FP_LENGTH..3 * FP_LENGTH]);
+                copy_and_reverse_limb(&g2_in[192..256], &mut p[3 * FP_LENGTH..4 * FP_LENGTH]);
 
                 // Scalar: 32B BE → 32B LE
                 s.copy_from_slice(
@@ -453,19 +456,19 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 
                 pairs.push((p, s));
             }
-            let mut out = [0u8; 192];
+            let mut out = [0u8; G2_LENGTH];
             bls12_381_g2_msm_with_sdk(&sdk, &pairs, &mut out);
             // Encode output to 256B padded BE like G2 add path
             if out.iter().all(|&b| b == 0) {
-                let out_be = [0u8; 256];
+                let out_be = [0u8; PADDED_G2_LENGTH];
                 sdk.write(&out_be);
             } else {
-                let mut out_be = [0u8; 256];
-                let mut limb = [0u8; 48];
+                let mut out_be = [0u8; PADDED_G2_LENGTH];
+                let mut limb = [0u8; FP_LENGTH];
                 let mut copy_reverse_and_place = |src: &[u8], dst_start: usize| {
                     limb.copy_from_slice(src);
                     limb.reverse();
-                    out_be[dst_start..dst_start + 48].copy_from_slice(&limb);
+                    out_be[dst_start..dst_start + FP_LENGTH].copy_from_slice(&limb);
                 };
 
                 // x0, x1, y0, y1
@@ -501,16 +504,17 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 g1[0..FP_LENGTH].reverse();
                 // Parse G2: x0||x1||y0||y1, each limb 64B BE padded
                 let g2_in = &input[start + 64..start + PAIRING_INPUT_LENGTH];
-                // x0: 32B BE -> 48B LE (zero-extended)
                 let mut limb = [0u8; FP_LENGTH];
-                limb[0..32].copy_from_slice(&g2_in[0..32]);
-                limb[0..32].reverse();
-                g2[0..FP_LENGTH].copy_from_slice(&limb);
-                // x1: 32B BE -> 48B LE (zero-extended)
-                limb[0..32].copy_from_slice(&g2_in[32..64]);
-                limb[0..32].reverse();
-                limb[32..FP_LENGTH].fill(0);
-                g2[48..96].copy_from_slice(&limb);
+                let mut parse_g2_limb = |src: &[u8], dst: &mut [u8]| {
+                    limb[0..32].copy_from_slice(src);
+                    limb[0..32].reverse();
+                    limb[32..FP_LENGTH].fill(0);
+                    dst.copy_from_slice(&limb);
+                };
+
+                // x0, x1: 32B BE -> 48B LE (zero-extended)
+                parse_g2_limb(&g2_in[0..32], &mut g2[0..FP_LENGTH]);
+                parse_g2_limb(&g2_in[32..64], &mut g2[48..96]);
                 pairs.push((g1, g2));
             }
             let mut out = [0u8; 288];
@@ -544,15 +548,15 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 Err(e) => sdk.native_exit(e),
             };
             // Reconstruct padded 64B input for the syscall which expects 64B padded field
-            let mut padded_fp = [0u8; 64];
+            let mut padded_fp = [0u8; PADDED_FP_LENGTH];
             padded_fp[FP_PAD_BY..].copy_from_slice(&unpadded_fp);
             // Call the Fluent SDK, syscall bls12_381_map_fp_to_g1
-            let mut out96 = [0u8; 96];
+            let mut out96 = [0u8; G1_LENGTH];
             bls12_381_map_fp_to_g1_with_sdk(&sdk, &padded_fp, &mut out96);
             // Pad result for EVM: 96B -> 128B padded (x||y)
             let mut unpadded_g1 = [0u8; G1_LENGTH];
-            unpadded_g1[0..48].copy_from_slice(&out96[0..48]);
-            unpadded_g1[48..96].copy_from_slice(&out96[48..96]);
+            unpadded_g1[0..FP_LENGTH].copy_from_slice(&out96[0..FP_LENGTH]);
+            unpadded_g1[FP_LENGTH..G1_LENGTH].copy_from_slice(&out96[FP_LENGTH..G1_LENGTH]);
             let out128 = pad_g1_point(&unpadded_g1);
             sdk.write(&out128);
         }
@@ -571,14 +575,19 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             let mut padded_fp2 = [0u8; PADDED_FP2_LENGTH];
             padded_fp2.copy_from_slice(&input);
             // Call the Fluent SDK, syscall bls12_381_map_fp2_to_g2
-            let mut out192 = [0u8; 192];
+            let mut out192 = [0u8; G2_LENGTH];
             bls12_381_map_fp2_to_g2_with_sdk(&sdk, &padded_fp2, &mut out192);
             // Pad result for EVM: 192B -> 256B padded (x||y over Fp2)
             let mut unpadded_g2 = [0u8; G2_LENGTH];
-            unpadded_g2[0..48].copy_from_slice(&out192[0..48]);
-            unpadded_g2[48..96].copy_from_slice(&out192[48..96]);
-            unpadded_g2[96..144].copy_from_slice(&out192[96..144]);
-            unpadded_g2[144..192].copy_from_slice(&out192[144..192]);
+            let mut copy_chunk = |src_start: usize, dst_start: usize| {
+                unpadded_g2[dst_start..dst_start + 48]
+                    .copy_from_slice(&out192[src_start..src_start + 48]);
+            };
+
+            copy_chunk(0, 0);
+            copy_chunk(48, 48);
+            copy_chunk(96, 96);
+            copy_chunk(144, 144);
 
             let out256 = pad_g2_point(&unpadded_g2);
             sdk.write(&out256);
