@@ -1591,7 +1591,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.4.3-dev"
+version = "0.4.4-dev"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1603,7 +1603,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.4.3-dev"
+version = "0.4.4-dev"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1754,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "0.4.3-dev"
+version = "0.4.4-dev"
 dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -1766,7 +1766,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.4.3-dev"
+version = "0.4.4-dev"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1792,7 +1792,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.4.3-dev"
+version = "0.4.4-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-sdk-derive",
@@ -1802,7 +1802,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.4.3-dev"
+version = "0.4.4-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -1815,7 +1815,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.4.3-dev"
+version = "0.4.4-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -1837,7 +1837,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-testing"
-version = "0.4.3-dev"
+version = "0.4.4-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-revm",
@@ -1851,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.4.3-dev"
+version = "0.4.4-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
