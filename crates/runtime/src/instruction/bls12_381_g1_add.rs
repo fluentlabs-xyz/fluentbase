@@ -1,3 +1,4 @@
+use crate::instruction::bls12_381_consts::G1_UNCOMPRESSED_LENGTH;
 use crate::instruction::bls12_381_helpers::parse_affine_g1;
 use crate::RuntimeContext;
 use blstrs::{G1Affine, G1Projective};
@@ -14,10 +15,10 @@ impl SyscallBls12381G1Add {
         let p_ptr = params[0].i32().unwrap() as usize;
         let q_ptr = params[1].i32().unwrap() as usize;
 
-        let mut p = [0u8; 96];
+        let mut p = [0u8; G1_UNCOMPRESSED_LENGTH];
         caller.memory_read(p_ptr, &mut p)?;
 
-        let mut q = [0u8; 96];
+        let mut q = [0u8; G1_UNCOMPRESSED_LENGTH];
         caller.memory_read(q_ptr, &mut q)?;
 
         Self::fn_impl(&mut p, &q);
@@ -26,15 +27,13 @@ impl SyscallBls12381G1Add {
         Ok(())
     }
 
-    pub fn fn_impl(p: &mut [u8; 96], q: &[u8; 96]) {
+    pub fn fn_impl(p: &mut [u8; G1_UNCOMPRESSED_LENGTH], q: &[u8; G1_UNCOMPRESSED_LENGTH]) {
         let p_aff = parse_affine_g1(p);
         let q_aff = parse_affine_g1(q);
 
-        let p_proj = G1Projective::from(p_aff);
-        let q_proj = G1Projective::from(q_aff);
-        let result = p_proj + q_proj;
-        let result_aff = G1Affine::from(result);
-        let result = result_aff.to_uncompressed();
+        let result_proj = G1Projective::from(p_aff) + G1Projective::from(q_aff);
+        let result = G1Affine::from(result_proj);
+        let result = result.to_uncompressed();
         p.copy_from_slice(&result);
     }
 }

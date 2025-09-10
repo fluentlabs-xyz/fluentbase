@@ -1,3 +1,4 @@
+use crate::instruction::bls12_381_consts::{FP_LENGTH, G2_UNCOMPRESSED_LENGTH};
 use crate::RuntimeContext;
 use blst::{
     blst_fp, blst_fp2, blst_fp_from_bendian, blst_map_to_g2, blst_p2, blst_p2_affine,
@@ -20,16 +21,16 @@ impl SyscallBls12381MapFp2ToG2 {
         let mut p = [0u8; 128];
         caller.memory_read(p_ptr, &mut p)?;
 
-        let mut out = [0u8; 192];
+        let mut out = [0u8; G2_UNCOMPRESSED_LENGTH];
         Self::fn_impl(&p, &mut out);
         caller.memory_write(out_ptr, &out)?;
         Ok(())
     }
 
-    pub fn fn_impl(p: &[u8; 128], out: &mut [u8; 192]) {
+    pub fn fn_impl(p: &[u8; 128], out: &mut [u8; G2_UNCOMPRESSED_LENGTH]) {
         // Interpret input as two 64-byte BE padded limbs (c0||c1). Extract 48-byte BE (skip 16 leading zeros per limb).
-        let mut c0_be48 = [0u8; 48];
-        let mut c1_be48 = [0u8; 48];
+        let mut c0_be48 = [0u8; FP_LENGTH];
+        let mut c1_be48 = [0u8; FP_LENGTH];
         c0_be48.copy_from_slice(&p[16..64]);
         c1_be48.copy_from_slice(&p[64 + 16..64 + 64]);
 
@@ -43,7 +44,6 @@ impl SyscallBls12381MapFp2ToG2 {
 
         // Construct Fp2
         let fp2 = blst_fp2 { fp: [u0, u1] };
-
         // Map to G2 and convert to affine
         let mut p2 = blst_p2::default();
         unsafe {

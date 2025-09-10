@@ -8,20 +8,96 @@ use fluentbase_sdk::{
     PRECOMPILE_BLS12_381_PAIRING,
 };
 
+/**
+ * This is the BLS12-381 precompile contract.
+ *
+ * Note: more info on the BLS12-381 curve can be found here: https://eips.ethereum.org/EIPS/eip-2537
+ *
+ * It implements the following functions:
+ * - G1_ADD: SDK::bls12_381_g1_add::blstrs
+ * - G1_MSM: SDK::bls12_381_g1_msm::blstrs
+ * - G2_ADD: SDK::bls12_381_g2_add::blstrs
+ * - G2_MSM: SDK::bls12_381_g2_msm::blstrs
+ * - PAIRING: SDK::bls12_381_pairing::blstrs
+ * - MAP_G1: SDK::bls12_381_map_fp_to_g1::blst
+ * - MAP_G2: SDK::bls12_381_map_fp2_to_g2::blst
+ */
+
+/// =========== Constants ===========
+
+/// ==== Fp Element ====
+
+/// The scalar is represented in little endian.
+pub const SCALAR_LENGTH: usize = 32;
+
+pub const FP_LENGTH: usize = 48;
+
+/// It represent an Fp element according to EIP-2537 that EVM will use.
+pub const PADDED_FP_LENGTH: usize = 64;
+pub const FP_PAD_BY: usize = PADDED_FP_LENGTH - FP_LENGTH;
+
+/// ==== G1 Element ====
+
+/// G1 element length in bytes, it contains 2 Fp elements.
+pub const G1_LENGTH: usize = 2 * FP_LENGTH;
+
+/// It represent a G1 element according to EIP-2537 that EVM will use.
+pub const PADDED_G1_LENGTH: usize = 2 * PADDED_FP_LENGTH;
+
+// ==== Fp2 Element ====
+
+/// Number of bytes needed to represent a Fp^2 element
+pub const FP2_LENGTH: usize = 2 * FP_LENGTH;
+
+/// ==== G2 Element ====
+
+/// G2 element contains 2 Fp^2 elements.
+pub const G2_LENGTH: usize = 2 * FP2_LENGTH;
+
+/// It represent a Fp^2 element according to EIP-2537 that EVM will use.
+pub const PADDED_FP2_LENGTH: usize = 2 * PADDED_FP_LENGTH;
+pub const PADDED_G2_LENGTH: usize = 2 * PADDED_FP2_LENGTH;
+
+///  Gas Constants for the BLS12-381 precompile contract.
+
 pub const G1_ADD_GAS: u64 = 375u64;
 pub const G2_ADD_GAS: u64 = 600u64;
-pub const G1_MSM_GAS: u64 = 12000u64;
-pub const G2_MSM_GAS: u64 = 22500u64;
-pub const G2_MSM_BASE_GAS_FEE: u64 = 22500u64;
-// Pairing gas constants (cost = MULTIPLIER * k + OFFSET)
-pub const PAIRING_OFFSET_BASE: u64 = 37700;
-pub const PAIRING_MULTIPLIER_BASE: u64 = 32600;
-pub const MAP_G1_GAS: u64 = 5500u64;
-pub const MAP_G2_GAS: u64 = 23800u64;
+
+/// ==== MSM gas constants ====
 
 pub const MSM_MULTIPLIER: u64 = 1000;
+pub const G1_MSM_GAS: u64 = 12000u64;
+pub const G2_MSM_GAS: u64 = 22500u64;
 
-pub static DISCOUNT_TABLE_G2_MSM: &[u16] = &[1000];
+pub static DISCOUNT_TABLE_G1_MSM: [u16; 128] = [
+    1000, 949, 848, 797, 764, 750, 738, 728, 719, 712, 705, 698, 692, 687, 682, 677, 673, 669, 665,
+    661, 658, 654, 651, 648, 645, 642, 640, 637, 635, 632, 630, 627, 625, 623, 621, 619, 617, 615,
+    613, 611, 609, 608, 606, 604, 603, 601, 599, 598, 596, 595, 593, 592, 591, 589, 588, 586, 585,
+    584, 582, 581, 580, 579, 577, 576, 575, 574, 573, 572, 570, 569, 568, 567, 566, 565, 564, 563,
+    562, 561, 560, 559, 558, 557, 556, 555, 554, 553, 552, 551, 550, 549, 548, 547, 547, 546, 545,
+    544, 543, 542, 541, 540, 540, 539, 538, 537, 536, 536, 535, 534, 533, 532, 532, 531, 530, 529,
+    528, 528, 527, 526, 525, 525, 524, 523, 522, 522, 521, 520, 520, 519,
+];
+
+pub static DISCOUNT_TABLE_G2_MSM: [u16; 128] = [
+    1000, 1000, 923, 884, 855, 832, 812, 796, 782, 770, 759, 749, 740, 732, 724, 717, 711, 704,
+    699, 693, 688, 683, 679, 674, 670, 666, 663, 659, 655, 652, 649, 646, 643, 640, 637, 634, 632,
+    629, 627, 624, 622, 620, 618, 615, 613, 611, 609, 607, 606, 604, 602, 600, 598, 597, 595, 593,
+    592, 590, 589, 587, 586, 584, 583, 582, 580, 579, 578, 576, 575, 574, 573, 571, 570, 569, 568,
+    567, 566, 565, 563, 562, 561, 560, 559, 558, 557, 556, 555, 554, 553, 552, 552, 551, 550, 549,
+    548, 547, 546, 545, 545, 544, 543, 542, 541, 541, 540, 539, 538, 537, 537, 536, 535, 535, 534,
+    533, 532, 532, 531, 530, 530, 529, 528, 528, 527, 526, 526, 525, 524, 524,
+];
+
+/// ==== Pairing gas constants ====
+
+pub const PAIRING_OFFSET_BASE: u64 = 37700;
+pub const PAIRING_MULTIPLIER_BASE: u64 = 32600;
+
+/// ==== Map gas constants ====
+
+pub const MAP_G1_GAS: u64 = 5500u64;
+pub const MAP_G2_GAS: u64 = 23800u64;
 
 #[inline(always)]
 pub fn msm_required_gas(k: usize, discount_table: &[u16], multiplication_cost: u64) -> u64 {
@@ -33,70 +109,18 @@ pub fn msm_required_gas(k: usize, discount_table: &[u16], multiplication_cost: u
     (k as u64 * discount * multiplication_cost) / MSM_MULTIPLIER
 }
 
-/// SCALAR_LENGTH specifies the number of bytes needed to represent a scalar.
-///
-/// Note: The scalar is represented in little endian.
-pub const SCALAR_LENGTH: usize = 32;
+/// ==== Input lengths requirements ====
 
-pub const FP_LENGTH: usize = 48;
-/// PADDED_FP_LENGTH specifies the number of bytes that the EVM will use
-/// to represent an Fp element according to EIP-2537.
-///
-/// Note: We only need FP_LENGTH number of bytes to represent it,
-/// but we pad the byte representation to be 32 byte aligned as specified in EIP 2537.
-pub const PADDED_FP_LENGTH: usize = 64;
-pub const FP_PAD_BY: usize = PADDED_FP_LENGTH - FP_LENGTH; // 16
-
-/// G1_LENGTH specifies the number of bytes needed to represent a G1 element.
-///
-/// Note: A G1 element contains 2 Fp elements.
-pub const G1_LENGTH: usize = 2 * FP_LENGTH;
-/// PADDED_G1_LENGTH specifies the number of bytes that the EVM will use to represent
-/// a G1 element according to padding rules specified in EIP-2537.
-pub const PADDED_G1_LENGTH: usize = 2 * PADDED_FP_LENGTH;
-
-/// G1_ADD_INPUT_LENGTH specifies the number of bytes that the input to G1ADD
-/// must use.
-///
-/// Note: The input to the G1 addition precompile is 2 G1 elements.
 pub const G1_ADD_INPUT_LENGTH: usize = 2 * PADDED_G1_LENGTH;
-
-/// FP2_LENGTH specifies the number of bytes needed to represent a Fp^2 element.
-///
-/// Note: This is the quadratic extension of Fp, and by definition
-/// means we need 2 Fp elements.
-pub const FP2_LENGTH: usize = 2 * FP_LENGTH;
-
-/// G2_LENGTH specifies the number of bytes needed to represent a G2 element.
-///
-/// Note: A G2 element contains 2 Fp^2 elements.
-pub const G2_LENGTH: usize = 2 * FP2_LENGTH;
-
-/// PADDED_FP2_LENGTH specifies the number of bytes that the EVM will use to represent
-/// a Fp^2 element according to the padding rules specified in EIP-2537.
-///
-/// Note: This is the quadratic extension of Fp, and by definition
-/// means we need 2 Fp elements.
-pub const PADDED_FP2_LENGTH: usize = 2 * PADDED_FP_LENGTH;
-
-/// PADDED_G2_LENGTH specifies the number of bytes that the EVM will use to represent
-/// a G2 element.
-///
-/// Note: A G2 element can be represented using 2 Fp^2 elements.
-pub const PADDED_G2_LENGTH: usize = 2 * PADDED_FP2_LENGTH;
-
-/// G2_ADD_INPUT_LENGTH specifies the number of bytes that the input to G2ADD
-/// must occupy.
-///
-/// Note: The input to the G2 addition precompile is 2 G2 elements.
 pub const G2_ADD_INPUT_LENGTH: usize = 2 * PADDED_G2_LENGTH;
 
-#[inline(always)]
-fn array_ref64(bytes: &[u8], offset: usize) -> &[u8; 64] {
-    // Safety: caller ensures bounds and alignment for 64 bytes slice
-    let slice = &bytes[offset..offset + 64];
-    unsafe { &*(slice.as_ptr() as *const [u8; 64]) }
-}
+pub const G1_MSM_INPUT_LENGTH: usize = PADDED_G1_LENGTH + 32;
+pub const G2_MSM_INPUT_LENGTH: usize = PADDED_G2_LENGTH + 32;
+
+const PAIRING_INPUT_LENGTH: usize = PADDED_G1_LENGTH + PADDED_G2_LENGTH;
+
+pub const MAP_G1_INPUT_LENGTH: usize = PADDED_FP_LENGTH;
+pub const MAP_G2_INPUT_LENGTH: usize = PADDED_FP2_LENGTH;
 
 #[inline(always)]
 fn remove_fp_padding(input: &[u8]) -> Result<[u8; FP_LENGTH], ExitCode> {
@@ -114,8 +138,11 @@ fn remove_fp_padding(input: &[u8]) -> Result<[u8; FP_LENGTH], ExitCode> {
 
 #[inline(always)]
 fn pad_g1_point(unpadded: &[u8; G1_LENGTH]) -> [u8; PADDED_G1_LENGTH] {
-    // Validate length assumptions
-    debug_assert_eq!(unpadded.len(), G1_LENGTH);
+    debug_assert_eq!(
+        unpadded.len(),
+        G1_LENGTH,
+        "wrong unpadded length for G1 point"
+    );
     let mut padded = [0u8; PADDED_G1_LENGTH];
     // x then y; each is 48B, pad to 64B with leading zeros
     for i in 0..2 {
@@ -129,8 +156,11 @@ fn pad_g1_point(unpadded: &[u8; G1_LENGTH]) -> [u8; PADDED_G1_LENGTH] {
 
 #[inline(always)]
 fn pad_g2_point(unpadded: &[u8; G2_LENGTH]) -> [u8; PADDED_G2_LENGTH] {
-    // Validate length assumptions
-    debug_assert_eq!(unpadded.len(), G2_LENGTH);
+    debug_assert_eq!(
+        unpadded.len(),
+        G2_LENGTH,
+        "wrong unpadded length for G2 point"
+    );
     let mut padded = [0u8; PADDED_G2_LENGTH];
     // For each coordinate (x then y), split FP2 limb into two FP limbs and pad each separately
     // EIP-2537 expects FP2 limbs ordered as (c1, c0) within each coordinate
@@ -151,11 +181,7 @@ fn bls12_381_g1_add_with_sdk<SDK: SharedAPI>(_: &SDK, p: &mut [u8; 96], q: &[u8;
     SDK::bls12_381_g1_add(p, q)
 }
 #[inline(always)]
-fn bls12_381_g2_add_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    p: &mut [u8; 192],
-    q: &[u8; 192],
-) -> [u8; 192] {
+fn bls12_381_g2_add_with_sdk<SDK: SharedAPI>(_: &SDK, p: &mut [u8; 192], q: &[u8; 192]) {
     SDK::bls12_381_g2_add(p, q)
 }
 #[inline(always)]
@@ -202,17 +228,16 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     // dispatch to SDK-backed implementation
     match bytecode_address {
         PRECOMPILE_BLS12_381_G1_ADD => {
+            // Expect two G1 points (x1||y1||x2||y2), each coord 64 bytes BE padded
+            if input_length != G1_ADD_INPUT_LENGTH as u32 {
+                sdk.native_exit(ExitCode::PrecompileError);
+            }
+            // We check for the gas in the very beginning to reduce execution time
             let gas_used = G1_ADD_GAS;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
             sdk.sync_evm_gas(gas_used, 0);
-
-            // Expect two G1 points (x1||y1||x2||y2), each coord 64 bytes BE padded
-            if input_length != G1_ADD_INPUT_LENGTH as u32 {
-                sdk.native_exit(ExitCode::PrecompileError);
-            }
-
             // Split into two 128-byte points
             let a = &input[0..128];
             let b = &input[128..256];
@@ -244,16 +269,16 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G2_ADD => {
+            // EIP-2537: input must be 512 bytes (two G2 elements, each 256 bytes padded)
+            if input_length != G2_ADD_INPUT_LENGTH as u32 {
+                sdk.native_exit(ExitCode::PrecompileError);
+            }
+            // We check for the gas in the very beginning to reduce execution time
             let gas_used = G2_ADD_GAS;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
             sdk.sync_evm_gas(gas_used, 0);
-
-            // EIP-2537: input must be 512 bytes (two G2 elements, each 256 bytes padded)
-            if input_length != G2_ADD_INPUT_LENGTH as u32 {
-                sdk.native_exit(ExitCode::PrecompileError);
-            }
             // Split inputs: each G2 is x0||x1||y0||y1 (each 64-byte padded BE, 48-byte value)
             let a = &input[0..256];
             let b = &input[256..512];
@@ -289,6 +314,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             q[144..192].copy_from_slice(&b_y1[16..64]);
             q[144..192].reverse();
 
+            // Call the Fluent SDK, syscall bls12_381_g2_add
             bls12_381_g2_add_with_sdk(&sdk, &mut p, &q);
 
             // Encode output: 256 bytes (x0||x1||y0||y1), each limb is 64-byte BE padded (16 zeros + 48 value)
@@ -314,21 +340,26 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G1_MSM => {
-            if input.len() % (PADDED_G1_LENGTH + 32) != 0 || input.is_empty() {
+            // Expect pairs of 288 bytes: 128-byte padded G1 point (x||y) + 32-byte scalar (BE)
+            // Convert to runtime format: 96-byte LE limbs + 32-byte scalar LE
+            let input_length_requirement = G1_MSM_INPUT_LENGTH;
+            if input.len() % input_length_requirement != 0 || input.is_empty() {
+                // Todo: add a specific error message
                 sdk.native_exit(ExitCode::PrecompileError);
             }
-            let pairs_len = input.len() / (PADDED_G1_LENGTH + 32);
+            let pairs_len = input.len() / input_length_requirement;
             let mut pairs: alloc::vec::Vec<([u8; 96], [u8; 32])> =
                 alloc::vec::Vec::with_capacity(pairs_len);
-            let gas_used = G1_MSM_GAS;
+            // We check for the gas in the very beginning to reduce execution time
+            let gas_used = msm_required_gas(pairs_len, &DISCOUNT_TABLE_G1_MSM, G1_MSM_GAS);
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
             sdk.sync_evm_gas(gas_used, 0);
             for i in 0..pairs_len {
-                let start = i * (PADDED_G1_LENGTH + 32);
+                let start = i * input_length_requirement;
                 let g1_in = &input[start..start + PADDED_G1_LENGTH];
-                let s_be = &input[start + PADDED_G1_LENGTH..start + PADDED_G1_LENGTH + 32];
+                let s_be = &input[start + PADDED_G1_LENGTH..start + input_length_requirement];
                 let mut p = [0u8; 96];
                 p[0..48].copy_from_slice(&g1_in[16..64]);
                 p[48..96].copy_from_slice(&g1_in[80..128]);
@@ -339,6 +370,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 pairs.push((p, s_le));
             }
             let mut out96 = [0u8; 96];
+            // Call the Fluent SDK, syscall bls12_381_g1_msm
             bls12_381_g1_msm_with_sdk(&sdk, &pairs, &mut out96);
             // Detect identity (blstrs sets flag bit for infinity in first byte of uncompressed)
             if out96[0] & 0x40 != 0 {
@@ -357,9 +389,9 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         PRECOMPILE_BLS12_381_G2_MSM => {
             // Expect pairs of 288 bytes: 256-byte padded G2 point (x0||x1||y0||y1) + 32-byte scalar (BE)
             // Convert to runtime format: 192-byte LE limbs + 32-byte scalar LE
-            let input_length_requirement = PADDED_G2_LENGTH + 32; // 256 + 32
-
+            let input_length_requirement = G2_MSM_INPUT_LENGTH;
             if input.len() % input_length_requirement != 0 || input.is_empty() {
+                // Todo: add a specific error message
                 sdk.native_exit(ExitCode::PrecompileError);
             }
             let pairs_len = input.len() / input_length_requirement;
@@ -367,7 +399,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 alloc::vec::Vec::with_capacity(pairs_len);
 
             let k = pairs_len;
-            let gas_used = msm_required_gas(k, &DISCOUNT_TABLE_G2_MSM, G2_MSM_BASE_GAS_FEE);
+            let gas_used = msm_required_gas(k, &DISCOUNT_TABLE_G2_MSM, G2_MSM_GAS);
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
@@ -435,7 +467,6 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             }
         }
         PRECOMPILE_BLS12_381_PAIRING => {
-            const PAIRING_INPUT_LENGTH: usize = PADDED_G1_LENGTH + PADDED_G2_LENGTH;
             if input.is_empty() || input.len() % PAIRING_INPUT_LENGTH != 0 {
                 sdk.native_exit(ExitCode::PrecompileError);
             }
@@ -489,10 +520,15 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&out_be);
         }
         PRECOMPILE_BLS12_381_MAP_G1 => {
-            if input.len() != PADDED_FP_LENGTH {
+            if input.len() != MAP_G1_INPUT_LENGTH {
                 sdk.native_exit(ExitCode::PrecompileError);
             }
-            // Remove padding and map
+            // We check for the gas in the very beginning to reduce execution time
+            let gas_used = MAP_G1_GAS;
+            if gas_used > gas_limit {
+                sdk.native_exit(ExitCode::OutOfFuel);
+            }
+            sdk.sync_evm_gas(gas_used, 0);
             let unpadded_fp = match remove_fp_padding(&input) {
                 Ok(v) => v,
                 Err(e) => sdk.native_exit(e),
@@ -500,16 +536,9 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             // Reconstruct padded 64B input for the syscall which expects 64B padded field
             let mut padded_fp = [0u8; 64];
             padded_fp[FP_PAD_BY..].copy_from_slice(&unpadded_fp);
-
+            // Call the Fluent SDK, syscall bls12_381_map_fp_to_g1
             let mut out96 = [0u8; 96];
             bls12_381_map_fp_to_g1_with_sdk(&sdk, &padded_fp, &mut out96);
-
-            let gas_used = MAP_G1_GAS;
-            if gas_used > gas_limit {
-                sdk.native_exit(ExitCode::OutOfFuel);
-            }
-            sdk.sync_evm_gas(gas_used, 0);
-
             // Pad result for EVM: 96B -> 128B padded (x||y)
             let mut unpadded_g1 = [0u8; G1_LENGTH];
             unpadded_g1[0..48].copy_from_slice(&out96[0..48]);
@@ -519,22 +548,21 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         }
         PRECOMPILE_BLS12_381_MAP_G2 => {
             // Expect Fp2 padded: 128 bytes (64B c0 || 64B c1)
-            if input.len() != PADDED_FP2_LENGTH {
+            if input.len() != MAP_G2_INPUT_LENGTH {
                 sdk.native_exit(ExitCode::PrecompileError);
             }
-            // Pass through the 128B padded Fp2 to the syscall
-            let mut padded_fp2 = [0u8; PADDED_FP2_LENGTH];
-            padded_fp2.copy_from_slice(&input);
-
-            let mut out192 = [0u8; 192];
-            bls12_381_map_fp2_to_g2_with_sdk(&sdk, &padded_fp2, &mut out192);
-
+            // We check for the gas in the very beginning to reduce execution time
             let gas_used = MAP_G2_GAS;
             if gas_used > gas_limit {
                 sdk.native_exit(ExitCode::OutOfFuel);
             }
             sdk.sync_evm_gas(gas_used, 0);
-
+            // Pass through the 128B padded Fp2 to the syscall
+            let mut padded_fp2 = [0u8; PADDED_FP2_LENGTH];
+            padded_fp2.copy_from_slice(&input);
+            // Call the Fluent SDK, syscall bls12_381_map_fp2_to_g2
+            let mut out192 = [0u8; 192];
+            bls12_381_map_fp2_to_g2_with_sdk(&sdk, &padded_fp2, &mut out192);
             // Pad result for EVM: 192B -> 256B padded (x||y over Fp2)
             let mut unpadded_g2 = [0u8; G2_LENGTH];
             unpadded_g2[0..48].copy_from_slice(&out192[0..48]);
@@ -550,6 +578,12 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 }
 
 entrypoint!(main_entry);
+
+/**
+ * The following are the tests for the BLS12-381 precompile contract.
+ *
+ * Note: The tests cases are taken from the: https://eips.ethereum.org/assets/eip-2537/test-vectors
+ */
 
 #[cfg(test)]
 mod tests {
@@ -604,6 +638,37 @@ mod tests {
                 &hex!("0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1"),
                 375,
             );
+        }
+    }
+    // ==================================== G2 ADD ====================================
+    mod g2_add {
+        use super::*;
+        #[test]
+        fn bls_g2add_g2_g2_2_g2() {
+            exec_evm_precompile(
+        PRECOMPILE_BLS12_381_G2_ADD,
+        &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be"),
+        &hex!("000000000000000000000000000000001638533957d540a9d2370f17cc7ed5863bc0b995b8825e0ee1ea1e1e4d00dbae81f14b0bf3611b78c952aacab827a053000000000000000000000000000000000a4edef9c1ed7f729f520e47730a124fd70662a904ba1074728114d1031e1572c6c886f6b57ec72a6178288c47c33577000000000000000000000000000000000468fb440d82b0630aeb8dca2b5256789a66da69bf91009cbfe6bd221e47aa8ae88dece9764bf3bd999d95d71e4c9899000000000000000000000000000000000f6d4552fa65dd2638b361543f887136a43253d9c66c411697003f7a13c308f5422e1aa0a59c8967acdefd8b6e36ccf3"),
+        600,
+    );
+        }
+        #[test]
+        fn bls_g2add_2_g2_3_g2_5_g2() {
+            exec_evm_precompile(
+        PRECOMPILE_BLS12_381_G2_ADD,
+        &hex!("000000000000000000000000000000001638533957d540a9d2370f17cc7ed5863bc0b995b8825e0ee1ea1e1e4d00dbae81f14b0bf3611b78c952aacab827a053000000000000000000000000000000000a4edef9c1ed7f729f520e47730a124fd70662a904ba1074728114d1031e1572c6c886f6b57ec72a6178288c47c33577000000000000000000000000000000000468fb440d82b0630aeb8dca2b5256789a66da69bf91009cbfe6bd221e47aa8ae88dece9764bf3bd999d95d71e4c9899000000000000000000000000000000000f6d4552fa65dd2638b361543f887136a43253d9c66c411697003f7a13c308f5422e1aa0a59c8967acdefd8b6e36ccf300000000000000000000000000000000122915c824a0857e2ee414a3dccb23ae691ae54329781315a0c75df1c04d6d7a50a030fc866f09d516020ef82324afae0000000000000000000000000000000009380275bbc8e5dcea7dc4dd7e0550ff2ac480905396eda55062650f8d251c96eb480673937cc6d9d6a44aaa56ca66dc000000000000000000000000000000000b21da7955969e61010c7a1abc1a6f0136961d1e3b20b1a7326ac738fef5c721479dfd948b52fdf2455e44813ecfd8920000000000000000000000000000000008f239ba329b3967fe48d718a36cfe5f62a7e42e0bf1c1ed714150a166bfbd6bcf6b3b58b975b9edea56d53f23a0e849"),
+        &hex!("000000000000000000000000000000000411a5de6730ffece671a9f21d65028cc0f1102378de124562cb1ff49db6f004fcd14d683024b0548eff3d1468df26880000000000000000000000000000000000fb837804dba8213329db46608b6c121d973363c1234a86dd183baff112709cf97096c5e9a1a770ee9d7dc641a894d60000000000000000000000000000000019b5e8f5d4a72f2b75811ac084a7f814317360bac52f6aab15eed416b4ef9938e0bdc4865cc2c4d0fd947e7c6925fd1400000000000000000000000000000000093567b4228be17ee62d11a254edd041ee4b953bffb8b8c7f925bd6662b4298bac2822b446f5b5de3b893e1be5aa4986"),
+        600,
+    );
+        }
+        #[test]
+        fn bls_g2add_inf_g2_g2() {
+            exec_evm_precompile(
+        PRECOMPILE_BLS12_381_G2_ADD,
+        &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+        &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be"),
+        600,
+    );
         }
     }
     // ==================================== G1 MSM ====================================
@@ -661,37 +726,6 @@ mod tests {
             &hex!("00000000000000000000000000000000112b98340eee2777cc3c14163dea3ec97977ac3dc5c70da32e6e87578f44912e902ccef9efe28d4a78b8999dfbca942600000000000000000000000000000000186b28d92356c4dfec4b5201ad099dbdede3781f8998ddf929b4cd7756192185ca7b8f4ef7088f813270ac3d48868a210000000000000000000000000000000000000000000000000000000000000000"),
             &hex!("0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
             12000,
-        );
-        }
-    }
-    // ==================================== G2 ADD ====================================
-    mod g2_add {
-        use super::*;
-        #[test]
-        fn bls_g2add_g2_g2_2_g2() {
-            exec_evm_precompile(
-            PRECOMPILE_BLS12_381_G2_ADD,
-            &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be"),
-            &hex!("000000000000000000000000000000001638533957d540a9d2370f17cc7ed5863bc0b995b8825e0ee1ea1e1e4d00dbae81f14b0bf3611b78c952aacab827a053000000000000000000000000000000000a4edef9c1ed7f729f520e47730a124fd70662a904ba1074728114d1031e1572c6c886f6b57ec72a6178288c47c33577000000000000000000000000000000000468fb440d82b0630aeb8dca2b5256789a66da69bf91009cbfe6bd221e47aa8ae88dece9764bf3bd999d95d71e4c9899000000000000000000000000000000000f6d4552fa65dd2638b361543f887136a43253d9c66c411697003f7a13c308f5422e1aa0a59c8967acdefd8b6e36ccf3"),
-            600,
-        );
-        }
-        #[test]
-        fn bls_g2add_2_g2_3_g2_5_g2() {
-            exec_evm_precompile(
-            PRECOMPILE_BLS12_381_G2_ADD,
-            &hex!("000000000000000000000000000000001638533957d540a9d2370f17cc7ed5863bc0b995b8825e0ee1ea1e1e4d00dbae81f14b0bf3611b78c952aacab827a053000000000000000000000000000000000a4edef9c1ed7f729f520e47730a124fd70662a904ba1074728114d1031e1572c6c886f6b57ec72a6178288c47c33577000000000000000000000000000000000468fb440d82b0630aeb8dca2b5256789a66da69bf91009cbfe6bd221e47aa8ae88dece9764bf3bd999d95d71e4c9899000000000000000000000000000000000f6d4552fa65dd2638b361543f887136a43253d9c66c411697003f7a13c308f5422e1aa0a59c8967acdefd8b6e36ccf300000000000000000000000000000000122915c824a0857e2ee414a3dccb23ae691ae54329781315a0c75df1c04d6d7a50a030fc866f09d516020ef82324afae0000000000000000000000000000000009380275bbc8e5dcea7dc4dd7e0550ff2ac480905396eda55062650f8d251c96eb480673937cc6d9d6a44aaa56ca66dc000000000000000000000000000000000b21da7955969e61010c7a1abc1a6f0136961d1e3b20b1a7326ac738fef5c721479dfd948b52fdf2455e44813ecfd8920000000000000000000000000000000008f239ba329b3967fe48d718a36cfe5f62a7e42e0bf1c1ed714150a166bfbd6bcf6b3b58b975b9edea56d53f23a0e849"),
-            &hex!("000000000000000000000000000000000411a5de6730ffece671a9f21d65028cc0f1102378de124562cb1ff49db6f004fcd14d683024b0548eff3d1468df26880000000000000000000000000000000000fb837804dba8213329db46608b6c121d973363c1234a86dd183baff112709cf97096c5e9a1a770ee9d7dc641a894d60000000000000000000000000000000019b5e8f5d4a72f2b75811ac084a7f814317360bac52f6aab15eed416b4ef9938e0bdc4865cc2c4d0fd947e7c6925fd1400000000000000000000000000000000093567b4228be17ee62d11a254edd041ee4b953bffb8b8c7f925bd6662b4298bac2822b446f5b5de3b893e1be5aa4986"),
-            600,
-        );
-        }
-        #[test]
-        fn bls_g2add_inf_g2_g2() {
-            exec_evm_precompile(
-            PRECOMPILE_BLS12_381_G2_ADD,
-            &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
-            &hex!("00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be"),
-            600,
         );
         }
     }
@@ -838,6 +872,19 @@ mod tests {
          &hex!("00000000000000000000000000000000038af300ef34c7759a6caaa4e69363cafeed218a1f207e93b2c70d91a1263d375d6730bd6b6509dcac3ba5b567e85bf3000000000000000000000000000000000da75be60fb6aa0e9e3143e40c42796edf15685cafe0279afd2a67c3dff1c82341f17effd402e4f1af240ea90f4b659b0000000000000000000000000000000019b148cbdf163cf0894f29660d2e7bfb2b68e37d54cc83fd4e6e62c020eaa48709302ef8e746736c0e19342cc1ce3df4000000000000000000000000000000000492f4fed741b073e5a82580f7c663f9b79e036b70ab3e51162359cec4e77c78086fe879b65ca7a47d34374c8315ac5e"),
          23800,
          );
+        }
+    }
+
+    mod fail_cases_g1_add {
+        use super::*;
+        #[test]
+        fn bls_g1_add_fail_case_1() {
+            exec_evm_precompile(
+                PRECOMPILE_BLS12_381_G1_ADD,
+                &hex!("0000000000000000000000000000000007355d25caf6e7f2f0cb2812ca0e513bd026ed09dda65b177500fa31714e09ea0ded3a078b526bed3307f804d4b93b040000000000000000000000000000000002829ce3c021339ccb5caf3e187f6370e1e2a311dec9b75363117063ab2015603ff52c3d3b98f19c2f65575e99e8b78c"),
+                &hex!("0000000000000000000000000000000000e7f4568a82b4b7dc1f14c6aaa055edf51502319c723c4dc2688c7fe5944c213f510328082396515734b6612c4e7bb700000000000000000000000000000000126b855e9e69b1f691f816e48ac6977664d24d99f8724868a184186469ddfd4617367e94527d4b74fc86413483afb35b000000000000000000000000000000000caead0fd7b6176c01436833c79d305c78be307da5f6af6c133c47311def6ff1e0babf57a0fb5539fce7ee12407b0a42000000000000000000000000000000001498aadcf7ae2b345243e281ae076df6de84455d766ab6fcdaad71fab60abb2e8b980a440043cd305db09d283c895e3d"),
+                23800,
+            );
         }
     }
 }

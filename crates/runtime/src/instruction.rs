@@ -1,4 +1,5 @@
 pub mod blake3;
+pub mod bls12_381_consts;
 pub mod bls12_381_g1_add;
 pub mod bls12_381_g1_msm;
 pub mod bls12_381_g2_add;

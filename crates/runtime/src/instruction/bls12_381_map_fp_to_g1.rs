@@ -1,9 +1,12 @@
+use crate::instruction::bls12_381_consts::G1_UNCOMPRESSED_LENGTH;
 use crate::RuntimeContext;
 use blst::{
     blst_fp, blst_fp_from_bendian, blst_map_to_g1, blst_p1, blst_p1_affine,
     blst_p1_affine_serialize, blst_p1_to_affine,
 };
 use rwasm::{Store, TrapCode, TypedCaller, Value};
+
+use super::bls12_381_consts::FP_LENGTH;
 
 pub struct SyscallBls12381MapFpToG1;
 
@@ -19,15 +22,15 @@ impl SyscallBls12381MapFpToG1 {
         let mut p = [0u8; 64];
         caller.memory_read(p_ptr, &mut p)?;
 
-        let mut out = [0u8; 96];
+        let mut out = [0u8; G1_UNCOMPRESSED_LENGTH];
         Self::fn_impl(&p, &mut out);
         caller.memory_write(out_ptr, &out)?;
         Ok(())
     }
 
-    pub fn fn_impl(p: &[u8; 64], out: &mut [u8; 96]) {
+    pub fn fn_impl(p: &[u8; 64], out: &mut [u8; G1_UNCOMPRESSED_LENGTH]) {
         // Input is 64B BE EIP-2537 padded Fp. Strip the first 16 zero bytes to get 48B BE field element.
-        let mut fp_be = [0u8; 48];
+        let mut fp_be = [0u8; FP_LENGTH];
         fp_be.copy_from_slice(&p[16..64]);
 
         // Convert BE bytes into blst_fp

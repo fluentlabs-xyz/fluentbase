@@ -126,7 +126,7 @@ mod tests {
             todo!()
         }
 
-        fn bls12_381_g2_add(_p: &mut [u8; 192], _q: &[u8; 192]) -> [u8; 192] {
+        fn bls12_381_g2_add(_p: &mut [u8; 192], _q: &[u8; 192]) {
             todo!()
         }
 

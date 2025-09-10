@@ -1,3 +1,4 @@
+use crate::instruction::bls12_381_consts::{G1_UNCOMPRESSED_LENGTH, SCALAR_LENGTH};
 use crate::instruction::bls12_381_helpers::parse_affine_g1;
 use crate::RuntimeContext;
 use blstrs::{G1Affine, G1Projective, Scalar};
@@ -17,28 +18,35 @@ impl SyscallBls12381G1Msm {
         let out_ptr = params[2].i32().unwrap() as usize;
 
         // Each pair is (point||scalar): 96-byte uncompressed G1 (BE) + 32-byte scalar (LE)
-        let total_len = pairs_len * (96 + 32);
+        let total_len = pairs_len * (G1_UNCOMPRESSED_LENGTH + SCALAR_LENGTH);
         let mut buf = vec![0u8; total_len];
         caller.memory_read(pairs_ptr, &mut buf)?;
 
         // parse into pairs of (point, scalar)
-        let mut pairs: Vec<([u8; 96], [u8; 32])> = Vec::with_capacity(pairs_len);
+        let mut pairs: Vec<([u8; G1_UNCOMPRESSED_LENGTH], [u8; SCALAR_LENGTH])> =
+            Vec::with_capacity(pairs_len);
         for i in 0..pairs_len {
-            let start = i * (96 + 32);
-            let mut p = [0u8; 96];
-            let mut s = [0u8; 32];
-            p.copy_from_slice(&buf[start..start + 96]);
-            s.copy_from_slice(&buf[start + 96..start + 96 + 32]);
+            let start = i * (G1_UNCOMPRESSED_LENGTH + SCALAR_LENGTH);
+            let mut p = [0u8; G1_UNCOMPRESSED_LENGTH];
+            let mut s = [0u8; SCALAR_LENGTH];
+            p.copy_from_slice(&buf[start..start + G1_UNCOMPRESSED_LENGTH]);
+            s.copy_from_slice(
+                &buf[start + G1_UNCOMPRESSED_LENGTH
+                    ..start + G1_UNCOMPRESSED_LENGTH + SCALAR_LENGTH],
+            );
             pairs.push((p, s));
         }
 
-        let mut out = [0u8; 96];
+        let mut out = [0u8; G1_UNCOMPRESSED_LENGTH];
         Self::fn_impl(&pairs, &mut out);
         caller.memory_write(out_ptr, &out)?;
         Ok(())
     }
 
-    pub fn fn_impl(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
+    pub fn fn_impl(
+        pairs: &[([u8; G1_UNCOMPRESSED_LENGTH], [u8; SCALAR_LENGTH])],
+        out: &mut [u8; G1_UNCOMPRESSED_LENGTH],
+    ) {
         let mut acc = G1Projective::identity();
         for (p, s_le) in pairs.iter() {
             let p_aff = parse_affine_g1(p);
@@ -51,6 +59,7 @@ impl SyscallBls12381G1Msm {
             acc += term;
         }
         let result_aff = G1Affine::from(acc);
-        *out = result_aff.to_uncompressed();
+        let result = result_aff.to_uncompressed();
+        out.copy_from_slice(&result);
     }
 }
