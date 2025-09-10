@@ -31,8 +31,6 @@ impl SyscallBls12381G2Add {
     pub fn fn_impl(p: &mut [u8; G2_UNCOMPRESSED_LENGTH], q: &[u8; G2_UNCOMPRESSED_LENGTH]) {
         // p, q layout: x0||x1||y0||y1, each limb 48 bytes little-endian
         // Convert to blstrs uncompressed big-endian bytes with c0/c1 swapped, add, then convert back.
-
-        // Convert both points from LE limb format to BE uncompressed format
         let a_be = g2_le_limbs_to_be_uncompressed(p);
         let b_be = g2_le_limbs_to_be_uncompressed(q);
 

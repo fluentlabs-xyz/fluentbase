@@ -1,10 +1,12 @@
-use crate::instruction::bls12_381_consts::{FP_LENGTH, G2_UNCOMPRESSED_LENGTH};
+use crate::instruction::bls12_381_consts::{FP_LENGTH, G2_UNCOMPRESSED_LENGTH, PADDED_FP2_LENGTH};
 use crate::RuntimeContext;
 use blst::{
     blst_fp, blst_fp2, blst_fp_from_bendian, blst_map_to_g2, blst_p2, blst_p2_affine,
     blst_p2_affine_serialize, blst_p2_to_affine,
 };
 use rwasm::{Store, TrapCode, TypedCaller, Value};
+
+use super::bls12_381_consts::{FP_PAD_BY, PADDED_FP_LENGTH};
 
 pub struct SyscallBls12381MapFp2ToG2;
 
@@ -18,7 +20,7 @@ impl SyscallBls12381MapFp2ToG2 {
         let out_ptr = params[1].i32().unwrap() as usize;
 
         // Read 128-byte padded Fp2: 64B c0 || 64B c1
-        let mut p = [0u8; 128];
+        let mut p = [0u8; PADDED_FP2_LENGTH];
         caller.memory_read(p_ptr, &mut p)?;
 
         let mut out = [0u8; G2_UNCOMPRESSED_LENGTH];
@@ -27,12 +29,12 @@ impl SyscallBls12381MapFp2ToG2 {
         Ok(())
     }
 
-    pub fn fn_impl(p: &[u8; 128], out: &mut [u8; G2_UNCOMPRESSED_LENGTH]) {
+    pub fn fn_impl(p: &[u8; PADDED_FP2_LENGTH], out: &mut [u8; G2_UNCOMPRESSED_LENGTH]) {
         // Interpret input as two 64-byte BE padded limbs (c0||c1). Extract 48-byte BE (skip 16 leading zeros per limb).
         let mut c0_be48 = [0u8; FP_LENGTH];
         let mut c1_be48 = [0u8; FP_LENGTH];
-        c0_be48.copy_from_slice(&p[16..64]);
-        c1_be48.copy_from_slice(&p[64 + 16..64 + 64]);
+        c0_be48.copy_from_slice(&p[FP_PAD_BY..PADDED_FP_LENGTH]);
+        c1_be48.copy_from_slice(&p[PADDED_FP_LENGTH + FP_PAD_BY..PADDED_FP2_LENGTH]);
 
         // Convert to blst_fp elements
         let mut u0 = blst_fp { l: [0u64; 6] };

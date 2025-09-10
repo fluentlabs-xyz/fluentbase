@@ -156,20 +156,6 @@ fn encode_g2_output(output: &[u8; G2_LENGTH]) -> [u8; PADDED_G2_LENGTH] {
 }
 
 #[inline(always)]
-fn remove_fp_padding(input: &[u8]) -> Result<[u8; FP_LENGTH], ExitCode> {
-    if input.len() != PADDED_FP_LENGTH {
-        return Err(ExitCode::PrecompileError);
-    }
-    // Leading 16 bytes must be zero per EIP-2537
-    if input[..FP_PAD_BY].iter().any(|&b| b != 0) {
-        return Err(ExitCode::PrecompileError);
-    }
-    let mut out = [0u8; FP_LENGTH];
-    out.copy_from_slice(&input[FP_PAD_BY..PADDED_FP_LENGTH]);
-    Ok(out)
-}
-
-#[inline(always)]
 fn pad_g1_point(unpadded: &[u8; G1_LENGTH]) -> [u8; PADDED_G1_LENGTH] {
     debug_assert_eq!(
         unpadded.len(),
@@ -407,7 +393,8 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 let out = {
                     let mut tmp = [0u8; PADDED_G1_LENGTH];
                     tmp[FP_PAD_BY..PADDED_FP_LENGTH].copy_from_slice(&out96[0..FP_LENGTH]);
-                    tmp[80..PADDED_G1_LENGTH].copy_from_slice(&out96[FP_LENGTH..G1_LENGTH]);
+                    tmp[PADDED_FP_LENGTH + FP_PAD_BY..PADDED_G1_LENGTH]
+                        .copy_from_slice(&out96[FP_LENGTH..G1_LENGTH]);
                     tmp
                 };
                 sdk.write(&out);
@@ -444,10 +431,19 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 
                 // Convert 4 G2 field elements from BE to LE
                 let mut convert_g2_from_input = |dst: &mut [u8], input: &[u8]| {
-                    copy_and_reverse_limb(&input[0..64], &mut dst[0..FP_LENGTH]);
-                    copy_and_reverse_limb(&input[64..128], &mut dst[FP_LENGTH..2 * FP_LENGTH]);
-                    copy_and_reverse_limb(&input[128..192], &mut dst[2 * FP_LENGTH..3 * FP_LENGTH]);
-                    copy_and_reverse_limb(&input[192..256], &mut dst[3 * FP_LENGTH..4 * FP_LENGTH]);
+                    copy_and_reverse_limb(&input[0..PADDED_FP_LENGTH], &mut dst[0..FP_LENGTH]);
+                    copy_and_reverse_limb(
+                        &input[PADDED_FP_LENGTH..PADDED_G1_LENGTH],
+                        &mut dst[FP_LENGTH..2 * FP_LENGTH],
+                    );
+                    copy_and_reverse_limb(
+                        &input[PADDED_G1_LENGTH..G2_LENGTH],
+                        &mut dst[2 * FP_LENGTH..3 * FP_LENGTH],
+                    );
+                    copy_and_reverse_limb(
+                        &input[G2_LENGTH..PADDED_G2_LENGTH],
+                        &mut dst[3 * FP_LENGTH..4 * FP_LENGTH],
+                    );
                 };
 
                 convert_g2_from_input(&mut p, g2_in);
@@ -529,13 +525,8 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             validate_input_length(&sdk, input.len() as u32, MAP_G1_INPUT_LENGTH);
             // We check for the gas in the very beginning to reduce execution time
             check_gas_and_sync(&sdk, MAP_G1_GAS, gas_limit);
-            let unpadded_fp = match remove_fp_padding(&input) {
-                Ok(v) => v,
-                Err(e) => sdk.native_exit(e),
-            };
-            // Reconstruct padded 64B input for the syscall which expects 64B padded field
             let mut padded_fp = [0u8; PADDED_FP_LENGTH];
-            padded_fp[FP_PAD_BY..].copy_from_slice(&unpadded_fp);
+            padded_fp.copy_from_slice(&input);
             // Call the Fluent SDK, syscall bls12_381_map_fp_to_g1
             let mut out96 = [0u8; G1_LENGTH];
             bls12_381_map_fp_to_g1_with_sdk(&sdk, &padded_fp, &mut out96);

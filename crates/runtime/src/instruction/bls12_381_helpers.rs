@@ -1,6 +1,6 @@
 use crate::instruction::bls12_381_consts::{
-    FP2_LENGTH, FP_LENGTH, G1_COMPRESSED_LENGTH, G1_UNCOMPRESSED_LENGTH, G2_UNCOMPRESSED_LENGTH,
-    PADDED_FP_LENGTH, PADDED_G1_LENGTH,
+    FP2_LENGTH, FP_LENGTH, FP_PAD_BY, G1_COMPRESSED_LENGTH, G1_UNCOMPRESSED_LENGTH,
+    G2_UNCOMPRESSED_LENGTH, PADDED_FP_LENGTH, PADDED_G1_LENGTH,
 };
 use blstrs::{G1Affine, G2Affine};
 use fluentbase_types::ExitCode;
@@ -26,8 +26,9 @@ pub fn g1_128be_to_affine(input: &[u8; PADDED_G1_LENGTH]) -> Result<G1Affine, Ex
     // 3) Convert 128B (64+64 BE) → library **96B uncompressed** buffer
     //    (blstrs expects 48B BE per coord). Map by stripping the leading 16 zero bytes.
     let mut lib = [0u8; G1_UNCOMPRESSED_LENGTH];
-    lib[0..FP_LENGTH].copy_from_slice(&input[16..PADDED_FP_LENGTH]); // x
-    lib[FP_LENGTH..G1_COMPRESSED_LENGTH].copy_from_slice(&input[80..PADDED_G1_LENGTH]); // y
+    lib[0..FP_LENGTH].copy_from_slice(&input[FP_PAD_BY..PADDED_FP_LENGTH]); // x
+    lib[FP_LENGTH..G1_COMPRESSED_LENGTH]
+        .copy_from_slice(&input[FP_PAD_BY + PADDED_FP_LENGTH..PADDED_G1_LENGTH]); // y
 
     let ct = G1Affine::from_uncompressed(&lib);
     // For *add*, the EIP does not require subgroup check. `from_uncompressed` enforces it.

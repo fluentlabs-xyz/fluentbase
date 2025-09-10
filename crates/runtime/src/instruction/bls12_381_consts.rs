@@ -2,6 +2,7 @@ use blstrs::{G1Affine, G2Affine};
 
 pub const SCALAR_LENGTH: usize = 32;
 
+pub const FP_PAD_BY: usize = 16;
 pub const FP_LENGTH: usize = 48;
 pub const PADDED_FP_LENGTH: usize = 64;
 /// 96
