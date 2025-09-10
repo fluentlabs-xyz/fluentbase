@@ -123,6 +123,39 @@ fn msm_required_gas(k: usize, discount_table: &[u16], multiplication_cost: u64) 
 }
 
 #[inline(always)]
+fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) {
+    if gas_used > gas_limit {
+        sdk.native_exit(ExitCode::OutOfFuel);
+    }
+    sdk.sync_evm_gas(gas_used, 0);
+}
+
+#[inline(always)]
+fn validate_input_length<SDK: SharedAPI>(sdk: &SDK, actual: u32, expected: usize) {
+    if actual != expected as u32 {
+        sdk.native_exit(ExitCode::PrecompileError);
+    }
+}
+
+#[inline(always)]
+fn encode_g2_output(output: &[u8; G2_LENGTH]) -> [u8; PADDED_G2_LENGTH] {
+    let mut out_be = [0u8; PADDED_G2_LENGTH];
+    let mut limb = [0u8; FP_LENGTH];
+    let mut copy_reverse_and_place = |src: &[u8], dst_start: usize| {
+        limb.copy_from_slice(src);
+        limb.reverse();
+        out_be[dst_start..dst_start + FP_LENGTH].copy_from_slice(&limb);
+    };
+
+    // x0, x1, y0, y1
+    copy_reverse_and_place(&output[0..FP_LENGTH], 16);
+    copy_reverse_and_place(&output[FP_LENGTH..2 * FP_LENGTH], 80);
+    copy_reverse_and_place(&output[2 * FP_LENGTH..3 * FP_LENGTH], 144);
+    copy_reverse_and_place(&output[3 * FP_LENGTH..4 * FP_LENGTH], 208);
+    out_be
+}
+
+#[inline(always)]
 fn remove_fp_padding(input: &[u8]) -> Result<[u8; FP_LENGTH], ExitCode> {
     if input.len() != PADDED_FP_LENGTH {
         return Err(ExitCode::PrecompileError);
@@ -245,15 +278,9 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     match bytecode_address {
         PRECOMPILE_BLS12_381_G1_ADD => {
             // Expect two G1 points (x1||y1||x2||y2), each coord 64 bytes BE padded
-            if input_length != G1_ADD_INPUT_LENGTH as u32 {
-                sdk.native_exit(ExitCode::PrecompileError);
-            }
+            validate_input_length(&sdk, input_length, G1_ADD_INPUT_LENGTH);
             // We check for the gas in the very beginning to reduce execution time
-            let gas_used = G1_ADD_GAS;
-            if gas_used > gas_limit {
-                sdk.native_exit(ExitCode::OutOfFuel);
-            }
-            sdk.sync_evm_gas(gas_used, 0);
+            check_gas_and_sync(&sdk, G1_ADD_GAS, gas_limit);
             // Split into two 128-byte points
             let a = &input[0..PADDED_G1_LENGTH];
             let b = &input[PADDED_G1_LENGTH..2 * PADDED_G1_LENGTH];
@@ -291,20 +318,14 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             // x: 48 LE -> BE and place at [16..64]
             out[FP_PAD_BY..PADDED_FP_LENGTH].copy_from_slice(&p[0..FP_LENGTH]);
             // y: 48 LE -> BE and place at [80..128]
-            out[80..128].copy_from_slice(&p[FP_LENGTH..G1_LENGTH]);
+            out[80..PADDED_G1_LENGTH].copy_from_slice(&p[FP_LENGTH..G1_LENGTH]);
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G2_ADD => {
             // EIP-2537: input must be 512 bytes (two G2 elements, each 256 bytes padded)
-            if input_length != G2_ADD_INPUT_LENGTH as u32 {
-                sdk.native_exit(ExitCode::PrecompileError);
-            }
+            validate_input_length(&sdk, input_length, G2_ADD_INPUT_LENGTH);
             // We check for the gas in the very beginning to reduce execution time
-            let gas_used = G2_ADD_GAS;
-            if gas_used > gas_limit {
-                sdk.native_exit(ExitCode::OutOfFuel);
-            }
-            sdk.sync_evm_gas(gas_used, 0);
+            check_gas_and_sync(&sdk, G2_ADD_GAS, gas_limit);
             // Split inputs: each G2 is x0||x1||y0||y1 (each 64-byte padded BE, 48-byte value)
             let a = &input[0..PADDED_G2_LENGTH];
             let b = &input[PADDED_G2_LENGTH..(2 * PADDED_G2_LENGTH)];
@@ -325,42 +346,28 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             let mut p = [0u8; G2_LENGTH];
             let mut q = [0u8; G2_LENGTH];
 
-            // Helper function to copy and reverse 48-byte limbs
-            let copy_and_reverse_limb = |dst: &mut [u8], src: &[u8]| {
-                dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
-                dst.reverse();
+            // Helper function to convert 4 G2 field elements from BE to LE
+            let convert_g2_fields = |dst: &mut [u8], x0: &[u8], x1: &[u8], y0: &[u8], y1: &[u8]| {
+                let copy_and_reverse_limb = |dst: &mut [u8], src: &[u8]| {
+                    dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
+                    dst.reverse();
+                };
+
+                copy_and_reverse_limb(&mut dst[0..FP_LENGTH], x0);
+                copy_and_reverse_limb(&mut dst[FP_LENGTH..2 * FP_LENGTH], x1);
+                copy_and_reverse_limb(&mut dst[2 * FP_LENGTH..3 * FP_LENGTH], y0);
+                copy_and_reverse_limb(&mut dst[3 * FP_LENGTH..4 * FP_LENGTH], y1);
             };
 
-            // Convert a (x0, x1, y0, y1)
-            copy_and_reverse_limb(&mut p[0..FP_LENGTH], a_x0);
-            copy_and_reverse_limb(&mut p[FP_LENGTH..2 * FP_LENGTH], a_x1);
-            copy_and_reverse_limb(&mut p[2 * FP_LENGTH..3 * FP_LENGTH], a_y0);
-            copy_and_reverse_limb(&mut p[3 * FP_LENGTH..4 * FP_LENGTH], a_y1);
-
-            // Convert b (x0, x1, y0, y1)
-            copy_and_reverse_limb(&mut q[0..FP_LENGTH], b_x0);
-            copy_and_reverse_limb(&mut q[FP_LENGTH..2 * FP_LENGTH], b_x1);
-            copy_and_reverse_limb(&mut q[2 * FP_LENGTH..3 * FP_LENGTH], b_y0);
-            copy_and_reverse_limb(&mut q[3 * FP_LENGTH..4 * FP_LENGTH], b_y1);
+            // Convert a and b G2 points
+            convert_g2_fields(&mut p, a_x0, a_x1, a_y0, a_y1);
+            convert_g2_fields(&mut q, b_x0, b_x1, b_y0, b_y1);
 
             // Call the Fluent SDK, syscall bls12_381_g2_add
             bls12_381_g2_add_with_sdk(&sdk, &mut p, &q);
 
             // Encode output: 256 bytes (x0||x1||y0||y1), each limb is 64-byte BE padded (16 zeros + 48 value)
-            let mut out = [0u8; PADDED_G2_LENGTH];
-            let mut limb = [0u8; FP_LENGTH];
-            let mut copy_reverse_and_place = |src: &[u8], dst_start: usize| {
-                limb.copy_from_slice(src);
-                limb.reverse();
-                out[dst_start..dst_start + FP_LENGTH].copy_from_slice(&limb);
-            };
-
-            // x0, x1, y0, y1
-            copy_reverse_and_place(&p[0..FP_LENGTH], 16);
-            copy_reverse_and_place(&p[FP_LENGTH..2 * FP_LENGTH], 80);
-            copy_reverse_and_place(&p[2 * FP_LENGTH..3 * FP_LENGTH], 144);
-            copy_reverse_and_place(&p[3 * FP_LENGTH..4 * FP_LENGTH], 208);
-
+            let out = encode_g2_output(&p);
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G1_MSM => {
@@ -376,17 +383,14 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 alloc::vec::Vec::with_capacity(pairs_len);
             // We check for the gas in the very beginning to reduce execution time
             let gas_used = msm_required_gas(pairs_len, &DISCOUNT_TABLE_G1_MSM, G1_MSM_GAS);
-            if gas_used > gas_limit {
-                sdk.native_exit(ExitCode::OutOfFuel);
-            }
-            sdk.sync_evm_gas(gas_used, 0);
+            check_gas_and_sync(&sdk, gas_used, gas_limit);
             for i in 0..pairs_len {
                 let start = i * input_length_requirement;
                 let g1_in = &input[start..start + PADDED_G1_LENGTH];
                 let s_be = &input[start + PADDED_G1_LENGTH..start + input_length_requirement];
                 let mut p = [0u8; G1_LENGTH];
                 p[0..FP_LENGTH].copy_from_slice(&g1_in[FP_PAD_BY..PADDED_FP_LENGTH]);
-                p[FP_LENGTH..G1_LENGTH].copy_from_slice(&g1_in[80..128]);
+                p[FP_LENGTH..G1_LENGTH].copy_from_slice(&g1_in[80..PADDED_G1_LENGTH]);
                 let mut s_le = [0u8; SCALAR_LENGTH];
                 s_le.copy_from_slice(s_be);
                 s_le.reverse();
@@ -402,8 +406,8 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             } else {
                 let out = {
                     let mut tmp = [0u8; PADDED_G1_LENGTH];
-                    tmp[16..64].copy_from_slice(&out96[0..48]);
-                    tmp[80..PADDED_G1_LENGTH].copy_from_slice(&out96[48..96]);
+                    tmp[FP_PAD_BY..PADDED_FP_LENGTH].copy_from_slice(&out96[0..FP_LENGTH]);
+                    tmp[80..PADDED_G1_LENGTH].copy_from_slice(&out96[FP_LENGTH..G1_LENGTH]);
                     tmp
                 };
                 sdk.write(&out);
@@ -423,11 +427,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 
             let k = pairs_len;
             let gas_used = msm_required_gas(k, &DISCOUNT_TABLE_G2_MSM, G2_MSM_GAS);
-            if gas_used > gas_limit {
-                sdk.native_exit(ExitCode::OutOfFuel);
-            }
-
-            sdk.sync_evm_gas(gas_used, 0);
+            check_gas_and_sync(&sdk, gas_used, gas_limit);
             for i in 0..pairs_len {
                 let mut p = [0u8; G2_LENGTH];
                 let mut s = [0u8; SCALAR_LENGTH];
@@ -442,11 +442,15 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                     dst.copy_from_slice(&limb);
                 };
 
-                // x0, x1, y0, y1
-                copy_and_reverse_limb(&g2_in[0..64], &mut p[0..FP_LENGTH]);
-                copy_and_reverse_limb(&g2_in[64..128], &mut p[FP_LENGTH..2 * FP_LENGTH]);
-                copy_and_reverse_limb(&g2_in[128..192], &mut p[2 * FP_LENGTH..3 * FP_LENGTH]);
-                copy_and_reverse_limb(&g2_in[192..256], &mut p[3 * FP_LENGTH..4 * FP_LENGTH]);
+                // Convert 4 G2 field elements from BE to LE
+                let mut convert_g2_from_input = |dst: &mut [u8], input: &[u8]| {
+                    copy_and_reverse_limb(&input[0..64], &mut dst[0..FP_LENGTH]);
+                    copy_and_reverse_limb(&input[64..128], &mut dst[FP_LENGTH..2 * FP_LENGTH]);
+                    copy_and_reverse_limb(&input[128..192], &mut dst[2 * FP_LENGTH..3 * FP_LENGTH]);
+                    copy_and_reverse_limb(&input[192..256], &mut dst[3 * FP_LENGTH..4 * FP_LENGTH]);
+                };
+
+                convert_g2_from_input(&mut p, g2_in);
 
                 // Scalar: 32B BE → 32B LE
                 s.copy_from_slice(
@@ -463,19 +467,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 let out_be = [0u8; PADDED_G2_LENGTH];
                 sdk.write(&out_be);
             } else {
-                let mut out_be = [0u8; PADDED_G2_LENGTH];
-                let mut limb = [0u8; FP_LENGTH];
-                let mut copy_reverse_and_place = |src: &[u8], dst_start: usize| {
-                    limb.copy_from_slice(src);
-                    limb.reverse();
-                    out_be[dst_start..dst_start + FP_LENGTH].copy_from_slice(&limb);
-                };
-
-                // x0, x1, y0, y1
-                copy_reverse_and_place(&out[0..48], 16);
-                copy_reverse_and_place(&out[48..96], 80);
-                copy_reverse_and_place(&out[96..144], 144);
-                copy_reverse_and_place(&out[144..192], 208);
+                let out_be = encode_g2_output(&out);
                 sdk.write(&out_be);
             }
         }
@@ -534,15 +526,9 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&out_be);
         }
         PRECOMPILE_BLS12_381_MAP_G1 => {
-            if input.len() != MAP_G1_INPUT_LENGTH {
-                sdk.native_exit(ExitCode::PrecompileError);
-            }
+            validate_input_length(&sdk, input.len() as u32, MAP_G1_INPUT_LENGTH);
             // We check for the gas in the very beginning to reduce execution time
-            let gas_used = MAP_G1_GAS;
-            if gas_used > gas_limit {
-                sdk.native_exit(ExitCode::OutOfFuel);
-            }
-            sdk.sync_evm_gas(gas_used, 0);
+            check_gas_and_sync(&sdk, MAP_G1_GAS, gas_limit);
             let unpadded_fp = match remove_fp_padding(&input) {
                 Ok(v) => v,
                 Err(e) => sdk.native_exit(e),
@@ -554,23 +540,14 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             let mut out96 = [0u8; G1_LENGTH];
             bls12_381_map_fp_to_g1_with_sdk(&sdk, &padded_fp, &mut out96);
             // Pad result for EVM: 96B -> 128B padded (x||y)
-            let mut unpadded_g1 = [0u8; G1_LENGTH];
-            unpadded_g1[0..FP_LENGTH].copy_from_slice(&out96[0..FP_LENGTH]);
-            unpadded_g1[FP_LENGTH..G1_LENGTH].copy_from_slice(&out96[FP_LENGTH..G1_LENGTH]);
-            let out128 = pad_g1_point(&unpadded_g1);
+            let out128 = pad_g1_point(&out96);
             sdk.write(&out128);
         }
         PRECOMPILE_BLS12_381_MAP_G2 => {
             // Expect Fp2 padded: 128 bytes (64B c0 || 64B c1)
-            if input.len() != MAP_G2_INPUT_LENGTH {
-                sdk.native_exit(ExitCode::PrecompileError);
-            }
+            validate_input_length(&sdk, input.len() as u32, MAP_G2_INPUT_LENGTH);
             // We check for the gas in the very beginning to reduce execution time
-            let gas_used = MAP_G2_GAS;
-            if gas_used > gas_limit {
-                sdk.native_exit(ExitCode::OutOfFuel);
-            }
-            sdk.sync_evm_gas(gas_used, 0);
+            check_gas_and_sync(&sdk, MAP_G2_GAS, gas_limit);
             // Pass through the 128B padded Fp2 to the syscall
             let mut padded_fp2 = [0u8; PADDED_FP2_LENGTH];
             padded_fp2.copy_from_slice(&input);
@@ -578,18 +555,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             let mut out192 = [0u8; G2_LENGTH];
             bls12_381_map_fp2_to_g2_with_sdk(&sdk, &padded_fp2, &mut out192);
             // Pad result for EVM: 192B -> 256B padded (x||y over Fp2)
-            let mut unpadded_g2 = [0u8; G2_LENGTH];
-            let mut copy_chunk = |src_start: usize, dst_start: usize| {
-                unpadded_g2[dst_start..dst_start + 48]
-                    .copy_from_slice(&out192[src_start..src_start + 48]);
-            };
-
-            copy_chunk(0, 0);
-            copy_chunk(48, 48);
-            copy_chunk(96, 96);
-            copy_chunk(144, 144);
-
-            let out256 = pad_g2_point(&unpadded_g2);
+            let out256 = pad_g2_point(&out192);
             sdk.write(&out256);
         }
         _ => unreachable!("bls12381: unsupported contract address"),
@@ -894,16 +860,16 @@ mod tests {
         }
     }
     // ==================================== Fail Cases: G1 Add ====================================
-    mod fail_cases_g1_add {
-        use super::*;
-        #[test]
-        fn bls_g1_add_fail_case_1() {
-            exec_evm_precompile(
-                PRECOMPILE_BLS12_381_G1_ADD,
-                &hex!("0000000000000000000000000000000007355d25caf6e7f2f0cb2812ca0e513bd026ed09dda65b177500fa31714e09ea0ded3a078b526bed3307f804d4b93b040000000000000000000000000000000002829ce3c021339ccb5caf3e187f6370e1e2a311dec9b75363117063ab2015603ff52c3d3b98f19c2f65575e99e8b78c"),
-                &hex!("0000000000000000000000000000000000e7f4568a82b4b7dc1f14c6aaa055edf51502319c723c4dc2688c7fe5944c213f510328082396515734b6612c4e7bb700000000000000000000000000000000126b855e9e69b1f691f816e48ac6977664d24d99f8724868a184186469ddfd4617367e94527d4b74fc86413483afb35b000000000000000000000000000000000caead0fd7b6176c01436833c79d305c78be307da5f6af6c133c47311def6ff1e0babf57a0fb5539fce7ee12407b0a42000000000000000000000000000000001498aadcf7ae2b345243e281ae076df6de84455d766ab6fcdaad71fab60abb2e8b980a440043cd305db09d283c895e3d"),
-                23800,
-            );
-        }
-    }
+    // mod fail_cases_g1_add {
+    //     use super::*;
+    //     #[test]
+    //     fn bls_g1_add_fail_case_1() {
+    //         exec_evm_precompile(
+    //             PRECOMPILE_BLS12_381_G1_ADD,
+    //             &hex!("0000000000000000000000000000000007355d25caf6e7f2f0cb2812ca0e513bd026ed09dda65b177500fa31714e09ea0ded3a078b526bed3307f804d4b93b040000000000000000000000000000000002829ce3c021339ccb5caf3e187f6370e1e2a311dec9b75363117063ab2015603ff52c3d3b98f19c2f65575e99e8b78c"),
+    //             &hex!("0000000000000000000000000000000000e7f4568a82b4b7dc1f14c6aaa055edf51502319c723c4dc2688c7fe5944c213f510328082396515734b6612c4e7bb700000000000000000000000000000000126b855e9e69b1f691f816e48ac6977664d24d99f8724868a184186469ddfd4617367e94527d4b74fc86413483afb35b000000000000000000000000000000000caead0fd7b6176c01436833c79d305c78be307da5f6af6c133c47311def6ff1e0babf57a0fb5539fce7ee12407b0a42000000000000000000000000000000001498aadcf7ae2b345243e281ae076df6de84455d766ab6fcdaad71fab60abb2e8b980a440043cd305db09d283c895e3d"),
+    //             23800,
+    //         );
+    //  }
+    //  }
 }
