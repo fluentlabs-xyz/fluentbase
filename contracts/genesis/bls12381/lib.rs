@@ -320,31 +320,24 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             // Convert to runtime format: 192 bytes LE (x0||x1||y0||y1), each limb 48 bytes
             let mut p = [0u8; G2_LENGTH];
             let mut q = [0u8; G2_LENGTH];
-            // a.x0
-            p[0..48].copy_from_slice(&a_x0[16..64]);
-            p[0..48].reverse();
-            // a.x1
-            p[48..96].copy_from_slice(&a_x1[16..64]);
-            p[48..96].reverse();
-            // a.y0
-            p[96..144].copy_from_slice(&a_y0[16..64]);
-            p[96..144].reverse();
-            // a.y1
-            p[144..192].copy_from_slice(&a_y1[16..64]);
-            p[144..192].reverse();
 
-            // b.x0
-            q[0..48].copy_from_slice(&b_x0[16..64]);
-            q[0..48].reverse();
-            // b.x1
-            q[48..96].copy_from_slice(&b_x1[16..64]);
-            q[48..96].reverse();
-            // b.y0
-            q[96..144].copy_from_slice(&b_y0[16..64]);
-            q[96..144].reverse();
-            // b.y1
-            q[144..192].copy_from_slice(&b_y1[16..64]);
-            q[144..192].reverse();
+            // Helper function to copy and reverse 48-byte limbs
+            let copy_and_reverse_limb = |dst: &mut [u8], src: &[u8]| {
+                dst.copy_from_slice(&src[16..64]);
+                dst.reverse();
+            };
+
+            // Convert a (x0, x1, y0, y1)
+            copy_and_reverse_limb(&mut p[0..48], a_x0);
+            copy_and_reverse_limb(&mut p[48..96], a_x1);
+            copy_and_reverse_limb(&mut p[96..144], a_y0);
+            copy_and_reverse_limb(&mut p[144..192], a_y1);
+
+            // Convert b (x0, x1, y0, y1)
+            copy_and_reverse_limb(&mut q[0..48], b_x0);
+            copy_and_reverse_limb(&mut q[48..96], b_x1);
+            copy_and_reverse_limb(&mut q[96..144], b_y0);
+            copy_and_reverse_limb(&mut q[144..192], b_y1);
 
             // Call the Fluent SDK, syscall bls12_381_g2_add
             bls12_381_g2_add_with_sdk(&sdk, &mut p, &q);
@@ -352,22 +345,17 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             // Encode output: 256 bytes (x0||x1||y0||y1), each limb is 64-byte BE padded (16 zeros + 48 value)
             let mut out = [0u8; 256];
             let mut limb = [0u8; 48];
-            // x0
-            limb.copy_from_slice(&p[0..48]);
-            limb.reverse();
-            out[16..64].copy_from_slice(&limb);
-            // x1
-            limb.copy_from_slice(&p[48..96]);
-            limb.reverse();
-            out[80..128].copy_from_slice(&limb);
-            // y0
-            limb.copy_from_slice(&p[96..144]);
-            limb.reverse();
-            out[144..192].copy_from_slice(&limb);
-            // y1
-            limb.copy_from_slice(&p[144..192]);
-            limb.reverse();
-            out[208..256].copy_from_slice(&limb);
+            let mut copy_reverse_and_place = |src: &[u8], dst_start: usize| {
+                limb.copy_from_slice(src);
+                limb.reverse();
+                out[dst_start..dst_start + 48].copy_from_slice(&limb);
+            };
+
+            // x0, x1, y0, y1
+            copy_reverse_and_place(&p[0..48], 16);
+            copy_reverse_and_place(&p[48..96], 80);
+            copy_reverse_and_place(&p[96..144], 144);
+            copy_reverse_and_place(&p[144..192], 208);
 
             sdk.write(&out);
         }
@@ -445,22 +433,17 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 
                 // Convert padded BE limbs → LE limbs (like G2 add path)
                 let mut limb = [0u8; 48];
-                // x0
-                limb.copy_from_slice(&g2_in[0..64][16..64]);
-                limb.reverse();
-                p[0..48].copy_from_slice(&limb);
-                // x1
-                limb.copy_from_slice(&g2_in[64..128][16..64]);
-                limb.reverse();
-                p[48..96].copy_from_slice(&limb);
-                // y0
-                limb.copy_from_slice(&g2_in[128..192][16..64]);
-                limb.reverse();
-                p[96..144].copy_from_slice(&limb);
-                // y1
-                limb.copy_from_slice(&g2_in[192..256][16..64]);
-                limb.reverse();
-                p[144..192].copy_from_slice(&limb);
+                let mut copy_and_reverse_limb = |src: &[u8], dst: &mut [u8]| {
+                    limb.copy_from_slice(&src[16..64]);
+                    limb.reverse();
+                    dst.copy_from_slice(&limb);
+                };
+
+                // x0, x1, y0, y1
+                copy_and_reverse_limb(&g2_in[0..64], &mut p[0..48]);
+                copy_and_reverse_limb(&g2_in[64..128], &mut p[48..96]);
+                copy_and_reverse_limb(&g2_in[128..192], &mut p[96..144]);
+                copy_and_reverse_limb(&g2_in[192..256], &mut p[144..192]);
 
                 // Scalar: 32B BE → 32B LE
                 s.copy_from_slice(
@@ -479,22 +462,17 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             } else {
                 let mut out_be = [0u8; 256];
                 let mut limb = [0u8; 48];
-                // x0
-                limb.copy_from_slice(&out[0..48]);
-                limb.reverse();
-                out_be[16..64].copy_from_slice(&limb);
-                // x1
-                limb.copy_from_slice(&out[48..96]);
-                limb.reverse();
-                out_be[80..128].copy_from_slice(&limb);
-                // y0
-                limb.copy_from_slice(&out[96..144]);
-                limb.reverse();
-                out_be[144..192].copy_from_slice(&limb);
-                // y1
-                limb.copy_from_slice(&out[144..192]);
-                limb.reverse();
-                out_be[208..256].copy_from_slice(&limb);
+                let mut copy_reverse_and_place = |src: &[u8], dst_start: usize| {
+                    limb.copy_from_slice(src);
+                    limb.reverse();
+                    out_be[dst_start..dst_start + 48].copy_from_slice(&limb);
+                };
+
+                // x0, x1, y0, y1
+                copy_reverse_and_place(&out[0..48], 16);
+                copy_reverse_and_place(&out[48..96], 80);
+                copy_reverse_and_place(&out[96..144], 144);
+                copy_reverse_and_place(&out[144..192], 208);
                 sdk.write(&out_be);
             }
         }
