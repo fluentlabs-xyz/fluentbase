@@ -16,6 +16,7 @@ pub mod rwasm;
 pub mod shared;
 #[deprecated(note = "Use `fluentbase_sdk::storage` instead", since = "0.4.5-dev")]
 pub mod storage_legacy;
+pub mod storage;
 
 pub use allocator::*;
 pub use fluentbase_codec as codec;
