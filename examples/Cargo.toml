@@ -25,6 +25,7 @@ solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "fe
 hex-literal = { version = "0.4.1", default-features = false }
 alloy-sol-types = { version = "1.2.0", default-features = false, features = ["json"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 fluentbase-sdk-testing = { path = "../crates/testing" }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
