@@ -2055,8 +2055,6 @@ dependencies = [
  "hex",
  "revm",
  "rwasm",
- "serde",
- "serde_json",
 ]
 
 [[package]]
