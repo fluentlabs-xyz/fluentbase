@@ -6,6 +6,7 @@ use quote::{quote, ToTokens};
 
 mod contract;
 mod utils;
+use fluentbase_sdk_derive_core::storage::process_storage_layout;
 use syn::parse_macro_input;
 
 /// Function ID attribute for overriding function selectors in smart contracts.
@@ -413,4 +414,14 @@ pub fn derive_evm_error(token: TokenStream) -> TokenStream {
 pub fn contract_macro_derive(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     impl_derive_contract(&ast)
+}
+
+#[proc_macro_derive(Storage)]
+pub fn derive_storage_layout(input: TokenStream) -> TokenStream {
+    let input = syn::parse(input).unwrap();
+
+    match process_storage_layout(input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
 }
