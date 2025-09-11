@@ -1,5 +1,5 @@
 use crate::contract::impl_derive_contract;
-use fluentbase_sdk_derive_core::{client, router, storage};
+use fluentbase_sdk_derive_core::{client, router, storage_legacy};
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::{quote, ToTokens};
@@ -235,7 +235,7 @@ pub fn client(attr: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro]
 #[proc_macro_error]
 pub fn solidity_storage(input: TokenStream) -> TokenStream {
-    let storage = parse_macro_input!(input as storage::Storage);
+    let storage = parse_macro_input!(input as storage_legacy::Storage);
     storage.to_token_stream().into()
 }
 

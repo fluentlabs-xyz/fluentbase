@@ -1,5 +1,5 @@
 ---
-source: crates/sdk-derive/derive-core/src/storage.rs
+source: crates/sdk-derive/derive-core/src/storage_legacy.rs
 expression: formatted
 ---
 pub struct Owner {}

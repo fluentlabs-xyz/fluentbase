@@ -9,5 +9,9 @@ mod method;
 pub mod router;
 mod signature;
 pub mod sol_input;
-pub mod storage;
+#[deprecated(
+    note = "Use `fluentbase_sdk_derive_core::storage` instead",
+    since = "0.4.5-dev"
+)]
+pub mod storage_legacy;
 mod utils;
