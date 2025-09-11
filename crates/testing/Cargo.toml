@@ -19,6 +19,8 @@ revm = { workspace = true }
 fluentbase-revm = { workspace = true }
 rwasm = { workspace = true }
 hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [features]
 default = ["std"]
