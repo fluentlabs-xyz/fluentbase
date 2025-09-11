@@ -252,6 +252,104 @@ fn bls12_381_map_fp2_to_g2_with_sdk<SDK: SharedAPI>(
     SDK::bls12_381_map_fp2_to_g2(p, out)
 }
 
+/// Helper function to convert G1 input from EVM format to runtime format
+#[inline(always)]
+fn convert_g1_input_to_runtime(input: &[u8]) -> ([u8; G1_LENGTH], [u8; G1_LENGTH]) {
+    let a = &input[0..PADDED_G1_LENGTH];
+    let b = &input[PADDED_G1_LENGTH..2 * PADDED_G1_LENGTH];
+
+    let (x1_be, y1_be) = (
+        &a[0..PADDED_FP_LENGTH],
+        &a[PADDED_FP_LENGTH..2 * PADDED_FP_LENGTH],
+    );
+    let (x2_be, y2_be) = (
+        &b[0..PADDED_FP_LENGTH],
+        &b[PADDED_FP_LENGTH..2 * PADDED_FP_LENGTH],
+    );
+
+    let mut p = [0u8; G1_LENGTH];
+    let mut q = [0u8; G1_LENGTH];
+
+    // Helper function to copy 48-byte field from padded input
+    let copy_field = |dst: &mut [u8], src: &[u8]| {
+        dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
+    };
+
+    // p (x, y)
+    copy_field(&mut p[0..FP_LENGTH], x1_be);
+    copy_field(&mut p[FP_LENGTH..G1_LENGTH], y1_be);
+    // q (x, y)
+    copy_field(&mut q[0..FP_LENGTH], x2_be);
+    copy_field(&mut q[FP_LENGTH..G1_LENGTH], y2_be);
+
+    (p, q)
+}
+
+/// Helper function to convert G2 input from EVM format to runtime format
+#[inline(always)]
+fn convert_g2_input_to_runtime(input: &[u8]) -> ([u8; G2_LENGTH], [u8; G2_LENGTH]) {
+    let a = &input[0..PADDED_G2_LENGTH];
+    let b = &input[PADDED_G2_LENGTH..(2 * PADDED_G2_LENGTH)];
+    let (a_x0, a_x1, a_y0, a_y1) = (
+        &a[0..PADDED_FP_LENGTH],
+        &a[PADDED_FP_LENGTH..(2 * PADDED_FP_LENGTH)],
+        &a[(2 * PADDED_FP_LENGTH)..(3 * PADDED_FP_LENGTH)],
+        &a[(3 * PADDED_FP_LENGTH)..(4 * PADDED_FP_LENGTH)],
+    );
+    let (b_x0, b_x1, b_y0, b_y1) = (
+        &b[0..PADDED_FP_LENGTH],
+        &b[PADDED_FP_LENGTH..(2 * PADDED_FP_LENGTH)],
+        &b[(2 * PADDED_FP_LENGTH)..(3 * PADDED_FP_LENGTH)],
+        &b[(3 * PADDED_FP_LENGTH)..(4 * PADDED_FP_LENGTH)],
+    );
+
+    let mut p = [0u8; G2_LENGTH];
+    let mut q = [0u8; G2_LENGTH];
+
+    // Helper function to convert 4 G2 field elements from BE to LE
+    let convert_g2_fields = |dst: &mut [u8], x0: &[u8], x1: &[u8], y0: &[u8], y1: &[u8]| {
+        let copy_and_reverse_limb = |dst: &mut [u8], src: &[u8]| {
+            dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
+            dst.reverse();
+        };
+
+        copy_and_reverse_limb(&mut dst[0..FP_LENGTH], x0);
+        copy_and_reverse_limb(&mut dst[FP_LENGTH..2 * FP_LENGTH], x1);
+        copy_and_reverse_limb(&mut dst[2 * FP_LENGTH..3 * FP_LENGTH], y0);
+        copy_and_reverse_limb(&mut dst[3 * FP_LENGTH..4 * FP_LENGTH], y1);
+    };
+
+    // Convert a and b G2 points
+    convert_g2_fields(&mut p, a_x0, a_x1, a_y0, a_y1);
+    convert_g2_fields(&mut q, b_x0, b_x1, b_y0, b_y1);
+
+    (p, q)
+}
+
+/// Helper function to convert G1 output from runtime format to EVM format
+#[inline(always)]
+fn convert_g1_output_to_evm(p: &[u8; G1_LENGTH]) -> [u8; PADDED_G1_LENGTH] {
+    let mut out = [0u8; PADDED_G1_LENGTH];
+    // x: 48 LE -> BE and place at [16..64]
+    out[FP_PAD_BY..PADDED_FP_LENGTH].copy_from_slice(&p[0..FP_LENGTH]);
+    // y: 48 LE -> BE and place at [80..128]
+    out[80..PADDED_G1_LENGTH].copy_from_slice(&p[FP_LENGTH..G1_LENGTH]);
+    out
+}
+
+/// Helper function for common validation and gas checking pattern
+#[inline(always)]
+fn validate_and_consume_gas<SDK: SharedAPI>(
+    sdk: &SDK,
+    input_length: u32,
+    expected_length: usize,
+    gas_cost: u64,
+    gas_limit: u64,
+) {
+    validate_input_length(sdk, input_length, expected_length);
+    check_gas_and_sync(sdk, gas_cost, gas_limit);
+}
+
 pub fn main_entry(mut sdk: impl SharedAPI) {
     // read full input data
     let bytecode_address = sdk.context().contract_bytecode_address();
@@ -264,90 +362,35 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     match bytecode_address {
         PRECOMPILE_BLS12_381_G1_ADD => {
             // Expect two G1 points (x1||y1||x2||y2), each coord 64 bytes BE padded
-            validate_input_length(&sdk, input_length, G1_ADD_INPUT_LENGTH);
-            // We check for the gas in the very beginning to reduce execution time
-            check_gas_and_sync(&sdk, G1_ADD_GAS, gas_limit);
-            // Split into two 128-byte points
-            let a = &input[0..PADDED_G1_LENGTH];
-            let b = &input[PADDED_G1_LENGTH..2 * PADDED_G1_LENGTH];
-
-            // a = x1||y1, b = x2||y2 (each limb 64B BE padded, 48B value)
-            let (x1_be, y1_be) = (
-                &a[0..PADDED_FP_LENGTH],
-                &a[PADDED_FP_LENGTH..2 * PADDED_FP_LENGTH],
-            );
-            let (x2_be, y2_be) = (
-                &b[0..PADDED_FP_LENGTH],
-                &b[PADDED_FP_LENGTH..2 * PADDED_FP_LENGTH],
+            validate_and_consume_gas(
+                &sdk,
+                input_length,
+                G1_ADD_INPUT_LENGTH,
+                G1_ADD_GAS,
+                gas_limit,
             );
 
-            // Convert to runtime format: 96 bytes BE (x48||y48) as expected by blstrs::G1Affine::from_uncompressed
-            let mut p = [0u8; G1_LENGTH];
-            let mut q = [0u8; G1_LENGTH];
-
-            // Helper function to copy 48-byte field from padded input
-            let copy_field = |dst: &mut [u8], src: &[u8]| {
-                dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
-            };
-
-            // p (x, y)
-            copy_field(&mut p[0..FP_LENGTH], x1_be);
-            copy_field(&mut p[FP_LENGTH..G1_LENGTH], y1_be);
-            // q (x, y)
-            copy_field(&mut q[0..FP_LENGTH], x2_be);
-            copy_field(&mut q[FP_LENGTH..G1_LENGTH], y2_be);
+            // Convert input from EVM format to runtime format
+            let (mut p, q) = convert_g1_input_to_runtime(&input);
 
             bls12_381_g1_add_with_sdk(&sdk, &mut p, &q);
 
-            // EVM expects X||Y, each 64 bytes BE, where the 48-byte field is left-padded
-            let mut out = [0u8; PADDED_G1_LENGTH];
-            // x: 48 LE -> BE and place at [16..64]
-            out[FP_PAD_BY..PADDED_FP_LENGTH].copy_from_slice(&p[0..FP_LENGTH]);
-            // y: 48 LE -> BE and place at [80..128]
-            out[80..PADDED_G1_LENGTH].copy_from_slice(&p[FP_LENGTH..G1_LENGTH]);
+            // Convert output from runtime format to EVM format
+            let out = convert_g1_output_to_evm(&p);
             sdk.write(&out);
         }
         PRECOMPILE_BLS12_381_G2_ADD => {
             // EIP-2537: input must be 512 bytes (two G2 elements, each 256 bytes padded)
-            validate_input_length(&sdk, input_length, G2_ADD_INPUT_LENGTH);
-            // We check for the gas in the very beginning to reduce execution time
-            check_gas_and_sync(&sdk, G2_ADD_GAS, gas_limit);
-            // Split inputs: each G2 is x0||x1||y0||y1 (each 64-byte padded BE, 48-byte value)
-            let a = &input[0..PADDED_G2_LENGTH];
-            let b = &input[PADDED_G2_LENGTH..(2 * PADDED_G2_LENGTH)];
-            let (a_x0, a_x1, a_y0, a_y1) = (
-                &a[0..PADDED_FP_LENGTH],
-                &a[PADDED_FP_LENGTH..(2 * PADDED_FP_LENGTH)],
-                &a[(2 * PADDED_FP_LENGTH)..(3 * PADDED_FP_LENGTH)],
-                &a[(3 * PADDED_FP_LENGTH)..(4 * PADDED_FP_LENGTH)],
-            );
-            let (b_x0, b_x1, b_y0, b_y1) = (
-                &b[0..PADDED_FP_LENGTH],
-                &b[PADDED_FP_LENGTH..(2 * PADDED_FP_LENGTH)],
-                &b[(2 * PADDED_FP_LENGTH)..(3 * PADDED_FP_LENGTH)],
-                &b[(3 * PADDED_FP_LENGTH)..(4 * PADDED_FP_LENGTH)],
+            validate_and_consume_gas(
+                &sdk,
+                input_length,
+                G2_ADD_INPUT_LENGTH,
+                G2_ADD_GAS,
+                gas_limit,
             );
 
-            // Convert to runtime format: 192 bytes LE (x0||x1||y0||y1), each limb 48 bytes
-            let mut p = [0u8; G2_LENGTH];
-            let mut q = [0u8; G2_LENGTH];
-
-            // Helper function to convert 4 G2 field elements from BE to LE
-            let convert_g2_fields = |dst: &mut [u8], x0: &[u8], x1: &[u8], y0: &[u8], y1: &[u8]| {
-                let copy_and_reverse_limb = |dst: &mut [u8], src: &[u8]| {
-                    dst.copy_from_slice(&src[FP_PAD_BY..PADDED_FP_LENGTH]);
-                    dst.reverse();
-                };
-
-                copy_and_reverse_limb(&mut dst[0..FP_LENGTH], x0);
-                copy_and_reverse_limb(&mut dst[FP_LENGTH..2 * FP_LENGTH], x1);
-                copy_and_reverse_limb(&mut dst[2 * FP_LENGTH..3 * FP_LENGTH], y0);
-                copy_and_reverse_limb(&mut dst[3 * FP_LENGTH..4 * FP_LENGTH], y1);
-            };
-
-            // Convert a and b G2 points
-            convert_g2_fields(&mut p, a_x0, a_x1, a_y0, a_y1);
-            convert_g2_fields(&mut q, b_x0, b_x1, b_y0, b_y1);
+            // Convert input from EVM format to runtime format
+            let (mut p, q) = convert_g2_input_to_runtime(&input);
 
             // Call the Fluent SDK, syscall bls12_381_g2_add
             bls12_381_g2_add_with_sdk(&sdk, &mut p, &q);
@@ -365,7 +408,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 sdk.native_exit(ExitCode::PrecompileError);
             }
             let pairs_len = input.len() / input_length_requirement;
-            let mut pairs: alloc::vec::Vec<([u8; 96], [u8; 32])> =
+            let mut pairs: alloc::vec::Vec<([u8; G1_LENGTH], [u8; SCALAR_LENGTH])> =
                 alloc::vec::Vec::with_capacity(pairs_len);
             // We check for the gas in the very beginning to reduce execution time
             let gas_used = msm_required_gas(pairs_len, &DISCOUNT_TABLE_G1_MSM, G1_MSM_GAS);
@@ -376,7 +419,8 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 let s_be = &input[start + PADDED_G1_LENGTH..start + input_length_requirement];
                 let mut p = [0u8; G1_LENGTH];
                 p[0..FP_LENGTH].copy_from_slice(&g1_in[FP_PAD_BY..PADDED_FP_LENGTH]);
-                p[FP_LENGTH..G1_LENGTH].copy_from_slice(&g1_in[80..PADDED_G1_LENGTH]);
+                p[FP_LENGTH..G1_LENGTH]
+                    .copy_from_slice(&g1_in[FP_PAD_BY + PADDED_FP_LENGTH..PADDED_G1_LENGTH]);
                 let mut s_le = [0u8; SCALAR_LENGTH];
                 s_le.copy_from_slice(s_be);
                 s_le.reverse();
@@ -522,9 +566,13 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&out_be);
         }
         PRECOMPILE_BLS12_381_MAP_G1 => {
-            validate_input_length(&sdk, input.len() as u32, MAP_G1_INPUT_LENGTH);
-            // We check for the gas in the very beginning to reduce execution time
-            check_gas_and_sync(&sdk, MAP_G1_GAS, gas_limit);
+            validate_and_consume_gas(
+                &sdk,
+                input.len() as u32,
+                MAP_G1_INPUT_LENGTH,
+                MAP_G1_GAS,
+                gas_limit,
+            );
             let mut padded_fp = [0u8; PADDED_FP_LENGTH];
             padded_fp.copy_from_slice(&input);
             // Call the Fluent SDK, syscall bls12_381_map_fp_to_g1
@@ -536,9 +584,13 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         }
         PRECOMPILE_BLS12_381_MAP_G2 => {
             // Expect Fp2 padded: 128 bytes (64B c0 || 64B c1)
-            validate_input_length(&sdk, input.len() as u32, MAP_G2_INPUT_LENGTH);
-            // We check for the gas in the very beginning to reduce execution time
-            check_gas_and_sync(&sdk, MAP_G2_GAS, gas_limit);
+            validate_and_consume_gas(
+                &sdk,
+                input.len() as u32,
+                MAP_G2_INPUT_LENGTH,
+                MAP_G2_GAS,
+                gas_limit,
+            );
             // Pass through the 128B padded Fp2 to the syscall
             let mut padded_fp2 = [0u8; PADDED_FP2_LENGTH];
             padded_fp2.copy_from_slice(&input);

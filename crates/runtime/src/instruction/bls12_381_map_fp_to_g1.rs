@@ -6,6 +6,8 @@ use blst::{
 };
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
+use super::bls12_381_consts::FP_PAD_BY;
+
 pub struct SyscallBls12381MapFpToG1;
 
 impl SyscallBls12381MapFpToG1 {
@@ -29,7 +31,7 @@ impl SyscallBls12381MapFpToG1 {
     pub fn fn_impl(p: &[u8; 64], out: &mut [u8; G1_UNCOMPRESSED_LENGTH]) {
         // Input is 64B BE EIP-2537 padded Fp. Strip the first 16 zero bytes to get 48B BE field element.
         let mut fp_be = [0u8; FP_LENGTH];
-        fp_be.copy_from_slice(&p[16..PADDED_FP_LENGTH]);
+        fp_be.copy_from_slice(&p[FP_PAD_BY..PADDED_FP_LENGTH]);
 
         // Convert BE bytes into blst_fp
         let mut fp = blst_fp { l: [0u64; 6] };
