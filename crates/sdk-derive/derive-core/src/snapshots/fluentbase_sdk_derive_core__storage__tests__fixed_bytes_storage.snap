@@ -11,13 +11,13 @@ impl CustomBytes1 {
         let key = Self::key(sdk);
         <FixedBytes<
             32usize,
-        > as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+        > as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, value: FixedBytes<32usize>) {
         let key = Self::key(sdk);
         <FixedBytes<
             32usize,
-        > as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+        > as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::set(sdk, key, value)
     }
     fn key<SDK: fluentbase_sdk::SharedAPI>(_sdk: &SDK) -> fluentbase_sdk::U256 {
         Self::SLOT
@@ -32,13 +32,13 @@ impl CustomBytes2 {
         let key = Self::key(sdk);
         <FixedBytes<
             32usize,
-        > as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+        > as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, value: FixedBytes<32usize>) {
         let key = Self::key(sdk);
         <FixedBytes<
             32usize,
-        > as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+        > as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::set(sdk, key, value)
     }
     fn key<SDK: fluentbase_sdk::SharedAPI>(_sdk: &SDK) -> fluentbase_sdk::U256 {
         Self::SLOT
@@ -53,17 +53,17 @@ impl CustomBytes1 {
         let key = Self::key(sdk);
         <FixedBytes<
             321usize,
-        > as fluentbase_sdk::storage::StorageValueSolidity<
+        > as fluentbase_sdk::storage_legacy::StorageValueSolidity<
             SDK,
             FixedBytes<321usize>,
         >>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, value: FixedBytes<321usize>) {
-        use fluentbase_sdk::storage::StorageValueSolidity;
+        use fluentbase_sdk::storage_legacy::StorageValueSolidity;
         let key = Self::key(sdk);
         <FixedBytes<
             321usize,
-        > as fluentbase_sdk::storage::StorageValueSolidity<
+        > as fluentbase_sdk::storage_legacy::StorageValueSolidity<
             SDK,
             FixedBytes<321usize>,
         >>::set(sdk, key, value.clone());
@@ -81,17 +81,17 @@ impl CustomBytes2 {
         let key = Self::key(sdk);
         <FixedBytes<
             321usize,
-        > as fluentbase_sdk::storage::StorageValueSolidity<
+        > as fluentbase_sdk::storage_legacy::StorageValueSolidity<
             SDK,
             FixedBytes<321usize>,
         >>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, value: FixedBytes<321usize>) {
-        use fluentbase_sdk::storage::StorageValueSolidity;
+        use fluentbase_sdk::storage_legacy::StorageValueSolidity;
         let key = Self::key(sdk);
         <FixedBytes<
             321usize,
-        > as fluentbase_sdk::storage::StorageValueSolidity<
+        > as fluentbase_sdk::storage_legacy::StorageValueSolidity<
             SDK,
             FixedBytes<321usize>,
         >>::set(sdk, key, value.clone());

@@ -546,14 +546,14 @@ impl StorageSlot {
                 quote! {
                     fn get<SDK: fluentbase_sdk::SharedAPI>(#get_args) -> #output {
                         let key = Self::key(sdk);
-                        <#output as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+                        <#output as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
                     }
                 }
             } else {
                 quote! {
                     fn get<SDK: fluentbase_sdk::SharedAPI>(#get_args) -> #output {
                         let key = Self::key(sdk, #(#arg_names),*);
-                        <#output as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+                        <#output as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
                     }
                 }
             }
@@ -561,14 +561,14 @@ impl StorageSlot {
             quote! {
                 fn get<SDK: fluentbase_sdk::SharedAPI>(#get_args) -> #output {
                     let key = Self::key(sdk);
-                    <#output as fluentbase_sdk::storage::StorageValueSolidity<SDK, #output>>::get(sdk, key)
+                    <#output as fluentbase_sdk::storage_legacy::StorageValueSolidity<SDK, #output>>::get(sdk, key)
                 }
             }
         } else {
             quote! {
                 fn get<SDK: fluentbase_sdk::SharedAPI>(#get_args) -> #output {
                     let key = Self::key(sdk, #(#arg_names),*);
-                    <#output as fluentbase_sdk::storage::StorageValueSolidity<SDK, #output>>::get(sdk, key)
+                    <#output as fluentbase_sdk::storage_legacy::StorageValueSolidity<SDK, #output>>::get(sdk, key)
                 }
             }
         }
@@ -594,14 +594,14 @@ impl StorageSlot {
                 quote! {
                     fn set<SDK: fluentbase_sdk::SharedAPI>(#set_args) {
                         let key = Self::key(sdk);
-                        <#output as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+                        <#output as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::set(sdk, key, value)
                     }
                 }
             } else {
                 quote! {
                     fn set<SDK: fluentbase_sdk::SharedAPI>(#set_args) {
                         let key = Self::key(sdk, #(#arg_names),*);
-                        <#output as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+                        <#output as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::set(sdk, key, value)
                     }
                 }
             }
@@ -610,17 +610,17 @@ impl StorageSlot {
             if arguments.is_empty() {
                 quote! {
                     fn set<SDK: fluentbase_sdk::SharedAPI>(#set_args) {
-                        use fluentbase_sdk::storage::StorageValueSolidity;
+                        use fluentbase_sdk::storage_legacy::StorageValueSolidity;
                         let key = Self::key(sdk);
-                        <#output as fluentbase_sdk::storage::StorageValueSolidity<SDK, #output>>::set(sdk, key, value.clone());
+                        <#output as fluentbase_sdk::storage_legacy::StorageValueSolidity<SDK, #output>>::set(sdk, key, value.clone());
                     }
                 }
             } else {
                 quote! {
                     fn set<SDK: fluentbase_sdk::SharedAPI>(#set_args) {
-                        use fluentbase_sdk::storage::StorageValueSolidity;
+                        use fluentbase_sdk::storage_legacy::StorageValueSolidity;
                         let key = Self::key(sdk, #(#arg_names),*);
-                        <#output as fluentbase_sdk::storage::StorageValueSolidity<SDK, #output>>::set(sdk, key, value.clone());
+                        <#output as fluentbase_sdk::storage_legacy::StorageValueSolidity<SDK, #output>>::set(sdk, key, value.clone());
                     }
                 }
             }

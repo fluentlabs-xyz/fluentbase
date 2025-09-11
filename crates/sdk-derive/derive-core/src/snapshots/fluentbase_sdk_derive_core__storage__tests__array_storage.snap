@@ -9,11 +9,13 @@ impl Arr {
     ]);
     fn get<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK, arg0: U256) -> U256 {
         let key = Self::key(sdk, arg0);
-        <U256 as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+        <U256 as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, arg0: U256, value: U256) {
         let key = Self::key(sdk, arg0);
-        <U256 as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+        <U256 as fluentbase_sdk::storage_legacy::DirectStorage<
+            SDK,
+        >>::set(sdk, key, value)
     }
     fn key<SDK: fluentbase_sdk::SharedAPI>(
         sdk: &SDK,
@@ -41,7 +43,7 @@ impl NestedArr {
         arg2: U256,
     ) -> Address {
         let key = Self::key(sdk, arg0, arg1, arg2);
-        <Address as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+        <Address as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(
         sdk: &mut SDK,
@@ -51,7 +53,9 @@ impl NestedArr {
         value: Address,
     ) {
         let key = Self::key(sdk, arg0, arg1, arg2);
-        <Address as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+        <Address as fluentbase_sdk::storage_legacy::DirectStorage<
+            SDK,
+        >>::set(sdk, key, value)
     }
     fn key<SDK: fluentbase_sdk::SharedAPI>(
         sdk: &SDK,

@@ -9,11 +9,13 @@ impl Owner {
     ]);
     fn get<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK) -> Address {
         let key = Self::key(sdk);
-        <Address as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+        <Address as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, value: Address) {
         let key = Self::key(sdk);
-        <Address as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+        <Address as fluentbase_sdk::storage_legacy::DirectStorage<
+            SDK,
+        >>::set(sdk, key, value)
     }
     fn key<SDK: fluentbase_sdk::SharedAPI>(_sdk: &SDK) -> fluentbase_sdk::U256 {
         Self::SLOT
@@ -26,11 +28,13 @@ impl Paused {
     ]);
     fn get<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK) -> bool {
         let key = Self::key(sdk);
-        <bool as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+        <bool as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, value: bool) {
         let key = Self::key(sdk);
-        <bool as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+        <bool as fluentbase_sdk::storage_legacy::DirectStorage<
+            SDK,
+        >>::set(sdk, key, value)
     }
     fn key<SDK: fluentbase_sdk::SharedAPI>(_sdk: &SDK) -> fluentbase_sdk::U256 {
         Self::SLOT
@@ -43,11 +47,13 @@ impl TotalSupply {
     ]);
     fn get<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK) -> U256 {
         let key = Self::key(sdk);
-        <U256 as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+        <U256 as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, value: U256) {
         let key = Self::key(sdk);
-        <U256 as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+        <U256 as fluentbase_sdk::storage_legacy::DirectStorage<
+            SDK,
+        >>::set(sdk, key, value)
     }
     fn key<SDK: fluentbase_sdk::SharedAPI>(_sdk: &SDK) -> fluentbase_sdk::U256 {
         Self::SLOT
