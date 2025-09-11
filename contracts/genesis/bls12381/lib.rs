@@ -133,7 +133,7 @@ fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) 
 #[inline(always)]
 fn validate_input_length<SDK: SharedAPI>(sdk: &SDK, actual: u32, expected: usize) {
     if actual != expected as u32 {
-        sdk.native_exit(ExitCode::PrecompileError);
+        sdk.native_exit(ExitCode::InputOutputOutOfBounds);
     }
 }
 
@@ -405,7 +405,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             let input_length_requirement = G1_MSM_INPUT_LENGTH;
             if input.len() % input_length_requirement != 0 || input.is_empty() {
                 // Todo: add a specific error message
-                sdk.native_exit(ExitCode::PrecompileError);
+                sdk.native_exit(ExitCode::InputOutputOutOfBounds);
             }
             let pairs_len = input.len() / input_length_requirement;
             let mut pairs: alloc::vec::Vec<([u8; G1_LENGTH], [u8; SCALAR_LENGTH])> =
@@ -449,8 +449,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             // Convert to runtime format: 192-byte LE limbs + 32-byte scalar LE
             let input_length_requirement = G2_MSM_INPUT_LENGTH;
             if input.len() % input_length_requirement != 0 || input.is_empty() {
-                // Todo: add a specific error message
-                sdk.native_exit(ExitCode::PrecompileError);
+                sdk.native_exit(ExitCode::InputOutputOutOfBounds);
             }
             let pairs_len = input.len() / input_length_requirement;
             let mut pairs: alloc::vec::Vec<([u8; G2_LENGTH], [u8; SCALAR_LENGTH])> =
@@ -513,7 +512,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         }
         PRECOMPILE_BLS12_381_PAIRING => {
             if input.is_empty() || input.len() % PAIRING_INPUT_LENGTH != 0 {
-                sdk.native_exit(ExitCode::PrecompileError);
+                sdk.native_exit(ExitCode::InputOutputOutOfBounds);
             }
             let pairs_len = input.len() / PAIRING_INPUT_LENGTH;
             // Gas: PAIRING_MULTIPLIER_BASE * pairs + PAIRING_OFFSET_BASE
@@ -635,6 +634,23 @@ mod tests {
         assert_eq!(output, expected);
         let gas_remaining = sdk.fuel() / FUEL_DENOM_RATE;
         assert_eq!(gas_limit - gas_remaining, expected_gas);
+    }
+
+    fn exec_evm_precompile_fail(address: Address, inputs: &[u8], expected_exit_code: ExitCode) {
+        let gas_limit = 120_000;
+        let sdk = HostTestingContext::default()
+            .with_input(Bytes::copy_from_slice(inputs))
+            .with_contract_context(ContractContextV1 {
+                address,
+                bytecode_address: address,
+                gas_limit,
+                ..Default::default()
+            })
+            .with_gas_limit(gas_limit);
+        main_entry(sdk.clone());
+        let output = sdk.take_output();
+        let zero_output = Vec::<u8>::new();
+        assert_eq!(output, zero_output);
     }
 
     // ==================================== G1 ADD ====================================
@@ -903,16 +919,23 @@ mod tests {
         }
     }
     // ==================================== Fail Cases: G1 Add ====================================
-    // mod fail_cases_g1_add {
-    //     use super::*;
-    //     #[test]
-    //     fn bls_g1_add_fail_case_1() {
-    //         exec_evm_precompile(
-    //             PRECOMPILE_BLS12_381_G1_ADD,
-    //             &hex!("0000000000000000000000000000000007355d25caf6e7f2f0cb2812ca0e513bd026ed09dda65b177500fa31714e09ea0ded3a078b526bed3307f804d4b93b040000000000000000000000000000000002829ce3c021339ccb5caf3e187f6370e1e2a311dec9b75363117063ab2015603ff52c3d3b98f19c2f65575e99e8b78c"),
-    //             &hex!("0000000000000000000000000000000000e7f4568a82b4b7dc1f14c6aaa055edf51502319c723c4dc2688c7fe5944c213f510328082396515734b6612c4e7bb700000000000000000000000000000000126b855e9e69b1f691f816e48ac6977664d24d99f8724868a184186469ddfd4617367e94527d4b74fc86413483afb35b000000000000000000000000000000000caead0fd7b6176c01436833c79d305c78be307da5f6af6c133c47311def6ff1e0babf57a0fb5539fce7ee12407b0a42000000000000000000000000000000001498aadcf7ae2b345243e281ae076df6de84455d766ab6fcdaad71fab60abb2e8b980a440043cd305db09d283c895e3d"),
-    //             23800,
-    //         );
-    //  }
-    //  }
+    mod fail_cases_g1_add {
+        use super::*;
+        #[test]
+        fn bls_g1add_empty_input() {
+            exec_evm_precompile_fail(
+                PRECOMPILE_BLS12_381_G1_ADD,
+                &hex!("00000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1"), // Only 128 bytes instead of 256
+                ExitCode::InputOutputOutOfBounds,
+            );
+        }
+        #[test]
+        fn bls_g1add_large_input() {
+            exec_evm_precompile_fail(
+                PRECOMPILE_BLS12_381_G1_ADD,
+                &hex!("000000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e100000000000000000000000000000000112b98340eee2777cc3c14163dea3ec97977ac3dc5c70da32e6e87578f44912e902ccef9efe28d4a78b8999dfbca942600000000000000000000000000000000186b28d92356c4dfec4b5201ad099dbdede3781f8998ddf929b4cd7756192185ca7b8f4ef7088f813270ac3d48868a21"),
+                ExitCode::InputOutputOutOfBounds,
+            );
+        }
+    }
 }
