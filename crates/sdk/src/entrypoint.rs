@@ -25,6 +25,33 @@ macro_rules! basic_entrypoint {
         pub fn main() {}
     };
 }
+#[macro_export]
+macro_rules! entrypoint_with_storage {
+    ($struct_typ:ident) => {
+        #[cfg(target_arch = "wasm32")]
+        #[no_mangle]
+        extern "C" fn deploy() {
+            use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl, U256};
+            let mut sdk = SharedContextImpl::new(RwasmContext {});
+            let mut app = $struct_typ::new(sdk, U256::from(0), 0);
+            app.deploy();
+        }
+        #[cfg(target_arch = "wasm32")]
+        #[no_mangle]
+        extern "C" fn main() {
+            use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
+            let mut sdk = SharedContextImpl::new(RwasmContext {});
+            let mut app = $struct_typ::new(sdk, U256::from(0), 0);
+            app.main();
+        }
+        #[cfg(target_arch = "wasm32")]
+        $crate::define_panic_handler!();
+        #[cfg(target_arch = "wasm32")]
+        $crate::define_allocator!();
+        #[cfg(not(target_arch = "wasm32"))]
+        pub fn main() {}
+    };
+}
 
 #[macro_export]
 macro_rules! func_entrypoint {
