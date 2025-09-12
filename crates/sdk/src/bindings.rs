@@ -160,6 +160,14 @@ extern "C" {
     pub fn _bls12381_fp2_sub(arg1: u32, arg2: u32);
     pub fn _bls12381_fp2_mul(arg1: u32, arg2: u32);
 
+    pub fn _bls12_381_g1_add(p_ptr: *mut u8, q_ptr: *const u8);
+    pub fn _bls12_381_g1_msm(pairs_ptr: *const u8, pairs_count: u32, out_ptr: *mut u8);
+    pub fn _bls12_381_g2_add(p_ptr: *mut u8, q_ptr: *const u8);
+    pub fn _bls12_381_g2_msm(pairs_ptr: *const u8, pairs_count: u32, out_ptr: *mut u8);
+    pub fn _bls12_381_pairing(pairs_ptr: *const u8, pairs_count: u32, out_ptr: *mut u8);
+    pub fn _bls12_381_map_fp_to_g1(p_ptr: *const u8, out_ptr: *mut u8);
+    pub fn _bls12_381_map_fp2_to_g2(p_ptr: *const u8, out_ptr: *mut u8);
+
     pub fn _ed25519_edwards_decompress_validate(arg1: *const u8) -> u32;
     pub fn _ed25519_edwards_add(arg1: *mut u8, arg2: *const u8) -> u32;
     pub fn _ed25519_edwards_sub(arg1: *mut u8, arg2: *const u8) -> u32;

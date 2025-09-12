@@ -1,19 +1,11 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_types::{
-    address,
-    compile_wasm_to_rwasm_with_config,
-    default_compilation_config,
-    keccak256,
-    Address,
-    Bytes,
-    B256,
-    DEVELOPER_PREVIEW_CHAIN_ID,
-    U256,
+    address, compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256, Address,
+    Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
-    env,
-    fs,
+    env, fs,
     path::PathBuf,
     time::Instant,
 };

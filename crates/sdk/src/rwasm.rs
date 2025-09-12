@@ -1,6 +1,10 @@
 pub use crate::{
     bindings::{
-        _big_mod_exp, _blake3, _bn254_add, _bn254_double, _bn254_fp2_mul, _bn254_fp_mul,
+        _big_mod_exp, _blake3, _bls12381_add, _bls12381_decompress, _bls12381_double,
+        _bls12381_fp2_add, _bls12381_fp2_mul, _bls12381_fp2_sub, _bls12381_fp_add,
+        _bls12381_fp_mul, _bls12381_fp_sub, _bls12_381_g1_add, _bls12_381_g1_msm,
+        _bls12_381_g2_add, _bls12_381_g2_msm, _bls12_381_map_fp2_to_g2, _bls12_381_map_fp_to_g1,
+        _bls12_381_pairing, _bn254_add, _bn254_double, _bn254_fp2_mul, _bn254_fp_mul,
         _bn254_g1_compress, _bn254_g1_decompress, _bn254_g2_compress, _bn254_g2_decompress,
         _bn254_mul, _bn254_multi_pairing, _charge_fuel, _charge_fuel_manually, _debug_log,
         _ed25519_edwards_add, _ed25519_edwards_decompress_validate, _ed25519_edwards_mul,
@@ -388,5 +392,59 @@ impl NativeAPI for RwasmContext {
     #[inline(always)]
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
         unsafe { _preimage_copy(hash.as_ptr(), target.as_mut_ptr()) }
+    }
+
+    // BLS12-381 implementations
+    #[inline(always)]
+    fn bls12_381_g1_add(p: &mut [u8; 96], q: &[u8; 96]) {
+        unsafe { _bls12_381_g1_add(p.as_mut_ptr(), q.as_ptr()) }
+    }
+
+    #[inline(always)]
+    fn bls12_381_g1_msm(pairs: &[([u8; 96], [u8; 32])], out: &mut [u8; 96]) {
+        unsafe {
+            _bls12_381_g1_msm(
+                pairs.as_ptr() as *const u8,
+                pairs.len() as u32,
+                out.as_mut_ptr(),
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]) {
+        unsafe { _bls12_381_g2_add(p.as_mut_ptr(), q.as_ptr()) }
+    }
+
+    #[inline(always)]
+    fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]) {
+        unsafe {
+            _bls12_381_g2_msm(
+                pairs.as_ptr() as *const u8,
+                pairs.len() as u32,
+                out.as_mut_ptr(),
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]) {
+        unsafe {
+            _bls12_381_pairing(
+                pairs.as_ptr() as *const u8,
+                pairs.len() as u32,
+                out.as_mut_ptr(),
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]) {
+        unsafe { _bls12_381_map_fp_to_g1(p.as_ptr(), out.as_mut_ptr()) }
+    }
+
+    #[inline(always)]
+    fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
+        unsafe { _bls12_381_map_fp2_to_g2(p.as_ptr(), out.as_mut_ptr()) }
     }
 }

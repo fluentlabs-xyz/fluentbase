@@ -5,8 +5,6 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
-revm-precompile = { workspace = true, features = ["blst"] }
-blst = { version = "0.3" }
 
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
@@ -17,4 +15,4 @@ path = "lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "revm-precompile/std"]
+std = ["fluentbase-sdk/std"]

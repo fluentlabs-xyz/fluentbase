@@ -157,5 +157,50 @@ pub fn create_import_linker() -> Rc<ImportLinker> {
         &[ValType::I32; 6],
         &[ValType::I32; 1]
     );
+
+    // BLS12-381 high-level operations
+    import_function!(
+        "_bls12_381_g1_add",
+        BLS12381_G1_ADD,
+        &[ValType::I32; 2],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_g1_msm",
+        BLS12381_G1_MSM,
+        &[ValType::I32; 3],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_g2_add",
+        BLS12381_G2_ADD,
+        &[ValType::I32; 2],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_g2_msm",
+        BLS12381_G2_MSM,
+        &[ValType::I32; 3],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_pairing",
+        BLS12381_PAIRING,
+        &[ValType::I32; 3],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_map_fp_to_g1",
+        BLS12381_MAP_G1,
+        &[ValType::I32; 2],
+        &[]
+    );
+    import_function!(
+        "_bls12_381_map_fp2_to_g2",
+        BLS12381_MAP_G2,
+        &[ValType::I32; 2],
+        &[]
+    );
+
     Rc::new(import_linker)
 }
