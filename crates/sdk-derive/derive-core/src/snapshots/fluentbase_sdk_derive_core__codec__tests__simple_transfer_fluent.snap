@@ -19,43 +19,21 @@ const _: () = {
         /// Encodes with selector
         pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-            let args = self.0.clone();
-            fluentbase_sdk::codec::encoder::FluentABI::encode(
-                    &(args.0, args.1),
+            buf.extend_from_slice(&Self::SELECTOR);
+            fluentbase_sdk::codec::encoder::CompactABI::encode_function_args(
+                    &self.0,
                     &mut buf,
-                    0,
                 )
                 .expect("Failed to encode values");
-            let encoded_args = buf.freeze();
-            let clean_args = if fluentbase_sdk::codec::encoder::FluentABI::<
-                TransferCallArgs,
-            >::is_dynamic() {
-                encoded_args[4..].to_vec()
-            } else {
-                encoded_args.to_vec()
-            };
-            Self::SELECTOR.iter().copied().chain(clean_args).collect()
+            buf.freeze()
         }
         /// Decodes call arguments from bytes
         pub fn decode(
             buf: &impl fluentbase_sdk::codec::bytes::Buf,
         ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
-            use fluentbase_sdk::codec::bytes::BufMut;
-            let mut combined_buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-            combined_buf
-                .put_slice(
-                    &if fluentbase_sdk::codec::encoder::FluentABI::<
-                        TransferCallArgs,
-                    >::is_dynamic() {
-                        (4_u32).to_le_bytes().to_vec()
-                    } else {
-                        ::alloc::vec::Vec::new()
-                    },
-                );
-            combined_buf.put_slice(buf.chunk());
-            let args = fluentbase_sdk::codec::encoder::FluentABI::<
+            let args = fluentbase_sdk::codec::encoder::CompactABI::<
                 TransferCallArgs,
-            >::decode(&combined_buf.freeze(), 0)?;
+            >::decode_function_args(buf)?;
             Ok(Self(args))
         }
     }
@@ -73,39 +51,20 @@ const _: () = {
         /// Encodes the return values to bytes
         pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-            let args = self.0.clone();
-            fluentbase_sdk::codec::encoder::FluentABI::encode(&(args.0,), &mut buf, 0)
+            fluentbase_sdk::codec::encoder::CompactABI::encode_function_args(
+                    &self.0,
+                    &mut buf,
+                )
                 .expect("Failed to encode values");
-            let encoded_args = buf.freeze();
-            let clean_args = if fluentbase_sdk::codec::encoder::FluentABI::<
-                TransferReturnArgs,
-            >::is_dynamic() {
-                encoded_args[4..].to_vec()
-            } else {
-                encoded_args.to_vec()
-            };
-            clean_args.into()
+            buf.freeze()
         }
         /// Decodes return values from bytes
         pub fn decode(
             buf: &impl fluentbase_sdk::codec::bytes::Buf,
         ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
-            use fluentbase_sdk::codec::bytes::BufMut;
-            let mut combined_buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-            combined_buf
-                .put_slice(
-                    &if fluentbase_sdk::codec::encoder::FluentABI::<
-                        TransferReturnArgs,
-                    >::is_dynamic() {
-                        (4_u32).to_le_bytes().to_vec()
-                    } else {
-                        ::alloc::vec::Vec::new()
-                    },
-                );
-            combined_buf.put_slice(buf.chunk());
-            let args = fluentbase_sdk::codec::encoder::FluentABI::<
+            let args = fluentbase_sdk::codec::encoder::CompactABI::<
                 TransferReturnArgs,
-            >::decode(&combined_buf.freeze(), 0)?;
+            >::decode_function_args(buf)?;
             Ok(Self(args))
         }
     }
