@@ -86,10 +86,15 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
             quote! {
                 /// Encodes with selector
                 pub fn encode(&self) -> #crate_path::bytes::Bytes {
+                    // First encode the arguments separately
+                    let mut args_buf = #crate_path::bytes::BytesMut::new();
+                    #codec_type::encode_function_args(&self.0, &mut args_buf)
+                        .expect("Failed to encode values");
+
+                    // Then combine selector + encoded args
                     let mut buf = #crate_path::bytes::BytesMut::new();
                     buf.extend_from_slice(&Self::SELECTOR);
-                    #codec_type::encode_function_args(&self.0, &mut buf)
-                        .expect("Failed to encode values");
+                    buf.extend_from_slice(&args_buf);
                     buf.freeze()
                 }
             }
