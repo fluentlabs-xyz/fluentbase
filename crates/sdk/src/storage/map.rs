@@ -134,36 +134,6 @@ impl MapKey for String {
     }
 }
 
-// Implement for signed integers
-impl MapKey for i64 {
-    fn compute_slot(&self, root_slot: U256) -> U256 {
-        // Two's complement representation
-        let value = U256::from(*self as u64);
-        value.compute_slot(root_slot)
-    }
-}
-
-impl MapKey for i32 {
-    fn compute_slot(&self, root_slot: U256) -> U256 {
-        let value = U256::from(*self as u32);
-        value.compute_slot(root_slot)
-    }
-}
-
-impl MapKey for i16 {
-    fn compute_slot(&self, root_slot: U256) -> U256 {
-        let value = U256::from(*self as u16);
-        value.compute_slot(root_slot)
-    }
-}
-
-impl MapKey for i8 {
-    fn compute_slot(&self, root_slot: U256) -> U256 {
-        let value = U256::from(*self as u8);
-        value.compute_slot(root_slot)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
