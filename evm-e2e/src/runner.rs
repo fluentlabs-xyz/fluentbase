@@ -638,12 +638,23 @@ pub fn execute_test_suite(
                 kind: TestErrorKind::UnknownPrivateKey(unit.transaction.secret_key),
             })?
         };
-        tx_env.gas_price = unit
+        // Handle gas price overflow - if the gas price is too large for u128,
+        // this should result in a GASLIMIT_PRICE_PRODUCT_OVERFLOW exception
+        let gas_price_value = unit
             .transaction
             .gas_price
             .or(unit.transaction.max_fee_per_gas)
-            .unwrap_or_default()
-            .to();
+            .unwrap_or_default();
+
+        // Check if gas price is too large to fit in u128 (causes overflow)
+        if gas_price_value > U256::from(u128::MAX) {
+            // This is the case where gas price is too large to fit in u128
+            // This should result in GASLIMIT_PRICE_PRODUCT_OVERFLOW exception
+            // We'll use the maximum u128 value and let the EVM handle the overflow
+            tx_env.gas_price = u128::MAX;
+        } else {
+            tx_env.gas_price = gas_price_value.to();
+        }
         tx_env.gas_priority_fee = unit.transaction.max_priority_fee_per_gas.map(|v| v.to());
         // EIP-4844
         tx_env.blob_hashes = unit.transaction.blob_versioned_hashes;

@@ -37,26 +37,15 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     // Parse fields
     let digest = B256::from_slice(&data[0..32]);
 
-    // v is 32-byte big-endian integer; require top 31 bytes to be zero
+    // v is 32-byte big-endian integer; require top 31 bytes to be zero AND v must be 27 or 28
     let v_bytes = &data[32..64];
-    let high_nonzero = v_bytes[..31].iter().any(|&b| b != 0);
-    if high_nonzero {
+    if !(v_bytes[..31].iter().all(|&b| b == 0) && matches!(v_bytes[31], 27 | 28)) {
         // Invalid v, return empty
         sdk.sync_evm_gas(gas_used, 0);
         sdk.write(&[]);
         return;
     }
-    let mut v = v_bytes[31];
-    // Accept 27/28 or 0/1
-    v = match v {
-        27 | 28 => v - 27,
-        0 | 1 => v,
-        _ => {
-            sdk.sync_evm_gas(gas_used, 0);
-            sdk.write(&[]);
-            return;
-        }
-    };
+    let v = v_bytes[31] - 27;
 
     // r and s
     let r = &data[64..96];
@@ -79,7 +68,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     // SDK returns 65-byte uncompressed pubkey [0x04 || x || y]
     let hashed = sdk.keccak256(&pubkey[1..65]);
     let mut out = [0u8; 32];
-    out[12..32].copy_from_slice(&hashed.0[12..32]);
+    out[12..32].copy_from_slice(&hashed[12..32]);
 
     sdk.sync_evm_gas(gas_used, 0);
     sdk.write(&out);
