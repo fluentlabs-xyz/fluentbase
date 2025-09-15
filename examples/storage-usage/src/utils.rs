@@ -1,9 +1,54 @@
 #![allow(dead_code)]
 #![cfg(test)]
 use fluentbase_sdk::{Address, HashMap, U256};
-
 #[macro_export]
 macro_rules! assert_storage_layout {
+    // contracts with SDK type parameter
+    (
+        $struct_type:ident<$sdk_type:ty> => {
+            $(
+                $field:ident: $slot:expr, $offset:expr
+            ),* $(,)?
+        },
+        total_slots: $total_slots:expr
+    ) => {
+        {
+            use fluentbase_sdk::storage::StorageDescriptor;
+            use fluentbase_sdk::U256;
+
+            // Create a default SDK instance for testing
+            let sdk = <$sdk_type>::default();
+            let instance = $struct_type::new(sdk);
+
+            $(
+                assert_eq!(
+                    instance.$field.slot(),
+                    U256::from($slot),
+                    "Field '{}' slot mismatch: expected {}, got {}",
+                    stringify!($field),
+                    $slot,
+                    instance.$field.slot()
+                );
+                assert_eq!(
+                    instance.$field.offset(),
+                    $offset,
+                    "Field '{}' offset mismatch: expected {}, got {}",
+                    stringify!($field),
+                    $offset,
+                    instance.$field.offset()
+                );
+            )*
+
+            assert_eq!(
+                $struct_type::<$sdk_type>::SLOTS,
+                $total_slots,
+                "Total slots mismatch: expected {}, got {}",
+                $total_slots,
+                $struct_type::<$sdk_type>::SLOTS
+            );
+        }
+    };
+    // storage struct
     (
         $struct_type:ty => {
             $(
@@ -13,21 +58,36 @@ macro_rules! assert_storage_layout {
         total_slots: $total_slots:expr
     ) => {
         {
-            use fluentbase_sdk::storage::{composite::CompositeStorage, StorageDescriptor};
+            use fluentbase_sdk::storage::StorageDescriptor;
             use fluentbase_sdk::U256;
 
-            let instance =  <$struct_type>::new(U256::from(0), 0);
+            let instance = <$struct_type>::new(U256::from(0), 0);
 
             $(
-                assert_eq!(instance.$field.slot(), U256::from($slot));
-                assert_eq!(instance.$field.offset(), $offset);
+                assert_eq!(
+                    instance.$field.slot(),
+                    U256::from($slot),
+                    "Field '{}' slot mismatch: expected {}, got {}",
+                    stringify!($field),
+                    $slot,
+                    instance.$field.slot()
+                );
+                assert_eq!(
+                    instance.$field.offset(),
+                    $offset,
+                    "Field '{}' offset mismatch: expected {}, got {}",
+                    stringify!($field),
+                    $offset,
+                    instance.$field.offset()
+                );
             )*
 
             assert_eq!(
-                <$struct_type as CompositeStorage>::REQUIRED_SLOTS,
+                <$struct_type>::SLOTS,
                 $total_slots,
                 "Total slots mismatch: expected {}, got {}",
-                $total_slots, <$struct_type as CompositeStorage>::REQUIRED_SLOTS
+                $total_slots,
+                <$struct_type>::SLOTS
             );
         }
     };

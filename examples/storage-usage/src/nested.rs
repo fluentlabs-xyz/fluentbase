@@ -2,41 +2,37 @@
 use fluentbase_sdk::{
     derive::Storage,
     storage::{
-        array::StorageArray,
-        composite::{Composite},
-        map::StorageMap,
-        primitive::StoragePrimitive,
-        vec::StorageVec,
-        ArrayAccess, MapAccess, PrimitiveAccess, VecAccess,
+        StorageAddress, StorageArray, StorageBool, StorageMap, StorageU256, StorageU32, StorageU8,
+        StorageVec,
     },
     Address, SharedAPI, U256,
 };
 
 // Storage structures
 #[derive(Storage)]
-pub struct Item {
-    owner: StoragePrimitive<Address>,
-    value: StoragePrimitive<U256>,
-    level: StoragePrimitive<u8>,
-    active: StoragePrimitive<bool>,
+pub struct StorageItem {
+    owner: StorageAddress,
+    value: StorageU256,
+    level: StorageU8,
+    active: StorageBool,
 }
 
 #[derive(Storage)]
-pub struct Inventory {
-    equipped_items: StorageArray<Composite<Item>, 3>,
-    user_items: StorageMap<Address, Composite<Item>>,
-    collected_items: StorageVec<Composite<Item>>,
-    total_value: StoragePrimitive<U256>,
-    item_count: StoragePrimitive<u32>,
+pub struct StorageInventory {
+    equipped_items: StorageArray<StorageItem, 3>,
+    user_items: StorageMap<Address, StorageItem>,
+    collected_items: StorageVec<StorageItem>,
+    total_value: StorageU256,
+    item_count: StorageU32,
 }
 
 #[derive(Storage)]
 pub struct Game<SDK> {
     sdk: SDK,
-    admin: StoragePrimitive<Address>,
-    version: StoragePrimitive<u32>,
-    player_inventory: Composite<Inventory>,
-    is_active: StoragePrimitive<bool>,
+    admin: StorageAddress,
+    version: StorageU32,
+    player_inventory: StorageInventory,
+    is_active: StorageBool,
 }
 
 // Data structures for passing values
@@ -47,6 +43,7 @@ pub struct ItemData {
     pub level: u8,
     pub active: bool,
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct InventoryData {
     pub equipped_items: [ItemData; 3],
@@ -57,45 +54,51 @@ pub struct InventoryData {
 }
 
 // Helper methods for Item
-impl Item {
+impl StorageItem {
     fn set_from<SDK: SharedAPI>(&self, data: &ItemData, sdk: &mut SDK) {
-        self.owner().set(sdk, data.owner);
-        self.value().set(sdk, data.value);
-        self.level().set(sdk, data.level);
-        self.active().set(sdk, data.active);
+        self.owner_accessor().set(sdk, data.owner);
+        self.value_accessor().set(sdk, data.value);
+        self.level_accessor().set(sdk, data.level);
+        self.active_accessor().set(sdk, data.active);
     }
 
     fn get_data<SDK: SharedAPI>(&self, sdk: &SDK) -> ItemData {
         ItemData {
-            owner: self.owner().get(sdk),
-            value: self.value().get(sdk),
-            level: self.level().get(sdk),
-            active: self.active().get(sdk),
+            owner: self.owner_accessor().get(sdk),
+            value: self.value_accessor().get(sdk),
+            level: self.level_accessor().get(sdk),
+            active: self.active_accessor().get(sdk),
         }
     }
 }
 
 // Helper methods for Inventory
-impl Inventory {
+impl StorageInventory {
     fn set_from<SDK: SharedAPI>(&self, data: &InventoryData, sdk: &mut SDK) {
         // Set equipped items
         for (i, item_data) in data.equipped_items.iter().enumerate() {
-            self.equipped_items.at(i).set_from(item_data, sdk);
+            self.equipped_items_accessor()
+                .at(i)
+                .set_from(item_data, sdk);
         }
 
         // Set user items
         for (user, item_data) in &data.user_items {
-            self.user_items.entry(*user).set_from(item_data, sdk);
+            self.user_items_accessor()
+                .entry(*user)
+                .set_from(item_data, sdk);
         }
 
-        // Set collected items
+        // Clear and set collected items
+        self.collected_items_accessor().clear(sdk);
         for item_data in &data.collected_items {
-            self.collected_items.push(sdk).set_from(item_data, sdk);
+            let item = self.collected_items_accessor().grow(sdk);
+            item.set_from(item_data, sdk);
         }
 
         // Set simple fields
-        self.total_value().set(sdk, data.total_value);
-        self.item_count().set(sdk, data.item_count);
+        self.total_value_accessor().set(sdk, data.total_value);
+        self.item_count_accessor().set(sdk, data.item_count);
     }
 }
 
@@ -103,39 +106,42 @@ impl Inventory {
 impl<SDK: SharedAPI> Game<SDK> {
     // Simple setters
     pub fn set_admin(&mut self, admin: Address) {
-        self.admin().set(&mut self.sdk, admin);
+        self.admin_accessor().set(&mut self.sdk, admin);
     }
 
     pub fn set_version(&mut self, version: u32) {
-        self.version().set(&mut self.sdk, version);
+        self.version_accessor().set(&mut self.sdk, version);
     }
 
     pub fn set_is_active(&mut self, active: bool) {
-        self.is_active().set(&mut self.sdk, active);
+        self.is_active_accessor().set(&mut self.sdk, active);
     }
 
     // Inventory methods
     pub fn set_inventory(&mut self, data: &InventoryData) {
-        self.player_inventory().set_from(data, &mut self.sdk);
+        self.player_inventory_accessor()
+            .set_from(data, &mut self.sdk);
     }
 
     pub fn set_equipped_item(&mut self, index: usize, item: &ItemData) {
-        self.player_inventory()
-            .equipped_items
+        self.player_inventory_accessor()
+            .equipped_items_accessor()
             .at(index)
             .set_from(item, &mut self.sdk);
     }
 
     pub fn set_user_item(&mut self, user: Address, item: &ItemData) {
-        self.player_inventory()
-            .user_items
+        self.player_inventory_accessor()
+            .user_items_accessor()
             .entry(user)
             .set_from(item, &mut self.sdk);
     }
 
     pub fn add_collected_item(&mut self, item: &ItemData) {
-        let item_descriptor = self.player_inventory().collected_items.push(&mut self.sdk);
-
+        let item_descriptor = self
+            .player_inventory_accessor()
+            .collected_items_accessor()
+            .grow(&mut self.sdk);
         item_descriptor.set_from(item, &mut self.sdk);
     }
 }
@@ -143,16 +149,14 @@ impl<SDK: SharedAPI> Game<SDK> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assert_storage_layout;
-    use crate::nested::{Game, Inventory, Item};
-    use crate::utils::storage_from_fixture;
+    use crate::{assert_storage_layout, utils::storage_from_fixture};
     use fluentbase_sdk::address;
     use fluentbase_sdk_testing::HostTestingContext;
 
     #[test]
     fn test_layout_calculations() {
         assert_storage_layout! {
-            Item => {
+            StorageItem => {
                 owner: 0, 12,
                 value: 1, 0,
                 level: 2, 31,
@@ -162,7 +166,7 @@ mod tests {
         }
 
         assert_storage_layout! {
-            Inventory => {
+            StorageInventory => {
                 equipped_items: 0, 0,
                 user_items: 9, 0,
                 collected_items: 10, 0,
@@ -171,7 +175,16 @@ mod tests {
             },
             total_slots: 13
         }
-        // assert_eq!(Game::<MockStorage>::REQUIRED_SLOTS, 15);
+
+        assert_storage_layout! {
+            Game<HostTestingContext> => {
+                admin: 0, 12,
+                version: 0, 8,
+                player_inventory: 1, 0,
+                is_active: 14, 31,
+            },
+            total_slots: 15
+        }
     }
 
     const EXPECTED_LAYOUT: &str = r#"{
@@ -206,8 +219,7 @@ mod tests {
     #[test]
     fn test_storage_layout_with_data_structures() {
         let sdk = HostTestingContext::default();
-
-        let mut game = Game::new(sdk, U256::from(0), 0);
+        let mut game = Game::new(sdk);
 
         // Set simple fields
         game.set_admin(address!("0x1111111111111111111111111111111111111111"));
@@ -261,11 +273,9 @@ mod tests {
             total_value: U256::from(10000),
             item_count: 25,
         };
+
         game.set_inventory(&inventory_data);
         let storage = game.sdk.dump_storage();
-
-        // print resulting storage
-        // println!("{}", format_storage(&storage));
 
         let expected_storage = storage_from_fixture(EXPECTED_LAYOUT);
         assert_eq!(expected_storage, storage);

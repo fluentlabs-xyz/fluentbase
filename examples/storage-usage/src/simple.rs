@@ -2,32 +2,25 @@
 use fluentbase_sdk::{
     derive::Storage,
     storage::{
-        bytes::StorageString, composite::Composite, map::StorageMap, primitive::StoragePrimitive,
-        vec::StorageVec, MapAccess, PrimitiveAccess, VecAccess,
+        StorageAddress, StorageBool, StorageMap, StorageString, StorageU256, StorageU32, StorageVec,
     },
     Address, SharedAPI, U256,
 };
 
-// Storage structures
-#[derive(Storage)]
-pub struct State {
-    owner: StoragePrimitive<Address>,
-    counter: StoragePrimitive<U256>,
-    balances: StorageMap<Address, StorageMap<Address, StoragePrimitive<U256>>>,
-    data: StorageVec<StoragePrimitive<U256>>,
-    name: StorageString,
-    description: StorageString,
-    is_active: StoragePrimitive<bool>,
-    is_paused: StoragePrimitive<bool>,
-    is_locked: StoragePrimitive<bool>,
-    version: StoragePrimitive<u32>,
-    flags: StoragePrimitive<u32>,
-}
-
 #[derive(Storage)]
 pub struct App<SDK> {
     sdk: SDK,
-    state: Composite<State>,
+    owner: StorageAddress,
+    counter: StorageU256,
+    balances: StorageMap<Address, StorageMap<Address, StorageU256>>,
+    data: StorageVec<StorageU256>,
+    name: StorageString,
+    description: StorageString,
+    is_active: StorageBool,
+    is_paused: StorageBool,
+    is_locked: StorageBool,
+    version: StorageU32,
+    flags: StorageU32,
 }
 
 // Data structures for passing values
@@ -46,88 +39,79 @@ pub struct StateData {
     pub flags: u32,
 }
 
-// Helper methods for State
-impl State {
-    fn set_from<SDK: SharedAPI>(&self, data: &StateData, sdk: &mut SDK) {
-        self.owner().set(sdk, data.owner);
-        self.counter().set(sdk, data.counter);
+// Public API methods
+impl<SDK: SharedAPI> App<SDK> {
+    pub fn set_state(&mut self, data: &StateData) {
+        self.owner_accessor().set(&mut self.sdk, data.owner);
+        self.counter_accessor().set(&mut self.sdk, data.counter);
 
         // Set balances
         for (owner, token, amount) in &data.balances {
-            self.balances.entry(*owner).entry(*token).set(sdk, *amount);
+            self.balances_accessor()
+                .entry(*owner)
+                .entry(*token)
+                .set(&mut self.sdk, *amount);
         }
 
         // Set vector elements
         for element in &data.data_elements {
-            self.data.push(sdk).set(sdk, *element);
+            self.data_accessor().push(&mut self.sdk, *element);
         }
 
         // Set strings
-        self.name.set_string(sdk, &data.name);
-        self.description.set_string(sdk, &data.description);
+        self.name_accessor().set(&mut self.sdk, &data.name);
+        self.description_accessor()
+            .set(&mut self.sdk, &data.description);
 
         // Set packed fields
-        self.is_active().set(sdk, data.is_active);
-        self.is_paused().set(sdk, data.is_paused);
-        self.is_locked().set(sdk, data.is_locked);
-        self.version().set(sdk, data.version);
-        self.flags().set(sdk, data.flags);
-    }
-
-    fn get_data<SDK: SharedAPI>(&self, sdk: &SDK) -> StateData {
-        // Get vector elements
-        let mut data_elements = Vec::new();
-        let vec_len = self.data.len(sdk);
-        for i in 0..vec_len {
-            data_elements.push(self.data.at(i).get(sdk));
-        }
-
-        StateData {
-            owner: self.owner().get(sdk),
-            counter: self.counter().get(sdk),
-            balances: vec![], // Would need to track which keys were set
-            data_elements,
-            name: self.name.get_string(sdk),
-            description: self.description.get_string(sdk),
-            is_active: self.is_active().get(sdk),
-            is_paused: self.is_paused().get(sdk),
-            is_locked: self.is_locked().get(sdk),
-            version: self.version().get(sdk),
-            flags: self.flags().get(sdk),
-        }
-    }
-}
-
-// Public API methods
-impl<SDK: SharedAPI> App<SDK> {
-    pub fn set_state(&mut self, data: &StateData) {
-        self.state().set_from(data, &mut self.sdk);
+        self.is_active_accessor().set(&mut self.sdk, data.is_active);
+        self.is_paused_accessor().set(&mut self.sdk, data.is_paused);
+        self.is_locked_accessor().set(&mut self.sdk, data.is_locked);
+        self.version_accessor().set(&mut self.sdk, data.version);
+        self.flags_accessor().set(&mut self.sdk, data.flags);
     }
 
     pub fn get_state(&self) -> StateData {
-        self.state().get_data(&self.sdk)
+        // Get vector elements
+        let mut data_elements = Vec::new();
+        let vec_len = self.data_accessor().len(&self.sdk);
+        for i in 0..vec_len {
+            data_elements.push(self.data_accessor().at(i).get(&self.sdk));
+        }
+
+        StateData {
+            owner: self.owner_accessor().get(&self.sdk),
+            counter: self.counter_accessor().get(&self.sdk),
+            balances: vec![], // Would need to track which keys were set
+            data_elements,
+            name: self.name_accessor().get(&self.sdk),
+            description: self.description_accessor().get(&self.sdk),
+            is_active: self.is_active_accessor().get(&self.sdk),
+            is_paused: self.is_paused_accessor().get(&self.sdk),
+            is_locked: self.is_locked_accessor().get(&self.sdk),
+            version: self.version_accessor().get(&self.sdk),
+            flags: self.flags_accessor().get(&self.sdk),
+        }
     }
 
     // Individual setters for convenience
     pub fn set_owner(&mut self, owner: Address) {
-        self.state().owner().set(&mut self.sdk, owner);
+        self.owner_accessor().set(&mut self.sdk, owner);
     }
 
     pub fn set_counter(&mut self, counter: U256) {
-        self.state().counter().set(&mut self.sdk, counter);
+        self.counter_accessor().set(&mut self.sdk, counter);
     }
 
     pub fn set_balance(&mut self, owner: Address, token: Address, amount: U256) {
-        self.state()
-            .balances
+        self.balances_accessor()
             .entry(owner)
             .entry(token)
             .set(&mut self.sdk, amount);
     }
 
     pub fn get_balance(&self, owner: Address, token: Address) -> U256 {
-        self.state()
-            .balances
+        self.balances_accessor()
             .entry(owner)
             .entry(token)
             .get(&self.sdk)
@@ -137,15 +121,14 @@ impl<SDK: SharedAPI> App<SDK> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assert_storage_layout;
-    use crate::utils::storage_from_fixture;
+    use crate::{assert_storage_layout, utils::storage_from_fixture};
     use fluentbase_sdk::address;
     use fluentbase_sdk_testing::HostTestingContext;
 
     #[test]
     fn test_layout_calculations() {
         assert_storage_layout! {
-            State => {
+            App<HostTestingContext> => {
                 owner: 0, 12,
                 counter: 1, 0,
                 balances: 2, 0,
@@ -183,7 +166,7 @@ mod tests {
     #[test]
     fn test_storage_layout_with_data() {
         let sdk = HostTestingContext::default();
-        let mut app = App::new(sdk, U256::from(0), 0);
+        let mut app = App::new(sdk);
 
         let state_data = StateData {
             owner: address!("0x1111111111111111111111111111111111111111"),
@@ -231,14 +214,7 @@ mod tests {
         // Dump and compare storage
         let storage = app.sdk.dump_storage();
 
-        // Uncomment to see actual storage layout
-        // println!("actual:\n {}", format_storage(&storage));
-
         let expected_storage = storage_from_fixture(EXPECTED_LAYOUT);
-
-        // Uncomment to see expected storage layout
-        // println!("expected:\n {}", format_storage(&expected_storage));
-
         assert_eq!(expected_storage, storage);
     }
 }
