@@ -8,9 +8,9 @@ use core::cmp::min;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, debug_log_ext, is_system_precompile, keccak256, syscall, Address, Bytes,
-    ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, STATE_MAIN, SVM_ELF_MAGIC_BYTES,
-    SVM_MAX_CODE_SIZE, U256, WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
+    calc_create4_address, is_system_precompile, keccak256, syscall, Address, Bytes, ExitCode, Log,
+    LogData, B256, FUEL_DENOM_RATE, STATE_MAIN, SVM_ELF_MAGIC_BYTES, SVM_MAX_CODE_SIZE, U256,
+    WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
 };
 use revm::bytecode::opcode;
 use revm::interpreter::interpreter::ExtBytecode;
@@ -792,12 +792,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Some(_account_owner_address) = account_owner_address else {
                 return_result!(MalformedBuiltinParams);
             };
-            // read an account from its address
             let address = Address::from_slice(&inputs.syscall_params.input[..Address::len_bytes()]);
-            let mut account = ctx.journal_mut().load_account_code(address)?;
-            // to make sure this account is ownable and owner by the same runtime, that allows
-            // a runtime to modify any account it owns
-            match account.info.code.as_mut() {
+            let account = ctx.journal_mut().load_account_code(address)?;
+            match account.info.code.as_ref() {
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode)) => {
                     return_result!(ownable_account_bytecode.owner_address.0, Ok)
                 }

@@ -273,10 +273,8 @@ pub fn storage_read_metadata<API: MetadataAPI>(
 ) -> Result<Bytes, SvmError> {
     let ((_, derived_metadata_address, metadata_len)) =
         storage_read_metadata_params(api, pubkey, alt_precompile_address)?;
-    debug_log_ext!();
     let metadata_copy = api.metadata_copy(&derived_metadata_address, 0, metadata_len);
     if !metadata_copy.status.is_ok() {
-        debug_log_ext!("metadata_copy.status {}", metadata_copy.status);
         return Err(metadata_copy.status.into());
     }
     let buffer = metadata_copy.data;
@@ -317,11 +315,8 @@ pub fn storage_read_account_data<API: MetadataAPI + MetadataStorageAPI>(
             &native_loader::id(),
         ));
     };
-    debug_log_ext!();
     let buffer = storage_read_metadata(api, pk, alt_precompile_address)?;
-    debug_log_ext!();
     if buffer.len() < 1 + size_of::<Pubkey>() {
-        debug_log_ext!();
         return Err(SvmError::RuntimeError(RuntimeError::InvalidLength));
     }
     let executable = buffer[0] > 0;
@@ -335,7 +330,6 @@ pub fn storage_read_account_data<API: MetadataAPI + MetadataStorageAPI>(
         executable,
         Default::default(),
     );
-    debug_log_ext!();
     Ok(account_data)
 }
 

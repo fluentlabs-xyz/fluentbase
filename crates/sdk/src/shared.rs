@@ -3,7 +3,6 @@ mod context;
 use crate::{
     alloc_slice,
     byteorder::{ByteOrder, LittleEndian},
-    debug_log_ext,
     shared::context::ContextReaderImpl,
 };
 use alloc::vec;

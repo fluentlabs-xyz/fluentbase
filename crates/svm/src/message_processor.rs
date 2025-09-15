@@ -101,7 +101,6 @@ impl MessageProcessor {
                     &instruction_accounts,
                     program_indices,
                 );
-                debug_log_ext!("result {:?}", result);
                 result
             };
 

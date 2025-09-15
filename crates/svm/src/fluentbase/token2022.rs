@@ -26,16 +26,13 @@ pub fn token2022_process<const IS_DEPLOY: bool, SDK: SharedAPI>(
     account_metas: &[AccountMeta],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    debug_log_ext!();
     let token_program_id = token_2022::lib::id();
-    debug_log_ext!("instruction_data {:x?}", instruction_data);
     let instruction_type: PodTokenInstruction =
         decode_instruction_type(instruction_data).expect("failed to decode instruction type");
     let contract_caller = sdk.context().contract_caller();
 
     CONTRACT_CALLER.lock().insert(contract_caller);
 
-    debug_log_ext!("contract_caller {}", contract_caller);
     for account_meta in account_metas {
         if account_meta.is_signer {
             assert_eq!(
@@ -47,11 +44,6 @@ pub fn token2022_process<const IS_DEPLOY: bool, SDK: SharedAPI>(
     }
     let mut account_metas = account_metas.to_vec();
     normalize_account_metas(&mut account_metas);
-    debug_log_ext!(
-        "instruction_type {:x?} account_metas.len={}",
-        instruction_type,
-        account_metas.len()
-    );
 
     let accounts =
         Processor::preprocess::<IS_DEPLOY, SDK>(program_id, &account_metas, instruction_data, sdk)?;
@@ -70,12 +62,6 @@ pub fn token2022_process_raw<const IS_DEPLOY: bool, SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> ProgramResult {
-    debug_log_ext!(
-        "IS_DEPLOY={} input.len={} input={:x?}",
-        IS_DEPLOY,
-        input.len(),
-        input
-    );
     let (program_id, account_metas, instruction_data) =
         deserialize_svm_program_params(input).map_err(|_e| ProgramError::Custom(1))?;
 

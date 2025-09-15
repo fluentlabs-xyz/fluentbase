@@ -2,9 +2,9 @@ use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_sdk::syscall::SyscallResult;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, debug_log_ext, native_api::NativeAPI, Address, Bytes,
-    ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess,
-    MetadataAPI, MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, B256,
+    bytes::Buf, calc_create4_address, native_api::NativeAPI, Address, Bytes, ContextReader,
+    ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI,
+    MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, B256,
     BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
@@ -184,10 +184,6 @@ impl MetadataAPI for HostTestingContext {
 
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {
         let mut ctx = self.inner.borrow_mut();
-        debug_log_ext!(
-            "ctx.ownable_account_address={:x?}",
-            ctx.ownable_account_address
-        );
         let account_owner = ctx
             .ownable_account_address
             .expect("ownable account address should exist");
@@ -206,10 +202,6 @@ impl MetadataAPI for HostTestingContext {
 
     fn metadata_copy(&self, address: &Address, _offset: u32, length: u32) -> SyscallResult<Bytes> {
         let ctx = self.inner.borrow();
-        debug_log_ext!(
-            "ctx.ownable_account_address={:x?}",
-            ctx.ownable_account_address
-        );
         let account_owner = ctx
             .ownable_account_address
             .expect("expected ownable account address");
@@ -226,7 +218,7 @@ impl MetadataAPI for HostTestingContext {
         SyscallResult::new(Default::default(), 0, 0, ExitCode::Err)
     }
 
-    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address> {
+    fn metadata_account_owner(&self, _address: &Address) -> SyscallResult<Address> {
         let ctx = self.inner.borrow();
         let account_owner = ctx
             .ownable_account_address

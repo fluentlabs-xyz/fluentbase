@@ -151,10 +151,6 @@ impl Processor {
         //     Rent::get()?
         // };
 
-        debug_log_ext!(
-            "new_account_info.key {:x?}",
-            new_account_info.key.to_bytes()
-        );
         let mut account_data = new_account_info.data.borrow_mut();
         // unpack_uninitialized checks account.base.is_initialized() under the hood
         let mut account =
@@ -386,7 +382,6 @@ impl Processor {
 
             (0, None, None)
         };
-        debug_log_ext!();
         if let Some(expected_fee) = expected_fee {
             if expected_fee != fee {
                 debug_log!("Calculated fee {}, received {}", fee, expected_fee);
@@ -407,7 +402,6 @@ impl Processor {
         //         return Err(TokenError::CpiGuardTransferBlocked.into());
         //     }
         // }
-        debug_log_ext!();
         match (source_account.base.delegate, maybe_permanent_delegate) {
             (_, Some(ref delegate)) if authority_info.key == delegate => Self::validate_owner(
                 program_id,
@@ -423,7 +417,6 @@ impl Processor {
                 },
                 _,
             ) if authority_info.key == &delegate => {
-                debug_log_ext!();
                 Self::validate_owner(
                     program_id,
                     &delegate,
@@ -431,7 +424,6 @@ impl Processor {
                     authority_info_data_len,
                     account_info_iter.as_slice(),
                 )?;
-                debug_log_ext!();
                 let delegated_amount = u64::from(source_account.base.delegated_amount);
                 if delegated_amount < amount {
                     return Err(TokenError::InsufficientFunds.into());
@@ -447,7 +439,6 @@ impl Processor {
                 }
             }
             _ => {
-                debug_log_ext!();
                 Self::validate_owner(
                     program_id,
                     &source_account.base.owner,
@@ -455,18 +446,14 @@ impl Processor {
                     authority_info_data_len,
                     account_info_iter.as_slice(),
                 )?;
-                debug_log_ext!();
             }
         }
 
         // Revisit this later to see if it's worth adding a check to reduce
         // compute costs, ie:
         // if self_transfer || amount == 0
-        debug_log_ext!();
         check_program_account(source_account_info.owner)?;
-        debug_log_ext!();
         check_program_account(destination_account_info.owner)?;
-        debug_log_ext!();
 
         // This check MUST occur just before the amounts are manipulated
         // to ensure self-transfers are fully validated
@@ -478,20 +465,13 @@ impl Processor {
         }
 
         // self-transfer was dealt with earlier, so this *should* be safe
-        debug_log_ext!(
-            "destination_account_info.key.to_bytes {:x?} data_len {}",
-            destination_account_info.key.to_bytes(),
-            destination_account_info.data.borrow().len()
-        );
         let mut destination_account_data = destination_account_info.data.borrow_mut();
         let mut destination_account =
             PodStateWithExtensionsMut::<PodAccount>::unpack(&mut destination_account_data)?;
 
-        debug_log_ext!();
         if destination_account.base.is_frozen() {
             return Err(TokenError::AccountFrozen.into());
         }
-        debug_log_ext!();
         if source_account.base.mint != destination_account.base.mint {
             return Err(TokenError::MintMismatch.into());
         }
@@ -506,7 +486,6 @@ impl Processor {
         //     confidential_transfer_state.non_confidential_transfer_allowed()?
         // }
 
-        debug_log_ext!();
         source_account.base.amount = source_amount
             .checked_sub(amount)
             .ok_or(TokenError::Overflow)?
@@ -530,7 +509,6 @@ impl Processor {
             // }
         }
 
-        debug_log_ext!();
         if source_account.base.is_native() {
             let source_starting_lamports = source_account_info.lamports();
             **source_account_info.lamports.borrow_mut() = source_starting_lamports
@@ -967,17 +945,10 @@ impl Processor {
         let destination_account_info = next_account_info(account_info_iter)?;
         let owner_info = next_account_info(account_info_iter)?;
         let owner_info_data_len = owner_info.data_len();
-        debug_log_ext!();
 
         let mut destination_account_data = destination_account_info.data.borrow_mut();
-        debug_log_ext!(
-            "destination_account_info.key {:x?} destination_account_data {:x?}",
-            destination_account_info.key.to_bytes(),
-            destination_account_data
-        );
         let destination_account =
             PodStateWithExtensionsMut::<PodAccount>::unpack(&mut destination_account_data)?;
-        debug_log_ext!();
         if destination_account.base.is_frozen() {
             return Err(TokenError::AccountFrozen.into());
         }
@@ -989,10 +960,8 @@ impl Processor {
             return Err(TokenError::MintMismatch.into());
         }
 
-        debug_log_ext!();
         let mut mint_data = mint_info.data.borrow_mut();
         let mint = PodStateWithExtensionsMut::<PodMint>::unpack(&mut mint_data)?;
-        debug_log_ext!();
 
         // If the mint if non-transferable, only allow minting to accounts
         // with immutable ownership.
@@ -1622,7 +1591,6 @@ impl Processor {
                 )
                 .expect("failed to read metadata params");
                 if metadata_params.2 > 0 {
-                    debug_log_ext!();
                     panic!("mint account already exists");
                 }
                 let account_data = AccountSharedData::new(
@@ -1797,7 +1765,6 @@ impl Processor {
                 }
             }
             _ => {
-                debug_log_ext!();
                 panic!("unsupported instruction type")
             }
         }
@@ -2014,7 +1981,7 @@ impl Processor {
                 PodTokenInstruction::Reallocate => {
                     debug_log!("Instruction: Reallocate");
                     let extension_types = input[1..]
-                        .chunks(core::mem::size_of::<ExtensionType>())
+                        .chunks(size_of::<ExtensionType>())
                         .map(ExtensionType::try_from)
                         .collect::<Result<Vec<_>, _>>()?;
                     reallocate::process_reallocate(program_id, accounts, extension_types)
@@ -2142,10 +2109,6 @@ impl Processor {
             return Ok(());
         } else*/
         if !owner_account_info.is_signer {
-            debug_log_ext!(
-                "owner_account_info.key {:x?}",
-                owner_account_info.key.to_bytes(),
-            );
             return Err(ProgramError::MissingRequiredSignature);
         }
         let contract_caller = CONTRACT_CALLER.lock();
@@ -3396,14 +3359,32 @@ mod tests {
     use crate::solana_program::sysvar::clock;
     use crate::token_2022::extension::transfer_fee::instruction::initialize_transfer_fee_config;
     use crate::token_2022::extension::ExtensionType;
-    use crate::token_2022::instruction::{
-        approve, approve_checked, burn, burn_checked, close_account, freeze_account,
-        get_account_data_size, initialize_account, initialize_account2, initialize_account3,
-        initialize_immutable_owner, initialize_mint, initialize_mint2, initialize_multisig,
-        initialize_non_transferable_mint, mint_to, mint_to_checked, revoke, set_authority,
-        thaw_account, transfer, transfer_checked, withdraw_excess_lamports, AuthorityType,
-        MAX_SIGNERS,
-    };
+    use crate::token_2022::instruction::approve;
+    use crate::token_2022::instruction::approve_checked;
+    use crate::token_2022::instruction::burn;
+    use crate::token_2022::instruction::burn_checked;
+    use crate::token_2022::instruction::close_account;
+    use crate::token_2022::instruction::freeze_account;
+    use crate::token_2022::instruction::get_account_data_size;
+    use crate::token_2022::instruction::initialize_account;
+    use crate::token_2022::instruction::initialize_account2;
+    use crate::token_2022::instruction::initialize_account3;
+    use crate::token_2022::instruction::initialize_immutable_owner;
+    use crate::token_2022::instruction::initialize_mint;
+    use crate::token_2022::instruction::initialize_mint2;
+    use crate::token_2022::instruction::initialize_multisig;
+    use crate::token_2022::instruction::initialize_non_transferable_mint;
+    use crate::token_2022::instruction::mint_to;
+    use crate::token_2022::instruction::mint_to_checked;
+    use crate::token_2022::instruction::revoke;
+    use crate::token_2022::instruction::set_authority;
+    use crate::token_2022::instruction::thaw_account;
+    #[allow(deprecated)]
+    use crate::token_2022::instruction::transfer;
+    use crate::token_2022::instruction::transfer_checked;
+    use crate::token_2022::instruction::withdraw_excess_lamports;
+    use crate::token_2022::instruction::AuthorityType;
+    use crate::token_2022::instruction::MAX_SIGNERS;
     use crate::token_2022::processor::Processor;
     use crate::token_2022::state::{Account, AccountState, Mint, Multisig};
     use crate::{solana_program, system_program};

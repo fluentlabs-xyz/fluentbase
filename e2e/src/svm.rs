@@ -42,7 +42,7 @@ mod tests {
     use fluentbase_types::{
         helpers::convert_endianness_fixed, BN254_G1_POINT_COMPRESSED_SIZE,
         BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
-        BN254_G2_POINT_DECOMPRESSED_SIZE, PRECOMPILE_SHA256,
+        BN254_G2_POINT_DECOMPRESSED_SIZE, PRECOMPILE_SHA256, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     };
     use hex_literal::hex;
     use rand::random_range;
@@ -73,10 +73,6 @@ mod tests {
 
     const USER_ADDRESS1: Address = address!("1111111111111111111111111111111111111111");
     const USER_ADDRESS2: Address = address!("2222222222222222222222222222222222222222");
-    const USER_ADDRESS3: Address = address!("3333333333333333333333333333333333333333");
-    const USER_ADDRESS4: Address = address!("4444444444444444444444444444444444444444");
-    const USER_ADDRESS5: Address = address!("5555555555555555555555555555555555555555");
-    const USER_ADDRESS6: Address = address!("6666666666666666666666666666666666666666");
 
     fn process_test_commands(
         ctx: &mut EvmTestingContext,
@@ -578,16 +574,14 @@ mod tests {
         // deploy through svm app
 
         let token_contract_address =
-            Address::from_slice(hex!("97d4e9ca35c157973e7a0ba2c96c355c42e052cd").as_slice());
+            Address::from_slice(hex!("6d725c63c935b6d8e31db216f6551ec36131f81a").as_slice());
 
         let instruction = initialize_mint(&program_id, &mint_key, &owner_key, None, 2).unwrap();
         let instruction_input = build_input(&[], &instruction).expect("failed to build input");
         let mut invoke_data: Vec<u8> = Default::default();
-        // TODO this is stub (no need for address when deploying)
-        invoke_data.extend_from_slice(Address::default().0.as_slice());
         invoke_data.extend_from_slice(&instruction_input);
         let test_command_data = Invoke {
-            pubkey: token_2022::lib::id().to_bytes(),
+            pubkey: pubkey_from_evm_address::<true>(&PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME).to_bytes(),
             data: invoke_data,
             account_info_idxs: vec![],
             account_metas: vec![],
@@ -612,7 +606,7 @@ mod tests {
             svm_contract_address,
             input.clone().into(),
             None,
-            Some(U256::from(10) * U256::from(1_000_000_000)),
+            None,
         );
         let output = result.output().unwrap();
         if output.len() > 0 {
@@ -627,11 +621,9 @@ mod tests {
             initialize_account(&program_id, &account_key, &mint_key, &owner_key).unwrap();
         let instruction_input = build_input(&[], &instruction).expect("failed to build input");
         let mut invoke_data: Vec<u8> = Default::default();
-        // TODO token_contract_address must be moved into instruction.program_id
-        invoke_data.extend_from_slice(token_contract_address.0.as_slice());
         invoke_data.extend_from_slice(&instruction_input);
         let test_command_data = Invoke {
-            pubkey: token_2022::lib::id().to_bytes(),
+            pubkey: pubkey_from_evm_address::<true>(&token_contract_address).to_bytes(),
             data: invoke_data,
             account_info_idxs: vec![],
             account_metas: vec![],

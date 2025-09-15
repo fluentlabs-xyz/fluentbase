@@ -29,7 +29,7 @@ use crate::{
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{fmt::Debug, marker::PhantomData, ptr};
 use fluentbase_sdk::ContextReader;
-use fluentbase_sdk::{debug_log_ext, Address, SharedAPI};
+use fluentbase_sdk::{Address, SharedAPI};
 use fluentbase_types::syscall::SyscallResult;
 use fluentbase_types::{
     IsAccountEmpty, IsAccountOwnable, IsColdAccess, ERC20_MAGIC_BYTES,
@@ -666,64 +666,41 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     // changes so the callee can see them.
     let mut instruction: StableInstruction =
         S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
-    let mut reroute_to_evm_input_prefix: Option<[u8; 4]> = None;
+    let mut input_prefix: Option<[u8; 4]> = None;
     let mut is_call_or_create = true;
-    // TODO extract address from instruction.program_id and check if it's ownable by token_2022
-    //  so we can get rid of contract address in instruction.data
-    if instruction.program_id == token_2022::lib::id() {
-        let address = Address::from_slice(&instruction.data[..Address::len_bytes()]);
-        let metadata_size_result: SyscallResult<(
-            u32,
-            IsAccountOwnable,
-            IsColdAccess,
-            IsAccountEmpty,
-        )> = invoke_context.sdk.metadata_size(&address);
-        debug_log_ext!(
-            "address {} metadata_size_result {:x?}",
-            address,
-            metadata_size_result
-        );
-        instruction.program_id = pubkey_from_evm_address::<true>(&address);
-        instruction.data = instruction.data[Address::len_bytes()..].to_vec().into();
-        // TODO 4test, temp solution for routing to spl-token2022
-        let sig_token2022_bytes = sig_to_bytes(SIG_TOKEN2022);
-        debug_log_ext!("sig_token2022_bytes {:x?}", sig_token2022_bytes);
-        reroute_to_evm_input_prefix = Some(sig_token2022_bytes);
-        let deser_instruction =
-            deserialize_svm_program_params_into_instruction(&instruction.data).expect("");
-        let instruction_type: PodTokenInstruction =
-            decode_instruction_type(&deser_instruction.data)
-                .expect("failed to decode instruction type");
-        match instruction_type {
-            PodTokenInstruction::InitializeMint | PodTokenInstruction::InitializeMint2 => {
-                is_call_or_create = false
-            }
-            _ => {}
+    let address = evm_address_from_pubkey::<true>(&instruction.program_id);
+    if address.is_ok_and(|v| {
+        if v == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME {
+            is_call_or_create = false;
+            return true;
         }
+        let metadata_account_owner_result: SyscallResult<Address> =
+            invoke_context.sdk.metadata_account_owner(&v);
+        metadata_account_owner_result.status.is_ok()
+            && metadata_account_owner_result.data == PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
+    }) {
+        let sig_token2022_bytes = sig_to_bytes(SIG_TOKEN2022);
+        input_prefix = Some(sig_token2022_bytes);
     }
-    debug_log_ext!("is_delegate_call {}", is_call_or_create);
-    if reroute_to_evm_input_prefix.is_some()
+    if input_prefix.is_some()
         || !is_program_exists(invoke_context.sdk, &instruction.program_id, None)?
     {
-        debug_log_ext!("reroute_to_evm_input_prefix");
         let mut data: StableVec<u8>;
         let mut offset = 0;
         let address = evm_address_from_pubkey::<false>(&instruction.program_id)?;
-        debug_log_ext!("address {:x?}", address);
         let value;
         let fuel_limit;
-        if let Some(prefix) = reroute_to_evm_input_prefix {
-            value = U256::from(5) * U256::from(1_000_000_000);
+        if let Some(prefix) = input_prefix {
+            value = invoke_context.sdk.context().tx_value();
             fuel_limit = None;
-            // data: prefix ([u8; 4]) + instruction_data
             let mut data_tmp = if is_call_or_create {
-                prefix.to_vec()
+                let mut data = prefix.to_vec();
+                data.extend_from_slice(instruction.data.as_ref());
+                data
             } else {
-                Default::default()
+                instruction.data.to_vec()
             };
-            data_tmp.extend_from_slice(&instruction.data);
             data = data_tmp.into();
-            debug_log_ext!("data.len={}", data.len());
         } else {
             data = instruction.data;
             const MIN_LEN: usize = size_of::<U256>() + size_of::<u64>();
@@ -746,33 +723,18 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
             offset += size_of::<u64>();
         }
         let input = &data[offset..];
-        debug_log_ext!("input({}) {:x?}", input.len(), input);
-        // debug_log_ext!("instruction {:x?}", &instruction);
         let action_result = if is_call_or_create {
-            debug_log_ext!(
-                "invoke_context.sdk.delegate_call({}, {:x?}, {:x?})",
-                address,
-                input,
-                fuel_limit
-            );
             invoke_context.sdk.delegate_call(address, input, fuel_limit)
         } else {
-            let contract_caller = invoke_context.sdk.context().contract_caller();
-            let salt_bytes = contract_caller.as_slice();
-            // TODO add nonce to salt_bytes to enable many contracts per caller
-            let salt = Some(U256::from_le_slice(salt_bytes));
-            debug_log_ext!(
-                "invoke_context.sdk.create({:x?}, {:x?}, {:x?})",
-                salt,
-                value,
-                input,
-            );
+            let ctx = invoke_context.sdk.context();
+            let contract_caller = ctx.contract_caller();
+            let mut salt_bytes = contract_caller.to_vec();
+            salt_bytes.extend_from_slice(&ctx.tx_nonce().to_le_bytes());
+            drop(ctx);
+            let salt = Some(U256::from_le_slice(&salt_bytes));
             let mut init_code = ERC20_MAGIC_BYTES.to_vec();
-            // TODO get rid of slicing
             init_code.extend_from_slice(&input);
-            let result = invoke_context.sdk.create(salt, &value, &init_code);
-            debug_log_ext!("create result (address) {:x?}", result);
-            result
+            invoke_context.sdk.create(salt, &value, &init_code)
         };
         if !action_result.status.is_ok() {
             return Ok(1);

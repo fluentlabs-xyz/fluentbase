@@ -17,9 +17,13 @@ use fluentbase_svm::token_2022;
 use fluentbase_svm::token_2022::helpers::{
     account_from_account_info, account_info_from_meta_and_account,
 };
-use fluentbase_svm::token_2022::instruction::{
-    initialize_account, initialize_mint, initialize_mint2, mint_to, transfer, transfer_checked,
-};
+use fluentbase_svm::token_2022::instruction::initialize_account;
+use fluentbase_svm::token_2022::instruction::initialize_mint;
+use fluentbase_svm::token_2022::instruction::initialize_mint2;
+use fluentbase_svm::token_2022::instruction::mint_to;
+#[allow(deprecated)]
+use fluentbase_svm::token_2022::instruction::transfer;
+use fluentbase_svm::token_2022::instruction::transfer_checked;
 use fluentbase_svm::token_2022::state::{Account, Mint};
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
@@ -136,9 +140,8 @@ fn test_initialize_mint2() {
     let mint2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
     let initialize_mint2_instruction1 =
         initialize_mint2(&program_id, &mint_key, &owner_key, None, 2).unwrap();
-    let mut init_bytecode: Vec<u8> =
-        build_input(&ERC20_MAGIC_BYTES, &initialize_mint2_instruction1)
-            .expect("failed to build input");
+    let init_bytecode: Vec<u8> = build_input(&ERC20_MAGIC_BYTES, &initialize_mint2_instruction1)
+        .expect("failed to build input");
     let _contract_address = ctx.deploy_evm_tx(USER_ADDRESS1, init_bytecode.clone().into());
     // try to create 2nd time
     assert!(ctx
@@ -148,9 +151,8 @@ fn test_initialize_mint2() {
     // create another mint that can freeze
     let initialize_mint2_instruction2 =
         initialize_mint2(&program_id, &mint2_key, &owner_key, Some(&owner_key), 2).unwrap();
-    let mut init_bytecode: Vec<u8> =
-        build_input(&ERC20_MAGIC_BYTES, &initialize_mint2_instruction2)
-            .expect("failed to build input");
+    let init_bytecode: Vec<u8> = build_input(&ERC20_MAGIC_BYTES, &initialize_mint2_instruction2)
+        .expect("failed to build input");
     let _contract_address = ctx.deploy_evm_tx(USER_ADDRESS2, init_bytecode.clone().into());
     // try to create 2nd time
     assert!(ctx
@@ -247,7 +249,7 @@ fn test_transfer_dups() {
     let account1_key = pubkey_from_evm_address::<true>(&USER_ADDRESS1);
     let account2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
     let account3_key = pubkey_from_evm_address::<true>(&USER_ADDRESS3);
-    let account4_key = pubkey_from_evm_address::<true>(&USER_ADDRESS4);
+    // let account4_key = pubkey_from_evm_address::<true>(&USER_ADDRESS4);
     let owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS5);
     let mint_key = pubkey_from_evm_address::<true>(&USER_ADDRESS6);
 

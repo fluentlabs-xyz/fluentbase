@@ -60,11 +60,6 @@ pub fn reconstruct_accounts<SDK: SharedAPI, const DEFAULT_NON_EXISTENT: bool>(
     let mut pks_reconstructed = HashMap::<Pubkey, usize>::with_capacity(account_metas.len());
     for account_meta in account_metas {
         if let Some(idx) = pks_reconstructed.get(&account_meta.pubkey) {
-            debug_log_ext!(
-                "account_meta.pubkey {:x?} idx {}",
-                account_meta.pubkey.to_bytes(),
-                idx
-            );
             accounts.push(accounts[*idx].clone());
             continue;
         }
@@ -85,12 +80,6 @@ pub fn reconstruct_accounts<SDK: SharedAPI, const DEFAULT_NON_EXISTENT: bool>(
         } else {
             account_data?
         };
-        debug_log_ext!(
-            "pk {:x?} account_data {:x?} data {:x?}",
-            account_meta.pubkey.to_bytes(),
-            account_data,
-            account_data.data(),
-        );
         accounts.push(account_data.into());
     }
     Ok(accounts)
@@ -104,11 +93,6 @@ pub fn reconstruct_account_infos<'a>(
     let mut pks_reconstructed = HashMap::<Pubkey, usize>::with_capacity(account_metas.len());
     for (account_meta, account) in account_metas.iter().zip(accounts.iter_mut()) {
         let account_info = if let Some(idx) = pks_reconstructed.get(&account_meta.pubkey) {
-            debug_log_ext!(
-                "account_meta.pubkey {:x?} idx {}",
-                account_meta.pubkey.to_bytes(),
-                idx
-            );
             account_infos[*idx].clone()
         } else {
             pks_reconstructed.insert(account_meta.pubkey, account_infos.len());
