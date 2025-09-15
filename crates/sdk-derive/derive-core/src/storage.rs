@@ -3,68 +3,96 @@ use quote::quote;
 use syn::{Data, DeriveInput, Fields, GenericParam};
 
 pub fn process_storage_layout(input: DeriveInput) -> Result<TokenStream2, syn::Error> {
+    let name = &input.ident;
     let has_sdk =
         input.generics.params.iter().any(
             |param| matches!(param, GenericParam::Type(type_param) if type_param.ident == "SDK"),
         );
 
+    // Extract storage fields (excluding sdk if present)
+    let fields = extract_storage_fields(&input)?;
+
+    // Generate the same storage logic for both cases
+    let slots_calculation = generate_const_slots_calculation(&fields);
+    let bytes_calculation = generate_const_bytes_calculation(&fields);
+    let constructor = generate_constructor_body(&fields, has_sdk);
+    let accessors = generate_accessor_methods(&fields);
+
     if has_sdk {
-        process_contract_storage(input)
+        // Contract with SDK - only generate impl block
+        Ok(quote! {
+            impl<SDK> #name<SDK> {
+                pub const SLOTS: usize = Self::calculate_slots();
+
+                pub fn new(sdk: SDK) -> Self {
+                    let slot = fluentbase_sdk::U256::from(0);
+                    let offset = 0u8;
+                    #constructor
+                }
+
+                pub fn new_at(sdk: SDK, slot: fluentbase_sdk::U256, offset: u8) -> Self {
+                    #constructor
+                }
+
+                #slots_calculation
+                #accessors
+            }
+        })
     } else {
-        process_composite_storage(input)
+        // Regular storage struct - generate full trait implementations
+        let first_field = fields.first().ok_or_else(|| {
+            syn::Error::new_spanned(&input, "StorageLayout requires at least one field")
+        })?;
+        let first_field_name = first_field.ident.as_ref().unwrap();
+
+        Ok(quote! {
+            impl #name {
+                pub const SLOTS: usize = Self::calculate_slots();
+
+                pub fn new(slot: fluentbase_sdk::U256, offset: u8) -> Self {
+                    #constructor
+                }
+
+                #slots_calculation
+                #bytes_calculation
+                #accessors
+            }
+
+            impl Copy for #name {}
+
+            impl Clone for #name {
+                fn clone(&self) -> Self {
+                    *self
+                }
+            }
+
+            impl fluentbase_sdk::storage::StorageDescriptor for #name {
+                fn new(slot: fluentbase_sdk::U256, offset: u8) -> Self {
+                    Self::new(slot, offset)
+                }
+
+                fn slot(&self) -> fluentbase_sdk::U256 {
+                    self.#first_field_name.slot()
+                }
+
+                fn offset(&self) -> u8 {
+                    0
+                }
+            }
+
+            impl fluentbase_sdk::storage::StorageLayout for #name {
+                type Descriptor = Self;
+                type Accessor = Self;
+
+                const BYTES: usize = Self::calculate_bytes();
+                const SLOTS: usize = Self::calculate_slots();
+
+                fn access(descriptor: Self::Descriptor) -> Self::Accessor {
+                    descriptor
+                }
+            }
+        })
     }
-}
-
-fn process_contract_storage(input: DeriveInput) -> Result<TokenStream2, syn::Error> {
-    let name = &input.ident;
-    let fields = extract_storage_fields(&input)?;
-
-    let constructor = generate_constructor_body(&fields, true);
-    let accessors = generate_accessor_methods(&fields, true);
-    let slots_calculation = generate_const_slots_calculation(&fields);
-
-    Ok(quote! {
-        impl<SDK> #name<SDK> {
-            pub const REQUIRED_SLOTS: usize = Self::calculate_required_slots();
-
-            pub fn new(sdk: SDK, slot: fluentbase_sdk::U256, offset: u8) -> Self {
-                #constructor
-            }
-
-            #slots_calculation
-            #accessors
-        }
-    })
-}
-
-fn process_composite_storage(input: DeriveInput) -> Result<TokenStream2, syn::Error> {
-    let name = &input.ident;
-    let fields = extract_storage_fields(&input)?;
-
-    let slots_calculation = generate_const_slots_calculation(&fields);
-    let constructor = generate_constructor_body(&fields, false);
-    let accessors = generate_accessor_methods(&fields, false);
-
-    Ok(quote! {
-        impl #name {
-            pub const REQUIRED_SLOTS: usize = Self::calculate_required_slots();
-
-            pub fn new(slot: fluentbase_sdk::U256, offset: u8) -> Self {
-                #constructor
-            }
-
-            #slots_calculation
-            #accessors
-        }
-
-        impl fluentbase_sdk::storage::composite::CompositeStorage for #name {
-            const REQUIRED_SLOTS: usize = Self::REQUIRED_SLOTS;
-
-            fn from_slot(base_slot: fluentbase_sdk::U256) -> Self {
-                Self::new(base_slot, 0)
-            }
-        }
-    })
 }
 
 fn generate_constructor_body(
@@ -76,11 +104,6 @@ fn generate_constructor_body(
 
     for field in fields {
         let field_name = field.ident.as_ref().expect("Named fields required");
-
-        if has_sdk && field_name == "sdk" {
-            continue;
-        }
-
         let field_type = &field.ty;
         let layout_var = quote::format_ident!("{}_layout", field_name);
 
@@ -107,38 +130,36 @@ fn generate_constructor_body(
     }
 }
 
+// All other helper functions remain the same...
 fn generate_layout_calculation(layout_var: &syn::Ident, field_type: &syn::Type) -> TokenStream2 {
     quote! {
         let #layout_var = {
-            let encoded_size = <#field_type as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE as u8;
-            let required_slots = <#field_type as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
+            let bytes = <#field_type as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <#field_type as fluentbase_sdk::storage::StorageLayout>::SLOTS;
 
-            let layout = if required_slots == 0 {
-                // StoragePrimitive type - try to pack
-                if current_offset + encoded_size <= 32 {
+            let layout = if slots == 0 {
+                // Packable type
+                if current_offset + bytes <= 32 {
                     // Fits in current slot
-                    // Calculate offset from the RIGHT edge (Solidity packs right to left)
-                    let actual_offset = 32 - current_offset - encoded_size;
+                    let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
-                    current_offset += encoded_size;
+                    current_offset += bytes;
                     result
                 } else {
-                    // Doesn't fit, move to next slot
+                    // Move to next slot
                     current_slot = current_slot + fluentbase_sdk::U256::from(1);
-                    // First element in new slot goes to rightmost position
-                    let actual_offset = 32 - encoded_size;
-                    current_offset = encoded_size;
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
                     (current_slot, actual_offset)
                 }
             } else {
-                // Composite type - needs its own slot(s)
+                // Full slots type
                 if current_offset > 0 {
-                    // If we were packing, move to next slot
                     current_slot = current_slot + fluentbase_sdk::U256::from(1);
                     current_offset = 0;
                 }
                 let result = (current_slot, 0);
-                current_slot = current_slot + fluentbase_sdk::U256::from(required_slots);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
                 current_offset = 0;
                 result
             };
@@ -161,42 +182,58 @@ fn generate_field_init(
     }
 }
 
+fn generate_accessor_methods(
+    fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+) -> TokenStream2 {
+    let methods = fields.iter().map(|field| {
+        let field_name = field.ident.as_ref().expect("Named fields required");
+        let field_type = &field.ty;
+        let doc_string = format!("Returns an accessor for the {} field", field_name);
+        let method_name = quote::format_ident!("{}_accessor", field_name);
+
+        quote! {
+            #[doc = #doc_string]
+            #[inline]
+            pub fn #method_name(&self) -> <#field_type as fluentbase_sdk::storage::StorageLayout>::Accessor {
+                <#field_type as fluentbase_sdk::storage::StorageLayout>::access(self.#field_name)
+            }
+        }
+    });
+
+    quote! { #(#methods)* }
+}
+
 fn generate_const_slots_calculation(
     fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
 ) -> TokenStream2 {
-    let mut field_calculations = Vec::new();
-
-    for field in fields {
+    let field_calculations = fields.iter().map(|field| {
         let field_type = &field.ty;
-
-        field_calculations.push(quote! {
+        quote! {
             {
-                let encoded_size = <#field_type as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE;
-                let required_slots = <#field_type as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
+                let bytes = <#field_type as fluentbase_sdk::storage::StorageLayout>::BYTES;
+                let slots = <#field_type as fluentbase_sdk::storage::StorageLayout>::SLOTS;
 
-                if required_slots == 0 {
-                    // StoragePrimitive type
-                    if current_offset + encoded_size <= 32 {
-                        current_offset += encoded_size;
+                if slots == 0 {
+                    if current_offset + bytes <= 32 {
+                        current_offset += bytes;
                     } else {
                         current_slot += 1;
-                        current_offset = encoded_size;
+                        current_offset = bytes;
                     }
                 } else {
-                    // Composite type
                     if current_offset > 0 {
                         current_slot += 1;
                         current_offset = 0;
                     }
-                    current_slot += required_slots;
+                    current_slot += slots;
                     current_offset = 0;
                 }
             }
-        });
-    }
+        }
+    });
 
     quote! {
-        const fn calculate_required_slots() -> usize {
+        const fn calculate_slots() -> usize {
             let mut current_slot: usize = 0;
             let mut current_offset: usize = 0;
 
@@ -211,7 +248,25 @@ fn generate_const_slots_calculation(
     }
 }
 
-// Keep the existing helper functions unchanged
+fn generate_const_bytes_calculation(
+    fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+) -> TokenStream2 {
+    let field_calculations = fields.iter().map(|field| {
+        let field_type = &field.ty;
+        quote! {
+            total_bytes += <#field_type as fluentbase_sdk::storage::StorageLayout>::BYTES;
+        }
+    });
+
+    quote! {
+        const fn calculate_bytes() -> usize {
+            let mut total_bytes: usize = 0;
+            #(#field_calculations)*
+            total_bytes
+        }
+    }
+}
+
 fn extract_named_fields(
     input: &DeriveInput,
 ) -> Result<&syn::punctuated::Punctuated<syn::Field, syn::token::Comma>, syn::Error> {
@@ -245,37 +300,6 @@ fn extract_storage_fields(
     }
     Ok(storage_fields)
 }
-
-fn generate_accessor_methods(
-    fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
-    has_sdk: bool,
-) -> TokenStream2 {
-    let mut methods = Vec::new();
-
-    for field in fields {
-        let field_name = field.ident.as_ref().expect("Named fields required");
-
-        if has_sdk && field_name == "sdk" {
-            continue;
-        }
-
-        let field_type = &field.ty;
-        let doc_string = format!("Returns an accessor for the {} field", field_name);
-
-        methods.push(quote! {
-            #[doc = #doc_string]
-            #[inline]
-            pub fn #field_name(&self) -> <#field_type as fluentbase_sdk::storage::StorageLayout>::Accessor {
-                <#field_type as fluentbase_sdk::storage::StorageLayout>::access(self.#field_name)
-            }
-        });
-    }
-
-    quote! {
-        #(#methods)*
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

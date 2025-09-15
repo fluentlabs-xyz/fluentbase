@@ -3,27 +3,27 @@ source: crates/sdk-derive/derive-core/src/storage.rs
 expression: formatted
 ---
 impl PackedConfig {
-    pub const REQUIRED_SLOTS: usize = Self::calculate_required_slots();
+    pub const SLOTS: usize = Self::calculate_slots();
     pub fn new(slot: fluentbase_sdk::U256, offset: u8) -> Self {
         let mut current_slot = slot;
         let mut current_offset: u8 = offset;
         let is_active_layout = {
-            let encoded_size = <StoragePrimitive<
+            let bytes = <StoragePrimitive<
                 bool,
-            > as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE as u8;
-            let required_slots = <StoragePrimitive<
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
                 bool,
-            > as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
-            let layout = if required_slots == 0 {
-                if current_offset + encoded_size <= 32 {
-                    let actual_offset = 32 - current_offset - encoded_size;
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let layout = if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
-                    current_offset += encoded_size;
+                    current_offset += bytes;
                     result
                 } else {
                     current_slot = current_slot + fluentbase_sdk::U256::from(1);
-                    let actual_offset = 32 - encoded_size;
-                    current_offset = encoded_size;
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
                     (current_slot, actual_offset)
                 }
             } else {
@@ -32,29 +32,29 @@ impl PackedConfig {
                     current_offset = 0;
                 }
                 let result = (current_slot, 0);
-                current_slot = current_slot + fluentbase_sdk::U256::from(required_slots);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
                 current_offset = 0;
                 result
             };
             layout
         };
         let is_paused_layout = {
-            let encoded_size = <StoragePrimitive<
+            let bytes = <StoragePrimitive<
                 bool,
-            > as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE as u8;
-            let required_slots = <StoragePrimitive<
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
                 bool,
-            > as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
-            let layout = if required_slots == 0 {
-                if current_offset + encoded_size <= 32 {
-                    let actual_offset = 32 - current_offset - encoded_size;
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let layout = if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
-                    current_offset += encoded_size;
+                    current_offset += bytes;
                     result
                 } else {
                     current_slot = current_slot + fluentbase_sdk::U256::from(1);
-                    let actual_offset = 32 - encoded_size;
-                    current_offset = encoded_size;
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
                     (current_slot, actual_offset)
                 }
             } else {
@@ -63,29 +63,29 @@ impl PackedConfig {
                     current_offset = 0;
                 }
                 let result = (current_slot, 0);
-                current_slot = current_slot + fluentbase_sdk::U256::from(required_slots);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
                 current_offset = 0;
                 result
             };
             layout
         };
         let version_layout = {
-            let encoded_size = <StoragePrimitive<
+            let bytes = <StoragePrimitive<
                 u32,
-            > as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE as u8;
-            let required_slots = <StoragePrimitive<
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
                 u32,
-            > as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
-            let layout = if required_slots == 0 {
-                if current_offset + encoded_size <= 32 {
-                    let actual_offset = 32 - current_offset - encoded_size;
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let layout = if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
-                    current_offset += encoded_size;
+                    current_offset += bytes;
                     result
                 } else {
                     current_slot = current_slot + fluentbase_sdk::U256::from(1);
-                    let actual_offset = 32 - encoded_size;
-                    current_offset = encoded_size;
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
                     (current_slot, actual_offset)
                 }
             } else {
@@ -94,29 +94,29 @@ impl PackedConfig {
                     current_offset = 0;
                 }
                 let result = (current_slot, 0);
-                current_slot = current_slot + fluentbase_sdk::U256::from(required_slots);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
                 current_offset = 0;
                 result
             };
             layout
         };
         let flags_layout = {
-            let encoded_size = <StoragePrimitive<
+            let bytes = <StoragePrimitive<
                 u64,
-            > as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE as u8;
-            let required_slots = <StoragePrimitive<
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
                 u64,
-            > as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
-            let layout = if required_slots == 0 {
-                if current_offset + encoded_size <= 32 {
-                    let actual_offset = 32 - current_offset - encoded_size;
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let layout = if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
-                    current_offset += encoded_size;
+                    current_offset += bytes;
                     result
                 } else {
                     current_slot = current_slot + fluentbase_sdk::U256::from(1);
-                    let actual_offset = 32 - encoded_size;
-                    current_offset = encoded_size;
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
                     (current_slot, actual_offset)
                 }
             } else {
@@ -125,29 +125,29 @@ impl PackedConfig {
                     current_offset = 0;
                 }
                 let result = (current_slot, 0);
-                current_slot = current_slot + fluentbase_sdk::U256::from(required_slots);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
                 current_offset = 0;
                 result
             };
             layout
         };
         let owner_layout = {
-            let encoded_size = <StoragePrimitive<
+            let bytes = <StoragePrimitive<
                 Address,
-            > as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE as u8;
-            let required_slots = <StoragePrimitive<
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES as u8;
+            let slots = <StoragePrimitive<
                 Address,
-            > as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
-            let layout = if required_slots == 0 {
-                if current_offset + encoded_size <= 32 {
-                    let actual_offset = 32 - current_offset - encoded_size;
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            let layout = if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    let actual_offset = 32 - current_offset - bytes;
                     let result = (current_slot, actual_offset);
-                    current_offset += encoded_size;
+                    current_offset += bytes;
                     result
                 } else {
                     current_slot = current_slot + fluentbase_sdk::U256::from(1);
-                    let actual_offset = 32 - encoded_size;
-                    current_offset = encoded_size;
+                    let actual_offset = 32 - bytes;
+                    current_offset = bytes;
                     (current_slot, actual_offset)
                 }
             } else {
@@ -156,7 +156,7 @@ impl PackedConfig {
                     current_offset = 0;
                 }
                 let result = (current_slot, 0);
-                current_slot = current_slot + fluentbase_sdk::U256::from(required_slots);
+                current_slot = current_slot + fluentbase_sdk::U256::from(slots);
                 current_offset = 0;
                 result
             };
@@ -195,129 +195,145 @@ impl PackedConfig {
             ),
         }
     }
-    const fn calculate_required_slots() -> usize {
+    const fn calculate_slots() -> usize {
         let mut current_slot: usize = 0;
         let mut current_offset: usize = 0;
         {
-            let encoded_size = <StoragePrimitive<
+            let bytes = <StoragePrimitive<
                 bool,
-            > as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE;
-            let required_slots = <StoragePrimitive<
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES;
+            let slots = <StoragePrimitive<
                 bool,
-            > as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
-            if required_slots == 0 {
-                if current_offset + encoded_size <= 32 {
-                    current_offset += encoded_size;
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    current_offset += bytes;
                 } else {
                     current_slot += 1;
-                    current_offset = encoded_size;
+                    current_offset = bytes;
                 }
             } else {
                 if current_offset > 0 {
                     current_slot += 1;
                     current_offset = 0;
                 }
-                current_slot += required_slots;
+                current_slot += slots;
                 current_offset = 0;
             }
         }
         {
-            let encoded_size = <StoragePrimitive<
+            let bytes = <StoragePrimitive<
                 bool,
-            > as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE;
-            let required_slots = <StoragePrimitive<
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES;
+            let slots = <StoragePrimitive<
                 bool,
-            > as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
-            if required_slots == 0 {
-                if current_offset + encoded_size <= 32 {
-                    current_offset += encoded_size;
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    current_offset += bytes;
                 } else {
                     current_slot += 1;
-                    current_offset = encoded_size;
+                    current_offset = bytes;
                 }
             } else {
                 if current_offset > 0 {
                     current_slot += 1;
                     current_offset = 0;
                 }
-                current_slot += required_slots;
+                current_slot += slots;
                 current_offset = 0;
             }
         }
         {
-            let encoded_size = <StoragePrimitive<
+            let bytes = <StoragePrimitive<
                 u32,
-            > as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE;
-            let required_slots = <StoragePrimitive<
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES;
+            let slots = <StoragePrimitive<
                 u32,
-            > as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
-            if required_slots == 0 {
-                if current_offset + encoded_size <= 32 {
-                    current_offset += encoded_size;
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    current_offset += bytes;
                 } else {
                     current_slot += 1;
-                    current_offset = encoded_size;
+                    current_offset = bytes;
                 }
             } else {
                 if current_offset > 0 {
                     current_slot += 1;
                     current_offset = 0;
                 }
-                current_slot += required_slots;
+                current_slot += slots;
                 current_offset = 0;
             }
         }
         {
-            let encoded_size = <StoragePrimitive<
+            let bytes = <StoragePrimitive<
                 u64,
-            > as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE;
-            let required_slots = <StoragePrimitive<
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES;
+            let slots = <StoragePrimitive<
                 u64,
-            > as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
-            if required_slots == 0 {
-                if current_offset + encoded_size <= 32 {
-                    current_offset += encoded_size;
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    current_offset += bytes;
                 } else {
                     current_slot += 1;
-                    current_offset = encoded_size;
+                    current_offset = bytes;
                 }
             } else {
                 if current_offset > 0 {
                     current_slot += 1;
                     current_offset = 0;
                 }
-                current_slot += required_slots;
+                current_slot += slots;
                 current_offset = 0;
             }
         }
         {
-            let encoded_size = <StoragePrimitive<
+            let bytes = <StoragePrimitive<
                 Address,
-            > as fluentbase_sdk::storage::StorageLayout>::ENCODED_SIZE;
-            let required_slots = <StoragePrimitive<
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES;
+            let slots = <StoragePrimitive<
                 Address,
-            > as fluentbase_sdk::storage::StorageLayout>::REQUIRED_SLOTS;
-            if required_slots == 0 {
-                if current_offset + encoded_size <= 32 {
-                    current_offset += encoded_size;
+            > as fluentbase_sdk::storage::StorageLayout>::SLOTS;
+            if slots == 0 {
+                if current_offset + bytes <= 32 {
+                    current_offset += bytes;
                 } else {
                     current_slot += 1;
-                    current_offset = encoded_size;
+                    current_offset = bytes;
                 }
             } else {
                 if current_offset > 0 {
                     current_slot += 1;
                     current_offset = 0;
                 }
-                current_slot += required_slots;
+                current_slot += slots;
                 current_offset = 0;
             }
         }
         if current_offset > 0 { current_slot + 1 } else { current_slot }
     }
+    const fn calculate_bytes() -> usize {
+        let mut total_bytes: usize = 0;
+        total_bytes
+            += <StoragePrimitive<bool> as fluentbase_sdk::storage::StorageLayout>::BYTES;
+        total_bytes
+            += <StoragePrimitive<bool> as fluentbase_sdk::storage::StorageLayout>::BYTES;
+        total_bytes
+            += <StoragePrimitive<u32> as fluentbase_sdk::storage::StorageLayout>::BYTES;
+        total_bytes
+            += <StoragePrimitive<u64> as fluentbase_sdk::storage::StorageLayout>::BYTES;
+        total_bytes
+            += <StoragePrimitive<
+                Address,
+            > as fluentbase_sdk::storage::StorageLayout>::BYTES;
+        total_bytes
+    }
     ///Returns an accessor for the is_active field
     #[inline]
-    pub fn is_active(
+    pub fn is_active_accessor(
         &self,
     ) -> <StoragePrimitive<bool> as fluentbase_sdk::storage::StorageLayout>::Accessor {
         <StoragePrimitive<
@@ -326,7 +342,7 @@ impl PackedConfig {
     }
     ///Returns an accessor for the is_paused field
     #[inline]
-    pub fn is_paused(
+    pub fn is_paused_accessor(
         &self,
     ) -> <StoragePrimitive<bool> as fluentbase_sdk::storage::StorageLayout>::Accessor {
         <StoragePrimitive<
@@ -335,7 +351,7 @@ impl PackedConfig {
     }
     ///Returns an accessor for the version field
     #[inline]
-    pub fn version(
+    pub fn version_accessor(
         &self,
     ) -> <StoragePrimitive<u32> as fluentbase_sdk::storage::StorageLayout>::Accessor {
         <StoragePrimitive<
@@ -344,7 +360,7 @@ impl PackedConfig {
     }
     ///Returns an accessor for the flags field
     #[inline]
-    pub fn flags(
+    pub fn flags_accessor(
         &self,
     ) -> <StoragePrimitive<u64> as fluentbase_sdk::storage::StorageLayout>::Accessor {
         <StoragePrimitive<
@@ -353,7 +369,7 @@ impl PackedConfig {
     }
     ///Returns an accessor for the owner field
     #[inline]
-    pub fn owner(
+    pub fn owner_accessor(
         &self,
     ) -> <StoragePrimitive<
         Address,
@@ -363,9 +379,29 @@ impl PackedConfig {
         > as fluentbase_sdk::storage::StorageLayout>::access(self.owner)
     }
 }
-impl fluentbase_sdk::storage::composite::CompositeStorage for PackedConfig {
-    const REQUIRED_SLOTS: usize = Self::REQUIRED_SLOTS;
-    fn from_slot(base_slot: fluentbase_sdk::U256) -> Self {
-        Self::new(base_slot, 0)
+impl Copy for PackedConfig {}
+impl Clone for PackedConfig {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl fluentbase_sdk::storage::StorageDescriptor for PackedConfig {
+    fn new(slot: fluentbase_sdk::U256, offset: u8) -> Self {
+        Self::new(slot, offset)
+    }
+    fn slot(&self) -> fluentbase_sdk::U256 {
+        self.is_active.slot()
+    }
+    fn offset(&self) -> u8 {
+        0
+    }
+}
+impl fluentbase_sdk::storage::StorageLayout for PackedConfig {
+    type Descriptor = Self;
+    type Accessor = Self;
+    const BYTES: usize = Self::calculate_bytes();
+    const SLOTS: usize = Self::calculate_slots();
+    fn access(descriptor: Self::Descriptor) -> Self::Accessor {
+        descriptor
     }
 }
