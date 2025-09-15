@@ -2,7 +2,7 @@
 extern crate alloc;
 extern crate core;
 
-use fluentbase_sdk::{debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, U256};
+use fluentbase_sdk::{entrypoint, Address, ContextReader, SharedAPI, U256};
 use fluentbase_svm::fluentbase::token2022::token2022_process_raw;
 use fluentbase_universal_token::actions::{
     do_approve, do_mint, do_pause, do_transfer, do_transfer_from, do_unpause, get_allowance,
@@ -169,7 +169,6 @@ fn unpause(mut sdk: impl SharedAPI, _input: &[u8]) {
 }
 
 pub fn deploy_entry(mut sdk: impl SharedAPI) {
-    debug_log_ext!();
     let input_size = sdk.input_size();
     if input_size < SIG_LEN_BYTES as u32 {
         sdk.evm_exit(ERR_MALFORMED_INPUT);

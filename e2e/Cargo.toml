@@ -17,6 +17,7 @@ fluentbase-sdk = { workspace = true }
 fluentbase-sdk-testing = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-svm = { workspace = true }
+fluentbase-svm-common = { workspace = true }
 fluentbase-svm-shared = { workspace = true }
 fluentbase-universal-token = { workspace = true }
 fluentbase-contracts = { workspace = true }

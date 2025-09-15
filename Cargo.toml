@@ -39,6 +39,7 @@ fluentbase-sdk-testing = { path = "crates/testing" }
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
 fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
+fluentbase-svm-common = { path = "./crates/svm-common", default-features = false }
 fluentbase-universal-token = { path = "./crates/universal-token", default-features = false }
 
 # solana
@@ -170,7 +171,7 @@ num-bigint = { version = "0.4.6", default-features = false, features = [] }
 curve25519-dalek = { version = "4.1.3", default-features = false, features = ["alloc"] }
 
 # dev-dependencies
-serde_derive = "1.0"
+serde_derive = { version = "1.0", default-features = false }
 thiserror = "2.0"
 array-bytes = "1.6.0"
 

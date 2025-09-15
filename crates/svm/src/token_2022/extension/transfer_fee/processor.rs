@@ -71,7 +71,7 @@ fn process_set_transfer_fee(
     let transfer_fee_config_authority =
         Option::<Pubkey>::from(extension.transfer_fee_config_authority)
             .ok_or(TokenError::NoAuthorityExists)?;
-    Processor::validate_owner(
+    Processor::new().validate_owner(
         program_id,
         &transfer_fee_config_authority,
         authority_info,
@@ -124,7 +124,7 @@ fn process_withdraw_withheld_tokens_from_mint(
 
     let withdraw_withheld_authority = Option::<Pubkey>::from(extension.withdraw_withheld_authority)
         .ok_or(TokenError::NoAuthorityExists)?;
-    Processor::validate_owner(
+    Processor::new().validate_owner(
         program_id,
         &withdraw_withheld_authority,
         authority_info,
@@ -221,7 +221,7 @@ fn process_withdraw_withheld_tokens_from_accounts(
 
     let withdraw_withheld_authority = Option::<Pubkey>::from(extension.withdraw_withheld_authority)
         .ok_or(TokenError::NoAuthorityExists)?;
-    Processor::validate_owner(
+    Processor::new().validate_owner(
         program_id,
         &withdraw_withheld_authority,
         authority_info,
@@ -295,7 +295,13 @@ pub(crate) fn process_instruction(
             fee,
         } => {
             debug_log!("TransferFeeInstruction: TransferCheckedWithFee");
-            Processor::process_transfer(program_id, accounts, amount, Some(decimals), Some(fee))
+            Processor::new().process_transfer(
+                program_id,
+                accounts,
+                amount,
+                Some(decimals),
+                Some(fee),
+            )
         }
         TransferFeeInstruction::WithdrawWithheldTokensFromMint => {
             debug_log!("TransferFeeInstruction: WithdrawWithheldTokensFromMint");

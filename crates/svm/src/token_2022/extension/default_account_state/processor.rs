@@ -51,7 +51,7 @@ fn process_update_default_account_state(
         PodCOption {
             option: PodCOption::<Pubkey>::SOME,
             value: freeze_authority,
-        } => Processor::validate_owner(
+        } => Processor::new().validate_owner(
             program_id,
             freeze_authority,
             freeze_authority_info,

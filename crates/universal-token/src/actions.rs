@@ -1,8 +1,10 @@
 use crate::consts::{
-    emit_approval_event, emit_pause_event, emit_transfer_event, emit_unpause_event,
     ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_INSUFFICIENT_ALLOWANCE, ERR_INVALID_MINTER,
     ERR_INVALID_PAUSER, ERR_INVALID_RECIPIENT, ERR_MINTABLE_PLUGIN_NOT_ACTIVE, ERR_OVERFLOW,
     ERR_PAUSABLE_PLUGIN_NOT_ACTIVE,
+};
+use crate::events::{
+    emit_approval_event, emit_pause_event, emit_transfer_event, emit_unpause_event,
 };
 use crate::storage::{Allowance, Balance, Config, Settings};
 use crate::{evm_exit, return_error_if_false};

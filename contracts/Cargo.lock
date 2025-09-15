@@ -2050,6 +2050,7 @@ dependencies = [
  "bytemuck_derive",
  "byteorder",
  "fluentbase-sdk",
+ "fluentbase-svm-common",
  "fluentbase-types",
  "fluentbase-universal-token 0.4.4-dev",
  "hashbrown 0.15.4",
@@ -2093,6 +2094,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-svm-common"
+version = "0.4.4-dev"
+dependencies = [
+ "fluentbase-types",
+ "serde",
+ "solana-pubkey",
+]
+
+[[package]]
 name = "fluentbase-types"
 version = "0.4.4-dev"
 dependencies = [
@@ -2128,6 +2138,8 @@ version = "0.4.4-dev"
 dependencies = [
  "bincode 2.0.1",
  "fluentbase-sdk",
+ "fluentbase-svm-common",
+ "solana-pubkey",
 ]
 
 [[package]]

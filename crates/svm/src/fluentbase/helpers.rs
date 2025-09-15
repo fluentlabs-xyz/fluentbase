@@ -1,4 +1,3 @@
-use crate::common::pubkey_from_evm_address;
 use crate::helpers::{extract_accounts, storage_read_account_data_or_default};
 use crate::solana_program::rent_collector::RENT_EXEMPT_RENT_EPOCH;
 use crate::{
@@ -31,6 +30,7 @@ use crate::{
 };
 use alloc::{sync::Arc, vec::Vec};
 use fluentbase_sdk::{ContextReader, MetadataAPI, SharedAPI};
+use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_types::MetadataStorageAPI;
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
 use solana_bincode::deserialize;

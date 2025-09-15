@@ -1,8 +1,8 @@
 use fluentbase_sdk::{Address, Bytes};
 use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext};
 use fluentbase_svm::account::{AccountSharedData, WritableAccount};
-use fluentbase_svm::common::{evm_balance_from_lamports, pubkey_from_evm_address};
 use fluentbase_svm::pubkey::Pubkey;
+use fluentbase_svm_common::common::{evm_balance_from_lamports, pubkey_from_evm_address};
 use fluentbase_types::PRECOMPILE_SVM_RUNTIME;
 use revm::context::result::ExecutionResult;
 use std::fs::File;

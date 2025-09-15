@@ -27,7 +27,7 @@ pub fn process_reallocate(
     let (mut current_extension_types, native_token_amount) = {
         let token_account = token_account_info.data.borrow();
         let account = StateWithExtensions::<Account>::unpack(&token_account)?;
-        Processor::validate_owner(
+        Processor::new().validate_owner(
             program_id,
             &account.base.owner,
             authority_info,

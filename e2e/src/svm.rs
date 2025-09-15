@@ -17,7 +17,6 @@ mod tests {
     use fluentbase_svm::token_2022::instruction::{initialize_account, initialize_mint};
     use fluentbase_svm::{
         account::ReadableAccount,
-        common::{evm_balance_from_lamports, pubkey_from_evm_address},
         fluentbase::common::BatchMessage,
         helpers::storage_read_account_data,
         pubkey::Pubkey,
@@ -29,6 +28,7 @@ mod tests {
         },
         system_program, token_2022,
     };
+    use fluentbase_svm_common::common::{evm_balance_from_lamports, pubkey_from_evm_address};
     use fluentbase_svm_shared::test_structs::{EvmAction, Invoke, Transfer};
     use fluentbase_svm_shared::{
         bincode_helpers::serialize,
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn test_svm_deploy() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
             ..Default::default()
         });
@@ -446,9 +446,13 @@ mod tests {
         assert_eq!(deployer2_account.data().len(), 0);
     }
 
+    fn ctx() -> EvmTestingContext {
+        EvmTestingContext::default().with_full_genesis()
+    }
+
     #[test]
     fn test_svm_deploy_exec_cross_call_evm_sha256() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -548,7 +552,7 @@ mod tests {
 
     #[test]
     fn test_svm_universal_token() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -660,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_big_mod_exp() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -767,7 +771,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_secp256k1_recover() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -830,7 +834,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_keccak256() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -872,7 +876,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_sha256() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -915,7 +919,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_blake3() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -957,7 +961,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_poseidon_input_ones_be() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1010,7 +1014,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_poseidon_input_ones_le() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1063,7 +1067,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_poseidon_input_ones_twos_be() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1121,7 +1125,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_poseidon_input_ones_twos_le() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1179,7 +1183,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_poseidon_input_one() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1308,7 +1312,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_return_data() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1346,7 +1350,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_curve_validate_point() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1411,7 +1415,7 @@ mod tests {
 
     #[test]
     fn test_svm_sol_curve_group_op() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1749,7 +1753,7 @@ mod tests {
 
     #[test]
     fn test_sol_curve_multiscalar_mul() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -1889,7 +1893,7 @@ mod tests {
 
     #[test]
     fn test_sol_alt_bn128_group_op_addition() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -2022,7 +2026,7 @@ mod tests {
 
     #[test]
     fn test_sol_alt_bn128_group_op_multiplication() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -2200,7 +2204,7 @@ mod tests {
 
     #[test]
     fn test_sol_alt_bn128_pairing() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -2345,7 +2349,7 @@ mod tests {
 
     #[test]
     fn test_sol_alt_bn128_compression_g1_compress_decompress() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -2460,7 +2464,7 @@ mod tests {
 
     #[test]
     fn test_sol_alt_bn128_compression_g2_compress_decompress() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(
@@ -2578,7 +2582,7 @@ mod tests {
 
     #[test]
     fn test_sol_alt_bn128_compression_pairing() {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        let mut ctx = ctx();
         let loader_id = loader_v4::id();
         let system_program_id = system_program::id();
         let account_with_program = load_program_account_from_elf_file(

@@ -13,6 +13,10 @@ categories.workspace = true
 fluentbase-sdk = { workspace = true, features = [
     #    "fast-panic"
 ] }
+fluentbase-svm-common = { workspace = true, default-features = false }
+
+solana-pubkey = { workspace = true, default-features = false }
+
 bincode = { workspace = true, default-features = false, features = ["serde"] }
 
 [dev-dependencies]

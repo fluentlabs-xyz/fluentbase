@@ -1,5 +1,5 @@
 use super::*;
-use crate::common::{evm_address_from_pubkey, pubkey_from_evm_address};
+use crate::error::RuntimeError;
 use crate::fluentbase::common::SYSTEM_PROGRAMS_KEYS;
 use crate::helpers::{
     deserialize_svm_program_params, deserialize_svm_program_params_into_instruction,
@@ -30,6 +30,7 @@ use alloc::{boxed::Box, vec, vec::Vec};
 use core::{fmt::Debug, marker::PhantomData, ptr};
 use fluentbase_sdk::ContextReader;
 use fluentbase_sdk::{Address, SharedAPI};
+use fluentbase_svm_common::common::evm_address_from_pubkey;
 use fluentbase_types::syscall::SyscallResult;
 use fluentbase_types::{
     IsAccountEmpty, IsAccountOwnable, IsColdAccess, ERC20_MAGIC_BYTES,
@@ -687,7 +688,8 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     {
         let mut data: StableVec<u8>;
         let mut offset = 0;
-        let address = evm_address_from_pubkey::<false>(&instruction.program_id)?;
+        let address =
+            evm_address_from_pubkey::<false>(&instruction.program_id).expect("evm compatible pk");
         let value;
         let fuel_limit;
         if let Some(prefix) = input_prefix {

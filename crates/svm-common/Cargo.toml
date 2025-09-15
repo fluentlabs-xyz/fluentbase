@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-svm-shared"
+name = "fluentbase-svm-common"
 version.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -10,9 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-bincode = { version = "1.3.3", default-features = false, features = [] }
 serde = { workspace = true, default-features = false, features = ["derive"] }
-hex = { workspace = true, default-features = false }
 
 solana-pubkey = { workspace = true, default-features = false }
 

@@ -5,7 +5,6 @@ use fluentbase_sdk::{address, Address};
 use fluentbase_sdk_testing::EvmTestingContext;
 use fluentbase_svm::account::{AccountSharedData, ReadableAccount};
 use fluentbase_svm::account_info::AccountInfo;
-use fluentbase_svm::common::pubkey_from_evm_address;
 use fluentbase_svm::error::SvmError;
 use fluentbase_svm::helpers::{
     serialize_svm_program_params_from_instruction, storage_read_account_data,
@@ -25,6 +24,7 @@ use fluentbase_svm::token_2022::instruction::mint_to;
 use fluentbase_svm::token_2022::instruction::transfer;
 use fluentbase_svm::token_2022::instruction::transfer_checked;
 use fluentbase_svm::token_2022::state::{Account, Mint};
+use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::SIG_TOKEN2022;

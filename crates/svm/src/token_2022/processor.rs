@@ -1,6 +1,5 @@
 //! Program state processor
 
-use crate::common::evm_address_from_pubkey;
 use crate::system_program;
 use crate::token_2022::extension::{reallocate, transfer_fee};
 use crate::token_2022::helpers::{next_item, reconstruct_account_infos, reconstruct_accounts};
@@ -9,6 +8,8 @@ use crate::token_2022::pod_instruction::{
     InitializeMultisigData, PodTokenInstruction, SetAuthorityData,
 };
 use alloc::vec::Vec;
+use core::cell::RefCell;
+use core::marker::PhantomData;
 use fluentbase_sdk::{debug_log, debug_log_ext};
 use fluentbase_types::{Address, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use solana_account_info::{next_account_info, AccountInfo};
@@ -66,14 +67,25 @@ use {
 
 use crate::account::AccountSharedData;
 use crate::helpers::{storage_read_metadata_params, storage_write_account_data};
+use fluentbase_svm_common::common::evm_address_from_pubkey;
+use fluentbase_universal_token::events::emit_ut_transfer;
 use spin::Mutex;
 
 lazy_static::lazy_static! {
-    pub static ref CONTRACT_CALLER: Mutex<Option<Address>> = Mutex::new(None);
+    pub static ref CONTRACT_CALLER: Mutex<Option<Address>> = Mutex::new(Default::default());
 }
 
 /// Program state handler.
-pub struct Processor {}
+pub struct Processor {
+    // sdk: &'a mut Option<&'a mut SDK>,
+}
+impl Processor {
+    pub fn new() -> Self {
+        Self {
+            // sdk,
+        }
+    }
+}
 impl Processor {
     fn _process_initialize_mint(
         accounts: &[AccountInfo],
@@ -287,6 +299,7 @@ impl Processor {
 
     /// Processes a [Transfer](enum.TokenInstruction.html) instruction.
     pub fn process_transfer(
+        &mut self,
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         amount: u64,
@@ -403,7 +416,7 @@ impl Processor {
         //     }
         // }
         match (source_account.base.delegate, maybe_permanent_delegate) {
-            (_, Some(ref delegate)) if authority_info.key == delegate => Self::validate_owner(
+            (_, Some(ref delegate)) if authority_info.key == delegate => self.validate_owner(
                 program_id,
                 delegate,
                 authority_info,
@@ -417,7 +430,7 @@ impl Processor {
                 },
                 _,
             ) if authority_info.key == &delegate => {
-                Self::validate_owner(
+                self.validate_owner(
                     program_id,
                     &delegate,
                     authority_info,
@@ -439,7 +452,7 @@ impl Processor {
                 }
             }
             _ => {
-                Self::validate_owner(
+                self.validate_owner(
                     program_id,
                     &source_account.base.owner,
                     authority_info,
@@ -495,6 +508,12 @@ impl Processor {
             .checked_add(credited_amount)
             .ok_or(TokenError::Overflow)?
             .into();
+        // emit_ut_transfer(
+        //     self.sdk.as_deref_mut().unwrap(),
+        //     &source_account.base.owner,
+        //     &destination_account.base.owner,
+        //     amount,
+        // );
         if fee > 0 {
             // if let Ok(extension) = destination_account.get_extension_mut::<TransferFeeAmount>() {
             //     let new_withheld_amount = u64::from(extension.withheld_amount)
@@ -553,6 +572,7 @@ impl Processor {
 
     /// Processes an [Approve](enum.TokenInstruction.html) instruction.
     pub fn process_approve(
+        &mut self,
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         amount: u64,
@@ -591,7 +611,7 @@ impl Processor {
             }
         }
 
-        Self::validate_owner(
+        self.validate_owner(
             program_id,
             &source_account.base.owner,
             owner_info,
@@ -612,7 +632,11 @@ impl Processor {
     }
 
     /// Processes an [Revoke](enum.TokenInstruction.html) instruction.
-    pub fn process_revoke(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
+    pub fn process_revoke(
+        &mut self,
+        program_id: &Pubkey,
+        accounts: &[AccountInfo],
+    ) -> ProgramResult {
         let account_info_iter = &mut accounts.iter();
         let source_account_info = next_account_info(account_info_iter)?;
         let authority_info = next_account_info(account_info_iter)?;
@@ -625,7 +649,7 @@ impl Processor {
             return Err(TokenError::AccountFrozen.into());
         }
 
-        Self::validate_owner(
+        self.validate_owner(
             program_id,
             match &source_account.base.delegate {
                 PodCOption {
@@ -647,6 +671,7 @@ impl Processor {
 
     /// Processes a [SetAuthority](enum.TokenInstruction.html) instruction.
     pub fn process_set_authority(
+        &mut self,
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         authority_type: AuthorityType,
@@ -666,7 +691,7 @@ impl Processor {
 
             match authority_type {
                 AuthorityType::AccountOwner => {
-                    Self::validate_owner(
+                    self.validate_owner(
                         program_id,
                         &account.base.owner,
                         authority_info,
@@ -705,7 +730,7 @@ impl Processor {
                 }
                 AuthorityType::CloseAccount => {
                     let authority = account.base.close_authority.unwrap_or(account.base.owner);
-                    Self::validate_owner(
+                    self.validate_owner(
                         program_id,
                         &authority,
                         authority_info,
@@ -735,7 +760,7 @@ impl Processor {
                         .base
                         .mint_authority
                         .ok_or(Into::<ProgramError>::into(TokenError::FixedSupply))?;
-                    Self::validate_owner(
+                    self.validate_owner(
                         program_id,
                         &mint_authority,
                         authority_info,
@@ -751,7 +776,7 @@ impl Processor {
                         .base
                         .freeze_authority
                         .ok_or(Into::<ProgramError>::into(TokenError::MintCannotFreeze))?;
-                    Self::validate_owner(
+                    self.validate_owner(
                         program_id,
                         &freeze_authority,
                         authority_info,
@@ -765,7 +790,7 @@ impl Processor {
                     let maybe_close_authority: Option<Pubkey> = extension.close_authority.into();
                     let close_authority =
                         maybe_close_authority.ok_or(TokenError::AuthorityTypeNotSupported)?;
-                    Self::validate_owner(
+                    self.validate_owner(
                         program_id,
                         &close_authority,
                         authority_info,
@@ -781,7 +806,7 @@ impl Processor {
                     //     extension.transfer_fee_config_authority.into();
                     // let transfer_fee_config_authority = maybe_transfer_fee_config_authority
                     //     .ok_or(TokenError::AuthorityTypeNotSupported)?;
-                    // Self::validate_owner(
+                    // self.validate_owner(
                     //     program_id,
                     //     &transfer_fee_config_authority,
                     //     authority_info,
@@ -935,6 +960,7 @@ impl Processor {
 
     /// Processes a [MintTo](enum.TokenInstruction.html) instruction.
     pub fn process_mint_to(
+        &mut self,
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         amount: u64,
@@ -987,7 +1013,7 @@ impl Processor {
             PodCOption {
                 option: PodCOption::<Pubkey>::SOME,
                 value: mint_authority,
-            } => Self::validate_owner(
+            } => self.validate_owner(
                 program_id,
                 mint_authority,
                 owner_info,
@@ -1018,6 +1044,7 @@ impl Processor {
 
     /// Processes a [Burn](enum.TokenInstruction.html) instruction.
     pub fn process_burn(
+        &mut self,
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         amount: u64,
@@ -1075,7 +1102,7 @@ impl Processor {
             .is_owned_by_system_program_or_incinerator()
         {
             match (&source_account.base.delegate, maybe_permanent_delegate) {
-                (_, Some(ref delegate)) if authority_info.key == delegate => Self::validate_owner(
+                (_, Some(ref delegate)) if authority_info.key == delegate => self.validate_owner(
                     program_id,
                     delegate,
                     authority_info,
@@ -1089,7 +1116,7 @@ impl Processor {
                     },
                     _,
                 ) if authority_info.key == delegate => {
-                    Self::validate_owner(
+                    self.validate_owner(
                         program_id,
                         delegate,
                         authority_info,
@@ -1110,7 +1137,7 @@ impl Processor {
                     }
                 }
                 _ => {
-                    Self::validate_owner(
+                    self.validate_owner(
                         program_id,
                         &source_account.base.owner,
                         authority_info,
@@ -1140,7 +1167,11 @@ impl Processor {
     }
 
     /// Processes a [CloseAccount](enum.TokenInstruction.html) instruction.
-    pub fn process_close_account(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
+    pub fn process_close_account(
+        &mut self,
+        program_id: &Pubkey,
+        accounts: &[AccountInfo],
+    ) -> ProgramResult {
         let account_info_iter = &mut accounts.iter();
         let source_account_info = next_account_info(account_info_iter)?;
         let destination_account_info = next_account_info(account_info_iter)?;
@@ -1177,7 +1208,7 @@ impl Processor {
                 //     }
                 // }
 
-                Self::validate_owner(
+                self.validate_owner(
                     program_id,
                     &authority,
                     authority_info,
@@ -1209,7 +1240,7 @@ impl Processor {
             let extension = mint.get_extension::<MintCloseAuthority>()?;
             let maybe_authority: Option<Pubkey> = extension.close_authority.into();
             let authority = maybe_authority.ok_or(TokenError::AuthorityTypeNotSupported)?;
-            Self::validate_owner(
+            self.validate_owner(
                 program_id,
                 &authority,
                 authority_info,
@@ -1239,6 +1270,7 @@ impl Processor {
     /// Processes a [FreezeAccount](enum.TokenInstruction.html) or a
     /// [ThawAccount](enum.TokenInstruction.html) instruction.
     pub fn process_toggle_freeze_account(
+        &mut self,
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         freeze: bool,
@@ -1269,7 +1301,7 @@ impl Processor {
             PodCOption {
                 option: PodCOption::<Pubkey>::SOME,
                 value: authority,
-            } => Self::validate_owner(
+            } => self.validate_owner(
                 program_id,
                 authority,
                 authority_info,
@@ -1496,6 +1528,7 @@ impl Processor {
     /// TokenProgram owned account by moving them to another account
     /// of the source account.
     pub fn process_withdraw_excess_lamports(
+        &mut self,
         program_id: &Pubkey,
         accounts: &[AccountInfo],
     ) -> ProgramResult {
@@ -1511,7 +1544,7 @@ impl Processor {
             if account.base.is_native() {
                 return Err(TokenError::NativeNotSupported.into());
             }
-            Self::validate_owner(
+            self.validate_owner(
                 program_id,
                 &account.base.owner,
                 authority_info,
@@ -1524,7 +1557,7 @@ impl Processor {
                     option: PodCOption::<Pubkey>::SOME,
                     value: mint_authority,
                 } => {
-                    Self::validate_owner(
+                    self.validate_owner(
                         program_id,
                         mint_authority,
                         authority_info,
@@ -1535,7 +1568,7 @@ impl Processor {
                 _ => return Err(TokenError::AuthorityTypeNotSupported.into()),
             }
         } else if source_data.len() == PodMultisig::SIZE_OF {
-            Self::validate_owner(
+            self.validate_owner(
                 program_id,
                 source_info.key,
                 authority_info,
@@ -1567,11 +1600,12 @@ impl Processor {
         Ok(())
     }
 
-    pub fn preprocess<const IS_DEPLOY: bool, SDK: SharedAPI>(
+    pub fn process_extended<const IS_DEPLOY: bool, SDK: SharedAPI>(
+        &mut self,
+        sdk: &mut SDK,
         program_id: &Pubkey,
         account_metas: &[AccountMeta],
         input: &[u8],
-        sdk: &mut SDK,
     ) -> Result<Vec<crate::account::Account>, ProgramError> {
         let instruction_type =
             decode_instruction_type(input).map_err(|_| TokenError::InvalidInstruction)?;
@@ -1773,12 +1807,13 @@ impl Processor {
                 .expect("failed to reconstruct accounts");
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
             .expect("failed to reconstruct accounts");
-        Self::process(program_id, &account_infos, input, Some(instruction_type))?;
+        self.process(program_id, &account_infos, input, Some(instruction_type))?;
         Ok((accounts))
     }
 
     /// Processes an [Instruction](enum.Instruction.html).
     pub fn process(
+        &mut self,
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         input: &[u8],
@@ -1840,22 +1875,33 @@ impl Processor {
                 PodTokenInstruction::Transfer => {
                     debug_log!("Instruction: Transfer");
                     let data = decode_instruction_data::<AmountData>(input)?;
-                    Self::process_transfer(program_id, accounts, data.amount.into(), None, None)
+                    self.process_transfer(program_id, accounts, data.amount.into(), None, None)
+                }
+                PodTokenInstruction::TransferChecked => {
+                    debug_log!("Instruction: TransferChecked");
+                    let data = decode_instruction_data::<AmountCheckedData>(input)?;
+                    self.process_transfer(
+                        program_id,
+                        accounts,
+                        data.amount.into(),
+                        Some(data.decimals),
+                        None,
+                    )
                 }
                 PodTokenInstruction::Approve => {
                     debug_log!("Instruction: Approve");
                     let data = decode_instruction_data::<AmountData>(input)?;
-                    Self::process_approve(program_id, accounts, data.amount.into(), None)
+                    self.process_approve(program_id, accounts, data.amount.into(), None)
                 }
                 PodTokenInstruction::Revoke => {
                     debug_log!("Instruction: Revoke");
-                    Self::process_revoke(program_id, accounts)
+                    self.process_revoke(program_id, accounts)
                 }
                 PodTokenInstruction::SetAuthority => {
                     debug_log!("Instruction: SetAuthority");
                     let (data, new_authority) =
                         decode_instruction_data_with_coption_pubkey::<SetAuthorityData>(input)?;
-                    Self::process_set_authority(
+                    self.process_set_authority(
                         program_id,
                         accounts,
                         AuthorityType::from(data.authority_type)?,
@@ -1865,40 +1911,29 @@ impl Processor {
                 PodTokenInstruction::MintTo => {
                     debug_log!("Instruction: MintTo");
                     let data = decode_instruction_data::<AmountData>(input)?;
-                    Self::process_mint_to(program_id, accounts, data.amount.into(), None)
+                    self.process_mint_to(program_id, accounts, data.amount.into(), None)
                 }
                 PodTokenInstruction::Burn => {
                     debug_log!("Instruction: Burn");
                     let data = decode_instruction_data::<AmountData>(input)?;
-                    Self::process_burn(program_id, accounts, data.amount.into(), None)
+                    self.process_burn(program_id, accounts, data.amount.into(), None)
                 }
                 PodTokenInstruction::CloseAccount => {
                     debug_log!("Instruction: CloseAccount");
-                    Self::process_close_account(program_id, accounts)
+                    self.process_close_account(program_id, accounts)
                 }
                 PodTokenInstruction::FreezeAccount => {
                     debug_log!("Instruction: FreezeAccount");
-                    Self::process_toggle_freeze_account(program_id, accounts, true)
+                    self.process_toggle_freeze_account(program_id, accounts, true)
                 }
                 PodTokenInstruction::ThawAccount => {
                     debug_log!("Instruction: ThawAccount");
-                    Self::process_toggle_freeze_account(program_id, accounts, false)
-                }
-                PodTokenInstruction::TransferChecked => {
-                    debug_log!("Instruction: TransferChecked");
-                    let data = decode_instruction_data::<AmountCheckedData>(input)?;
-                    Self::process_transfer(
-                        program_id,
-                        accounts,
-                        data.amount.into(),
-                        Some(data.decimals),
-                        None,
-                    )
+                    self.process_toggle_freeze_account(program_id, accounts, false)
                 }
                 PodTokenInstruction::ApproveChecked => {
                     debug_log!("Instruction: ApproveChecked");
                     let data = decode_instruction_data::<AmountCheckedData>(input)?;
-                    Self::process_approve(
+                    self.process_approve(
                         program_id,
                         accounts,
                         data.amount.into(),
@@ -1908,7 +1943,7 @@ impl Processor {
                 PodTokenInstruction::MintToChecked => {
                     debug_log!("Instruction: MintToChecked");
                     let data = decode_instruction_data::<AmountCheckedData>(input)?;
-                    Self::process_mint_to(
+                    self.process_mint_to(
                         program_id,
                         accounts,
                         data.amount.into(),
@@ -1918,7 +1953,7 @@ impl Processor {
                 PodTokenInstruction::BurnChecked => {
                     debug_log!("Instruction: BurnChecked");
                     let data = decode_instruction_data::<AmountCheckedData>(input)?;
-                    Self::process_burn(
+                    self.process_burn(
                         program_id,
                         accounts,
                         data.amount.into(),
@@ -2031,7 +2066,7 @@ impl Processor {
                 }
                 PodTokenInstruction::WithdrawExcessLamports => {
                     debug_log!("Instruction: WithdrawExcessLamports");
-                    Self::process_withdraw_excess_lamports(program_id, accounts)
+                    self.process_withdraw_excess_lamports(program_id, accounts)
                 }
                 PodTokenInstruction::MetadataPointerExtension => {
                     unreachable!("unsupported")
@@ -2074,6 +2109,7 @@ impl Processor {
 
     /// Validates owner(s) are present. Used for Mints and Accounts only.
     pub fn validate_owner(
+        &mut self,
         program_id: &Pubkey,
         expected_owner: &Pubkey,
         owner_account_info: &AccountInfo,
@@ -2256,7 +2292,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let account_infos = create_is_signer_account_infos(&mut meta);
-        Processor::process(
+        Processor::new().process(
             &instruction.program_id,
             &account_infos,
             &instruction.data,
@@ -2268,7 +2304,7 @@ mod tests {
         instruction: Instruction,
         account_infos: Vec<AccountInfo>,
     ) -> ProgramResult {
-        Processor::process(
+        Processor::new().process(
             &instruction.program_id,
             &account_infos,
             &instruction.data,
@@ -3502,7 +3538,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Ok(()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3531,7 +3567,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Ok(()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3563,7 +3599,7 @@ mod tests {
         owner_no_sign_info.is_signer = false;
         assert_eq!(
             Err(ProgramError::MissingRequiredSignature),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3590,7 +3626,7 @@ mod tests {
         instruction.accounts[3].is_signer = false;
         assert_eq!(
             Err(ProgramError::MissingRequiredSignature),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3616,7 +3652,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Err(TokenError::OwnerMismatch.into()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3642,7 +3678,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Err(TokenError::OwnerMismatch.into()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3668,7 +3704,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Err(TokenError::InsufficientFunds.into()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3694,7 +3730,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Err(TokenError::InsufficientFunds.into()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3721,7 +3757,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Err(TokenError::MintDecimalsMismatch.into()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3748,7 +3784,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Err(TokenError::MintMismatch.into()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3771,17 +3807,18 @@ mod tests {
             100,
         )
         .unwrap();
-        Processor::process(
-            &instruction.program_id,
-            &[
-                account_info.clone(),
-                delegate_info.clone(),
-                owner_info.clone(),
-            ],
-            &instruction.data,
-            None,
-        )
-        .unwrap();
+        Processor::new()
+            .process(
+                &instruction.program_id,
+                &[
+                    account_info.clone(),
+                    delegate_info.clone(),
+                    owner_info.clone(),
+                ],
+                &instruction.data,
+                None,
+            )
+            .unwrap();
 
         // delegate transfer
         #[allow(deprecated)]
@@ -3796,7 +3833,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Ok(()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3826,7 +3863,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Ok(()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3856,7 +3893,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Err(TokenError::InsufficientFunds.into()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3882,7 +3919,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Err(TokenError::InsufficientFunds.into()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3908,7 +3945,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Ok(()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -3937,7 +3974,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             Ok(()),
-            Processor::process(
+            Processor::new().process(
                 &instruction.program_id,
                 &[
                     account_info.clone(),
@@ -6392,27 +6429,29 @@ mod tests {
             );
             let account_info_data_len = account_info.data_len();
             let mut borrowed_data = account_info.try_borrow_mut_data().unwrap();
-            Processor::validate_owner(
-                &program_id,
-                &account_to_validate,
-                &account_info,
-                account_info_data_len,
-                &[],
-            )
-            .unwrap();
+            Processor::new()
+                .validate_owner(
+                    &program_id,
+                    &account_to_validate,
+                    &account_info,
+                    account_info_data_len,
+                    &[],
+                )
+                .unwrap();
             // modify the data to be sure that it wasn't silently dropped by the compiler
             borrowed_data[0] = 1;
         }
 
         // full 11 of 11
-        Processor::validate_owner(
-            &program_id,
-            &owner_key,
-            &owner_account_info,
-            owner_account_info.data_len(),
-            &signers,
-        )
-        .unwrap();
+        Processor::new()
+            .validate_owner(
+                &program_id,
+                &owner_key,
+                &owner_account_info,
+                owner_account_info.data_len(),
+                &signers,
+            )
+            .unwrap();
 
         // 1 of 11
         {
@@ -6421,14 +6460,15 @@ mod tests {
             multisig.m = 1;
             Multisig::pack(multisig, &mut owner_account_info.data.borrow_mut()).unwrap();
         }
-        Processor::validate_owner(
-            &program_id,
-            &owner_key,
-            &owner_account_info,
-            owner_account_info.data_len(),
-            &signers,
-        )
-        .unwrap();
+        Processor::new()
+            .validate_owner(
+                &program_id,
+                &owner_key,
+                &owner_account_info,
+                owner_account_info.data_len(),
+                &signers,
+            )
+            .unwrap();
 
         // 2:1
         {
@@ -6440,7 +6480,7 @@ mod tests {
         }
         assert_eq!(
             Err(ProgramError::MissingRequiredSignature),
-            Processor::validate_owner(
+            Processor::new().validate_owner(
                 &program_id,
                 &owner_key,
                 &owner_account_info,
@@ -6457,14 +6497,15 @@ mod tests {
             multisig.n = 11;
             Multisig::pack(multisig, &mut owner_account_info.data.borrow_mut()).unwrap();
         }
-        Processor::validate_owner(
-            &program_id,
-            &owner_key,
-            &owner_account_info,
-            owner_account_info.data_len(),
-            &signers,
-        )
-        .unwrap();
+        Processor::new()
+            .validate_owner(
+                &program_id,
+                &owner_key,
+                &owner_account_info,
+                owner_account_info.data_len(),
+                &signers,
+            )
+            .unwrap();
 
         // 2:11 but 0 provided
         {
@@ -6476,7 +6517,7 @@ mod tests {
         }
         assert_eq!(
             Err(ProgramError::MissingRequiredSignature),
-            Processor::validate_owner(
+            Processor::new().validate_owner(
                 &program_id,
                 &owner_key,
                 &owner_account_info,
@@ -6494,7 +6535,7 @@ mod tests {
         }
         assert_eq!(
             Err(ProgramError::MissingRequiredSignature),
-            Processor::validate_owner(
+            Processor::new().validate_owner(
                 &program_id,
                 &owner_key,
                 &owner_account_info,
@@ -6511,14 +6552,15 @@ mod tests {
             multisig.n = 11;
             Multisig::pack(multisig, &mut owner_account_info.data.borrow_mut()).unwrap();
         }
-        Processor::validate_owner(
-            &program_id,
-            &owner_key,
-            &owner_account_info,
-            owner_account_info.data_len(),
-            &signers[5..7],
-        )
-        .unwrap();
+        Processor::new()
+            .validate_owner(
+                &program_id,
+                &owner_key,
+                &owner_account_info,
+                owner_account_info.data_len(),
+                &signers[5..7],
+            )
+            .unwrap();
 
         // 11:11, one is not a signer
         {
@@ -6531,7 +6573,7 @@ mod tests {
         signers[5].is_signer = false;
         assert_eq!(
             Err(ProgramError::MissingRequiredSignature),
-            Processor::validate_owner(
+            Processor::new().validate_owner(
                 &program_id,
                 &owner_key,
                 &owner_account_info,
@@ -6565,7 +6607,7 @@ mod tests {
             Multisig::pack(multisig, &mut owner_account_info.data.borrow_mut()).unwrap();
             assert_eq!(
                 Err(ProgramError::MissingRequiredSignature),
-                Processor::validate_owner(
+                Processor::new().validate_owner(
                     &program_id,
                     &owner_key,
                     &owner_account_info,
