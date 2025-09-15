@@ -53,6 +53,7 @@
 //! - Module path used for type identification in registry
 //! - Only non-generic Rust types can be converted to Solidity types
 //! - Complex types must be registered in the registry when using Registry mode
+pub mod constructor;
 pub mod contract;
 pub mod error;
 pub mod function;

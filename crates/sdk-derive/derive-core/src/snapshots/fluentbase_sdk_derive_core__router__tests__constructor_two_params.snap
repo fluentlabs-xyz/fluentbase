@@ -4,27 +4,137 @@ expression: formatted
 ---
 #[allow(unused_imports)]
 use ::fluentbase_sdk::derive::function_id;
-impl<SDK: SharedAPI> RouterAPI for App<SDK> {
-    fn greeting(&self, message: String, owner: Address, amount: U256) -> String {
-        message
+impl<SDK: SharedAPI> App<SDK> {
+    pub fn constructor(&mut self, owner: Address, initial_supply: U256) {}
+    pub fn balance_of(&self, account: Address) -> U256 {
+        U256::from(0)
     }
-    #[function_id("customGreeting(string)")]
-    fn custom_greeting(&self, message: String) -> String {
-        message
+    pub fn transfer(&mut self, to: Address, amount: U256) -> bool {
+        true
     }
 }
-pub type GreetingCallArgs = (String, Address, U256);
+pub type BalanceOfCallArgs = (Address,);
 #[derive(Debug, Clone, PartialEq)]
-pub struct GreetingCall(pub GreetingCallArgs);
-pub type GreetingReturnArgs = (String,);
+pub struct BalanceOfCall(pub BalanceOfCallArgs);
+pub type BalanceOfReturnArgs = (U256,);
 #[derive(Debug, Clone, PartialEq)]
-pub struct GreetingReturn(pub GreetingReturnArgs);
+pub struct BalanceOfReturn(pub BalanceOfReturnArgs);
 const _: () = {
-    impl GreetingCall {
-        pub const SELECTOR: [u8; 4] = [68u8, 97u8, 93u8, 234u8];
-        pub const SIGNATURE: &'static str = "greeting(string,address,uint256)";
+    impl BalanceOfCall {
+        pub const SELECTOR: [u8; 4] = [112u8, 160u8, 130u8, 49u8];
+        pub const SIGNATURE: &'static str = "balanceOf(address)";
         /// Creates a new call instance from arguments
-        pub fn new(args: GreetingCallArgs) -> Self {
+        pub fn new(args: BalanceOfCallArgs) -> Self {
+            Self(args)
+        }
+        /// Encodes with selector
+        pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            let args = self.0.clone();
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(args.0,), &mut buf, 0)
+                .expect("Failed to encode values");
+            let encoded_args = buf.freeze();
+            let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
+                BalanceOfCallArgs,
+            >::is_dynamic() {
+                encoded_args[32..].to_vec()
+            } else {
+                encoded_args.to_vec()
+            };
+            Self::SELECTOR.iter().copied().chain(clean_args).collect()
+        }
+        /// Decodes call arguments from bytes
+        pub fn decode(
+            buf: &impl fluentbase_sdk::codec::bytes::Buf,
+        ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
+            use fluentbase_sdk::codec::bytes::BufMut;
+            let mut combined_buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            combined_buf
+                .put_slice(
+                    &if fluentbase_sdk::codec::encoder::SolidityABI::<
+                        BalanceOfCallArgs,
+                    >::is_dynamic() {
+                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                    } else {
+                        ::alloc::vec::Vec::new()
+                    },
+                );
+            combined_buf.put_slice(buf.chunk());
+            let args = fluentbase_sdk::codec::encoder::SolidityABI::<
+                BalanceOfCallArgs,
+            >::decode(&combined_buf.freeze(), 0)?;
+            Ok(Self(args))
+        }
+    }
+    impl ::core::ops::Deref for BalanceOfCall {
+        type Target = BalanceOfCallArgs;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl BalanceOfReturn {
+        /// Creates a new return instance from values
+        pub fn new(args: BalanceOfReturnArgs) -> Self {
+            Self(args)
+        }
+        /// Encodes the return values to bytes
+        pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
+            let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            let args = self.0.clone();
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(args.0,), &mut buf, 0)
+                .expect("Failed to encode values");
+            let encoded_args = buf.freeze();
+            let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
+                BalanceOfReturnArgs,
+            >::is_dynamic() {
+                encoded_args[32..].to_vec()
+            } else {
+                encoded_args.to_vec()
+            };
+            clean_args.into()
+        }
+        /// Decodes return values from bytes
+        pub fn decode(
+            buf: &impl fluentbase_sdk::codec::bytes::Buf,
+        ) -> Result<Self, fluentbase_sdk::codec::CodecError> {
+            use fluentbase_sdk::codec::bytes::BufMut;
+            let mut combined_buf = fluentbase_sdk::codec::bytes::BytesMut::new();
+            combined_buf
+                .put_slice(
+                    &if fluentbase_sdk::codec::encoder::SolidityABI::<
+                        BalanceOfReturnArgs,
+                    >::is_dynamic() {
+                        ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
+                    } else {
+                        ::alloc::vec::Vec::new()
+                    },
+                );
+            combined_buf.put_slice(buf.chunk());
+            let args = fluentbase_sdk::codec::encoder::SolidityABI::<
+                BalanceOfReturnArgs,
+            >::decode(&combined_buf.freeze(), 0)?;
+            Ok(Self(args))
+        }
+    }
+    impl ::core::ops::Deref for BalanceOfReturn {
+        type Target = BalanceOfReturnArgs;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+};
+pub type TransferCallArgs = (Address, U256);
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransferCall(pub TransferCallArgs);
+pub type TransferReturnArgs = (bool,);
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransferReturn(pub TransferReturnArgs);
+const _: () = {
+    impl TransferCall {
+        pub const SELECTOR: [u8; 4] = [169u8, 5u8, 156u8, 187u8];
+        pub const SIGNATURE: &'static str = "transfer(address,uint256)";
+        /// Creates a new call instance from arguments
+        pub fn new(args: TransferCallArgs) -> Self {
             Self(args)
         }
         /// Encodes with selector
@@ -32,14 +142,14 @@ const _: () = {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let args = self.0.clone();
             fluentbase_sdk::codec::encoder::SolidityABI::encode(
-                    &(args.0, args.1, args.2),
+                    &(args.0, args.1),
                     &mut buf,
                     0,
                 )
                 .expect("Failed to encode values");
             let encoded_args = buf.freeze();
             let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
-                GreetingCallArgs,
+                TransferCallArgs,
             >::is_dynamic() {
                 encoded_args[32..].to_vec()
             } else {
@@ -56,7 +166,7 @@ const _: () = {
             combined_buf
                 .put_slice(
                     &if fluentbase_sdk::codec::encoder::SolidityABI::<
-                        GreetingCallArgs,
+                        TransferCallArgs,
                     >::is_dynamic() {
                         ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
                     } else {
@@ -65,20 +175,20 @@ const _: () = {
                 );
             combined_buf.put_slice(buf.chunk());
             let args = fluentbase_sdk::codec::encoder::SolidityABI::<
-                GreetingCallArgs,
+                TransferCallArgs,
             >::decode(&combined_buf.freeze(), 0)?;
             Ok(Self(args))
         }
     }
-    impl ::core::ops::Deref for GreetingCall {
-        type Target = GreetingCallArgs;
+    impl ::core::ops::Deref for TransferCall {
+        type Target = TransferCallArgs;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
-    impl GreetingReturn {
+    impl TransferReturn {
         /// Creates a new return instance from values
-        pub fn new(args: GreetingReturnArgs) -> Self {
+        pub fn new(args: TransferReturnArgs) -> Self {
             Self(args)
         }
         /// Encodes the return values to bytes
@@ -89,7 +199,7 @@ const _: () = {
                 .expect("Failed to encode values");
             let encoded_args = buf.freeze();
             let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
-                GreetingReturnArgs,
+                TransferReturnArgs,
             >::is_dynamic() {
                 encoded_args[32..].to_vec()
             } else {
@@ -106,7 +216,7 @@ const _: () = {
             combined_buf
                 .put_slice(
                     &if fluentbase_sdk::codec::encoder::SolidityABI::<
-                        GreetingReturnArgs,
+                        TransferReturnArgs,
                     >::is_dynamic() {
                         ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
                     } else {
@@ -115,47 +225,51 @@ const _: () = {
                 );
             combined_buf.put_slice(buf.chunk());
             let args = fluentbase_sdk::codec::encoder::SolidityABI::<
-                GreetingReturnArgs,
+                TransferReturnArgs,
             >::decode(&combined_buf.freeze(), 0)?;
             Ok(Self(args))
         }
     }
-    impl ::core::ops::Deref for GreetingReturn {
-        type Target = GreetingReturnArgs;
+    impl ::core::ops::Deref for TransferReturn {
+        type Target = TransferReturnArgs;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
 };
-pub type CustomGreetingCallArgs = (String,);
+pub type ConstructorCallArgs = (Address, U256);
 #[derive(Debug, Clone, PartialEq)]
-pub struct CustomGreetingCall(pub CustomGreetingCallArgs);
-pub type CustomGreetingReturnArgs = (String,);
+pub struct ConstructorCall(pub ConstructorCallArgs);
+pub type ConstructorReturnArgs = ();
 #[derive(Debug, Clone, PartialEq)]
-pub struct CustomGreetingReturn(pub CustomGreetingReturnArgs);
+pub struct ConstructorReturn(pub ConstructorReturnArgs);
 const _: () = {
-    impl CustomGreetingCall {
-        pub const SELECTOR: [u8; 4] = [54u8, 184u8, 58u8, 154u8];
-        pub const SIGNATURE: &'static str = "customGreeting(string)";
+    impl ConstructorCall {
+        pub const SELECTOR: [u8; 4] = [0u8, 0u8, 0u8, 0u8];
+        pub const SIGNATURE: &'static str = "constructor(address,uint256)";
         /// Creates a new call instance from arguments
-        pub fn new(args: CustomGreetingCallArgs) -> Self {
+        pub fn new(args: ConstructorCallArgs) -> Self {
             Self(args)
         }
-        /// Encodes with selector
+        /// Encodes without selector (for constructor)
         pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let args = self.0.clone();
-            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(args.0,), &mut buf, 0)
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(
+                    &(args.0, args.1),
+                    &mut buf,
+                    0,
+                )
                 .expect("Failed to encode values");
             let encoded_args = buf.freeze();
             let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
-                CustomGreetingCallArgs,
+                ConstructorCallArgs,
             >::is_dynamic() {
                 encoded_args[32..].to_vec()
             } else {
                 encoded_args.to_vec()
             };
-            Self::SELECTOR.iter().copied().chain(clean_args).collect()
+            clean_args.into()
         }
         /// Decodes call arguments from bytes
         pub fn decode(
@@ -166,7 +280,7 @@ const _: () = {
             combined_buf
                 .put_slice(
                     &if fluentbase_sdk::codec::encoder::SolidityABI::<
-                        CustomGreetingCallArgs,
+                        ConstructorCallArgs,
                     >::is_dynamic() {
                         ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
                     } else {
@@ -175,31 +289,30 @@ const _: () = {
                 );
             combined_buf.put_slice(buf.chunk());
             let args = fluentbase_sdk::codec::encoder::SolidityABI::<
-                CustomGreetingCallArgs,
+                ConstructorCallArgs,
             >::decode(&combined_buf.freeze(), 0)?;
             Ok(Self(args))
         }
     }
-    impl ::core::ops::Deref for CustomGreetingCall {
-        type Target = CustomGreetingCallArgs;
+    impl ::core::ops::Deref for ConstructorCall {
+        type Target = ConstructorCallArgs;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
-    impl CustomGreetingReturn {
+    impl ConstructorReturn {
         /// Creates a new return instance from values
-        pub fn new(args: CustomGreetingReturnArgs) -> Self {
+        pub fn new(args: ConstructorReturnArgs) -> Self {
             Self(args)
         }
         /// Encodes the return values to bytes
         pub fn encode(&self) -> fluentbase_sdk::codec::bytes::Bytes {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-            let args = self.0.clone();
-            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(args.0,), &mut buf, 0)
+            fluentbase_sdk::codec::encoder::SolidityABI::encode(&(), &mut buf, 0)
                 .expect("Failed to encode values");
             let encoded_args = buf.freeze();
             let clean_args = if fluentbase_sdk::codec::encoder::SolidityABI::<
-                CustomGreetingReturnArgs,
+                ConstructorReturnArgs,
             >::is_dynamic() {
                 encoded_args[32..].to_vec()
             } else {
@@ -216,7 +329,7 @@ const _: () = {
             combined_buf
                 .put_slice(
                     &if fluentbase_sdk::codec::encoder::SolidityABI::<
-                        CustomGreetingReturnArgs,
+                        ConstructorReturnArgs,
                     >::is_dynamic() {
                         ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
                     } else {
@@ -225,13 +338,13 @@ const _: () = {
                 );
             combined_buf.put_slice(buf.chunk());
             let args = fluentbase_sdk::codec::encoder::SolidityABI::<
-                CustomGreetingReturnArgs,
+                ConstructorReturnArgs,
             >::decode(&combined_buf.freeze(), 0)?;
             Ok(Self(args))
         }
     }
-    impl ::core::ops::Deref for CustomGreetingReturn {
-        type Target = CustomGreetingReturnArgs;
+    impl ::core::ops::Deref for ConstructorReturn {
+        type Target = ConstructorReturnArgs;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
@@ -247,29 +360,43 @@ impl<SDK: SharedAPI> App<SDK> {
         self.sdk.read(&mut call_data, 0);
         let (selector, params) = call_data.split_at(4);
         match [selector[0], selector[1], selector[2], selector[3]] {
-            [68u8, 97u8, 93u8, 234u8] => {
-                let (param0, param1, param2) = match GreetingCall::decode(&params) {
-                    Ok(decoded) => (decoded.0.0, decoded.0.1, decoded.0.2),
-                    Err(err) => {
-                        panic!("Failed to decode parameters: {:?}", err);
-                    }
-                };
-                let output = self.greeting(param0, param1, param2);
-                let encoded_output = GreetingReturn::new((output,)).encode();
-                self.sdk.write(&encoded_output);
-            }
-            [54u8, 184u8, 58u8, 154u8] => {
-                let param0 = match CustomGreetingCall::decode(&params) {
+            [112u8, 160u8, 130u8, 49u8] => {
+                let param0 = match BalanceOfCall::decode(&params) {
                     Ok(decoded) => decoded.0.0,
                     Err(err) => {
                         panic!("Failed to decode parameters: {:?}", err);
                     }
                 };
-                let output = self.custom_greeting(param0);
-                let encoded_output = CustomGreetingReturn::new((output,)).encode();
+                let output = self.balance_of(param0);
+                let encoded_output = BalanceOfReturn::new((output,)).encode();
+                self.sdk.write(&encoded_output);
+            }
+            [169u8, 5u8, 156u8, 187u8] => {
+                let (param0, param1) = match TransferCall::decode(&params) {
+                    Ok(decoded) => (decoded.0.0, decoded.0.1),
+                    Err(err) => {
+                        panic!("Failed to decode parameters: {:?}", err);
+                    }
+                };
+                let output = self.transfer(param0, param1);
+                let encoded_output = TransferReturn::new((output,)).encode();
                 self.sdk.write(&encoded_output);
             }
             _ => panic!("unsupported method selector"),
         }
+    }
+}
+impl<SDK: SharedAPI> App<SDK> {
+    pub fn deploy(&mut self) {
+        let input_length = self.sdk.input_size();
+        let mut call_data = ::fluentbase_sdk::alloc_slice(input_length as usize);
+        self.sdk.read(&mut call_data, 0);
+        let (param0, param1) = match ConstructorCall::decode(&&call_data[..]) {
+            Ok(decoded) => (decoded.0.0, decoded.0.1),
+            Err(err) => {
+                panic!("Failed to decode constructor parameters: {:?}", err);
+            }
+        };
+        self.constructor(param0, param1);
     }
 }

@@ -136,6 +136,18 @@ fn generate_abi_from_routers(
     let router = &routers[0];
     let mut entries = Vec::new();
 
+    // Add constructor if present
+    if let Some(constructor) = router.constructor() {
+        if let Ok(constructor_abi) = constructor.parsed_signature().constructor_abi() {
+            if let Ok(mut json) = constructor_abi.to_json_value() {
+                // Enrich the ABI entry with struct components
+                enrich_abi_entry(&mut json, structs)?;
+                entries.push(json);
+            }
+        }
+    }
+
+    // Add all functions
     for method in router.available_methods() {
         if let Ok(func_abi) = method.parsed_signature().function_abi() {
             if let Ok(mut json) = func_abi.to_json_value() {
@@ -285,7 +297,7 @@ fn format_sol_type(param: &Value) -> String {
     let param_type = param["type"].as_str().unwrap_or("unknown");
 
     // Handle all tuple types (including multidimensional arrays)
-    if param_type.starts_with("tuple") {
+    if let Some(array_suffix) = param_type.strip_prefix("tuple") {
         // Check if it's a named struct
         if let Some(internal_type) = param.get("internalType").and_then(Value::as_str) {
             if let Some(stripped) = internal_type.strip_prefix("struct ") {
@@ -307,7 +319,6 @@ fn format_sol_type(param: &Value) -> String {
             }
         } else if param_type.starts_with("tuple[") && param_type.ends_with("]") {
             // Tuple array (any dimensionality)
-            let array_suffix = &param_type[5..]; // Remove "tuple" prefix
             if let Some(components) = param.get("components").and_then(Value::as_array) {
                 let component_types = components
                     .iter()
@@ -319,7 +330,7 @@ fn format_sol_type(param: &Value) -> String {
         }
 
         // Fallback
-        return param_type.to_string();
+        param_type.to_string()
     } else if let Some(base_type) = param_type.strip_suffix("[]") {
         // Handle other array types (not tuple arrays)
         let formatted_base = format_sol_type(&serde_json::json!({ "type": base_type }));
