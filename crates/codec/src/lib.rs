@@ -8,6 +8,7 @@ mod empty;
 pub mod encoder;
 mod error;
 mod evm;
+mod func;
 mod hash;
 mod primitive;
 mod tuple;
