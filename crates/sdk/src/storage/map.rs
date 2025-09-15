@@ -1,23 +1,29 @@
-use crate::storage::PrimitiveCodec;
 use crate::{
     keccak256,
-    storage::{MapAccess, MapKey, StorageDescriptor, StorageLayout},
+    storage::{PackableCodec, StorageDescriptor, StorageLayout},
     U256,
 };
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
-// --- 1. Map Descriptor ---
 
-/// A descriptor for a storage map (mapping in Solidity).
-/// Maps don't store data directly at the base slot - it's used only for slot calculation.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// Storage map (Solidity mapping).
+/// Base slot used only for computing value locations via keccak256.
+#[derive(Debug, PartialEq, Eq)]
 pub struct StorageMap<K, V> {
     base_slot: U256,
     _marker: PhantomData<(K, V)>,
 }
 
+// Manual Copy/Clone to avoid K,V: Copy bounds
+impl<K, V> Clone for StorageMap<K, V> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<K, V> Copy for StorageMap<K, V> {}
+
 impl<K, V> StorageMap<K, V> {
-    /// Creates a new map descriptor at the given base slot.
     pub const fn new(base_slot: U256) -> Self {
         Self {
             base_slot,
@@ -27,7 +33,8 @@ impl<K, V> StorageMap<K, V> {
 }
 
 impl<K, V> StorageDescriptor for StorageMap<K, V> {
-    fn new(slot: U256, _offset: u8) -> Self {
+    fn new(slot: U256, offset: u8) -> Self {
+        debug_assert_eq!(offset, 0, "maps always start at slot boundary");
         Self::new(slot)
     }
 
@@ -40,76 +47,72 @@ impl<K, V> StorageDescriptor for StorageMap<K, V> {
     }
 }
 
-// --- 2. MapAccess Implementation ---
-
-impl<K: MapKey, V: StorageLayout> MapAccess<K, V> for StorageMap<K, V>
+impl<K: MapKey, V: StorageLayout> StorageMap<K, V>
 where
     V::Descriptor: StorageDescriptor,
 {
-    fn entry(&self, key: K) -> V::Accessor {
+    /// Access value for given key.
+    pub fn entry(&self, key: K) -> V::Accessor {
         let value_slot = key.compute_slot(self.base_slot);
 
-        // For primitive types smaller than 32 bytes, calculate proper offset
-        let offset = if V::ENCODED_SIZE < 32 {
-            (32 - V::ENCODED_SIZE) as u8
+        // Packable values start at rightmost position in slot
+        let offset = if V::SLOTS == 0 {
+            (32 - V::BYTES) as u8
         } else {
             0
         };
 
-        let value_descriptor = V::Descriptor::new(value_slot, offset);
-
-        V::access(value_descriptor)
+        V::access(V::Descriptor::new(value_slot, offset))
     }
 }
-
-// --- 3. StorageLayout Implementation ---
 
 impl<K: MapKey, V: StorageLayout> StorageLayout for StorageMap<K, V>
 where
     V::Descriptor: StorageDescriptor,
 {
-    type Descriptor = StorageMap<K, V>;
+    type Descriptor = Self;
     type Accessor = Self;
 
-    // Maps only reserve the base slot for computation
-    const REQUIRED_SLOTS: usize = 1;
-    const ENCODED_SIZE: usize = 32;
+    const BYTES: usize = 32; // Base slot only
+    const SLOTS: usize = 1; // Reserve one slot for hash computation
 
     fn access(descriptor: Self::Descriptor) -> Self::Accessor {
         descriptor
     }
 }
 
-// --- 4. MapKey Implementations ---
+/// Trait for types that can be used as map keys.
+pub trait MapKey {
+    fn compute_slot(&self, base_slot: U256) -> U256;
+}
 
-impl<T> MapKey for T
-where
-    T: PrimitiveCodec,
-{
-    fn compute_slot(&self, root_slot: U256) -> U256 {
+// MapKey for primitive types via PackableCodec
+impl<T: PackableCodec> MapKey for T {
+    fn compute_slot(&self, base_slot: U256) -> U256 {
         let mut key_bytes = [0u8; 32];
-        let encoded_size = T::ENCODED_SIZE;
 
-        if encoded_size <= 32 {
-            let offset = 32 - encoded_size;
+        // Right-align key in 32 bytes
+        if T::ENCODED_SIZE <= 32 {
+            let offset = 32 - T::ENCODED_SIZE;
             self.encode_into(&mut key_bytes[offset..]);
         }
 
+        // keccak256(key || base_slot)
         let mut data = [0u8; 64];
         data[0..32].copy_from_slice(&key_bytes);
-        data[32..64].copy_from_slice(&root_slot.to_be_bytes::<32>());
+        data[32..64].copy_from_slice(&base_slot.to_be_bytes::<32>());
 
         let hash = keccak256(data);
         U256::from_be_bytes(hash.0)
     }
 }
 
+// Dynamic key types
 impl MapKey for &[u8] {
-    fn compute_slot(&self, root_slot: U256) -> U256 {
-        // For dynamic keys: keccak256(key || slot)
+    fn compute_slot(&self, base_slot: U256) -> U256 {
         let mut data = Vec::with_capacity(self.len() + 32);
         data.extend_from_slice(self);
-        data.extend_from_slice(&root_slot.to_be_bytes::<32>());
+        data.extend_from_slice(&base_slot.to_be_bytes::<32>());
 
         let hash = keccak256(&data);
         U256::from_be_bytes(hash.0)
@@ -117,35 +120,33 @@ impl MapKey for &[u8] {
 }
 
 impl MapKey for Vec<u8> {
-    fn compute_slot(&self, root_slot: U256) -> U256 {
-        self.as_slice().compute_slot(root_slot)
+    fn compute_slot(&self, base_slot: U256) -> U256 {
+        self.as_slice().compute_slot(base_slot)
     }
 }
 
 impl MapKey for &str {
-    fn compute_slot(&self, root_slot: U256) -> U256 {
-        self.as_bytes().compute_slot(root_slot)
+    fn compute_slot(&self, base_slot: U256) -> U256 {
+        self.as_bytes().compute_slot(base_slot)
     }
 }
 
 impl MapKey for String {
-    fn compute_slot(&self, root_slot: U256) -> U256 {
-        self.as_bytes().compute_slot(root_slot)
+    fn compute_slot(&self, base_slot: U256) -> U256 {
+        self.as_bytes().compute_slot(base_slot)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{
-        array::StorageArray, mock::MockStorage, primitive::StoragePrimitive, ArrayAccess,
-        PrimitiveAccess,
-    };
+    use crate::storage::{array::StorageArray, mock::MockStorage, primitive::StoragePrimitive};
 
     #[test]
     fn test_map_basic_operations() {
         let mut sdk = MockStorage::new();
-        let map = StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(100));
+        let map =
+            StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(100));
 
         // Set values for different keys
         map.entry(U256::from(1)).set(&mut sdk, U256::from(111));
@@ -181,21 +182,24 @@ mod tests {
         let mut sdk = MockStorage::new();
 
         // Bool keys
-        let bool_map = StorageMap::<bool, StoragePrimitive<U256>>::new(U256::from(200));
+        let bool_map =
+            StorageMap::<bool, StoragePrimitive<U256>>::new(U256::from(200));
         bool_map.entry(true).set(&mut sdk, U256::from(100));
         bool_map.entry(false).set(&mut sdk, U256::from(200));
         assert_eq!(bool_map.entry(true).get(&sdk), U256::from(100));
         assert_eq!(bool_map.entry(false).get(&sdk), U256::from(200));
 
         // String keys
-        let string_map = StorageMap::<&str, StoragePrimitive<U256>>::new(U256::from(300));
+        let string_map =
+            StorageMap::<&str, StoragePrimitive<U256>>::new(U256::from(300));
         string_map.entry("alice").set(&mut sdk, U256::from(1000));
         string_map.entry("bob").set(&mut sdk, U256::from(2000));
         assert_eq!(string_map.entry("alice").get(&sdk), U256::from(1000));
         assert_eq!(string_map.entry("bob").get(&sdk), U256::from(2000));
 
         // u64 keys
-        let u64_map = StorageMap::<u64, StoragePrimitive<U256>>::new(U256::from(400));
+        let u64_map =
+            StorageMap::<u64, StoragePrimitive<U256>>::new(U256::from(400));
         u64_map.entry(12345u64).set(&mut sdk, U256::from(999));
 
         assert_eq!(u64_map.entry(12345u64).get(&sdk), U256::from(999));
@@ -205,8 +209,10 @@ mod tests {
     fn test_nested_maps() {
         let mut sdk = MockStorage::new();
         // Map<U256, Map<U256, Primitive<U256>>>
-        let map =
-            StorageMap::<U256, StorageMap<U256, StoragePrimitive<U256>>>::new(U256::from(500));
+        let map = StorageMap::<
+            U256,
+            StorageMap<U256, StoragePrimitive<U256>>,
+        >::new(U256::from(500));
 
         // Set nested values
         map.entry(U256::from(1))
@@ -240,7 +246,10 @@ mod tests {
     fn test_map_with_arrays_as_values() {
         let mut sdk = MockStorage::new();
         // Map<U256, Array<Primitive<u64>, 3>>
-        let map = StorageMap::<U256, StorageArray<StoragePrimitive<u64>, 3>>::new(U256::from(600));
+        let map =
+            StorageMap::<U256, StorageArray<StoragePrimitive<u64>, 3>>::new(
+                U256::from(600),
+            );
 
         // Set array values for key 1
         let array1 = map.entry(U256::from(1));
@@ -267,7 +276,8 @@ mod tests {
     #[test]
     fn test_map_overwrites() {
         let mut sdk = MockStorage::new();
-        let map = StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(700));
+        let map =
+            StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(700));
 
         // Set initial value
         map.entry(U256::from(42)).set(&mut sdk, U256::from(100));
@@ -283,8 +293,10 @@ mod tests {
         let mut sdk = MockStorage::new();
 
         // Two maps at different slots
-        let map1 = StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(800));
-        let map2 = StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(801));
+        let map1 =
+            StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(800));
+        let map2 =
+            StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(801));
 
         // Same key, different values
         map1.entry(U256::from(1)).set(&mut sdk, U256::from(111));
@@ -298,7 +310,8 @@ mod tests {
     #[test]
     fn test_map_storage_layout() {
         let mut sdk = MockStorage::new();
-        let map = StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(5));
+        let map =
+            StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(5));
 
         // Set value for key = 7
         let key = U256::from(7);
@@ -321,7 +334,8 @@ mod tests {
     #[test]
     fn test_map_with_packed_values() {
         let mut sdk = MockStorage::new();
-        let map = StorageMap::<U256, StoragePrimitive<u64>>::new(U256::from(10));
+        let map =
+            StorageMap::<U256, StoragePrimitive<u64>>::new(U256::from(10));
 
         // Set u64 value for key = 1
         map.entry(U256::from(1))
@@ -343,7 +357,8 @@ mod tests {
         let mut sdk = MockStorage::new();
 
         // Test bool key storage
-        let bool_map = StorageMap::<bool, StoragePrimitive<U256>>::new(U256::from(20));
+        let bool_map =
+            StorageMap::<bool, StoragePrimitive<U256>>::new(U256::from(20));
         bool_map.entry(true).set(&mut sdk, U256::from(100));
 
         // Calculate slot for true (encoded as 1)
@@ -354,7 +369,8 @@ mod tests {
         assert_eq!(sdk.get_slot(slot_true), U256::from(100));
 
         // Test string key storage
-        let string_map = StorageMap::<&str, StoragePrimitive<U256>>::new(U256::from(30));
+        let string_map =
+            StorageMap::<&str, StoragePrimitive<U256>>::new(U256::from(30));
         string_map.entry("test").set(&mut sdk, U256::from(999));
 
         // Calculate slot for "test"
@@ -368,7 +384,10 @@ mod tests {
     #[test]
     fn test_nested_maps_storage() {
         let mut sdk = MockStorage::new();
-        let map = StorageMap::<U256, StorageMap<U256, StoragePrimitive<U256>>>::new(U256::from(40));
+        let map = StorageMap::<
+            U256,
+            StorageMap<U256, StoragePrimitive<U256>>,
+        >::new(U256::from(40));
 
         // Set map[1][2] = 100
         map.entry(U256::from(1))
@@ -394,7 +413,10 @@ mod tests {
     #[test]
     fn test_map_with_array_values_storage() {
         let mut sdk = MockStorage::new();
-        let map = StorageMap::<U256, StorageArray<StoragePrimitive<u64>, 3>>::new(U256::from(50));
+        let map =
+            StorageMap::<U256, StorageArray<StoragePrimitive<u64>, 3>>::new(
+                U256::from(50),
+            );
 
         // Set array values for key = 5
         let array = map.entry(U256::from(5));
@@ -421,8 +443,10 @@ mod tests {
         let mut sdk = MockStorage::new();
 
         // Two maps at different slots
-        let map1 = StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(60));
-        let map2 = StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(61));
+        let map1 =
+            StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(60));
+        let map2 =
+            StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(61));
 
         // Same key, different values
         map1.entry(U256::from(1)).set(&mut sdk, U256::from(111));
@@ -448,7 +472,8 @@ mod tests {
     #[test]
     fn test_map_zero_key() {
         let mut sdk = MockStorage::new();
-        let map = StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(70));
+        let map =
+            StorageMap::<U256, StoragePrimitive<U256>>::new(U256::from(70));
 
         // Test with key = 0
         map.entry(U256::ZERO).set(&mut sdk, U256::from(0xABCDEF));

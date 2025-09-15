@@ -1,224 +1,152 @@
+//! Storage abstraction layer for Ethereum smart contracts.
+
 use crate::{B256, U256};
-use alloc::vec::Vec;
 use fluentbase_types::StorageAPI;
 
-pub mod primitive;
+mod array;
+mod bytes;
+mod map;
+mod primitive;
+mod vec;
 
-pub mod array;
-pub mod bytes;
-pub mod map;
-
-pub mod composite;
+pub use array::*;
+pub use bytes::*;
+pub use map::*;
+pub use primitive::*;
+pub use vec::*;
+// test utils
 pub mod mock;
-pub use mock::MockStorage;
 
-pub mod vec;
-
-/// The main trait that connects a Rust type to its storage layout and access API.
-/// Any type that can be a field in a `#[fluent_storage]` struct must implement this.
+/// Trait connecting Rust types to Ethereum's storage model.
+///
+/// Ethereum storage is a key-value store with 2^256 slots, each holding 32 bytes.
+/// This trait defines how Rust types map to these slots through two key concepts:
+///
+/// 1. **Storage Layout** - How much space a type needs:
+///    - Primitive types < 32 bytes can be packed together in one slot
+///    - Full-width types (32 bytes) occupy exactly one slot
+///    - Complex types (arrays, structs) may span multiple slots
+///
+/// 2. **Two-phase Access Pattern**:
+///    - **Descriptor**: Lightweight metadata about WHERE data lives (slot + offset)
+///    - **Accessor**: The actual API for HOW to read/write that data
+///
+/// This separation allows zero-cost abstractions: descriptors are computed at
+/// compile-time, while accessors provide type-safe runtime operations.
 pub trait StorageLayout: Sized {
-    /// A lightweight, `Copy`-able struct describing the storage location.
-    type Descriptor: StorageDescriptor;
+    /// Lightweight location metadata.
+    ///
+    /// For packable types: contains slot + byte offset
+    /// For full types: contains only slot number
+    /// Computed at compile-time, Copy + Send + Sync
+    type Descriptor: StorageDescriptor + Copy;
 
-    /// A temporary proxy object providing the interactive API for this type.
+    /// Runtime access interface.
+    ///
+    /// Different types have different accessors:
+    /// - Primitive<T>: simple get/set operations
+    /// - Array<T, N>: indexed access via at(index)
+    /// - Map<K, V>: key-based access via entry(key)
+    /// - Vec<T>: dynamic operations (push/pop/at)
     type Accessor;
 
-    /// The number of contiguous slots required by this type's layout.
-    const REQUIRED_SLOTS: usize;
+    /// Size in bytes when encoded to storage.
+    ///
+    /// Used to determine:
+    /// - Whether type can be packed (BYTES < 32)
+    /// - Offset calculation for packed fields
+    /// - Total storage consumption
+    const BYTES: usize;
 
-    const ENCODED_SIZE: usize;
+    /// Number of storage slots this type reserves.
+    ///
+    /// - 0: Type can be packed with others (bool, u8, u16, etc.)
+    /// - 1: Type uses exactly one slot (u256, address for full slot)
+    /// - N: Type uses N slots (arrays, structs, etc.)
+    ///
+    /// Note: SLOTS = 0 means the type doesn't reserve a full slot,
+    /// allowing the compiler to pack multiple such types together.
+    const SLOTS: usize;
 
-    /// Creates an Accessor, the sole entry point for interacting with the stored value.
+    /// Construct accessor from descriptor.
+    ///
+    /// This is the entry point for all storage operations.
+    /// The descriptor tells WHERE, the accessor provides HOW.
     fn access(descriptor: Self::Descriptor) -> Self::Accessor;
 }
 
-/// Trait that all storage descriptors must implement.
-/// Provides a uniform interface for creating and accessing storage locations.
-pub trait StorageDescriptor {
-    /// Creates a descriptor at the specified storage location.
-    /// For composite types (arrays, structs, maps), offset should be 0.
-    /// For packed primitive types, offset indicates position within the slot.
+/// Uniform interface for creating storage descriptors at specific locations.
+pub trait StorageDescriptor: Copy {
     fn new(slot: U256, offset: u8) -> Self;
-
-    /// Returns the base storage slot.
     fn slot(&self) -> U256;
-
-    /// Returns the offset within the slot (0 for non-packed types).
     fn offset(&self) -> u8;
 }
 
-/// A trait for types that have a fixed-size byte representation suitable for storage.
+/// Encoding/decoding for types that fit within a single storage slot.
 ///
-/// This trait defines the low-level serialization and deserialization logic
-/// for types that can be packed within a single 32-byte storage slot.
-pub trait PrimitiveCodec: Sized {
-    /// The exact number of bytes this type occupies when encoded. Must be <= 32.
+/// Implementors must guarantee:
+/// - ENCODED_SIZE <= 32
+/// - encode_into/decode are inverse operations
+/// - Big-endian encoding for consistency with EVM
+pub trait PackableCodec: Sized + Copy {
+    /// Exact size in bytes (must be <= 32).
     const ENCODED_SIZE: usize;
 
-    /// Encodes the value into the provided byte slice.
-    ///
-    /// # Panics
-    /// if the length of `target` is not equal to `ENCODED_SIZE`.
+    /// Encode value to bytes at target position.
     fn encode_into(&self, target: &mut [u8]);
 
-    /// Decodes a value from the provided byte slice.
-    ///
-    /// # Panics
-    /// Panics if the length of `bytes` is not equal to `ENCODED_SIZE`.
+    /// Decode value from bytes.
     fn decode(bytes: &[u8]) -> Self;
 }
 
-/// ----------------------------------
-/// Accessor traits
-/// ----------------------------------
-/// Defines the API for a single, primitive value that implements `StorageCodec`.
-pub trait PrimitiveAccess<T: PrimitiveCodec> {
-    /// Reads the value from storage.
-    fn get<S: StorageAPI>(&self, sdk: &S) -> T;
-
-    /// Writes a new value to storage.
-    fn set<S: StorageAPI>(&self, sdk: &mut S, value: T);
-}
-
-/// Defines the API for a fixed-size array of `StorageLayout` elements.
-pub trait ArrayAccess<T: StorageLayout, const N: usize> {
-    /// Returns an accessor for the element at the given index.
-    ///
-    /// # Panics
-    /// Panics if `index >= N`.
-    fn at(&self, index: usize) -> T::Accessor;
-}
-/// Defines the API for a key-value map where values are `StorageLayout` types.
-pub trait MapAccess<K: MapKey, V: StorageLayout> {
-    /// Returns an accessor for the value at the given key.
-    /// The accessor can be used to get or set the value.
-    fn entry(&self, key: K) -> V::Accessor;
-}
-
-/// Defines the API for a dynamic vector of `StorageLayout` elements.
-/// Dynamic vectors in Solidity store their length at the base slot,
-/// and elements are stored starting at keccak256(base_slot).
-pub trait VecAccess<T: StorageLayout> {
-    /// Returns the number of elements in the vector.
-    fn len<S: StorageAPI>(&self, sdk: &S) -> u64;
-
-    /// Returns `true` if the vector is empty.
-    fn is_empty<S: StorageAPI>(&self, sdk: &S) -> bool {
-        self.len(sdk) == 0
-    }
-
-    /// Returns an accessor for the element at `index`.
-    /// # Panics
-    /// Panics if `index >= self.len()`.
-    fn at(&self, index: u64) -> T::Accessor;
-
-    /// Appends a new element and returns an accessor to initialize it.
-    /// Updates the length and returns accessor to the new element.
-    fn push<S: StorageAPI>(&self, sdk: &mut S) -> T::Accessor;
-
-    /// Removes the last element by decrementing the length.
-    /// Does not clear the storage slot (gas optimization).
-    fn pop<S: StorageAPI>(&self, sdk: &mut S);
-
-    /// Clears the vector by setting length to 0.
-    /// Does not clear individual elements (gas optimization).
-    fn clear<S: StorageAPI>(&self, sdk: &mut S);
-}
-/// Defines the specialized API for dynamic byte arrays.
-/// Dynamic byte arrays in Solidity use optimized storage:
-/// - Short (< 32 bytes): data and length stored inline
-/// - Long (≥ 32 bytes): length at base slot, data at keccak256(base_slot)
-pub trait BytesAccess {
-    /// Returns the number of bytes.
-    fn len<S: StorageAPI>(&self, sdk: &S) -> usize;
-
-    /// Returns `true` if the array is empty.
-    fn is_empty<S: StorageAPI>(&self, sdk: &S) -> bool {
-        self.len(sdk) == 0
-    }
-
-    /// Reads a single byte at `index`.
-    /// # Panics
-    /// Panics if `index >= self.len()`.
-    fn get<S: StorageAPI>(&self, sdk: &S, index: usize) -> u8;
-
-    /// Appends a byte.
-    fn push<S: StorageAPI>(&self, sdk: &mut S, byte: u8);
-
-    /// Removes and returns the last byte, or `None` if empty.
-    fn pop<S: StorageAPI>(&self, sdk: &mut S) -> Option<u8>;
-
-    /// Reads all bytes into a `Vec<u8>`.
-    /// Use with caution due to gas costs for large arrays.
-    fn load<S: StorageAPI>(&self, sdk: &S) -> Vec<u8>;
-
-    /// Overwrites the entire storage with new data.
-    /// Efficiently handles transition between short and long forms.
-    fn store<S: StorageAPI>(&self, sdk: &mut S, bytes: &[u8]);
-
-    /// Clears all bytes by setting length to 0.
-    /// May clear storage slots for gas optimization.
-    fn clear<S: StorageAPI>(&self, sdk: &mut S);
-}
-
-/// ----------------------------------
-/// Helper traits
-/// ----------------------------------
-/// A trait for types that can be used as keys in a `Map`.
-pub trait MapKey {
-    /// Computes the final storage slot for an item within a map.
-    fn compute_slot(&self, root_slot: U256) -> U256;
-}
-
-/// An internal extension trait for `StorageAPI` providing low-level,
-/// packed storage operations. Not intended for public use.
+/// Low-level storage operations.
+///
+/// Extension trait providing optimized read/write for packed values.
+/// Automatically implemented for all types implementing StorageAPI.
 pub(crate) trait StorageOps: StorageAPI {
-    /// Reads a 32-byte word from storage, returning a B256.
-    /// Panics on syscall failure.
+    /// Read full 32-byte slot.
     fn sload(&self, slot: U256) -> B256 {
         self.storage(&slot).unwrap().into()
     }
 
-    /// Writes a 32-byte word to storage.
-    /// Panics on syscall failure.
+    /// Write full 32-byte slot.
     fn sstore(&mut self, slot: U256, value: B256) {
         self.write_storage(slot, value.into()).unwrap()
     }
 
-    /// Reads a value of type `T` that implements `StorageCodec` from a specific
-    /// location (slot + offset) within a storage word.
-    fn read_at<T: PrimitiveCodec>(&self, slot: U256, offset: u8) -> T {
-        // offset is from the LEFT edge (start of byte array)
+    /// Read packed value from slot at specific offset.
+    ///
+    /// Optimization: single SLOAD even for small types.
+    fn read_at<T: PackableCodec>(&self, slot: U256, offset: u8) -> T {
         let start = offset as usize;
         let end = start + T::ENCODED_SIZE;
-
-        assert!(end <= 32, "read out of slot bounds");
+        assert!(end <= 32, "read out of bounds");
 
         let word = self.sload(slot);
         T::decode(&word[start..end])
     }
 
-    /// Writes a value of type `T` that implements `StorageCodec` to a specific
-    /// location (slot + offset) within a storage word.
-    fn write_at<T: PrimitiveCodec>(&mut self, slot: U256, offset: u8, value: &T) {
-        // offset is from the LEFT edge (start of byte array)
+    /// Write packed value to slot at specific offset.
+    ///
+    /// Optimization: skip SLOAD for full-slot writes.
+    fn write_at<T: PackableCodec>(&mut self, slot: U256, offset: u8, value: &T) {
         let start = offset as usize;
         let end = start + T::ENCODED_SIZE;
-
-        assert!(end <= 32, "write out of slot bounds");
+        assert!(end <= 32, "write out of bounds");
 
         if T::ENCODED_SIZE == 32 && offset == 0 {
-            let mut word_bytes = [0u8; 32];
-            value.encode_into(&mut word_bytes);
-            self.sstore(slot, B256::from(word_bytes));
+            // Full slot overwrite - no need to read existing value
+            let mut word = [0u8; 32];
+            value.encode_into(&mut word);
+            self.sstore(slot, B256::from(word));
             return;
         }
 
+        // Partial update - preserve other bytes in slot
         let mut word = self.sload(slot);
         value.encode_into(&mut word.0[start..end]);
         self.sstore(slot, word);
     }
 }
 
-/// Automatically implement `StorageOps` for any type that already implements `StorageAPI`.
 impl<S: StorageAPI> StorageOps for S {}
