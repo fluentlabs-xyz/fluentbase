@@ -1,8 +1,8 @@
+use crate::func::FunctionArgs;
 use crate::{alloc::string::ToString, error::CodecError};
 use byteorder::{ByteOrder, BE, LE};
 use bytes::{Buf, BytesMut};
 use core::marker::PhantomData;
-
 // TODO: @d1r1 Investigate whether decoding the result into an uninitialized memory (e.g., using
 // `MaybeUninit`) would be more efficient than initializing with `Default`.
 // This could potentially reduce unnecessary memory initialization overhead in cases where
@@ -62,6 +62,7 @@ pub trait Encoder<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const 
         align_up::<ALIGN>(Self::HEADER_SIZE)
     }
 }
+
 macro_rules! define_encoder_mode {
     ($name:ident, $byte_order:ty, $align:expr, $sol_mode:expr) => {
         pub struct $name<T>(PhantomData<T>);
@@ -133,6 +134,37 @@ define_encoder_mode!(CompactABI, LE, 4, false);
 // SolidityPackedABI works only for static types
 define_encoder_mode!(SolidityPackedABI, BE, 1, true, static_only);
 
+impl<T> SolidityABI<T> {
+    pub fn encode_function_args(value: &T, buf: &mut BytesMut) -> Result<(), CodecError>
+    where
+        T: FunctionArgs<BE, 32, true, false>,
+    {
+        value.encode_as_args(buf)
+    }
+
+    pub fn decode_function_args(buf: &impl Buf) -> Result<T, CodecError>
+    where
+        T: FunctionArgs<BE, 32, true, false>,
+    {
+        T::decode_as_args(buf)
+    }
+}
+
+impl<T> CompactABI<T> {
+    pub fn encode_function_args(value: &T, buf: &mut BytesMut) -> Result<(), CodecError>
+    where
+        T: FunctionArgs<LE, 4, false, false>,
+    {
+        value.encode_as_args(buf)
+    }
+
+    pub fn decode_function_args(buf: &impl Buf) -> Result<T, CodecError>
+    where
+        T: FunctionArgs<LE, 4, false, false>,
+    {
+        T::decode_as_args(buf)
+    }
+}
 pub trait SolidityEncoder: Encoder<BE, 32, true, false> {
     const SOLIDITY_HEADER_SIZE: usize = <Self as Encoder<BE, 32, true, false>>::HEADER_SIZE;
 }
@@ -241,7 +273,7 @@ pub(crate) fn get_aligned_slice<B: ByteOrder, const ALIGN: usize>(
         // For big-endian, return slice at the end of the aligned space
         aligned_offset + word_size - value_size
     } else {
-        // For little-endian, return slice at the beginning of the aligned space
+        // For little-endian, return a slice at the beginning of the aligned space
         aligned_offset
     };
 

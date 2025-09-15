@@ -1,5 +1,5 @@
 ---
-source: crates/sdk-derive/derive-core/src/storage.rs
+source: crates/sdk-derive/derive-core/src/storage_legacy.rs
 expression: formatted
 ---
 pub struct Balance {}
@@ -9,11 +9,13 @@ impl Balance {
     ]);
     fn get<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK, arg0: Address) -> U256 {
         let key = Self::key(sdk, arg0);
-        <U256 as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+        <U256 as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, arg0: Address, value: U256) {
         let key = Self::key(sdk, arg0);
-        <U256 as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+        <U256 as fluentbase_sdk::storage_legacy::DirectStorage<
+            SDK,
+        >>::set(sdk, key, value)
     }
     fn calculate_keys<SDK: fluentbase_sdk::SharedAPI>(
         sdk: &SDK,
@@ -63,15 +65,15 @@ impl ArbitraryData {
     ]);
     fn get<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK, arg0: Address) -> Bytes {
         let key = Self::key(sdk, arg0);
-        <Bytes as fluentbase_sdk::storage::StorageValueSolidity<
+        <Bytes as fluentbase_sdk::storage_legacy::StorageValueSolidity<
             SDK,
             Bytes,
         >>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, arg0: Address, value: Bytes) {
-        use fluentbase_sdk::storage::StorageValueSolidity;
+        use fluentbase_sdk::storage_legacy::StorageValueSolidity;
         let key = Self::key(sdk, arg0);
-        <Bytes as fluentbase_sdk::storage::StorageValueSolidity<
+        <Bytes as fluentbase_sdk::storage_legacy::StorageValueSolidity<
             SDK,
             Bytes,
         >>::set(sdk, key, value.clone());
@@ -128,7 +130,7 @@ impl Allowance {
         arg1: Address,
     ) -> U256 {
         let key = Self::key(sdk, arg0, arg1);
-        <U256 as fluentbase_sdk::storage::DirectStorage<SDK>>::get(sdk, key)
+        <U256 as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
     }
     fn set<SDK: fluentbase_sdk::SharedAPI>(
         sdk: &mut SDK,
@@ -137,7 +139,9 @@ impl Allowance {
         value: U256,
     ) {
         let key = Self::key(sdk, arg0, arg1);
-        <U256 as fluentbase_sdk::storage::DirectStorage<SDK>>::set(sdk, key, value)
+        <U256 as fluentbase_sdk::storage_legacy::DirectStorage<
+            SDK,
+        >>::set(sdk, key, value)
     }
     fn calculate_keys<SDK: fluentbase_sdk::SharedAPI>(
         sdk: &SDK,

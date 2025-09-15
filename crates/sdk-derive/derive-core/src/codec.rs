@@ -41,13 +41,8 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
         let input_types = self.extract_input_types();
         let output_types = self.extract_output_types();
 
-        let codec_impl = self.generate_codec_impl(
-            &call_struct,
-            &call_args,
-            &return_struct,
-            &return_args,
-            &output_types,
-        )?;
+        let codec_impl =
+            self.generate_codec_impl(&call_struct, &call_args, &return_struct, &return_args)?;
 
         Ok(quote! {
             pub type #call_args = (#(#input_types,)*);
@@ -70,93 +65,37 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
         call_args: &Ident,
         return_struct: &Ident,
         return_args: &Ident,
-        output_types: &[&Type],
     ) -> Result<TokenStream2> {
         let crate_path = self.get_crate_path();
         let codec_type = self.get_codec_type();
         let selector = self.route.function_id();
         let signature = self.route.parsed_signature().function_abi()?.signature()?;
 
-        let field_indices = (0..self
-            .route
-            .parsed_signature()
-            .inputs_without_receiver()
-            .len())
-            .map(syn::Index::from)
-            .collect::<Vec<_>>();
-
-        let call_encode_offset = self.create_encode_offset_expr(&codec_type, call_args);
-        let call_decode_offset = self.create_decode_offset_expr(&codec_type, call_args);
-        let return_encode_offset = self.create_encode_offset_expr(&codec_type, return_args);
-        let return_decode_offset = self.create_decode_offset_expr(&codec_type, return_args);
-
-        let encode_call_impl = if field_indices.is_empty() {
-            quote! {
-                #codec_type::encode(&(), &mut buf, 0)
-                    .expect("Failed to encode values");
-            }
-        } else if field_indices.len() == 1 {
-            let index = &field_indices[0];
-            quote! {
-                let args = self.0.clone();
-                #codec_type::encode(&(args.#index,), &mut buf, 0)
-                    .expect("Failed to encode values");
-            }
-        } else {
-            quote! {
-                let args = self.0.clone();
-                #codec_type::encode(&(#(args.#field_indices),*), &mut buf, 0)
-                    .expect("Failed to encode values");
-            }
-        };
-
-        let is_unit_type = match &self.route.parsed_signature().output {
-            ReturnType::Default => true,
-            ReturnType::Type(_, ty) => match &**ty {
-                Type::Tuple(tuple) => tuple.elems.is_empty(),
-                _ => false,
-            },
-        };
-
-        let encode_return_impl = if is_unit_type {
-            quote! {
-                #codec_type::encode(&(), &mut buf, 0)
-                    .expect("Failed to encode values");
-            }
-        } else if output_types.len() == 1 {
-            quote! {
-                let args = self.0.clone();
-                #codec_type::encode(&(args.0,), &mut buf, 0)
-                    .expect("Failed to encode values");
-            }
-        } else {
-            quote! {
-                let args = self.0.clone();
-                #codec_type::encode(&args, &mut buf, 0)
-                    .expect("Failed to encode values");
-            }
-        };
-
+        // Encode method (with or without selector)
         let encode_method = if self.route.is_constructor() {
             quote! {
                 /// Encodes without selector (for constructor)
                 pub fn encode(&self) -> #crate_path::bytes::Bytes {
                     let mut buf = #crate_path::bytes::BytesMut::new();
-                    #encode_call_impl
-                    let encoded_args = buf.freeze();
-                    let clean_args = #call_encode_offset;
-                    clean_args.into()
+                    #codec_type::encode_function_args(&self.0, &mut buf)
+                        .expect("Failed to encode values");
+                    buf.freeze()
                 }
             }
         } else {
             quote! {
                 /// Encodes with selector
                 pub fn encode(&self) -> #crate_path::bytes::Bytes {
+                    // First encode the arguments separately
+                    let mut args_buf = #crate_path::bytes::BytesMut::new();
+                    #codec_type::encode_function_args(&self.0, &mut args_buf)
+                        .expect("Failed to encode values");
+
+                    // Then combine selector + encoded args
                     let mut buf = #crate_path::bytes::BytesMut::new();
-                    #encode_call_impl
-                    let encoded_args = buf.freeze();
-                    let clean_args = #call_encode_offset;
-                    Self::SELECTOR.iter().copied().chain(clean_args).collect()
+                    buf.extend_from_slice(&Self::SELECTOR);
+                    buf.extend_from_slice(&args_buf);
+                    buf.freeze()
                 }
             }
         };
@@ -176,13 +115,7 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
 
                     /// Decodes call arguments from bytes
                     pub fn decode(buf: &impl #crate_path::bytes::Buf) -> Result<Self, #crate_path::CodecError> {
-                        use #crate_path::bytes::BufMut;
-
-                        let mut combined_buf = #crate_path::bytes::BytesMut::new();
-                        combined_buf.put_slice(&#call_decode_offset);
-                        combined_buf.put_slice(buf.chunk());
-
-                        let args = #codec_type::<#call_args>::decode(&combined_buf.freeze(), 0)?;
+                        let args = #codec_type::<#call_args>::decode_function_args(buf)?;
                         Ok(Self(args))
                     }
                 }
@@ -203,21 +136,14 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
                     /// Encodes the return values to bytes
                     pub fn encode(&self) -> #crate_path::bytes::Bytes {
                         let mut buf = #crate_path::bytes::BytesMut::new();
-                        #encode_return_impl
-                        let encoded_args = buf.freeze();
-                        let clean_args = #return_encode_offset;
-                        clean_args.into()
+                        #codec_type::encode_function_args(&self.0, &mut buf)
+                            .expect("Failed to encode values");
+                        buf.freeze()
                     }
 
                     /// Decodes return values from bytes
                     pub fn decode(buf: &impl #crate_path::bytes::Buf) -> Result<Self, #crate_path::CodecError> {
-                        use #crate_path::bytes::BufMut;
-
-                        let mut combined_buf = #crate_path::bytes::BytesMut::new();
-                        combined_buf.put_slice(&#return_decode_offset);
-                        combined_buf.put_slice(buf.chunk());
-
-                        let args = #codec_type::<#return_args>::decode(&combined_buf.freeze(), 0)?;
+                        let args = #codec_type::<#return_args>::decode_function_args(buf)?;
                         Ok(Self(args))
                     }
                 }
@@ -259,55 +185,6 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
         }
     }
 
-    /// Creates the encode offset expression based on the mode
-    /// Important: Dynamic types need the first 32/4 bytes removed
-    fn create_encode_offset_expr(
-        &self,
-        codec_type: &TokenStream2,
-        type_name: &Ident,
-    ) -> TokenStream2 {
-        match self.mode {
-            Mode::Solidity => quote! {
-                if #codec_type::<#type_name>::is_dynamic() {
-                    encoded_args[32..].to_vec()
-                } else {
-                    encoded_args.to_vec()
-                }
-            },
-            Mode::Fluent => quote! {
-                if #codec_type::<#type_name>::is_dynamic() {
-                    encoded_args[4..].to_vec()
-                } else {
-                    encoded_args.to_vec()
-                }
-            },
-        }
-    }
-
-    /// Creates the decode offset expression based on the mode
-    fn create_decode_offset_expr(
-        &self,
-        codec_type: &TokenStream2,
-        type_name: &Ident,
-    ) -> TokenStream2 {
-        match self.mode {
-            Mode::Solidity => quote! {
-                if #codec_type::<#type_name>::is_dynamic() {
-                    ::fluentbase_sdk::U256::from(32).to_be_bytes::<32>().to_vec()
-                } else {
-                    ::alloc::vec::Vec::new()
-                }
-            },
-            Mode::Fluent => quote! {
-                if #codec_type::<#type_name>::is_dynamic() {
-                    (4_u32).to_le_bytes().to_vec()
-                } else {
-                    ::alloc::vec::Vec::new()
-                }
-            },
-        }
-    }
-
     /// Determines the appropriate crate path to use for codec implementations
     fn get_crate_path(&self) -> TokenStream2 {
         match std::env::var("CARGO_PKG_NAME").as_deref() {
@@ -324,7 +201,7 @@ impl<'a, T: MethodLike> CodecGenerator<'a, T> {
         let crate_path = self.get_crate_path();
         match self.mode {
             Mode::Solidity => quote! { #crate_path::encoder::SolidityABI },
-            Mode::Fluent => quote! { #crate_path::encoder::FluentABI },
+            Mode::Fluent => quote! { #crate_path::encoder::CompactABI },
         }
     }
 }
