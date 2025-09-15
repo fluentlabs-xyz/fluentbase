@@ -17,7 +17,7 @@ pub const PRECOMPILE_OAUTH2_VERIFIER: Address =
     address!("0x0000000000000000000000000000000000520006");
 pub const PRECOMPILE_NITRO_VERIFIER: Address =
     address!("0x0000000000000000000000000000000000520007");
-pub const PRECOMPILE_ERC20_RUNTIME: Address =
+pub const PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME: Address =
     address!("0x0000000000000000000000000000000000520008");
 pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520009");
 pub const PRECOMPILE_EIP2935: Address = address!("0x0000F90827F1C53a10cb7A02335B175320002935");
@@ -64,7 +64,7 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
     PRECOMPILE_BN256_MUL,
     PRECOMPILE_BN256_PAIR,
     PRECOMPILE_EIP2935,
-    PRECOMPILE_ERC20_RUNTIME,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
     PRECOMPILE_EVM_RUNTIME,
     PRECOMPILE_FAIRBLOCK_VERIFIER,
     PRECOMPILE_IDENTITY,
@@ -89,7 +89,7 @@ pub fn is_system_precompile(address: &Address) -> bool {
 pub const fn is_resumable_precompile(address: &Address) -> bool {
     match address {
         &PRECOMPILE_EIP2935
-        | &PRECOMPILE_ERC20_RUNTIME
+        | &PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
         | &PRECOMPILE_EVM_RUNTIME
         | &PRECOMPILE_FAIRBLOCK_VERIFIER
         | &PRECOMPILE_SVM_RUNTIME
@@ -121,7 +121,7 @@ pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
     } else if input.len() > ERC20_MAGIC_BYTES.len()
         && input[..ERC20_MAGIC_BYTES.len()] == ERC20_MAGIC_BYTES
     {
-        PRECOMPILE_ERC20_RUNTIME
+        PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
     } else {
         PRECOMPILE_EVM_RUNTIME
     }

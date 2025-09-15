@@ -10,7 +10,7 @@ use crate::{
 };
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_sdk::{MetadataAPI, SharedAPI, U256};
+use fluentbase_sdk::{Address, MetadataAPI, SharedAPI, U256};
 use fluentbase_types::{syscall::SyscallResult, ExitCode, MetadataStorageAPI};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
@@ -65,6 +65,7 @@ pub(crate) fn flush_account<const SKIP_SYS_ACCS: bool, SDK: SharedAPI>(
     sdk: &mut SDK,
     pk: &Pubkey,
     account_data: &AccountSharedData,
+    alt_precompile_address: Option<Address>,
 ) -> Result<bool, SvmError> {
     if SKIP_SYS_ACCS && SYSTEM_PROGRAMS_KEYS.contains(&pk) {
         return Ok(false);
@@ -72,7 +73,7 @@ pub(crate) fn flush_account<const SKIP_SYS_ACCS: bool, SDK: SharedAPI>(
     if !is_evm_pubkey(&pk) {
         return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
     }
-    storage_write_account_data(sdk, pk, account_data)?;
+    storage_write_account_data(sdk, pk, account_data, alt_precompile_address)?;
     Ok(true)
 }
 
@@ -82,13 +83,14 @@ pub(crate) fn flush_account<const SKIP_SYS_ACCS: bool, SDK: SharedAPI>(
 pub(crate) fn flush_accounts<const SKIP_SYS_ACCS: bool, SDK: SharedAPI>(
     sdk: &mut SDK,
     accounts: &HashMap<Pubkey, AccountSharedData>,
+    alt_precompile_address: Option<Address>,
 ) -> Result<u64, SvmError> {
-    let mut accounts_flushed = 0;
+    let mut flushed_count = 0;
     for (pk, account_data) in accounts {
-        flush_account::<SKIP_SYS_ACCS, _>(sdk, pk, account_data)?;
-        accounts_flushed += 1;
+        flush_account::<SKIP_SYS_ACCS, _>(sdk, pk, account_data, alt_precompile_address)?;
+        flushed_count += 1;
     }
-    Ok(accounts_flushed)
+    Ok(flushed_count)
 }
 
 pub struct GlobalBalance<API: MetadataStorageAPI> {

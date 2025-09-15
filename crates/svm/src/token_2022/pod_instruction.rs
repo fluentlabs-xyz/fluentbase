@@ -60,7 +60,7 @@ pub(crate) struct SetAuthorityData {
 /// `InitializeMintData`.
 #[derive(Clone, Copy, Debug, PartialEq, TryFromPrimitive, IntoPrimitive)]
 #[repr(u8)]
-pub(crate) enum PodTokenInstruction {
+pub enum PodTokenInstruction {
     // 0
     InitializeMint, // InitializeMintData
     InitializeAccount,

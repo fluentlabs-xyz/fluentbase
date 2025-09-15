@@ -8,9 +8,9 @@ use core::cmp::min;
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address, is_system_precompile, keccak256, syscall, Address, Bytes, ExitCode, Log,
-    LogData, B256, FUEL_DENOM_RATE, STATE_MAIN, SVM_ELF_MAGIC_BYTES, SVM_MAX_CODE_SIZE, U256,
-    WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
+    calc_create4_address, debug_log_ext, is_system_precompile, keccak256, syscall, Address, Bytes,
+    ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, STATE_MAIN, SVM_ELF_MAGIC_BYTES,
+    SVM_MAX_CODE_SIZE, U256, WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
 };
 use revm::bytecode::opcode;
 use revm::interpreter::interpreter::ExtBytecode;
@@ -780,6 +780,30 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             output[5] = account.is_cold as u8;
             output[6] = account.is_empty() as u8;
             return_result!(output, Ok)
+        }
+
+        SYSCALL_ID_METADATA_ACCOUNT_OWNER => {
+            assert_return!(
+                inputs.syscall_params.input.len() >= 20
+                    && inputs.syscall_params.state == STATE_MAIN,
+                MalformedBuiltinParams
+            );
+            // syscall is allowed only for accounts that are owned by somebody
+            let Some(_account_owner_address) = account_owner_address else {
+                return_result!(MalformedBuiltinParams);
+            };
+            // read an account from its address
+            let address = Address::from_slice(&inputs.syscall_params.input[..Address::len_bytes()]);
+            let mut account = ctx.journal_mut().load_account_code(address)?;
+            // to make sure this account is ownable and owner by the same runtime, that allows
+            // a runtime to modify any account it owns
+            match account.info.code.as_mut() {
+                Some(Bytecode::OwnableAccount(ownable_account_bytecode)) => {
+                    return_result!(ownable_account_bytecode.owner_address.0, Ok)
+                }
+                _ => {}
+            };
+            return_result!(Address::ZERO.0, Ok)
         }
         SYSCALL_ID_METADATA_CREATE => {
             assert_return!(

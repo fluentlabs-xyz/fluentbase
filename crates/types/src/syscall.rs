@@ -174,3 +174,4 @@ pub const SYSCALL_ID_METADATA_COPY: B256 = B256::with_last_byte(0x43);
 
 pub const SYSCALL_ID_METADATA_STORAGE_READ: B256 = B256::with_last_byte(0x44);
 pub const SYSCALL_ID_METADATA_STORAGE_WRITE: B256 = B256::with_last_byte(0x45);
+pub const SYSCALL_ID_METADATA_ACCOUNT_OWNER: B256 = B256::with_last_byte(0x46);

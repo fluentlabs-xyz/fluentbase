@@ -167,7 +167,7 @@ fn load_transaction_account<'a, SDK: SharedAPI, API: MetadataAPI + MetadataStora
             account: account_shared_data_from_program(account_key, program_accounts)?,
         }
     } else {
-        storage_read_account_data(api, account_key)
+        storage_read_account_data(api, account_key, None)
             .map(|account| {
                 // Inspect the account prior to collecting rent, since
                 // rent collection can modify the account.
@@ -230,7 +230,8 @@ pub fn prepare_data_for_tx_ctx<SDK: SharedAPI>(
     // it's fine to use the fee payer directly here rather than checking account
     // overrides again.
     let fee_payer = message.fee_payer();
-    let loaded_fee_payer_account = storage_read_account_data_or_default(sdk, fee_payer, 0, None);
+    let loaded_fee_payer_account =
+        storage_read_account_data_or_default(sdk, fee_payer, 0, None, None);
     collect_loaded_account(fee_payer, (loaded_fee_payer_account, true))?;
 
     // Attempt to load and collect remaining non-fee payer accounts
@@ -281,7 +282,7 @@ pub fn prepare_data_for_tx_ctx<SDK: SharedAPI>(
                 .iter()
                 .any(|(key, _)| key == owner_id)
             {
-                if let Ok(owner_account) = storage_read_account_data(sdk, owner_id) {
+                if let Ok(owner_account) = storage_read_account_data(sdk, owner_id, None) {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
                     {
@@ -316,7 +317,7 @@ fn filter_executable_program_accounts<'a, SDK: SharedAPI>(
                     saturating_add_assign!(*count, 1);
                 }
                 Entry::Vacant(entry) => {
-                    let account = storage_read_account_data(sdk, key);
+                    let account = storage_read_account_data(sdk, key, None);
                     if let Ok(acc) = account {
                         if let Some(index) = program_owners.iter().position(|k| k == acc.owner()) {
                             if let Some(owner) = program_owners.get(index) {

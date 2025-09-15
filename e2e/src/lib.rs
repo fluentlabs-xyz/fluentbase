@@ -20,11 +20,10 @@ mod deployer;
 #[cfg(test)]
 mod eip2935;
 #[cfg(test)]
-mod erc20;
-#[cfg(test)]
 mod evm;
 #[cfg(test)]
 mod gas;
+mod helpers;
 #[cfg(test)]
 mod multicall;
 #[cfg(test)]
@@ -35,6 +34,8 @@ mod router;
 mod stateless;
 #[cfg(all(test, feature = "enable-svm"))]
 pub mod svm;
+#[cfg(test)]
+mod universal_token;
 #[cfg(test)]
 mod update_account;
 #[cfg(test)]

@@ -59,13 +59,14 @@ pub fn deploy_entry_simplified<SDK: SharedAPI>(mut sdk: SDK) {
         &pk_contract,
         LoaderV4State::program_data_offset().saturating_add(elf_program_bytes.len()),
         Some(&loader_v4::id()),
+        None,
     );
     let state = get_state_mut(contract_account_data.data_as_mut_slice())
         .expect("contract account has not enough data len");
     state.status = LoaderV4Status::Deployed;
     contract_account_data.data_as_mut_slice()[LoaderV4State::program_data_offset()..]
         .copy_from_slice(&elf_program_bytes);
-    storage_write_account_data(&mut sdk, &pk_contract, &contract_account_data)
+    storage_write_account_data(&mut sdk, &pk_contract, &contract_account_data, None)
         .expect("failed to write contract account");
 }
 
@@ -110,7 +111,7 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
                             None,
                         );
                     }
-                    flush_account::<true, _>(&mut sdk, pk, account_data)
+                    flush_account::<true, _>(&mut sdk, pk, account_data, None)
                         .expect("failed to save accounts");
                 }
             }

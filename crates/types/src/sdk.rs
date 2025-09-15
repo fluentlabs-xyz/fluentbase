@@ -1,6 +1,7 @@
 use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
-    Address, Bytes, ContextReader, ExitCode, syscall::SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
+    syscall::SyscallResult,
+    Address, Bytes, ContextReader, ExitCode, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
@@ -27,6 +28,7 @@ pub trait MetadataAPI {
     ) -> SyscallResult<(u32, IsAccountOwnable, IsColdAccess, IsAccountEmpty)>;
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()>;
     fn metadata_copy(&self, address: &Address, offset: u32, length: u32) -> SyscallResult<Bytes>;
+    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address>;
 }
 
 pub trait MetadataStorageAPI {

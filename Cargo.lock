@@ -2157,11 +2157,11 @@ version = "0.4.3-dev"
 dependencies = [
  "alloy-genesis",
  "cargo_metadata",
- "fluentbase-erc20",
  "fluentbase-evm",
  "fluentbase-sdk",
  "fluentbase-svm",
  "fluentbase-types",
+ "fluentbase-universal-token",
  "revm-precompile",
  "serde",
  "serde_json",
@@ -2179,7 +2179,6 @@ dependencies = [
  "curve25519-dalek",
  "fluentbase-codec",
  "fluentbase-contracts",
- "fluentbase-erc20",
  "fluentbase-genesis",
  "fluentbase-revm",
  "fluentbase-runtime",
@@ -2188,6 +2187,7 @@ dependencies = [
  "fluentbase-svm",
  "fluentbase-svm-shared",
  "fluentbase-types",
+ "fluentbase-universal-token",
  "hex",
  "hex-literal",
  "paste",
@@ -2200,15 +2200,9 @@ dependencies = [
  "solana-bn254",
  "solana-curve25519",
  "solana-poseidon",
+ "solana-program-option",
+ "solana-program-pack",
  "wat",
-]
-
-[[package]]
-name = "fluentbase-erc20"
-version = "0.4.3-dev"
-dependencies = [
- "bincode 2.0.1",
- "fluentbase-sdk",
 ]
 
 [[package]]
@@ -2333,6 +2327,7 @@ dependencies = [
 name = "fluentbase-sdk-testing"
 version = "0.4.3-dev"
 dependencies = [
+ "bytes",
  "fluentbase-codec",
  "fluentbase-revm",
  "fluentbase-runtime",
@@ -2355,10 +2350,10 @@ dependencies = [
  "bytemuck",
  "bytemuck_derive",
  "byteorder",
- "fluentbase-erc20",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "fluentbase-types",
+ "fluentbase-universal-token",
  "hashbrown 0.15.4",
  "itertools 0.14.0",
  "lazy_static",
@@ -2429,6 +2424,14 @@ dependencies = [
  "rwasm",
  "serde",
  "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "fluentbase-universal-token"
+version = "0.4.3-dev"
+dependencies = [
+ "bincode 2.0.1",
+ "fluentbase-sdk",
 ]
 
 [[package]]

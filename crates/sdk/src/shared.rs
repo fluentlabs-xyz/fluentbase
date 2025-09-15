@@ -3,10 +3,12 @@ mod context;
 use crate::{
     alloc_slice,
     byteorder::{ByteOrder, LittleEndian},
+    debug_log_ext,
     shared::context::ContextReaderImpl,
 };
 use alloc::vec;
 use core::cell::RefCell;
+use fluentbase_types::syscall::SYSCALL_ID_METADATA_ACCOUNT_OWNER;
 use fluentbase_types::{
     native_api::NativeAPI, syscall::SyscallResult, syscall::SYSCALL_ID_BALANCE,
     syscall::SYSCALL_ID_BLOCK_HASH, syscall::SYSCALL_ID_CALL, syscall::SYSCALL_ID_CALL_CODE,
@@ -140,6 +142,18 @@ impl<API: NativeAPI> MetadataAPI for SharedContextImpl<API> {
             fuel_refunded,
             exit_code,
         )
+    }
+
+    fn metadata_account_owner(&self, address: &Address) -> SyscallResult<Address> {
+        let (fuel_consumed, fuel_refunded, exit_code) = self.native_sdk.exec(
+            SYSCALL_ID_METADATA_ACCOUNT_OWNER,
+            address.as_slice(),
+            None,
+            STATE_MAIN,
+        );
+        let mut address = Address::ZERO;
+        self.native_sdk.read_output(&mut address.as_mut(), 0);
+        SyscallResult::new(address, fuel_consumed, fuel_refunded, exit_code)
     }
 
     fn metadata_create(&mut self, salt: &U256, metadata: Bytes) -> SyscallResult<()> {

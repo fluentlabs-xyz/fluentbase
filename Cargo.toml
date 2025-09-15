@@ -39,7 +39,7 @@ fluentbase-sdk-testing = { path = "crates/testing" }
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
 fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
-fluentbase-erc20 = { path = "./crates/erc20", default-features = false }
+fluentbase-universal-token = { path = "./crates/universal-token", default-features = false }
 
 # solana
 solana-pubkey = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }

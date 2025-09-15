@@ -1,7 +1,13 @@
 use super::*;
 use crate::common::{evm_address_from_pubkey, pubkey_from_evm_address};
 use crate::fluentbase::common::SYSTEM_PROGRAMS_KEYS;
-use crate::helpers::{is_program_exists, storage_read_account_data, storage_read_metadata_params};
+use crate::helpers::{
+    deserialize_svm_program_params, deserialize_svm_program_params_into_instruction,
+    is_program_exists, serialize_svm_program_params, serialize_svm_program_params_from_instruction,
+    storage_read_account_data, storage_read_metadata_params,
+};
+use crate::token_2022::instruction::decode_instruction_type;
+use crate::token_2022::pod_instruction::PodTokenInstruction;
 use crate::{
     account::BorrowedAccount,
     builtins::SyscallInvokeSignedRust,
@@ -22,10 +28,15 @@ use crate::{
 };
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{fmt::Debug, marker::PhantomData, ptr};
-use fluentbase_erc20::common::sig_to_bytes;
-use fluentbase_erc20::consts::SIG_TOKEN2022;
+use fluentbase_sdk::ContextReader;
 use fluentbase_sdk::{debug_log_ext, Address, SharedAPI};
-use fluentbase_types::{PRECOMPILE_ERC20_RUNTIME, SVM_ELF_MAGIC_BYTES, U256};
+use fluentbase_types::syscall::SyscallResult;
+use fluentbase_types::{
+    IsAccountEmpty, IsAccountOwnable, IsColdAccess, ERC20_MAGIC_BYTES,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, SVM_ELF_MAGIC_BYTES, U256,
+};
+use fluentbase_universal_token::common::sig_to_bytes;
+use fluentbase_universal_token::consts::SIG_TOKEN2022;
 use solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE};
 use solana_instruction::{error::InstructionError, AccountMeta};
 use solana_program_entrypoint::SUCCESS;
@@ -656,46 +667,60 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
     let mut instruction: StableInstruction =
         S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
     let mut reroute_to_evm_input_prefix: Option<[u8; 4]> = None;
+    let mut is_call_or_create = true;
+    // TODO extract address from instruction.program_id and check if it's ownable by token_2022
+    //  so we can get rid of contract address in instruction.data
     if instruction.program_id == token_2022::lib::id() {
-        instruction.program_id = pubkey_from_evm_address::<true>(&PRECOMPILE_ERC20_RUNTIME);
+        let address = Address::from_slice(&instruction.data[..Address::len_bytes()]);
+        let metadata_size_result: SyscallResult<(
+            u32,
+            IsAccountOwnable,
+            IsColdAccess,
+            IsAccountEmpty,
+        )> = invoke_context.sdk.metadata_size(&address);
+        debug_log_ext!(
+            "address {} metadata_size_result {:x?}",
+            address,
+            metadata_size_result
+        );
+        instruction.program_id = pubkey_from_evm_address::<true>(&address);
+        instruction.data = instruction.data[Address::len_bytes()..].to_vec().into();
         // TODO 4test, temp solution for routing to spl-token2022
         let sig_token2022_bytes = sig_to_bytes(SIG_TOKEN2022);
-        // let mut data = Vec::with_capacity(sig_token2022_bytes.len() + instruction.data.len());
-        // data.extend_from_slice(&sig_token2022_bytes);
-        // data.extend_from_slice(&instruction.data);
-        // instruction.data = data.into();
+        debug_log_ext!("sig_token2022_bytes {:x?}", sig_token2022_bytes);
         reroute_to_evm_input_prefix = Some(sig_token2022_bytes);
+        let deser_instruction =
+            deserialize_svm_program_params_into_instruction(&instruction.data).expect("");
+        let instruction_type: PodTokenInstruction =
+            decode_instruction_type(&deser_instruction.data)
+                .expect("failed to decode instruction type");
+        match instruction_type {
+            PodTokenInstruction::InitializeMint | PodTokenInstruction::InitializeMint2 => {
+                is_call_or_create = false
+            }
+            _ => {}
+        }
     }
+    debug_log_ext!("is_delegate_call {}", is_call_or_create);
     if reroute_to_evm_input_prefix.is_some()
-        || !is_program_exists(invoke_context.sdk, &instruction.program_id)?
+        || !is_program_exists(invoke_context.sdk, &instruction.program_id, None)?
     {
+        debug_log_ext!("reroute_to_evm_input_prefix");
         let mut data: StableVec<u8>;
         let mut offset = 0;
         let address = evm_address_from_pubkey::<false>(&instruction.program_id)?;
+        debug_log_ext!("address {:x?}", address);
         let value;
         let fuel_limit;
         if let Some(prefix) = reroute_to_evm_input_prefix {
-            value = U256::ZERO;
+            value = U256::from(5) * U256::from(1_000_000_000);
             fuel_limit = None;
-            // data: prefix ([u8; 4]) + program_id ([u8; 32]) + accounts_meta_number (u8) + account_meta[] (AccountMeta) + data ([u8])
-            let mut data_tmp = Vec::with_capacity(
-                prefix.len()
-                    + PUBKEY_BYTES
-                    + 1
-                    + instruction.accounts.len() * size_of::<AccountMeta>()
-                    + instruction.data.len(),
-            );
-            data_tmp.extend_from_slice(&prefix);
-            data_tmp.extend_from_slice(&instruction.program_id.to_bytes());
-            data_tmp.push(instruction.accounts.len() as u8);
-            let tmp_am = AccountMeta::new(instruction.program_id, false);
-            let tmp_am_ser = solana_bincode::serialize(&tmp_am)?;
-            debug_log_ext!("tmp_am_ser.len={}", tmp_am_ser.len());
-            for am in instruction.accounts.iter() {
-                let am_ser = solana_bincode::serialize(am)?;
-                debug_log_ext!("am_ser.len={}", am_ser.len());
-                data_tmp.extend_from_slice(&am_ser);
-            }
+            // data: prefix ([u8; 4]) + instruction_data
+            let mut data_tmp = if is_call_or_create {
+                prefix.to_vec()
+            } else {
+                Default::default()
+            };
             data_tmp.extend_from_slice(&instruction.data);
             data = data_tmp.into();
             debug_log_ext!("data.len={}", data.len());
@@ -721,18 +746,38 @@ pub fn cpi_common<SDK: SharedAPI, S: SyscallInvokeSigned<SDK>>(
             offset += size_of::<u64>();
         }
         let input = &data[offset..];
-        debug_log_ext!(
-            "invoke_context.sdk.call({}, {}, {:x?}, {:x?})",
-            address,
-            value,
-            input,
-            fuel_limit
-        );
-        let call_result = invoke_context.sdk.call(address, value, input, fuel_limit);
-        if !call_result.status.is_ok() {
+        debug_log_ext!("input({}) {:x?}", input.len(), input);
+        // debug_log_ext!("instruction {:x?}", &instruction);
+        let action_result = if is_call_or_create {
+            debug_log_ext!(
+                "invoke_context.sdk.delegate_call({}, {:x?}, {:x?})",
+                address,
+                input,
+                fuel_limit
+            );
+            invoke_context.sdk.delegate_call(address, input, fuel_limit)
+        } else {
+            let contract_caller = invoke_context.sdk.context().contract_caller();
+            let salt_bytes = contract_caller.as_slice();
+            // TODO add nonce to salt_bytes to enable many contracts per caller
+            let salt = Some(U256::from_le_slice(salt_bytes));
+            debug_log_ext!(
+                "invoke_context.sdk.create({:x?}, {:x?}, {:x?})",
+                salt,
+                value,
+                input,
+            );
+            let mut init_code = ERC20_MAGIC_BYTES.to_vec();
+            // TODO get rid of slicing
+            init_code.extend_from_slice(&input);
+            let result = invoke_context.sdk.create(salt, &value, &init_code);
+            debug_log_ext!("create result (address) {:x?}", result);
+            result
+        };
+        if !action_result.status.is_ok() {
             return Ok(1);
         };
-        let return_data = call_result.data.to_vec();
+        let return_data = action_result.data.to_vec();
         invoke_context
             .transaction_context
             .set_return_data(instruction.program_id, return_data);

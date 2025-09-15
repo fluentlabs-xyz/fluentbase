@@ -17,10 +17,11 @@ readme = "README.md"
 [workspace.dependencies]
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", package = "revm-precompile", default-features = false }
-fluentbase-erc20 = { path = "../crates/erc20", default-features = false }
+fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 fluentbase-svm = { path = "../crates/svm", default-features = false }
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 hex-literal = { version = "0.4.1", default-features = false }
 alloy-sol-types = { version = "1.2.0", default-features = false, features = ["json"] }

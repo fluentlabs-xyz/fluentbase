@@ -1839,6 +1839,7 @@ dependencies = [
 name = "fluentbase-sdk-testing"
 version = "0.4.3-dev"
 dependencies = [
+ "bytes",
  "fluentbase-codec",
  "fluentbase-revm",
  "fluentbase-runtime",

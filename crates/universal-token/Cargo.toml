@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-erc20"
+name = "fluentbase-universal-token"
 version.workspace = true
 authors.workspace = true
 repository.workspace = true

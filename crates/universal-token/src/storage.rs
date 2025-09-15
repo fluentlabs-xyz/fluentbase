@@ -35,15 +35,11 @@ pub enum Feature {
 }
 
 #[derive(Debug, PartialEq, Encode, Decode)]
-pub struct InitialSettings {
-    features: Vec<Feature>,
-}
+pub struct InitialSettings {}
 
 impl InitialSettings {
     pub fn new() -> Self {
-        Self {
-            features: Vec::default(),
-        }
+        Self {}
     }
     pub fn try_decode_from_slice(
         value: &[u8],
@@ -55,27 +51,8 @@ impl InitialSettings {
     }
     pub fn try_encode_for_deploy(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
         let mut init_bytecode: Vec<u8> = ERC20_MAGIC_BYTES.to_vec();
-        init_bytecode.extend(serialize(self)?);
+        init_bytecode.extend(self.try_encode()?);
         Ok(init_bytecode)
-    }
-    pub fn add_feature(&mut self, feature: Feature) {
-        self.features.push(feature);
-    }
-    pub fn is_valid(&self) -> bool {
-        let mut has_initial_token_supply = false;
-        for f in &self.features {
-            match f {
-                Feature::InitialSupply { .. } => {
-                    has_initial_token_supply = true;
-                }
-                _ => {}
-            }
-        }
-
-        has_initial_token_supply
-    }
-    pub fn features(&self) -> &Vec<Feature> {
-        &self.features
     }
 }
 
@@ -355,11 +332,7 @@ impl Allowance {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        common::fixed_bytes_from_u256,
-        storage::{deserialize, serialize, Feature, InitialSettings, ADDRESS_LEN_BYTES},
-    };
-    use fluentbase_sdk::{address, Address, U256};
+    use fluentbase_sdk::U256;
 
     #[test]
     fn operations_over_u256() {
@@ -372,28 +345,5 @@ mod tests {
             value.as_le_slice_mut()[1] = 22;
         }
         assert_eq!(&value.as_le_slice()[0..3], &[3, 22, 0]);
-    }
-
-    #[test]
-    fn ser_deser() {
-        let settings = InitialSettings {
-            features: vec![
-                Feature::InitialSupply {
-                    amount: fixed_bytes_from_u256(&U256::from(2)),
-                    owner: address!("0003000200500000400000040000002000800020").into(),
-                    decimals: 12,
-                },
-                Feature::Mintable {
-                    minter: address!("0303000200500020400000040000002000809020").into(),
-                },
-            ],
-        };
-        let addr = address!("0003000200500000400000040000002000800020");
-        let addr_bytes: [u8; ADDRESS_LEN_BYTES] = addr.into();
-        let addr_restored: Address = addr_bytes.into();
-        assert_eq!(addr, addr_restored);
-        let settings_vec = serialize(&settings).unwrap();
-        let (settings_restored, _) = deserialize(&settings_vec).unwrap();
-        assert_eq!(settings, settings_restored);
     }
 }

@@ -68,7 +68,7 @@ pub const CALL_STACK_LIMIT: u32 = 1024;
 pub fn is_delegated_runtime_address(address: &Address) -> bool {
     address == &PRECOMPILE_EVM_RUNTIME
         || address == &PRECOMPILE_SVM_RUNTIME
-        || address == &PRECOMPILE_ERC20_RUNTIME
+        || address == &PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
         || address == &PRECOMPILE_WASM_RUNTIME
 }
 

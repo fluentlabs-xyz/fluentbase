@@ -1805,18 +1805,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-erc20"
-version = "0.1.0"
-dependencies = [
- "fluentbase-erc20",
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "fluentbase-svm",
- "solana-bincode",
- "solana-program-error",
-]
-
-[[package]]
 name = "fluentbase-contracts-evm"
 version = "0.1.0"
 dependencies = [
@@ -1944,14 +1932,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-erc20"
-version = "0.4.3-dev"
-dependencies = [
- "bincode 2.0.1",
- "fluentbase-sdk",
-]
-
-[[package]]
 name = "fluentbase-evm"
 version = "0.4.3-dev"
 dependencies = [
@@ -2047,6 +2027,7 @@ dependencies = [
 name = "fluentbase-sdk-testing"
 version = "0.4.3-dev"
 dependencies = [
+ "bytes",
  "fluentbase-codec",
  "fluentbase-revm",
  "fluentbase-runtime",
@@ -2068,9 +2049,9 @@ dependencies = [
  "bytemuck",
  "bytemuck_derive",
  "byteorder",
- "fluentbase-erc20",
  "fluentbase-sdk",
  "fluentbase-types",
+ "fluentbase-universal-token 0.4.3-dev",
  "hashbrown 0.15.4",
  "itertools 0.14.0",
  "lazy_static",
@@ -2126,6 +2107,27 @@ dependencies = [
  "revm-primitives",
  "rwasm",
  "strum_macros 0.27.1",
+]
+
+[[package]]
+name = "fluentbase-universal-token"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "fluentbase-sdk-testing",
+ "fluentbase-svm",
+ "fluentbase-universal-token 0.4.3-dev",
+ "solana-bincode",
+ "solana-program-error",
+ "solana-program-option",
+]
+
+[[package]]
+name = "fluentbase-universal-token"
+version = "0.4.3-dev"
+dependencies = [
+ "bincode 2.0.1",
+ "fluentbase-sdk",
 ]
 
 [[package]]

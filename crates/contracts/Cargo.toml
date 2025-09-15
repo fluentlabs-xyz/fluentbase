@@ -25,7 +25,7 @@ cargo_metadata = "0.19.1"
 # The following dependencies are not used directly but listed here to trigger execution of build.rs whenever they are changed
 fluentbase-sdk = { workspace = true }
 revm-precompile = { workspace = true }
-fluentbase-erc20 = { workspace = true }
+fluentbase-universal-token = { workspace = true }
 fluentbase-evm = { workspace = true }
 fluentbase-svm = { workspace = true }
 

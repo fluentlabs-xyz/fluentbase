@@ -1,19 +1,11 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_types::{
-    address,
-    compile_wasm_to_rwasm_with_config,
-    default_compilation_config,
-    keccak256,
-    Address,
-    Bytes,
-    B256,
-    DEVELOPER_PREVIEW_CHAIN_ID,
-    U256,
+    address, compile_wasm_to_rwasm_with_config, default_compilation_config, keccak256, Address,
+    Bytes, B256, DEVELOPER_PREVIEW_CHAIN_ID, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
-    env,
-    fs,
+    env, fs,
     path::PathBuf,
     time::Instant,
 };
@@ -25,7 +17,7 @@ const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
     (fluentbase_types::PRECOMPILE_BN256_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
     (fluentbase_types::PRECOMPILE_BN256_MUL, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
     (fluentbase_types::PRECOMPILE_BN256_PAIR, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
-    (fluentbase_types::PRECOMPILE_ERC20_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_ERC20),
+    (fluentbase_types::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, fluentbase_contracts::FLUENTBASE_UNIVERSAL_TOKEN),
     (fluentbase_types::PRECOMPILE_EIP2935, fluentbase_contracts::FLUENTBASE_CONTRACTS_EIP2935),
     (fluentbase_types::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_EVM),
     #[cfg(feature="enable-svm")]

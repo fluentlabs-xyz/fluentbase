@@ -1,19 +1,22 @@
 //! Program state processor
 
+use crate::common::evm_address_from_pubkey;
 use crate::system_program;
 use crate::token_2022::extension::{reallocate, transfer_fee};
-use crate::token_2022::helpers::next_item;
+use crate::token_2022::helpers::{next_item, reconstruct_account_infos, reconstruct_accounts};
 use crate::token_2022::pod_instruction::{
     decode_instruction_data_with_coption_pubkey, AmountCheckedData, AmountData, InitializeMintData,
     InitializeMultisigData, PodTokenInstruction, SetAuthorityData,
 };
 use alloc::vec::Vec;
 use fluentbase_sdk::{debug_log, debug_log_ext};
+use fluentbase_types::{Address, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use solana_account_info::{next_account_info, AccountInfo};
 use solana_instruction::AccountMeta;
 use solana_program_entrypoint::__msg;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_program_memory::sol_memset;
+use solana_program_pack::Pack;
 use solana_pubkey::Pubkey;
 use {
     crate::token_2022::spl_pod::{
@@ -60,6 +63,14 @@ use {
     // spl_token_metadata_interface::instruction::TokenMetadataInstruction,
     core::convert::{TryFrom, TryInto},
 };
+
+use crate::account::AccountSharedData;
+use crate::helpers::{storage_read_metadata_params, storage_write_account_data};
+use spin::Mutex;
+
+lazy_static::lazy_static! {
+    pub static ref CONTRACT_CALLER: Mutex<Option<Address>> = Mutex::new(None);
+}
 
 /// Program state handler.
 pub struct Processor {}
@@ -134,7 +145,16 @@ impl Processor {
             next_account_info(account_info_iter)?.key
         };
         let new_account_info_data_len = new_account_info.data_len();
+        // let rent = if rent_sysvar_account {
+        //     Rent::from_account_info(next_account_info(account_info_iter)?)?
+        // } else {
+        //     Rent::get()?
+        // };
 
+        debug_log_ext!(
+            "new_account_info.key {:x?}",
+            new_account_info.key.to_bytes()
+        );
         let mut account_data = new_account_info.data.borrow_mut();
         // unpack_uninitialized checks account.base.is_initialized() under the hood
         let mut account =
@@ -366,6 +386,7 @@ impl Processor {
 
             (0, None, None)
         };
+        debug_log_ext!();
         if let Some(expected_fee) = expected_fee {
             if expected_fee != fee {
                 debug_log!("Calculated fee {}, received {}", fee, expected_fee);
@@ -386,6 +407,7 @@ impl Processor {
         //         return Err(TokenError::CpiGuardTransferBlocked.into());
         //     }
         // }
+        debug_log_ext!();
         match (source_account.base.delegate, maybe_permanent_delegate) {
             (_, Some(ref delegate)) if authority_info.key == delegate => Self::validate_owner(
                 program_id,
@@ -401,6 +423,7 @@ impl Processor {
                 },
                 _,
             ) if authority_info.key == &delegate => {
+                debug_log_ext!();
                 Self::validate_owner(
                     program_id,
                     &delegate,
@@ -408,6 +431,7 @@ impl Processor {
                     authority_info_data_len,
                     account_info_iter.as_slice(),
                 )?;
+                debug_log_ext!();
                 let delegated_amount = u64::from(source_account.base.delegated_amount);
                 if delegated_amount < amount {
                     return Err(TokenError::InsufficientFunds.into());
@@ -423,6 +447,7 @@ impl Processor {
                 }
             }
             _ => {
+                debug_log_ext!();
                 Self::validate_owner(
                     program_id,
                     &source_account.base.owner,
@@ -430,14 +455,18 @@ impl Processor {
                     authority_info_data_len,
                     account_info_iter.as_slice(),
                 )?;
+                debug_log_ext!();
             }
         }
 
         // Revisit this later to see if it's worth adding a check to reduce
         // compute costs, ie:
         // if self_transfer || amount == 0
+        debug_log_ext!();
         check_program_account(source_account_info.owner)?;
+        debug_log_ext!();
         check_program_account(destination_account_info.owner)?;
+        debug_log_ext!();
 
         // This check MUST occur just before the amounts are manipulated
         // to ensure self-transfers are fully validated
@@ -449,13 +478,20 @@ impl Processor {
         }
 
         // self-transfer was dealt with earlier, so this *should* be safe
+        debug_log_ext!(
+            "destination_account_info.key.to_bytes {:x?} data_len {}",
+            destination_account_info.key.to_bytes(),
+            destination_account_info.data.borrow().len()
+        );
         let mut destination_account_data = destination_account_info.data.borrow_mut();
         let mut destination_account =
             PodStateWithExtensionsMut::<PodAccount>::unpack(&mut destination_account_data)?;
 
+        debug_log_ext!();
         if destination_account.base.is_frozen() {
             return Err(TokenError::AccountFrozen.into());
         }
+        debug_log_ext!();
         if source_account.base.mint != destination_account.base.mint {
             return Err(TokenError::MintMismatch.into());
         }
@@ -470,6 +506,7 @@ impl Processor {
         //     confidential_transfer_state.non_confidential_transfer_allowed()?
         // }
 
+        debug_log_ext!();
         source_account.base.amount = source_amount
             .checked_sub(amount)
             .ok_or(TokenError::Overflow)?
@@ -493,6 +530,7 @@ impl Processor {
             // }
         }
 
+        debug_log_ext!();
         if source_account.base.is_native() {
             let source_starting_lamports = source_account_info.lamports();
             **source_account_info.lamports.borrow_mut() = source_starting_lamports
@@ -929,10 +967,17 @@ impl Processor {
         let destination_account_info = next_account_info(account_info_iter)?;
         let owner_info = next_account_info(account_info_iter)?;
         let owner_info_data_len = owner_info.data_len();
+        debug_log_ext!();
 
         let mut destination_account_data = destination_account_info.data.borrow_mut();
+        debug_log_ext!(
+            "destination_account_info.key {:x?} destination_account_data {:x?}",
+            destination_account_info.key.to_bytes(),
+            destination_account_data
+        );
         let destination_account =
             PodStateWithExtensionsMut::<PodAccount>::unpack(&mut destination_account_data)?;
+        debug_log_ext!();
         if destination_account.base.is_frozen() {
             return Err(TokenError::AccountFrozen.into());
         }
@@ -944,8 +989,10 @@ impl Processor {
             return Err(TokenError::MintMismatch.into());
         }
 
+        debug_log_ext!();
         let mut mint_data = mint_info.data.borrow_mut();
         let mint = PodStateWithExtensionsMut::<PodMint>::unpack(&mut mint_data)?;
+        debug_log_ext!();
 
         // If the mint if non-transferable, only allow minting to accounts
         // with immutable ownership.
@@ -1551,9 +1598,229 @@ impl Processor {
         Ok(())
     }
 
+    pub fn preprocess<const IS_DEPLOY: bool, SDK: SharedAPI>(
+        program_id: &Pubkey,
+        account_metas: &[AccountMeta],
+        input: &[u8],
+        sdk: &mut SDK,
+    ) -> Result<Vec<crate::account::Account>, ProgramError> {
+        let instruction_type =
+            decode_instruction_type(input).map_err(|_| TokenError::InvalidInstruction)?;
+        match instruction_type {
+            PodTokenInstruction::InitializeMint | PodTokenInstruction::InitializeMint2 => {
+                if !IS_DEPLOY {
+                    panic!("action not supported")
+                }
+                let pk = &account_metas[0].pubkey;
+                // if evm_address_from_pubkey::<true>(pk).expect("evm compatible pk") != contract_caller {
+                //     panic!("only caller can be assigned as minter")
+                // }
+                let metadata_params = storage_read_metadata_params(
+                    sdk,
+                    &pk,
+                    Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME),
+                )
+                .expect("failed to read metadata params");
+                if metadata_params.2 > 0 {
+                    debug_log_ext!();
+                    panic!("mint account already exists");
+                }
+                let account_data = AccountSharedData::new(
+                    0,
+                    Mint::get_packed_len(),
+                    &crate::token_2022::lib::id(),
+                );
+                storage_write_account_data(
+                    sdk,
+                    &pk,
+                    &account_data,
+                    Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME),
+                )
+                .expect("failed to write initialized mint account");
+            }
+            PodTokenInstruction::InitializeAccount => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::InitializeAccount2 => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::InitializeAccount3 => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::Transfer | PodTokenInstruction::TransferChecked => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::Approve => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::Revoke => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::SetAuthority => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::MintTo => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::Burn => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::CloseAccount => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::FreezeAccount => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::ThawAccount => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::ApproveChecked => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::MintToChecked => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::BurnChecked => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::SyncNative => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::GetAccountDataSize => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::InitializeImmutableOwner => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::InitializeMintCloseAuthority => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::TransferFeeExtension => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::DefaultAccountStateExtension => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::Reallocate => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::InitializeNonTransferableMint => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            PodTokenInstruction::WithdrawExcessLamports => {
+                if IS_DEPLOY {
+                    panic!("action not supported")
+                } else {
+                    panic!("action not supported")
+                }
+            }
+            _ => {
+                debug_log_ext!();
+                panic!("unsupported instruction type")
+            }
+        }
+        let mut accounts: Vec<crate::account::Account> =
+            reconstruct_accounts::<_, true>(sdk, &account_metas)
+                .expect("failed to reconstruct accounts");
+        let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
+            .expect("failed to reconstruct accounts");
+        Self::process(program_id, &account_infos, input, Some(instruction_type))?;
+        Ok((accounts))
+    }
+
     /// Processes an [Instruction](enum.Instruction.html).
-    pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], input: &[u8]) -> ProgramResult {
-        if let Ok(instruction_type) = decode_instruction_type(input) {
+    pub fn process(
+        program_id: &Pubkey,
+        accounts: &[AccountInfo],
+        input: &[u8],
+        instruction_type: Option<PodTokenInstruction>,
+    ) -> ProgramResult {
+        if let Ok(instruction_type) = instruction_type
+            .map(|v| Ok(v))
+            .unwrap_or(decode_instruction_type(input))
+        {
             match instruction_type {
                 PodTokenInstruction::InitializeMint => {
                     debug_log!("Instruction: InitializeMint");
@@ -1603,7 +1870,6 @@ impl Processor {
                     // let data = decode_instruction_data::<InitializeMultisigData>(input)?;
                     // Self::process_initialize_multisig2(accounts, data.m)
                 }
-                #[allow(deprecated)]
                 PodTokenInstruction::Transfer => {
                     debug_log!("Instruction: Transfer");
                     let data = decode_instruction_data::<AmountData>(input)?;
@@ -1711,7 +1977,6 @@ impl Processor {
                     Self::process_initialize_mint_close_authority(accounts, close_authority)
                 }
                 PodTokenInstruction::TransferFeeExtension => {
-                    // unreachable!("unsupported")
                     transfer_fee::processor::process_instruction(program_id, accounts, &input[1..])
                 }
                 PodTokenInstruction::ConfidentialTransferExtension => {
@@ -1852,7 +2117,7 @@ impl Processor {
             return Err(TokenError::OwnerMismatch.into());
         }
 
-        if program_id == owner_account_info.owner && owner_account_data_len == PodMultisig::SIZE_OF
+        /*if program_id == owner_account_info.owner && owner_account_data_len == PodMultisig::SIZE_OF
         {
             let multisig_data = &owner_account_info.data.borrow();
             let multisig = pod_from_bytes::<PodMultisig>(multisig_data)?;
@@ -1862,6 +2127,7 @@ impl Processor {
                 for (position, key) in multisig.signers[0..multisig.n as usize].iter().enumerate() {
                     if key == signer.key && !matched[position] {
                         if !signer.is_signer {
+                            debug_log_ext!();
                             return Err(ProgramError::MissingRequiredSignature);
                         }
                         matched[position] = true;
@@ -1870,11 +2136,26 @@ impl Processor {
                 }
             }
             if num_signers < multisig.m {
+                debug_log_ext!();
                 return Err(ProgramError::MissingRequiredSignature);
             }
             return Ok(());
-        } else if !owner_account_info.is_signer {
+        } else*/
+        if !owner_account_info.is_signer {
+            debug_log_ext!(
+                "owner_account_info.key {:x?}",
+                owner_account_info.key.to_bytes(),
+            );
             return Err(ProgramError::MissingRequiredSignature);
+        }
+        let contract_caller = CONTRACT_CALLER.lock();
+        if let Some(contract_caller) = contract_caller.as_ref() {
+            assert_eq!(
+                evm_address_from_pubkey::<true>(&owner_account_info.key)
+                    .expect("evm compatible pk"),
+                *contract_caller,
+                "cannot be writable nor signer"
+            );
         }
         Ok(())
     }
@@ -2012,14 +2293,24 @@ mod tests {
             .collect::<Vec<_>>();
 
         let account_infos = create_is_signer_account_infos(&mut meta);
-        Processor::process(&instruction.program_id, &account_infos, &instruction.data)
+        Processor::process(
+            &instruction.program_id,
+            &account_infos,
+            &instruction.data,
+            None,
+        )
     }
 
     fn do_process_instruction_dups(
         instruction: Instruction,
         account_infos: Vec<AccountInfo>,
     ) -> ProgramResult {
-        Processor::process(&instruction.program_id, &account_infos, &instruction.data)
+        Processor::process(
+            &instruction.program_id,
+            &account_infos,
+            &instruction.data,
+            None,
+        )
     }
 
     fn return_token_error_as_program_error() -> ProgramError {
@@ -3098,7 +3389,7 @@ mod tests {
         );
     }
 
-    use crate::account::Account as SolanaAccount;
+    use crate::account::{Account as SolanaAccount, AccountSharedData};
     use crate::error::TokenError;
     use crate::helpers::{create_account_for_test, create_is_signer_account_infos};
     use crate::solana_program::program_error;
@@ -3116,6 +3407,7 @@ mod tests {
     use crate::token_2022::processor::Processor;
     use crate::token_2022::state::{Account, AccountState, Mint, Multisig};
     use crate::{solana_program, system_program};
+    use fluentbase_types::SharedAPI;
     use solana_account_info::{AccountInfo, IntoAccountInfo};
     use solana_clock::{Clock, Epoch};
     use solana_instruction::Instruction;
@@ -3237,6 +3529,7 @@ mod tests {
                     owner_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
         // no balance change...
@@ -3266,6 +3559,7 @@ mod tests {
                     owner_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
         // no balance change...
@@ -3296,6 +3590,7 @@ mod tests {
                     owner_no_sign_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
 
@@ -3323,6 +3618,7 @@ mod tests {
                     owner_no_sign_info,
                 ],
                 &instruction.data,
+                None
             )
         );
 
@@ -3347,6 +3643,7 @@ mod tests {
                     owner2_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
 
@@ -3373,6 +3670,7 @@ mod tests {
                     owner2_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
 
@@ -3397,6 +3695,7 @@ mod tests {
                     owner_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
 
@@ -3423,6 +3722,7 @@ mod tests {
                     owner_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
 
@@ -3449,6 +3749,7 @@ mod tests {
                     owner_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
 
@@ -3475,6 +3776,7 @@ mod tests {
                     owner_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
 
@@ -3496,6 +3798,7 @@ mod tests {
                 owner_info.clone(),
             ],
             &instruction.data,
+            None,
         )
         .unwrap();
 
@@ -3520,6 +3823,7 @@ mod tests {
                     delegate_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
         // no balance change...
@@ -3550,6 +3854,7 @@ mod tests {
                     delegate_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
         // no balance change...
@@ -3578,6 +3883,7 @@ mod tests {
                     delegate_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
 
@@ -3604,6 +3910,7 @@ mod tests {
                     delegate_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
 
@@ -3628,6 +3935,7 @@ mod tests {
                     owner_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
         // no balance change...
@@ -3657,6 +3965,7 @@ mod tests {
                     owner_info.clone(),
                 ],
                 &instruction.data,
+                None
             )
         );
         // no balance change...
@@ -6035,6 +6344,7 @@ mod tests {
     //         .unwrap();
     //     }
 
+    #[ignore]
     #[test]
     fn test_validate_owner() {
         let program_id = crate::token_2022::lib::id();

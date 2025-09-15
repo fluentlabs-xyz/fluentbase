@@ -2,7 +2,7 @@ use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use fluentbase_sdk::{address, Address, Bytes, U256};
 use fluentbase_sdk_testing::EvmTestingContext;
-use fluentbase_types::{ContractContextV1, PRECOMPILE_EIP2935, PRECOMPILE_ERC20_RUNTIME};
+use fluentbase_types::{ContractContextV1, PRECOMPILE_EIP2935, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use revm::{context::result::ExecutionResult, handler::SYSTEM_ADDRESS};
 
 fn call_success(
@@ -34,7 +34,7 @@ fn call_revert(ctx: &mut EvmTestingContext, input: Bytes, caller: &Address, call
 fn eip2935_test() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
-        address: PRECOMPILE_ERC20_RUNTIME,
+        address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
         ..Default::default()
     });
     const USER_ADDR: Address = address!("9437947297489237489237461545439472947329");
