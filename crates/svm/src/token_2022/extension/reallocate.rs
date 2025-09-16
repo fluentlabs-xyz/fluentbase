@@ -6,12 +6,14 @@ use crate::token_2022::processor::Processor;
 use crate::token_2022::state::Account;
 use alloc::vec::Vec;
 use fluentbase_sdk::{debug_log, debug_log_ext};
+use fluentbase_types::SharedAPI;
 use solana_account_info::{next_account_info, AccountInfo};
 use solana_program_error::ProgramResult;
 use solana_pubkey::Pubkey;
 
 /// Processes a [Reallocate](enum.TokenInstruction.html) instruction
-pub fn process_reallocate(
+pub fn process_reallocate<SDK: SharedAPI>(
+    sdk: &mut SDK,
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     new_extension_types: Vec<ExtensionType>,
@@ -27,7 +29,7 @@ pub fn process_reallocate(
     let (mut current_extension_types, native_token_amount) = {
         let token_account = token_account_info.data.borrow();
         let account = StateWithExtensions::<Account>::unpack(&token_account)?;
-        Processor::new().validate_owner(
+        Processor::new(sdk).validate_owner(
             program_id,
             &account.base.owner,
             authority_info,

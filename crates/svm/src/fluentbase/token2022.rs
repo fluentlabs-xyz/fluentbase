@@ -46,9 +46,7 @@ pub fn token2022_process<const IS_DEPLOY: bool, SDK: SharedAPI>(
     let mut account_metas = account_metas.to_vec();
     normalize_account_metas(&mut account_metas);
 
-    let mut processor = Processor::new();
-    let accounts = processor.process_extended::<IS_DEPLOY, _>(
-        sdk,
+    let accounts = Processor::new(sdk).process_extended::<IS_DEPLOY>(
         program_id,
         &account_metas,
         instruction_data,

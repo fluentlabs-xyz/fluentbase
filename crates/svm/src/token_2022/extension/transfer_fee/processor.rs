@@ -13,6 +13,7 @@ use crate::token_2022::pod::{PodAccount, PodMint};
 use crate::token_2022::processor::Processor;
 use core::convert::TryInto;
 use fluentbase_sdk::debug_log;
+use fluentbase_types::SharedAPI;
 use solana_account_info::{next_account_info, AccountInfo};
 use solana_clock::Clock;
 use solana_program_error::ProgramResult;
@@ -53,7 +54,8 @@ fn process_initialize_transfer_fee_config(
     Ok(())
 }
 
-fn process_set_transfer_fee(
+fn process_set_transfer_fee<SDK: SharedAPI>(
+    sdk: &mut SDK,
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     transfer_fee_basis_points: u16,
@@ -71,7 +73,7 @@ fn process_set_transfer_fee(
     let transfer_fee_config_authority =
         Option::<Pubkey>::from(extension.transfer_fee_config_authority)
             .ok_or(TokenError::NoAuthorityExists)?;
-    Processor::new().validate_owner(
+    Processor::new(sdk).validate_owner(
         program_id,
         &transfer_fee_config_authority,
         authority_info,
@@ -105,7 +107,8 @@ fn process_set_transfer_fee(
     Ok(())
 }
 
-fn process_withdraw_withheld_tokens_from_mint(
+fn process_withdraw_withheld_tokens_from_mint<SDK: SharedAPI>(
+    sdk: &mut SDK,
     program_id: &Pubkey,
     accounts: &[AccountInfo],
 ) -> ProgramResult {
@@ -124,7 +127,7 @@ fn process_withdraw_withheld_tokens_from_mint(
 
     let withdraw_withheld_authority = Option::<Pubkey>::from(extension.withdraw_withheld_authority)
         .ok_or(TokenError::NoAuthorityExists)?;
-    Processor::new().validate_owner(
+    Processor::new(sdk).validate_owner(
         program_id,
         &withdraw_withheld_authority,
         authority_info,
@@ -197,7 +200,8 @@ fn process_harvest_withheld_tokens_to_mint(accounts: &[AccountInfo]) -> ProgramR
     Ok(())
 }
 
-fn process_withdraw_withheld_tokens_from_accounts(
+fn process_withdraw_withheld_tokens_from_accounts<SDK: SharedAPI>(
+    sdk: &mut SDK,
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     num_token_accounts: u8,
@@ -221,7 +225,7 @@ fn process_withdraw_withheld_tokens_from_accounts(
 
     let withdraw_withheld_authority = Option::<Pubkey>::from(extension.withdraw_withheld_authority)
         .ok_or(TokenError::NoAuthorityExists)?;
-    Processor::new().validate_owner(
+    Processor::new(sdk).validate_owner(
         program_id,
         &withdraw_withheld_authority,
         authority_info,
@@ -268,7 +272,8 @@ fn process_withdraw_withheld_tokens_from_accounts(
     Ok(())
 }
 
-pub(crate) fn process_instruction(
+pub(crate) fn process_instruction<SDK: SharedAPI>(
+    sdk: &mut SDK,
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     input: &[u8],
@@ -295,7 +300,7 @@ pub(crate) fn process_instruction(
             fee,
         } => {
             debug_log!("TransferFeeInstruction: TransferCheckedWithFee");
-            Processor::new().process_transfer(
+            Processor::new(sdk).process_transfer::<true>(
                 program_id,
                 accounts,
                 amount,
@@ -305,11 +310,16 @@ pub(crate) fn process_instruction(
         }
         TransferFeeInstruction::WithdrawWithheldTokensFromMint => {
             debug_log!("TransferFeeInstruction: WithdrawWithheldTokensFromMint");
-            process_withdraw_withheld_tokens_from_mint(program_id, accounts)
+            process_withdraw_withheld_tokens_from_mint(sdk, program_id, accounts)
         }
         TransferFeeInstruction::WithdrawWithheldTokensFromAccounts { num_token_accounts } => {
             debug_log!("TransferFeeInstruction: WithdrawWithheldTokensFromAccounts");
-            process_withdraw_withheld_tokens_from_accounts(program_id, accounts, num_token_accounts)
+            process_withdraw_withheld_tokens_from_accounts(
+                sdk,
+                program_id,
+                accounts,
+                num_token_accounts,
+            )
         }
         TransferFeeInstruction::HarvestWithheldTokensToMint => {
             debug_log!("TransferFeeInstruction: HarvestWithheldTokensToMint");
@@ -320,7 +330,13 @@ pub(crate) fn process_instruction(
             maximum_fee,
         } => {
             debug_log!("TransferFeeInstruction: SetTransferFee");
-            process_set_transfer_fee(program_id, accounts, transfer_fee_basis_points, maximum_fee)
+            process_set_transfer_fee(
+                sdk,
+                program_id,
+                accounts,
+                transfer_fee_basis_points,
+                maximum_fee,
+            )
         }
     }
 }

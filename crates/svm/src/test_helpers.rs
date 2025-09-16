@@ -24,15 +24,6 @@ use solana_rbpf::{
 };
 use std::{fs::File, io::Read};
 
-// fn load_program_account_from_elf_file(loader_id: &Pubkey, path: &str) -> AccountSharedData {
-//     let mut file = File::open(path).expect("file open failed");
-//     let mut elf = Vec::new();
-//     file.read_to_end(&mut elf).unwrap();
-//     let mut program_account = AccountSharedData::new(0, 0, loader_id);
-//     program_account.set_data(elf);
-//     program_account.set_executable(true);
-//     program_account
-// }
 pub(crate) fn prepare_vars_for_tests<'a, SDK: SharedAPI>(
 ) -> (Config, Arc<BuiltinProgram<InvokeContext<'a, SDK>>>) {
     let config = rbpf_config_default(None);
