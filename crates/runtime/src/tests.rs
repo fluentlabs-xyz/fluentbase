@@ -64,13 +64,9 @@ fn test_wrong_indirect_type() {
     "#,
     );
     let ctx = RuntimeContext::default().with_state(STATE_DEPLOY);
-    let mut runtime = Runtime::new(new_bytecode_or_hash(rwasm_bytecode), ctx);
+    let mut runtime = Runtime::new(new_bytecode_or_hash(rwasm_bytecode), ctx.clone());
     let res = runtime.execute(None);
-    runtime
-        .strategy
-        .store
-        .borrow_mut()
-        .context_mut(|ctx| ctx.state = STATE_MAIN);
+    runtime.store.context_mut(|ctx| ctx.state = STATE_MAIN);
     assert_eq!(res.exit_code, 0);
     let res = runtime.execute(None);
     assert_eq!(res.exit_code, -2003);
