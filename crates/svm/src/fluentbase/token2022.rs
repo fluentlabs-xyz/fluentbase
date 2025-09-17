@@ -8,14 +8,13 @@ use crate::token_2022::helpers::{
 };
 use crate::token_2022::instruction::decode_instruction_type;
 use crate::token_2022::pod_instruction::PodTokenInstruction;
-use crate::token_2022::processor::{Processor, CONTRACT_CALLER};
+use crate::token_2022::processor::Processor;
 use crate::token_2022::state::Mint;
 use alloc::vec::Vec;
 use fluentbase_sdk::debug_log_ext;
 use fluentbase_sdk::ContextReader;
 use fluentbase_svm_common::common::evm_address_from_pubkey;
 use fluentbase_types::{SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
-use fluentbase_universal_token::events::emit_ut_transfer;
 use solana_instruction::AccountMeta;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_program_pack::Pack;
@@ -27,12 +26,9 @@ pub fn token2022_process<const IS_DEPLOY: bool, SDK: SharedAPI>(
     account_metas: &[AccountMeta],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    let token_program_id = token_2022::lib::id();
     let instruction_type: PodTokenInstruction =
         decode_instruction_type(instruction_data).expect("failed to decode instruction type");
     let contract_caller = sdk.context().contract_caller();
-
-    CONTRACT_CALLER.lock().insert(contract_caller);
 
     for account_meta in account_metas {
         if account_meta.is_signer {

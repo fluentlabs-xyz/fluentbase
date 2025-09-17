@@ -10,6 +10,7 @@ use crate::storage::{Allowance, Balance, Config, Settings};
 use crate::{evm_exit, return_error_if_false};
 use alloc::vec::Vec;
 use fluentbase_sdk::{Address, SharedAPI, U256};
+use solana_pubkey::Pubkey;
 
 pub fn get_symbol<SDK: SharedAPI>(sdk: &SDK) -> Vec<u8> {
     Settings::symbol(sdk)

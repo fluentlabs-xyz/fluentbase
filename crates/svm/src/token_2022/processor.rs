@@ -67,17 +67,15 @@ use {
 };
 
 use crate::account::AccountSharedData;
+use crate::error::SvmError;
 use crate::helpers::{storage_read_metadata_params, storage_write_account_data};
+use alloc::vec;
+use fluentbase_sdk::ContextReader;
 use fluentbase_svm_common::common::evm_address_from_pubkey;
 use fluentbase_universal_token::events::{
     emit_ut_approve, emit_ut_burn, emit_ut_close_account, emit_ut_freeze_account, emit_ut_mint_to,
     emit_ut_revoke, emit_ut_set_authority, emit_ut_transfer,
 };
-use spin::Mutex;
-
-lazy_static::lazy_static! {
-    pub static ref CONTRACT_CALLER: Mutex<Option<Address>> = Mutex::new(Default::default());
-}
 
 /// Program state handler.
 pub struct Processor<'a, SDK: SharedAPI> {
@@ -297,6 +295,25 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
     /// instruction.
     pub fn process_initialize_multisig2(accounts: &[AccountInfo], m: u8) -> ProgramResult {
         Self::_process_initialize_multisig(accounts, m, false)
+    }
+
+    pub fn balance_of(&mut self, pk: &Pubkey) -> Result<u64, ProgramError> {
+        let account_metas = vec![AccountMeta::new_readonly(pk.clone(), false)];
+        let mut accounts: Vec<crate::account::Account> = self
+            .reconstruct_accounts::<true>(&account_metas)
+            .expect("failed to reconstruct accounts");
+        let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
+            .expect("failed to reconstruct accounts");
+
+        let account_info_iter = &mut account_infos.iter();
+
+        let destination_account_info = next_account_info(account_info_iter)?;
+
+        let mut destination_account_data = destination_account_info.data.borrow_mut();
+        let mut destination_account =
+            PodStateWithExtensionsMut::<PodAccount>::unpack(&mut destination_account_data)?;
+
+        Ok(destination_account.base.amount.into())
     }
 
     /// Processes a [Transfer](enum.TokenInstruction.html) instruction.
@@ -1847,13 +1864,20 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
                 panic!("unsupported instruction type")
             }
         }
-        let mut accounts: Vec<crate::account::Account> =
-            reconstruct_accounts::<_, true>(self.sdk, &account_metas)
-                .expect("failed to reconstruct accounts");
+        let mut accounts: Vec<crate::account::Account> = self
+            .reconstruct_accounts::<true>(&account_metas)
+            .expect("failed to reconstruct accounts");
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
             .expect("failed to reconstruct accounts");
         self.process(program_id, &account_infos, input, Some(instruction_type))?;
         Ok((accounts))
+    }
+
+    fn reconstruct_accounts<const DEFAULT_NON_EXISTENT: bool>(
+        &self,
+        account_metas: &[AccountMeta],
+    ) -> Result<Vec<crate::account::Account>, SvmError> {
+        reconstruct_accounts::<_, true>(self.sdk, account_metas)
     }
 
     /// Processes an [Instruction](enum.Instruction.html).
@@ -2204,14 +2228,17 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         if !owner_account_info.is_signer {
             return Err(ProgramError::MissingRequiredSignature);
         }
-        let contract_caller = CONTRACT_CALLER.lock();
-        if let Some(contract_caller) = contract_caller.as_ref() {
+        #[cfg(not(test))]
+        {
+            let contract_caller = self.sdk.context().contract_caller();
+            // if let Some(contract_caller) = contract_caller.as_ref() {
             assert_eq!(
                 evm_address_from_pubkey::<true>(&owner_account_info.key)
                     .expect("evm compatible pk"),
-                *contract_caller,
+                contract_caller,
                 "cannot be writable nor signer"
             );
+            // }
         }
         Ok(())
     }

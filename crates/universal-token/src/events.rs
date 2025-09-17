@@ -1,6 +1,5 @@
 use crate::common::fixed_bytes_from_u256;
 use fluentbase_sdk::{derive::derive_keccak256, Address, SharedAPI, B256, U256};
-use fluentbase_svm_common::common::evm_balance_from_lamports;
 use solana_pubkey::Pubkey;
 
 pub const EVENT_TRANSFER: B256 = B256::new(derive_keccak256!("Transfer(address,address,uint256)"));
@@ -43,29 +42,27 @@ pub fn emit_approval_event(
     );
 }
 
-pub const EVENT_UT_TRANSFER: B256 =
-    B256::new(derive_keccak256!("Transfer(address,address,uint256)"));
-pub const EVENT_UT_TRANSFER_CHECKED: B256 = B256::new(derive_keccak256!(
-    "TransferChecked(address,address,uint256)"
-));
-pub const EVENT_UT_APPROVE: B256 = B256::new(derive_keccak256!("Approve(address,address,uint256)"));
+pub const EVENT_UT_TRANSFER: B256 = B256::new(derive_keccak256!("Transfer(pubkey,pubkey,u64)"));
+pub const EVENT_UT_TRANSFER_CHECKED: B256 =
+    B256::new(derive_keccak256!("TransferChecked(pubkey,pubkey,u64)"));
+pub const EVENT_UT_APPROVE: B256 = B256::new(derive_keccak256!("Approve(pubkey,pubkey,u64)"));
 pub const EVENT_UT_APPROVE_CHECKED: B256 =
-    B256::new(derive_keccak256!("ApproveChecked(address,address,uint256)"));
-pub const EVENT_UT_REVOKE: B256 = B256::new(derive_keccak256!("Revoke(address,address,uint256)"));
+    B256::new(derive_keccak256!("ApproveChecked(pubkey,pubkey,u64)"));
+pub const EVENT_UT_REVOKE: B256 = B256::new(derive_keccak256!("Revoke(pubkey)"));
 pub const EVENT_UT_SET_AUTHORITY: B256 =
-    B256::new(derive_keccak256!("SetAuthority(address,address,uint256)"));
-pub const EVENT_UT_MINT_TO: B256 = B256::new(derive_keccak256!("MintTo(address,address,uint256)"));
+    B256::new(derive_keccak256!("SetAuthority(pubkey,pubkey,u8)"));
+pub const EVENT_UT_MINT_TO: B256 = B256::new(derive_keccak256!("MintTo(pubkey,pubkey,u64)"));
 pub const EVENT_UT_MINT_TO_CHECKED: B256 =
-    B256::new(derive_keccak256!("MintToChecked(address,address,uint256)"));
-pub const EVENT_UT_BURN: B256 = B256::new(derive_keccak256!("Burn(address,address,uint256)"));
+    B256::new(derive_keccak256!("MintToChecked(pubkey,pubkey,u64)"));
+pub const EVENT_UT_BURN: B256 = B256::new(derive_keccak256!("Burn(pubkey,pubkey,u64)"));
 pub const EVENT_UT_BURN_CHECKED: B256 =
-    B256::new(derive_keccak256!("BurnChecked(address,address,uint256)"));
+    B256::new(derive_keccak256!("BurnChecked(pubkey,pubkey,u64)"));
 pub const EVENT_UT_CLOSE_ACCOUNT: B256 =
-    B256::new(derive_keccak256!("CloseAccount(address,address,uint256)"));
+    B256::new(derive_keccak256!("CloseAccount(pubkey,pubkey,pubkey)"));
 pub const EVENT_UT_FREEZE_ACCOUNT: B256 =
-    B256::new(derive_keccak256!("FreezeAccount(address,address,uint256)"));
+    B256::new(derive_keccak256!("FreezeAccount(pubkey,pubkey,pubkey)"));
 pub const EVENT_UT_THAW_ACCOUNT: B256 =
-    B256::new(derive_keccak256!("ThawAccount(address,address,uint256)"));
+    B256::new(derive_keccak256!("ThawAccount(pubkey,pubkey,pubkey)"));
 
 pub fn emit_ut_transfer<SDK: SharedAPI, const CHECKED: bool>(
     sdk: &mut SDK,
@@ -83,7 +80,7 @@ pub fn emit_ut_transfer<SDK: SharedAPI, const CHECKED: bool>(
             B256::left_padding_from(from.as_ref()),
             B256::left_padding_from(to.as_ref()),
         ],
-        &fixed_bytes_from_u256(&evm_balance_from_lamports(amount)),
+        &amount.to_le_bytes(),
     );
 }
 
@@ -103,7 +100,7 @@ pub fn emit_ut_approve<SDK: SharedAPI, const CHECKED: bool>(
             B256::left_padding_from(source.as_ref()),
             B256::left_padding_from(spender.as_ref()),
         ],
-        &fixed_bytes_from_u256(&evm_balance_from_lamports(amount)),
+        &amount.to_le_bytes(),
     );
 }
 
@@ -146,7 +143,7 @@ pub fn emit_ut_mint_to<SDK: SharedAPI, const CHECKED: bool>(
             B256::left_padding_from(mint_account.as_ref()),
             B256::left_padding_from(dst_account.as_ref()),
         ],
-        &fixed_bytes_from_u256(&evm_balance_from_lamports(amount)),
+        &amount.to_le_bytes(),
     );
 }
 
@@ -159,14 +156,14 @@ pub fn emit_ut_burn<SDK: SharedAPI, const CHECKED: bool>(
     sdk.emit_log(
         &[
             if CHECKED {
-                EVENT_UT_MINT_TO_CHECKED
+                EVENT_UT_BURN_CHECKED
             } else {
-                EVENT_UT_MINT_TO
+                EVENT_UT_BURN
             },
             B256::left_padding_from(src_account.as_ref()),
             B256::left_padding_from(mint_account.as_ref()),
         ],
-        &fixed_bytes_from_u256(&evm_balance_from_lamports(amount)),
+        &amount.to_le_bytes(),
     );
 }
 

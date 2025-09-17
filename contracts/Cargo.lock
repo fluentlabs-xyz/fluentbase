@@ -2126,6 +2126,7 @@ dependencies = [
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
  "fluentbase-svm",
+ "fluentbase-svm-common",
  "fluentbase-universal-token 0.4.5-dev",
  "solana-bincode",
  "solana-program-error",

@@ -27,14 +27,16 @@ use fluentbase_svm::token_2022::state::{Account, Mint};
 use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
-use fluentbase_universal_token::consts::SIG_TOKEN2022;
+use fluentbase_universal_token::consts::{
+    SIG_BALANCE, SIG_BALANCE_OF, SIG_TOKEN2022, SIG_TRANSFER_FROM,
+};
 use solana_program_option::COption;
 use solana_program_pack::Pack;
 
 const USER_ADDRESS1: Address = address!("1111111111111111111111111111111111111111");
 const USER_ADDRESS2: Address = address!("2222222222222222222222222222222222222222");
 const USER_ADDRESS3: Address = address!("3333333333333333333333333333333333333333");
-const USER_ADDRESS4: Address = address!("4444444444444444444444444444444444444444");
+const _USER_ADDRESS4: Address = address!("4444444444444444444444444444444444444444");
 const USER_ADDRESS5: Address = address!("5555555555555555555555555555555555555555");
 const USER_ADDRESS6: Address = address!("6666666666666666666666666666666666666666");
 pub fn modify_account_info(
@@ -69,11 +71,19 @@ pub fn modify_account_state(
         Account::pack(account1_state, &mut account_info.data.borrow_mut()).unwrap();
     });
 }
+pub fn build_input_raw(prefix: &[u8], instruction_data: &[u8]) -> Vec<u8> {
+    let input = prefix
+        .iter()
+        .chain(instruction_data.iter())
+        .copied()
+        .collect();
+    input
+}
 pub fn build_input(prefix: &[u8], instruction: &Instruction) -> Result<Vec<u8>, SvmError> {
-    let mut init_bytecode: Vec<u8> = prefix.to_vec();
-    serialize_svm_program_params_from_instruction(&mut init_bytecode, instruction)
+    let mut input: Vec<u8> = prefix.to_vec();
+    serialize_svm_program_params_from_instruction(&mut input, instruction)
         .expect("failed to serialize program params into init_bytecode");
-    Ok(init_bytecode)
+    Ok(input)
 }
 
 #[test]
@@ -402,6 +412,16 @@ fn test_transfer_dups() {
     let _output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
 
+    // balance_of (ABI version)
+    let mut input_data = vec![];
+    input_data.extend_from_slice(account2_key.as_ref());
+    let input = build_input_raw(&sig_to_bytes(SIG_BALANCE_OF), &input_data);
+    let output_data =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+    assert_eq!(output_data.len(), size_of::<u64>());
+    let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+    assert_eq!(balance, 1500);
+
     // destination-owner TransferChecked
     let instruction = transfer_checked(
         &program_id,
@@ -410,7 +430,7 @@ fn test_transfer_dups() {
         &account2_key,
         &account2_key,
         &[],
-        500,
+        100,
         2,
     )
     .unwrap();
@@ -418,4 +438,47 @@ fn test_transfer_dups() {
         build_input(&sig_to_bytes(SIG_TOKEN2022), &instruction).expect("failed to build input");
     let _output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+
+    // balance_of (ABI version)
+    let mut input_data = vec![];
+    input_data.extend_from_slice(account2_key.as_ref());
+    let input = build_input_raw(&sig_to_bytes(SIG_BALANCE_OF), &input_data);
+    let output_data =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+    assert_eq!(output_data.len(), size_of::<u64>());
+    let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+    assert_eq!(balance, 1600);
+
+    // transfer_from (ABI version)
+    let amount: u64 = 100;
+    let mut input_data = vec![];
+    // from, minter, to, authority, amount
+    input_data.extend_from_slice(account3_key.as_ref());
+    input_data.extend_from_slice(mint_key.as_ref());
+    input_data.extend_from_slice(account2_key.as_ref());
+    input_data.extend_from_slice(account2_key.as_ref());
+    input_data.extend_from_slice(&amount.to_be_bytes());
+    let input = build_input_raw(&sig_to_bytes(SIG_TRANSFER_FROM), &input_data);
+    let output_data =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+    assert_eq!(output_data.len(), 1);
+    assert_eq!(output_data[0], 1);
+
+    // balance_of (ABI version)
+    let mut input_data = vec![];
+    input_data.extend_from_slice(account2_key.as_ref());
+    let input = build_input_raw(&sig_to_bytes(SIG_BALANCE_OF), &input_data);
+    let output_data =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+    assert_eq!(output_data.len(), size_of::<u64>());
+    let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+    assert_eq!(balance, 1700);
+
+    // balance (ABI version)
+    let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
+    let output_data =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+    assert_eq!(output_data.len(), size_of::<u64>());
+    let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
+    assert_eq!(balance, 1700);
 }

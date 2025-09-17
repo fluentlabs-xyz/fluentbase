@@ -20,6 +20,7 @@ revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", br
 fluentbase-universal-token = { path = "../crates/universal-token", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 fluentbase-svm = { path = "../crates/svm", default-features = false }
+fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
