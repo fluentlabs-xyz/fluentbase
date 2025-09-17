@@ -1,5 +1,5 @@
 use crate::EvmTestingContextWithGenesis;
-use fluentbase_genesis::devnet_genesis_from_file;
+use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{
     address, bytes, compile_wasm_to_rwasm, Address, PRECOMPILE_EVM_RUNTIME, UPDATE_GENESIS_AUTH,
     UPDATE_GENESIS_PREFIX,
@@ -10,7 +10,6 @@ use hex_literal::hex;
 #[test]
 fn test_update_account_code_by_auth() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    let genesis = devnet_genesis_from_file();
 
     // deploy evm greeting contract
     const DEPLOYER_ADDRESS: Address = address!("0x7777777777777777777777777777777777777777");
@@ -25,9 +24,11 @@ fn test_update_account_code_by_auth() {
     );
     assert!(result.is_success());
 
-    let account = genesis.alloc.get(&PRECOMPILE_EVM_RUNTIME).unwrap();
+    let account = GENESIS_CONTRACTS_BY_ADDRESS
+        .get(&PRECOMPILE_EVM_RUNTIME)
+        .unwrap();
     let code = ctx.get_code(PRECOMPILE_EVM_RUNTIME).unwrap();
-    assert_eq!(&code.original_bytes(), account.code.as_ref().unwrap());
+    assert_eq!(&code.original_bytes(), account.rwasm_bytecode.as_ref());
 
     let rwasm_module = compile_wasm_to_rwasm(
         &wat::parse_str(

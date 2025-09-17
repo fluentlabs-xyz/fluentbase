@@ -1,12 +1,6 @@
 use crate::{runtime::Runtime, RuntimeContext};
 use fluentbase_types::{
-    compile_wasm_to_rwasm,
-    keccak256,
-    Address,
-    BytecodeOrHash,
-    Bytes,
-    STATE_DEPLOY,
-    STATE_MAIN,
+    compile_wasm_to_rwasm, keccak256, Address, BytecodeOrHash, Bytes, STATE_DEPLOY, STATE_MAIN,
 };
 use hex_literal::hex;
 use rwasm::Store;
@@ -42,8 +36,8 @@ fn test_simple() {
     "#,
     );
 
-    let ctx = RuntimeContext::new(new_bytecode_or_hash(rwasm_binary)).with_fuel_limit(10_000_000);
-    let execution_result = Runtime::run_with_context(ctx);
+    let ctx = RuntimeContext::default();
+    let execution_result = Runtime::run_with_context(new_bytecode_or_hash(rwasm_binary), ctx);
     assert_eq!(execution_result.exit_code, 0);
 }
 
@@ -69,14 +63,16 @@ fn test_wrong_indirect_type() {
     ))
     "#,
     );
-    let ctx = RuntimeContext::new(new_bytecode_or_hash(rwasm_bytecode))
-        .with_fuel_limit(1_000_000)
-        .with_state(STATE_DEPLOY);
-    let mut runtime = Runtime::new(ctx);
-    let res = runtime.call();
-    let ctx = runtime.store.context(|ctx| ctx.clone());
+    let ctx = RuntimeContext::default().with_state(STATE_DEPLOY);
+    let mut runtime = Runtime::new(new_bytecode_or_hash(rwasm_bytecode), ctx);
+    let res = runtime.execute(None);
+    runtime
+        .strategy
+        .store
+        .borrow_mut()
+        .context_mut(|ctx| ctx.state = STATE_MAIN);
     assert_eq!(res.exit_code, 0);
-    let res = Runtime::run_with_context(ctx.with_state(STATE_MAIN));
+    let res = runtime.execute(None);
     assert_eq!(res.exit_code, -2003);
 }
 
@@ -104,8 +100,8 @@ fn test_keccak256() {
   (export "main" (func $main)))
     "#,
     );
-    let ctx = RuntimeContext::new(new_bytecode_or_hash(rwasm_binary)).with_fuel_limit(1_000_000);
-    let execution_result = Runtime::run_with_context(ctx);
+    let ctx = RuntimeContext::default();
+    let execution_result = Runtime::run_with_context(new_bytecode_or_hash(rwasm_binary), ctx);
     println!("fuel consumed: {}", execution_result.fuel_consumed);
     assert_eq!(execution_result.exit_code, 0);
     assert_eq!(

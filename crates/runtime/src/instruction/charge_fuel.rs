@@ -14,7 +14,7 @@ impl SyscallChargeFuel {
         Ok(())
     }
 
-    pub fn fn_impl(ctx: &mut RuntimeContext, fuel_consumed: u64) {
-        ctx.try_consume_fuel(fuel_consumed).unwrap();
+    pub fn fn_impl(_ctx: &mut RuntimeContext, _fuel_consumed: u64) {
+        unimplemented!()
     }
 }

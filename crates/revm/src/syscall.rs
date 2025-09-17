@@ -29,6 +29,7 @@ use revm::{
 };
 use std::{boxed::Box, vec::Vec};
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn inspect_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -70,6 +71,7 @@ pub(crate) fn inspect_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     Ok(result)
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,

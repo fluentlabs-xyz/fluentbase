@@ -1,5 +1,6 @@
 use crate::{Bytes, ExitCode, B256};
 use alloc::string::String;
+use alloc::vec::Vec;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -12,10 +13,8 @@ pub struct SyscallInvocationParams {
 }
 
 impl SyscallInvocationParams {
-    pub fn encode(&self) -> Bytes {
-        bincode::encode_to_vec(self, bincode::config::legacy())
-            .unwrap()
-            .into()
+    pub fn encode(&self) -> Vec<u8> {
+        bincode::encode_to_vec(self, bincode::config::legacy()).unwrap()
     }
 
     pub fn decode(bytes: &[u8]) -> Option<Self> {

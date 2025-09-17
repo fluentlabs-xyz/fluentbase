@@ -2,11 +2,7 @@ use crate::{Runtime, RuntimeContext};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
     syscall::SyscallInvocationParams,
-    BytecodeOrHash,
-    Bytes,
-    ExitCode,
-    B256,
-    CALL_STACK_LIMIT,
+    BytecodeOrHash, Bytes, BytesOrRef, ExitCode, B256, CALL_STACK_LIMIT,
 };
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 use std::{
@@ -100,7 +96,7 @@ impl SyscallExec {
             Self::fn_impl(
                 ctx,
                 context.params.code_hash,
-                context.params.input.as_ref(),
+                BytesOrRef::Ref(context.params.input.as_ref()),
                 fuel_limit,
                 context.params.state,
             )
@@ -111,7 +107,7 @@ impl SyscallExec {
     pub fn fn_impl<I: Into<BytecodeOrHash>>(
         ctx: &mut RuntimeContext,
         code_hash: I,
-        input: &[u8],
+        input: BytesOrRef,
         fuel_limit: u64,
         state: u32,
     ) -> (u64, i64, i32) {
@@ -120,18 +116,15 @@ impl SyscallExec {
             return (fuel_limit, 0, ExitCode::CallDepthOverflow.into_i32());
         }
 
-        let bytecode_or_hash: BytecodeOrHash = code_hash.into();
-
         // create a new runtime instance with the context
-        let ctx2 = RuntimeContext::new(bytecode_or_hash)
-            .with_input(Bytes::copy_from_slice(input))
-            .with_fuel_limit(fuel_limit)
+        let ctx2 = RuntimeContext::default()
+            .with_input(input.into_bytes())
             .with_state(state)
             .with_call_depth(ctx.call_depth + 1)
             .with_disable_fuel(ctx.disable_fuel);
 
-        let mut runtime = Runtime::new(ctx2);
-        let mut execution_result = runtime.call();
+        let mut runtime = Runtime::new(code_hash.into(), ctx2);
+        let mut execution_result = runtime.execute(Some(fuel_limit));
 
         // if execution was interrupted,
         if execution_result.interrupted {

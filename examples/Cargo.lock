@@ -1760,8 +1760,9 @@ dependencies = [
  "fluentbase-sdk",
  "once_cell",
  "revm",
- "rwasm",
+ "rwasm 0.0.0 (git+https://github.com/fluentlabs-xyz/rwasm?branch=devel)",
  "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -1781,13 +1782,14 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "paste",
- "rwasm",
+ "rwasm 0.0.0",
  "secp256k1 0.30.0",
  "sha2 0.10.9",
  "solana-poseidon",
  "sp1-curves",
  "sp1-primitives",
  "tiny-keccak",
+ "tracing",
 ]
 
 [[package]]
@@ -1846,7 +1848,7 @@ dependencies = [
  "hashbrown 0.15.4",
  "hex",
  "revm",
- "rwasm",
+ "rwasm 0.0.0",
 ]
 
 [[package]]
@@ -1862,7 +1864,7 @@ dependencies = [
  "paste",
  "revm-precompile",
  "revm-primitives",
- "rwasm",
+ "rwasm 0.0.0",
  "strum_macros 0.27.1",
 ]
 
@@ -3758,6 +3760,26 @@ dependencies = [
  "quick-error",
  "tempfile",
  "wait-timeout",
+]
+
+[[package]]
+name = "rwasm"
+version = "0.0.0"
+dependencies = [
+ "bincode 2.0.1",
+ "bitvec",
+ "bytes",
+ "downcast-rs",
+ "hashbrown 0.15.4",
+ "libm",
+ "num-derive",
+ "num-traits",
+ "paste",
+ "smallvec",
+ "tiny-keccak",
+ "wasmi",
+ "wasmparser-nostd",
+ "wasmtime",
 ]
 
 [[package]]

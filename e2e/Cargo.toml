@@ -45,6 +45,9 @@ serde_json = { workspace = true }
 array-bytes = { workspace = true }
 ark-bn254 = { workspace = true }
 ark-serialize = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-chrome = "0.7"
 
 [features]
 default = [
@@ -74,17 +77,22 @@ debug-print = [
 ]
 wasmtime = [
     "fluentbase-runtime/wasmtime",
+    "fluentbase-runtime/cache-compiled-artifacts",
     "fluentbase-revm/wasmtime",
 ]
 
-[[bench]]
-name = "erc20"
-harness = false
+#[[bench]]
+#name = "erc20"
+#harness = false
+#
+#[[bench]]
+#name = "greeting"
+#harness = false
+#
+#[[bench]]
+#name = "multicall"
+#harness = false
 
 [[bench]]
-name = "greeting"
-harness = false
-
-[[bench]]
-name = "multicall"
+name = "nitro"
 harness = false

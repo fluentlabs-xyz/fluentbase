@@ -164,6 +164,15 @@ impl EvmTestingContext {
         account.info.code.as_ref()
     }
 
+    pub fn warmup_bytecode(&mut self, address: Address) {
+        let bytecode = self.get_code(address).unwrap();
+        let rwasm_bytecode = match bytecode {
+            Bytecode::Rwasm(rwasm_bytecode) => rwasm_bytecode.clone(),
+            _ => unreachable!(),
+        };
+        Runtime::warmup_strategy(address, rwasm_bytecode, bytecode.hash_slow());
+    }
+
     pub fn add_balance(&mut self, address: Address, value: U256) {
         let account = self.db.load_account(address).unwrap();
         account.info.balance += value;
@@ -383,14 +392,13 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
         rwasm_module: Bytes::from(rwasm_binary),
         code_hash,
     };
-    let ctx = RuntimeContext::new(bytecode_or_hash)
+    let ctx = RuntimeContext::default()
         .with_state(STATE_MAIN)
-        .with_fuel_limit(100_000_000_000)
         .with_input(context_input);
     // .with_tracer();
-    let mut runtime = Runtime::new(ctx);
+    let mut runtime = Runtime::new(bytecode_or_hash, ctx);
     runtime.store.context_mut(|ctx| ctx.clear_output());
-    let result = runtime.call();
+    let result = runtime.execute(Some(100_000_000_000));
     println!(
         "exit_code: {} ({})",
         result.exit_code,

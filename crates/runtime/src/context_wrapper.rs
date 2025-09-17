@@ -47,8 +47,8 @@ use crate::{
     RuntimeContext,
 };
 use fluentbase_types::{
-    bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, Bytes, ExitCode, UnwrapExitCode,
-    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, Bytes, BytesOrRef, ExitCode,
+    UnwrapExitCode, B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
@@ -286,7 +286,7 @@ impl NativeAPI for RuntimeContextWrapper {
         let (fuel_consumed, fuel_refunded, exit_code) = SyscallExec::fn_impl(
             &mut self.ctx.borrow_mut(),
             code_hash,
-            input,
+            BytesOrRef::Ref(input),
             fuel_limit.unwrap_or(u64::MAX),
             state,
         );
@@ -342,15 +342,6 @@ impl TestingContext {
     pub fn set_input<I: Into<Bytes>>(&mut self, input: I) {
         self.ctx
             .replace_with(|ctx| take(ctx).with_input(input.into()));
-    }
-
-    pub fn with_fuel(mut self, fuel: u64) -> Self {
-        self.set_fuel(fuel);
-        self
-    }
-
-    pub fn set_fuel(&mut self, fuel: u64) {
-        self.ctx.replace_with(|ctx| take(ctx).with_fuel_limit(fuel));
     }
 
     pub fn take_output(&self) -> Vec<u8> {
