@@ -8,6 +8,7 @@ use crate::{
         bls12_381_map_fp2_to_g2::SyscallBls12381MapFp2ToG2,
         bls12_381_map_fp_to_g1::SyscallBls12381MapFpToG1,
         bls12_381_pairing::SyscallBls12381Pairing,
+        bn256_mul::SyscallBn256Mul,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         curve25519_edwards_add::SyscallCurve25519EdwardsAdd,
@@ -27,6 +28,7 @@ use crate::{
         fp2_mul::SyscallFp2Mul,
         fp_op::SyscallFpOp,
         fuel::SyscallFuel,
+        g1_add::SyscallG1Add,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
         math_big_mod_exp::SyscallMathBigModExp,
@@ -186,15 +188,9 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallBls12381MapFp2ToG2::fn_impl(p, out)
     }
 
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
-        let result = bn254_add_common_impl!(
-            p,
-            q,
-            { SyscallWeierstrassDoubleAssign::<Bn254>::fn_impl(p) },
-            { SyscallWeierstrassAddAssign::<Bn254>::fn_impl(p, q) }
-        );
-        let min = core::cmp::min(p.len(), result.len());
-        p[..min].copy_from_slice(&result[..min]);
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
+        SyscallG1Add::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
+        Ok(*p)
     }
 
     fn bn254_double(p: &mut [u8; 64]) {
@@ -203,9 +199,9 @@ impl NativeAPI for RuntimeContextWrapper {
         p[..min].copy_from_slice(&result[..min]);
     }
 
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        let result = SyscallWeierstrassMulAssign::<Bn254>::fn_impl(p, q);
-        p.copy_from_slice(&result);
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
+        let result = SyscallBn256Mul::fn_impl(p, q).map_err(|_| ExitCode::PrecompileError)?;
+        Ok(result)
     }
 
     fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {

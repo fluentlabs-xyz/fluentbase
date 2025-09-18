@@ -317,14 +317,14 @@ impl SharedAPI for HostTestingContext {
     fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]) {
         RuntimeContextWrapper::bls12_381_map_fp2_to_g2(p, out);
     }
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
-        RuntimeContextWrapper::bn254_add(p, q);
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
+        RuntimeContextWrapper::bn254_add(p, q)
     }
     fn bn254_double(p: &mut [u8; 64]) {
         RuntimeContextWrapper::bn254_double(p);
     }
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
-        RuntimeContextWrapper::bn254_mul(p, q);
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
+        RuntimeContextWrapper::bn254_mul(p, q)
     }
     fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
         RuntimeContextWrapper::bn254_multi_pairing(elements)

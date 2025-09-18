@@ -6,8 +6,7 @@ use ark_bn254::Bn254;
 use ark_ec::pairing::Pairing;
 use ark_ff::{BigInteger, BigInteger256};
 use fluentbase_types::{
-    BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_DECOMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
     BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN,
 };
 use rwasm::{Store, TrapCode, TypedCaller, Value};

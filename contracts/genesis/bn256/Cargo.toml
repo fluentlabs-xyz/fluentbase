@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
+fluentbase-types = { workspace = true }
 revm-precompile = { workspace = true }
 
 [dev-dependencies]

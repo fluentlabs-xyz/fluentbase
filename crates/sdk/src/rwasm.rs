@@ -17,9 +17,9 @@ pub use crate::{
     B256,
 };
 use fluentbase_types::{
-    bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, ExitCode,
-    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
+    native_api::NativeAPI, BytecodeOrHash, ExitCode, BN254_G1_POINT_COMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 
 #[derive(Default)]
@@ -51,6 +51,7 @@ impl NativeAPI for RwasmContext {
             res
         }
     }
+
     #[inline(always)]
     fn blake3(data: &[u8]) -> B256 {
         unsafe {
@@ -158,28 +159,33 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) {
-        bn254_add_common_impl!(
-            p,
-            q,
-            {
-                unsafe {
-                    _bn254_double(p.as_ptr() as u32);
-                }
-            },
-            {
-                unsafe {
-                    _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
-                }
-            }
-        )
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
+        unsafe {
+            _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
+        }
+        Ok(*p)
+        // bn254_add_common_impl!(
+        //     p,
+        //     q,
+        //     {
+        //         unsafe {
+        //             _bn254_double(p.as_ptr() as u32);
+        //         }
+        //     },
+        //     {
+        //         unsafe {
+        //             _bn254_add(p.as_ptr() as u32, q.as_ptr() as u32);
+        //         }
+        //     }
+        // )
     }
 
     #[inline(always)]
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) {
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
         unsafe {
             _bn254_mul(p.as_ptr() as u32, q.as_ptr() as u32);
         }
+        Ok(*p)
     }
 
     #[inline(always)]

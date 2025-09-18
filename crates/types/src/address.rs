@@ -68,6 +68,10 @@ mod tests {
             todo!()
         }
 
+        // fn g1_add(_p: &mut [u8; 64], _q: &[u8; 64]) -> Result<(), ExitCode> {
+        //     Ok(())
+        // }
+
         fn secp256k1_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> Option<[u8; 65]> {
             todo!()
         }
@@ -146,7 +150,7 @@ mod tests {
             todo!()
         }
 
-        fn bn254_add(_p: &mut [u8; 64], _q: &[u8; 64]) {
+        fn bn254_add(_p: &mut [u8; 64], _q: &[u8; 64]) -> Result<[u8; 64], ExitCode> {
             todo!()
         }
 
@@ -154,7 +158,7 @@ mod tests {
             todo!()
         }
 
-        fn bn254_mul(_p: &mut [u8; 64], _q: &[u8; 32]) {
+        fn bn254_mul(_p: &mut [u8; 64], _q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
             todo!()
         }
 

@@ -8,6 +8,7 @@ pub mod bls12_381_helpers;
 pub mod bls12_381_map_fp2_to_g2;
 pub mod bls12_381_map_fp_to_g1;
 pub mod bls12_381_pairing;
+pub mod bn256_mul;
 pub mod charge_fuel;
 pub mod charge_fuel_manually;
 pub mod curve25519_edwards_add;
@@ -30,6 +31,7 @@ pub mod fp2_addsub;
 pub mod fp2_mul;
 pub mod fp_op;
 pub mod fuel;
+pub mod g1_add;
 pub mod input_size;
 pub mod keccak256;
 pub mod keccak256_permute;
@@ -66,6 +68,7 @@ use crate::{
         bls12_381_map_fp2_to_g2::SyscallBls12381MapFp2ToG2,
         bls12_381_map_fp_to_g1::SyscallBls12381MapFpToG1,
         bls12_381_pairing::SyscallBls12381Pairing,
+        bn256_mul::SyscallBn256Mul,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         curve25519_edwards_add::SyscallCurve25519EdwardsAdd,
@@ -88,6 +91,7 @@ use crate::{
         fp2_mul::SyscallFp2Mul,
         fp_op::SyscallFpOp,
         fuel::SyscallFuel,
+        g1_add::SyscallG1Add,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
         keccak256_permute::SyscallKeccak256Permute,
@@ -161,6 +165,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::SHA256 => SyscallSha256::fn_handler(caller, params, result),
         SysFuncIdx::BLAKE3 => SyscallBlake3::fn_handler(caller, params, result),
         SysFuncIdx::POSEIDON => SyscallPoseidon::fn_handler(caller, params, result),
+        //SysFuncIdx::BN256_MUL => SyscallBn256Mul::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_ADD => SyscallEdwardsAddAssign::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_DECOMPRESS => SyscallEdwardsDecompress::<Ed25519>::fn_handler(caller, params, result),
         SysFuncIdx::ED25519_EDWARDS_DECOMPRESS_VALIDATE => SyscallCurve25519EdwardsDecompressValidate::fn_handler(caller, params, result),
@@ -193,9 +198,9 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::BLS12381_PAIRING => SyscallBls12381Pairing::fn_handler(caller, params, result),
         SysFuncIdx::BLS12381_MAP_G1 => SyscallBls12381MapFpToG1::fn_handler(caller, params, result),
         SysFuncIdx::BLS12381_MAP_G2 => SyscallBls12381MapFp2ToG2::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_ADD => SyscallWeierstrassAddAssign::<Bn254>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_ADD => SyscallG1Add::fn_handler(caller, params, result),
         SysFuncIdx::BN254_DOUBLE => SyscallWeierstrassDoubleAssign::<Bn254>::fn_handler(caller, params, result),
-        SysFuncIdx::BN254_MUL => SyscallWeierstrassMulAssign::<Bn254Parameters>::fn_handler(caller, params, result),
+        SysFuncIdx::BN254_MUL => SyscallBn256Mul::fn_handler(caller, params, result),
         SysFuncIdx::BN254_MULTI_PAIRING => SyscallWeierstrassMultiPairingAssign::<Bn254Parameters>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_G1_COMPRESS => SyscallWeierstrassCompressDecompressAssign::<ConfigG1Compress>::fn_handler(caller, params, result),
         SysFuncIdx::BN254_G1_DECOMPRESS => SyscallWeierstrassCompressDecompressAssign::<ConfigG1Decompress>::fn_handler(caller, params, result),

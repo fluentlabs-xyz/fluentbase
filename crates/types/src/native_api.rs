@@ -33,14 +33,11 @@ pub trait NativeAPI {
     fn bls12_381_g2_add(p: &mut [u8; 192], q: &[u8; 192]);
     fn bls12_381_g2_msm(pairs: &[([u8; 192], [u8; 32])], out: &mut [u8; 192]);
     fn bls12_381_pairing(pairs: &[([u8; 48], [u8; 96])], out: &mut [u8; 288]);
-    // Map Fp (64-byte padded, BE) -> G1 (96-byte uncompressed, BE per limb)
     fn bls12_381_map_fp_to_g1(p: &[u8; 64], out: &mut [u8; 96]);
-    // Map Fp2 (128-byte padded: 64B c0 || 64B c1, BE with 16 zero pad per limb)
-    // -> G2 affine uncompressed (192 bytes: x0||x1||y0||y1, each 48B BE)
     fn bls12_381_map_fp2_to_g2(p: &[u8; 128], out: &mut [u8; 192]);
-    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]);
+    fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode>;
     fn bn254_double(p: &mut [u8; 64]);
-    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]);
+    fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode>;
     fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32];
     fn bn254_g1_compress(
         point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],

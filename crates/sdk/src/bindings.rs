@@ -186,6 +186,7 @@ extern "C" {
         pairs_count: u32,
         out_ptr: *mut u8,
     ) -> u32;
+    pub fn _g1_add(p_ptr: *mut u8, q_ptr: *const u8);
     pub fn _bn254_add(arg1: u32, arg2: u32);
     pub fn _bn254_double(p_ptr: u32);
     pub fn _bn254_mul(arg1: u32, arg2: u32);
