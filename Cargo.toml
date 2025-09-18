@@ -2,8 +2,7 @@
 members = [
     "crates/*",
     "e2e",
-    "bins/cli",
-    "contracts/genesis/*"
+    "bins/cli"
 ]
 exclude = [
     "examples/svm",

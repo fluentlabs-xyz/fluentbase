@@ -1282,16 +1282,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
-name = "coset"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4c8cc80f631f8307b887faca24dcc3abc427cd0367f6eb6188f6e8f5b7ad8fb"
-dependencies = [
- "ciborium",
- "ciborium-io",
-]
-
-[[package]]
 name = "cpp_demangle"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1721,21 +1711,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid",
- "der_derive",
- "flagset",
  "pem-rfc7468",
  "zeroize",
-]
-
-[[package]]
-name = "der_derive"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8034092389675178f570469e6c3b0465d3d30b4505c294a6550db47f3c17ad18"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.104",
 ]
 
 [[package]]
@@ -2123,12 +2100,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flagset"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
-
-[[package]]
 name = "fluentbase-build"
 version = "0.4.5-dev"
 dependencies = [
@@ -2211,192 +2182,6 @@ dependencies = [
  "revm-precompile",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "fluentbase-contracts-blake2f"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-bls12381"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-bn256"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "fluentbase-types",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-ecrecover"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-eip2935"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-erc20"
-version = "0.1.0"
-dependencies = [
- "fluentbase-erc20",
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-evm"
-version = "0.1.0"
-dependencies = [
- "fluentbase-evm",
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-fairblock"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
-]
-
-[[package]]
-name = "fluentbase-contracts-identity"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-kzg"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-modexp"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-multicall"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-nitro"
-version = "0.1.0"
-dependencies = [
- "ciborium",
- "coset",
- "der",
- "ecdsa",
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "hex",
- "p384",
- "x509-cert",
-]
-
-[[package]]
-name = "fluentbase-contracts-oauth2"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-ripemd160"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-secp256r1"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "hex",
- "p256",
- "revm-precompile",
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "fluentbase-contracts-sha256"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-svm"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "fluentbase-svm",
-]
-
-[[package]]
-name = "fluentbase-contracts-wasm"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-webauthn"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "hex",
- "p256",
- "revm-precompile",
- "sha2 0.10.9",
 ]
 
 [[package]]
@@ -4314,18 +4099,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c2c2010678b9332b563eaa38364915b585c1a94b5ca61e2c7541c087ddda5c"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "p384"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe42f1670a52a47d448f14b6a5c61dd78fce51856e68edaa38f7ae3a46b8d6b6"
-dependencies = [
- "ecdsa",
- "elliptic-curve",
- "primeorder",
- "sha2 0.10.9",
 ]
 
 [[package]]
@@ -8078,17 +7851,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
-]
-
-[[package]]
-name = "x509-cert"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
-dependencies = [
- "const-oid",
- "der",
- "spki",
 ]
 
 [[package]]

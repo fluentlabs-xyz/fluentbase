@@ -118,8 +118,6 @@ use crate::{
         },
         weierstrass_decompress::SyscallWeierstrassDecompressAssign,
         weierstrass_double::SyscallWeierstrassDoubleAssign,
-        weierstrass_mul::SyscallWeierstrassMulAssign,
-        weierstrass_multi_pairing::SyscallWeierstrassMultiPairingAssign,
         write::SyscallWrite,
     },
     RuntimeContext,
@@ -131,7 +129,7 @@ use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{
         bls12_381::{Bls12381, Bls12381BaseField},
-        bn254::{Bn254, Bn254BaseField, Bn254Parameters},
+        bn254::{Bn254, Bn254BaseField},
         secp256k1::Secp256k1,
     },
 };
