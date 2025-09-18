@@ -1,11 +1,12 @@
 use crate::contract::impl_derive_contract;
-use fluentbase_sdk_derive_core::{client, router, storage};
+use fluentbase_sdk_derive_core::{client, router, storage_legacy};
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::{quote, ToTokens};
 
 mod contract;
 mod utils;
+use fluentbase_sdk_derive_core::storage::process_storage_layout;
 use syn::parse_macro_input;
 
 /// Function ID attribute for overriding function selectors in smart contracts.
@@ -235,7 +236,7 @@ pub fn client(attr: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro]
 #[proc_macro_error]
 pub fn solidity_storage(input: TokenStream) -> TokenStream {
-    let storage = parse_macro_input!(input as storage::Storage);
+    let storage = parse_macro_input!(input as storage_legacy::Storage);
     storage.to_token_stream().into()
 }
 
@@ -413,4 +414,14 @@ pub fn derive_evm_error(token: TokenStream) -> TokenStream {
 pub fn contract_macro_derive(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     impl_derive_contract(&ast)
+}
+
+#[proc_macro_derive(Storage)]
+pub fn derive_storage_layout(input: TokenStream) -> TokenStream {
+    let input = syn::parse(input).unwrap();
+
+    match process_storage_layout(input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
 }

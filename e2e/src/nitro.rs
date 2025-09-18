@@ -6,8 +6,7 @@ use fluentbase_types::PRECOMPILE_NITRO_VERIFIER;
 use revm::primitives::hardfork::SpecId;
 use std::time::Instant;
 
-const ATTESTATION_EXAMPLE: &[u8] =
-    include_bytes!("../../contracts/genesis/nitro/attestation-example.hex");
+const ATTESTATION_EXAMPLE: &[u8] = include_bytes!("../../contracts/nitro/attestation-example.hex");
 
 #[test]
 fn test_nitro_verifier_precompiled_version() {

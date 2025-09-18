@@ -1,6 +1,6 @@
 [workspace]
-members = ["genesis/*", "examples/*"]
-exclude = ["examples/svm", "genesis/fairblock"]
+members = ["*"]
+exclude = [".cargo", "fairblock"]
 resolver = "2"
 
 [workspace.package]
@@ -21,6 +21,8 @@ revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", br
 fluentbase-erc20 = { path = "../crates/erc20", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 fluentbase-svm = { path = "../crates/svm", default-features = false }
+solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 hex-literal = { version = "0.4.1", default-features = false }
 alloy-sol-types = { version = "1.2.0", default-features = false, features = ["json"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
@@ -28,6 +30,17 @@ tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 fluentbase-sdk-testing = { path = "../crates/testing" }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 sha2 = { version = "0.10.9", default-features = false }
+
+[profile.release]
+panic = "abort"
+lto = "fat"
+opt-level = 3
+strip = true
+debug = false
+debug-assertions = false
+rpath = false
+codegen-units = 1
+overflow-checks = false
 
 [profile.dev]
 # Optimize WASM for size in debug to avoid massive binaries that slow compilation

@@ -4,6 +4,15 @@ use serde::{Deserialize, Serialize};
 pub const EXPECTED_RET_OK: u64 = 0;
 pub const EXPECTED_RET_ERR: u64 = 1;
 
+type Address = [u8; 20];
+type U256 = [u8; 32];
+type Pubkey = [u8; 32];
+type ECPoint32 = [u8; 32];
+type ECScalar32 = [u8; 32];
+type Hash32 = [u8; 32];
+type IsSigner = bool;
+type IsWritable = bool;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModifyAccount1 {
     pub account_idx: usize,
@@ -18,6 +27,43 @@ pub struct CreateAccountAndModifySomeData1 {
     pub seeds: Vec<Vec<u8>>,
     pub byte_n_to_set: u32,
     pub byte_n_value: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Transfer {
+    pub lamports: u64,
+    pub seeds: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Invoke {
+    pub pubkey: Pubkey,
+    pub data: Vec<u8>,
+    pub account_info_idxs: Vec<usize>,
+    pub account_metas: Vec<(Pubkey, IsSigner, IsWritable)>,
+    pub result_data_expected: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EvmCall {
+    pub address: Address,
+    pub value: U256,
+    pub gas_limit: u64,
+    pub data: Vec<u8>,
+    pub result_data_expected: Vec<u8>,
+}
+
+impl EvmCall {
+    pub fn params_to_vec(&self) -> Vec<u8> {
+        use core::mem::size_of;
+        let mut out = Vec::with_capacity(size_of::<U256>() + size_of::<u64>() + self.data.len());
+
+        out.extend_from_slice(&self.value);
+        out.extend_from_slice(&self.gas_limit.to_le_bytes());
+        out.extend_from_slice(&self.data);
+
+        out
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,13 +110,13 @@ pub struct Keccak256 {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Sha256 {
     pub data: Vec<Vec<u8>>,
-    pub expected_result: [u8; 32],
+    pub expected_result: Hash32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Blake3 {
     pub data: Vec<Vec<u8>>,
-    pub expected_result: [u8; 32],
+    pub expected_result: Hash32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,7 +124,7 @@ pub struct Poseidon {
     pub parameters: u64,
     pub endianness: u64,
     pub data: Vec<Vec<u8>>,
-    pub expected_result: [u8; 32],
+    pub expected_result: Hash32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -88,24 +134,24 @@ pub struct SetGetReturnData {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurvePointValidation {
     pub curve_id: u64,
-    pub point: [u8; 32],
+    pub point: ECPoint32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurveGroupOp {
     pub curve_id: u64,
     pub group_op: u64,
-    pub left_input: [u8; 32],
-    pub right_input: [u8; 32],
-    pub expected_point: [u8; 32],
+    pub left_input: ECPoint32,
+    pub right_input: ECPoint32,
+    pub expected_point: ECPoint32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurveMultiscalarMultiplication {
     pub curve_id: u64,
-    pub scalars: Vec<[u8; 32]>,
-    pub points: Vec<[u8; 32]>,
-    pub expected_point: [u8; 32],
+    pub scalars: Vec<ECScalar32>,
+    pub points: Vec<ECPoint32>,
+    pub expected_point: ECPoint32,
     pub expected_ret: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -121,24 +167,6 @@ pub struct AltBn128Compression {
     pub input: Vec<u8>,
     pub expected_result: Vec<u8>,
     pub expected_ret: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum TestCommand {
-    ModifyAccount1(ModifyAccount1),
-    CreateAccountAndModifySomeData1(CreateAccountAndModifySomeData1),
-    SolBigModExp(SolBigModExp),
-    SolSecp256k1Recover(SolSecp256k1Recover),
-    Keccak256(Keccak256),
-    Sha256(Sha256),
-    Blake3(Blake3),
-    Poseidon(Poseidon),
-    SetGetReturnData(SetGetReturnData),
-    CurvePointValidation(CurvePointValidation),
-    CurveGroupOp(CurveGroupOp),
-    CurveMultiscalarMultiplication(CurveMultiscalarMultiplication),
-    SyscallAltBn128(SyscallAltBn128),
-    AltBn128Compression(AltBn128Compression),
 }
 
 macro_rules! impl_from {
@@ -158,17 +186,36 @@ macro_rules! impl_from {
     };
 }
 
-impl_from!(ModifyAccount1);
-impl_from!(CreateAccountAndModifySomeData1);
-impl_from!(SolBigModExp);
-impl_from!(SolSecp256k1Recover);
-impl_from!(Keccak256);
-impl_from!(Sha256);
-impl_from!(Blake3);
-impl_from!(Poseidon);
-impl_from!(SetGetReturnData);
-impl_from!(CurvePointValidation);
-impl_from!(CurveGroupOp);
-impl_from!(CurveMultiscalarMultiplication);
-impl_from!(SyscallAltBn128);
-impl_from!(AltBn128Compression);
+macro_rules! impl_structs {
+    ($($typ:ident),+ $(,)?) => {
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        pub enum TestCommand {
+            $(
+                $typ($typ),
+            )+
+        }
+        $(
+            impl_from!($typ);
+        )+
+    };
+}
+
+impl_structs!(
+    ModifyAccount1,
+    CreateAccountAndModifySomeData1,
+    Transfer,
+    Invoke,
+    EvmCall,
+    SolBigModExp,
+    SolSecp256k1Recover,
+    Keccak256,
+    Sha256,
+    Blake3,
+    Poseidon,
+    SetGetReturnData,
+    CurvePointValidation,
+    CurveGroupOp,
+    CurveMultiscalarMultiplication,
+    SyscallAltBn128,
+    AltBn128Compression,
+);

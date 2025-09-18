@@ -4,13 +4,13 @@ use crate::{
     common::is_evm_pubkey,
     error::{RuntimeError, SvmError},
     helpers::{storage_read_account_data, storage_write_account_data},
-    native_loader, select_api,
+    native_loader,
     solana_program::{loader_v4, message::legacy, sysvar},
     system_program,
 };
 use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
-use fluentbase_sdk::{debug_log_ext, MetadataAPI, SharedAPI, U256};
+use fluentbase_sdk::{MetadataAPI, SharedAPI, U256};
 use fluentbase_types::{syscall::SyscallResult, ExitCode, MetadataStorageAPI};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
@@ -51,12 +51,6 @@ impl BatchMessage {
 
 lazy_static! {
     pub static ref SYSTEM_PROGRAMS_KEYS: Vec<Pubkey> = {
-        // let mut items = HashSet::new();
-        // items.insert(system_program::id());
-        // items.insert(native_loader::id());
-        // items.insert(loader_v4::id());
-        // items.insert(sysvar::clock::id());
-        // items
         use alloc::vec;
         vec![
             system_program::id(),
@@ -67,63 +61,48 @@ lazy_static! {
     };
 }
 
-pub(crate) fn extract_account_data_or_default<API: MetadataAPI + MetadataStorageAPI>(
-    api: &API,
-    account_key: &Pubkey,
-) -> Result<AccountSharedData, SvmError> {
-    Ok(storage_read_account_data(api, account_key)
-        .unwrap_or_else(|_e| AccountSharedData::new(0, 0, &system_program::id())))
+pub(crate) fn flush_account<const SKIP_SYS_ACCS: bool, SDK: SharedAPI>(
+    sdk: &mut SDK,
+    pk: &Pubkey,
+    account_data: &AccountSharedData,
+) -> Result<bool, SvmError> {
+    if SKIP_SYS_ACCS && SYSTEM_PROGRAMS_KEYS.contains(&pk) {
+        return Ok(false);
+    }
+    if !is_evm_pubkey(&pk) {
+        return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
+    }
+    storage_write_account_data(sdk, pk, account_data)?;
+    Ok(true)
 }
 
 /// Stores provided accounts using specified storage api or alt api
 /// Filters out system accounts if set
 /// Returns error if some accounts are not evm compatible
-pub(crate) fn flush_accounts<
-    const SKIP_SYS_ACCS: bool,
-    SDK: SharedAPI,
-    API: MetadataAPI + MetadataStorageAPI,
->(
+pub(crate) fn flush_accounts<const SKIP_SYS_ACCS: bool, SDK: SharedAPI>(
     sdk: &mut SDK,
-    alt_api: &mut Option<&mut API>,
     accounts: &HashMap<Pubkey, AccountSharedData>,
 ) -> Result<u64, SvmError> {
     let mut accounts_flushed = 0;
-    select_api!(alt_api, sdk, |storage: &mut _| -> Result<(), SvmError> {
-        for (pk, account_data) in accounts {
-            if SKIP_SYS_ACCS && SYSTEM_PROGRAMS_KEYS.contains(&pk) {
-                continue;
-            }
-            // if !is_evm_pubkey(&pk) {
-            //     return Err(SvmError::RuntimeError(RuntimeError::InvalidPrefix));
-            // }
-            storage_write_account_data(storage, pk, account_data)?;
-            accounts_flushed += 1;
-        }
-        Ok(())
-    })?;
-    debug_log_ext!("accounts flushed {}", accounts_flushed);
+    for (pk, account_data) in accounts {
+        flush_account::<SKIP_SYS_ACCS, _>(sdk, pk, account_data)?;
+        accounts_flushed += 1;
+    }
     Ok(accounts_flushed)
 }
 
-pub fn process_svm_result<T>(result: Result<T, SvmError>) -> Result<T, String> {
-    match result {
-        Ok(v) => Ok(v),
-        Err(ref err) => Err(alloc::format!("{}", &err)),
-    }
+pub struct GlobalBalance<API: MetadataStorageAPI> {
+    _phantom_data: PhantomData<API>,
 }
 
-pub struct GlobalBalance<SDK: SharedAPI> {
-    _phantom_data: PhantomData<SDK>,
-}
-
-impl<SDK: SharedAPI> GlobalBalance<SDK> {
+impl<API: MetadataStorageAPI> GlobalBalance<API> {
     pub fn new() -> Self {
         Self {
             _phantom_data: Default::default(),
         }
     }
 
-    pub fn get(sdk: &SDK, pk: &Pubkey) -> u64 {
+    pub fn get(sdk: &API, pk: &Pubkey) -> u64 {
         let slot = pubkey_to_u256(pk);
         let balance_current = sdk
             .metadata_storage_read(&slot)
@@ -133,7 +112,7 @@ impl<SDK: SharedAPI> GlobalBalance<SDK> {
         lamports_from_evm_balance(balance_current)
     }
     pub fn change<const ADD_OR_SUB: bool>(
-        sdk: &mut SDK,
+        sdk: &mut API,
         pk: &Pubkey,
         lamports_change: u64,
     ) -> Result<(), SvmError> {
@@ -159,7 +138,7 @@ impl<SDK: SharedAPI> GlobalBalance<SDK> {
         Ok(())
     }
     pub fn transfer(
-        sdk: &mut SDK,
+        sdk: &mut API,
         pk_from: &Pubkey,
         pk_to: &Pubkey,
         lamports_change: u64,
@@ -168,11 +147,11 @@ impl<SDK: SharedAPI> GlobalBalance<SDK> {
         let slot_to = pubkey_to_u256(pk_to);
         let balance_from_current = sdk
             .metadata_storage_read(&slot_from)
-            .expect("failed to read current from balance")
+            .expect("failed to read current 'from' balance")
             .data;
         let balance_to_current = sdk
             .metadata_storage_read(&slot_to)
-            .expect("failed to read current to balance")
+            .expect("failed to read current 'to' balance")
             .data;
         let balance_change = evm_balance_from_lamports(lamports_change);
 
@@ -183,9 +162,9 @@ impl<SDK: SharedAPI> GlobalBalance<SDK> {
             return Err(ExitCode::IntegerOverflow.into());
         };
         sdk.metadata_storage_write(&slot_from, balance_from_new)
-            .expect("failed to write updated balance");
+            .expect("failed to write updated 'from' balance");
         sdk.metadata_storage_write(&slot_to, balance_to_new)
-            .expect("failed to write updated balance");
+            .expect("failed to write updated 'to' balance");
 
         Ok(())
     }

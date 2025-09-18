@@ -1,0 +1,13 @@
+---
+source: crates/build/tests/interface_generation.rs
+expression: interface
+---
+// SPDX-License-Identifier: MIT
+// Auto-generated from Rust source
+pragma solidity ^0.8.0;
+
+interface IAllTypesContract {
+    function transfer(address to, uint256 amount) external returns (bool _0);
+    function balanceOf(address account) external returns (uint256 _0);
+    function totalSupply() external returns (uint256 _0);
+}

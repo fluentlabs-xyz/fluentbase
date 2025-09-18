@@ -1,15 +1,21 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
 use core::str::from_utf8;
-use fluentbase_sdk::{address, bytes, calc_create_address, Address, U256};
+use fluentbase_sdk::{address, bytes, calc_create_address, constructor, Address, U256};
 use fluentbase_sdk_testing::{
-    try_print_utf8_error, EvmTestingContext, HostTestingContextNativeAPI, TxBuilder,
+    try_print_utf8_error,
+    EvmTestingContext,
+    HostTestingContextNativeAPI,
+    TxBuilder,
 };
 use fluentbase_types::{PRECOMPILE_BLAKE2F, PRECOMPILE_SECP256K1_RECOVER};
 use hex_literal::hex;
 use revm::{
-    bytecode::opcode, context::result::ExecutionResult::Revert, primitives::hardfork::SpecId,
+    bytecode::opcode,
+    context::result::ExecutionResult::Revert,
+    primitives::hardfork::SpecId,
 };
+use fluentbase_sdk::constructor::encode_constructor_params;
 
 #[test]
 fn test_evm_greeting() {
@@ -307,7 +313,21 @@ fn test_evm_balance() {
 fn test_wasm_erc20() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     const OWNER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, crate::EXAMPLE_ERC20.into());
+    let bytecode: &[u8] = crate::EXAMPLE_ERC20.into();
+
+    // constructor params for ERC20:
+    //     name: "TestToken"
+    //     symbol: "TST"
+    //     initial_supply: 1_000_000
+    // use examples/erc20/src/lib.rs print_constructor_params_hex() to regenerate
+    let constructor_params = hex!("000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000f4240000000000000000000000000000000000000000000000000000000000000000954657374546f6b656e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000035453540000000000000000000000000000000000000000000000000000000000");
+
+    let encoded_constructor_params = encode_constructor_params(&constructor_params);
+    let mut input: Vec<u8> = Vec::new();
+    input.extend(bytecode);
+    input.extend(encoded_constructor_params);
+
+    let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, input.into());
     let transfer_coin = |ctx: &mut EvmTestingContext| {
         let result = ctx.call_evm_tx(
             OWNER_ADDRESS,

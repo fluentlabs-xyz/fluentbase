@@ -1,6 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall, SolValue};
-use fluentbase_sdk::{Address, Bytes};
+use fluentbase_sdk::{hex, Address, Bytes};
+use fluentbase_sdk::constructor::encode_constructor_params;
 use fluentbase_sdk_testing::EvmTestingContext;
 
 /// Contract `ContractDeployer.sol` is a smart contract that deploys
@@ -65,5 +66,14 @@ fn test_evm_create_wasm_contract() {
 #[test]
 fn test_evm_create_large_wasm_contract() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    deploy_via_deployer(&mut ctx, crate::EXAMPLE_ERC20.into());
+
+    // Add constructor parameters for ERC20
+    let bytecode: &[u8] = crate::EXAMPLE_ERC20.into();
+    let constructor_params = hex!("000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000f4240000000000000000000000000000000000000000000000000000000000000000954657374546f6b656e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000035453540000000000000000000000000000000000000000000000000000000000");
+    let encoded_constructor_params = encode_constructor_params(&constructor_params);
+    let mut input: Vec<u8> = Vec::new();
+    input.extend(bytecode);
+    input.extend(encoded_constructor_params);
+
+    deploy_via_deployer(&mut ctx, input.into());
 }

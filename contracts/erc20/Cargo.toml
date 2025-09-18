@@ -1,0 +1,25 @@
+[package]
+name = "fluentbase-contracts-erc20"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-sdk = { workspace = true, features = [
+    "fast-panic",
+    #    "debug-print",
+] }
+fluentbase-erc20 = { workspace = true }
+fluentbase-svm = { workspace = true }
+solana-program-error = { workspace = true }
+solana-bincode = { workspace = true }
+
+[dev-dependencies]
+fluentbase-sdk-testing = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std"]

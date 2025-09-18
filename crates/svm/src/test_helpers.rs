@@ -3,10 +3,7 @@ use crate::{
     builtins::register_builtins,
     common::rbpf_config_default,
     context::{
-        BuiltinFunctionWithContext,
-        IndexOfAccount,
-        InstructionAccount,
-        InvokeContext,
+        BuiltinFunctionWithContext, IndexOfAccount, InstructionAccount, InvokeContext,
         TransactionAccount,
     },
     helpers::create_account_shared_data_for_test,
@@ -53,7 +50,7 @@ pub(crate) fn mock_process_instruction<
     F: FnMut(&mut InvokeContext<SDK>),
     G: FnMut(&mut InvokeContext<SDK>),
 >(
-    sdk: &'a SDK,
+    sdk: &'a mut SDK,
     loader_id: &Pubkey,
     mut program_indices: Vec<IndexOfAccount>,
     instruction_data: &[u8],

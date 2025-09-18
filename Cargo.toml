@@ -6,14 +6,14 @@ members = [
     "contracts/genesis/*"
 ]
 exclude = [
-    "contracts/examples/svm",
+    "examples/svm",
     # exclude revm e2e testing suite to let it be a separate crate
     "evm-e2e"
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
@@ -64,11 +64,10 @@ solana-stable-layout = { git = "https://github.com/fluentlabs-xyz/agave", branch
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-precompile-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-poseidon = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-secp256k1-recover = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-native-token = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-solana-atomic-u64 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-curve25519 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-bn254 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
+solana-program-pack = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 #solana-pubkey = { path = "../agave/sdk/pubkey", default-features = false }
 #solana-instruction = { path = "../agave/sdk/instruction", default-features = false }
 #solana-account-info = { path = "../agave/sdk/account-info", default-features = false }
@@ -89,12 +88,11 @@ solana-bn254 = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat
 #solana-stable-layout = { path = "../agave/sdk/stable-layout", default-features = false }
 #solana-bincode = { path = "../agave/sdk/bincode", default-features = false }
 #solana-precompile-error = { path = "../agave/sdk/precompile-error", default-features = false }
-#solana-native-token = { path = "../agave/sdk/native-token", default-features = false }
-#solana-atomic-u64 = { path = "../agave/sdk/atomic-u64", default-features = false }
 #solana-poseidon = { path = "../agave/poseidon", default-features = false }
-#solana-secp256k1-recover = { path = "../agave/curves/secp256k1-recover", default-features = false }
 #solana-curve25519 = { path = "../agave/curves/curve25519", default-features = false }
 #solana-bn254 = { path = "../agave/curves/bn254", default-features = false }
+#solana-program-option = { path = "../agave/sdk/program-option", default-features = false }
+#solana-program-pack = { path = "../agave/sdk/program-pack", default-features = false }
 
 solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/svm", default-features = false }
 #solana_rbpf = { path = "../rbpf", default-features = false }
@@ -113,6 +111,11 @@ alloy-genesis = { version = "1.0.11", default-features = false }
 blake3 = { version = "1.5.4", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
 itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
+bytemuck = { version = "1.10.1", default-features = false, features = ["derive"] }
+bytemuck_derive = { version = "1.8", default-features = false }
+num_enum = { version = "0.7.3", default-features = false, features = [] }
+arrayref = { version = "0.3.9", default-features = false, features = [] }
+proptest = { version = "1.5.0" }
 
 num-derive = { version = "0.4" }
 num-traits = { version = "0.2", features = ["i128"], default-features = false }
@@ -121,6 +124,7 @@ hashbrown = { version = "0.15.0", default-features = false, features = ["default
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false }
 serde_bytes = { version = "0.11.15", default-features = false }
+serde_with = { version = "3.11.0", default-features = false }
 spin = { version = "0.10.0", default-features = false }
 static_assertions = { version = "1.1.0", default-features = false }
 memoffset = { version = "0.9.1", default-features = false }
@@ -189,9 +193,9 @@ codegen-units = 1
 
 [profile.release]
 panic = "abort"
-lto = true
+lto = "fat"
 opt-level = 3
-strip = false
+strip = true
 debug = false
 debug-assertions = false
 rpath = false

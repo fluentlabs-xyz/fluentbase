@@ -19,6 +19,7 @@ use hex_literal::hex;
 use revm::bytecode::Bytecode;
 use rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
+use fluentbase_sdk::constructor::encode_constructor_params;
 
 #[test]
 fn test_wasm_greeting() {
@@ -147,7 +148,22 @@ fn test_wasm_panic() {
 fn test_wasm_erc20() {
     let mut ctx = EvmTestingContext::default().with_minimal_genesis();
     const OWNER_ADDRESS: Address = Address::ZERO;
-    let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
+
+    // Add constructor parameters
+    let bytecode: &[u8] = EXAMPLE_ERC20.into();
+    // constructor params for ERC20:
+    //     name: "TestToken"
+    //     symbol: "TST"
+    //     initial_supply: 1_000_000
+    // use examples/erc20/src/lib.rs print_constructor_params_hex() to regenerate
+    let constructor_params = hex!("000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000f4240000000000000000000000000000000000000000000000000000000000000000954657374546f6b656e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000035453540000000000000000000000000000000000000000000000000000000000");
+    let encoded_constructor_params = encode_constructor_params(&constructor_params);
+    let mut input: Vec<u8> = Vec::new();
+    input.extend(bytecode);
+    input.extend(encoded_constructor_params);
+
+    let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, input.into());
+
     // call with empty input (should fail)
     let result = ctx.call_evm_tx(
         OWNER_ADDRESS,

@@ -1,0 +1,85 @@
+---
+source: crates/sdk-derive/derive-core/src/storage_legacy.rs
+expression: formatted
+---
+pub struct Arr {}
+impl Arr {
+    const SLOT: fluentbase_sdk::U256 = fluentbase_sdk::U256::from_limbs([
+        0u64, 0u64, 0u64, 0u64,
+    ]);
+    fn get<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK, arg0: U256) -> U256 {
+        let key = Self::key(sdk, arg0);
+        <U256 as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
+    }
+    fn set<SDK: fluentbase_sdk::SharedAPI>(sdk: &mut SDK, arg0: U256, value: U256) {
+        let key = Self::key(sdk, arg0);
+        <U256 as fluentbase_sdk::storage_legacy::DirectStorage<
+            SDK,
+        >>::set(sdk, key, value)
+    }
+    fn key<SDK: fluentbase_sdk::SharedAPI>(
+        sdk: &SDK,
+        arg0: U256,
+    ) -> fluentbase_sdk::U256 {
+        use fluentbase_sdk::native_api::NativeAPI;
+        let mut key = Self::SLOT;
+        let storage_key = {
+            let storage_key = sdk.keccak256(&key.to_be_bytes::<32>());
+            fluentbase_sdk::U256::from_be_bytes(storage_key.0)
+        };
+        key = storage_key + arg0;
+        key
+    }
+}
+pub struct NestedArr {}
+impl NestedArr {
+    const SLOT: fluentbase_sdk::U256 = fluentbase_sdk::U256::from_limbs([
+        1u64, 0u64, 0u64, 0u64,
+    ]);
+    fn get<SDK: fluentbase_sdk::SharedAPI>(
+        sdk: &SDK,
+        arg0: U256,
+        arg1: U256,
+        arg2: U256,
+    ) -> Address {
+        let key = Self::key(sdk, arg0, arg1, arg2);
+        <Address as fluentbase_sdk::storage_legacy::DirectStorage<SDK>>::get(sdk, key)
+    }
+    fn set<SDK: fluentbase_sdk::SharedAPI>(
+        sdk: &mut SDK,
+        arg0: U256,
+        arg1: U256,
+        arg2: U256,
+        value: Address,
+    ) {
+        let key = Self::key(sdk, arg0, arg1, arg2);
+        <Address as fluentbase_sdk::storage_legacy::DirectStorage<
+            SDK,
+        >>::set(sdk, key, value)
+    }
+    fn key<SDK: fluentbase_sdk::SharedAPI>(
+        sdk: &SDK,
+        arg0: U256,
+        arg1: U256,
+        arg2: U256,
+    ) -> fluentbase_sdk::U256 {
+        use fluentbase_sdk::native_api::NativeAPI;
+        let mut key = Self::SLOT;
+        let storage_key = {
+            let storage_key = sdk.keccak256(&key.to_be_bytes::<32>());
+            fluentbase_sdk::U256::from_be_bytes(storage_key.0)
+        };
+        key = storage_key + arg0;
+        let storage_key = {
+            let storage_key = sdk.keccak256(&key.to_be_bytes::<32>());
+            fluentbase_sdk::U256::from_be_bytes(storage_key.0)
+        };
+        key = storage_key + arg1;
+        let storage_key = {
+            let storage_key = sdk.keccak256(&key.to_be_bytes::<32>());
+            fluentbase_sdk::U256::from_be_bytes(storage_key.0)
+        };
+        key = storage_key + arg2;
+        key
+    }
+}

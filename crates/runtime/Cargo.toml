@@ -13,11 +13,11 @@ categories.workspace = true
 # fluentbase
 fluentbase-types = { workspace = true }
 
-rwasm = { workspace = true, features = ["cache-compiled-artifacts"] }
+rwasm = { workspace = true }
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
-secp256k1 = { version = ">=0.28, <=0.29", default-features = false, features = [
+secp256k1 = { version = "=0.30", default-features = false, features = [
     "alloc",
     "recovery",
     "rand",
@@ -43,7 +43,7 @@ curve25519-dalek = { workspace = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 paste = { workspace = true }
-fs2 = "0.4.3"
+fs2 = { version = "0.4.3", optional = true }
 
 [dev-dependencies]
 sha2 = { workspace = true, default-features = false }
@@ -60,4 +60,11 @@ debug-print = [
     "dep:hex",
     "rwasm/debug-print",
 ]
-wasmtime = ["rwasm/wasmtime"]
+cache-compiled-artifacts = [
+    "rwasm/cache-compiled-artifacts"
+]
+wasmtime = [
+    "rwasm/wasmtime",
+    "dep:fs2",
+    "cache-compiled-artifacts"
+]

@@ -1,11 +1,10 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
-use fluentbase_sdk::syscall::SyscallResult;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, native_api::NativeAPI, Address, Bytes, ContextReader,
-    ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI,
-    MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, B256,
-    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    bytes::Buf, calc_create4_address, native_api::NativeAPI, syscall::SyscallResult, Address,
+    Bytes, ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable,
+    IsColdAccess, MetadataAPI, MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI,
+    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
@@ -44,6 +43,32 @@ impl HostTestingContext {
             .change_input(input.into());
         self
     }
+    /// Sets the initial storage state
+    pub fn with_storage(self, storage: HashMap<(Address, U256), U256>) -> Self {
+        self.inner.borrow_mut().persistent_storage = storage;
+        self
+    }
+
+    /// Merges storage entries
+    pub fn with_storage_entries(
+        self,
+        entries: impl IntoIterator<Item = ((Address, U256), U256)>,
+    ) -> Self {
+        self.inner.borrow_mut().persistent_storage.extend(entries);
+        self
+    }
+
+    /// Sets storage for a specific contract
+    pub fn with_contract_storage(self, contract: Address, slots: HashMap<U256, U256>) -> Self {
+        for (slot, value) in slots {
+            self.inner
+                .borrow_mut()
+                .persistent_storage
+                .insert((contract, slot), value);
+        }
+        self
+    }
+
     pub fn set_ownable_account_address(&mut self, address: Address) {
         self.inner.borrow_mut().ownable_account_address = Some(address);
     }
@@ -184,12 +209,13 @@ impl MetadataAPI for HostTestingContext {
         let derived_metadata_address =
             calc_create4_address(&account_owner, salt, HostTestingContextNativeAPI::keccak256);
         let target_address = ctx.shared_context_input_v1.contract.address;
-        ctx.metadata
-            .insert(
-                (target_address, derived_metadata_address),
-                metadata.to_vec(),
-            )
-            .expect("metadata account collision");
+        let res = ctx.metadata.insert(
+            (target_address, derived_metadata_address),
+            metadata.to_vec(),
+        );
+        if res.is_some() {
+            panic!("metadata account collision")
+        }
         SyscallResult::new(Default::default(), 0, 0, ExitCode::Ok)
     }
 

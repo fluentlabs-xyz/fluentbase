@@ -1,8 +1,10 @@
 extern crate solana_rbpf;
 
-use crate::solana_program;
+use crate::{native_loader, solana_program, system_program};
 use alloc::{boxed::Box, vec, vec::Vec};
 use bincode::error::DecodeError;
+use hashbrown::HashMap;
+use solana_account_info::AccountInfo;
 use solana_bincode::{deserialize, serialize, serialized_size};
 use solana_clock::Epoch;
 use solana_pubkey::Pubkey;
@@ -42,7 +44,11 @@ pub fn address_is_aligned<T>(address: u64) -> bool {
 
 use crate::account::{ReadableAccount, WritableAccount};
 use crate::common::GlobalLamportsBalance;
+use crate::context::TransactionContext;
 use crate::error::RuntimeError;
+use crate::fluentbase::common::{GlobalBalance, SYSTEM_PROGRAMS_KEYS};
+use crate::native_loader::create_loadable_account_with_fields2;
+use crate::solana_program::loader_v4;
 use crate::{
     account::{
         to_account, Account, AccountSharedData, InheritableAccountFields,
@@ -55,7 +61,7 @@ use crate::{
 use fluentbase_sdk::{
     calc_create4_address, debug_log_ext, keccak256, Bytes, MetadataAPI, PRECOMPILE_SVM_RUNTIME,
 };
-use fluentbase_types::{MetadataStorageAPI, SharedAPI, StorageAPI};
+use fluentbase_types::{Address, MetadataStorageAPI, SharedAPI, StorageAPI, B256};
 use solana_rbpf::ebpf::MM_HEAP_START;
 
 pub fn create_memory_mapping<'a, 'b, C: ContextObject>(
@@ -135,6 +141,31 @@ pub fn create_account_shared_data_for_test<S: Sysvar>(sysvar: &S) -> AccountShar
     ))
 }
 
+pub fn create_account_for_test<S: Sysvar>(sysvar: &S) -> Account {
+    create_account_with_fields(sysvar, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
+}
+
+/// Create `AccountInfo`s
+pub fn create_is_signer_account_infos<'a>(
+    accounts: &'a mut [(&'a Pubkey, bool, &'a mut Account)],
+) -> Vec<AccountInfo<'a>> {
+    accounts
+        .iter_mut()
+        .map(|(key, is_signer, account)| {
+            AccountInfo::new(
+                key,
+                *is_signer,
+                false,
+                &mut account.lamports,
+                &mut account.data,
+                &account.owner,
+                account.executable,
+                account.rent_epoch,
+            )
+        })
+        .collect()
+}
+
 #[macro_export]
 macro_rules! with_mock_invoke_context {
     (
@@ -200,31 +231,40 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
-#[macro_export]
-macro_rules! select_api {
-    ($optional:expr, $alt:expr, $callback:expr) => {
-        if let Some(v) = $optional {
-            $callback(*v)
-        } else {
-            $callback($alt)
-        }
+pub fn is_program_exists<API: MetadataAPI>(
+    api: &API,
+    program_id: &Pubkey,
+) -> Result<bool, SvmError> {
+    let is_exists = if SYSTEM_PROGRAMS_KEYS.contains(program_id) {
+        true
+    } else {
+        let account_metadata = storage_read_metadata_params(api, program_id);
+        account_metadata.is_ok() && account_metadata?.2 > 0
     };
+    Ok(is_exists)
+}
+
+pub fn storage_read_metadata_params<API: MetadataAPI>(
+    api: &API,
+    pubkey: &Pubkey,
+) -> Result<(B256, Address, u32), SvmError> {
+    // let pubkey_hash = keccak256(pubkey.as_ref());
+    let pubkey: B256 = pubkey.to_bytes().into();
+    let derived_metadata_address =
+        calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey.into(), |v| keccak256(v));
+    let metadata_size_result = api.metadata_size(&derived_metadata_address);
+    // if !metadata_size_result.status.is_ok() {
+    //     return Err(metadata_size_result.status.into());
+    // }
+    let metadata_len = metadata_size_result.data.0;
+    Ok((pubkey, derived_metadata_address, metadata_len))
 }
 
 pub fn storage_read_metadata<API: MetadataAPI>(
     api: &API,
     pubkey: &Pubkey,
 ) -> Result<Bytes, SvmError> {
-    let pubkey_hash = keccak256(pubkey.as_ref());
-    let derived_metadata_address =
-        calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
-            keccak256(v)
-        });
-    let metadata_size_result = api.metadata_size(&derived_metadata_address);
-    if !metadata_size_result.status.is_ok() {
-        return Err(metadata_size_result.status.into());
-    }
-    let metadata_len = metadata_size_result.data.0;
+    let ((_, derived_metadata_address, metadata_len)) = storage_read_metadata_params(api, pubkey)?;
     let metadata_copy = api.metadata_copy(&derived_metadata_address, 0, metadata_len);
     if !metadata_copy.status.is_ok() {
         return Err(metadata_copy.status.into());
@@ -238,16 +278,9 @@ pub fn storage_write_metadata<MAPI: MetadataAPI>(
     pubkey: &Pubkey,
     metadata: Bytes,
 ) -> Result<(), SvmError> {
-    let pubkey_hash = keccak256(pubkey.as_ref());
-    let derived_metadata_address =
-        calc_create4_address(&PRECOMPILE_SVM_RUNTIME, &pubkey_hash.into(), |v| {
-            keccak256(v)
-        });
-    let (metadata_size, _, _, _) = api
-        .metadata_size(&derived_metadata_address)
-        .expect("metadata size")
-        .data;
-    if metadata_size == 0 {
+    let ((pubkey_hash, derived_metadata_address, metadata_len)) =
+        storage_read_metadata_params(api, pubkey)?;
+    if metadata_len == 0 {
         api.metadata_create(&pubkey_hash.into(), metadata)
             .expect("metadata creation failed");
     } else {
@@ -261,6 +294,17 @@ pub fn storage_read_account_data<API: MetadataAPI + MetadataStorageAPI>(
     api: &API,
     pk: &Pubkey,
 ) -> Result<AccountSharedData, SvmError> {
+    if pk == &system_program::id() {
+        return Ok(create_loadable_account_with_fields2(
+            "system_program_id",
+            &native_loader::id(),
+        ));
+    } else if pk == &loader_v4::id() {
+        return Ok(create_loadable_account_with_fields2(
+            "loader_v4_id",
+            &native_loader::id(),
+        ));
+    };
     let buffer = storage_read_metadata(api, pk)?;
     if buffer.len() < 1 + size_of::<Pubkey>() {
         return Err(SvmError::RuntimeError(RuntimeError::InvalidLength));
@@ -276,7 +320,6 @@ pub fn storage_read_account_data<API: MetadataAPI + MetadataStorageAPI>(
         executable,
         Default::default(),
     );
-    debug_log_ext!("pk {} account_data {:?}", pk, account_data);
     Ok(account_data)
 }
 
@@ -291,6 +334,53 @@ pub fn storage_write_account_data<API: MetadataAPI + MetadataStorageAPI>(
     buffer[1 + size_of::<Pubkey>()..].copy_from_slice(account_data.data());
     storage_write_metadata(api, pk, buffer.into())?;
     GlobalLamportsBalance::set(api, &pk, account_data.lamports());
-    debug_log_ext!("pk {} account_data {:?}", pk, account_data);
     Ok(())
+}
+
+pub(crate) fn storage_read_account_data_or_default<API: MetadataAPI + MetadataStorageAPI>(
+    api: &API,
+    pk: &Pubkey,
+    space_default: usize,
+    owner_default: Option<&Pubkey>,
+) -> AccountSharedData {
+    storage_read_account_data(api, pk).unwrap_or_else(|_e| {
+        let lamports = GlobalBalance::get(api, pk);
+        AccountSharedData::new(
+            lamports,
+            space_default,
+            owner_default.unwrap_or(&system_program::id()),
+        )
+    })
+}
+
+pub fn extract_accounts(
+    transaction_context: &TransactionContext,
+) -> Result<HashMap<Pubkey, AccountSharedData>, SvmError> {
+    let mut accounts =
+        HashMap::with_capacity(transaction_context.get_number_of_accounts() as usize);
+    for account_idx in 0..transaction_context.get_number_of_accounts() {
+        let account_key = transaction_context.get_key_of_account_at_index(account_idx)?;
+        let account_data = transaction_context.get_account_at_index(account_idx)?;
+        accounts.insert(
+            account_key.clone(),
+            account_data.borrow().to_account_shared_data(),
+        );
+    }
+    Ok(accounts)
+}
+
+pub fn update_accounts(
+    transaction_context: &mut TransactionContext,
+    accounts: &HashMap<Pubkey, AccountSharedData>,
+) {
+    for (pk, data) in accounts {
+        let idx = transaction_context
+            .find_index_of_account(pk)
+            .expect("each account must be presented");
+        let mut account = transaction_context
+            .get_account_at_index(idx)
+            .expect("each account must be presented");
+        // let mut_data = account.borrow_mut().data_as_mut_slice();
+        *account.borrow_mut() = data.clone();
+    }
 }

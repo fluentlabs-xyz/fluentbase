@@ -11,11 +11,8 @@ pub mod common;
 pub mod compute_budget;
 pub mod compute_budget_processor;
 pub mod context;
-// pub mod ed25519_instruction;
 pub mod error;
 pub mod helpers;
-// #[cfg(test)]
-// mod helpers_tests;
 pub mod loaded_programs;
 pub mod macros;
 pub mod mem_ops;
@@ -23,7 +20,7 @@ pub mod message_processor;
 #[cfg(test)]
 mod message_processor_tests;
 pub mod native_loader;
-pub mod precompiles;
+// pub mod precompiles;
 #[cfg(test)]
 mod process_instruction_tests;
 // #[cfg(test)]
@@ -43,7 +40,7 @@ pub mod system_program;
 pub mod sysvar_cache;
 #[cfg(test)]
 pub mod test_helpers;
-mod types;
+pub mod token_2022;
 pub mod word_size;
 
 pub use bincode;

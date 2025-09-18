@@ -170,39 +170,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloy-sol-macro"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a14f21d053aea4c6630687c2f4ad614bed4c81e14737a9b904798b24f30ea849"
-dependencies = [
- "alloy-sol-macro-expander",
- "alloy-sol-macro-input",
- "proc-macro-error2",
- "proc-macro2",
- "quote",
- "syn 2.0.104",
-]
-
-[[package]]
-name = "alloy-sol-macro-expander"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34d99282e7c9ef14eb62727981a985a01869e586d1dec729d3bb33679094c100"
-dependencies = [
- "alloy-json-abi",
- "alloy-sol-macro-input",
- "const-hex",
- "heck",
- "indexmap",
- "proc-macro-error2",
- "proc-macro2",
- "quote",
- "syn 2.0.104",
- "syn-solidity",
- "tiny-keccak",
-]
-
-[[package]]
 name = "alloy-sol-macro-input"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -228,17 +195,6 @@ checksum = "52db32fbd35a9c0c0e538b58b81ebbae08a51be029e7ad60e08b60481c2ec6c3"
 dependencies = [
  "serde",
  "winnow",
-]
-
-[[package]]
-name = "alloy-sol-types"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58377025a47d8b8426b3e4846a251f2c1991033b27f517aade368146f6ab1dfe"
-dependencies = [
- "alloy-json-abi",
- "alloy-primitives",
- "alloy-sol-macro",
 ]
 
 [[package]]
@@ -706,6 +662,7 @@ checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
 dependencies = [
  "funty",
  "radium",
+ "serde",
  "tap",
  "wyz",
 ]
@@ -786,15 +743,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
 dependencies = [
  "tinyvec",
-]
-
-[[package]]
-name = "btoi"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b5ab9db53bcda568284df0fd39f6eac24ad6f7ba7ff1168b9e76eba6576b976"
-dependencies = [
- "num-traits",
 ]
 
 [[package]]
@@ -888,6 +836,16 @@ name = "cfg-if"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
+
+[[package]]
+name = "chrono"
+version = "0.4.41"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c469d952047f47f91b68d1cba3f10d63c11d73e4636f24f08daf0278abf01c4d"
+dependencies = [
+ "num-traits",
+ "serde",
+]
 
 [[package]]
 name = "ciborium"
@@ -1277,16 +1235,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crypto-mac"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b584a330336237c1eecd3e94266efb216c56ed91225d634cb2991c5f3fd1aeab"
-dependencies = [
- "generic-array 0.14.7",
- "subtle",
-]
-
-[[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1461,6 +1409,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "deranged"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c9e6a11ca8224451684bc0d7d5a7adbf8f2fd6887261a1cfc3c0432f9d4068e"
+dependencies = [
+ "powerfmt",
+]
+
+[[package]]
 name = "derivative"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1545,15 +1502,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "directories"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
-dependencies = [
- "dirs-sys",
-]
-
-[[package]]
 name = "directories-next"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1564,25 +1512,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "dirs-sys"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
-dependencies = [
- "libc",
- "option-ext",
- "redox_users 0.5.0",
- "windows-sys 0.60.2",
-]
-
-[[package]]
 name = "dirs-sys-next"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ebda144c4fe02d1f7ea1a7d9641b6fc6b580adcfa024ae48797ecdeb6825b4d"
 dependencies = [
  "libc",
- "redox_users 0.4.6",
+ "redox_users",
  "winapi",
 ]
 
@@ -1629,6 +1565,9 @@ name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "elliptic-curve"
@@ -1816,7 +1755,7 @@ checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1828,7 +1767,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1889,6 +1828,9 @@ dependencies = [
  "fluentbase-erc20",
  "fluentbase-sdk",
  "fluentbase-sdk-testing",
+ "fluentbase-svm",
+ "solana-bincode",
+ "solana-program-error",
 ]
 
 [[package]]
@@ -2019,7 +1961,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-erc20"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "bincode 2.0.1",
  "fluentbase-sdk",
@@ -2027,7 +1969,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -2035,147 +1977,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-examples-abi-solidity"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "hex-literal 0.4.1",
-]
-
-[[package]]
-name = "fluentbase-examples-checkmate"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "shakmaty",
-]
-
-[[package]]
-name = "fluentbase-examples-client-solidity"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "hex",
-]
-
-[[package]]
-name = "fluentbase-examples-constructor-params"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-examples-erc20"
-version = "0.1.0"
-dependencies = [
- "alloy-sol-types",
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "hex-literal 0.4.1",
- "serial_test",
-]
-
-[[package]]
-name = "fluentbase-examples-greeting"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-examples-json"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "serde",
- "serde-json-core",
- "serde_json",
-]
-
-[[package]]
-name = "fluentbase-examples-keccak"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-examples-panic"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-examples-router-solidity"
-version = "0.1.0"
-dependencies = [
- "alloy-sol-types",
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "hex",
-]
-
-[[package]]
-name = "fluentbase-examples-rwasm"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
-]
-
-[[package]]
-name = "fluentbase-examples-secp256k1"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "hex",
- "hex-literal 1.0.0",
- "libsecp256k1 0.7.2",
- "secp256k1-sys 0.10.1",
- "tiny-keccak",
-]
-
-[[package]]
-name = "fluentbase-examples-simple-storage"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "hex-literal 0.4.1",
-]
-
-[[package]]
-name = "fluentbase-examples-storage"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "serial_test",
-]
-
-[[package]]
-name = "fluentbase-examples-tiny-keccak"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-sdk-testing",
- "tiny-keccak",
-]
-
-[[package]]
 name = "fluentbase-revm"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -2187,7 +1990,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2207,7 +2010,7 @@ dependencies = [
  "num-traits",
  "paste",
  "rwasm",
- "secp256k1 0.29.1",
+ "secp256k1 0.30.0",
  "sha2 0.10.9",
  "solana-poseidon",
  "sp1-curves",
@@ -2217,7 +2020,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-sdk-derive",
@@ -2227,7 +2030,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2240,7 +2043,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2262,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-testing"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-revm",
@@ -2276,13 +2079,17 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-svm"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "ark-bn254",
+ "arrayref",
  "bincode 2.0.1",
  "bitflags",
  "blake3",
+ "bytemuck",
+ "bytemuck_derive",
  "byteorder",
+ "fluentbase-erc20",
  "fluentbase-sdk",
  "fluentbase-types",
  "hashbrown 0.15.4",
@@ -2292,10 +2099,12 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-derive",
  "num-traits",
+ "num_enum",
  "paste",
  "serde",
  "serde_bytes",
  "serde_json",
+ "serde_with",
  "solana-account-info",
  "solana-bincode",
  "solana-bn254",
@@ -2311,6 +2120,8 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-program-memory",
+ "solana-program-option",
+ "solana-program-pack",
  "solana-pubkey",
  "solana-sanitize",
  "solana-serialize-utils",
@@ -2326,7 +2137,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.4.3-dev"
+version = "0.4.5-dev"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -2354,97 +2165,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
-name = "fs2"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
-
-[[package]]
-name = "futures"
-version = "0.3.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65bc07b1a8bc7c85c5f2e110c476c7389b4554ba72af57d8445ea63a576b0876"
-dependencies = [
- "futures-channel",
- "futures-core",
- "futures-executor",
- "futures-io",
- "futures-sink",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
-name = "futures-channel"
-version = "0.3.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dff15bf788c671c1934e366d07e30c1814a8ef514e1af724a602e8a2fbe1b10"
-dependencies = [
- "futures-core",
- "futures-sink",
-]
-
-[[package]]
-name = "futures-core"
-version = "0.3.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
-
-[[package]]
-name = "futures-executor"
-version = "0.3.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e28d1d997f585e54aebc3f97d39e72338912123a67330d723fdbb564d646c9f"
-dependencies = [
- "futures-core",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
-name = "futures-io"
-version = "0.3.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e5c1b78ca4aae1ac06c48a526a655760685149f0d465d21f37abfe57ce075c6"
-
-[[package]]
-name = "futures-sink"
-version = "0.3.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e575fab7d1e0dcb8d0c7bcf9a63ee213816ab51902e6d244a95819acacf1d4f7"
-
-[[package]]
-name = "futures-task"
-version = "0.3.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
-
-[[package]]
-name = "futures-util"
-version = "0.3.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
-dependencies = [
- "futures-channel",
- "futures-core",
- "futures-io",
- "futures-sink",
- "futures-task",
- "memchr",
- "pin-project-lite",
- "pin-utils",
- "slab",
-]
 
 [[package]]
 name = "fxhash"
@@ -2620,15 +2344,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hash32"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
-dependencies = [
- "byteorder",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2650,17 +2365,6 @@ dependencies = [
  "foldhash",
  "rustc-std-workspace-alloc",
  "serde",
-]
-
-[[package]]
-name = "heapless"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
-dependencies = [
- "hash32 0.3.1",
- "serde",
- "stable_deref_trait",
 ]
 
 [[package]]
@@ -2695,25 +2399,9 @@ dependencies = [
 
 [[package]]
 name = "hex-literal"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
-
-[[package]]
-name = "hex-literal"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bcaaec4551594c969335c98c903c1397853d4198408ea609190f420500f6be71"
-
-[[package]]
-name = "hmac"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "126888268dcc288495a26bf004b38c5fdbb31682f992c84ceb046a1f0fe38840"
-dependencies = [
- "crypto-mac",
- "digest 0.9.0",
-]
 
 [[package]]
 name = "hmac"
@@ -2722,17 +2410,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest 0.10.7",
-]
-
-[[package]]
-name = "hmac-drbg"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17ea0a1394df5b6574da6e0c1ade9e78868c9fb0a4e5ef4428e32da4676b85b1"
-dependencies = [
- "digest 0.9.0",
- "generic-array 0.14.7",
- "hmac 0.8.1",
 ]
 
 [[package]]
@@ -2986,14 +2663,12 @@ dependencies = [
  "arrayref",
  "base64 0.22.1",
  "digest 0.9.0",
- "hmac-drbg",
  "libsecp256k1-core 0.3.0",
  "libsecp256k1-gen-ecmult 0.3.0",
  "libsecp256k1-gen-genmult 0.3.0",
  "rand 0.8.5",
  "serde",
  "sha2 0.9.9",
- "typenum",
 ]
 
 [[package]]
@@ -3225,6 +2900,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-conv"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9"
+
+[[package]]
 name = "num-derive"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3346,12 +3027,6 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
-
-[[package]]
-name = "option-ext"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "p256"
@@ -3690,6 +3365,7 @@ checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
 dependencies = [
  "phf_macros",
  "phf_shared",
+ "serde",
 ]
 
 [[package]]
@@ -3731,12 +3407,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 
 [[package]]
-name = "pin-utils"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
-
-[[package]]
 name = "pkcs8"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3769,6 +3439,12 @@ dependencies = [
  "embedded-io 0.6.1",
  "serde",
 ]
+
+[[package]]
+name = "powerfmt"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "ppv-lite86"
@@ -3839,28 +3515,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "version_check",
-]
-
-[[package]]
-name = "proc-macro-error-attr2"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96de42df36bb9bba5542fe9f1a054b8cc87e172759a1868aa05c1f3acc89dfc5"
-dependencies = [
- "proc-macro2",
- "quote",
-]
-
-[[package]]
-name = "proc-macro-error2"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
-dependencies = [
- "proc-macro-error-attr2",
- "proc-macro2",
- "quote",
- "syn 2.0.104",
 ]
 
 [[package]]
@@ -4119,17 +3773,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "redox_users"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd6f9d3d47bdd2ad6945c5015a226ec6155d0bcdfd8f7cd29f86b71f8de99d2b"
-dependencies = [
- "getrandom 0.2.16",
- "libredox",
- "thiserror 2.0.12",
-]
-
-[[package]]
 name = "regalloc2"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4333,7 +3976,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
 dependencies = [
- "hmac 0.12.1",
+ "hmac",
  "subtle",
 ]
 
@@ -4495,7 +4138,6 @@ dependencies = [
  "bincode 2.0.1",
  "bitvec",
  "bytes",
- "directories",
  "downcast-rs",
  "hashbrown 0.15.4",
  "libm",
@@ -4540,15 +4182,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "scc"
-version = "2.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22b2d775fb28f245817589471dd49c5edf64237f4a19d10ce9a92ff4651a27f4"
-dependencies = [
- "sdd",
-]
-
-[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4575,12 +4208,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sdd"
-version = "3.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
-
-[[package]]
 name = "sec1"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4596,10 +4223,11 @@ dependencies = [
 
 [[package]]
 name = "secp256k1"
-version = "0.29.1"
+version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
+checksum = "b50c5943d326858130af85e049f2661ba3c78b26589b8ab98e65e80ae44a1252"
 dependencies = [
+ "bitcoin_hashes",
  "rand 0.8.5",
  "secp256k1-sys 0.10.1",
 ]
@@ -4670,17 +4298,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-json-core"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b81787e655bd59cecadc91f7b6b8651330b2be6c33246039a65e5cd6f4e0828"
-dependencies = [
- "heapless",
- "ryu",
- "serde",
-]
-
-[[package]]
 name = "serde_arrays"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4732,28 +4349,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "serial_test"
-version = "3.2.0"
+name = "serde_with"
+version = "3.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b258109f244e1d6891bf1053a55d63a5cd4f8f4c30cf9a1280989f80e7a1fa9"
+checksum = "f2c45cd61fefa9db6f254525d46e392b852e0e61d9a1fd36e5bd183450a556d5"
 dependencies = [
- "futures",
- "log",
- "once_cell",
- "parking_lot",
- "scc",
- "serial_test_derive",
-]
-
-[[package]]
-name = "serial_test_derive"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d69265a08751de7844521fd15003ae0a888e035773ba05695c5c759a6f89eef"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.104",
+ "base64 0.22.1",
+ "chrono",
+ "hex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "time",
 ]
 
 [[package]]
@@ -4812,17 +4419,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shakmaty"
-version = "0.29.0"
-source = "git+https://github.com/niklasf/shakmaty#20e381905dd1bdc09a707d0558bedebef1598065"
-dependencies = [
- "arrayvec",
- "bitflags",
- "btoi",
- "serde",
-]
-
-[[package]]
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4843,12 +4439,6 @@ name = "siphasher"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
-
-[[package]]
-name = "slab"
-version = "0.4.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04dc19736151f35336d325007ac991178d504a119863a2fcb3758cdb5e52c50d"
 
 [[package]]
 name = "smallvec"
@@ -4872,7 +4462,7 @@ dependencies = [
 [[package]]
 name = "solana-account-info"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -4885,12 +4475,12 @@ dependencies = [
 [[package]]
 name = "solana-atomic-u64"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 
 [[package]]
 name = "solana-bincode"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "lazy_static",
@@ -4900,7 +4490,7 @@ dependencies = [
 [[package]]
 name = "solana-bn254"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -4912,7 +4502,7 @@ dependencies = [
 [[package]]
 name = "solana-clock"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -4924,7 +4514,7 @@ dependencies = [
 [[package]]
 name = "solana-cpi"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "solana-account-info",
  "solana-define-syscall",
@@ -4937,7 +4527,7 @@ dependencies = [
 [[package]]
 name = "solana-curve25519"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -4949,7 +4539,7 @@ dependencies = [
 [[package]]
 name = "solana-decode-error"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "num-traits",
 ]
@@ -4957,12 +4547,12 @@ dependencies = [
 [[package]]
 name = "solana-define-syscall"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 
 [[package]]
 name = "solana-epoch-schedule"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -4974,7 +4564,7 @@ dependencies = [
 [[package]]
 name = "solana-feature-set"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "hashbrown 0.15.4",
  "lazy_static",
@@ -4988,7 +4578,7 @@ dependencies = [
 [[package]]
 name = "solana-fee-calculator"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "log",
@@ -4999,7 +4589,7 @@ dependencies = [
 [[package]]
 name = "solana-hash"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "bs58",
@@ -5014,7 +4604,7 @@ dependencies = [
 [[package]]
 name = "solana-instruction"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "num-traits",
@@ -5028,7 +4618,7 @@ dependencies = [
 [[package]]
 name = "solana-last-restart-slot"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -5040,7 +4630,7 @@ dependencies = [
 [[package]]
 name = "solana-msg"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "solana-define-syscall",
 ]
@@ -5048,12 +4638,12 @@ dependencies = [
 [[package]]
 name = "solana-native-token"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 
 [[package]]
 name = "solana-poseidon"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "ark-bn254",
  "light-poseidon",
@@ -5063,7 +4653,7 @@ dependencies = [
 [[package]]
 name = "solana-precompile-error"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "num-traits",
  "solana-decode-error",
@@ -5072,7 +4662,7 @@ dependencies = [
 [[package]]
 name = "solana-program"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "base64 0.22.1",
  "bincode 2.0.1",
@@ -5141,7 +4731,7 @@ dependencies = [
 [[package]]
 name = "solana-program-entrypoint"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -5152,7 +4742,7 @@ dependencies = [
 [[package]]
 name = "solana-program-error"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "num-traits",
  "serde",
@@ -5166,7 +4756,7 @@ dependencies = [
 [[package]]
 name = "solana-program-memory"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "num-traits",
  "solana-define-syscall",
@@ -5175,12 +4765,12 @@ dependencies = [
 [[package]]
 name = "solana-program-option"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 
 [[package]]
 name = "solana-program-pack"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "solana-program-error",
 ]
@@ -5188,7 +4778,7 @@ dependencies = [
 [[package]]
 name = "solana-pubkey"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "bs58",
@@ -5197,7 +4787,7 @@ dependencies = [
  "curve25519-dalek",
  "five8_const",
  "hex",
- "hex-literal 1.0.0",
+ "hex-literal",
  "keccak-hash",
  "num-traits",
  "serde",
@@ -5213,7 +4803,7 @@ dependencies = [
 [[package]]
 name = "solana-rent"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -5225,12 +4815,12 @@ dependencies = [
 [[package]]
 name = "solana-sanitize"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 
 [[package]]
 name = "solana-sdk-macro"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bs58",
  "proc-macro2",
@@ -5241,7 +4831,7 @@ dependencies = [
 [[package]]
 name = "solana-secp256k1-recover"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "libsecp256k1 0.6.0",
  "solana-define-syscall",
@@ -5251,7 +4841,7 @@ dependencies = [
 [[package]]
 name = "solana-serde-varint"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "serde",
 ]
@@ -5259,7 +4849,7 @@ dependencies = [
 [[package]]
 name = "solana-serialize-utils"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "solana-instruction",
  "solana-pubkey",
@@ -5269,7 +4859,7 @@ dependencies = [
 [[package]]
 name = "solana-sha256-hasher"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "sha2 0.10.9",
  "solana-define-syscall",
@@ -5279,7 +4869,7 @@ dependencies = [
 [[package]]
 name = "solana-short-vec"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "serde",
 ]
@@ -5287,7 +4877,7 @@ dependencies = [
 [[package]]
 name = "solana-slot-hashes"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -5299,7 +4889,7 @@ dependencies = [
 [[package]]
 name = "solana-slot-history"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "bincode 2.0.1",
  "bv",
@@ -5311,7 +4901,7 @@ dependencies = [
 [[package]]
 name = "solana-stable-layout"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "solana-instruction",
  "solana-pubkey",
@@ -5320,7 +4910,7 @@ dependencies = [
 [[package]]
 name = "solana-sysvar-id"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "solana-pubkey",
 ]
@@ -5328,7 +4918,7 @@ dependencies = [
 [[package]]
 name = "solana-transaction-error"
 version = "2.1.18"
-source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#ed11239e492666bd8279b7cd479ee5d18c8eb602"
+source = "git+https://github.com/fluentlabs-xyz/agave?branch=feat%2Fsvm#46c158255cbb7c68086457caeacfc4ed05067a44"
 dependencies = [
  "serde",
  "serde_derive",
@@ -5344,7 +4934,7 @@ dependencies = [
  "byteorder",
  "combine",
  "goblin",
- "hash32 0.2.1",
+ "hash32",
  "hashbrown 0.15.4",
  "log",
  "rand 0.8.5",
@@ -5686,6 +5276,25 @@ checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
 dependencies = [
  "num_cpus",
 ]
+
+[[package]]
+name = "time"
+version = "0.3.41"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a7619e19bc266e0f9c5e6686659d394bc57973859340060a69221e57dbc0c40"
+dependencies = [
+ "deranged",
+ "num-conv",
+ "powerfmt",
+ "serde",
+ "time-core",
+]
+
+[[package]]
+name = "time-core"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9e9a38711f559d9e3ce1cdb06dd7c5b8ea546bc90052da6d06bb76da74bb07c"
 
 [[package]]
 name = "tiny-keccak"

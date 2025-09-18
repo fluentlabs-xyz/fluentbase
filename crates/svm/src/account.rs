@@ -51,7 +51,7 @@ fn shared_serialize_data<T: serde::Serialize, U: WritableAccount>(
 
 /// An Account with data that is stored on chain
 #[repr(C)]
-#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Default /*, AbiExample*/)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
     /// lamports in the account
@@ -138,6 +138,19 @@ impl WritableAccount for Account {
             executable,
             rent_epoch,
         }
+    }
+}
+
+impl solana_account_info::Account for Account {
+    fn get(&mut self) -> (&mut u64, &mut [u8], &Pubkey, bool, u64) {
+        let lamports = self.lamports;
+        (
+            &mut self.lamports,
+            &mut self.data,
+            &self.owner,
+            self.executable,
+            lamports,
+        )
     }
 }
 

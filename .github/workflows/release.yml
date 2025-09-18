@@ -49,7 +49,7 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Build genesis
-        run: cargo b
+        run: cargo b --release
       - name: Move binary
         run: |
           mkdir artifacts

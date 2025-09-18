@@ -124,7 +124,6 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
 /// redundantly specifying the fee-payer is not strictly required.
 // NOTE: Serialization-related changes must be paired with the custom serialization
 // for versioned messages in the `RemainingLegacyMessage` struct.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Serialize, Deserialize, Default, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
@@ -141,25 +140,6 @@ pub struct Message {
 
     /// Programs that will be executed in sequence and committed in one atomic transaction if all
     /// succeed.
-    #[serde(with = "short_vec")]
-    pub instructions: Vec<CompiledInstruction>,
-}
-
-/// wasm-bindgen version of the Message struct.
-/// This duplication is required until https://github.com/rustwasm/wasm-bindgen/issues/3671
-/// is fixed. This must not diverge from the regular non-wasm Message struct.
-#[cfg(target_arch = "wasm32")]
-#[derive(Serialize, Deserialize, Default, PartialEq, Eq, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Message {
-    pub header: MessageHeader,
-
-    #[serde(with = "short_vec")]
-    pub account_keys: Vec<Pubkey>,
-
-    /// The id of a recent ledger entry.
-    pub recent_blockhash: Hash,
-
     #[serde(with = "short_vec")]
     pub instructions: Vec<CompiledInstruction>,
 }
@@ -266,6 +246,7 @@ impl Message {
         compile_instruction(ix, &self.account_keys)
     }
 
+    #[cfg(test)]
     pub fn serialize(&self) -> Vec<u8> {
         serialize(self).unwrap()
     }
@@ -325,9 +306,9 @@ impl Message {
             .position(|&&pubkey| pubkey == self.account_keys[index])
     }
 
-    pub fn maybe_executable(&self, i: usize) -> bool {
-        self.program_position(i).is_some()
-    }
+    // pub fn maybe_executable(&self, i: usize) -> bool {
+    //     self.program_position(i).is_some()
+    // }
 
     pub fn demote_program_id(&self, i: usize) -> bool {
         self.is_key_called_as_program(i)
@@ -362,6 +343,7 @@ impl Message {
     /// fetching the latest set of reserved account keys. If this method is
     /// called by the runtime, the latest set of reserved account keys must be
     /// passed.
+    #[cfg(test)]
     pub fn is_maybe_writable(
         &self,
         i: usize,
@@ -374,6 +356,7 @@ impl Message {
 
     /// Returns true if the account at the specified index is in the optional
     /// reserved account keys set.
+    #[cfg(test)]
     fn is_account_maybe_reserved(
         &self,
         key_index: usize,
