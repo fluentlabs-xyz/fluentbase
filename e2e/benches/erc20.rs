@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use fluentbase_e2e::{EvmTestingContextWithGenesis, EXAMPLE_ERC20};
+use fluentbase_sdk::constructor::encode_constructor_params;
 use fluentbase_sdk::{address, Address, Bytes};
 use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext};
 use fluentbase_svm::error::SvmError;
@@ -74,7 +75,22 @@ fn erc20_transfer_benches(c: &mut Criterion) {
     {
         let mut ctx = EvmTestingContext::default().with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
-        let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
+        let bytecode: &[u8] = crate::EXAMPLE_ERC20.into();
+
+        // constructor params for ERC20:
+        //     name: "TestToken"
+        //     symbol: "TST"
+        //     initial_supply: 1_000_000
+        // use examples/erc20/src/lib.rs print_constructor_params_hex() to regenerate
+        let constructor_params = hex!("000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000f4240000000000000000000000000000000000000000000000000000000000000000954657374546f6b656e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000035453540000000000000000000000000000000000000000000000000000000000");
+
+        let encoded_constructor_params = encode_constructor_params(&constructor_params);
+        let mut input: Vec<u8> = Vec::new();
+        input.extend(bytecode);
+        input.extend(encoded_constructor_params);
+
+        let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, input.into());
+
         let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
 
         group.bench_function("3_rWasm_Contract_ERC20", |b| {
