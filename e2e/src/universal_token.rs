@@ -28,8 +28,8 @@ use fluentbase_svm_common::common::{lamports_to_bytes, pubkey_from_evm_address};
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::{
-    SIG_BALANCE, SIG_BALANCE_OF, SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO,
-    SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
+    SIG_BALANCE, SIG_BALANCE_OF, SIG_DECIMALS, SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT,
+    SIG_MINT_TO, SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
 };
 use solana_program_option::COption;
 use solana_program_pack::Pack;
@@ -544,7 +544,7 @@ fn test_transfer_dups_abi_version() {
     let owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS5);
     let mint_key = pubkey_from_evm_address::<true>(&USER_ADDRESS6);
 
-    // initialize_mint (ABI version)
+    // initialize_mint
     let decimals: u8 = 2;
     let mut input_data = vec![];
     // mint, owner, freeze, decimals
@@ -558,6 +558,16 @@ fn test_transfer_dups_abi_version() {
     let contract_address = ctx.deploy_evm_tx(USER_ADDRESS5, input.into());
 
     ctx.commit_db_to_sdk();
+
+    // decimals
+    let mut input_data = vec![];
+    // mint
+    input_data.extend_from_slice(mint_key.as_ref());
+    let input = build_input_raw(&sig_to_bytes(SIG_DECIMALS), &input_data);
+    let output_data =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+    assert_eq!(output_data.len(), 1);
+    assert_eq!(output_data[0], decimals);
 
     // initialize_account1
     let mut input_data = vec![];

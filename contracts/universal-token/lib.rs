@@ -16,8 +16,9 @@ use fluentbase_universal_token::{
     common::{bytes_to_sig, u256_from_bytes_slice_try},
     consts::{
         ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_INVALID_PAUSER, ERR_MALFORMED_INPUT,
-        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, SIG_BALANCE, SIG_BALANCE_OF, SIG_INITIALIZE_ACCOUNT,
-        SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
+        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, SIG_BALANCE, SIG_BALANCE_OF, SIG_DECIMALS,
+        SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_TOKEN2022, SIG_TRANSFER,
+        SIG_TRANSFER_FROM,
     },
     storage::{Config, Settings, ADDRESS_LEN_BYTES, SIG_LEN_BYTES, U256_LEN_BYTES},
 };
@@ -28,9 +29,19 @@ fn symbol<SDK: SharedAPI>(sdk: &mut SDK) {
 fn name<SDK: SharedAPI>(sdk: &mut SDK) {
     // sdk.write(&get_name(sdk));
 }
-fn decimals<SDK: SharedAPI>(sdk: &mut SDK) {
-    // let output = fixed_bytes_from_u256(&get_decimals(sdk));
-    sdk.write(&[0]);
+
+fn decimals_for_pubkey<SDK: SharedAPI>(sdk: &mut SDK, pk: &Pubkey) -> u8 {
+    let mut processor = Processor::new(sdk);
+    let decimals = processor.decimals(&pk).expect("failed to get decimals");
+    decimals
+}
+
+fn decimals<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
+    let Ok(pk) = pubkey_try_from_slice(input) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let decimals = decimals_for_pubkey(sdk, &pk);
+    sdk.write(&[decimals]);
 }
 
 fn transfer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
@@ -344,23 +355,21 @@ pub fn deploy_entry(mut sdk: impl SharedAPI) {
     if input_size < SIG_LEN_BYTES as u32 {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     }
-    let (sig1_bytes, input) = sdk.input().split_at(SIG_LEN_BYTES);
+    let (sig1_bytes, input1) = sdk.input().split_at(SIG_LEN_BYTES);
     if sig1_bytes != ERC20_MAGIC_BYTES {
         panic!("invalid input signature");
     }
-    let sig2_bytes = &input[..SIG_LEN_BYTES];
+    let (sig2_bytes, input2) = &input1.split_at(SIG_LEN_BYTES);
     let sig2 = bytes_to_sig(sig2_bytes);
-    debug_log_ext!("sig1_bytes {:x?} sig2_bytes {:x?}", sig1_bytes, sig2_bytes);
     match sig2 {
         SIG_INITIALIZE_MINT => {
-            // TODO check for collision or add specific signature for raw processing
             debug_log_ext!("initialize_mint");
-            initialize_mint(&mut sdk, &input[SIG_LEN_BYTES..]);
+            initialize_mint(&mut sdk, &input2);
             return;
         }
         _ => {}
     }
-    token2022_process_raw::<true, _>(&mut sdk, input).expect("failed to process token deploy");
+    token2022_process_raw::<true, _>(&mut sdk, input1).expect("failed to process token deploy");
 }
 
 pub fn main_entry(mut sdk: impl SharedAPI) {
@@ -380,8 +389,8 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         SIG_TRANSFER_FROM => transfer_from(&mut sdk, input),
         SIG_INITIALIZE_ACCOUNT => initialize_account(&mut sdk, input),
         SIG_MINT_TO => mint_to(&mut sdk, input),
+        SIG_DECIMALS => decimals(&mut sdk, input),
         // SIG_APPROVE => approve(&mut sdk, input),
-        // SIG_DECIMALS => decimals(&mut sdk),
         // SIG_ALLOWANCE => allow(&mut sdk, input),
         // SIG_TOTAL_SUPPLY => total_supply(&mut sdk),
         // SIG_MINT => mint(&mut sdk, input),

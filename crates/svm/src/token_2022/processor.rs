@@ -10,7 +10,7 @@ use crate::token_2022::pod_instruction::{
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::marker::PhantomData;
-use fluentbase_sdk::{debug_log, debug_log_ext};
+use fluentbase_sdk::debug_log;
 use fluentbase_types::{Address, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use itertools::min;
 use solana_account_info::{next_account_info, AccountInfo};
@@ -94,7 +94,6 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         freeze_authority: PodCOption<Pubkey>,
         rent_sysvar_account: bool,
     ) -> ProgramResult {
-        debug_log_ext!();
         let account_info_iter = &mut accounts.iter();
         let mint_info = next_item(account_info_iter)?;
         let mint_data_len = mint_info.data_len();
@@ -120,8 +119,6 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         mint.base.is_initialized = PodBool::from_bool(true);
         mint.base.freeze_authority = freeze_authority;
         mint.init_account_type()?;
-
-        debug_log_ext!();
 
         Ok(())
     }
@@ -317,6 +314,24 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
             PodStateWithExtensionsMut::<PodAccount>::unpack(&mut destination_account_data)?;
 
         Ok(destination_account.base.amount.into())
+    }
+
+    pub fn decimals(&mut self, mint_pk: &Pubkey) -> Result<u8, ProgramError> {
+        let account_metas = vec![AccountMeta::new_readonly(mint_pk.clone(), false)];
+        let mut accounts: Vec<crate::account::Account> = self
+            .reconstruct_accounts::<true>(&account_metas)
+            .expect("failed to reconstruct accounts");
+        let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
+            .expect("failed to reconstruct accounts infos");
+
+        let account_info_iter = &mut account_infos.iter();
+
+        let mint_info = next_account_info(account_info_iter)?;
+
+        let mut account_data = mint_info.data.borrow_mut();
+        let mut mint = PodStateWithExtensionsMut::<PodMint>::unpack(&mut account_data)?;
+
+        Ok(mint.base.decimals)
     }
 
     /// Processes a [Transfer](enum.TokenInstruction.html) instruction.

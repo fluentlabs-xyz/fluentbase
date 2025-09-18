@@ -21,7 +21,7 @@ pub const ERR_CONVERSION: u32 = derive_evm_error!("ConversionError()");
 
 pub const SIG_SYMBOL: u32 = derive_keccak256_id!("symbol()");
 pub const SIG_NAME: u32 = derive_keccak256_id!("name()");
-pub const SIG_DECIMALS: u32 = derive_keccak256_id!("decimals()");
+pub const SIG_DECIMALS: u32 = derive_keccak256_id!("decimals(pubkey)"); // mint
 pub const SIG_TOTAL_SUPPLY: u32 = derive_keccak256_id!("totalSupply()");
 pub const SIG_BALANCE: u32 = derive_keccak256_id!("balance()");
 pub const SIG_BALANCE_OF: u32 = derive_keccak256_id!("balanceOf(pubkey)");
