@@ -11,7 +11,6 @@ use crate::token_2022::pod_instruction::PodTokenInstruction;
 use crate::token_2022::processor::Processor;
 use crate::token_2022::state::Mint;
 use alloc::vec::Vec;
-use fluentbase_sdk::debug_log_ext;
 use fluentbase_sdk::ContextReader;
 use fluentbase_svm_common::common::evm_address_from_pubkey;
 use fluentbase_types::{SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
@@ -28,17 +27,7 @@ pub fn token2022_process<const IS_DEPLOY: bool, SDK: SharedAPI>(
 ) -> ProgramResult {
     let instruction_type: PodTokenInstruction =
         decode_instruction_type(instruction_data).expect("failed to decode instruction type");
-    let contract_caller = sdk.context().contract_caller();
 
-    for account_meta in account_metas {
-        if account_meta.is_signer {
-            assert_eq!(
-                evm_address_from_pubkey::<true>(&account_meta.pubkey).expect("evm compatible pk"),
-                contract_caller,
-                "cannot be writable nor signer"
-            );
-        }
-    }
     let mut account_metas = account_metas.to_vec();
     normalize_account_metas(&mut account_metas);
 

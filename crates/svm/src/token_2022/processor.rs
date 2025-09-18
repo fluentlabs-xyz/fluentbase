@@ -10,7 +10,7 @@ use crate::token_2022::pod_instruction::{
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::marker::PhantomData;
-use fluentbase_sdk::{debug_log, debug_log_ext};
+use fluentbase_sdk::debug_log;
 use fluentbase_types::{Address, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use itertools::min;
 use solana_account_info::{next_account_info, AccountInfo};
@@ -2231,14 +2231,12 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         #[cfg(not(test))]
         {
             let contract_caller = self.sdk.context().contract_caller();
-            // if let Some(contract_caller) = contract_caller.as_ref() {
             assert_eq!(
                 evm_address_from_pubkey::<true>(&owner_account_info.key)
                     .expect("evm compatible pk"),
                 contract_caller,
                 "cannot be writable nor signer"
             );
-            // }
         }
         Ok(())
     }

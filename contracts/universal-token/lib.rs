@@ -13,7 +13,7 @@ use fluentbase_universal_token::{
     common::{bytes_to_sig, u256_from_bytes_slice_try},
     consts::{
         ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_INVALID_PAUSER, ERR_MALFORMED_INPUT,
-        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, SIG_BALANCE, SIG_BALANCE_OF, SIG_TOKEN2022,
+        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, SIG_BALANCE, SIG_BALANCE_OF, SIG_TOKEN2022, SIG_TRANSFER,
         SIG_TRANSFER_FROM,
     },
     storage::{Config, Settings, ADDRESS_LEN_BYTES, SIG_LEN_BYTES, U256_LEN_BYTES},
@@ -45,17 +45,12 @@ fn decimals<SDK: SharedAPI>(sdk: &mut SDK) {
 }
 
 fn transfer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let from = sdk.context().contract_caller();
-    const FROM_OFFSET: usize = 0;
-    const MINTER_OFFSET: usize = FROM_OFFSET + PUBKEY_BYTES;
-    const TO_OFFSET: usize = MINTER_OFFSET + PUBKEY_BYTES;
+    let from = &pubkey_from_evm_address::<true>(&sdk.context().contract_caller());
+    const TO_OFFSET: usize = 0;
     const AUTHORITY_OFFSET: usize = TO_OFFSET + PUBKEY_BYTES;
     const AMOUNT_OFFSET: usize = AUTHORITY_OFFSET + PUBKEY_BYTES;
 
-    let Ok(from) = pubkey_try_from_slice(&input[FROM_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(minter) = pubkey_try_from_slice(&input[MINTER_OFFSET..]) else {
+    let Ok(amount) = balance_try_from_slice(&input[AMOUNT_OFFSET..]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let Ok(to) = pubkey_try_from_slice(&input[TO_OFFSET..]) else {
@@ -64,39 +59,32 @@ fn transfer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     let Ok(authority) = pubkey_try_from_slice(&input[AUTHORITY_OFFSET..]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    let Ok(amount) = balance_try_from_slice(&input[AMOUNT_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
 
-    let program_id = fluentbase_svm::token_2022::lib::id();
-    let instruction = token_2022::instruction::transfer_checked(
-        &program_id,
+    #[allow(deprecated)]
+    let instruction = token_2022::instruction::transfer(
+        &token_2022::lib::id(),
         &from,
-        &minter,
         &to,
         &authority,
         &[],
         amount,
-        2, // TODO put as params in input?
     )
     .unwrap();
 
-    let mut processor = Processor::new(sdk);
-    processor
-        .process_extended::<false>(
-            &instruction.program_id,
-            &instruction.accounts,
-            &instruction.data,
-        )
-        .expect("failed to process");
+    token2022_process::<false, _>(
+        sdk,
+        &instruction.program_id,
+        &instruction.accounts,
+        &instruction.data,
+    )
+    .expect("failed to process");
     sdk.write(&[1]);
 }
 
 fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     // let from = sdk.context().contract_caller();
     const FROM_OFFSET: usize = 0;
-    const MINTER_OFFSET: usize = FROM_OFFSET + PUBKEY_BYTES;
-    const TO_OFFSET: usize = MINTER_OFFSET + PUBKEY_BYTES;
+    const TO_OFFSET: usize = FROM_OFFSET + PUBKEY_BYTES;
     const AUTHORITY_OFFSET: usize = TO_OFFSET + PUBKEY_BYTES;
     const AMOUNT_OFFSET: usize = AUTHORITY_OFFSET + PUBKEY_BYTES;
 
@@ -106,9 +94,6 @@ fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     let Ok(from) = pubkey_try_from_slice(&input[FROM_OFFSET..]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    let Ok(minter) = pubkey_try_from_slice(&input[MINTER_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
     let Ok(to) = pubkey_try_from_slice(&input[TO_OFFSET..]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
@@ -116,18 +101,14 @@ fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
 
-    debug_log_ext!("amount {}", amount);
-
-    let program_id = token_2022::lib::id();
-    let instruction = token_2022::instruction::transfer_checked(
-        &program_id,
+    #[allow(deprecated)]
+    let instruction = token_2022::instruction::transfer(
+        &token_2022::lib::id(),
         &from,
-        &minter,
         &to,
         &authority,
         &[],
         amount,
-        2, // TODO put as params in input?
     )
     .unwrap();
 
@@ -272,7 +253,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         // SIG_NAME => name(sdk),
         SIG_BALANCE => balance(&mut sdk),
         SIG_BALANCE_OF => balance_of(&mut sdk, input),
-        // SIG_TRANSFER => transfer(&mut sdk, input),
+        SIG_TRANSFER => transfer(&mut sdk, input),
         SIG_TRANSFER_FROM => transfer_from(&mut sdk, input),
         // SIG_APPROVE => approve(&mut sdk, input),
         // SIG_DECIMALS => decimals(&mut sdk),
