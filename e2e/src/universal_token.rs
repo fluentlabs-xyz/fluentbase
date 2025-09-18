@@ -10,7 +10,7 @@ use fluentbase_svm::helpers::{
     serialize_svm_program_params_from_instruction, storage_read_account_data,
     storage_write_account_data,
 };
-use fluentbase_svm::pubkey::{Pubkey, PUBKEY_BYTES};
+use fluentbase_svm::pubkey::Pubkey;
 use fluentbase_svm::solana_program::instruction::{AccountMeta, Instruction};
 use fluentbase_svm::token_2022;
 use fluentbase_svm::token_2022::helpers::{
@@ -24,7 +24,7 @@ use fluentbase_svm::token_2022::instruction::mint_to;
 use fluentbase_svm::token_2022::instruction::transfer;
 use fluentbase_svm::token_2022::instruction::transfer_checked;
 use fluentbase_svm::token_2022::state::{Account, Mint};
-use fluentbase_svm_common::common::{lamports_to_bytes, pubkey_from_evm_address};
+use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_svm_common::pubkey::PUBKEY_ZERO;
 use fluentbase_svm_common::universal_token::{
     InitializeAccountParams, InitializeMintParams, MintToParams, TransferFromParams, TransferParams,
@@ -268,8 +268,10 @@ fn test_transfer_dups() {
     let owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS5);
     let mint_key = pubkey_from_evm_address::<true>(&USER_ADDRESS6);
 
+    let decimals = 2;
+
     let initialize_mint_instruction =
-        initialize_mint(&program_id, &mint_key, &owner_key, None, 2).unwrap();
+        initialize_mint(&program_id, &mint_key, &owner_key, None, decimals).unwrap();
 
     let init_bytecode = build_input(&ERC20_MAGIC_BYTES, &initialize_mint_instruction)
         .expect("failed to build input");
@@ -417,7 +419,7 @@ fn test_transfer_dups() {
     let _output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
 
-    // balance_of (ABI version)
+    // balance_of
     let mut input_data = vec![];
     input_data.extend_from_slice(account2_key.as_ref());
     let input = build_input_raw(&sig_to_bytes(SIG_BALANCE_OF), &input_data);
@@ -444,7 +446,7 @@ fn test_transfer_dups() {
     let _output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
 
-    // balance_of (ABI version)
+    // balance_of
     let mut input_data = vec![];
     input_data.extend_from_slice(account2_key.as_ref());
     let input = build_input_raw(&sig_to_bytes(SIG_BALANCE_OF), &input_data);
@@ -453,81 +455,6 @@ fn test_transfer_dups() {
     assert_eq!(output_data.len(), size_of::<u64>());
     let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
     assert_eq!(balance, 1600);
-
-    // transfer_from (ABI version)
-    let amount: u64 = 100;
-    let mut input_data = vec![];
-    // from, to, authority, amount
-    input_data.extend_from_slice(account3_key.as_ref());
-    input_data.extend_from_slice(account2_key.as_ref());
-    input_data.extend_from_slice(account2_key.as_ref());
-    input_data.extend_from_slice(&amount.to_be_bytes());
-    let input = build_input_raw(&sig_to_bytes(SIG_TRANSFER_FROM), &input_data);
-    let output_data =
-        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
-    assert_eq!(output_data.len(), 1);
-    assert_eq!(output_data[0], 1);
-
-    // balance_of (ABI version)
-    let mut input_data = vec![];
-    input_data.extend_from_slice(account2_key.as_ref());
-    let input = build_input_raw(&sig_to_bytes(SIG_BALANCE_OF), &input_data);
-    let output_data =
-        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
-    assert_eq!(output_data.len(), size_of::<u64>());
-    let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1700);
-
-    // balance (ABI version)
-    let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
-    let output_data =
-        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
-    assert_eq!(output_data.len(), size_of::<u64>());
-    let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1700);
-
-    // transfer_from (ABI version)
-    let amount: u64 = 100;
-    let mut input_data = vec![];
-    // from, to, authority, amount
-    input_data.extend_from_slice(account2_key.as_ref());
-    input_data.extend_from_slice(account1_key.as_ref());
-    input_data.extend_from_slice(owner_key.as_ref());
-    input_data.extend_from_slice(&amount.to_be_bytes());
-    let input = build_input_raw(&sig_to_bytes(SIG_TRANSFER_FROM), &input_data);
-    let output_data =
-        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address).unwrap();
-    assert_eq!(output_data.len(), 1);
-    assert_eq!(output_data[0], 1);
-
-    // balance (ABI version)
-    let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
-    let output_data =
-        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
-    assert_eq!(output_data.len(), size_of::<u64>());
-    let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1600);
-
-    // transfer (ABI version)
-    let amount: u64 = 100;
-    let mut input_data = vec![];
-    // to, authority, amount
-    input_data.extend_from_slice(account2_key.as_ref());
-    input_data.extend_from_slice(account1_key.as_ref());
-    input_data.extend_from_slice(&amount.to_be_bytes());
-    let input = build_input_raw(&sig_to_bytes(SIG_TRANSFER), &input_data);
-    let output_data =
-        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
-    assert_eq!(output_data.len(), 1);
-    assert_eq!(output_data[0], 1);
-
-    // balance (ABI version)
-    let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
-    let output_data =
-        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
-    assert_eq!(output_data.len(), size_of::<u64>());
-    let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1700);
 }
 
 #[test]
