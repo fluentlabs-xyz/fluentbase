@@ -1,16 +1,96 @@
-use crate::{
-    instruction::weierstrass_helpers::{g1_from_decompressed_bytes, g2_from_decompressed_bytes},
-    utils::syscall_process_exit_code,
-    RuntimeContext,
-};
-use ark_bn254::{Bn254, Fq12};
+use crate::{utils::syscall_process_exit_code, RuntimeContext};
+use ark_bn254::{Bn254, Fq, Fq2, G1Affine, G2Affine};
 use ark_ec::{pairing::Pairing, AffineRepr};
-use ark_ff::{BigInteger, BigInteger256, One};
+use ark_ff::{One, Zero};
+use ark_serialize::CanonicalDeserialize;
 use fluentbase_types::{
     ExitCode, BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
     BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN,
 };
 use rwasm::{Store, TrapCode, TypedCaller, Value};
+
+// Constants from REVM
+const FQ_LEN: usize = 32;
+const FQ2_LEN: usize = 64;
+
+/// Reads a single `Fq` field element from the input slice (REVM compatible)
+#[inline]
+fn read_fq(input_be: &[u8]) -> Result<Fq, ExitCode> {
+    if input_be.len() != FQ_LEN {
+        return Err(ExitCode::InputOutputOutOfBounds);
+    }
+
+    let mut input_le = [0u8; FQ_LEN];
+    input_le.copy_from_slice(input_be);
+    input_le.reverse(); // Convert from big-endian to little-endian
+
+    Fq::deserialize_uncompressed(&input_le[..]).map_err(|_| ExitCode::PrecompileError)
+}
+
+/// Reads a Fq2 (quadratic extension field element) from the input slice (REVM compatible)
+#[inline]
+fn read_fq2(input: &[u8]) -> Result<Fq2, ExitCode> {
+    let y = read_fq(&input[..FQ_LEN])?;
+    let x = read_fq(&input[FQ_LEN..2 * FQ_LEN])?;
+    Ok(Fq2::new(x, y))
+}
+
+/// Creates a new `G1` point from the given `x` and `y` coordinates (REVM compatible)
+#[inline]
+fn new_g1_point(px: Fq, py: Fq) -> Result<G1Affine, ExitCode> {
+    if px.is_zero() && py.is_zero() {
+        Ok(G1Affine::zero())
+    } else {
+        let point = G1Affine::new_unchecked(px, py);
+        if !point.is_on_curve() || !point.is_in_correct_subgroup_assuming_on_curve() {
+            return Err(ExitCode::PrecompileError);
+        }
+        Ok(point)
+    }
+}
+
+/// Creates a new `G2` point from the given Fq2 coordinates (REVM compatible)
+#[inline]
+fn new_g2_point(x: Fq2, y: Fq2) -> Result<G2Affine, ExitCode> {
+    let point = if x.is_zero() && y.is_zero() {
+        G2Affine::zero()
+    } else {
+        let point = G2Affine::new_unchecked(x, y);
+        if !point.is_on_curve() || !point.is_in_correct_subgroup_assuming_on_curve() {
+            return Err(ExitCode::PrecompileError);
+        }
+        point
+    };
+    Ok(point)
+}
+
+/// Reads a G1 point from the input slice (REVM compatible)
+#[inline]
+fn read_g1_point_revm(input: &[u8]) -> Result<G1Affine, ExitCode> {
+    let px = read_fq(&input[0..FQ_LEN])?;
+    let py = read_fq(&input[FQ_LEN..2 * FQ_LEN])?;
+    new_g1_point(px, py)
+}
+
+/// Reads a G2 point from the input slice (REVM compatible)
+#[inline]
+fn read_g2_point_revm(input: &[u8]) -> Result<G2Affine, ExitCode> {
+    let ba = read_fq2(&input[0..FQ2_LEN])?;
+    let bb = read_fq2(&input[FQ2_LEN..2 * FQ2_LEN])?;
+    new_g2_point(ba, bb)
+}
+
+/// Performs pairing check (REVM compatible)
+#[inline]
+fn pairing_check_revm(pairs: &[(G1Affine, G2Affine)]) -> bool {
+    if pairs.is_empty() {
+        return true;
+    }
+
+    let (g1_points, g2_points): (Vec<G1Affine>, Vec<G2Affine>) = pairs.iter().copied().unzip();
+    let pairing_result = Bn254::multi_pairing(&g1_points, &g2_points);
+    pairing_result.0.is_one()
+}
 
 pub struct SyscallBn256Pairing;
 
@@ -61,38 +141,31 @@ impl SyscallBn256Pairing {
     }
 
     pub fn fn_impl(pairs: &mut [([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
-        // Build vectors of parsed points; invalid inputs return error like revm
-        let mut g1_vec = Vec::with_capacity(pairs.len());
-        let mut g2_vec = Vec::with_capacity(pairs.len());
-        for (g1_bytes, g2_bytes) in pairs.iter() {
-            let g1 = match g1_from_decompressed_bytes(g1_bytes) {
-                Ok(p) => p,
-                Err(_) => return Err(ExitCode::PrecompileError),
-            };
-            let g2 = match g2_from_decompressed_bytes(g2_bytes) {
-                Ok(p) => p,
-                Err(_) => return Err(ExitCode::PrecompileError),
-            };
+        // Parse points using REVM-compatible logic
+        let mut parsed_pairs = Vec::with_capacity(pairs.len());
 
-            // Handle point-at-infinity cases like revm
+        for (g1_bytes, g2_bytes) in pairs.iter() {
+            // Parse G1 point using REVM-compatible logic
+            let g1 = read_g1_point_revm(g1_bytes)?;
+            let g2 = read_g2_point_revm(g2_bytes)?;
+
+            // Handle point-at-infinity cases like REVM
             if g1.is_zero() || g2.is_zero() {
                 // Skip this pair but continue processing
                 continue;
             }
 
-            g1_vec.push(g1);
-            g2_vec.push(g2);
+            parsed_pairs.push((g1, g2));
         }
 
-        let res = Bn254::multi_pairing(g1_vec.into_iter(), g2_vec.into_iter());
-        let mut out = BigInteger256::from(0u64);
-        if res.0 == Fq12::one() {
-            out = BigInteger256::from(1u64);
+        // Perform pairing check using REVM-compatible logic
+        let success = pairing_check_revm(&parsed_pairs);
+
+        // Return big-endian 32-byte result (REVM compatible)
+        let mut result = [0u8; 32];
+        if success {
+            result[31] = 1; // Set the last byte to 1 for true (big-endian)
         }
-        // Return little-endian 32-byte result
-        let vec_bytes = out.to_bytes_le();
-        let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&vec_bytes);
-        Ok(bytes)
+        Ok(result)
     }
 }
