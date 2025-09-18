@@ -10,7 +10,7 @@ use fluentbase_svm::helpers::{
     serialize_svm_program_params_from_instruction, storage_read_account_data,
     storage_write_account_data,
 };
-use fluentbase_svm::pubkey::Pubkey;
+use fluentbase_svm::pubkey::{Pubkey, PUBKEY_BYTES};
 use fluentbase_svm::solana_program::instruction::{AccountMeta, Instruction};
 use fluentbase_svm::token_2022;
 use fluentbase_svm::token_2022::helpers::{
@@ -25,6 +25,10 @@ use fluentbase_svm::token_2022::instruction::transfer;
 use fluentbase_svm::token_2022::instruction::transfer_checked;
 use fluentbase_svm::token_2022::state::{Account, Mint};
 use fluentbase_svm_common::common::{lamports_to_bytes, pubkey_from_evm_address};
+use fluentbase_svm_common::pubkey::PUBKEY_ZERO;
+use fluentbase_svm_common::universal_token::{
+    InitializeAccountParams, InitializeMintParams, MintToParams, TransferFromParams, TransferParams,
+};
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::{
@@ -547,11 +551,13 @@ fn test_transfer_dups_abi_version() {
     // initialize_mint
     let decimals: u8 = 2;
     let mut input_data = vec![];
-    // mint, owner, freeze, decimals
-    input_data.extend_from_slice(mint_key.as_ref());
-    input_data.extend_from_slice(owner_key.as_ref());
-    input_data.extend_from_slice(Pubkey::default().as_ref());
-    input_data.push(decimals);
+    InitializeMintParams {
+        mint: &mint_key,
+        mint_authority: &owner_key,
+        freeze_opt: Some(&PUBKEY_ZERO),
+        decimals,
+    }
+    .serialize_into(&mut input_data);
     let sig_bytes = sig_to_bytes(SIG_INITIALIZE_MINT);
     let input = build_input_raw(&sig_bytes, &input_data);
     let input = build_input_raw(&ERC20_MAGIC_BYTES, &input);
@@ -571,10 +577,12 @@ fn test_transfer_dups_abi_version() {
 
     // initialize_account1
     let mut input_data = vec![];
-    // account, mint, owner
-    input_data.extend_from_slice(account1_key.as_ref());
-    input_data.extend_from_slice(mint_key.as_ref());
-    input_data.extend_from_slice(account1_key.as_ref());
+    InitializeAccountParams {
+        account: &account1_key,
+        mint: &mint_key,
+        owner: &account1_key,
+    }
+    .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
@@ -583,10 +591,12 @@ fn test_transfer_dups_abi_version() {
 
     // initialize_account2
     let mut input_data = vec![];
-    // account, mint, owner
-    input_data.extend_from_slice(account2_key.as_ref());
-    input_data.extend_from_slice(mint_key.as_ref());
-    input_data.extend_from_slice(owner_key.as_ref());
+    InitializeAccountParams {
+        account: &account2_key,
+        mint: &mint_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
@@ -594,12 +604,15 @@ fn test_transfer_dups_abi_version() {
     assert_eq!(output_data[0], 1);
 
     // mint_to
+    let amount = 1000;
     let mut input_data = vec![];
-    // mint, account, owner, amount
-    input_data.extend_from_slice(mint_key.as_ref());
-    input_data.extend_from_slice(account1_key.as_ref());
-    input_data.extend_from_slice(owner_key.as_ref());
-    input_data.extend_from_slice(&lamports_to_bytes(1000));
+    MintToParams {
+        mint: &mint_key,
+        account: &account1_key,
+        owner: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_MINT_TO), &input_data);
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address).unwrap();
@@ -665,10 +678,12 @@ fn test_transfer_dups_abi_version() {
     // test destination-owner transfer
     // initialize_account3
     let mut input_data = vec![];
-    // account, mint, owner
-    input_data.extend_from_slice(account3_key.as_ref());
-    input_data.extend_from_slice(mint_key.as_ref());
-    input_data.extend_from_slice(account2_key.as_ref());
+    InitializeAccountParams {
+        account: &account3_key,
+        mint: &mint_key,
+        owner: &account2_key,
+    }
+    .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
@@ -676,12 +691,15 @@ fn test_transfer_dups_abi_version() {
     assert_eq!(output_data[0], 1);
 
     // mint_to
+    let amount = 1000;
     let mut input_data = vec![];
-    // mint, account, owner, amount
-    input_data.extend_from_slice(mint_key.as_ref());
-    input_data.extend_from_slice(account3_key.as_ref());
-    input_data.extend_from_slice(owner_key.as_ref());
-    input_data.extend_from_slice(&lamports_to_bytes(1000));
+    MintToParams {
+        mint: &mint_key,
+        account: &account3_key,
+        owner: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_MINT_TO), &input_data);
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address).unwrap();
@@ -694,20 +712,22 @@ fn test_transfer_dups_abi_version() {
     modify_account_info(&mut ctx, &account2_key, |account2_info| {
         account2_info.is_signer = true;
     });
-    #[allow(deprecated)]
-    let instruction = transfer(
-        &program_id,
-        &account3_key,
-        &account2_key,
-        &account2_key,
-        &[],
-        500,
-    )
-    .unwrap();
-    let input =
-        build_input(&sig_to_bytes(SIG_TOKEN2022), &instruction).expect("failed to build input");
-    let _output_data =
+    let amount: u64 = 500;
+    let mut input_data = vec![];
+    TransferFromParams {
+        from: &account3_key,
+        mint: &mint_key,
+        to: &account2_key,
+        authority: &account2_key,
+        amount: &amount,
+        decimals,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_TRANSFER_FROM), &input_data);
+    let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+    assert_eq!(output_data.len(), 1);
+    assert_eq!(output_data[0], 1);
 
     // balance_of
     let mut input_data = vec![];
@@ -736,7 +756,7 @@ fn test_transfer_dups_abi_version() {
     let _output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
 
-    // balance_of
+    // balance
     let mut input_data = vec![];
     let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &input_data);
     let output_data =
@@ -748,11 +768,15 @@ fn test_transfer_dups_abi_version() {
     // transfer_from
     let amount: u64 = 100;
     let mut input_data = vec![];
-    // from, to, authority, amount
-    input_data.extend_from_slice(account3_key.as_ref());
-    input_data.extend_from_slice(account2_key.as_ref());
-    input_data.extend_from_slice(account2_key.as_ref());
-    input_data.extend_from_slice(&amount.to_be_bytes());
+    TransferFromParams {
+        from: &account3_key,
+        mint: &mint_key,
+        to: &account2_key,
+        authority: &account2_key,
+        amount: &amount,
+        decimals,
+    }
+    .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_TRANSFER_FROM), &input_data);
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
@@ -780,11 +804,15 @@ fn test_transfer_dups_abi_version() {
     // transfer_from
     let amount: u64 = 100;
     let mut input_data = vec![];
-    // from, to, authority, amount
-    input_data.extend_from_slice(account2_key.as_ref());
-    input_data.extend_from_slice(account1_key.as_ref());
-    input_data.extend_from_slice(owner_key.as_ref());
-    input_data.extend_from_slice(&amount.to_be_bytes());
+    TransferFromParams {
+        from: &account2_key,
+        mint: &mint_key,
+        to: &account1_key,
+        authority: &owner_key,
+        amount: &amount,
+        decimals,
+    }
+    .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_TRANSFER_FROM), &input_data);
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address).unwrap();
@@ -802,10 +830,14 @@ fn test_transfer_dups_abi_version() {
     // transfer
     let amount: u64 = 100;
     let mut input_data = vec![];
-    // to, authority, amount
-    input_data.extend_from_slice(account2_key.as_ref());
-    input_data.extend_from_slice(account1_key.as_ref());
-    input_data.extend_from_slice(&amount.to_be_bytes());
+    TransferParams {
+        mint: &mint_key,
+        to: &account2_key,
+        authority: &account1_key,
+        amount,
+        decimals,
+    }
+    .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_TRANSFER), &input_data);
     let output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();

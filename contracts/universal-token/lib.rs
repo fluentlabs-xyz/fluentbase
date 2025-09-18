@@ -8,9 +8,13 @@ use fluentbase_sdk::{
 use fluentbase_svm::fluentbase::token2022::{token2022_process, token2022_process_raw};
 use fluentbase_svm::pubkey::{Pubkey, PUBKEY_BYTES};
 use fluentbase_svm::token_2022;
+use fluentbase_svm::token_2022::extension::AccountType::Mint;
 use fluentbase_svm::token_2022::processor::Processor;
 use fluentbase_svm_common::common::{
     lamports_to_bytes, lamports_try_from_slice, pubkey_from_evm_address, pubkey_try_from_slice,
+};
+use fluentbase_svm_common::universal_token::{
+    InitializeAccountParams, InitializeMintParams, MintToParams, TransferFromParams, TransferParams,
 };
 use fluentbase_universal_token::{
     common::{bytes_to_sig, u256_from_bytes_slice_try},
@@ -46,28 +50,19 @@ fn decimals<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 
 fn transfer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     let from = &pubkey_from_evm_address::<true>(&sdk.context().contract_caller());
-    const TO_OFFSET: usize = 0;
-    const AUTHORITY_OFFSET: usize = TO_OFFSET + PUBKEY_BYTES;
-    const AMOUNT_OFFSET: usize = AUTHORITY_OFFSET + PUBKEY_BYTES;
-
-    let Ok(amount) = lamports_try_from_slice(&input[AMOUNT_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(to) = pubkey_try_from_slice(&input[TO_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(authority) = pubkey_try_from_slice(&input[AUTHORITY_OFFSET..]) else {
+    let Ok(params) = TransferParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
 
-    #[allow(deprecated)]
-    let instruction = token_2022::instruction::transfer(
+    let instruction = token_2022::instruction::transfer_checked(
         &token_2022::lib::id(),
         &from,
-        &to,
-        &authority,
+        &params.mint,
+        &params.to,
+        &params.authority,
         &[],
-        amount,
+        params.amount,
+        params.decimals,
     )
     .unwrap();
 
@@ -82,33 +77,20 @@ fn transfer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    // let from = sdk.context().contract_caller();
-    const FROM_OFFSET: usize = 0;
-    const TO_OFFSET: usize = FROM_OFFSET + PUBKEY_BYTES;
-    const AUTHORITY_OFFSET: usize = TO_OFFSET + PUBKEY_BYTES;
-    const AMOUNT_OFFSET: usize = AUTHORITY_OFFSET + PUBKEY_BYTES;
-
-    let Ok(amount) = lamports_try_from_slice(&input[AMOUNT_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(from) = pubkey_try_from_slice(&input[FROM_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(to) = pubkey_try_from_slice(&input[TO_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(authority) = pubkey_try_from_slice(&input[AUTHORITY_OFFSET..]) else {
+    let Ok(params) = TransferFromParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
 
     #[allow(deprecated)]
-    let instruction = token_2022::instruction::transfer(
+    let instruction = token_2022::instruction::transfer_checked(
         &token_2022::lib::id(),
-        &from,
-        &to,
-        &authority,
+        &params.from,
+        &params.mint,
+        &params.to,
+        &params.authority,
         &[],
-        amount,
+        *params.amount,
+        params.decimals,
     )
     .unwrap();
 
@@ -123,36 +105,16 @@ fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn initialize_mint<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    const MINT_OFFSET: usize = 0;
-    const MINT_AUTHORITY_OFFSET: usize = MINT_OFFSET + PUBKEY_BYTES;
-    const FREEZE_OFFSET: usize = MINT_AUTHORITY_OFFSET + PUBKEY_BYTES;
-    const DECIMALS_OFFSET: usize = FREEZE_OFFSET + PUBKEY_BYTES;
-
-    let Some(decimals) = input.get(DECIMALS_OFFSET).cloned() else {
+    let Ok(params) = InitializeMintParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(mint) = pubkey_try_from_slice(&input[MINT_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(mint_authority) = pubkey_try_from_slice(&input[MINT_AUTHORITY_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(freeze) = pubkey_try_from_slice(&input[FREEZE_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-
-    let freeze_opt = if freeze == Pubkey::default() {
-        None
-    } else {
-        Some(freeze)
     };
 
     let instruction = token_2022::instruction::initialize_mint(
         &token_2022::lib::id(),
-        &mint,
-        &mint_authority,
-        freeze_opt.as_ref(),
-        decimals,
+        &params.mint,
+        &params.mint_authority,
+        params.freeze_opt,
+        params.decimals,
     )
     .unwrap();
 
@@ -168,25 +130,15 @@ fn initialize_mint<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn initialize_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    const ACCOUNT_OFFSET: usize = 0;
-    const MINT_OFFSET: usize = ACCOUNT_OFFSET + PUBKEY_BYTES;
-    const OWNER_OFFSET: usize = MINT_OFFSET + PUBKEY_BYTES;
-
-    let Ok(owner) = pubkey_try_from_slice(&input[OWNER_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(account) = pubkey_try_from_slice(&input[ACCOUNT_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(mint) = pubkey_try_from_slice(&input[MINT_OFFSET..]) else {
+    let Ok(params) = InitializeAccountParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
 
     let instruction = token_2022::instruction::initialize_account(
         &token_2022::lib::id(),
-        &account,
-        &mint,
-        &owner,
+        &params.account,
+        &params.mint,
+        &params.owner,
     )
     .unwrap();
 
@@ -202,31 +154,17 @@ fn initialize_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn mint_to<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    const MINT_OFFSET: usize = 0;
-    const ACCOUNT_OFFSET: usize = MINT_OFFSET + PUBKEY_BYTES;
-    const OWNER_OFFSET: usize = ACCOUNT_OFFSET + PUBKEY_BYTES;
-    const AMOUNT_OFFSET: usize = OWNER_OFFSET + PUBKEY_BYTES;
-
-    let Ok(amount) = lamports_try_from_slice(&input[AMOUNT_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(mint) = pubkey_try_from_slice(&input[MINT_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(account) = pubkey_try_from_slice(&input[ACCOUNT_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(owner) = pubkey_try_from_slice(&input[OWNER_OFFSET..]) else {
+    let Ok(params) = MintToParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
 
     let instruction = token_2022::instruction::mint_to(
         &token_2022::lib::id(),
-        &mint,
-        &account,
-        &owner,
+        &params.mint,
+        &params.account,
+        &params.owner,
         &[],
-        amount,
+        *params.amount,
     )
     .unwrap();
 

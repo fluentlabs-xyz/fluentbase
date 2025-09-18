@@ -1,4 +1,5 @@
 use core::array::TryFromSliceError;
+use core::mem::transmute;
 use fluentbase_types::{Address, U256};
 use solana_pubkey::{Pubkey, PUBKEY_BYTES, SVM_ADDRESS_PREFIX};
 
@@ -55,11 +56,36 @@ pub fn lamports_try_from_slice(input: &[u8]) -> Result<u64, TryFromSliceError> {
     Ok(u64::from_be_bytes(amount_bytes))
 }
 
+pub fn lamports_ref_try_from_slice<'a>(input: &'a [u8]) -> Result<&'a u64, ()> {
+    if input.len() < size_of::<u64>() {
+        return Err(());
+    }
+    let result = unsafe {
+        transmute::<&'a [u8; size_of::<u64>()], &'a u64>(
+            input[..size_of::<u64>()].try_into().unwrap(),
+        )
+    };
+    Ok(result)
+}
+
 pub fn lamports_to_bytes(lamports: u64) -> [u8; size_of::<u64>()] {
     lamports.to_be_bytes()
+}
+pub fn lamports_ref_to_bytes_ref<'a>(lamports: &'a u64) -> &'a [u8; size_of::<u64>()] {
+    unsafe { transmute::<&'a u64, &'a [u8; size_of::<u64>()]>(lamports) }
 }
 
 pub fn pubkey_try_from_slice(input: &[u8]) -> Result<Pubkey, TryFromSliceError> {
     let bytes: [u8; PUBKEY_BYTES] = input[..PUBKEY_BYTES].try_into()?;
     Ok(Pubkey::new_from_array(bytes))
+}
+
+pub fn pubkey_ref_try_from_slice<'a>(input: &'a [u8]) -> Result<&'a Pubkey, ()> {
+    if input.len() < PUBKEY_BYTES {
+        return Err(());
+    }
+    let result = unsafe {
+        transmute::<&'a [u8; PUBKEY_BYTES], &'a Pubkey>(input[..PUBKEY_BYTES].try_into().unwrap())
+    };
+    Ok(result)
 }

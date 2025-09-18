@@ -131,7 +131,6 @@ pub fn flush_accounts<SDK: SharedAPI, const SKIP_REPEATS: bool>(
             continue;
         }
         let account_data: AccountSharedData = (*account).clone().into();
-        debug_log_ext!("pk: {} account_data len {}", &pk, account_data.data().len());
         storage_write_account_data(
             sdk,
             pk,
