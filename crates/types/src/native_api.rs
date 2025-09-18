@@ -38,7 +38,7 @@ pub trait NativeAPI {
     fn bn254_add(p: &mut [u8; 64], q: &[u8; 64]) -> Result<[u8; 64], ExitCode>;
     fn bn254_double(p: &mut [u8; 64]);
     fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode>;
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32];
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode>;
     fn bn254_g1_compress(
         point: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
     ) -> Result<[u8; BN254_G1_POINT_COMPRESSED_SIZE], ExitCode>;

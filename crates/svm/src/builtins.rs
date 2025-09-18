@@ -2024,7 +2024,12 @@ declare_builtin_function!(
                 }
 
                 let output = SDK::bn254_multi_pairing(&vec_pairs2);
-                Ok(convert_endianness_flexible::<32>(&output))
+                // handle error
+                if let Err(e) = output {
+                    todo!()
+                    //return Err(e.into());
+                }
+                Ok(convert_endianness_flexible::<32>(&output.unwrap()))
             },
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());

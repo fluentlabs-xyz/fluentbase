@@ -189,7 +189,7 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
         let mut result = [0u8; 32];
         unsafe {
             _bn254_multi_pairing(
@@ -198,7 +198,7 @@ impl NativeAPI for RwasmContext {
                 result.as_mut_ptr(),
             );
         }
-        result
+        Ok(result)
     }
 
     #[inline(always)]

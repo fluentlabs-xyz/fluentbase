@@ -205,9 +205,11 @@ impl NativeAPI for RuntimeContextWrapper {
         Ok(result)
     }
 
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
         let mut pairs = elements.to_vec();
-        SyscallBn256Pairing::fn_impl(&mut pairs).unwrap_or([0u8; 32])
+        let result =
+            SyscallBn256Pairing::fn_impl(&mut pairs).map_err(|_| ExitCode::PrecompileError)?;
+        Ok(result)
     }
 
     fn bn254_g1_compress(

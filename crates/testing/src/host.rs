@@ -326,7 +326,7 @@ impl SharedAPI for HostTestingContext {
     fn bn254_mul(p: &mut [u8; 64], q: &[u8; 32]) -> Result<[u8; 64], ExitCode> {
         RuntimeContextWrapper::bn254_mul(p, q)
     }
-    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+    fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
         RuntimeContextWrapper::bn254_multi_pairing(elements)
     }
     fn bn254_g1_compress(

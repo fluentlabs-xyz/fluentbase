@@ -162,7 +162,7 @@ mod tests {
             todo!()
         }
 
-        fn bn254_multi_pairing(_elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
+        fn bn254_multi_pairing(_elements: &[([u8; 64], [u8; 128])]) -> Result<[u8; 32], ExitCode> {
             todo!()
         }
 

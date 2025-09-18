@@ -14,7 +14,6 @@ use revm_precompile::bn128::{
     ADD_INPUT_LEN, MUL_INPUT_LEN, PAIR_ELEMENT_LEN,
 };
 
-// Constants from REVM
 const G1_LEN: usize = 64;
 const G2_LEN: usize = 128;
 
@@ -59,7 +58,6 @@ fn bn256_mul_with_sdk<SDK: SharedAPI>(
     SDK::bn254_mul(p, q)
 }
 
-/// Reads a G1 point from the input slice (REVM compatible)
 #[inline(always)]
 fn read_g1_point(input: &[u8]) -> Result<[u8; 64], ExitCode> {
     if input.len() != G1_LEN {
@@ -70,7 +68,6 @@ fn read_g1_point(input: &[u8]) -> Result<[u8; 64], ExitCode> {
     Ok(g1)
 }
 
-/// Reads a G2 point from the input slice (REVM compatible)
 #[inline(always)]
 fn read_g2_point(input: &[u8]) -> Result<[u8; 128], ExitCode> {
     if input.len() != G2_LEN {
@@ -81,21 +78,11 @@ fn read_g2_point(input: &[u8]) -> Result<[u8; 128], ExitCode> {
     Ok(g2)
 }
 
-/// Performs pairing check (REVM compatible)
 #[inline(always)]
-fn pairing_check<SDK: SharedAPI>(sdk: &SDK, pairs: &[([u8; 64], [u8; 128])]) -> bool {
-    if pairs.is_empty() {
-        return true;
-    }
-    // Use SDK's multi-pairing function
-    let mut pairs_vec = pairs.to_vec();
-    let result = bn256_pair_with_sdk(sdk, &mut pairs_vec);
-    result[31] == 1
-}
-
-#[inline(always)]
-fn bn256_pair_with_sdk<SDK: SharedAPI>(_: &SDK, pairs: &mut [([u8; 64], [u8; 128])]) -> [u8; 32] {
-    // Use the SDK's multi-pairing function which should be REVM-compatible
+fn bn256_pair_with_sdk<SDK: SharedAPI>(
+    _: &SDK,
+    pairs: &mut [([u8; 64], [u8; 128])],
+) -> Result<[u8; 32], ExitCode> {
     SDK::bn254_multi_pairing(pairs)
 }
 
@@ -134,7 +121,6 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             sdk.write(&result);
         }
         PRECOMPILE_BN256_PAIR => {
-            // Calculate gas cost exactly like REVM
             let gas_used = (input.len() / PAIR_ELEMENT_LEN) as u64 * ISTANBUL_PAIR_PER_POINT
                 + ISTANBUL_PAIR_BASE;
             if gas_used > gas_limit {
@@ -160,31 +146,19 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 let encoded_g1_element = &input[g1_start..g2_start];
                 let encoded_g2_element = &input[g2_start..g2_start + G2_LEN];
 
-                // If either the G1 or G2 element is the encoded representation
-                // of the point at infinity, then these two points are no-ops
-                // in the pairing computation.
-                //
-                // Note: we do not skip the validation of these two elements even if
-                // one of them is the point at infinity because we could have G1 be
-                // the point at infinity and G2 be an invalid element or vice versa.
-                // In that case, the precompile should error because one of the elements
-                // was invalid.
-                let g1_is_zero = encoded_g1_element.iter().all(|i| *i == 0);
-                let g2_is_zero = encoded_g2_element.iter().all(|i| *i == 0);
-
                 // Get G1 and G2 points from the input
                 let a = read_g1_point(encoded_g1_element)
                     .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
                 let b = read_g2_point(encoded_g2_element)
                     .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
 
-                if !g1_is_zero && !g2_is_zero {
-                    pairs.push((a, b));
-                }
+                // Always pass pairs to runtime; it will validate and skip zero pairs
+                pairs.push((a, b));
             }
 
             // Use the runtime's REVM-compatible pairing implementation
             let result = bn256_pair_with_sdk(&sdk, &mut pairs);
+            let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
             sdk.sync_evm_gas(gas_used, 0);
             sdk.write(&result);
         }
