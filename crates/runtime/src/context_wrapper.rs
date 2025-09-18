@@ -9,6 +9,7 @@ use crate::{
         bls12_381_map_fp_to_g1::SyscallBls12381MapFpToG1,
         bls12_381_pairing::SyscallBls12381Pairing,
         bn256_mul::SyscallBn256Mul,
+        bn256_pairing::SyscallBn256Pairing,
         charge_fuel::SyscallChargeFuel,
         charge_fuel_manually::SyscallChargeFuelManually,
         curve25519_edwards_add::SyscallCurve25519EdwardsAdd,
@@ -56,8 +57,8 @@ use crate::{
     RuntimeContext,
 };
 use fluentbase_types::{
-    bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, Bytes, ExitCode, UnwrapExitCode,
-    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    native_api::NativeAPI, BytecodeOrHash, Bytes, ExitCode, UnwrapExitCode, B256,
+    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
@@ -205,8 +206,8 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn bn254_multi_pairing(elements: &[([u8; 64], [u8; 128])]) -> [u8; 32] {
-        let result = SyscallWeierstrassMultiPairingAssign::<Bn254>::fn_impl(elements);
-        result.try_into().unwrap()
+        let mut pairs = elements.to_vec();
+        SyscallBn256Pairing::fn_impl(&mut pairs).unwrap_or([0u8; 32])
     }
 
     fn bn254_g1_compress(

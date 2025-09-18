@@ -112,27 +112,21 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             let gas_cost = ISTANBUL_PAIR_BASE + (elements as u64 * ISTANBUL_PAIR_PER_POINT);
             validate_and_consume_gas(&sdk, gas_cost, gas_limit);
 
-            // Handle all pairing cases
+            // Build pairs without altering endianness; runtime handles decoding
             let mut pairs = alloc::vec::Vec::with_capacity(elements);
             for i in 0..elements {
                 let start = i * PAIR_ELEMENT_LEN;
                 let end = start + PAIR_ELEMENT_LEN;
                 let pair_input = &input[start..end];
 
-                // Convert endianness like the system builtin does
-                // G1 points use 32-byte chunks, G2 points use 64-byte chunks
-                let p_bytes = convert_endianness_flexible::<32>(&pair_input[0..64]);
-                let q_bytes = convert_endianness_flexible::<64>(&pair_input[64..192]);
-
-                let p: [u8; 64] = p_bytes.try_into().unwrap();
-                let q: [u8; 128] = q_bytes.try_into().unwrap();
+                let p: [u8; 64] = pair_input[0..64].try_into().unwrap();
+                let q: [u8; 128] = pair_input[64..192].try_into().unwrap();
                 pairs.push((p, q));
             }
 
             let result = bn256_pair_with_sdk(&sdk, &mut pairs);
-            // Convert output endianness back like the system builtin does
-            let output = convert_endianness_flexible::<32>(&result);
-            sdk.write(&output);
+            // Write result directly in big-endian 0/1 format expected by tests
+            sdk.write(&result);
         }
         _ => unreachable!("bn128: unsupported contract address"),
     };
