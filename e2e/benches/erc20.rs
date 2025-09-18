@@ -19,76 +19,76 @@ use revm::context::result::ExecutionResult;
 fn erc20_transfer_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("ERC20 Transfer Comparison");
 
-    // // --- Benchmark 1: Original EVM ERC20 (rWasm disabled) ---
-    // {
-    //     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    //     ctx.disabled_rwasm = true;
-    //     const OWNER_ADDRESS: Address = Address::ZERO;
-    //     let contract_address = ctx.deploy_evm_tx(
-    //         OWNER_ADDRESS,
-    //         hex::decode(include_bytes!("../assets/ERC20.bin"))
-    //             .unwrap()
-    //             .into(),
-    //     );
-    //     let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
-    //
-    //     group.bench_function("1_Original_EVM_ERC20", |b| {
-    //         b.iter(|| {
-    //             ctx.call_evm_tx(
-    //                 OWNER_ADDRESS,
-    //                 contract_address,
-    //                 transfer_payload.clone(),
-    //                 None,
-    //                 None,
-    //             );
-    //         });
-    //     });
-    // }
-    //
-    // // --- Benchmark 2: Emulated EVM ERC20 (rWasm enabled) ---
-    // {
-    //     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    //     const OWNER_ADDRESS: Address = Address::ZERO;
-    //     let contract_address = ctx.deploy_evm_tx(
-    //         OWNER_ADDRESS,
-    //         hex::decode(include_bytes!("../assets/ERC20.bin"))
-    //             .unwrap()
-    //             .into(),
-    //     );
-    //     let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
-    //
-    //     group.bench_function("2_Emulated_EVM_ERC20", |b| {
-    //         b.iter(|| {
-    //             ctx.call_evm_tx(
-    //                 OWNER_ADDRESS,
-    //                 contract_address,
-    //                 transfer_payload.clone(),
-    //                 None,
-    //                 None,
-    //             );
-    //         });
-    //     });
-    // }
-    //
-    // // --- Benchmark 3: rWasm Contract ERC20 ---
-    // {
-    //     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    //     const OWNER_ADDRESS: Address = Address::ZERO;
-    //     let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
-    //     let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
-    //
-    //     group.bench_function("3_rWasm_Contract_ERC20", |b| {
-    //         b.iter(|| {
-    //             ctx.call_evm_tx(
-    //                 OWNER_ADDRESS,
-    //                 contract_address,
-    //                 transfer_payload.clone(),
-    //                 None,
-    //                 None,
-    //             );
-    //         });
-    //     });
-    // }
+    // --- Benchmark 1: Original EVM ERC20 (rWasm disabled) ---
+    {
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        ctx.disabled_rwasm = true;
+        const OWNER_ADDRESS: Address = Address::ZERO;
+        let contract_address = ctx.deploy_evm_tx(
+            OWNER_ADDRESS,
+            hex::decode(include_bytes!("../assets/ERC20.bin"))
+                .unwrap()
+                .into(),
+        );
+        let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
+
+        group.bench_function("1_Original_EVM_ERC20", |b| {
+            b.iter(|| {
+                ctx.call_evm_tx(
+                    OWNER_ADDRESS,
+                    contract_address,
+                    transfer_payload.clone(),
+                    None,
+                    None,
+                );
+            });
+        });
+    }
+
+    // --- Benchmark 2: Emulated EVM ERC20 (rWasm enabled) ---
+    {
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        const OWNER_ADDRESS: Address = Address::ZERO;
+        let contract_address = ctx.deploy_evm_tx(
+            OWNER_ADDRESS,
+            hex::decode(include_bytes!("../assets/ERC20.bin"))
+                .unwrap()
+                .into(),
+        );
+        let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
+
+        group.bench_function("2_Emulated_EVM_ERC20", |b| {
+            b.iter(|| {
+                ctx.call_evm_tx(
+                    OWNER_ADDRESS,
+                    contract_address,
+                    transfer_payload.clone(),
+                    None,
+                    None,
+                );
+            });
+        });
+    }
+
+    // --- Benchmark 3: rWasm Contract ERC20 ---
+    {
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        const OWNER_ADDRESS: Address = Address::ZERO;
+        let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
+        let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
+
+        group.bench_function("3_rWasm_Contract_ERC20", |b| {
+            b.iter(|| {
+                ctx.call_evm_tx(
+                    OWNER_ADDRESS,
+                    contract_address,
+                    transfer_payload.clone(),
+                    None,
+                    None,
+                );
+            });
+        });
+    }
 
     // --- Benchmark 4: Precompiled Universal Token ---
     {
