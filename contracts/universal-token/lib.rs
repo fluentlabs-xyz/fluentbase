@@ -2,36 +2,25 @@
 extern crate alloc;
 extern crate core;
 
-use core::array::TryFromSliceError;
-use fluentbase_sdk::{debug_log_ext, entrypoint, Address, ContextReader, SharedAPI};
+use fluentbase_sdk::{
+    debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, ERC20_MAGIC_BYTES,
+};
 use fluentbase_svm::fluentbase::token2022::{token2022_process, token2022_process_raw};
 use fluentbase_svm::pubkey::{Pubkey, PUBKEY_BYTES};
 use fluentbase_svm::token_2022;
 use fluentbase_svm::token_2022::processor::Processor;
-use fluentbase_svm_common::common::pubkey_from_evm_address;
+use fluentbase_svm_common::common::{
+    lamports_to_bytes, lamports_try_from_slice, pubkey_from_evm_address, pubkey_try_from_slice,
+};
 use fluentbase_universal_token::{
     common::{bytes_to_sig, u256_from_bytes_slice_try},
     consts::{
         ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_INVALID_PAUSER, ERR_MALFORMED_INPUT,
-        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, SIG_BALANCE, SIG_BALANCE_OF, SIG_TOKEN2022, SIG_TRANSFER,
-        SIG_TRANSFER_FROM,
+        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, SIG_BALANCE, SIG_BALANCE_OF, SIG_INITIALIZE_ACCOUNT,
+        SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
     },
     storage::{Config, Settings, ADDRESS_LEN_BYTES, SIG_LEN_BYTES, U256_LEN_BYTES},
 };
-
-fn balance_try_from_slice(input: &[u8]) -> Result<u64, TryFromSliceError> {
-    let amount_bytes: [u8; size_of::<u64>()] = input[..size_of::<u64>()].try_into()?;
-    Ok(u64::from_be_bytes(amount_bytes))
-}
-
-fn balance_to_bytes(balance: u64) -> [u8; size_of::<u64>()] {
-    balance.to_be_bytes()
-}
-
-fn pubkey_try_from_slice(input: &[u8]) -> Result<Pubkey, TryFromSliceError> {
-    let bytes: [u8; PUBKEY_BYTES] = input[..PUBKEY_BYTES].try_into()?;
-    Ok(Pubkey::new_from_array(bytes))
-}
 
 fn symbol<SDK: SharedAPI>(sdk: &mut SDK) {
     // sdk.write(&get_symbol(sdk));
@@ -50,7 +39,7 @@ fn transfer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     const AUTHORITY_OFFSET: usize = TO_OFFSET + PUBKEY_BYTES;
     const AMOUNT_OFFSET: usize = AUTHORITY_OFFSET + PUBKEY_BYTES;
 
-    let Ok(amount) = balance_try_from_slice(&input[AMOUNT_OFFSET..]) else {
+    let Ok(amount) = lamports_try_from_slice(&input[AMOUNT_OFFSET..]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let Ok(to) = pubkey_try_from_slice(&input[TO_OFFSET..]) else {
@@ -88,7 +77,7 @@ fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     const AUTHORITY_OFFSET: usize = TO_OFFSET + PUBKEY_BYTES;
     const AMOUNT_OFFSET: usize = AUTHORITY_OFFSET + PUBKEY_BYTES;
 
-    let Ok(amount) = balance_try_from_slice(&input[AMOUNT_OFFSET..]) else {
+    let Ok(amount) = lamports_try_from_slice(&input[AMOUNT_OFFSET..]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     let Ok(from) = pubkey_try_from_slice(&input[FROM_OFFSET..]) else {
@@ -122,6 +111,125 @@ fn transfer_from<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     sdk.write(&[1]);
 }
 
+fn initialize_mint<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
+    const MINT_OFFSET: usize = 0;
+    const MINT_AUTHORITY_OFFSET: usize = MINT_OFFSET + PUBKEY_BYTES;
+    const FREEZE_OFFSET: usize = MINT_AUTHORITY_OFFSET + PUBKEY_BYTES;
+    const DECIMALS_OFFSET: usize = FREEZE_OFFSET + PUBKEY_BYTES;
+
+    let Some(decimals) = input.get(DECIMALS_OFFSET).cloned() else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(mint) = pubkey_try_from_slice(&input[MINT_OFFSET..]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(mint_authority) = pubkey_try_from_slice(&input[MINT_AUTHORITY_OFFSET..]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(freeze) = pubkey_try_from_slice(&input[FREEZE_OFFSET..]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+
+    let freeze_opt = if freeze == Pubkey::default() {
+        None
+    } else {
+        Some(freeze)
+    };
+
+    let instruction = token_2022::instruction::initialize_mint(
+        &token_2022::lib::id(),
+        &mint,
+        &mint_authority,
+        freeze_opt.as_ref(),
+        decimals,
+    )
+    .unwrap();
+
+    token2022_process::<true, _>(
+        sdk,
+        &instruction.program_id,
+        &instruction.accounts,
+        &instruction.data,
+    )
+    .expect("failed to process");
+
+    // sdk.write(&[1]);
+}
+
+fn initialize_account<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
+    const ACCOUNT_OFFSET: usize = 0;
+    const MINT_OFFSET: usize = ACCOUNT_OFFSET + PUBKEY_BYTES;
+    const OWNER_OFFSET: usize = MINT_OFFSET + PUBKEY_BYTES;
+
+    let Ok(owner) = pubkey_try_from_slice(&input[OWNER_OFFSET..]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(account) = pubkey_try_from_slice(&input[ACCOUNT_OFFSET..]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(mint) = pubkey_try_from_slice(&input[MINT_OFFSET..]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+
+    let instruction = token_2022::instruction::initialize_account(
+        &token_2022::lib::id(),
+        &account,
+        &mint,
+        &owner,
+    )
+    .unwrap();
+
+    token2022_process::<false, _>(
+        sdk,
+        &instruction.program_id,
+        &instruction.accounts,
+        &instruction.data,
+    )
+    .expect("failed to process");
+
+    sdk.write(&[1]);
+}
+
+fn mint_to<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
+    const MINT_OFFSET: usize = 0;
+    const ACCOUNT_OFFSET: usize = MINT_OFFSET + PUBKEY_BYTES;
+    const OWNER_OFFSET: usize = ACCOUNT_OFFSET + PUBKEY_BYTES;
+    const AMOUNT_OFFSET: usize = OWNER_OFFSET + PUBKEY_BYTES;
+
+    let Ok(amount) = lamports_try_from_slice(&input[AMOUNT_OFFSET..]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(mint) = pubkey_try_from_slice(&input[MINT_OFFSET..]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(account) = pubkey_try_from_slice(&input[ACCOUNT_OFFSET..]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+    let Ok(owner) = pubkey_try_from_slice(&input[OWNER_OFFSET..]) else {
+        sdk.evm_exit(ERR_MALFORMED_INPUT);
+    };
+
+    let instruction = token_2022::instruction::mint_to(
+        &token_2022::lib::id(),
+        &mint,
+        &account,
+        &owner,
+        &[],
+        amount,
+    )
+    .unwrap();
+
+    token2022_process::<false, _>(
+        sdk,
+        &instruction.program_id,
+        &instruction.accounts,
+        &instruction.data,
+    )
+    .expect("failed to process");
+
+    sdk.write(&[1]);
+}
+
 fn approve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     const OWNER_OFFSET: usize = 0;
     const SPENDER_OFFSET: usize = OWNER_OFFSET + ADDRESS_LEN_BYTES;
@@ -132,7 +240,7 @@ fn approve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
     let Ok(spender) = Address::try_from(&input[SPENDER_OFFSET..]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    let Ok(amount) = balance_try_from_slice(&input[AMOUNT_OFFSET..]) else {
+    let Ok(amount) = lamports_try_from_slice(&input[AMOUNT_OFFSET..]) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     // do_approve(&mut sdk, &owner, &spender, &amount);
@@ -164,7 +272,7 @@ fn balance_for_pubkey<SDK: SharedAPI>(sdk: &mut SDK, pubkey: &Pubkey) {
     let balance = processor
         .balance_of(&pubkey)
         .expect("failed to get balance");
-    sdk.write(&balance_to_bytes(balance))
+    sdk.write(&lamports_to_bytes(balance))
 }
 
 fn balance_for_address<SDK: SharedAPI>(sdk: &mut SDK, address: &Address) {
@@ -236,7 +344,22 @@ pub fn deploy_entry(mut sdk: impl SharedAPI) {
     if input_size < SIG_LEN_BYTES as u32 {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     }
-    let (_sig, input) = sdk.input().split_at(SIG_LEN_BYTES);
+    let (sig1_bytes, input) = sdk.input().split_at(SIG_LEN_BYTES);
+    if sig1_bytes != ERC20_MAGIC_BYTES {
+        panic!("invalid input signature");
+    }
+    let sig2_bytes = &input[..SIG_LEN_BYTES];
+    let sig2 = bytes_to_sig(sig2_bytes);
+    debug_log_ext!("sig1_bytes {:x?} sig2_bytes {:x?}", sig1_bytes, sig2_bytes);
+    match sig2 {
+        SIG_INITIALIZE_MINT => {
+            // TODO check for collision or add specific signature for raw processing
+            debug_log_ext!("initialize_mint");
+            initialize_mint(&mut sdk, &input[SIG_LEN_BYTES..]);
+            return;
+        }
+        _ => {}
+    }
     token2022_process_raw::<true, _>(&mut sdk, input).expect("failed to process token deploy");
 }
 
@@ -255,6 +378,8 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         SIG_BALANCE_OF => balance_of(&mut sdk, input),
         SIG_TRANSFER => transfer(&mut sdk, input),
         SIG_TRANSFER_FROM => transfer_from(&mut sdk, input),
+        SIG_INITIALIZE_ACCOUNT => initialize_account(&mut sdk, input),
+        SIG_MINT_TO => mint_to(&mut sdk, input),
         // SIG_APPROVE => approve(&mut sdk, input),
         // SIG_DECIMALS => decimals(&mut sdk),
         // SIG_ALLOWANCE => allow(&mut sdk, input),

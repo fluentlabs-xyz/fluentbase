@@ -25,8 +25,12 @@ pub const SIG_DECIMALS: u32 = derive_keccak256_id!("decimals()");
 pub const SIG_TOTAL_SUPPLY: u32 = derive_keccak256_id!("totalSupply()");
 pub const SIG_BALANCE: u32 = derive_keccak256_id!("balance()");
 pub const SIG_BALANCE_OF: u32 = derive_keccak256_id!("balanceOf(pubkey)");
-pub const SIG_TRANSFER: u32 = derive_keccak256_id!("transfer(pubkey,pubkey,pubkey,u64)"); // to, minter, authority, amount
-pub const SIG_TRANSFER_FROM: u32 = derive_keccak256_id!("transferFrom(pubkey,pubkey,u64)"); // from, minter, to, authority, amount
+pub const SIG_TRANSFER: u32 = derive_keccak256_id!("transfer(pubkey,pubkey,u64)"); // to, authority, amount
+pub const SIG_TRANSFER_FROM: u32 = derive_keccak256_id!("transferFrom(pubkey,pubkey,pubkey,u64)"); // from, to, authority, amount
+pub const SIG_INITIALIZE_MINT: u32 = derive_keccak256_id!("initializeMint(pubkey,pubkey)"); // mint, owner, freeze, decimals (u8)
+pub const SIG_INITIALIZE_ACCOUNT: u32 =
+    derive_keccak256_id!("initializeAccount(pubkey,pubkey,pubkey)"); // account, mint, owner
+pub const SIG_MINT_TO: u32 = derive_keccak256_id!("initializeAccount(pubkey,pubkey,pubkey,u64)"); // mint, account, owner, amount
 pub const SIG_ALLOWANCE: u32 = derive_keccak256_id!("allowance(pubkey)");
 pub const SIG_APPROVE: u32 = derive_keccak256_id!("approve(pubkey,u64)");
 pub const SIG_MINT: u32 = derive_keccak256_id!("mint(pubkey,u64)");

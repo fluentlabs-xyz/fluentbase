@@ -1,3 +1,4 @@
+use core::array::TryFromSliceError;
 use fluentbase_types::{Address, U256};
 use solana_pubkey::{Pubkey, PUBKEY_BYTES, SVM_ADDRESS_PREFIX};
 
@@ -47,4 +48,18 @@ pub fn evm_balance_from_lamports(value: u64) -> U256 {
     let mut bytes = [0u8; U256::BYTES];
     bytes[U256::BYTES - SIZE_OF_U64..U256::BYTES].copy_from_slice(&value.to_be_bytes());
     U256::from_be_bytes(bytes) * U256::from(ONE_GWEI)
+}
+
+pub fn lamports_try_from_slice(input: &[u8]) -> Result<u64, TryFromSliceError> {
+    let amount_bytes: [u8; size_of::<u64>()] = input[..size_of::<u64>()].try_into()?;
+    Ok(u64::from_be_bytes(amount_bytes))
+}
+
+pub fn lamports_to_bytes(lamports: u64) -> [u8; size_of::<u64>()] {
+    lamports.to_be_bytes()
+}
+
+pub fn pubkey_try_from_slice(input: &[u8]) -> Result<Pubkey, TryFromSliceError> {
+    let bytes: [u8; PUBKEY_BYTES] = input[..PUBKEY_BYTES].try_into()?;
+    Ok(Pubkey::new_from_array(bytes))
 }

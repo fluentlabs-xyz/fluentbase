@@ -10,7 +10,7 @@ use crate::token_2022::pod_instruction::{
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::marker::PhantomData;
-use fluentbase_sdk::debug_log;
+use fluentbase_sdk::{debug_log, debug_log_ext};
 use fluentbase_types::{Address, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use itertools::min;
 use solana_account_info::{next_account_info, AccountInfo};
@@ -94,6 +94,7 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         freeze_authority: PodCOption<Pubkey>,
         rent_sysvar_account: bool,
     ) -> ProgramResult {
+        debug_log_ext!();
         let account_info_iter = &mut accounts.iter();
         let mint_info = next_item(account_info_iter)?;
         let mint_data_len = mint_info.data_len();
@@ -119,6 +120,8 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         mint.base.is_initialized = PodBool::from_bool(true);
         mint.base.freeze_authority = freeze_authority;
         mint.init_account_type()?;
+
+        debug_log_ext!();
 
         Ok(())
     }
@@ -1663,6 +1666,13 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         Ok(())
     }
 
+    fn reconstruct_accounts<const DEFAULT_NON_EXISTENT: bool>(
+        &self,
+        account_metas: &[AccountMeta],
+    ) -> Result<Vec<crate::account::Account>, SvmError> {
+        reconstruct_accounts::<_, DEFAULT_NON_EXISTENT>(self.sdk, account_metas)
+    }
+
     pub fn process_extended<const IS_DEPLOY: bool>(
         &mut self,
         program_id: &Pubkey,
@@ -1871,13 +1881,6 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
             .expect("failed to reconstruct accounts");
         self.process(program_id, &account_infos, input, Some(instruction_type))?;
         Ok((accounts))
-    }
-
-    fn reconstruct_accounts<const DEFAULT_NON_EXISTENT: bool>(
-        &self,
-        account_metas: &[AccountMeta],
-    ) -> Result<Vec<crate::account::Account>, SvmError> {
-        reconstruct_accounts::<_, true>(self.sdk, account_metas)
     }
 
     /// Processes an [Instruction](enum.Instruction.html).
