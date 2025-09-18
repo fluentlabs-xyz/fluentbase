@@ -1,113 +1,41 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use fluentbase_e2e::{EvmTestingContextWithGenesis, EXAMPLE_ERC20};
-use fluentbase_sdk::{Address, Bytes};
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_sdk::{address, Address, Bytes};
+use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext};
+use fluentbase_svm::error::SvmError;
+use fluentbase_svm::helpers::serialize_svm_program_params_from_instruction;
+use fluentbase_svm::solana_program::instruction::Instruction;
+use fluentbase_svm::token_2022;
+use fluentbase_svm::token_2022::instruction::{
+    initialize_account, initialize_mint, mint_to, transfer,
+};
+use fluentbase_svm_common::common::pubkey_from_evm_address;
+use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
+use fluentbase_universal_token::common::sig_to_bytes;
+use fluentbase_universal_token::consts::SIG_TOKEN2022;
 use hex_literal::hex;
+use revm::context::result::ExecutionResult;
 
 fn erc20_transfer_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("ERC20 Transfer Comparison");
 
-    // --- Benchmark 1: Original EVM ERC20 (rWasm disabled) ---
-    {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
-        ctx.disabled_rwasm = true;
-        const OWNER_ADDRESS: Address = Address::ZERO;
-        let contract_address = ctx.deploy_evm_tx(
-            OWNER_ADDRESS,
-            hex::decode(include_bytes!("../assets/ERC20.bin"))
-                .unwrap()
-                .into(),
-        );
-        let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
-
-        group.bench_function("1_Original_EVM_ERC20", |b| {
-            b.iter(|| {
-                ctx.call_evm_tx(
-                    OWNER_ADDRESS,
-                    contract_address,
-                    transfer_payload.clone(),
-                    None,
-                    None,
-                );
-            });
-        });
-    }
-
-    // --- Benchmark 2: Emulated EVM ERC20 (rWasm enabled) ---
-    {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
-        const OWNER_ADDRESS: Address = Address::ZERO;
-        let contract_address = ctx.deploy_evm_tx(
-            OWNER_ADDRESS,
-            hex::decode(include_bytes!("../assets/ERC20.bin"))
-                .unwrap()
-                .into(),
-        );
-        let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
-
-        group.bench_function("2_Emulated_EVM_ERC20", |b| {
-            b.iter(|| {
-                ctx.call_evm_tx(
-                    OWNER_ADDRESS,
-                    contract_address,
-                    transfer_payload.clone(),
-                    None,
-                    None,
-                );
-            });
-        });
-    }
-
-    // --- Benchmark 3: rWasm Contract ERC20 ---
-    {
-        let mut ctx = EvmTestingContext::default().with_full_genesis();
-        const OWNER_ADDRESS: Address = Address::ZERO;
-        let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
-        let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
-
-        group.bench_function("3_rWasm_Contract_ERC20", |b| {
-            b.iter(|| {
-                ctx.call_evm_tx(
-                    OWNER_ADDRESS,
-                    contract_address,
-                    transfer_payload.clone(),
-                    None,
-                    None,
-                );
-            });
-        });
-    }
-
-    // // --- Benchmark 4: Precompiled ERC20 ---
+    // // --- Benchmark 1: Original EVM ERC20 (rWasm disabled) ---
     // {
     //     let mut ctx = EvmTestingContext::default().with_full_genesis();
-    //     const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
-    //     ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
-    //         address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
-    //         ..Default::default()
-    //     });
-    //     let mut initial_settings = InitialSettings::new();
-    //     let total_supply = U256::from(0xffff_ffffu64);
-    //     initial_settings.add_feature(Feature::InitialSupply {
-    //         amount: fixed_bytes_from_u256(&total_supply),
-    //         owner: DEPLOYER_ADDR.into(),
-    //         decimals: DECIMALS_DEFAULT,
-    //     });
+    //     ctx.disabled_rwasm = true;
+    //     const OWNER_ADDRESS: Address = Address::ZERO;
     //     let contract_address = ctx.deploy_evm_tx(
-    //         DEPLOYER_ADDR,
-    //         initial_settings
-    //             .try_encode_for_deploy()
-    //             .expect("failed to encode settings for deployment")
+    //         OWNER_ADDRESS,
+    //         hex::decode(include_bytes!("../assets/ERC20.bin"))
+    //             .unwrap()
     //             .into(),
     //     );
+    //     let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
     //
-    //     let transfer_payload: Bytes = hex!("bb9c05a900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000016").into();
-    //
-    //     group.bench_function("4_Precompiled_ERC20", |b| {
-    //         // Note: Manual warmup calls are not needed. Criterion handles warmups automatically.
+    //     group.bench_function("1_Original_EVM_ERC20", |b| {
     //         b.iter(|| {
     //             ctx.call_evm_tx(
-    //                 DEPLOYER_ADDR,
+    //                 OWNER_ADDRESS,
     //                 contract_address,
     //                 transfer_payload.clone(),
     //                 None,
@@ -116,6 +44,167 @@ fn erc20_transfer_benches(c: &mut Criterion) {
     //         });
     //     });
     // }
+    //
+    // // --- Benchmark 2: Emulated EVM ERC20 (rWasm enabled) ---
+    // {
+    //     let mut ctx = EvmTestingContext::default().with_full_genesis();
+    //     const OWNER_ADDRESS: Address = Address::ZERO;
+    //     let contract_address = ctx.deploy_evm_tx(
+    //         OWNER_ADDRESS,
+    //         hex::decode(include_bytes!("../assets/ERC20.bin"))
+    //             .unwrap()
+    //             .into(),
+    //     );
+    //     let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
+    //
+    //     group.bench_function("2_Emulated_EVM_ERC20", |b| {
+    //         b.iter(|| {
+    //             ctx.call_evm_tx(
+    //                 OWNER_ADDRESS,
+    //                 contract_address,
+    //                 transfer_payload.clone(),
+    //                 None,
+    //                 None,
+    //             );
+    //         });
+    //     });
+    // }
+    //
+    // // --- Benchmark 3: rWasm Contract ERC20 ---
+    // {
+    //     let mut ctx = EvmTestingContext::default().with_full_genesis();
+    //     const OWNER_ADDRESS: Address = Address::ZERO;
+    //     let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
+    //     let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
+    //
+    //     group.bench_function("3_rWasm_Contract_ERC20", |b| {
+    //         b.iter(|| {
+    //             ctx.call_evm_tx(
+    //                 OWNER_ADDRESS,
+    //                 contract_address,
+    //                 transfer_payload.clone(),
+    //                 None,
+    //                 None,
+    //             );
+    //         });
+    //     });
+    // }
+
+    // --- Benchmark 4: Precompiled Universal Token ---
+    {
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
+        const USER_ADDRESS1: Address = address!("1111111111111111111111111111111111111111");
+        const USER_ADDRESS2: Address = address!("2222222222222222222222222222222222222222");
+        const USER_ADDRESS5: Address = address!("5555555555555555555555555555555555555555");
+        const USER_ADDRESS6: Address = address!("6666666666666666666666666666666666666666");
+        ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
+            address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+            ..Default::default()
+        });
+        ctx.sdk
+            .set_ownable_account_address(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME);
+
+        pub fn build_input(prefix: &[u8], instruction: &Instruction) -> Result<Vec<u8>, SvmError> {
+            let mut input: Vec<u8> = prefix.to_vec();
+            serialize_svm_program_params_from_instruction(&mut input, instruction)
+                .expect("failed to serialize program params into init_bytecode");
+            Ok(input)
+        }
+
+        pub fn call_with_sig(
+            ctx: &mut EvmTestingContext,
+            input: Bytes,
+            caller: &Address,
+            callee: &Address,
+        ) -> Result<Vec<u8>, u32> {
+            let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
+            match &result {
+                ExecutionResult::Revert {
+                    gas_used: _,
+                    output,
+                } => {
+                    let output_vec = output.to_vec();
+                    try_print_utf8_error(&output_vec);
+                    let error_code = u32::from_be_bytes(output_vec[32..].try_into().unwrap());
+                    Err(error_code)
+                }
+                ExecutionResult::Success { output, .. } => Ok(output.data().to_vec()),
+                _ => {
+                    panic!("expected revert, got: {:?}", &result)
+                }
+            }
+        }
+
+        let program_id = token_2022::lib::id();
+        let account1_key = pubkey_from_evm_address::<true>(&USER_ADDRESS1);
+        let account2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
+        let owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS5);
+        let mint_key = pubkey_from_evm_address::<true>(&USER_ADDRESS6);
+
+        let initialize_mint_instruction =
+            initialize_mint(&program_id, &mint_key, &owner_key, None, 2).unwrap();
+
+        let init_bytecode = build_input(&ERC20_MAGIC_BYTES, &initialize_mint_instruction)
+            .expect("failed to build input");
+        let contract_address = ctx.deploy_evm_tx(USER_ADDRESS5, init_bytecode.clone().into());
+
+        ctx.commit_db_to_sdk();
+
+        let initialize_account1_instruction =
+            initialize_account(&program_id, &account1_key, &mint_key, &account1_key).unwrap();
+        let input = build_input(
+            &sig_to_bytes(SIG_TOKEN2022),
+            &initialize_account1_instruction,
+        )
+        .expect("failed to build input");
+        let _output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS1, &contract_address).unwrap();
+
+        let initialize_account2_instruction =
+            initialize_account(&program_id, &account2_key, &mint_key, &owner_key).unwrap();
+        let input = build_input(
+            &sig_to_bytes(SIG_TOKEN2022),
+            &initialize_account2_instruction,
+        )
+        .expect("failed to build input");
+        let _output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
+
+        // mint to account
+        let mint_to_instruction =
+            mint_to(&program_id, &mint_key, &account1_key, &owner_key, &[], 1000).unwrap();
+        let input = build_input(&sig_to_bytes(SIG_TOKEN2022), &mint_to_instruction)
+            .expect("failed to build input");
+        let _output_data =
+            call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address).unwrap();
+
+        // source-owner transfer
+        #[allow(deprecated)]
+        let transfer_instruction = transfer(
+            &program_id,
+            &account1_key,
+            &account2_key,
+            &account1_key,
+            &[],
+            1,
+        )
+        .unwrap();
+        let input = build_input(&sig_to_bytes(SIG_TOKEN2022), &transfer_instruction)
+            .expect("failed to build input");
+
+        group.bench_function("4_Precompiled_UniversalToken", |b| {
+            // Note: Manual warmup calls are not needed. Criterion handles warmups automatically.
+            b.iter(|| {
+                ctx.call_evm_tx(
+                    USER_ADDRESS1,
+                    contract_address,
+                    input.clone().into(),
+                    None,
+                    None,
+                );
+            });
+        });
+    }
 
     group.finish();
 }
