@@ -35,7 +35,12 @@ pub const SIG_ALLOWANCE: u32 = derive_keccak256_id!("allowance(pubkey)");
 pub const SIG_APPROVE: u32 = derive_keccak256_id!("approve(pubkey,u64)");
 pub const SIG_APPROVE_CHECKED: u32 = derive_keccak256_id!("approveChecked(pubkey,u64)");
 pub const SIG_REVOKE: u32 = derive_keccak256_id!("revoke(pubkey,u64)");
-pub const SIG_MINT: u32 = derive_keccak256_id!("mint(pubkey,u64)");
-pub const SIG_PAUSE: u32 = derive_keccak256_id!("pause()");
-pub const SIG_UNPAUSE: u32 = derive_keccak256_id!("unpause()");
+pub const SIG_SET_AUTHORITY: u32 = derive_keccak256_id!("setAuthority(pubkey,pubkey)");
+pub const SIG_BURN: u32 = derive_keccak256_id!("burn(pubkey,pubkey)");
+pub const SIG_BURN_CHECKED: u32 = derive_keccak256_id!("burnChecked(pubkey,pubkey)");
+pub const SIG_CLOSE_ACCOUNT: u32 = derive_keccak256_id!("closeAccount(pubkey,pubkey)");
+pub const SIG_FREEZE_ACCOUNT: u32 = derive_keccak256_id!("freezeAccount(pubkey,pubkey)");
+pub const SIG_THAW_ACCOUNT: u32 = derive_keccak256_id!("thawAccount(pubkey,pubkey)");
+pub const SIG_GET_ACCOUNT_DATA_SIZE: u32 =
+    derive_keccak256_id!("getAccountDataSize(pubkey,pubkey)");
 pub const SIG_TOKEN2022: u32 = derive_keccak256_id!("token2022()");

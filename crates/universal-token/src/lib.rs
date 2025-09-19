@@ -8,5 +8,3 @@ pub mod consts;
 pub mod events;
 pub mod helpers;
 pub mod storage;
-#[cfg(test)]
-mod tests;

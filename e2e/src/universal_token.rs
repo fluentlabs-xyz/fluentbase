@@ -5,7 +5,7 @@ use fluentbase_sdk::{address, Address};
 use fluentbase_sdk_testing::EvmTestingContext;
 use fluentbase_svm::account::{AccountSharedData, ReadableAccount};
 use fluentbase_svm::account_info::AccountInfo;
-use fluentbase_svm::error::{SvmError, TokenError};
+use fluentbase_svm::error::SvmError;
 use fluentbase_svm::helpers::{
     serialize_svm_program_params_from_instruction, storage_read_account_data,
     storage_write_account_data,
@@ -13,32 +13,29 @@ use fluentbase_svm::helpers::{
 use fluentbase_svm::pubkey::Pubkey;
 use fluentbase_svm::solana_program::instruction::{AccountMeta, Instruction};
 use fluentbase_svm::token_2022;
-use fluentbase_svm::token_2022::helpers::{
-    account_from_account_info, account_info_from_meta_and_account,
-};
-use fluentbase_svm::token_2022::instruction::{approve, initialize_account, set_authority, AuthorityType};
+use fluentbase_svm::token_2022::helpers::account_info_from_meta_and_account;
 use fluentbase_svm::token_2022::instruction::initialize_mint;
 use fluentbase_svm::token_2022::instruction::initialize_mint2;
 use fluentbase_svm::token_2022::instruction::mint_to;
 #[allow(deprecated)]
 use fluentbase_svm::token_2022::instruction::transfer;
 use fluentbase_svm::token_2022::instruction::transfer_checked;
+use fluentbase_svm::token_2022::instruction::{initialize_account, AuthorityType};
 use fluentbase_svm::token_2022::state::{Account, Mint};
 use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_svm_common::universal_token::{
     ApproveCheckedParams, ApproveParams, InitializeAccountParams, InitializeMintParams,
-    MintToParams, RevokeParams, TransferFromParams, TransferParams,
+    MintToParams, RevokeParams, SetAuthorityParams, TransferFromParams, TransferParams,
 };
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::{
     SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF, SIG_DECIMALS,
-    SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE, SIG_TOKEN2022,
-    SIG_TRANSFER, SIG_TRANSFER_FROM,
+    SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE, SIG_SET_AUTHORITY,
+    SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
 };
 use solana_program_option::COption;
 use solana_program_pack::Pack;
-use fluentbase_svm::solana_program::program_error::ProgramError;
 
 const USER_ADDRESS1: Address = address!("1111111111111111111111111111111111111111");
 const USER_ADDRESS2: Address = address!("2222222222222222222222222222222222222222");
@@ -49,33 +46,43 @@ const USER_ADDRESS6: Address = address!("666666666666666666666666666666666666666
 const USER_ADDRESS7: Address = address!("7777777777777777777777777777777777777777");
 const USER_ADDRESS8: Address = address!("8888888888888888888888888888888888888888");
 const USER_ADDRESS9: Address = address!("9999999999999999999999999999999999999999");
-pub fn modify_account_info(
+pub fn with_account_mut(
     ctx: &mut EvmTestingContext,
     pk: &Pubkey,
-    f: impl FnOnce(&mut AccountInfo),
+    f: impl FnOnce(&mut fluentbase_svm::account::Account),
 ) {
-    let account_meta = AccountMeta::default();
-    let account1_data =
+    ctx.commit_db_to_sdk();
+    let account_data =
         storage_read_account_data(&ctx.sdk, &pk, Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME)).unwrap();
-    let mut account: fluentbase_svm::account::Account = account1_data.into();
-    let mut account_info = account_info_from_meta_and_account(&account_meta, &mut account);
-    f(&mut account_info);
-    let account1_data: AccountSharedData = account_from_account_info(&account_info).into();
+    let mut account: fluentbase_svm::account::Account = account_data.into();
+    f(&mut account);
+    let account_data: AccountSharedData = account.into();
     storage_write_account_data(
         &mut ctx.sdk,
         &pk,
-        &account1_data,
+        &account_data,
         Some(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME),
     )
     .unwrap();
     ctx.commit_sdk_to_db();
 }
-pub fn modify_account_state(
+pub fn with_account_info_mut(
+    ctx: &mut EvmTestingContext,
+    pk: &Pubkey,
+    f: impl FnOnce(&mut AccountInfo),
+) {
+    with_account_mut(ctx, pk, |mut account| {
+        let account_meta = AccountMeta::default();
+        let mut account_info = account_info_from_meta_and_account(&account_meta, &mut account);
+        f(&mut account_info);
+    });
+}
+pub fn with_account_state_mut(
     ctx: &mut EvmTestingContext,
     pk: &Pubkey,
     f: impl FnOnce(&mut Account),
 ) {
-    modify_account_info(ctx, pk, |account_info| {
+    with_account_info_mut(ctx, pk, |account_info| {
         let mut account1_state = Account::unpack_unchecked(&account_info.data.borrow()).unwrap();
         f(&mut account1_state);
         Account::pack(account1_state, &mut account_info.data.borrow_mut()).unwrap();
@@ -336,7 +343,7 @@ fn test_transfer_dups() {
         &account1_key,
         &[],
         500,
-        2,
+        decimals,
     )
     .unwrap();
     let input = build_input(&sig_to_bytes(SIG_TOKEN2022), &transfer_instruction)
@@ -347,7 +354,7 @@ fn test_transfer_dups() {
     ctx.commit_db_to_sdk();
 
     // source-delegate transfer
-    modify_account_state(&mut ctx, &account1_key, |account_state| {
+    with_account_state_mut(&mut ctx, &account1_key, |account_state| {
         account_state.amount = 1000;
         account_state.delegated_amount = 1000;
         account_state.delegate = COption::Some(account1_key);
@@ -378,7 +385,7 @@ fn test_transfer_dups() {
         &account1_key,
         &[],
         500,
-        2,
+        decimals,
     )
     .unwrap();
     let input = build_input(&sig_to_bytes(SIG_TOKEN2022), &transfer_checked_instruction)
@@ -402,10 +409,10 @@ fn test_transfer_dups() {
     let _output_data =
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address).unwrap();
 
-    modify_account_info(&mut ctx, &account1_key, |account1_info| {
+    with_account_info_mut(&mut ctx, &account1_key, |account1_info| {
         account1_info.is_signer = false;
     });
-    modify_account_info(&mut ctx, &account2_key, |account2_info| {
+    with_account_info_mut(&mut ctx, &account2_key, |account2_info| {
         account2_info.is_signer = true;
     });
     #[allow(deprecated)]
@@ -431,7 +438,7 @@ fn test_transfer_dups() {
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
     assert_eq!(output_data.len(), size_of::<u64>());
     let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1500);
+    assert_eq!(balance, 2500);
 
     // destination-owner TransferChecked
     let instruction = transfer_checked(
@@ -442,7 +449,7 @@ fn test_transfer_dups() {
         &account2_key,
         &[],
         100,
-        2,
+        decimals,
     )
     .unwrap();
     let input =
@@ -458,7 +465,7 @@ fn test_transfer_dups() {
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
     assert_eq!(output_data.len(), size_of::<u64>());
     let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1600);
+    assert_eq!(balance, 2600);
 }
 
 #[test]
@@ -575,7 +582,7 @@ fn test_transfer_dups_abi() {
     ctx.commit_db_to_sdk();
 
     // source-delegate transfer
-    modify_account_state(&mut ctx, &account1_key, |account_state| {
+    with_account_state_mut(&mut ctx, &account1_key, |account_state| {
         account_state.amount = 1000;
         account_state.delegated_amount = 1000;
         account_state.delegate = COption::Some(account1_key);
@@ -635,10 +642,10 @@ fn test_transfer_dups_abi() {
     assert_eq!(output_data.len(), 1);
     assert_eq!(output_data[0], 1);
 
-    modify_account_info(&mut ctx, &account1_key, |account1_info| {
+    with_account_info_mut(&mut ctx, &account1_key, |account1_info| {
         account1_info.is_signer = false;
     });
-    modify_account_info(&mut ctx, &account2_key, |account2_info| {
+    with_account_info_mut(&mut ctx, &account2_key, |account2_info| {
         account2_info.is_signer = true;
     });
     let amount: u64 = 500;
@@ -666,7 +673,7 @@ fn test_transfer_dups_abi() {
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
     assert_eq!(output_data.len(), size_of::<u64>());
     let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1000);
+    assert_eq!(balance, 1500);
 
     // destination-owner TransferChecked
     let instruction = transfer_checked(
@@ -677,7 +684,7 @@ fn test_transfer_dups_abi() {
         &account2_key,
         &[],
         100,
-        2,
+        decimals,
     )
     .unwrap();
     let input =
@@ -692,7 +699,7 @@ fn test_transfer_dups_abi() {
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
     assert_eq!(output_data.len(), size_of::<u64>());
     let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1100);
+    assert_eq!(balance, 1600);
 
     // transfer_from
     let amount: u64 = 100;
@@ -720,7 +727,7 @@ fn test_transfer_dups_abi() {
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
     assert_eq!(output_data.len(), size_of::<u64>());
     let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1200);
+    assert_eq!(balance, 1700);
 
     // balance
     let input = build_input_raw(&sig_to_bytes(SIG_BALANCE), &[]);
@@ -728,7 +735,7 @@ fn test_transfer_dups_abi() {
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
     assert_eq!(output_data.len(), size_of::<u64>());
     let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1200);
+    assert_eq!(balance, 1700);
 
     // transfer_from
     let amount: u64 = 100;
@@ -754,7 +761,7 @@ fn test_transfer_dups_abi() {
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
     assert_eq!(output_data.len(), size_of::<u64>());
     let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1100);
+    assert_eq!(balance, 1600);
 
     // transfer
     let amount: u64 = 100;
@@ -779,7 +786,7 @@ fn test_transfer_dups_abi() {
         call_with_sig(&mut ctx, input.into(), &USER_ADDRESS2, &contract_address).unwrap();
     assert_eq!(output_data.len(), size_of::<u64>());
     let balance = u64::from_be_bytes(output_data.as_slice().try_into().unwrap());
-    assert_eq!(balance, 1200);
+    assert_eq!(balance, 1700);
 }
 
 #[test]
@@ -1072,7 +1079,7 @@ fn test_approve() {
     //         &owner_key,
     //         &[],
     //         100,
-    //         2,
+    //         decimals,
     //     )
     //     .unwrap(),
     //     vec![
@@ -1126,7 +1133,7 @@ fn test_approve() {
     //         &owner_key,
     //         &[],
     //         100,
-    //         2,
+    //         decimals,
     //     )
     //     .unwrap(),
     //     vec![
@@ -1189,8 +1196,6 @@ fn test_approve() {
     assert_eq!(output_data.unwrap_err(), u32::MAX);
 }
 
-
-
 #[test]
 fn test_set_authority() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
@@ -1217,7 +1222,20 @@ fn test_set_authority() {
     //     vec![&mut mint_account /*&mut rent_sysvar*/],
     // )
     //     .unwrap();
-    //
+    let incorrect_decimals = 0;
+    let decimals = 2;
+    let mut input_data = vec![];
+    InitializeMintParams {
+        mint: &mint_key,
+        mint_authority: &owner_key,
+        freeze_opt: None,
+        decimals,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_MINT), &input_data);
+    let input = build_input_raw(&ERC20_MAGIC_BYTES, &input);
+    let contract_address = ctx.deploy_evm_tx(USER_ADDRESS6, input.into());
+
     // // create mint with owner and freeze_authority
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1225,7 +1243,18 @@ fn test_set_authority() {
     //     vec![&mut mint2_account /*&mut rent_sysvar*/],
     // )
     //     .unwrap();
-    //
+    let mut input_data = vec![];
+    InitializeMintParams {
+        mint: &mint2_key,
+        mint_authority: &owner_key,
+        freeze_opt: Some(&owner2_key),
+        decimals,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_MINT), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS7, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
     // // invalid account
     // assert_eq!(
     //     Err(ProgramError::InvalidAccountData),
@@ -1243,7 +1272,18 @@ fn test_set_authority() {
     //         vec![&mut account_account, &mut owner_account],
     //     )
     // );
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &account_key,
+        new_authority: Some(&owner2_key),
+        authority_type: AuthorityType::AccountOwner as u8,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap_err(), u32::MAX);
+
     // // create account
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1256,7 +1296,17 @@ fn test_set_authority() {
     //     ],
     // )
     //     .unwrap();
-    //
+    let mut input_data = vec![];
+    InitializeAccountParams {
+        account: &account_key,
+        mint: &mint_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
     // // create another account
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1269,7 +1319,17 @@ fn test_set_authority() {
     //     ],
     // )
     //     .unwrap();
-    //
+    let mut input_data = vec![];
+    InitializeAccountParams {
+        account: &account2_key,
+        mint: &mint2_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
     // // missing owner
     // assert_eq!(
     //     Err(TokenError::OwnerMismatch.into()),
@@ -1287,7 +1347,18 @@ fn test_set_authority() {
     //         vec![&mut account_account, &mut owner2_account],
     //     )
     // );
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &account_key,
+        new_authority: Some(&owner_key),
+        authority_type: AuthorityType::AccountOwner as u8,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap_err(), u32::MAX);
+
     // // owner did not sign
     // let mut instruction = set_authority(
     //     &program_id,
@@ -1325,7 +1396,18 @@ fn test_set_authority() {
     //         vec![&mut account_account, &mut owner_account],
     //     )
     // );
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &account_key,
+        new_authority: Some(&owner2_key),
+        authority_type: AuthorityType::FreezeAccount as u8,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap_err(), u32::MAX);
+
     // // account owner may not be set to None
     // assert_eq!(
     //     Err(TokenError::InvalidInstruction.into()),
@@ -1343,7 +1425,18 @@ fn test_set_authority() {
     //         vec![&mut account_account, &mut owner_account],
     //     )
     // );
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &account_key,
+        new_authority: None,
+        authority_type: AuthorityType::AccountOwner as u8,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap_err(), u32::MAX);
+
     // // set delegate
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1366,7 +1459,24 @@ fn test_set_authority() {
     // let account = Account::unpack_unchecked(&account_account.data).unwrap();
     // assert_eq!(account.delegate, COption::Some(owner2_key));
     // assert_eq!(account.delegated_amount, u64::MAX);
-    //
+    let amount = u64::MAX;
+    let mut input_data = vec![];
+    ApproveParams {
+        from: &account_key,
+        delegate: &owner2_key,
+        owner: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_APPROVE), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+    with_account_mut(&mut ctx, &account_key, |account_account| {
+        let account = Account::unpack_unchecked(&account_account.data).unwrap();
+        assert_eq!(account.delegate, COption::Some(owner2_key));
+        assert_eq!(account.delegated_amount, u64::MAX);
+    });
+
     // // set owner
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1382,12 +1492,28 @@ fn test_set_authority() {
     //     vec![&mut account_account, &mut owner_account],
     // )
     //     .unwrap();
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &account_key,
+        new_authority: Some(&owner3_key),
+        authority_type: AuthorityType::AccountOwner as u8,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
     // // check delegate cleared
     // let account = Account::unpack_unchecked(&account_account.data).unwrap();
     // assert_eq!(account.delegate, COption::None);
     // assert_eq!(account.delegated_amount, 0);
-    //
+    with_account_mut(&mut ctx, &account_key, |account_account| {
+        let account = Account::unpack_unchecked(&account_account.data).unwrap();
+        assert_eq!(account.delegate, COption::None);
+        assert_eq!(account.delegated_amount, 0);
+    });
+
     // // set owner without existing delegate
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1403,7 +1529,18 @@ fn test_set_authority() {
     //     vec![&mut account_account, &mut owner3_account],
     // )
     //     .unwrap();
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &account_key,
+        new_authority: Some(&owner2_key),
+        authority_type: AuthorityType::AccountOwner as u8,
+        owner: &owner3_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
     // // set close_authority
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1419,7 +1556,18 @@ fn test_set_authority() {
     //     vec![&mut account_account, &mut owner2_account],
     // )
     //     .unwrap();
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &account_key,
+        new_authority: Some(&owner2_key),
+        authority_type: AuthorityType::CloseAccount as u8,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
     // // close_authority may be set to None
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1435,7 +1583,18 @@ fn test_set_authority() {
     //     vec![&mut account_account, &mut owner2_account],
     // )
     //     .unwrap();
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &account_key,
+        new_authority: None,
+        authority_type: AuthorityType::CloseAccount as u8,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
     // // wrong owner
     // assert_eq!(
     //     Err(TokenError::OwnerMismatch.into()),
@@ -1453,7 +1612,18 @@ fn test_set_authority() {
     //         vec![&mut mint_account, &mut owner2_account],
     //     )
     // );
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &mint_key,
+        new_authority: Some(&owner3_key),
+        authority_type: AuthorityType::MintTokens as u8,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address);
+    assert_eq!(output_data.unwrap_err(), u32::MAX);
+
     // // owner did not sign
     // let mut instruction = set_authority(
     //     &program_id,
@@ -1491,7 +1661,18 @@ fn test_set_authority() {
     //         vec![&mut mint_account, &mut owner_account],
     //     )
     // );
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &mint_key,
+        new_authority: Some(&owner2_key),
+        authority_type: AuthorityType::FreezeAccount as u8,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address);
+    assert_eq!(output_data.unwrap_err(), u32::MAX);
+
     // // set owner
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1507,7 +1688,18 @@ fn test_set_authority() {
     //     vec![&mut mint_account, &mut owner_account],
     // )
     //     .unwrap();
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &mint_key,
+        new_authority: Some(&owner2_key),
+        authority_type: AuthorityType::MintTokens as u8,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
     // // set owner to None
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1523,7 +1715,18 @@ fn test_set_authority() {
     //     vec![&mut mint_account, &mut owner2_account],
     // )
     //     .unwrap();
-    //
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &mint_key,
+        new_authority: None,
+        authority_type: AuthorityType::MintTokens as u8,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
     // // test unsetting mint_authority is one-way operation
     // assert_eq!(
     //     Err(TokenError::FixedSupply.into()),
@@ -1541,7 +1744,18 @@ fn test_set_authority() {
     //         vec![&mut mint_account, &mut owner_account],
     //     )
     // );
-    //
+    // let mut input_data = vec![];
+    // SetAuthorityParams {
+    //     owned: &mint2_key,
+    //     new_authority: Some(&owner2_key),
+    //     authority_type: AuthorityType::MintTokens as u8,
+    //     owner: &owner_key,
+    // }
+    // .serialize_into(&mut input_data);
+    // let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    // let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    // assert_eq!(output_data.unwrap_err(), u32::MAX);
+
     // // set freeze_authority
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1557,7 +1771,18 @@ fn test_set_authority() {
     //     vec![&mut mint2_account, &mut owner_account],
     // )
     //     .unwrap();
-    //
+    // let mut input_data = vec![];
+    // SetAuthorityParams {
+    //     owned: &mint2_key,
+    //     new_authority: Some(&owner2_key),
+    //     authority_type: AuthorityType::FreezeAccount as u8,
+    //     owner: &owner_key,
+    // }
+    // .serialize_into(&mut input_data);
+    // let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    // let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    // assert_eq!(output_data.unwrap(), vec![1]);
+
     // // test unsetting freeze_authority is one-way operation
     // do_process_instruction(
     //     &mut ctx.sdk,
@@ -1573,7 +1798,17 @@ fn test_set_authority() {
     //     vec![&mut mint2_account, &mut owner2_account],
     // )
     //     .unwrap();
-    //
+    // SetAuthorityParams {
+    //     owned: &mint2_key,
+    //     new_authority: None,
+    //     authority_type: AuthorityType::FreezeAccount as u8,
+    //     owner: &owner2_key,
+    // }
+    // .serialize_into(&mut input_data);
+    // let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    // let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    // assert_eq!(output_data.unwrap(), vec![1]);
+
     // assert_eq!(
     //     Err(TokenError::MintCannotFreeze.into()),
     //     do_process_instruction(
@@ -1590,4 +1825,14 @@ fn test_set_authority() {
     //         vec![&mut mint2_account, &mut owner2_account],
     //     )
     // );
+    // SetAuthorityParams {
+    //     owned: &mint2_key,
+    //     new_authority: Some(&owner2_key),
+    //     authority_type: AuthorityType::FreezeAccount as u8,
+    //     owner: &owner_key,
+    // }
+    // .serialize_into(&mut input_data);
+    // let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    // let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    // assert_eq!(output_data.unwrap_err(), u32::MAX);
 }

@@ -1692,9 +1692,7 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
             decode_instruction_type(input).map_err(|_| TokenError::InvalidInstruction)?;
         match instruction_type {
             PodTokenInstruction::InitializeMint | PodTokenInstruction::InitializeMint2 => {
-                if !IS_DEPLOY {
-                    panic!("action not supported")
-                }
+                // can be called in any situation
                 let pk = &account_metas[0].pubkey;
                 // if evm_address_from_pubkey::<true>(pk).expect("evm compatible pk") != contract_caller {
                 //     panic!("only caller can be assigned as minter")
