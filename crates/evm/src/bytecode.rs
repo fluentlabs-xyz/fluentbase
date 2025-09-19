@@ -1,9 +1,14 @@
+//! Compact representation of analyzed EVM bytecode.
+//!
+//! Stores padded bytecode, original length, jump table and code hash for
+//! fast interpreter setup and cheap serialization.
 use bincode::{de::read::SliceReader, enc::write::SliceWriter};
 use bitvec::vec::BitVec;
 use fluentbase_sdk::{alloc_slice, Bytes, B256};
 use revm_bytecode::{legacy::analyze_legacy, JumpTable};
 
 #[derive(Debug)]
+/// Bytecode plus metadata required by the interpreter.
 pub struct AnalyzedBytecode {
     pub bytecode: Bytes,
     pub len: usize,
@@ -18,6 +23,7 @@ impl Default for AnalyzedBytecode {
 }
 
 impl AnalyzedBytecode {
+    /// Analyze legacy bytecode, compute jump table, and keep original length and hash.
     pub fn new(evm_bytecode: Bytes, hash: B256) -> Self {
         let len = evm_bytecode.len();
         let (jump_table, padded_bytecode) = analyze_legacy(evm_bytecode);
@@ -29,6 +35,7 @@ impl AnalyzedBytecode {
         }
     }
 
+    /// Serialize into a contiguous buffer suitable for metadata storage.
     pub fn serialize<'a>(&self) -> &'a [u8] {
         let mut buffer = alloc_slice(
             8 + self.bytecode.len()
@@ -51,6 +58,7 @@ impl AnalyzedBytecode {
         buffer
     }
 
+    /// Deserialize from a buffer produced by `serialize`.
     pub fn deserialize(bytes: &[u8]) -> Self {
         use alloc::vec::Vec;
         let config = bincode::config::legacy();
@@ -68,11 +76,13 @@ impl AnalyzedBytecode {
     }
 
     #[inline]
+    /// Return the original (unpadded) bytecode slice.
     pub fn as_slice(&self) -> &[u8] {
         &self.bytecode[..self.len]
     }
 
     #[inline]
+    /// Original bytecode length (before padding).
     pub fn len(&self) -> usize {
         self.len
     }

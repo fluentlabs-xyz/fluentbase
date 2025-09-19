@@ -9,18 +9,8 @@ use fluentbase_sdk::{
     EVM_MAX_CODE_SIZE, KECCAK_EMPTY,
 };
 
-/// Commits EVM bytecode to persistent storage and updates the corresponding code hash.
-///
-/// This function performs the following operations:
-/// 1. Write the provided bytecode (`evm_bytecode`) to preimage storage using the SDK, which returns
-///    a hash of the preimage.
-/// 2. Takes the resulting code hash and writes it to a predefined storage slot identified by
-///    `EVM_CODE_HASH_SLOT`.
-///
-/// # Arguments
-/// - `sdk`: A mutable reference to the SDK instance implementing the `SharedAPI` trait, which
-///   provides the methods required for interactions with storage.
-/// - `evm_bytecode`: A `Bytes` object containing the EVM bytecode to be stored.
+/// Store EVM bytecode and its keccak256 hash in contract metadata.
+/// Hash is written at offset 0, raw bytecode at offset 32.
 pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: Bytes) {
     let contract_address = sdk.context().contract_address();
     let evm_code_hash = keccak256(evm_bytecode.as_ref());
@@ -32,22 +22,8 @@ pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: B
         .unwrap();
 }
 
-/// Loads the EVM bytecode associated with the contract using the provided SDK.
-///
-/// This function retrieves the EVM bytecode for a contract from the state storage
-/// using a delegated storage mechanism. The process involves fetching the contract's
-/// bytecode address, locating the storage slot for its EVM code hash, and verifying
-/// if the bytecode exists (i.e., it is not empty). If valid bytecode is found, it is loaded
-/// and returned as a `Bytecode` object.
-///
-/// # Arguments
-/// - `sdk`: A reference to an implementation of the `SharedAPI` trait that provides access to
-///   storage, context, and pre-image retrieval methods required for handling contract data.
-///
-/// # Returns
-/// An `Option<Bytecode>`.
-/// - `Some(Bytecode)`: If a valid bytecode exists and is successfully retrieved.
-/// - `None`: If the bytecode is empty or not present in the storage.
+/// Load analyzed EVM bytecode from contract metadata.
+/// Returns None if metadata is empty or code hash is zero/KECCAK_EMPTY.
 pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<AnalyzedBytecode> {
     // we use bytecode address because contract can be called using DELEGATECALL
     let bytecode_address = sdk.context().contract_bytecode_address();
@@ -76,26 +52,8 @@ pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<AnalyzedByt
     Some(analyzed_bytecode)
 }
 
-/// Handles non-OK results from the EVM interpreter.
-///
-/// This function performs the following:
-/// 1. Synchronizes the remaining and refunded gas with the `SharedAPI` instance.
-/// 2. Write the output of the interpreter result to the `SharedAPI` instance.
-/// 3. If the result is a revert, immediately exits with a panic exit code.
-/// 4. Determine the final exit code based on the `InstructionResult` value and exits accordingly.
-///
-/// ## Parameters:
-/// - `sdk`: A mutable instance of a type implementing the `SharedAPI` trait to interface with the
-///   environment.
-/// - `result`: The `InterpreterResult` containing the gas usage, output, and result status.
-///
-/// ## Exit Codes:
-/// - `ExitCode::Ok` (0) for successful instructions.
-/// - `ExitCode::Panic` (-1) for revert cases.
-/// - `ExitCode::Err` (-2) for any other error conditions.
-///
-/// By interpreting and mapping results appropriately, this function ensures
-/// the correct handling and propagation of results from the EVM context.
+/// Propagate a non-successful interpreter result to the host:
+/// charge final fuel delta, write output, and exit with Err/Panic.
 fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: ExecutionResult) {
     let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
     sdk.charge_fuel_manually(consumed_diff, refund_diff);
@@ -107,60 +65,9 @@ fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: ExecutionResult) {
     });
 }
 
-/// Deploys an EVM smart contract using the provided bytecode input.
-///
-/// This function handles the deployment process for EVM-compatible smart contracts,
-/// including executing the contract bytecode, ensuring compliance with EVM specifications,
-/// and committing the deployed bytecode if the deployment is successful.
-///
-/// # Steps:
-/// 1. **Fetch Input and Context**:
-///    - Retrieves the input bytecode for contract deployment using the SDK.
-///    - Obtains the gas limit for the deployment from the context.
-///
-/// 2. **Execute EVM Bytecode**:
-///    - Executes the provided bytecode via the `exec_evm_bytecode` function.
-///    - If the execution fails, the non-success result is processed by `handle_not_ok_result` and
-///      the function terminates early.
-///
-/// 3. **EIP-3541 (Disallow Code Starting with 0xEF)**:
-///    - Checks if the executed contract output begins with the byte `0xEF` (non-standard prefix).
-///    - If so, exits with the error code `InstructionResult::CreateContractStartingWithEF`.
-///
-/// 4. **EIP-170 (Code Size Limit)**:
-///    - Verifies if the length of the generated bytecode exceeds 24KB, specified by
-///      `MAX_CODE_SIZE`.
-///    - Exits with `InstructionResult::CreateContractSizeLimit` error if the limit is exceeded.
-///
-/// 5. **Gas Cost for Code Deposit**:
-///    - Calculates the gas cost for storing the deployed bytecode based on `CODEDEPOSIT` (a
-///      predefined gas constant) and the bytecode size.
-///    - If the cost cannot be recorded (due to insufficient gas), charge the maximum fuel and exits
-///      accordingly.
-///
-/// 6. **Synchronize Gas Information**:
-///    - Updates the EVM gas state (remaining and refunded gas) in the SDK to keep it synchronized
-///      with the deployment process.
-///
-/// 7. **Commit Bytecode**:
-///    - Saves the deployed contract bytecode to persistent storage using `commit_evm_bytecode`.
-///
-/// This function ensures compatibility with fundamental Ethereum standards and handles
-/// gas calculations, runtime checks, and storage updates as part of the deployment flow.
-///
-/// # Parameters
-/// - `sdk`: A mutable reference to the SDK instance that implements the `SharedAPI` trait.
-///
-/// # Errors
-/// The function can exit under various error conditions:
-/// - Non-successful EVM bytecode execution.
-/// - Code starting with 0xEF (EIP-3541 violation).
-/// - Code exceeding the size limit (EIP-170 violation).
-/// - Insufficient gas for code deposit.
-///
-/// # Gas Mechanics
-/// - Gas is deducted during the bytecode execution and additional deployment steps.
-/// - Compatibility with EVM gas mechanisms is maintained to ensure Ethereum-like behavior.
+/// Deploy entry for EVM contracts.
+/// Runs init bytecode, enforces EIP-3541 and EIP-170, charges CODEDEPOSIT gas,
+/// then commits the resulting runtime bytecode to metadata.
 pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input: Bytes = sdk.input().into();
     let analyzed_bytecode = AnalyzedBytecode::new(input, B256::ZERO);
@@ -190,40 +97,9 @@ pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     commit_evm_bytecode(&mut sdk, result.output);
 }
 
-/// The main entry point function of the application that processes EVM-based contract bytecode.
-///
-/// This function interacts with an environment (`SharedAPI`) to execute EVM bytecode
-/// with input data under a specified gas limit.
-/// The results are then processed, handled, and written back to the environment.
-///
-/// ### Key Steps:
-/// 1. Load the EVM bytecode for the specific contract using `load_evm_bytecode`.
-///    - If the bytecode is not available (e.g., invalid or absent), the function terminates early.
-/// 2. Retrieve the input data provided by the environment via `sdk.input()`.
-/// 3. Fetch the gas limit for the contract execution from the environment's `contract_gas_limit`.
-/// 4. Execute EVM bytecode with `exec_evm_bytecode`, passing:
-///    - Loaded bytecode
-///    - Input data
-///    - Gas limit
-/// 5. Check the result of the execution:
-///    - If unsuccessful, handle the failure gracefully using `handle_not_ok_result`.
-///    - If successful, sync gas usage (`remaining` and `refunded` gas) via `sdk.sync_evm_gas`, and
-///      write the execution output back with `sdk.write`.
-///
-/// ### Parameters:
-/// - `sdk`: An instance implementing `SharedAPI` to provide runtime functionality, such as
-///   input/output handling, gas synchronization, and context details.
-///
-/// ### Detailed Behavior:
-/// This function ensures that gas usage and execution outputs are synchronously managed
-/// between the SDK environment and the virtual machine.
-/// The error-handling mechanism ensures
-/// that non-successful results terminate the function with appropriate actions, such as panic
-/// (`revert`) or error logging.
-///
-/// ### Assumptions:
-/// - The SDK instance conforms to the `SharedAPI` interface.
-/// - Bytecode is preloaded and valid for the specific context where the function is executed.
+/// Main entry for executing deployed EVM bytecode.
+/// Loads analyzed code from metadata, runs EthVM with call input, settles fuel,
+/// and writes the returned data.
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let Some(analyzed_bytecode) = load_evm_bytecode(&sdk) else {
         return;

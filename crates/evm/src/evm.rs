@@ -1,3 +1,8 @@
+//! Minimal EVM driver wired for interruptible host calls.
+//!
+//! EthVM executes analyzed EVM bytecode and yields on host-bound opcodes
+//! (calls, storage, logs, etc.). The surrounding runtime performs the
+//! operation and the VM resumes with identical EVM semantics and gas.
 use crate::{
     bytecode::AnalyzedBytecode,
     host::HostWrapperImpl,
@@ -12,11 +17,14 @@ use revm_interpreter::{
 };
 use revm_primitives::hardfork::SpecId;
 
+/// EVM interpreter wrapper running with an interruption extension.
 pub struct EthVM {
     interpreter: Interpreter<InterruptingInterpreter>,
 }
 
 impl EthVM {
+    /// Create a new VM instance bound to the given context and input.
+    /// The bytecode must be pre-analyzed (jump table + hash preserved).
     pub fn new(
         context_input: impl ContextReader,
         input: Bytes,
@@ -62,6 +70,8 @@ impl EthVM {
         Self { interpreter }
     }
 
+    /// Execute until completion, delegating host-bound ops via interruptions.
+    /// Returns EVM result plus precise gas/fuel accounting.
     pub fn run_the_loop<SDK: SharedAPI>(mut self, sdk: &mut SDK) -> ExecutionResult {
         let instruction_table = interruptable_instruction_table();
         let mut sdk = HostWrapperImpl::wrap(sdk);

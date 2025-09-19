@@ -1,3 +1,4 @@
+//! Small helpers for building the interruption protocol and keeping gas in sync.
 use crate::{host::HostWrapper, types::InterruptionExtension};
 use core::{cell::Ref, ops::Range};
 use fluentbase_sdk::{InterruptionExtractingAdapter, SharedAPI, FUEL_DENOM_RATE};
@@ -6,6 +7,7 @@ use revm_interpreter::{
     Host, InstructionContext, InterpreterAction, InterpreterTypes,
 };
 
+/// Convert opcode handler logic into a SystemInterruption and set up re-dispatch.
 pub(crate) fn interrupt_into_action<
     WIRE: InterpreterTypes<Extend = InterruptionExtension>,
     H: Host + ?Sized,
@@ -34,6 +36,7 @@ pub(crate) fn interrupt_into_action<
     context.interpreter.bytecode.set_action(action);
 }
 
+/// Commit interpreter gas deltas to the host (fuel) and snapshot the state.
 pub(crate) fn sync_evm_gas<
     WIRE: InterpreterTypes<Extend = InterruptionExtension>,
     H: Host + HostWrapper + ?Sized,
@@ -60,6 +63,7 @@ pub(crate) fn sync_evm_gas<
     *committed_gas = *gas;
 }
 
+/// View a range of the interpreter’s shared memory as a global slice.
 pub(crate) fn global_memory_from_shared_buffer<
     'a,
     WIRE: InterpreterTypes<Extend = InterruptionExtension>,
