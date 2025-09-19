@@ -37,7 +37,7 @@ fn test_simple() {
     );
 
     let ctx = RuntimeContext::default();
-    let execution_result = Runtime::run_with_context(new_bytecode_or_hash(rwasm_binary), ctx);
+    let execution_result = Runtime::new(new_bytecode_or_hash(rwasm_binary), ctx).execute(None);
     assert_eq!(execution_result.exit_code, 0);
 }
 
@@ -97,7 +97,7 @@ fn test_keccak256() {
     "#,
     );
     let ctx = RuntimeContext::default();
-    let execution_result = Runtime::run_with_context(new_bytecode_or_hash(rwasm_binary), ctx);
+    let execution_result = Runtime::new(new_bytecode_or_hash(rwasm_binary), ctx).execute(None);
     println!("fuel consumed: {}", execution_result.fuel_consumed);
     assert_eq!(execution_result.exit_code, 0);
     assert_eq!(
