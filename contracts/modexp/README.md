@@ -1,4 +1,4 @@
-contracts/modexp
+# MODEXP
 
 Modular exponentiation precompile wrapper (EIP-198, 0x05). Computes base^exp mod mod with EVM-compatible gas schedule.
 

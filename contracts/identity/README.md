@@ -1,4 +1,4 @@
-contracts/identity
+# IDENTITY
 
 Identity precompile wrapper (0x04). Returns the input unchanged, following EVM gas rules.
 

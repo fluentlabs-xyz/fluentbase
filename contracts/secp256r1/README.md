@@ -1,6 +1,7 @@
-contracts/secp256r1
+# SECP256R1
 
-secp256r1 (P‑256) precompile-style wrapper. Provides signature verification and related operations over the NIST P‑256 curve.
+secp256r1 (P‑256) precompile-style wrapper. Provides signature verification and related operations over the NIST P‑256
+curve.
 
 - Entrypoint: main_entry. Reads input, executes host-backed P‑256 operation, syncs gas, writes output.
 - Input: operation selector + payload (message hash, public key, signature). Encoding defined by this crate.

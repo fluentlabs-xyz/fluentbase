@@ -1,4 +1,4 @@
-contracts/sha256
+# SHA256
 
 SHA-256 precompile wrapper (Byzantium 0x02). Computes SHA-256 over the input and returns a 32-byte digest.
 
@@ -8,4 +8,5 @@ SHA-256 precompile wrapper (Byzantium 0x02). Computes SHA-256 over the input and
 - Gas: Same schedule as EVM precompile (base + word cost); charged via sdk.sync_evm_gas.
 
 Usage
+
 - Call the entrypoint with the payload to hash. The output buffer contains the 32-byte digest.

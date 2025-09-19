@@ -1,4 +1,4 @@
-contracts/ripemd160
+# RIPEMD160
 
 RIPEMD-160 precompile wrapper (0x03). Computes RIPEMD-160 over the input and returns a 20-byte digest.
 
