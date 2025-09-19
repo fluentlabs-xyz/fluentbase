@@ -1,7 +1,13 @@
+//! Shared types for the interruptible interpreter.
+//!
+//! InterruptionOutcome carries host call results back into the VM;
+//! InterruptionExtension stores per-interpreter state; ExecutionResult
+//! summarizes final outcome with gas/fuel accounting.
 use fluentbase_sdk::{Bytes, ExitCode, B256, FUEL_DENOM_RATE, U256};
 use revm_interpreter::{interpreter::EthInterpreter, Gas, InstructionResult, InterpreterResult};
 
 #[derive(Debug)]
+/// Result of a host interruption (output, gas delta, and exit code).
 pub struct InterruptionOutcome {
     pub output: Bytes,
     pub gas: Gas,
@@ -41,6 +47,7 @@ impl InterruptionOutcome {
 }
 
 #[derive(Default)]
+/// Extra per-interpreter state used during interruptions.
 pub struct InterruptionExtension {
     pub interruption_outcome: Option<InterruptionOutcome>,
     pub committed_gas: Gas,
@@ -48,6 +55,7 @@ pub struct InterruptionExtension {
 
 pub type InterruptingInterpreter = EthInterpreter<InterruptionExtension>;
 
+/// Final result of EthVM::run_the_loop with gas/fuel details.
 pub struct ExecutionResult {
     /// The result of the instruction execution.
     pub result: InstructionResult,
@@ -60,6 +68,7 @@ pub struct ExecutionResult {
 }
 
 impl ExecutionResult {
+    /// Fuel/refund delta to settle at the host based on committed vs. final gas.
     pub fn chargeable_fuel_and_refund(&self) -> (u64, i64) {
         let remaining_diff = self.committed_gas.remaining() - self.gas.remaining();
         let refunded_diff = self.gas.refunded() - self.committed_gas.refunded();

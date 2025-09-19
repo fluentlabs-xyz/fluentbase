@@ -1,3 +1,8 @@
+//! Opcode shims that turn host-bound instructions into interruptions.
+//!
+//! The instruction table mirrors EVM semantics. For opcodes that require
+//! host interaction we emit a SystemInterruption and resume after the host
+//! provides a result.
 use crate::{
     host::{HostWrapper, HostWrapperImpl},
     opcodes,
@@ -578,6 +583,7 @@ fn selfdestruct<
     interrupt_into_action(context, |_context, sdk| sdk.destroy_account(target));
 }
 
+/// Build an instruction table matching EVM semantics with interruption-aware handlers.
 pub const fn interruptable_instruction_table<'a, SDK: SharedAPI>(
 ) -> [Instruction<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>; 256] {
     let mut table = instruction_table::<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>();

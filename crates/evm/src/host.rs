@@ -1,13 +1,20 @@
+//! Bridge between revm Host trait and the external SDK host.
+//!
+//! We do not execute Host methods directly; host-bound opcodes are routed
+//! via interruptions. The unreachable!() bodies here document that path.
 use core::ops::{Deref, DerefMut};
 use fluentbase_sdk::{Address, Bytes, ContextReader, Log, SharedAPI, B256, U256};
 use revm_context::journaled_state::{AccountLoad, StateLoad};
 use revm_interpreter::{Host, SStoreResult, SelfDestructResult};
 use revm_primitives::{StorageKey, StorageValue};
 
+/// Helper trait to access the underlying SDK from opcode handlers.
 pub(crate) trait HostWrapper {
     fn sdk_mut(&mut self) -> &mut impl SharedAPI;
 }
 
+/// Wrapper that implements revm::Host for our SDK, but actual effects
+/// are performed through the interruption protocol.
 pub(crate) struct HostWrapperImpl<'a, SDK: SharedAPI> {
     sdk: &'a mut SDK,
 }
