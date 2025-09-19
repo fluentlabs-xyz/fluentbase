@@ -8,6 +8,7 @@ mod allocator;
 mod bindings;
 pub mod constructor;
 pub mod entrypoint;
+pub mod evm;
 pub mod leb128;
 mod macros;
 pub mod panic;
@@ -15,6 +16,7 @@ pub mod panic;
 pub mod rwasm;
 pub mod shared;
 pub mod storage;
+pub mod syscall;
 
 pub use allocator::*;
 pub use fluentbase_codec as codec;

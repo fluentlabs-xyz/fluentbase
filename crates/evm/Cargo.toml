@@ -14,6 +14,12 @@ fluentbase-sdk = { workspace = true }
 bitvec = { workspace = true }
 bincode = { workspace = true }
 
+# revm
+revm-primitives = { workspace = true }
+revm-bytecode = { workspace = true }
+revm-interpreter = { workspace = true }
+revm-context = { workspace = true }
+
 [dev-dependencies]
 fluentbase-sdk-testing = { workspace = true }
 

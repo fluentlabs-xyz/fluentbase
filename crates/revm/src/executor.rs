@@ -1,8 +1,8 @@
-use crate::inspector::inspect_syscall;
-use crate::syscall::{execute_rwasm_interruption, inspect_rwasm_interruption};
 use crate::{
     api::RwasmFrame,
+    inspector::inspect_syscall,
     instruction_result_from_exit_code,
+    syscall::{execute_rwasm_interruption, inspect_rwasm_interruption},
     types::{SystemInterruptionInputs, SystemInterruptionOutcome},
     ExecutionResult, NextAction,
 };
@@ -12,14 +12,13 @@ use fluentbase_runtime::{
     RuntimeContext,
 };
 use fluentbase_sdk::{
-    is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule,
-    syscall::SyscallInvocationParams, BlockContextV1, BytecodeOrHash, Bytes, BytesOrRef,
-    ContractContextV1, ExitCode, SharedContextInput, SharedContextInputV1, TxContextV1,
-    FUEL_DENOM_RATE, STATE_DEPLOY, STATE_MAIN, U256,
+    is_delegated_runtime_address, keccak256, rwasm_core::RwasmModule, BlockContextV1,
+    BytecodeOrHash, Bytes, BytesOrRef, ContractContextV1, ExitCode, SharedContextInput,
+    SharedContextInputV1, SyscallInvocationParams, TxContextV1, FUEL_DENOM_RATE, STATE_DEPLOY,
+    STATE_MAIN, U256,
 };
-use revm::bytecode::opcode;
 use revm::{
-    bytecode::Bytecode,
+    bytecode::{opcode, Bytecode},
     context::{Block, Cfg, ContextError, ContextTr, JournalTr, Transaction},
     handler::FrameData,
     interpreter::{

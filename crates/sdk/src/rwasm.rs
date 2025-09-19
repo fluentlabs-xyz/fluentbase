@@ -13,9 +13,9 @@ pub use crate::{
     B256,
 };
 use fluentbase_types::{
-    bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, ExitCode,
-    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
-    BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
+    bn254_add_common_impl, BytecodeOrHash, ExitCode, NativeAPI, BN254_G1_POINT_COMPRESSED_SIZE,
+    BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
+    BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 
 #[derive(Default)]
@@ -337,9 +337,9 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn exec<I: Into<BytecodeOrHash>>(
+    fn exec(
         &self,
-        code_hash: I,
+        code_hash: BytecodeOrHash,
         input: &[u8],
         fuel_limit: Option<u64>,
         state: u32,
@@ -348,7 +348,7 @@ impl NativeAPI for RwasmContext {
         unsafe {
             let mut fuel_info: [i64; 2] = [fuel_limit.unwrap_or(u64::MAX) as i64, 0];
             let exit_code = _exec(
-                code_hash.hash().as_ptr(),
+                code_hash.code_hash().as_ptr(),
                 input.as_ptr(),
                 input.len() as u32,
                 &mut fuel_info as *mut [i64; 2],

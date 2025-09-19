@@ -66,6 +66,7 @@ impl CachingRuntime {
     ) -> Arc<Strategy> {
         let entry = match self.strategies.entry(code_hash) {
             Entry::Occupied(entry) => {
+                println!("strategy cache hit: code_hash={code_hash} address={address}");
                 let strategy = entry.get().clone();
                 // strategy
                 //     .store
@@ -75,6 +76,7 @@ impl CachingRuntime {
             }
             Entry::Vacant(entry) => entry,
         };
+        println!("missing strategy: code_hash={code_hash} address={address}");
 
         let _span = tracing::info_span!("parse_rwasm_module").entered();
         let rwasm_module = Rc::new(RwasmModule::new_or_empty(bytecode.as_ref()).0);

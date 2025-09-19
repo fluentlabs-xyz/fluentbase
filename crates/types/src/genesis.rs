@@ -82,7 +82,7 @@ pub const PRECOMPILE_ADDRESSES: &[Address] = &[
 ];
 
 pub fn is_system_precompile(address: &Address) -> bool {
-    // TODO(dmitry123): "add spec check here"
+    // TODO(dmitry123): Add spec check here, once we have first fork
     PRECOMPILE_ADDRESSES.contains(address)
 }
 

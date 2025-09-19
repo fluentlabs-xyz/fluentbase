@@ -2,7 +2,7 @@ edition = "2021"
 group_imports = "One"
 ignore = ["revm/*"]
 imports_granularity = "Crate"
-imports_layout = "HorizontalVertical"
+#imports_layout = "HorizontalVertical"
 
 comment_width = 100
 max_width = 100

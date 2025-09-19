@@ -1,11 +1,10 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
-use fluentbase_sdk::syscall::SyscallResult;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, native_api::NativeAPI, Address, Bytes, ContextReader,
+    bytes::Buf, calc_create4_address, Address, BytecodeOrHash, Bytes, ContextReader,
     ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI,
-    MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI, B256,
-    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    MetadataStorageAPI, NativeAPI, SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult,
+    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
@@ -381,6 +380,25 @@ impl SharedAPI for HostTestingContext {
 
     fn native_exit(&self, exit_code: ExitCode) -> ! {
         self.inner.borrow().native_sdk.exit(exit_code);
+    }
+
+    fn native_exec(
+        &self,
+        code_hash: B256,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32) {
+        self.inner.borrow().native_sdk.exec(
+            BytecodeOrHash::Hash(code_hash),
+            input,
+            fuel_limit,
+            state,
+        )
+    }
+
+    fn return_data(&self) -> Bytes {
+        self.inner.borrow().native_sdk.return_data()
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {

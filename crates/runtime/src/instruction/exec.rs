@@ -1,8 +1,7 @@
 use crate::{Runtime, RuntimeContext};
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    syscall::SyscallInvocationParams,
-    BytecodeOrHash, Bytes, BytesOrRef, ExitCode, B256, CALL_STACK_LIMIT,
+    BytecodeOrHash, Bytes, BytesOrRef, ExitCode, SyscallInvocationParams, B256, CALL_STACK_LIMIT,
 };
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 use std::{

@@ -252,7 +252,7 @@ impl StorageKind {
                 raw_storage_key[0..32].copy_from_slice(&key.to_be_bytes::<32>());
                 raw_storage_key[32..64].copy_from_slice(&slot.to_be_bytes::<32>());
 
-                use fluentbase_sdk::native_api::NativeAPI;
+                use fluentbase_sdk::NativeAPI;
                 let storage_key = sdk.keccak256(&raw_storage_key[..]);
                 fluentbase_sdk::U256::from_be_bytes(storage_key.0)
             }
@@ -292,7 +292,7 @@ impl StorageKind {
 
         quote! {
             fn key<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK, #(#arguments),*) -> fluentbase_sdk::U256 {
-                use fluentbase_sdk::native_api::NativeAPI;
+                use fluentbase_sdk::NativeAPI;
                 let mut key = Self::SLOT;
 
                 #(

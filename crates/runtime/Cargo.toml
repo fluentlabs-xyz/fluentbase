@@ -53,11 +53,12 @@ hex-literal = { workspace = true }
 default = ["std"]
 std = [
     "rwasm/std",
+    "fluentbase-types/std",
 ]
 rwasm = []
 debug-print = [
     "dep:hex",
-    "rwasm/debug-print",
+    #    "rwasm/debug-print",
 ]
 cache-compiled-artifacts = [
     "rwasm/cache-compiled-artifacts"

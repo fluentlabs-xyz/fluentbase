@@ -97,8 +97,8 @@ solana_rbpf = { git = "https://github.com/fluentlabs-xyz/rbpf", branch = "feat/s
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-#rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
-rwasm = { path = "../rwasm", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+#rwasm = { path = "../rwasm", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.2.0", default-features = false, features = ["sha3-keccak"] }
@@ -144,9 +144,18 @@ proc-macro2 = { version = "1.0", default-features = false }
 quote = { version = "1.0" }
 
 # revm
-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
-revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
-revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+revm-bytecode = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+revm-context = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v82-patched", default-features = false }
+#revm = { path = "../revm-rwasm/crates/revm", default-features = false }
+#revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false }
+#revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false }
+#revm-bytecode = { path = "../revm-rwasm/crates/bytecode", default-features = false }
+#revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false }
+#revm-context = { path = "../revm-rwasm/crates/context", default-features = false }
 
 # precompiles
 ark-bn254 = { version = "0.5", default-features = false }

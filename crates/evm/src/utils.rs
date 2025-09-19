@@ -1,124 +1,76 @@
-use crate::{
-    as_usize_or_fail_ret,
-    gas,
-    pop_ret,
-    push,
-    push_b256,
-    refund,
-    resize_memory,
-    result::InstructionResult,
-    EVM,
-};
-use core::{cmp::min, ops::Range};
-use fluentbase_sdk::{
-    syscall::SyscallResult,
-    Address,
-    Bytes,
-    ExitCode,
-    SharedAPI,
-    B256,
-    FUEL_DENOM_RATE,
-    U256,
+use crate::{host::HostWrapper, types::InterruptionExtension};
+use core::{cell::Ref, ops::Range};
+use fluentbase_sdk::{InterruptionExtractingAdapter, SharedAPI, FUEL_DENOM_RATE};
+use revm_interpreter::{
+    interpreter_types::{Jumps, LoopControl, MemoryTr},
+    Host, InstructionContext, InterpreterAction, InterpreterTypes,
 };
 
-pub(crate) fn instruction_result_from_exit_code(exit_code: ExitCode) -> InstructionResult {
-    match exit_code {
-        ExitCode::OutOfFuel => InstructionResult::OutOfGas,
-        _ => unreachable!(
-            "unexpected return err: {:?} ({})",
-            exit_code,
-            exit_code.into_i32()
-        ),
-    }
-}
-
-pub(crate) fn insert_create_outcome<SDK: SharedAPI>(
-    evm: &mut EVM<SDK>,
-    result: SyscallResult<Bytes>,
+pub(crate) fn interrupt_into_action<
+    WIRE: InterpreterTypes<Extend = InterruptionExtension>,
+    H: Host + ?Sized,
+    F: FnOnce(&InstructionContext<'_, H, WIRE>, &mut InterruptionExtractingAdapter) -> (u64, i64, i32),
+>(
+    context: InstructionContext<'_, H, WIRE>,
+    f: F,
 ) {
-    gas!(evm, result.fuel_consumed / FUEL_DENOM_RATE);
-    refund!(evm, result.fuel_refunded / FUEL_DENOM_RATE as i64);
-    evm.return_data_buffer = Bytes::new();
-    match result.status {
-        ExitCode::Ok => {
-            assert_eq!(result.data.len(), 20);
-            let created_address = Address::from_slice(result.data.as_ref());
-            push_b256!(evm, created_address.into_word());
-        }
-        ExitCode::Panic => {
-            evm.return_data_buffer = result.data;
-            push_b256!(evm, B256::ZERO);
-        }
-        ExitCode::Err => {
-            push_b256!(evm, B256::ZERO);
-        }
-        _ => evm.state = instruction_result_from_exit_code(result.status),
-    }
-}
-
-pub(crate) fn insert_call_outcome<SDK: SharedAPI>(
-    evm: &mut EVM<SDK>,
-    result: SyscallResult<Bytes>,
-    return_memory_offset: Range<usize>,
-) {
-    let out_offset = return_memory_offset.start;
-    let out_len = return_memory_offset.len();
-    evm.return_data_buffer = result.data;
-    let target_len = min(out_len, evm.return_data_buffer.len());
-    match result.status {
-        ExitCode::Ok => {
-            gas!(evm, result.fuel_consumed / FUEL_DENOM_RATE);
-            refund!(evm, result.fuel_refunded / FUEL_DENOM_RATE as i64);
-            evm.memory
-                .set(out_offset, &evm.return_data_buffer[..target_len]);
-            push!(evm, U256::from(1));
-        }
-        ExitCode::Panic => {
-            gas!(evm, result.fuel_consumed / FUEL_DENOM_RATE);
-            evm.memory
-                .set(out_offset, &evm.return_data_buffer[..target_len]);
-            push!(evm, U256::ZERO);
-        }
-        ExitCode::Err => {
-            gas!(evm, result.fuel_consumed / FUEL_DENOM_RATE);
-            push!(evm, U256::ZERO);
-        }
-        _ => evm.state = instruction_result_from_exit_code(result.status),
-    }
-}
-
-/// Resize memory and return range of memory.
-/// If `len` is 0 dont touch memory and return `usize::MAX` as offset and 0 as length.
-#[inline]
-pub fn resize_memory<SDK: SharedAPI>(
-    evm: &mut EVM<SDK>,
-    offset: U256,
-    len: U256,
-) -> Option<Range<usize>> {
-    let len = as_usize_or_fail_ret!(evm, len, None);
-    let offset = if len != 0 {
-        let offset = as_usize_or_fail_ret!(evm, offset, None);
-        resize_memory!(evm, offset, len, None);
-        offset
-    } else {
-        usize::MAX //unrealistic value so we are sure it is not used
+    // TODO(dmitry123): Is there a better way to extract interruption details?
+    //  What to do with serialization overhead?
+    let mut sdk = InterruptionExtractingAdapter::default();
+    f(&context, &mut sdk);
+    // We use the adapter to extract interruption data only.
+    // Maybe there is an easier way to do this,
+    // but we wanted to avoid code duplicates, especially related to syscall input/output data.
+    let data = sdk.extract();
+    let action = InterpreterAction::SystemInterruption {
+        code_hash: data.code_hash,
+        input: data.input,
+        fuel_limit: data.fuel_limit,
+        state: data.state,
     };
-    Some(offset..offset + len)
+    // We should repeat previous instruction once we have enough data.
+    // To achieve this, we jump back to this opcode PC.
+    context.interpreter.bytecode.relative_jump(-1);
+    context.interpreter.bytecode.set_action(action);
 }
 
-#[inline]
-pub fn get_memory_input_and_out_ranges<SDK: SharedAPI>(
-    evm: &mut EVM<SDK>,
-) -> Option<(Bytes, Range<usize>)> {
-    pop_ret!(evm, in_offset, in_len, out_offset, out_len, None);
-
-    let in_range = resize_memory(evm, in_offset, in_len)?;
-
-    let mut input = Bytes::new();
-    if !in_range.is_empty() {
-        input = Bytes::copy_from_slice(evm.memory.slice_range(in_range));
+pub(crate) fn sync_evm_gas<
+    WIRE: InterpreterTypes<Extend = InterruptionExtension>,
+    H: Host + HostWrapper + ?Sized,
+>(
+    context: &mut InstructionContext<'_, H, WIRE>,
+) {
+    let (gas, committed_gas) = (
+        &context.interpreter.gas,
+        &mut context.interpreter.extend.committed_gas,
+    );
+    let remaining_diff = committed_gas.remaining() - gas.remaining();
+    let refunded_diff = gas.refunded() - committed_gas.refunded();
+    // If there is nothing to commit/charge then just ignore it
+    if remaining_diff == 0 && refunded_diff == 0 {
+        return;
     }
+    // Charge gas from the runtime
+    context.host.sdk_mut().charge_fuel_manually(
+        // TODO(dmitry123): How safe to mul here? Shouldn't overwrap. Checked?
+        remaining_diff * FUEL_DENOM_RATE,
+        refunded_diff * FUEL_DENOM_RATE as i64,
+    );
+    // Remember new committed gas
+    *committed_gas = *gas;
+}
 
-    let ret_range = resize_memory(evm, out_offset, out_len)?;
-    Some((input, ret_range))
+pub(crate) fn global_memory_from_shared_buffer<
+    'a,
+    WIRE: InterpreterTypes<Extend = InterruptionExtension>,
+    H: Host + HostWrapper + ?Sized,
+>(
+    context: &'a InstructionContext<'_, H, WIRE>,
+    in_range: Range<usize>,
+) -> Ref<'a, [u8]> {
+    if !in_range.is_empty() {
+        context.interpreter.memory.global_slice(in_range)
+    } else {
+        context.interpreter.memory.global_slice(0..0)
+    }
 }

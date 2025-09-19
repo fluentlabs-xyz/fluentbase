@@ -92,7 +92,7 @@ impl Default for BytecodeOrHash {
 }
 
 impl BytecodeOrHash {
-    pub fn hash(&self) -> B256 {
+    pub fn code_hash(&self) -> B256 {
         match self {
             BytecodeOrHash::Bytecode { code_hash, .. } => *code_hash,
             BytecodeOrHash::Hash(hash) => *hash,
