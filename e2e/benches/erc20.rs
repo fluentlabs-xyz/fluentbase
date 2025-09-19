@@ -4,7 +4,7 @@ use fluentbase_erc20::{
     common::fixed_bytes_from_u256,
     storage::{Feature, InitialSettings, DECIMALS_DEFAULT},
 };
-use fluentbase_sdk::{address, Address, Bytes, U256};
+use fluentbase_sdk::{address, constructor::encode_constructor_params, Address, Bytes, U256};
 use fluentbase_sdk_testing::EvmTestingContext;
 use fluentbase_types::{ContractContextV1, PRECOMPILE_ERC20_RUNTIME};
 use hex_literal::hex;
@@ -14,8 +14,7 @@ fn erc20_transfer_benches(c: &mut Criterion) {
 
     // --- Benchmark 1: Original EVM ERC20 (rWasm disabled) ---
     {
-        let mut ctx = EvmTestingContext::default()
-            .with_full_genesis();
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
         ctx.disabled_rwasm = true;
         const OWNER_ADDRESS: Address = Address::ZERO;
         let contract_address = ctx.deploy_evm_tx(
@@ -41,8 +40,7 @@ fn erc20_transfer_benches(c: &mut Criterion) {
 
     // --- Benchmark 2: Emulated EVM ERC20 (rWasm enabled) ---
     {
-        let mut ctx = EvmTestingContext::default()
-            .with_full_genesis();
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
         let contract_address = ctx.deploy_evm_tx(
             OWNER_ADDRESS,
@@ -67,10 +65,24 @@ fn erc20_transfer_benches(c: &mut Criterion) {
 
     // --- Benchmark 3: rWasm Contract ERC20 ---
     {
-        let mut ctx = EvmTestingContext::default()
-            .with_full_genesis();
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
         const OWNER_ADDRESS: Address = Address::ZERO;
-        let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, EXAMPLE_ERC20.into());
+        let bytecode: &[u8] = crate::EXAMPLE_ERC20.into();
+
+        // constructor params for ERC20:
+        //     name: "TestToken"
+        //     symbol: "TST"
+        //     initial_supply: 1_000_000
+        // use examples/erc20/src/lib.rs print_constructor_params_hex() to regenerate
+        let constructor_params = hex!("000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000f4240000000000000000000000000000000000000000000000000000000000000000954657374546f6b656e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000035453540000000000000000000000000000000000000000000000000000000000");
+
+        let encoded_constructor_params = encode_constructor_params(&constructor_params);
+        let mut input: Vec<u8> = Vec::new();
+        input.extend(bytecode);
+        input.extend(encoded_constructor_params);
+
+        let contract_address = ctx.deploy_evm_tx(OWNER_ADDRESS, input.into());
+
         let transfer_payload: Bytes = hex!("a9059cbb00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001").into();
 
         group.bench_function("3_rWasm_Contract_ERC20", |b| {
@@ -88,8 +100,7 @@ fn erc20_transfer_benches(c: &mut Criterion) {
 
     // --- Benchmark 4: Precompiled ERC20 ---
     {
-        let mut ctx = EvmTestingContext::default()
-            .with_full_genesis();
+        let mut ctx = EvmTestingContext::default().with_full_genesis();
         const DEPLOYER_ADDR: Address = address!("1111111111111111111111111111111111111111");
         ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
             address: PRECOMPILE_ERC20_RUNTIME,

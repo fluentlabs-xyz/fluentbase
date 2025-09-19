@@ -43,6 +43,32 @@ impl HostTestingContext {
             .change_input(input.into());
         self
     }
+    /// Sets the initial storage state
+    pub fn with_storage(self, storage: HashMap<(Address, U256), U256>) -> Self {
+        self.inner.borrow_mut().persistent_storage = storage;
+        self
+    }
+
+    /// Merges storage entries
+    pub fn with_storage_entries(
+        self,
+        entries: impl IntoIterator<Item = ((Address, U256), U256)>,
+    ) -> Self {
+        self.inner.borrow_mut().persistent_storage.extend(entries);
+        self
+    }
+
+    /// Sets storage for a specific contract
+    pub fn with_contract_storage(self, contract: Address, slots: HashMap<U256, U256>) -> Self {
+        for (slot, value) in slots {
+            self.inner
+                .borrow_mut()
+                .persistent_storage
+                .insert((contract, slot), value);
+        }
+        self
+    }
+
     pub fn set_ownable_account_address(&mut self, address: Address) {
         self.inner.borrow_mut().ownable_account_address = Some(address);
     }

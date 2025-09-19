@@ -10,3 +10,4 @@ use fluentbase_codec::{
 
 mod structs;
 mod tuples;
+mod func;

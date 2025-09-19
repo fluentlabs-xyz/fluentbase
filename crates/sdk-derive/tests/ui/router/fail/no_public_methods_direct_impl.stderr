@@ -1,4 +1,4 @@
-error: Router has no methods. Make sure your implementation contains at least one public method that is not named 'deploy'.
+error: Router has no methods or constructor. Make sure your implementation contains at least one public method or a constructor.
 
          = help: Check that methods are public (pub fn) for regular implementations
          = help: Consider marking your methods as public: pub fn method_name(...)
