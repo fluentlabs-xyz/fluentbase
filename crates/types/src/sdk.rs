@@ -1,6 +1,7 @@
 use crate::{
     evm::{write_evm_exit_message, write_evm_panic_message},
-    Address, Bytes, ContextReader, ExitCode, syscall::SyscallResult, B256, BN254_G1_POINT_COMPRESSED_SIZE,
+    syscall::SyscallResult,
+    Address, Bytes, ContextReader, ExitCode, B256, BN254_G1_POINT_COMPRESSED_SIZE,
     BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_COMPRESSED_SIZE,
     BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
@@ -95,6 +96,10 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
         buffer
     }
 
+    fn bytes_input(&self) -> Bytes {
+        Bytes::from(self.input())
+    }
+
     fn read_context(&self, target: &mut [u8], offset: u32);
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64);
@@ -124,6 +129,16 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     }
 
     fn native_exit(&self, exit_code: ExitCode) -> !;
+
+    fn native_exec(
+        &self,
+        code_hash: B256,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32);
+
+    fn return_data(&self) -> Bytes;
 
     fn exit(&self) -> ! {
         self.native_exit(ExitCode::Ok)

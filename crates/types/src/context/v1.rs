@@ -249,14 +249,12 @@ impl SharedContextInputV1 {
     pub const SIZE: usize = 1024; // size of encoded struct
 
     pub fn decode_from_slice(buf: &[u8]) -> Result<Self, bincode::error::DecodeError> {
-        let config = bincode::config::legacy();
-        let result = bincode::decode_from_slice(buf, config)?;
-        Ok(result.0)
+        let (result, _) = bincode::decode_from_slice(buf, bincode::config::legacy())?;
+        Ok(result)
     }
 
     pub fn encode_to_vec(&self) -> Result<Bytes, bincode::error::EncodeError> {
-        let config = bincode::config::legacy();
-        let result: Bytes = bincode::encode_to_vec(self, config)?.into();
+        let result: Bytes = bincode::encode_to_vec(self, bincode::config::legacy())?.into();
         Ok(result)
     }
 }

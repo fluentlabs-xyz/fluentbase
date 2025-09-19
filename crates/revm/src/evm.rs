@@ -8,7 +8,6 @@ use fluentbase_sdk::{
     resolve_precompiled_runtime_from_input, try_resolve_precompile_account_from_input, Address,
     Bytes, UPDATE_GENESIS_AUTH, UPDATE_GENESIS_PREFIX,
 };
-use revm::inspector::NoOpInspector;
 use revm::{
     bytecode::{ownable_account::OwnableAccountBytecode, Bytecode},
     context::{ContextError, ContextSetters, Evm, FrameStack, JournalTr},
@@ -20,7 +19,7 @@ use revm::{
     },
     inspector::{
         handler::{frame_end, frame_start},
-        InspectorEvmTr, JournalExt,
+        InspectorEvmTr, JournalExt, NoOpInspector,
     },
     interpreter::{
         interpreter::{EthInterpreter, ExtBytecode},
@@ -118,6 +117,7 @@ where
     }
 
     #[inline]
+    #[tracing::instrument(level = "info", skip_all)]
     fn inspect_frame_init(
         &mut self,
         mut frame_init: <Self::Frame as FrameTr>::FrameInit,
@@ -143,6 +143,7 @@ where
     }
 
     #[inline]
+    #[tracing::instrument(level = "info", skip_all)]
     fn inspect_frame_run(
         &mut self,
     ) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<Self::Context>> {
@@ -191,6 +192,7 @@ where
         &mut self.0.frame_stack
     }
 
+    #[tracing::instrument(level = "info", skip_all)]
     fn frame_init(
         &mut self,
         frame_input: <Self::Frame as FrameTr>::FrameInit,
@@ -198,6 +200,7 @@ where
         ItemOrResult<&mut Self::Frame, <Self::Frame as FrameTr>::FrameResult>,
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
     > {
+        let _span = tracing::info_span!("revm.frame_init.init_with_context").entered();
         let is_first_init = self.0.frame_stack.index().is_none();
         let new_frame = if is_first_init {
             self.0.frame_stack.start_init()
@@ -219,6 +222,7 @@ where
             ItemOrResult::Item(new_frame) => {
                 match &mut new_frame.input {
                     FrameInput::Call(inputs) => {
+                        let _span = tracing::info_span!("revm.frame_init.call_hook").entered();
                         // a special hook for runtime upgrade
                         // that is used only for testnet to upgrade genesis without forks
                         if inputs.caller == UPDATE_GENESIS_AUTH
@@ -242,6 +246,7 @@ where
                         }
                     }
                     FrameInput::Create(inputs) => {
+                        let _span = tracing::info_span!("revm.frame_init.create_hook").entered();
                         let precompile_runtime =
                             resolve_precompiled_runtime_from_input(inputs.init_code.as_ref());
                         // create a new EIP-7702 account that points to the EVM runtime system precompile
@@ -278,6 +283,7 @@ where
         Ok(res)
     }
 
+    #[tracing::instrument(level = "info", skip_all)]
     fn frame_run(
         &mut self,
     ) -> Result<

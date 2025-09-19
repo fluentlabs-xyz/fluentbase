@@ -15,12 +15,12 @@ mod exit_code;
 pub mod genesis;
 pub mod hashes;
 pub mod helpers;
-pub mod native_api;
+mod native_api;
 mod preimage;
 mod rwasm;
 mod sdk;
 mod sys_func_idx;
-pub mod syscall;
+mod syscall;
 
 pub use address::*;
 pub use alloy_primitives::*;
@@ -31,10 +31,12 @@ pub use curves::*;
 pub use exit_code::*;
 pub use genesis::*;
 pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
+pub use native_api::*;
 pub use preimage::*;
 pub use rwasm::*;
 pub use sdk::*;
 pub use sys_func_idx::SysFuncIdx;
+pub use syscall::*;
 
 pub const KECCAK_EMPTY: B256 =
     b256!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
@@ -59,7 +61,9 @@ pub const DEVELOPER_PREVIEW_CHAIN_ID: u64 = 10993;
 
 /// A relation between fuel and gas,
 /// according to our benchmarks, average WebAssembly instruction is ~1000 faster than average EVM
-/// instruction
+/// instruction.
+///
+/// The value can be changed in the future.
 pub const FUEL_DENOM_RATE: u64 = 1000;
 
 /// A max rWasm call stack limit
@@ -97,3 +101,21 @@ pub const EVM_MAX_CODE_SIZE: usize = revm_primitives::eip170::MAX_CODE_SIZE;
 ///
 /// Limit of maximum initcode size is `2 * WASM_MAX_CODE_SIZE`.
 pub const EVM_MAX_INITCODE_SIZE: usize = 2 * EVM_MAX_CODE_SIZE;
+
+#[macro_export]
+macro_rules! bn254_add_common_impl {
+    ($p: ident, $q: ident, $action_p_eq_q: block, $action_rest: block) => {
+        if *$p == [0u8; 64] {
+            if *$q != [0u8; 64] {
+                *$p = *$q;
+            }
+            return;
+        } else if *$q == [0u8; 64] {
+            return;
+        } else if *$p == *$q {
+            $action_p_eq_q
+        } else {
+            $action_rest
+        }
+    };
+}

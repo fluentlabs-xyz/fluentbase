@@ -196,3 +196,36 @@ mod v82_failing_tests {
         fn underflow_test("tests/GeneralStateTests/stStackTests/underflowTest.json");
     }
 }
+
+mod new_v82_interpreter_failing_tests {
+    define_tests! {
+        fn invalid_addr("tests/GeneralStateTests/stBadOpcode/invalidAddr.json");
+        fn measure_gas("tests/GeneralStateTests/stBadOpcode/measureGas.json");
+        fn operation_diff_gas("tests/GeneralStateTests/stBadOpcode/operationDiffGas.json");
+        fn call_oog_additional_gas_costs2("tests/GeneralStateTests/stCallCodes/call_OOG_additionalGasCosts2.json");
+        fn call1024_pre_calls("tests/GeneralStateTests/stCallCreateCallCodeTest/Call1024PreCalls.json");
+        fn eip2929_oog("tests/GeneralStateTests/stEIP150singleCodeGasPrices/eip2929OOG.json");
+        fn oog("tests/GeneralStateTests/stMemoryTest/oog.json");
+        fn random_statetest458("tests/GeneralStateTests/stRandom2/randomStatetest458.json");
+        fn random_statetest554("tests/GeneralStateTests/stRandom2/randomStatetest554.json");
+        fn random_statetest150("tests/GeneralStateTests/stRandom/randomStatetest150.json");
+        fn random_statetest154("tests/GeneralStateTests/stRandom/randomStatetest154.json");
+        fn random_statetest205("tests/GeneralStateTests/stRandom/randomStatetest205.json");
+        fn revert_precompiled_touch_exact_oog_paris("tests/GeneralStateTests/stRevertTest/RevertPrecompiledTouchExactOOG_Paris.json");
+        fn recursive_create_contracts("tests/GeneralStateTests/stSolidityTest/RecursiveCreateContracts.json");
+        fn jumpdest_attack("tests/GeneralStateTests/stSpecialTest/JUMPDEST_Attack.json");
+        fn static_abacalls0("tests/GeneralStateTests/stStaticCall/static_ABAcalls0.json");
+        fn static_abacalls2("tests/GeneralStateTests/stStaticCall/static_ABAcalls2.json");
+        fn static_abacalls3("tests/GeneralStateTests/stStaticCall/static_ABAcalls3.json");
+        fn static_callcallcall_abcb_recursive("tests/GeneralStateTests/stStaticCall/static_callcallcall_ABCB_RECURSIVE.json");
+        fn abacalls2("tests/GeneralStateTests/stSystemOperationsTest/ABAcalls2.json");
+        fn abacalls3("tests/GeneralStateTests/stSystemOperationsTest/ABAcalls3.json");
+        fn internal_call_hitting_gas_limit("tests/GeneralStateTests/stTransactionTest/InternalCallHittingGasLimit.json");
+        fn sstore_gas_left("tests/GeneralStateTests/stSStoreTest/sstore_gasLeft.json");
+        fn call_to_name_registrator_not_much_memory1("tests/GeneralStateTests/stSystemOperationsTest/CallToNameRegistratorNotMuchMemory1.json");
+        fn all_opcodes("tests/GeneralStateTests/Pyspecs/frontier/opcodes/all_opcodes.json");
+        fn opc49_diff_places("tests/GeneralStateTests/stBadOpcode/opc49DiffPlaces.json");
+        fn opc4_adiff_places("tests/GeneralStateTests/stBadOpcode/opc4ADiffPlaces.json");
+        fn buffer("tests/GeneralStateTests/stMemoryTest/buffer.json");
+    }
+}

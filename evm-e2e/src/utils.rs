@@ -17,7 +17,7 @@ pub fn recover_address(private_key: &[u8]) -> Option<Address> {
 pub(crate) fn run_e2e_test(test_path: &'static str) {
     let path = format!("./{}", test_path);
     let elapsed = Arc::new(Mutex::new(Duration::new(0, 0)));
-    execute_test_suite(Path::new(path.as_str()), &elapsed, true, false).unwrap();
+    execute_test_suite(Path::new(path.as_str()), &elapsed, false, false).unwrap();
 }
 
 #[cfg(test)]

@@ -49,6 +49,20 @@ pub enum BytecodeOrHash {
     Hash(B256),
 }
 
+#[derive(Clone, Debug)]
+pub enum BytesOrRef<'a> {
+    Bytes(Bytes),
+    Ref(&'a [u8]),
+}
+impl<'a> BytesOrRef<'a> {
+    pub fn into_bytes(self) -> Bytes {
+        match self {
+            BytesOrRef::Bytes(bytes) => bytes,
+            BytesOrRef::Ref(slice) => Bytes::copy_from_slice(slice),
+        }
+    }
+}
+
 impl From<B256> for BytecodeOrHash {
     #[inline(always)]
     fn from(value: B256) -> Self {
@@ -78,7 +92,7 @@ impl Default for BytecodeOrHash {
 }
 
 impl BytecodeOrHash {
-    pub fn hash(&self) -> B256 {
+    pub fn code_hash(&self) -> B256 {
         match self {
             BytecodeOrHash::Bytecode { code_hash, .. } => *code_hash,
             BytecodeOrHash::Hash(hash) => *hash,

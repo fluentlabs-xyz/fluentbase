@@ -262,7 +262,7 @@ impl<T: MethodLike> Client<T> {
                     Some(gas_limit),
                 );
 
-                if !fluentbase_sdk::syscall::SyscallResult::is_ok(result.status) {
+                if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
                     ::core::panic!("Contract call failed");
                 }
 

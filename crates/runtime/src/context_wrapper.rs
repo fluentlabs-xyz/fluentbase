@@ -47,23 +47,26 @@ use crate::{
     RuntimeContext,
 };
 use fluentbase_types::{
-    bn254_add_common_impl, native_api::NativeAPI, BytecodeOrHash, Bytes, ExitCode, UnwrapExitCode,
+    bn254_add_common_impl, BytecodeOrHash, Bytes, BytesOrRef, ExitCode, NativeAPI, UnwrapExitCode,
     B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
-use std::{cell::RefCell, mem::take, rc::Rc};
+use std::{cell::RefCell, mem::take};
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct RuntimeContextWrapper {
-    pub ctx: Rc<RefCell<RuntimeContext>>,
+    pub ctx: RefCell<RuntimeContext>,
 }
 
 impl RuntimeContextWrapper {
     pub fn new(ctx: RuntimeContext) -> Self {
         Self {
-            ctx: Rc::new(RefCell::new(ctx)),
+            ctx: RefCell::new(ctx),
         }
+    }
+    pub fn into_inner(self) -> RuntimeContext {
+        self.ctx.into_inner()
     }
 }
 
@@ -276,9 +279,9 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallChargeFuel::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed);
     }
 
-    fn exec<I: Into<BytecodeOrHash>>(
+    fn exec(
         &self,
-        code_hash: I,
+        code_hash: BytecodeOrHash,
         input: &[u8],
         fuel_limit: Option<u64>,
         state: u32,
@@ -286,7 +289,7 @@ impl NativeAPI for RuntimeContextWrapper {
         let (fuel_consumed, fuel_refunded, exit_code) = SyscallExec::fn_impl(
             &mut self.ctx.borrow_mut(),
             code_hash,
-            input,
+            BytesOrRef::Ref(input),
             fuel_limit.unwrap_or(u64::MAX),
             state,
         );
@@ -342,15 +345,6 @@ impl TestingContext {
     pub fn set_input<I: Into<Bytes>>(&mut self, input: I) {
         self.ctx
             .replace_with(|ctx| take(ctx).with_input(input.into()));
-    }
-
-    pub fn with_fuel(mut self, fuel: u64) -> Self {
-        self.set_fuel(fuel);
-        self
-    }
-
-    pub fn set_fuel(&mut self, fuel: u64) {
-        self.ctx.replace_with(|ctx| take(ctx).with_fuel_limit(fuel));
     }
 
     pub fn take_output(&self) -> Vec<u8> {

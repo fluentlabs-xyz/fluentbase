@@ -30,10 +30,10 @@ impl SyscallChargeFuelManually {
         Ok(())
     }
 
-    pub fn fn_impl(ctx: &mut RuntimeContext, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
+    pub fn fn_impl(ctx: &mut RuntimeContext, _fuel_consumed: u64, fuel_refunded: i64) -> u64 {
         // TODO(dmitry123): "how to sync fuel between caller and context? do we need to sync it?"
-        ctx.try_consume_fuel(fuel_consumed).unwrap();
+        // ctx.try_consume_fuel(fuel_consumed).unwrap();
         ctx.refund_fuel(fuel_refunded);
-        ctx.remaining_fuel()
+        0
     }
 }

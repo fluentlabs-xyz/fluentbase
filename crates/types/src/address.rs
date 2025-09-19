@@ -222,9 +222,9 @@ mod tests {
             todo!()
         }
 
-        fn exec<I: Into<BytecodeOrHash>>(
+        fn exec(
             &self,
-            _code_hash: I,
+            _code_hash: BytecodeOrHash,
             _input: &[u8],
             _fuel_limit: Option<u64>,
             _state: u32,

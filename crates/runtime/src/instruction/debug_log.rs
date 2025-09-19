@@ -5,7 +5,7 @@ use rwasm::{Store, TrapCode, TypedCaller, Value};
 pub struct SyscallDebugLog;
 
 thread_local! {
-    pub static LAST_LOG_TIME: Cell<i64> = const { Cell::new(0) };
+    pub static LAST_LOG_TIME: Cell<u128> = const { Cell::new(0) };
 }
 
 impl SyscallDebugLog {
@@ -30,7 +30,7 @@ impl SyscallDebugLog {
         let curr_time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
-            .as_millis() as i64;
+            .as_micros();
         let last_time = LAST_LOG_TIME.get();
         let time_diff = if last_time > 0 {
             curr_time - last_time
@@ -45,11 +45,11 @@ impl SyscallDebugLog {
             &msg[..]
         };
         println!(
-            "debug_log (diff {}ms): {}",
+            "debug_log (diff {}us): {}",
             time_diff,
             std::str::from_utf8(msg)
                 .map(|s| s.to_string())
-                .unwrap_or_else(|_| { hex::encode(msg) })
+                .unwrap_or("non utf-8 message".to_string())
         );
     }
 

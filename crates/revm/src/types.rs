@@ -1,5 +1,5 @@
 use crate::ExecutionResult;
-use fluentbase_sdk::syscall::SyscallInvocationParams;
+use fluentbase_sdk::SyscallInvocationParams;
 use revm::interpreter::Gas;
 
 ///

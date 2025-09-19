@@ -8,6 +8,7 @@ mod allocator;
 mod bindings;
 pub mod constructor;
 pub mod entrypoint;
+pub mod evm;
 pub mod leb128;
 mod macros;
 pub mod panic;
@@ -17,6 +18,7 @@ pub mod shared;
 pub mod storage;
 #[deprecated(note = "Use `fluentbase_sdk::storage` instead", since = "0.4.5-dev")]
 pub mod storage_legacy;
+pub mod syscall;
 
 pub use allocator::*;
 pub use fluentbase_codec as codec;

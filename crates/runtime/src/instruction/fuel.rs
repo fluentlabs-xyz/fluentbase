@@ -14,7 +14,7 @@ impl SyscallFuel {
         Ok(())
     }
 
-    pub fn fn_impl(ctx: &RuntimeContext) -> u64 {
-        ctx.remaining_fuel()
+    pub fn fn_impl(_ctx: &RuntimeContext) -> u64 {
+        unimplemented!()
     }
 }

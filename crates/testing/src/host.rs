@@ -1,9 +1,9 @@
 use core::cell::RefCell;
 use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, native_api::NativeAPI, syscall::SyscallResult, Address,
-    Bytes, ContextReader, ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable,
-    IsColdAccess, MetadataAPI, MetadataStorageAPI, SharedAPI, SharedContextInputV1, StorageAPI,
+    bytes::Buf, calc_create4_address, Address, BytecodeOrHash, Bytes, ContextReader,
+    ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI,
+    MetadataStorageAPI, NativeAPI, SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult,
     B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
@@ -73,14 +73,11 @@ impl HostTestingContext {
         self.inner.borrow_mut().ownable_account_address = Some(address);
     }
     pub fn with_fuel_limit(self, fuel_limit: u64) -> Self {
-        self.inner.borrow_mut().native_sdk.set_fuel(fuel_limit);
+        self.inner.borrow_mut().remaining_fuel = Some(fuel_limit);
         self
     }
     pub fn with_gas_limit(self, gas_limit: u64) -> Self {
-        self.inner
-            .borrow_mut()
-            .native_sdk
-            .set_fuel(gas_limit * FUEL_DENOM_RATE);
+        self.inner.borrow_mut().remaining_fuel = Some(gas_limit * FUEL_DENOM_RATE);
         self
     }
     pub fn take_output(&self) -> Vec<u8> {
@@ -121,6 +118,7 @@ struct TestingContextInner {
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     ownable_account_address: Option<Address>,
+    remaining_fuel: Option<u64>,
 }
 
 impl Default for HostTestingContext {
@@ -128,13 +126,14 @@ impl Default for HostTestingContext {
         Self {
             inner: Rc::new(RefCell::new(TestingContextInner {
                 shared_context_input_v1: SharedContextInputV1::default(),
-                native_sdk: RuntimeContextWrapper::new(RuntimeContext::root(0)),
+                native_sdk: RuntimeContextWrapper::new(RuntimeContext::root()),
                 persistent_storage: Default::default(),
                 metadata: Default::default(),
                 metadata_storage: Default::default(),
                 transient_storage: Default::default(),
                 logs: vec![],
                 ownable_account_address: None,
+                remaining_fuel: None,
             })),
         }
     }
@@ -386,9 +385,14 @@ impl SharedAPI for HostTestingContext {
     }
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
-        self.inner
-            .borrow()
-            .native_sdk
+        let mut ctx = self.inner.borrow_mut();
+        let remaining_fuel = ctx
+            .remaining_fuel
+            .unwrap()
+            .checked_sub(fuel_consumed)
+            .expect("trap: out of fuel");
+        ctx.remaining_fuel = Some(remaining_fuel);
+        ctx.native_sdk
             .charge_fuel_manually(fuel_consumed, fuel_refunded);
     }
 
@@ -402,6 +406,25 @@ impl SharedAPI for HostTestingContext {
 
     fn native_exit(&self, exit_code: ExitCode) -> ! {
         self.inner.borrow().native_sdk.exit(exit_code);
+    }
+
+    fn native_exec(
+        &self,
+        code_hash: B256,
+        input: &[u8],
+        fuel_limit: Option<u64>,
+        state: u32,
+    ) -> (u64, i64, i32) {
+        self.inner.borrow().native_sdk.exec(
+            BytecodeOrHash::Hash(code_hash),
+            input,
+            fuel_limit,
+            state,
+        )
+    }
+
+    fn return_data(&self) -> Bytes {
+        self.inner.borrow().native_sdk.return_data()
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {

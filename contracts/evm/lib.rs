@@ -3,24 +3,11 @@
 extern crate alloc;
 extern crate core;
 
-use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, result::InterpreterResult, EVM};
+use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, EthVM, ExecutionResult};
 use fluentbase_sdk::{
-    bytes::Buf,
-    entrypoint,
-    keccak256,
-    Bytes,
-    ContextReader,
-    ExitCode,
-    SharedAPI,
-    B256,
-    EVM_MAX_CODE_SIZE,
-    KECCAK_EMPTY,
+    bytes::Buf, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
+    EVM_MAX_CODE_SIZE, KECCAK_EMPTY,
 };
-
-/// Indicates whether analyzed EVM bytecode should be cached.
-/// Set to `false` to disable caching, which may result in repeated analysis and potentially slower
-/// performance but ensures the latest results are always used.
-pub const CACHE_ANALYZED_EVM_BYTECODE: bool = false;
 
 /// Commits EVM bytecode to persistent storage and updates the corresponding code hash.
 ///
@@ -34,10 +21,7 @@ pub const CACHE_ANALYZED_EVM_BYTECODE: bool = false;
 /// - `sdk`: A mutable reference to the SDK instance implementing the `SharedAPI` trait, which
 ///   provides the methods required for interactions with storage.
 /// - `evm_bytecode`: A `Bytes` object containing the EVM bytecode to be stored.
-pub(crate) fn commit_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
-    sdk: &mut SDK,
-    evm_bytecode: Bytes,
-) {
+pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: Bytes) {
     let contract_address = sdk.context().contract_address();
     let evm_code_hash = keccak256(evm_bytecode.as_ref());
     // write an EVM code hash into metadata at offset 0
@@ -64,9 +48,7 @@ pub(crate) fn commit_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
 /// An `Option<Bytecode>`.
 /// - `Some(Bytecode)`: If a valid bytecode exists and is successfully retrieved.
 /// - `None`: If the bytecode is empty or not present in the storage.
-pub(crate) fn load_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
-    sdk: &SDK,
-) -> Option<AnalyzedBytecode> {
+pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<AnalyzedBytecode> {
     // we use bytecode address because contract can be called using DELEGATECALL
     let bytecode_address = sdk.context().contract_bytecode_address();
     // read metadata size, if it's zero, then an account is not assigned to the EVM runtime
@@ -90,7 +72,7 @@ pub(crate) fn load_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
     }
     // skip the first 32 bytes (code hash)
     metadata.advance(32);
-    let analyzed_bytecode = AnalyzedBytecode::new(&metadata[..], evm_code_hash.into());
+    let analyzed_bytecode = AnalyzedBytecode::new(metadata, evm_code_hash.into());
     Some(analyzed_bytecode)
 }
 
@@ -114,11 +96,11 @@ pub(crate) fn load_evm_bytecode<const CACHE_ANALYZED: bool, SDK: SharedAPI>(
 ///
 /// By interpreting and mapping results appropriately, this function ensures
 /// the correct handling and propagation of results from the EVM context.
-fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult) {
+fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: ExecutionResult) {
     let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
     sdk.charge_fuel_manually(consumed_diff, refund_diff);
     sdk.write(result.output.as_ref());
-    sdk.native_exit(if result.is_revert() {
+    sdk.native_exit(if result.result.is_revert() {
         ExitCode::Panic
     } else {
         ExitCode::Err
@@ -179,13 +161,13 @@ fn handle_not_ok_result<SDK: SharedAPI>(mut sdk: SDK, result: InterpreterResult)
 /// # Gas Mechanics
 /// - Gas is deducted during the bytecode execution and additional deployment steps.
 /// - Compatibility with EVM gas mechanisms is maintained to ensure Ethereum-like behavior.
-pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
+pub fn deploy_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let input: Bytes = sdk.input().into();
-    let analyzed_bytecode = AnalyzedBytecode::new(&input[..], B256::ZERO);
-    let gas_limit = sdk.context().contract_gas_limit();
+    let analyzed_bytecode = AnalyzedBytecode::new(input, B256::ZERO);
 
-    let mut result = EVM::new(&mut sdk, analyzed_bytecode, &[], gas_limit).exec();
-    if !result.is_ok() {
+    let mut result =
+        EthVM::new(sdk.context(), Bytes::default(), analyzed_bytecode).run_the_loop(&mut sdk);
+    if !result.result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }
 
@@ -203,9 +185,9 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
     let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
     sdk.charge_fuel_manually(consumed_diff, refund_diff);
 
-    // we intentionally don't charge gas for these opcodes
+    // We intentionally don't charge gas for these opcodes
     // to keep full compatibility with an EVM deployment process
-    commit_evm_bytecode::<{ CACHE_ANALYZED_EVM_BYTECODE }, SDK>(&mut sdk, result.output);
+    commit_evm_bytecode(&mut sdk, result.output);
 }
 
 /// The main entry point function of the application that processes EVM-based contract bytecode.
@@ -243,15 +225,13 @@ pub fn deploy<SDK: SharedAPI>(mut sdk: SDK) {
 /// - The SDK instance conforms to the `SharedAPI` interface.
 /// - Bytecode is preloaded and valid for the specific context where the function is executed.
 pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
-    let Some(evm_bytecode) = load_evm_bytecode::<{ CACHE_ANALYZED_EVM_BYTECODE }, SDK>(&sdk) else {
+    let Some(analyzed_bytecode) = load_evm_bytecode(&sdk) else {
         return;
     };
 
-    let input: Bytes = sdk.input().into();
-    let gas_limit = sdk.context().contract_gas_limit();
-
-    let result = EVM::new(&mut sdk, evm_bytecode, &input[..], gas_limit).exec();
-    if !result.is_ok() {
+    let mut result =
+        EthVM::new(sdk.context(), sdk.bytes_input(), analyzed_bytecode).run_the_loop(&mut sdk);
+    if !result.result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }
 
@@ -261,13 +241,13 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     sdk.write(result.output.as_ref());
 }
 
-entrypoint!(main_entry, deploy);
+entrypoint!(main_entry, deploy_entry);
 
 #[cfg(test)]
 mod tests {
-    use crate::{deploy, main_entry};
+    use crate::{deploy_entry, main_entry};
     use core::str::from_utf8;
-    use fluentbase_sdk::{hex, Address, ContractContextV1, U256};
+    use fluentbase_sdk::{hex, Address, ContractContextV1, PRECOMPILE_EVM_RUNTIME, U256};
     use fluentbase_sdk_testing::HostTestingContext;
 
     #[ignore]
@@ -287,10 +267,11 @@ mod tests {
                 gas_limit: 1_000_000,
             })
             .with_gas_limit(1_000_000);
+        sdk.set_ownable_account_address(PRECOMPILE_EVM_RUNTIME);
         // deploy
         {
             sdk = sdk.with_input(hex!("60806040526105ae806100115f395ff3fe608060405234801561000f575f80fd5b506004361061003f575f3560e01c80633b2e97481461004357806345773e4e1461007357806348b8bcc314610091575b5f80fd5b61005d600480360381019061005891906102e5565b6100af565b60405161006a919061039a565b60405180910390f35b61007b6100dd565b604051610088919061039a565b60405180910390f35b61009961011a565b6040516100a6919061039a565b60405180910390f35b60605f8273ffffffffffffffffffffffffffffffffffffffff163190506100d58161012f565b915050919050565b60606040518060400160405280600b81526020017f48656c6c6f20576f726c64000000000000000000000000000000000000000000815250905090565b60605f4790506101298161012f565b91505090565b60605f8203610175576040518060400160405280600181526020017f30000000000000000000000000000000000000000000000000000000000000008152509050610282565b5f8290505f5b5f82146101a457808061018d906103f0565b915050600a8261019d9190610464565b915061017b565b5f8167ffffffffffffffff8111156101bf576101be610494565b5b6040519080825280601f01601f1916602001820160405280156101f15781602001600182028036833780820191505090505b5090505b5f851461027b578180610207906104c1565b925050600a8561021791906104e8565b60306102239190610518565b60f81b8183815181106102395761023861054b565b5b60200101907effffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff191690815f1a905350600a856102749190610464565b94506101f5565b8093505050505b919050565b5f80fd5b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f6102b48261028b565b9050919050565b6102c4816102aa565b81146102ce575f80fd5b50565b5f813590506102df816102bb565b92915050565b5f602082840312156102fa576102f9610287565b5b5f610307848285016102d1565b91505092915050565b5f81519050919050565b5f82825260208201905092915050565b5f5b8381101561034757808201518184015260208101905061032c565b5f8484015250505050565b5f601f19601f8301169050919050565b5f61036c82610310565b610376818561031a565b935061038681856020860161032a565b61038f81610352565b840191505092915050565b5f6020820190508181035f8301526103b28184610362565b905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f819050919050565b5f6103fa826103e7565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff820361042c5761042b6103ba565b5b600182019050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601260045260245ffd5b5f61046e826103e7565b9150610479836103e7565b92508261048957610488610437565b5b828204905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b5f6104cb826103e7565b91505f82036104dd576104dc6103ba565b5b600182039050919050565b5f6104f2826103e7565b91506104fd836103e7565b92508261050d5761050c610437565b5b828206905092915050565b5f610522826103e7565b915061052d836103e7565b9250828201905080821115610545576105446103ba565b5b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffdfea2646970667358221220feebf5ace29c3c3146cb63bf7ca9009c2005f349075639d267cfbd817adde3e564736f6c63430008180033"));
-            deploy(sdk.clone());
+            deploy_entry(sdk.clone());
         }
         // main
         {
