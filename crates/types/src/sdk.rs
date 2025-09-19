@@ -42,6 +42,7 @@ pub trait SharedAPI: StorageAPI + MetadataAPI + MetadataStorageAPI {
     fn blake3(data: &[u8]) -> B256;
     fn poseidon(parameters: u32, endianness: u32, data: &[u8]) -> Result<B256, ExitCode>;
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]>;
+    fn curve256r1_verify(input: &[u8]) -> bool;
     fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool;
     fn curve25519_edwards_add(p: &mut [u8; 32], q: &[u8; 32]) -> bool;
     fn curve25519_edwards_sub(p: &mut [u8; 32], q: &[u8; 32]) -> bool;

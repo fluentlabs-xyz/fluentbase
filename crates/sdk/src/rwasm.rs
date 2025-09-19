@@ -6,10 +6,10 @@ pub use crate::{
         _bls12_381_g2_add, _bls12_381_g2_msm, _bls12_381_map_fp2_to_g2, _bls12_381_map_fp_to_g1,
         _bls12_381_pairing, _bn254_add, _bn254_double, _bn254_fp2_mul, _bn254_fp_mul,
         _bn254_g1_compress, _bn254_g1_decompress, _bn254_g2_compress, _bn254_g2_decompress,
-        _bn254_mul, _bn254_multi_pairing, _charge_fuel, _charge_fuel_manually, _debug_log,
-        _ed25519_edwards_add, _ed25519_edwards_decompress_validate, _ed25519_edwards_mul,
-        _ed25519_edwards_multiscalar_mul, _ed25519_edwards_sub, _ed25519_ristretto_add,
-        _ed25519_ristretto_decompress_validate, _ed25519_ristretto_mul,
+        _bn254_mul, _bn254_multi_pairing, _charge_fuel, _charge_fuel_manually, _curve256r1_verify,
+        _debug_log, _ed25519_edwards_add, _ed25519_edwards_decompress_validate,
+        _ed25519_edwards_mul, _ed25519_edwards_multiscalar_mul, _ed25519_edwards_sub,
+        _ed25519_ristretto_add, _ed25519_ristretto_decompress_validate, _ed25519_ristretto_mul,
         _ed25519_ristretto_multiscalar_mul, _ed25519_ristretto_sub, _exec, _exit, _forward_output,
         _fuel, _input_size, _keccak256, _output_size, _poseidon, _preimage_copy, _preimage_size,
         _read, _read_output, _resume, _secp256k1_recover, _sha256, _state, _write,
@@ -97,6 +97,15 @@ impl NativeAPI for RwasmContext {
             } else {
                 None
             }
+        }
+    }
+
+    #[inline(always)]
+    fn curve256r1_verify(input: &[u8]) -> bool {
+        unsafe {
+            let mut output = [0u8; 32];
+            let ok = _curve256r1_verify(input.as_ptr(), input.len() as u32, output.as_mut_ptr());
+            ok == 0
         }
     }
     #[inline(always)]

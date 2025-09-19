@@ -46,6 +46,7 @@ mod tests {
     use crate::{
         BytecodeOrHash, ExitCode, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
         BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
+        CURVE256R1_POINT_COMPRESSED_SIZE, CURVE256R1_POINT_DECOMPRESSED_SIZE,
     };
     use alloy_primitives::{address, b256, keccak256};
 
@@ -60,6 +61,10 @@ mod tests {
             todo!()
         }
 
+        fn curve256r1_verify(_input: &[u8]) -> bool {
+            todo!()
+        }
+
         fn blake3(_data: &[u8]) -> B256 {
             todo!()
         }
@@ -67,10 +72,6 @@ mod tests {
         fn poseidon(_parameters: u32, _endianness: u32, _data: &[u8]) -> Result<B256, ExitCode> {
             todo!()
         }
-
-        // fn g1_add(_p: &mut [u8; 64], _q: &[u8; 64]) -> Result<(), ExitCode> {
-        //     Ok(())
-        // }
 
         fn secp256k1_recover(_digest: &B256, _sig: &[u8; 64], _rec_id: u8) -> Option<[u8; 65]> {
             todo!()

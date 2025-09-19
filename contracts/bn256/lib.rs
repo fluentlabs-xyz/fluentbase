@@ -104,7 +104,6 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
 
             let result = bn256_add_with_sdk(&sdk, &mut p, &q);
             let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-            // write output
             sdk.write(&result);
         }
         PRECOMPILE_BN256_MUL => {

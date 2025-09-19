@@ -17,6 +17,7 @@ rwasm = { workspace = true }
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 secp256k1 = { version = "=0.30", default-features = false, features = [
     "alloc",
     "recovery",

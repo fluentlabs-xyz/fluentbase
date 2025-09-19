@@ -22,6 +22,7 @@ pub mod curve25519_ristretto_decompress_validate;
 pub mod curve25519_ristretto_mul;
 pub mod curve25519_ristretto_multiscalar_mul;
 pub mod curve25519_ristretto_sub;
+pub mod curve256r1_verify;
 pub mod debug_log;
 pub mod ed_add;
 pub mod ed_decompress;
@@ -83,6 +84,7 @@ use crate::{
         curve25519_ristretto_mul::SyscallCurve25519RistrettoMul,
         curve25519_ristretto_multiscalar_mul::SyscallCurve25519RistrettoMultiscalarMul,
         curve25519_ristretto_sub::SyscallCurve25519RistrettoSub,
+        curve256r1_verify::SyscallCurve256r1Verify,
         debug_log::SyscallDebugLog,
         ed_add::SyscallEdwardsAddAssign,
         ed_decompress::SyscallEdwardsDecompress,
@@ -181,6 +183,7 @@ pub fn invoke_runtime_handler(
         SysFuncIdx::SECP256K1_ADD => SyscallWeierstrassAddAssign::<Secp256k1>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_DECOMPRESS => SyscallWeierstrassDecompressAssign::<Secp256k1>::fn_handler(caller, params, result),
         SysFuncIdx::SECP256K1_DOUBLE => SyscallWeierstrassDoubleAssign::<Secp256k1>::fn_handler(caller, params, result),
+        SysFuncIdx::CURVE256R1_VERIFY => SyscallCurve256r1Verify::fn_handler(caller, params, result),
         SysFuncIdx::BLS12381_DECOMPRESS => SyscallWeierstrassDecompressAssign::<Bls12381>::fn_handler(caller, params, result),
         SysFuncIdx::BLS12381_ADD => SyscallWeierstrassAddAssign::<Bls12381>::fn_handler(caller, params, result),
         SysFuncIdx::BLS12381_DOUBLE => SyscallWeierstrassDoubleAssign::<Bls12381>::fn_handler(caller, params, result),

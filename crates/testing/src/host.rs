@@ -286,6 +286,11 @@ impl SharedAPI for HostTestingContext {
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         RuntimeContextWrapper::secp256k1_recover(digest, sig, rec_id)
     }
+
+    fn curve256r1_verify(input: &[u8]) -> bool {
+        RuntimeContextWrapper::curve256r1_verify(input)
+    }
+
     fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
         RuntimeContextWrapper::curve25519_edwards_decompress_validate(p)
     }

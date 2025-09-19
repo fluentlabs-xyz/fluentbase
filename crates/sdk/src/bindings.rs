@@ -150,6 +150,9 @@ extern "C" {
     pub fn _secp256k1_decompress(x_ptr: *mut u8, sign: u32);
     pub fn _secp256k1_double(p_ptr: *mut u8);
 
+    /// Returns 0 when signature verification succeeds and 1 in case of error
+    pub fn _curve256r1_verify(input_ptr: *const u8, input_len: u32, output_ptr: *mut u8) -> i32;
+
     pub fn _bls12381_decompress(arg1: u32, arg2: u32);
     pub fn _bls12381_add(arg1: u32, arg2: u32);
     pub fn _bls12381_double(p_ptr: u32);

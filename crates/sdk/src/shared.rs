@@ -214,6 +214,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         API::secp256k1_recover(digest, sig, rec_id)
     }
 
+    fn curve256r1_verify(input: &[u8]) -> bool {
+        API::curve256r1_verify(input)
+    }
+
     fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {
         API::curve25519_edwards_decompress_validate(p)
     }

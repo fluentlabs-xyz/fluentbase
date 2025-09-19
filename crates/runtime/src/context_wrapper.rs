@@ -22,6 +22,7 @@ use crate::{
         curve25519_ristretto_mul::SyscallCurve25519RistrettoMul,
         curve25519_ristretto_multiscalar_mul::SyscallCurve25519RistrettoMultiscalarMul,
         curve25519_ristretto_sub::SyscallCurve25519RistrettoSub,
+        curve256r1_verify::SyscallCurve256r1Verify,
         debug_log::SyscallDebugLog,
         exec::SyscallExec,
         exit::SyscallExit,
@@ -92,6 +93,10 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn secp256k1_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> Option<[u8; 65]> {
         SyscallSecp256k1Recover::fn_impl(digest, sig, rec_id)
+    }
+
+    fn curve256r1_verify(input: &[u8]) -> bool {
+        SyscallCurve256r1Verify::fn_impl(input)
     }
 
     fn curve25519_edwards_decompress_validate(p: &[u8; 32]) -> bool {

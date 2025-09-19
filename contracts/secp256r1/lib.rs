@@ -3,7 +3,40 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
+use alloc::vec;
+
+use fluentbase_sdk::{
+    alloc_slice, entrypoint, native_api::NativeAPI, Bytes, ContextReader, ExitCode, SharedAPI,
+};
+
+const INPUT_LENGTH: usize = 160;
+const P256_VERIFY_GAS: u64 = 3450;
+
+/// Helper function for common validation and gas checking pattern
+#[inline(always)]
+fn validate_and_consume_gas<SDK: SharedAPI>(sdk: &SDK, gas_cost: u64, gas_limit: u64) {
+    check_gas_and_sync(sdk, gas_cost, gas_limit);
+}
+
+#[inline(always)]
+fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) {
+    if gas_used > gas_limit {
+        sdk.native_exit(ExitCode::OutOfFuel);
+    }
+    sdk.sync_evm_gas(gas_used, 0);
+}
+
+fn verify_input_length(input: &[u8]) -> bool {
+    if input.len() == INPUT_LENGTH {
+        return true;
+    }
+    false
+}
+
+#[inline(always)]
+fn curve256r1_verify_with_sdk<SDK: SharedAPI>(_: &SDK, input: &[u8]) -> bool {
+    SDK::curve256r1_verify(input)
+}
 
 /// Main entry point for the secp256r1 wrapper contract.
 /// This contract wraps the secp256r1 precompile (EIP-7212) which verifies ECDSA signatures
@@ -23,11 +56,25 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let mut input = alloc_slice(input_length as usize);
     sdk.read(&mut input, 0);
     let input = Bytes::copy_from_slice(input);
-    let result = revm_precompile::secp256r1::p256_verify(&input, gas_limit)
-        .unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
-    sdk.sync_evm_gas(result.gas_used, 0);
-    // write output
-    sdk.write(result.bytes.as_ref());
+    // Check input length
+    if !verify_input_length(&input) {
+        sdk.sync_evm_gas(P256_VERIFY_GAS, 0);
+        sdk.write(&[]);
+        return;
+    }
+
+    // Use the curve256r1_verify instruction
+    let verification_result = curve256r1_verify_with_sdk(&sdk, &input);
+
+    sdk.sync_evm_gas(P256_VERIFY_GAS, 0);
+
+    if verification_result {
+        let mut result = vec![0u8; 32];
+        result[31] = 1; // success marker
+        sdk.write(&result);
+    } else {
+        sdk.write(&[]); // empty result for failure
+    }
 }
 
 entrypoint!(main_entry);

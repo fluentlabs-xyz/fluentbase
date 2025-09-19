@@ -2007,6 +2007,7 @@ dependencies = [
  "num",
  "num-bigint 0.4.6",
  "num-traits",
+ "p256",
  "paste",
  "rwasm",
  "secp256k1 0.30.0",
