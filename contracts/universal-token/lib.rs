@@ -8,31 +8,23 @@ use fluentbase_sdk::{
 use fluentbase_svm::fluentbase::token2022::{token2022_process, token2022_process_raw};
 use fluentbase_svm::pubkey::{Pubkey, PUBKEY_BYTES};
 use fluentbase_svm::token_2022;
-use fluentbase_svm::token_2022::extension::AccountType::Mint;
 use fluentbase_svm::token_2022::processor::Processor;
 use fluentbase_svm_common::common::{
-    lamports_to_bytes, lamports_try_from_slice, pubkey_from_evm_address, pubkey_try_from_slice,
+    lamports_to_bytes, pubkey_from_evm_address, pubkey_try_from_slice,
 };
 use fluentbase_svm_common::universal_token::{
-    InitializeAccountParams, InitializeMintParams, MintToParams, TransferFromParams, TransferParams,
+    ApproveCheckedParams, ApproveParams, InitializeAccountParams, InitializeMintParams,
+    MintToParams, RevokeParams, TransferFromParams, TransferParams,
 };
 use fluentbase_universal_token::{
-    common::{bytes_to_sig, u256_from_bytes_slice_try},
+    common::bytes_to_sig,
     consts::{
-        ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_INVALID_PAUSER, ERR_MALFORMED_INPUT,
-        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, SIG_BALANCE, SIG_BALANCE_OF, SIG_DECIMALS,
-        SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_TOKEN2022, SIG_TRANSFER,
-        SIG_TRANSFER_FROM,
+        ERR_MALFORMED_INPUT, SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF,
+        SIG_DECIMALS, SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE,
+        SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
     },
-    storage::{Config, Settings, ADDRESS_LEN_BYTES, SIG_LEN_BYTES, U256_LEN_BYTES},
+    storage::SIG_LEN_BYTES,
 };
-
-fn symbol<SDK: SharedAPI>(sdk: &mut SDK) {
-    // sdk.write(&get_symbol(sdk));
-}
-fn name<SDK: SharedAPI>(sdk: &mut SDK) {
-    // sdk.write(&get_name(sdk));
-}
 
 fn decimals_for_pubkey<SDK: SharedAPI>(sdk: &mut SDK, pk: &Pubkey) -> u8 {
     let mut processor = Processor::new(sdk);
@@ -180,35 +172,72 @@ fn mint_to<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
 }
 
 fn approve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    const OWNER_OFFSET: usize = 0;
-    const SPENDER_OFFSET: usize = OWNER_OFFSET + ADDRESS_LEN_BYTES;
-    const AMOUNT_OFFSET: usize = SPENDER_OFFSET + ADDRESS_LEN_BYTES;
-    let Ok(owner) = Address::try_from(&input[OWNER_OFFSET..]) else {
+    let Ok(params) = ApproveParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    let Ok(spender) = Address::try_from(&input[SPENDER_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Ok(amount) = lamports_try_from_slice(&input[AMOUNT_OFFSET..]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    // do_approve(&mut sdk, &owner, &spender, &amount);
-    sdk.write(&[0]);
+    let instruction = token_2022::instruction::approve(
+        &token_2022::lib::id(),
+        &params.from,
+        &params.delegate,
+        &params.owner,
+        &[],
+        *params.amount,
+    )
+    .unwrap();
+
+    token2022_process::<false, _>(
+        sdk,
+        &instruction.program_id,
+        &instruction.accounts,
+        &instruction.data,
+    )
+    .expect("failed to process");
+    sdk.write(&[1]);
 }
 
-fn allow<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    const OWNER_OFFSET: usize = 0;
-    const SPENDER_OFFSET: usize = OWNER_OFFSET + ADDRESS_LEN_BYTES;
-    let Ok(owner) = Address::try_from(&input[OWNER_OFFSET..OWNER_OFFSET + ADDRESS_LEN_BYTES])
-    else {
+fn approve_checked<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
+    let Ok(params) = ApproveCheckedParams::try_parse(input) else {
+        debug_log_ext!();
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    let Ok(spender) = Address::try_from(&input[SPENDER_OFFSET..SPENDER_OFFSET + ADDRESS_LEN_BYTES])
-    else {
+    let instruction = token_2022::instruction::approve_checked(
+        &token_2022::lib::id(),
+        &params.source,
+        &params.mint,
+        &params.delegate,
+        &params.owner,
+        &[],
+        *params.amount,
+        params.decimals,
+    )
+    .unwrap();
+
+    token2022_process::<false, _>(
+        sdk,
+        &instruction.program_id,
+        &instruction.accounts,
+        &instruction.data,
+    )
+    .expect("failed to process");
+    sdk.write(&[1]);
+}
+
+fn revoke<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
+    let Ok(params) = RevokeParams::try_parse(input) else {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
-    // let amount = get_allowance(&mut sdk, &owner, &spender);
-    sdk.write(&[0]);
+    let instruction =
+        token_2022::instruction::revoke(&token_2022::lib::id(), &params.source, &params.owner, &[])
+            .unwrap();
+
+    token2022_process::<false, _>(
+        sdk,
+        &instruction.program_id,
+        &instruction.accounts,
+        &instruction.data,
+    )
+    .expect("failed to process");
+    sdk.write(&[1]);
 }
 
 fn total_supply<SDK: SharedAPI>(sdk: &mut SDK) {
@@ -239,53 +268,6 @@ fn balance_of<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
         sdk.evm_exit(ERR_MALFORMED_INPUT);
     };
     balance_for_pubkey(sdk, &pubkey);
-}
-
-fn mint<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) {
-    let minter = sdk.context().contract_caller();
-    let Ok(to) = Address::try_from(&input[..ADDRESS_LEN_BYTES]) else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let Some(amount) =
-        u256_from_bytes_slice_try(&input[ADDRESS_LEN_BYTES..ADDRESS_LEN_BYTES + U256_LEN_BYTES])
-    else {
-        sdk.evm_exit(ERR_MALFORMED_INPUT);
-    };
-    let mut config = Config::new();
-    // evm_exit!(sdk, do_mint(&mut sdk, &mut config, &minter, &to, &amount));
-    sdk.write(&[0])
-}
-
-fn pause<SDK: SharedAPI>(sdk: &mut SDK) {
-    let mut config = Config::new();
-    if !config.pausable_plugin_enabled(sdk) {
-        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
-    }
-    let pauser = sdk.context().contract_caller();
-    if pauser != Settings::pauser_get(sdk) {
-        sdk.evm_exit(ERR_INVALID_PAUSER);
-    }
-    if config.paused(sdk) {
-        sdk.evm_exit(ERR_ALREADY_PAUSED);
-    }
-    // evm_exit!(sdk, do_pause(sdk, &mut config, &pauser));
-    sdk.write(&[1]);
-}
-
-fn unpause<SDK: SharedAPI>(sdk: &mut SDK, _input: &[u8]) {
-    let mut config = Config::new();
-    if !config.pausable_plugin_enabled(sdk) {
-        sdk.evm_exit(ERR_PAUSABLE_PLUGIN_NOT_ACTIVE);
-    }
-    let pauser = sdk.context().contract_caller();
-    if pauser != Settings::pauser_get(sdk) {
-        sdk.evm_exit(ERR_INVALID_PAUSER);
-    }
-    if !config.paused(sdk) {
-        sdk.evm_exit(ERR_ALREADY_UNPAUSED);
-    }
-    // evm_exit!(sdk, do_unpause(sdk, &mut config, &pauser));
-    sdk.write(&[0]);
 }
 
 pub fn deploy_entry(mut sdk: impl SharedAPI) {
@@ -319,8 +301,6 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     let (sig, input) = input.split_at(SIG_LEN_BYTES);
     let signature = bytes_to_sig(sig);
     match signature {
-        // SIG_SYMBOL => symbol(sdk),
-        // SIG_NAME => name(sdk),
         SIG_BALANCE => balance(&mut sdk),
         SIG_BALANCE_OF => balance_of(&mut sdk, input),
         SIG_TRANSFER => transfer(&mut sdk, input),
@@ -328,8 +308,9 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         SIG_INITIALIZE_ACCOUNT => initialize_account(&mut sdk, input),
         SIG_MINT_TO => mint_to(&mut sdk, input),
         SIG_DECIMALS => decimals(&mut sdk, input),
-        // SIG_APPROVE => approve(&mut sdk, input),
-        // SIG_ALLOWANCE => allow(&mut sdk, input),
+        SIG_APPROVE => approve(&mut sdk, input),
+        SIG_APPROVE_CHECKED => approve_checked(&mut sdk, input),
+        SIG_REVOKE => revoke(&mut sdk, input),
         // SIG_TOTAL_SUPPLY => total_supply(&mut sdk),
         // SIG_MINT => mint(&mut sdk, input),
         // SIG_PAUSE => pause(&mut sdk),

@@ -10,7 +10,7 @@ use crate::token_2022::pod_instruction::{
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::marker::PhantomData;
-use fluentbase_sdk::debug_log;
+use fluentbase_sdk::{debug_log, debug_log_ext};
 use fluentbase_types::{Address, SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use itertools::min;
 use solana_account_info::{next_account_info, AccountInfo};
@@ -299,9 +299,9 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
 
     pub fn balance_of(&mut self, pk: &Pubkey) -> Result<u64, ProgramError> {
         let account_metas = vec![AccountMeta::new_readonly(pk.clone(), false)];
-        let mut accounts: Vec<crate::account::Account> = self
-            .reconstruct_accounts::<true>(&account_metas)
-            .expect("failed to reconstruct accounts");
+        let mut accounts: Vec<crate::account::Account> =
+            reconstruct_accounts::<_, true>(self.sdk, &account_metas)
+                .expect("failed to reconstruct accounts");
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
             .expect("failed to reconstruct accounts");
 
@@ -318,9 +318,9 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
 
     pub fn decimals(&mut self, mint_pk: &Pubkey) -> Result<u8, ProgramError> {
         let account_metas = vec![AccountMeta::new_readonly(mint_pk.clone(), false)];
-        let mut accounts: Vec<crate::account::Account> = self
-            .reconstruct_accounts::<true>(&account_metas)
-            .expect("failed to reconstruct accounts");
+        let mut accounts: Vec<crate::account::Account> =
+            reconstruct_accounts::<_, true>(self.sdk, &account_metas)
+                .expect("failed to reconstruct accounts");
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
             .expect("failed to reconstruct accounts infos");
 
@@ -633,6 +633,7 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
             PodStateWithExtensionsMut::<PodAccount>::unpack(&mut source_account_data)?;
 
         if source_account.base.is_frozen() {
+            debug_log_ext!();
             return Err(TokenError::AccountFrozen.into());
         }
 
@@ -1681,13 +1682,6 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
         Ok(())
     }
 
-    fn reconstruct_accounts<const DEFAULT_NON_EXISTENT: bool>(
-        &self,
-        account_metas: &[AccountMeta],
-    ) -> Result<Vec<crate::account::Account>, SvmError> {
-        reconstruct_accounts::<_, DEFAULT_NON_EXISTENT>(self.sdk, account_metas)
-    }
-
     pub fn process_extended<const IS_DEPLOY: bool>(
         &mut self,
         program_id: &Pubkey,
@@ -1747,89 +1741,52 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
                     panic!("action not supported")
                 }
             }
-            PodTokenInstruction::Approve => {
+            PodTokenInstruction::Approve | PodTokenInstruction::ApproveChecked => {
                 if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
                     panic!("action not supported")
                 }
             }
             PodTokenInstruction::Revoke => {
                 if IS_DEPLOY {
                     panic!("action not supported")
-                } else {
-                    panic!("action not supported")
                 }
             }
             PodTokenInstruction::SetAuthority => {
                 if IS_DEPLOY {
                     panic!("action not supported")
-                } else {
-                    panic!("action not supported")
                 }
             }
-            PodTokenInstruction::MintTo => {
+            PodTokenInstruction::MintTo | PodTokenInstruction::MintToChecked => {
                 if IS_DEPLOY {
                     panic!("action not supported")
                 }
             }
-            PodTokenInstruction::Burn => {
+            PodTokenInstruction::Burn | PodTokenInstruction::BurnChecked => {
                 if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
                     panic!("action not supported")
                 }
             }
             PodTokenInstruction::CloseAccount => {
                 if IS_DEPLOY {
                     panic!("action not supported")
-                } else {
-                    panic!("action not supported")
                 }
             }
             PodTokenInstruction::FreezeAccount => {
                 if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
                     panic!("action not supported")
                 }
             }
             PodTokenInstruction::ThawAccount => {
                 if IS_DEPLOY {
                     panic!("action not supported")
-                } else {
-                    panic!("action not supported")
                 }
             }
-            PodTokenInstruction::ApproveChecked => {
+            PodTokenInstruction::GetAccountDataSize => {
                 if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::MintToChecked => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::BurnChecked => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
                     panic!("action not supported")
                 }
             }
             PodTokenInstruction::SyncNative => {
-                if IS_DEPLOY {
-                    panic!("action not supported")
-                } else {
-                    panic!("action not supported")
-                }
-            }
-            PodTokenInstruction::GetAccountDataSize => {
                 if IS_DEPLOY {
                     panic!("action not supported")
                 } else {
@@ -1889,9 +1846,9 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
                 panic!("unsupported instruction type")
             }
         }
-        let mut accounts: Vec<crate::account::Account> = self
-            .reconstruct_accounts::<true>(&account_metas)
-            .expect("failed to reconstruct accounts");
+        let mut accounts: Vec<crate::account::Account> =
+            reconstruct_accounts::<_, true>(self.sdk, &account_metas)
+                .expect("failed to reconstruct accounts");
         let account_infos = reconstruct_account_infos(&account_metas, &mut accounts)
             .expect("failed to reconstruct accounts");
         self.process(program_id, &account_infos, input, Some(instruction_type))?;

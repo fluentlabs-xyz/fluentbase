@@ -1,6 +1,6 @@
 use crate::common::{
-    lamports_ref_to_bytes_ref, lamports_ref_try_from_slice, lamports_to_bytes,
-    lamports_try_from_slice, pubkey_ref_try_from_slice, pubkey_try_from_slice,
+    lamports_ref_to_bytes_ref, lamports_ref_try_from_slice, lamports_try_from_slice,
+    pubkey_ref_try_from_slice,
 };
 use alloc::vec::Vec;
 use solana_pubkey::{Pubkey, PUBKEY_BYTES};
@@ -235,5 +235,131 @@ impl<'a> MintToParams<'a> {
         out.extend_from_slice(self.account.as_ref());
         out.extend_from_slice(self.owner.as_ref());
         out.extend_from_slice(lamports_ref_to_bytes_ref(self.amount));
+    }
+}
+
+pub struct ApproveParams<'a> {
+    pub from: &'a Pubkey,
+    pub delegate: &'a Pubkey,
+    pub owner: &'a Pubkey,
+    pub amount: &'a u64,
+}
+
+impl<'a> ApproveParams<'a> {
+    pub fn try_parse(input: &'a [u8]) -> Result<Self, ()> {
+        const FROM_OFFSET: usize = 0;
+        const DELEGATE_OFFSET: usize = FROM_OFFSET + PUBKEY_BYTES;
+        const OWNER_OFFSET: usize = DELEGATE_OFFSET + PUBKEY_BYTES;
+        const AMOUNT_OFFSET: usize = OWNER_OFFSET + PUBKEY_BYTES;
+
+        let Ok(amount) = lamports_ref_try_from_slice(&input[AMOUNT_OFFSET..]) else {
+            return Err(());
+        };
+        let Ok(from) = pubkey_ref_try_from_slice(&input[FROM_OFFSET..]) else {
+            return Err(());
+        };
+        let Ok(delegate) = pubkey_ref_try_from_slice(&input[DELEGATE_OFFSET..]) else {
+            return Err(());
+        };
+        let Ok(owner) = pubkey_ref_try_from_slice(&input[OWNER_OFFSET..]) else {
+            return Err(());
+        };
+
+        Ok(Self {
+            from,
+            delegate,
+            owner,
+            amount,
+        })
+    }
+
+    pub fn serialize_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.from.as_ref());
+        out.extend_from_slice(self.delegate.as_ref());
+        out.extend_from_slice(self.owner.as_ref());
+        out.extend_from_slice(lamports_ref_to_bytes_ref(self.amount));
+    }
+}
+
+pub struct ApproveCheckedParams<'a> {
+    pub source: &'a Pubkey,
+    pub mint: &'a Pubkey,
+    pub delegate: &'a Pubkey,
+    pub owner: &'a Pubkey,
+    pub amount: &'a u64,
+    pub decimals: u8,
+}
+
+impl<'a> ApproveCheckedParams<'a> {
+    pub fn try_parse(input: &'a [u8]) -> Result<Self, ()> {
+        const SOURCE_OFFSET: usize = 0;
+        const MINT_OFFSET: usize = SOURCE_OFFSET + PUBKEY_BYTES;
+        const DELEGATE_OFFSET: usize = MINT_OFFSET + PUBKEY_BYTES;
+        const OWNER_OFFSET: usize = DELEGATE_OFFSET + PUBKEY_BYTES;
+        const AMOUNT_OFFSET: usize = OWNER_OFFSET + PUBKEY_BYTES;
+        const DECIMALS_OFFSET: usize = AMOUNT_OFFSET + size_of::<u64>();
+
+        let Some(decimals) = input.get(DECIMALS_OFFSET).cloned() else {
+            return Err(());
+        };
+        let Ok(source) = pubkey_ref_try_from_slice(&input[SOURCE_OFFSET..]) else {
+            return Err(());
+        };
+        let Ok(mint) = pubkey_ref_try_from_slice(&input[MINT_OFFSET..]) else {
+            return Err(());
+        };
+        let Ok(delegate) = pubkey_ref_try_from_slice(&input[DELEGATE_OFFSET..]) else {
+            return Err(());
+        };
+        let Ok(owner) = pubkey_ref_try_from_slice(&input[OWNER_OFFSET..]) else {
+            return Err(());
+        };
+        let Ok(amount) = lamports_ref_try_from_slice(&input[AMOUNT_OFFSET..]) else {
+            return Err(());
+        };
+
+        Ok(Self {
+            source,
+            mint,
+            delegate,
+            owner,
+            amount,
+            decimals,
+        })
+    }
+
+    pub fn serialize_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.source.as_ref());
+        out.extend_from_slice(self.mint.as_ref());
+        out.extend_from_slice(self.delegate.as_ref());
+        out.extend_from_slice(self.owner.as_ref());
+        out.extend_from_slice(lamports_ref_to_bytes_ref(self.amount));
+        out.push(self.decimals);
+    }
+}
+
+pub struct RevokeParams<'a> {
+    pub source: &'a Pubkey,
+    pub owner: &'a Pubkey,
+}
+
+impl<'a> RevokeParams<'a> {
+    pub fn try_parse(input: &'a [u8]) -> Result<Self, ()> {
+        const SOURCE_OFFSET: usize = 0;
+        const OWNER_OFFSET: usize = SOURCE_OFFSET + PUBKEY_BYTES;
+
+        let Ok(owner) = pubkey_ref_try_from_slice(&input[OWNER_OFFSET..]) else {
+            return Err(());
+        };
+        let Ok(source) = pubkey_ref_try_from_slice(&input[SOURCE_OFFSET..]) else {
+            return Err(());
+        };
+
+        Ok(Self { source, owner })
+    }
+
+    pub fn serialize_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.source.as_ref());
+        out.extend_from_slice(self.owner.as_ref());
     }
 }
