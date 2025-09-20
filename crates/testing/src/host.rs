@@ -26,10 +26,6 @@ impl HostTestingContext {
         self.inner.borrow_mut().shared_context_input_v1.contract = contract_context;
         self
     }
-    pub fn with_devnet_genesis(self) -> Self {
-        // TODO(dmitry123): "implement this"
-        self
-    }
     pub fn with_block_number(self, number: u64) -> Self {
         self.inner.borrow_mut().shared_context_input_v1.block.number = number;
         self
@@ -73,11 +69,11 @@ impl HostTestingContext {
         self.inner.borrow_mut().ownable_account_address = Some(address);
     }
     pub fn with_fuel_limit(self, fuel_limit: u64) -> Self {
-        self.inner.borrow_mut().remaining_fuel = Some(fuel_limit);
+        self.inner.borrow_mut().fuel_limit = Some(fuel_limit);
         self
     }
     pub fn with_gas_limit(self, gas_limit: u64) -> Self {
-        self.inner.borrow_mut().remaining_fuel = Some(gas_limit * FUEL_DENOM_RATE);
+        self.inner.borrow_mut().fuel_limit = Some(gas_limit * FUEL_DENOM_RATE);
         self
     }
     pub fn take_output(&self) -> Vec<u8> {
@@ -118,7 +114,9 @@ struct TestingContextInner {
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     ownable_account_address: Option<Address>,
-    remaining_fuel: Option<u64>,
+    consumed_fuel: u64,
+    fuel_limit: Option<u64>,
+    refunded_fuel: i64,
 }
 
 impl Default for HostTestingContext {
@@ -133,7 +131,9 @@ impl Default for HostTestingContext {
                 transient_storage: Default::default(),
                 logs: vec![],
                 ownable_account_address: None,
-                remaining_fuel: None,
+                consumed_fuel: 0,
+                fuel_limit: None,
+                refunded_fuel: 0,
             })),
         }
     }
@@ -386,18 +386,14 @@ impl SharedAPI for HostTestingContext {
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) {
         let mut ctx = self.inner.borrow_mut();
-        let remaining_fuel = ctx
-            .remaining_fuel
-            .unwrap()
-            .checked_sub(fuel_consumed)
-            .expect("trap: out of fuel");
-        ctx.remaining_fuel = Some(remaining_fuel);
-        ctx.native_sdk
-            .charge_fuel_manually(fuel_consumed, fuel_refunded);
+        ctx.consumed_fuel += fuel_consumed;
+        ctx.refunded_fuel += fuel_refunded;
     }
 
     fn fuel(&self) -> u64 {
-        self.inner.borrow().native_sdk.fuel()
+        let ctx = self.inner.borrow();
+        let fuel_limit = ctx.fuel_limit.expect("fuel is disabled");
+        fuel_limit - ctx.consumed_fuel
     }
 
     fn write(&mut self, output: &[u8]) {
