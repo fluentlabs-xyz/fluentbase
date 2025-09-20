@@ -1,7 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{address, Address, U256};
-use fluentbase_sdk_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
+use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use fluentbase_types::PRECOMPILE_NITRO_VERIFIER;
 use revm::primitives::hardfork::SpecId;
 use std::time::Instant;

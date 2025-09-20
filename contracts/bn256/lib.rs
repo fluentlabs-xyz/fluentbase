@@ -49,7 +49,7 @@ entrypoint!(main_entry);
 mod tests {
     use super::*;
     use fluentbase_sdk::{hex, Address, Bytes, ContractContextV1, FUEL_DENOM_RATE};
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_testing::HostTestingContext;
 
     fn exec_evm_precompile(address: Address, inputs: &[u8], expected: &[u8], expected_gas: u64) {
         let gas_limit = 100_000;

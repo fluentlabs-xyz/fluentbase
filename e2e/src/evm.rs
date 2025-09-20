@@ -4,7 +4,7 @@ use core::str::from_utf8;
 use fluentbase_sdk::{
     address, bytes, calc_create_address, constructor::encode_constructor_params, Address, U256,
 };
-use fluentbase_sdk_testing::{
+use fluentbase_testing::{
     try_print_utf8_error, EvmTestingContext, HostTestingContextNativeAPI, TxBuilder,
 };
 use fluentbase_types::{PRECOMPILE_BLAKE2F, PRECOMPILE_SECP256K1_RECOVER};

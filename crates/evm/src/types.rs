@@ -56,6 +56,7 @@ pub struct InterruptionExtension {
 pub type InterruptingInterpreter = EthInterpreter<InterruptionExtension>;
 
 /// Final result of EthVM::run_the_loop with gas/fuel details.
+#[derive(Debug, Default)]
 pub struct ExecutionResult {
     /// The result of the instruction execution.
     pub result: InstructionResult,

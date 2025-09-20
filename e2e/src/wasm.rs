@@ -5,13 +5,12 @@ use crate::{
 };
 use core::str::from_utf8;
 use fluentbase_codec::{bytes::BytesMut, SolidityABI};
-use fluentbase_sdk::{bytes, Address, Bytes, U256};
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_sdk::{bytes, constructor::encode_constructor_params, Address, Bytes, U256};
+use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
 use revm::bytecode::Bytecode;
 use rwasm::RwasmModule;
 use std::str::from_utf8_unchecked;
-use fluentbase_sdk::constructor::encode_constructor_params;
 
 #[test]
 fn test_wasm_greeting() {

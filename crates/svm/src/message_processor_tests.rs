@@ -22,7 +22,7 @@ pub mod tests {
     };
     use alloc::{sync::Arc, vec, vec::Vec};
     use fluentbase_sdk::SharedAPI;
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_testing::HostTestingContext;
     use serde::{Deserialize, Serialize};
     use solana_bincode::deserialize;
     use solana_instruction::{error::InstructionError, AccountMeta, Instruction};

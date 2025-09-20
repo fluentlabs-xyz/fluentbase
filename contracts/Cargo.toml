@@ -23,7 +23,7 @@ fluentbase-evm = { path = "../crates/evm", default-features = false }
 fluentbase-svm = { path = "../crates/svm", default-features = false }
 solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-fluentbase-sdk-testing = { path = "../crates/testing" }
+fluentbase-testing = { path = "../crates/testing" }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 
 [profile.release]

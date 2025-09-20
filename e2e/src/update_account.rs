@@ -4,7 +4,7 @@ use fluentbase_sdk::{
     address, bytes, compile_wasm_to_rwasm, Address, PRECOMPILE_EVM_RUNTIME, UPDATE_GENESIS_AUTH,
     UPDATE_GENESIS_PREFIX,
 };
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
 
 #[test]

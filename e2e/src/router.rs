@@ -1,7 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use fluentbase_codec::SolidityABI;
 use fluentbase_sdk::{address, Address, U256};
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
 
 #[test]

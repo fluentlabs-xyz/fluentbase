@@ -3,10 +3,10 @@
 extern crate alloc;
 extern crate core;
 
-use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, EthVM, ExecutionResult};
+use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, EthVM, EthereumMetadata, ExecutionResult};
 use fluentbase_sdk::{
     bytes::Buf, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
-    EVM_MAX_CODE_SIZE, KECCAK_EMPTY,
+    EVM_MAX_CODE_SIZE,
 };
 
 /// Store EVM bytecode and its keccak256 hash in contract metadata.
@@ -14,42 +14,32 @@ use fluentbase_sdk::{
 pub(crate) fn commit_evm_bytecode<SDK: SharedAPI>(sdk: &mut SDK, evm_bytecode: Bytes) {
     let contract_address = sdk.context().contract_address();
     let evm_code_hash = keccak256(evm_bytecode.as_ref());
-    // write an EVM code hash into metadata at offset 0
-    sdk.metadata_write(&contract_address, 0, evm_code_hash.into())
-        .unwrap();
-    // write not analyzed EVM bytecode at offset 32
-    sdk.metadata_write(&contract_address, 32, evm_bytecode.into())
+    let analyzed_bytecode = AnalyzedBytecode::new(evm_bytecode, evm_code_hash);
+    let raw_metadata = EthereumMetadata::Analyzed(analyzed_bytecode).write_to_bytes();
+    sdk.metadata_write(&contract_address, 0, raw_metadata)
         .unwrap();
 }
 
 /// Load analyzed EVM bytecode from contract metadata.
 /// Returns None if metadata is empty or code hash is zero/KECCAK_EMPTY.
 pub(crate) fn load_evm_bytecode<SDK: SharedAPI>(sdk: &SDK) -> Option<AnalyzedBytecode> {
-    // we use bytecode address because contract can be called using DELEGATECALL
+    // We use bytecode address because contract can be called using DELEGATECALL
     let bytecode_address = sdk.context().contract_bytecode_address();
-    // read metadata size, if it's zero, then an account is not assigned to the EVM runtime
-    let (metadata_size, _, _, _) = sdk.metadata_size(&bytecode_address).unwrap();
-    if metadata_size == 0 {
+    // Read metadata size, if it's zero, then an account is not assigned to the EVM runtime
+    let (metadata_size, is_account_ownable, _, _) = sdk.metadata_size(&bytecode_address).unwrap();
+    if !is_account_ownable {
         return None;
     }
-    let mut metadata = sdk
+    let metadata = sdk
         .metadata_copy(&bytecode_address, 0, metadata_size)
         .unwrap();
-    assert!(
-        metadata.len() >= 32,
-        "can't load EVM bytecode: metadata is too small"
-    );
-    // load EVM bytecode hash and exit if the code hash is empty
-    let evm_code_hash = B256::from_slice(&metadata[0..32]);
-    // TODO(dmitry123): "do we want to have this optimized during the creation of the frame?"
-    let is_empty_bytecode = evm_code_hash == B256::ZERO || evm_code_hash == KECCAK_EMPTY;
-    if is_empty_bytecode {
-        return None;
-    }
-    // skip the first 32 bytes (code hash)
-    metadata.advance(32);
-    let analyzed_bytecode = AnalyzedBytecode::new(metadata, evm_code_hash.into());
-    Some(analyzed_bytecode)
+    // Get EVM bytecode from metadata
+    Some(match EthereumMetadata::read_from_bytes(&metadata)? {
+        EthereumMetadata::Legacy(bytecode) => {
+            AnalyzedBytecode::new(bytecode.bytecode, bytecode.hash)
+        }
+        EthereumMetadata::Analyzed(bytecode) => bytecode,
+    })
 }
 
 /// Propagate a non-successful interpreter result to the host:
@@ -104,16 +94,13 @@ pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let Some(analyzed_bytecode) = load_evm_bytecode(&sdk) else {
         return;
     };
-
     let mut result =
         EthVM::new(sdk.context(), sdk.bytes_input(), analyzed_bytecode).run_the_loop(&mut sdk);
     if !result.result.is_ok() {
         return handle_not_ok_result(sdk, result);
     }
-
     let (consumed_diff, refund_diff) = result.chargeable_fuel_and_refund();
     sdk.charge_fuel_manually(consumed_diff, refund_diff);
-
     sdk.write(result.output.as_ref());
 }
 
@@ -124,7 +111,7 @@ mod tests {
     use crate::{deploy_entry, main_entry};
     use core::str::from_utf8;
     use fluentbase_sdk::{hex, Address, ContractContextV1, PRECOMPILE_EVM_RUNTIME, U256};
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_testing::HostTestingContext;
 
     #[ignore]
     #[test]

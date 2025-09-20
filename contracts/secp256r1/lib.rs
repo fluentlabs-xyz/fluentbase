@@ -36,7 +36,7 @@ entrypoint!(main_entry);
 mod tests {
     use super::*;
     use fluentbase_sdk::{hex, ContractContextV1, B256, FUEL_DENOM_RATE};
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_testing::HostTestingContext;
     use p256::{
         ecdsa::{signature::Verifier, SigningKey, VerifyingKey},
         elliptic_curve::rand_core::OsRng,

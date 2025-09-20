@@ -35,7 +35,7 @@ fluentbase-revm = { path = "./crates/revm", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
-fluentbase-sdk-testing = { path = "crates/testing" }
+fluentbase-testing = { path = "crates/testing" }
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-svm = { path = "./crates/svm", default-features = false }
 fluentbase-svm-shared = { path = "./crates/svm-shared", default-features = false }
