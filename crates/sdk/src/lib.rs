@@ -8,7 +8,6 @@ mod allocator;
 mod bindings;
 pub mod constructor;
 pub mod entrypoint;
-pub mod evm;
 pub mod leb128;
 mod macros;
 pub mod panic;

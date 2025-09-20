@@ -15,6 +15,7 @@ fluentbase-codec = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-sdk-derive = { workspace = true }
 hashbrown = { workspace = true }
+revm-bytecode = { workspace = true }
 
 [dev-dependencies]
 

@@ -37,6 +37,7 @@ tracing = { version = "0.1" }
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
 # fluentbase
+fluentbase-evm = { workspace = true }
 fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
 
@@ -60,6 +61,7 @@ std = [
     "fluentbase-sdk/std",
     "rwasm/std",
     "fluentbase-runtime/std",
+    "fluentbase-evm/std",
 ]
 hashbrown = ["revm/hashbrown"]
 serde = [

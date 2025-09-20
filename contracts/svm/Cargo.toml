@@ -11,7 +11,7 @@ fluentbase-svm = { workspace = true, default-features = false, features = [
 ] }
 
 [dev-dependencies]
-fluentbase-sdk-testing = { workspace = true }
+fluentbase-testing = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

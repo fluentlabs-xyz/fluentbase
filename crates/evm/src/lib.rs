@@ -8,11 +8,13 @@ pub mod bytecode;
 
 mod evm;
 mod host;
+mod metadata;
 mod opcodes;
 mod types;
 mod utils;
 
 pub use bytecode::AnalyzedBytecode;
 pub use evm::EthVM;
+pub use metadata::EthereumMetadata;
 pub use revm_interpreter::gas;
 pub use types::ExecutionResult;

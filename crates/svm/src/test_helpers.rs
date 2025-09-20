@@ -15,7 +15,7 @@ use crate::{
 };
 use alloc::sync::Arc;
 use fluentbase_sdk::{Address, ContractContextV1, SharedAPI, U256};
-use fluentbase_sdk_testing::HostTestingContext;
+use fluentbase_testing::HostTestingContext;
 use solana_epoch_schedule::EpochSchedule;
 use solana_instruction::error::InstructionError;
 use solana_rbpf::{

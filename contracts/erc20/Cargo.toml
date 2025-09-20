@@ -14,7 +14,7 @@ solana-program-error = { workspace = true }
 solana-bincode = { workspace = true }
 
 [dev-dependencies]
-fluentbase-sdk-testing = { workspace = true }
+fluentbase-testing = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

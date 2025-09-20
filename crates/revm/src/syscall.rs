@@ -5,13 +5,11 @@ use crate::{
     ExecutionResult, NextAction,
 };
 use core::cmp::min;
+use fluentbase_evm::EthereumMetadata;
 use fluentbase_sdk::{
-    address,
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
-    calc_create4_address,
-    evm::{evm_metadata_code_copy, evm_metadata_code_hash, evm_metadata_code_size},
-    is_system_precompile, keccak256,
+    calc_create4_address, is_system_precompile, keccak256,
     syscall::*,
     Address, Bytes, ExitCode, Log, LogData, B256, FUEL_DENOM_RATE, KECCAK_EMPTY,
     PRECOMPILE_EVM_RUNTIME, STATE_MAIN, U256,
@@ -637,7 +635,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode))
                     if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
                 {
-                    evm_metadata_code_size(&ownable_account_bytecode.metadata)
+                    EthereumMetadata::read_from_bytes(&ownable_account_bytecode.metadata)
+                        .as_ref()
+                        .map(EthereumMetadata::code_size)
+                        .unwrap_or(0)
                 }
                 code => code.as_ref().map(Bytecode::len).unwrap_or(0),
             };
@@ -666,11 +667,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let account = ctx.journal_mut().load_account_code(address)?;
             charge_gas!(warm_cold_cost(account.is_cold));
 
-            if address == address!("0x0000000000000000000000000000000000000002") {
-                #[cfg(feature = "std")]
-                println!("ext_code_hash account={:?}", account);
-            }
-
             // Extract code hash for an account for delegated account.
             // For EVM, we extract code hash from the metadata to satisfy EVM requirements.
             // It requires the account to be loaded with bytecode.
@@ -678,7 +674,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode))
                     if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
                 {
-                    evm_metadata_code_hash(&ownable_account_bytecode.metadata)
+                    EthereumMetadata::read_from_bytes(&ownable_account_bytecode.metadata)
+                        .as_ref()
+                        .map(EthereumMetadata::code_hash)
+                        .unwrap_or(B256::ZERO)
                 }
                 // We return code hash only if account exists (not empty),
                 // this is a requirement from EVM
@@ -728,7 +727,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 Some(Bytecode::OwnableAccount(ownable_account_bytecode))
                     if ownable_account_bytecode.owner_address == PRECOMPILE_EVM_RUNTIME =>
                 {
-                    evm_metadata_code_copy(&ownable_account_bytecode.metadata)
+                    EthereumMetadata::read_from_bytes(&ownable_account_bytecode.metadata)
+                        .as_ref()
+                        .map(EthereumMetadata::code_copy)
+                        .unwrap_or_default()
                 }
                 code => code
                     .as_ref()

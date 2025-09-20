@@ -1791,7 +1791,7 @@ name = "fluentbase-contracts-blake2f"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "revm-precompile",
 ]
 
@@ -1800,7 +1800,7 @@ name = "fluentbase-contracts-bls12381"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "revm-precompile",
 ]
 
@@ -1809,7 +1809,7 @@ name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "revm-precompile",
 ]
 
@@ -1818,7 +1818,7 @@ name = "fluentbase-contracts-ecrecover"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "revm-precompile",
 ]
 
@@ -1827,7 +1827,7 @@ name = "fluentbase-contracts-eip2935"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
 ]
 
 [[package]]
@@ -1836,8 +1836,8 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-erc20",
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
  "fluentbase-svm",
+ "fluentbase-testing",
  "solana-bincode",
  "solana-program-error",
 ]
@@ -1848,7 +1848,7 @@ version = "0.1.0"
 dependencies = [
  "fluentbase-evm",
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
 ]
 
 [[package]]
@@ -1856,7 +1856,7 @@ name = "fluentbase-contracts-identity"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "revm-precompile",
 ]
 
@@ -1865,7 +1865,7 @@ name = "fluentbase-contracts-kzg"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "revm-precompile",
 ]
 
@@ -1874,7 +1874,7 @@ name = "fluentbase-contracts-modexp"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "revm-precompile",
 ]
 
@@ -1883,7 +1883,7 @@ name = "fluentbase-contracts-multicall"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
 ]
 
 [[package]]
@@ -1895,7 +1895,7 @@ dependencies = [
  "der",
  "ecdsa",
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "hex",
  "p384",
  "x509-cert",
@@ -1906,7 +1906,7 @@ name = "fluentbase-contracts-oauth2"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
 ]
 
 [[package]]
@@ -1914,7 +1914,7 @@ name = "fluentbase-contracts-ripemd160"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "revm-precompile",
 ]
 
@@ -1923,7 +1923,7 @@ name = "fluentbase-contracts-secp256r1"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "hex",
  "p256",
  "revm-precompile",
@@ -1935,7 +1935,7 @@ name = "fluentbase-contracts-sha256"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "revm-precompile",
 ]
 
@@ -1944,8 +1944,8 @@ name = "fluentbase-contracts-svm"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
  "fluentbase-svm",
+ "fluentbase-testing",
 ]
 
 [[package]]
@@ -1953,7 +1953,7 @@ name = "fluentbase-contracts-wasm"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
 ]
 
 [[package]]
@@ -1962,7 +1962,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "fluentbase-sdk",
- "fluentbase-sdk-testing",
+ "fluentbase-testing",
  "hex",
  "p256",
  "revm-precompile",
@@ -1994,6 +1994,7 @@ dependencies = [
 name = "fluentbase-revm"
 version = "0.4.5-dev"
 dependencies = [
+ "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
  "once_cell",
@@ -2038,6 +2039,7 @@ dependencies = [
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.15.5",
+ "revm-bytecode",
 ]
 
 [[package]]
@@ -2073,20 +2075,6 @@ dependencies = [
  "syn-solidity",
  "thiserror 2.0.16",
  "tracing",
-]
-
-[[package]]
-name = "fluentbase-sdk-testing"
-version = "0.4.5-dev"
-dependencies = [
- "fluentbase-codec",
- "fluentbase-revm",
- "fluentbase-runtime",
- "fluentbase-sdk",
- "hashbrown 0.15.5",
- "hex",
- "revm",
- "rwasm",
 ]
 
 [[package]]
@@ -2145,6 +2133,20 @@ dependencies = [
  "solana_rbpf",
  "spin 0.10.0",
  "static_assertions",
+]
+
+[[package]]
+name = "fluentbase-testing"
+version = "0.4.5-dev"
+dependencies = [
+ "fluentbase-codec",
+ "fluentbase-revm",
+ "fluentbase-runtime",
+ "fluentbase-sdk",
+ "hashbrown 0.15.5",
+ "hex",
+ "revm",
+ "rwasm",
 ]
 
 [[package]]

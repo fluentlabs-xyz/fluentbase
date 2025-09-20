@@ -200,7 +200,7 @@
 //     use super::*;
 //     use fluentbase_sdk::{address, bytes::BytesMut, hex, ContractContextV1, U256};
 //     use fluentbase_sdk::codec::SolidityABI;
-//     use fluentbase_sdk_testing::HostTestingContext;
+//     use fluentbase_testing::HostTestingContext;
 
 //     #[test]
 //     fn test_erc20_deploy_constructor_args() {
@@ -237,7 +237,7 @@
 // //     use super::*;
 // //     use crate::assert_storage_layout;
 // //     use fluentbase_sdk::address;
-// //     use fluentbase_sdk_testing::HostTestingContext;
+// //     use fluentbase_testing::HostTestingContext;
 // //
 // //     #[test]
 // //     fn test_layout_calculations() {

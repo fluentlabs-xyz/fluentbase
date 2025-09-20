@@ -16,8 +16,8 @@ entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{hex};
-    use fluentbase_sdk_testing::HostTestingContext;
+    use fluentbase_sdk::hex;
+    use fluentbase_testing::HostTestingContext;
 
     #[test]
     fn test_contract_works() {

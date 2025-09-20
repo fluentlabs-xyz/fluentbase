@@ -4,28 +4,15 @@ use core::str::from_utf8;
 use fluentbase_erc20::{
     common::{fixed_bytes_from_u256, sig_to_bytes, u256_from_bytes_slice_try},
     consts::{
-        ERR_ALREADY_PAUSED,
-        ERR_ALREADY_UNPAUSED,
-        ERR_INSUFFICIENT_ALLOWANCE,
-        ERR_MINTABLE_PLUGIN_NOT_ACTIVE,
-        ERR_PAUSABLE_PLUGIN_NOT_ACTIVE,
-        SIG_ALLOWANCE,
-        SIG_APPROVE,
-        SIG_BALANCE_OF,
-        SIG_DECIMALS,
-        SIG_MINT,
-        SIG_NAME,
-        SIG_PAUSE,
-        SIG_SYMBOL,
-        SIG_TOTAL_SUPPLY,
-        SIG_TRANSFER,
-        SIG_TRANSFER_FROM,
-        SIG_UNPAUSE,
+        ERR_ALREADY_PAUSED, ERR_ALREADY_UNPAUSED, ERR_INSUFFICIENT_ALLOWANCE,
+        ERR_MINTABLE_PLUGIN_NOT_ACTIVE, ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, SIG_ALLOWANCE, SIG_APPROVE,
+        SIG_BALANCE_OF, SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOTAL_SUPPLY,
+        SIG_TRANSFER, SIG_TRANSFER_FROM, SIG_UNPAUSE,
     },
     storage::{Feature, InitialSettings, DECIMALS_DEFAULT},
 };
 use fluentbase_sdk::{address, Address, Bytes, U256};
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_testing::EvmTestingContext;
 use fluentbase_types::{ContractContextV1, PRECOMPILE_ERC20_RUNTIME};
 use revm::context::result::ExecutionResult;
 use std::ops::Add;

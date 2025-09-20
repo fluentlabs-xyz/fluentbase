@@ -20,7 +20,7 @@ p384 = { version = "0.13.0", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-fluentbase-sdk-testing = { workspace = true }
+fluentbase-testing = { workspace = true }
 hex = { workspace = true }
 
 [lib]
