@@ -9,30 +9,45 @@ use fluentbase_types::{
 use rwasm::{Store, Strategy, TrapCode, TypedStore, Value};
 use std::{fmt::Debug, mem::take, sync::Arc};
 
+/// Finalized outcome of a single runtime invocation.
+///
+/// Values are reported in fuel units; gas conversion (if any) is handled by the caller.
 #[derive(Default, Clone, Debug)]
 pub struct ExecutionResult {
+    /// Contract-defined exit status. Negative values map from TrapCode via ExitCode; zero indicates success.
     pub exit_code: i32,
+    /// Total fuel consumed by the invocation (excludes refunded fuel).
     pub fuel_consumed: u64,
+    /// Fuel refunded to the caller (negative values are not expected).
     pub fuel_refunded: i64,
-    /// A return data from nested call
+    /// Return data propagated back to the parent on success paths of nested calls.
     pub return_data: Vec<u8>,
+    /// Raw output buffer produced by the callee; for nested calls it is moved into the parent's return_data.
     pub output: Vec<u8>,
 }
 
+/// Captures an intentional execution interruption that must be resumed by the root context.
 pub struct ExecutionInterruption {
+    /// Fuel spent up to the interruption point.
     pub fuel_consumed: u64,
+    /// Fuel to refund to the caller at the interruption point.
     pub fuel_refunded: i64,
-    /// A serialized info about interruption (params, etc.)
+    /// Encoded interruption payload (e.g., delegated call parameters).
     pub output: Vec<u8>,
+    /// Suspended runtime instance to be resumed by the root.
     pub runtime: Runtime,
 }
 
+/// Result of running or resuming a runtime.
 pub enum RuntimeResult {
+    /// Execution finished; contains the finalized result.
     Result(ExecutionResult),
+    /// Execution yielded; contains data necessary to resume later.
     Interruption(ExecutionInterruption),
 }
 
 impl RuntimeResult {
+    /// Unwraps the successful execution result; panics if this is an interruption.
     pub fn into_execution_result(self) -> ExecutionResult {
         match self {
             RuntimeResult::Result(result) => result,
@@ -40,6 +55,7 @@ impl RuntimeResult {
         }
     }
 
+    /// Finalizes the result into (fuel_consumed, fuel_refunded, exit_code) and updates the parent context.
     pub fn finalize(self, ctx: &mut RuntimeContext) -> (u64, i64, i32) {
         match self {
             RuntimeResult::Result(result) => {
@@ -62,13 +78,18 @@ impl RuntimeResult {
     }
 }
 
+/// A compiled, executable runtime instance with its store and engine strategy.
 pub struct Runtime {
+    /// Underlying execution strategy (rWasm/Wasmtime).
     pub strategy: Arc<Strategy>,
+    /// Engine store carrying linear memory and the RuntimeContext.
     pub store: TypedStore<RuntimeContext>,
+    /// Code hash identifying the compiled module within the cache.
     pub code_hash: B256,
 }
 
 impl Runtime {
+    /// Creates a runtime from bytecode or code hash and initializes its store with the provided context.
     #[tracing::instrument(level = "info", skip_all)]
     pub fn new(bytecode_or_hash: BytecodeOrHash, runtime_context: RuntimeContext) -> Self {
         CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
@@ -107,6 +128,9 @@ impl Runtime {
         })
     }
 
+    /// Executes the entry function of the module determined by the current execution state.
+    ///
+    /// Returns either a finalized result or an interruption that must be resumed by the root.
     #[tracing::instrument(level = "info", skip_all)]
     pub fn execute(mut self) -> RuntimeResult {
         let (fuel_limit, disable_fuel) =
@@ -127,6 +151,9 @@ impl Runtime {
             .execute(&mut self.store, func_name, &[], &mut [], fuel)
     }
 
+    /// Resumes a previously interrupted runtime.
+    ///
+    /// fuel16_ptr optionally points to a 16-byte buffer where fuel consumption and refund are written back.
     #[tracing::instrument(level = "info", skip_all, fields(fuel_ptr = fuel16_ptr, exit_code = exit_code))]
     pub fn resume(
         mut self,
@@ -161,8 +188,9 @@ impl Runtime {
             .resume(&mut self.store, &[Value::I32(exit_code)], &mut [])
     }
 
+    /// Pre-compiles and caches a module for the given code hash and address if not already cached.
     pub fn warmup_strategy(bytecode: Bytes, hash: B256, address: Address) {
-        // save the current runtime state for future recovery
+        // Ensure the strategy is created and cached ahead of time to avoid JIT cost on first call
         CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
             caching_runtime.get_module_or_init(BytecodeOrHash::Bytecode {
                 address,
@@ -172,6 +200,7 @@ impl Runtime {
         })
     }
 
+    /// Saves the current runtime instance for later resumption and returns its call identifier.
     pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
         // save the current runtime state for future recovery
         CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
@@ -184,6 +213,7 @@ impl Runtime {
         })
     }
 
+    /// Returns the internal store to the cache associated with this runtime's code hash.
     pub(crate) fn return_store(self) {
         CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
             if let Some(cached_module) = caching_runtime.cached_modules.get_mut(&self.code_hash) {
@@ -192,6 +222,7 @@ impl Runtime {
         });
     }
 
+    /// Fetches and removes a previously remembered runtime by its call identifier.
     pub(crate) fn recover_runtime(call_id: u32) -> Runtime {
         CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
             caching_runtime
@@ -201,6 +232,10 @@ impl Runtime {
         })
     }
 
+    /// Consolidates the trap/result of an invocation into a RuntimeResult and updates accounting.
+    ///
+    /// When fuel_consumed_before_the_call is provided, computes precise fuel usage by diffing the
+    /// store's remaining fuel. Returns either a finalized result or an interruption wrapper.
     #[tracing::instrument(level = "info", skip_all)]
     fn handle_execution_result(
         mut self,
@@ -233,6 +268,10 @@ impl Runtime {
         RuntimeResult::Result(execution_result)
     }
 
+    /// Converts an in-flight interruption into a RuntimeResult::Interruption and prepares payload.
+    ///
+    /// Clears transient buffers, encodes the delegated invocation parameters, and packages the
+    /// suspended runtime for recovery by the root context.
     fn handle_resumable_state(mut self, execution_result: ExecutionResult) -> RuntimeResult {
         let ExecutionResult {
             fuel_consumed,
@@ -270,8 +309,9 @@ impl Runtime {
     }
 }
 
-// TODO(dmitry123): This one is dirty, but we call this function from Reth to reset `call_id` counter
-//  before executing new transaction. We should pass `call_id` using root context.
+/// Resets the per-transaction call identifier counter and clears recoverable runtimes.
+///
+/// Intended to be invoked at the beginning of a new transaction.
 pub fn reset_call_id_counter() {
     CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
         caching_runtime.transaction_call_id_counter = 1;

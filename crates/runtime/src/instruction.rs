@@ -115,6 +115,10 @@ use sp1_curves::{
 };
 
 #[rustfmt::skip]
+/// Dispatches a system function index to its corresponding syscall handler.
+///
+/// This is the central runtime syscall dispatcher used by runtime_syscall_handler.
+/// It routes the call based on SysFuncIdx without performing additional validation.
 pub fn invoke_runtime_handler(
     caller: &mut TypedCaller<RuntimeContext>,
     sys_func_idx: SysFuncIdx,
@@ -190,6 +194,7 @@ pub fn invoke_runtime_handler(
     }
 }
 
+/// Interprets a byte slice as a u32 slice if length is a multiple of 4; otherwise returns None.
 pub fn cast_u8_to_u32(slice: &[u8]) -> Option<&[u32]> {
     if slice.len() % 4 != 0 {
         return None;
@@ -197,10 +202,12 @@ pub fn cast_u8_to_u32(slice: &[u8]) -> Option<&[u32]> {
     Some(unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u32, slice.len() / 4) })
 }
 
+/// Field operation over a prime field used by FP builtins.
 pub trait FieldOp {
     fn execute(a: BigUint, b: BigUint, modulus: &BigUint) -> BigUint;
 }
 
+/// Binary operation on quadratic extension field elements (a0 + a1*i) and (b0 + b1*i).
 pub trait FieldOp2 {
     fn execute(
         ac0: &BigUint,
@@ -259,6 +266,7 @@ impl FieldOp2 for FieldSub {
     }
 }
 
+/// Stores the exit code in the context and converts it into a halting TrapCode.
 pub(crate) fn syscall_process_exit_code(
     caller: &mut TypedCaller<RuntimeContext>,
     exit_code: ExitCode,

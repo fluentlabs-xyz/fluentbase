@@ -5,9 +5,11 @@ use fluentbase_types::{
 };
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
+/// Syscall entry points for resuming a previously interrupted runtime.
 pub struct SyscallResume;
 
 impl SyscallResume {
+    /// Handles the resume syscall. Copies return data, applies fuel, resumes the target, and writes back the exit code.
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
@@ -50,6 +52,7 @@ impl SyscallResume {
         Ok(())
     }
 
+    /// Resumes the runtime identified by call_id using the provided return data and fuel accounting.
     pub fn fn_impl(
         ctx: &mut RuntimeContext,
         call_id: u32,

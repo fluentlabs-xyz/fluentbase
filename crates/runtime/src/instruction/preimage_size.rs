@@ -1,9 +1,11 @@
 use crate::RuntimeContext;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
+/// Builtin to query the size of a preimage by its 32-byte hash.
 pub struct SyscallPreimageSize;
 
 impl SyscallPreimageSize {
+    /// Reads a 32-byte hash from memory and writes the preimage size into result[0].
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],

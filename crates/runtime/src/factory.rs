@@ -7,17 +7,21 @@ use hashbrown::{
 use rwasm::{ExecutionEngine, ImportLinker, RwasmModule, Strategy, TypedStore};
 use std::{cell::RefCell, collections::LinkedList, rc::Rc, sync::Arc};
 
-// TODO(dmitry123): What's the most optimal value here? It depends on the type of application we execute,
-//  what engine is used and how many nested calls are allowed. For example, in EVM we have 1024, but what if we
-//  cover only most common cases? Like 10 or 30 nested calls?
+/// Number of pre-initialized stores kept per module in the cache.
+///
+/// TODO(dmitry123): What's the most optimal value here? It depends on the type of application we execute,
+///  what engine is used and how many nested calls are allowed. For example, in EVM we have 1024, but what if we
+///  cover only most common cases? Like 10 or 30 nested calls?
 const N_DEFAULT_CACHED_STORE: usize = 0;
 
+/// A cache entry holding a compiled module strategy and a pool of reusable stores.
 pub struct CachedModule {
     strategy: Arc<Strategy>,
     stores: LinkedList<TypedStore<RuntimeContext>>,
 }
 
 impl CachedModule {
+    /// Constructs a cache entry for the given strategy and import linker, optionally pre-populating stores.
     pub fn new(strategy: Strategy, import_linker: Rc<ImportLinker>) -> Self {
         let mut stores = LinkedList::new();
         for _ in 0..N_DEFAULT_CACHED_STORE {
@@ -34,28 +38,37 @@ impl CachedModule {
         }
     }
 
+    /// Borrows the strategy and pops a reusable store if available.
     pub fn acquire_shared(&mut self) -> (Arc<Strategy>, Option<TypedStore<RuntimeContext>>) {
         (self.strategy.clone(), self.stores.pop_front())
     }
 
+    /// Returns a used store back into the pool for reuse.
     pub fn return_store(&mut self, store: TypedStore<RuntimeContext>) {
         self.stores.push_back(store);
     }
 }
 
+/// Global factory maintaining compiled module cache and resumable runtime instances.
 pub struct RuntimeFactory {
     // TODO(dmitry123): Add LRU cache to this map to avoid memory leak (or remove HashMap?)
+    /// Cache of compiled modules keyed by code hash.
     pub cached_modules: HashMap<B256, CachedModule>,
+    /// Suspended runtimes keyed by per-transaction call identifier.
     pub recoverable_runtimes: HashMap<u32, Runtime>,
+    /// Import linker used to instantiate new stores.
     pub import_linker: Rc<ImportLinker>,
+    /// Monotonically increasing counter for assigning call identifiers.
     pub transaction_call_id_counter: u32,
 }
 
+/// Thread-local access to the runtime factory with shared caches.
 thread_local! {
     pub static CACHING_RUNTIME_FACTORY: RefCell<RuntimeFactory> = RefCell::new(RuntimeFactory::new_v1_preview());
 }
 
 impl RuntimeFactory {
+    /// Creates a factory configured for the v1 preview import surface.
     pub fn new_v1_preview() -> Self {
         Self {
             cached_modules: HashMap::new(),
@@ -65,6 +78,7 @@ impl RuntimeFactory {
         }
     }
 
+    /// Returns a cached module for the given bytecode or compiles and caches it on first use.
     #[tracing::instrument(level = "info", skip_all, fields(bytecode_or_hash = %bytecode_or_hash))]
     pub fn get_module_or_init(&mut self, bytecode_or_hash: BytecodeOrHash) -> &mut CachedModule {
         let code_hash = bytecode_or_hash.code_hash();
@@ -104,6 +118,7 @@ impl RuntimeFactory {
 
     #[cfg(feature = "wasmtime")]
     #[tracing::instrument(level = "info", skip_all, fields(code_hash = %code_hash))]
+    /// Initializes a Wasmtime-based strategy for the given module and inserts it into the cache.
     fn init_wasmtime(
         import_linker: Rc<ImportLinker>,
         entry: VacantEntry<B256, CachedModule>,

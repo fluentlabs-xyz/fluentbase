@@ -1,31 +1,22 @@
 use crate::{instruction::exec::InterruptionHolder, ExecutionResult};
 use fluentbase_types::{Bytes, CALL_DEPTH_ROOT, STATE_MAIN};
 
+/// Per-invocation execution context carried inside the VM store.
 #[derive(Debug, Clone)]
 pub struct RuntimeContext {
-    /// A fuel limit for this call. If it's set to `None` then fuel is disabled.
+    /// Maximum fuel available to this invocation.
     pub fuel_limit: u64,
-    /// Do we disable fuel for this call?
-    /// With this flag enabled,
-    /// we ignore fuel checks inside VMs and the only way to manage fuel is by using builtins:
-    /// `charge_fuel` and `charge_fuel_manually`
+    /// If true, the engine does not enforce fuel; fuel is managed explicitly by builtins.
     pub disable_fuel: bool,
-    /// An execution state.
-    /// Usually we use values like `STATE_MAIN (0)`
-    /// and `STATE_DEPLOY (1)` to identify application execution state: deployment or execution.
-    /// Theoretically, other states can be used, but we don't use it right now.
+    /// Entry selector for the module (e.g., STATE_MAIN or STATE_DEPLOY).
     pub state: u32,
-    /// A call depth for this execution phrase.
-    /// Once it reached `MAX_CALL_DEPTH (1024)`, then execution halts.
-    /// By checking call depth to zero, we determine so-called root layer.
+    /// Current call depth; root is zero.
     pub call_depth: u32,
-    /// An input for the application.
-    /// Just an input.
-    /// It already contains all required context params inside.
+    /// Calldata for the invocation.
     pub input: Bytes,
-    /// Execution result details, like exit code or output data.
+    /// Mutable execution artifacts collected during the run.
     pub execution_result: ExecutionResult,
-    /// An information about interrupted call.
+    /// Deferred invocation metadata used to resume an interrupted call.
     pub resumable_context: Option<InterruptionHolder>,
 }
 
@@ -44,35 +35,42 @@ impl Default for RuntimeContext {
 }
 
 impl RuntimeContext {
+    /// Sets the fuel limit for this context.
     pub fn with_fuel_limit(mut self, fuel_limit: u64) -> Self {
         self.fuel_limit = fuel_limit;
         self
     }
 
+    /// Replaces the calldata for this invocation.
     pub fn with_input<I: Into<Bytes>>(mut self, input_data: I) -> Self {
         self.input = input_data.into();
         self
     }
 
+    /// Updates the entry selector (state) for this invocation.
     pub fn with_state(mut self, state: u32) -> Self {
         self.state = state;
         self
     }
 
+    /// Sets the call depth for this context.
     pub fn with_call_depth(mut self, depth: u32) -> Self {
         self.call_depth = depth;
         self
     }
 
+    /// Marks the context to run with fuel metering disabled.
     pub fn with_disabled_fuel(mut self) -> Self {
         self.disable_fuel = true;
         self
     }
 
+    /// Clears the accumulated output buffer.
     pub fn clear_output(&mut self) {
         self.execution_result.output.clear();
     }
 
+    /// Returns true if fuel metering is disabled for this context.
     pub fn is_fuel_disabled(&self) -> bool {
         self.disable_fuel
     }

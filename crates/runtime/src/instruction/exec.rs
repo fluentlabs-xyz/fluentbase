@@ -9,13 +9,15 @@ use std::{
     fmt::{Debug, Display, Formatter},
 };
 
+/// Syscall entry points for deferred execution (exec) within the runtime.
 pub struct SyscallExec;
 
 #[derive(Clone)]
+/// Holds parameters required to resume a deferred exec and whether it originated at root depth.
 pub struct InterruptionHolder {
-    /// List of delayed invocation params, like exec params (address, code hash, etc.)
+    /// Encoded invocation parameters (target code hash, input, fuel, state, pointers).
     pub params: SyscallInvocationParams,
-    /// A depth level of the current call, for root it's always zero
+    /// True if the interruption happened at depth 0.
     pub is_root: bool,
 }
 
@@ -32,6 +34,7 @@ impl Display for InterruptionHolder {
 }
 
 impl SyscallExec {
+    /// Dispatches the exec syscall: validates fuel, captures parameters, and triggers an interruption.
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
@@ -84,6 +87,7 @@ impl SyscallExec {
         Err(TrapCode::InterruptionCalled)
     }
 
+    /// Continues an exec after an interruption, executing the delegated call.
     pub fn fn_continue(
         caller: &mut TypedCaller<RuntimeContext>,
         context: &InterruptionHolder,
@@ -101,6 +105,7 @@ impl SyscallExec {
         (fuel_consumed, fuel_refunded, exit_code)
     }
 
+    /// Executes a nested runtime with the given parameters and merges the result into ctx.
     pub fn fn_impl<I: Into<BytecodeOrHash>>(
         ctx: &mut RuntimeContext,
         code_hash: I,

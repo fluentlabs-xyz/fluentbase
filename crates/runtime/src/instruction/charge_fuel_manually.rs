@@ -2,15 +2,17 @@ use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
+/// Builtin to manually charge and refund fuel when VM metering is disabled.
 pub struct SyscallChargeFuelManually;
 
 impl SyscallChargeFuelManually {
+    /// Validates that fuel metering is disabled, applies manual charge/refund, and returns remaining fuel.
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],
         result: &mut [Value],
     ) -> Result<(), TrapCode> {
-        // this method is allowed only in manual fuel mode that is possible with disabled fuel
+        // Only allowed when engine metering is disabled (manual fuel mode).
         caller.context_mut(|ctx| {
             if ctx.is_fuel_disabled() {
                 return Ok(());
@@ -27,6 +29,7 @@ impl SyscallChargeFuelManually {
         Ok(())
     }
 
+    /// Updates context fuel accounting with manual consumption and refund values.
     pub fn fn_impl(
         ctx: &mut RuntimeContext,
         fuel_consumed: u64,
