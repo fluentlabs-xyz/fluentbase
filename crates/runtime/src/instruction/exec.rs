@@ -12,20 +12,20 @@ use std::{
 pub struct SyscallExec;
 
 #[derive(Clone)]
-pub struct SysExecResumable {
+pub struct InterruptionHolder {
     /// List of delayed invocation params, like exec params (address, code hash, etc.)
     pub params: SyscallInvocationParams,
     /// A depth level of the current call, for root it's always zero
     pub is_root: bool,
 }
 
-impl Debug for SysExecResumable {
+impl Debug for InterruptionHolder {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "runtime resume error")
     }
 }
 
-impl Display for SysExecResumable {
+impl Display for InterruptionHolder {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "runtime resume error")
     }
@@ -38,7 +38,7 @@ impl SyscallExec {
         _result: &mut [Value],
     ) -> Result<(), TrapCode> {
         let remaining_fuel = caller.remaining_fuel().unwrap_or(u64::MAX);
-        let disable_fuel = caller.context(|ctx| ctx.disable_fuel);
+        let disable_fuel = caller.context(|ctx| ctx.is_fuel_disabled());
         let (hash32_ptr, input_ptr, input_len, fuel16_ptr, state) = (
             params[0].i32().unwrap() as usize,
             params[1].i32().unwrap() as usize,
@@ -70,25 +70,23 @@ impl SyscallExec {
         caller.memory_read(input_ptr, &mut input)?;
         let input = Bytes::from(input);
         let is_root = caller.context(|ctx| ctx.call_depth) == 0;
+        let params = SyscallInvocationParams {
+            code_hash,
+            input,
+            fuel_limit,
+            state,
+            fuel16_ptr: fuel16_ptr as u32,
+        };
         // return resumable error
         caller.context_mut(|ctx| {
-            ctx.resumable_context = Some(SysExecResumable {
-                params: SyscallInvocationParams {
-                    code_hash,
-                    input: input.clone(),
-                    fuel_limit,
-                    state,
-                    fuel16_ptr: fuel16_ptr as u32,
-                },
-                is_root,
-            })
+            ctx.resumable_context = Some(InterruptionHolder { params, is_root })
         });
         Err(TrapCode::InterruptionCalled)
     }
 
     pub fn fn_continue(
         caller: &mut TypedCaller<RuntimeContext>,
-        context: &SysExecResumable,
+        context: &InterruptionHolder,
     ) -> (u64, i64, i32) {
         let fuel_limit = context.params.fuel_limit;
         let (fuel_consumed, fuel_refunded, exit_code) = caller.context_mut(|ctx| {
@@ -116,20 +114,25 @@ impl SyscallExec {
         }
 
         // create a new runtime instance with the context
-        let ctx2 = RuntimeContext::default()
+        let mut ctx2 = RuntimeContext::default()
+            .with_fuel_limit(fuel_limit)
             .with_input(input.into_bytes())
             .with_state(state)
-            .with_call_depth(ctx.call_depth + 1)
-            .with_disable_fuel(ctx.disable_fuel);
+            .with_call_depth(ctx.call_depth + 1);
+        if ctx.is_fuel_disabled() {
+            ctx2 = ctx2.with_disabled_fuel();
+        }
 
         let mut runtime = Runtime::new(code_hash.into(), ctx2);
-        let mut execution_result = runtime.execute(Some(fuel_limit));
+        let mut execution_result = runtime.execute();
 
         // if execution was interrupted,
         if execution_result.interrupted {
             // then we remember this runtime and assign call id into exit code (positive exit code
             // stands for interrupted runtime call id, negative or zero for error)
             execution_result.exit_code = runtime.remember_runtime(ctx);
+        } else {
+            runtime.return_store();
         }
 
         ctx.execution_result.return_data = execution_result.output.clone();

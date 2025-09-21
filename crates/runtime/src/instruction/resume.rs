@@ -64,39 +64,41 @@ impl SyscallResume {
             return (0, 0, ExitCode::RootCallOnly.into_i32());
         }
 
-        let mut recoverable_runtime = Runtime::recover_runtime(call_id);
+        let mut runtime = Runtime::recover_runtime(call_id);
 
         // during the résumé we must clear output, otherwise collision might happen
-        recoverable_runtime
+        runtime
             .store
-            .context_mut(|ctx| ctx.clear_output());
+            .context_mut(|ctx| ctx.execution_result.output.clear());
 
         // we can charge fuel only if fuel is not disabled,
         // when fuel is disabled,
         // we only pass consumed fuel amount into the contract back,
         // and it can decide on charging
-        if !ctx.disable_fuel && fuel_consumed > 0 {
+        if !ctx.is_fuel_disabled() && fuel_consumed > 0 {
             // charge fuel that was spent during the interruption
             // to make sure our fuel calculations are aligned
-            if let Err(_) = recoverable_runtime.store.try_consume_fuel(fuel_consumed) {
+            if let Err(_) = runtime.store.try_consume_fuel(fuel_consumed) {
                 return (0, 0, ExitCode::OutOfFuel.into_i32());
             }
         }
 
         // copy return data into return data
-        recoverable_runtime.store.context_mut(|ctx| {
-            ctx.return_data_mut().clear();
-            ctx.return_data_mut().extend(return_data);
+        runtime.store.context_mut(|ctx| {
+            ctx.execution_result.return_data.clear();
+            ctx.execution_result.return_data.extend(return_data);
         });
 
         let mut execution_result =
-            recoverable_runtime.resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code);
+            runtime.resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code);
 
         // if execution was interrupted,
         if execution_result.interrupted {
             // then we remember this runtime and assign call id into exit code (positive exit code
             // stands for interrupted runtime call id, negative or zero for error)
-            execution_result.exit_code = recoverable_runtime.remember_runtime(ctx);
+            execution_result.exit_code = runtime.remember_runtime(ctx);
+        } else {
+            runtime.return_store();
         }
 
         ctx.execution_result.return_data = execution_result.output.clone();

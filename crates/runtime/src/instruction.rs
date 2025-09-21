@@ -102,9 +102,9 @@ use crate::{
     },
     RuntimeContext,
 };
-use fluentbase_types::SysFuncIdx;
+use fluentbase_types::{ExitCode, SysFuncIdx};
 use num::BigUint;
-use rwasm::{TrapCode, TypedCaller, Value};
+use rwasm::{Store, TrapCode, TypedCaller, Value};
 use sp1_curves::{
     edwards::ed25519::Ed25519,
     weierstrass::{
@@ -257,4 +257,12 @@ impl FieldOp2 for FieldSub {
             (ac1 + modulus - bc1) % modulus,
         )
     }
+}
+
+pub(crate) fn syscall_process_exit_code(
+    caller: &mut TypedCaller<RuntimeContext>,
+    exit_code: ExitCode,
+) -> TrapCode {
+    caller.context_mut(|ctx| ctx.execution_result.exit_code = exit_code.into());
+    TrapCode::ExecutionHalted
 }

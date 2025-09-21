@@ -52,7 +52,7 @@ use fluentbase_types::{
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
 };
 use sp1_curves::weierstrass::bn254::{Bn254, Bn254BaseField};
-use std::{cell::RefCell, mem::take};
+use std::cell::RefCell;
 
 #[derive(Default)]
 pub struct RuntimeContextWrapper {
@@ -273,10 +273,11 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn charge_fuel_manually(&self, fuel_consumed: u64, fuel_refunded: i64) -> u64 {
         SyscallChargeFuelManually::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed, fuel_refunded)
+            .unwrap()
     }
 
     fn charge_fuel(&self, fuel_consumed: u64) {
-        SyscallChargeFuel::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed);
+        SyscallChargeFuel::fn_impl(&mut self.ctx.borrow_mut(), fuel_consumed).unwrap();
     }
 
     fn exec(
@@ -326,32 +327,7 @@ impl NativeAPI for RuntimeContextWrapper {
     }
 
     fn return_data(&self) -> Bytes {
-        self.ctx.borrow_mut().return_data().clone().into()
-    }
-}
-
-pub type TestingContext = RuntimeContextWrapper;
-
-impl TestingContext {
-    pub fn empty() -> Self {
-        Self::new(RuntimeContext::default())
-    }
-
-    pub fn with_input<I: Into<Bytes>>(mut self, input: I) -> Self {
-        self.set_input(input);
-        self
-    }
-
-    pub fn set_input<I: Into<Bytes>>(&mut self, input: I) {
-        self.ctx
-            .replace_with(|ctx| take(ctx).with_input(input.into()));
-    }
-
-    pub fn take_output(&self) -> Vec<u8> {
-        take(self.ctx.borrow_mut().output_mut())
-    }
-
-    pub fn exit_code(&self) -> i32 {
-        self.ctx.borrow_mut().exit_code()
+        let ctx = self.ctx.borrow();
+        ctx.execution_result.return_data.clone().into()
     }
 }

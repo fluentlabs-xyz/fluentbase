@@ -37,7 +37,7 @@ fn test_simple() {
     );
 
     let ctx = RuntimeContext::default();
-    let execution_result = Runtime::new(new_bytecode_or_hash(rwasm_binary), ctx).execute(None);
+    let execution_result = Runtime::new(new_bytecode_or_hash(rwasm_binary), ctx).execute();
     assert_eq!(execution_result.exit_code, 0);
 }
 
@@ -65,10 +65,10 @@ fn test_wrong_indirect_type() {
     );
     let ctx = RuntimeContext::default().with_state(STATE_DEPLOY);
     let mut runtime = Runtime::new(new_bytecode_or_hash(rwasm_bytecode), ctx.clone());
-    let res = runtime.execute(None);
+    let res = runtime.execute();
     runtime.store.context_mut(|ctx| ctx.state = STATE_MAIN);
     assert_eq!(res.exit_code, 0);
-    let res = runtime.execute(None);
+    let res = runtime.execute();
     assert_eq!(res.exit_code, -2003);
 }
 
@@ -97,7 +97,7 @@ fn test_keccak256() {
     "#,
     );
     let ctx = RuntimeContext::default();
-    let execution_result = Runtime::new(new_bytecode_or_hash(rwasm_binary), ctx).execute(None);
+    let execution_result = Runtime::new(new_bytecode_or_hash(rwasm_binary), ctx).execute();
     println!("fuel consumed: {}", execution_result.fuel_consumed);
     assert_eq!(execution_result.exit_code, 0);
     assert_eq!(

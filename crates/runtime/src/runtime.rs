@@ -1,18 +1,13 @@
 use crate::{
-    context::RuntimeContext,
-    instruction::{exec::SysExecResumable, invoke_runtime_handler},
+    context::RuntimeContext, factory::CACHING_RUNTIME_FACTORY,
+    instruction::exec::InterruptionHolder, syscall_handler::runtime_syscall_handler,
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    create_import_linker, Address, BytecodeOrHash, Bytes, ExitCode, SysFuncIdx, B256, STATE_DEPLOY,
-    STATE_MAIN,
+    Address, BytecodeOrHash, Bytes, ExitCode, B256, STATE_DEPLOY, STATE_MAIN,
 };
-use hashbrown::{hash_map::Entry, HashMap};
-use rwasm::{
-    ExecutionEngine, ImportLinker, RwasmModule, Store, Strategy, TrapCode, TypedCaller, TypedStore,
-    Value,
-};
-use std::{cell::RefCell, fmt::Debug, mem::take, rc::Rc, sync::Arc};
+use rwasm::{Store, Strategy, TrapCode, TypedStore, Value};
+use std::{fmt::Debug, mem::take, sync::Arc};
 
 #[derive(Default, Clone, Debug)]
 pub struct ExecutionResult {
@@ -26,110 +21,10 @@ pub struct ExecutionResult {
     pub interrupted: bool,
 }
 
-impl ExecutionResult {
-    pub fn new_error(exit_code: i32) -> Self {
-        Self {
-            exit_code,
-            ..Default::default()
-        }
-    }
-}
-
-pub struct CachingRuntime {
-    // TODO(dmitry123): add LRU cache to this map to avoid memory leak (or remove HashMap?)
-    strategies: HashMap<B256, Arc<Strategy>>,
-    recoverable_runtimes: HashMap<u32, Runtime>,
-    import_linker: Rc<ImportLinker>,
-    transaction_call_id_counter: u32,
-}
-
-thread_local! {
-    static CACHING_RUNTIME: RefCell<CachingRuntime> = RefCell::new(CachingRuntime::new());
-}
-
-impl CachingRuntime {
-    pub fn new() -> Self {
-        Self {
-            strategies: HashMap::new(),
-            recoverable_runtimes: HashMap::new(),
-            import_linker: create_import_linker(),
-            transaction_call_id_counter: 1,
-        }
-    }
-
-    #[tracing::instrument(level = "info", skip_all, fields(address = %address, code_hash = %code_hash))]
-    pub fn init_strategy(
-        &mut self,
-        address: Address,
-        bytecode: Bytes,
-        code_hash: B256,
-    ) -> Arc<Strategy> {
-        let entry = match self.strategies.entry(code_hash) {
-            Entry::Occupied(entry) => {
-                println!("strategy cache hit: code_hash={code_hash} address={address}");
-                let strategy = entry.get().clone();
-                // strategy
-                //     .store
-                //     .borrow_mut()
-                //     .context_mut(move |context_ref| *context_ref = runtime_context);
-                return strategy;
-            }
-            Entry::Vacant(entry) => entry,
-        };
-        println!("missing strategy: code_hash={code_hash} address={address}");
-
-        let _span = tracing::info_span!("parse_rwasm_module").entered();
-        let rwasm_module = Rc::new(RwasmModule::new_or_empty(bytecode.as_ref()).0);
-        drop(_span);
-
-        #[cfg(feature = "wasmtime")]
-        if fluentbase_types::is_system_precompile(&address) {
-            let _span = tracing::info_span!("compile_wasmtime_module").entered();
-            let wasmtime_module = {
-                #[cfg(feature = "inter-process-lock")]
-                let _lock = crate::inter_process_lock::InterProcessLock::acquire_on_b256(
-                    crate::inter_process_lock::FILE_NAME_PREFIX1,
-                    &code_hash,
-                )
-                .unwrap();
-                let config =
-                    fluentbase_types::default_compilation_config().with_consume_fuel(false);
-                let wasmtime_module =
-                    rwasm::compile_wasmtime_module(config, &rwasm_module.hint_section).unwrap();
-                wasmtime_module
-            };
-            let strategy = Strategy::Wasmtime {
-                module: Rc::new(wasmtime_module),
-            };
-            return entry.insert(Arc::new(strategy)).clone();
-        }
-
-        #[cfg(not(feature = "wasmtime"))]
-        let _ = address; // silence unused variable warning
-        let strategy = Strategy::Rwasm {
-            module: rwasm_module,
-            engine: ExecutionEngine::acquire_shared(),
-        };
-        entry.insert(Arc::new(strategy)).clone()
-    }
-}
-
-#[derive(Default)]
-pub struct RuntimeSyscallHandler {}
-
-fn runtime_syscall_handler(
-    caller: &mut TypedCaller<RuntimeContext>,
-    func_idx: u32,
-    params: &[Value],
-    result: &mut [Value],
-) -> Result<(), TrapCode> {
-    let sys_func_idx = SysFuncIdx::from_repr(func_idx).ok_or(TrapCode::UnknownExternalFunction)?;
-    invoke_runtime_handler(caller, sys_func_idx, params, result)
-}
-
 pub struct Runtime {
     pub strategy: Arc<Strategy>,
     pub store: TypedStore<RuntimeContext>,
+    pub code_hash: B256,
 }
 
 impl Runtime {
@@ -138,45 +33,59 @@ impl Runtime {
         bytecode_or_hash: BytecodeOrHash,
         runtime_context: RuntimeContext,
     ) -> ExecutionResult {
-        Self::new(bytecode_or_hash, runtime_context).execute(None)
+        Self::new(bytecode_or_hash, runtime_context).execute()
     }
 
     #[tracing::instrument(level = "info", skip_all)]
     pub fn new(bytecode_or_hash: BytecodeOrHash, runtime_context: RuntimeContext) -> Self {
-        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
-            // resolve cached module or init it
-            let strategy = match bytecode_or_hash {
-                BytecodeOrHash::Bytecode {
-                    address,
-                    rwasm_module,
-                    code_hash,
-                } => {
-                    // if we have a cached module, then use it, otherwise create a new one and cache
-                    caching_runtime.init_strategy(address, rwasm_module, code_hash)
-                }
-                BytecodeOrHash::Hash(_hash) => {
-                    panic!("runtime: can't run just by hash")
-                }
-            };
+        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
+            let code_hash = bytecode_or_hash.code_hash();
 
-            let store = strategy.create_store(
-                caching_runtime.import_linker.clone(),
-                runtime_context,
-                runtime_syscall_handler,
-            );
+            // If we have a cached module, then use it, otherwise create a new one and cache
+            let cached_module = caching_runtime.get_module_or_init(bytecode_or_hash);
+            let (strategy, mut store) = cached_module.acquire_shared();
 
-            Self { strategy, store }
+            // If there is cached store then reuse it, but rewrite the context data
+            if let Some(store) = store.as_mut() {
+                match store {
+                    TypedStore::Rwasm(rwasm_store) => {
+                        // A special case for rWasm, we need to reset state
+                        rwasm_store.reset(false);
+                    }
+                    _ => {}
+                }
+                store.context_mut(|context_ref| *context_ref = runtime_context.clone());
+            }
+
+            // If there is no cached store, then construct a new one (slow)
+            let store = store.unwrap_or_else(|| {
+                strategy.create_store(
+                    caching_runtime.import_linker.clone(),
+                    runtime_context,
+                    runtime_syscall_handler,
+                )
+            });
+
+            Self {
+                strategy,
+                store,
+                code_hash,
+            }
         })
     }
 
     #[tracing::instrument(level = "info", skip_all)]
-    pub fn execute(&mut self, fuel: Option<u64>) -> ExecutionResult {
-        let result = self.execute_inner(fuel);
-        self.handle_execution_result(result, fuel)
+    pub fn execute(&mut self) -> ExecutionResult {
+        let (fuel_limit, disable_fuel) =
+            self.store.context(|ctx| (ctx.fuel_limit, ctx.disable_fuel));
+        let result = self.execute_inner(Some(fuel_limit));
+        let fuel_limit = if disable_fuel { None } else { Some(fuel_limit) };
+        self.handle_execution_result(result, fuel_limit)
     }
 
     fn execute_inner(&mut self, fuel: Option<u64>) -> Result<(), TrapCode> {
-        let func_name = match self.store.context(|ctx| ctx.state) {
+        let state = self.store.context(|ctx| ctx.state);
+        let func_name = match state {
             STATE_MAIN => "main",
             STATE_DEPLOY => "deploy",
             _ => unreachable!(),
@@ -193,7 +102,11 @@ impl Runtime {
         fuel_refunded: i64,
         exit_code: i32,
     ) -> ExecutionResult {
-        let fuel_remaining = self.store.remaining_fuel();
+        let disable_fuel = self.store.context(|ctx| ctx.is_fuel_disabled());
+        let mut fuel_remaining = self.store.remaining_fuel();
+        if disable_fuel {
+            fuel_remaining = None;
+        }
         let result = self.resume_inner(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code);
         self.handle_execution_result(result, fuel_remaining)
     }
@@ -215,16 +128,20 @@ impl Runtime {
             .resume(&mut self.store, &[Value::I32(exit_code)], &mut [])
     }
 
-    pub fn warmup_strategy(address: Address, rwasm_bytecode: Bytes, code_hash: B256) {
+    pub fn warmup_strategy(bytecode: Bytes, hash: B256, address: Address) {
         // save the current runtime state for future recovery
-        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
-            caching_runtime.init_strategy(address, rwasm_bytecode, code_hash);
+        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
+            caching_runtime.get_module_or_init(BytecodeOrHash::Bytecode {
+                address,
+                bytecode,
+                hash,
+            });
         })
     }
 
     pub(crate) fn remember_runtime(self, _root_ctx: &mut RuntimeContext) -> i32 {
         // save the current runtime state for future recovery
-        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
             let call_id = caching_runtime.transaction_call_id_counter;
             caching_runtime.transaction_call_id_counter += 1;
             // root_ctx.call_counter += 1;
@@ -234,8 +151,16 @@ impl Runtime {
         })
     }
 
+    pub(crate) fn return_store(self) {
+        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
+            if let Some(cached_module) = caching_runtime.cached_modules.get_mut(&self.code_hash) {
+                cached_module.return_store(self.store);
+            }
+        });
+    }
+
     pub(crate) fn recover_runtime(call_id: u32) -> Runtime {
-        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+        CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
             caching_runtime
                 .recoverable_runtimes
                 .remove(&call_id)
@@ -252,12 +177,12 @@ impl Runtime {
         let mut execution_result = self
             .store
             .context_mut(|ctx| take(&mut ctx.execution_result));
-        // once fuel is calculated, we must adjust our fuel limit,
+        // Once fuel is calculated, we must adjust our fuel limit,
         // because we don't know what gas conversion policy is used,
         // if there is rounding then it can cause miscalculations
         if let Some(fuel_consumed_before_the_call) = fuel_consumed_before_the_call {
-            execution_result.fuel_consumed =
-                fuel_consumed_before_the_call - self.store.remaining_fuel().unwrap();
+            let diff = fuel_consumed_before_the_call - self.store.remaining_fuel().unwrap();
+            execution_result.fuel_consumed = diff;
         }
         loop {
             match next_result {
@@ -284,14 +209,14 @@ impl Runtime {
     fn handle_resumable_state(
         &mut self,
         execution_result: &mut ExecutionResult,
-        sys_exec_resumable: SysExecResumable,
+        sys_exec_resumable: InterruptionHolder,
     ) {
         // we disallow nested calls at non-root levels,
         // so we must save the current state
         // to interrupt execution and delegate decision-making
         // to the root execution
         self.store.context_mut(|ctx| {
-            let output = ctx.output_mut();
+            let output = &mut ctx.execution_result.output;
             output.clear();
             assert!(output.is_empty(), "runtime: return data must be empty");
         });
@@ -306,8 +231,10 @@ impl Runtime {
     }
 }
 
+// TODO(dmitry123): This one is dirty, but we call this function from Reth to reset `call_id` counter
+//  before executing new transaction. We should pass `call_id` using root context.
 pub fn reset_call_id_counter() {
-    CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+    CACHING_RUNTIME_FACTORY.with_borrow_mut(|caching_runtime| {
         caching_runtime.transaction_call_id_counter = 1;
         caching_runtime.recoverable_runtimes.clear();
     });

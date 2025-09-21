@@ -13,21 +13,19 @@ use fluentbase_erc20::{
         ERR_INVALID_META_NAME, ERR_INVALID_META_SYMBOL, ERR_INVALID_MINTER, ERR_INVALID_PAUSER,
         ERR_INVALID_RECIPIENT, ERR_MALFORMED_INPUT, ERR_MINTABLE_PLUGIN_NOT_ACTIVE, ERR_OVERFLOW,
         ERR_PAUSABLE_PLUGIN_NOT_ACTIVE, ERR_VALIDATION, SIG_ALLOWANCE, SIG_APPROVE, SIG_BALANCE_OF,
-        SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOKEN2022, SIG_TOTAL_SUPPLY,
-        SIG_TRANSFER, SIG_TRANSFER_FROM, SIG_UNPAUSE,
+        SIG_DECIMALS, SIG_MINT, SIG_NAME, SIG_PAUSE, SIG_SYMBOL, SIG_TOTAL_SUPPLY, SIG_TRANSFER,
+        SIG_TRANSFER_FROM, SIG_UNPAUSE,
     },
     storage::{
         Allowance, Balance, Config, Feature, InitialSettings, Settings, ADDRESS_LEN_BYTES,
         SIG_LEN_BYTES, U256_LEN_BYTES,
     },
 };
-use fluentbase_sdk::{
-    debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, SVM_ELF_MAGIC_BYTES, U256,
+use fluentbase_sdk::{debug_log_ext, entrypoint, Address, ContextReader, SharedAPI, U256};
+use fluentbase_svm::{
+    pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_program::instruction::AccountMeta,
 };
-use fluentbase_svm::account_info::AccountInfo;
-use fluentbase_svm::pubkey::{Pubkey, PUBKEY_BYTES};
-use fluentbase_svm::solana_program::instruction::AccountMeta;
-use fluentbase_svm::token_2022::processor::Processor;
 use solana_program_error::ProgramResult;
 
 fn symbol(mut sdk: impl SharedAPI, _input: &[u8]) {

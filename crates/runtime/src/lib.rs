@@ -7,12 +7,13 @@ pub mod instruction;
 mod context;
 #[cfg(feature = "std")]
 mod context_wrapper;
+mod factory;
 #[cfg(all(feature = "wasmtime", feature = "inter-process-lock"))]
 mod inter_process_lock;
 mod runtime;
+mod syscall_handler;
 #[cfg(test)]
 mod tests;
-mod utils;
 
 pub use context::*;
 #[cfg(feature = "std")]

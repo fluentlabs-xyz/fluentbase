@@ -7,26 +7,12 @@ use std::{
 
 pub const FILE_NAME_PREFIX1: &str = "runtime-wasm-module";
 
-fn lock_id_str_file_path(file_name_prefix: &str, s: &str) -> PathBuf {
-    let mut path = std::env::temp_dir();
-    path.push(format!("{}-{}.lock", file_name_prefix, s));
-    path
-}
-
-fn lock_id_u64_file_path(file_name_prefix: &str, id: u64) -> PathBuf {
-    lock_id_str_file_path(file_name_prefix, &id.to_string())
-}
-
-fn lock_id_b256_file_path(file_name_prefix: &str, id: &B256) -> PathBuf {
-    lock_id_str_file_path(file_name_prefix, &id.to_string())
-}
-
 pub struct InterProcessLock {
     file: File,
 }
 
 impl InterProcessLock {
-    pub fn acquire(path: PathBuf) -> std::io::Result<Self> {
+    fn acquire_inner(path: PathBuf) -> std::io::Result<Self> {
         let file = OpenOptions::new()
             .create(true)
             .read(true)
@@ -38,13 +24,11 @@ impl InterProcessLock {
 
         Ok(Self { file })
     }
-    pub fn acquire_on_u64(file_name_prefix: &str, id: u64) -> std::io::Result<Self> {
-        let path = lock_id_u64_file_path(file_name_prefix, id);
-        Self::acquire(path)
-    }
-    pub fn acquire_on_b256(file_name_prefix: &str, id: &B256) -> std::io::Result<Self> {
-        let path = lock_id_b256_file_path(file_name_prefix, id);
-        Self::acquire(path)
+
+    pub fn acquire(file_name_prefix: &str, id: String) -> std::io::Result<Self> {
+        let mut path = std::env::temp_dir();
+        path.push(format!("{}-{}.lock", file_name_prefix, id));
+        Self::acquire_inner(path)
     }
 }
 

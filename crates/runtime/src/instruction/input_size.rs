@@ -15,6 +15,6 @@ impl SyscallInputSize {
     }
 
     pub fn fn_impl(ctx: &RuntimeContext) -> u32 {
-        ctx.input_size()
+        ctx.input.len() as u32
     }
 }
