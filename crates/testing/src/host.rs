@@ -1,14 +1,14 @@
 use core::cell::RefCell;
-use fluentbase_runtime::{RuntimeContext, RuntimeContextWrapper};
+use fluentbase_runtime::RuntimeContextWrapper;
 use fluentbase_sdk::{
-    bytes::Buf, calc_create4_address, Address, BytecodeOrHash, Bytes, ContextReader,
-    ContractContextV1, ExitCode, IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI,
-    MetadataStorageAPI, NativeAPI, SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult,
-    B256, BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
+    bytes::Buf, calc_create4_address, Address, Bytes, ContextReader, ContractContextV1, ExitCode,
+    IsAccountEmpty, IsAccountOwnable, IsColdAccess, MetadataAPI, MetadataStorageAPI, NativeAPI,
+    SharedAPI, SharedContextInputV1, StorageAPI, SyscallResult, B256,
+    BN254_G1_POINT_COMPRESSED_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE,
     BN254_G2_POINT_COMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE, FUEL_DENOM_RATE, U256,
 };
 use hashbrown::HashMap;
-use std::rc::Rc;
+use std::{mem::take, rc::Rc};
 
 #[derive(Clone)]
 pub struct HostTestingContext {
@@ -31,12 +31,9 @@ impl HostTestingContext {
         self
     }
     pub fn with_input<I: Into<Bytes>>(self, input: I) -> Self {
-        self.inner
-            .borrow_mut()
-            .native_sdk
-            .ctx
-            .borrow_mut()
-            .change_input(input.into());
+        let mut ctx = self.inner.borrow_mut();
+        ctx.input = input.into();
+        drop(ctx);
         self
     }
     /// Sets the initial storage state
@@ -77,10 +74,12 @@ impl HostTestingContext {
         self
     }
     pub fn take_output(&self) -> Vec<u8> {
-        self.inner.borrow_mut().native_sdk.take_output()
+        let mut ctx = self.inner.borrow_mut();
+        take(&mut ctx.output)
     }
     pub fn exit_code(&self) -> i32 {
-        self.inner.borrow_mut().native_sdk.exit_code()
+        let ctx = self.inner.borrow();
+        ctx.exit_code
     }
     pub fn dump_storage(&self) -> HashMap<(Address, U256), U256> {
         self.inner.borrow().persistent_storage.clone()
@@ -107,13 +106,15 @@ impl HostTestingContext {
 
 struct TestingContextInner {
     shared_context_input_v1: SharedContextInputV1,
-    native_sdk: RuntimeContextWrapper,
     persistent_storage: HashMap<(Address, U256), U256>,
     metadata: HashMap<(Address, Address), Vec<u8>>,
     metadata_storage: HashMap<(Address, U256), U256>,
     transient_storage: HashMap<(Address, U256), U256>,
     logs: Vec<(Bytes, Vec<B256>)>,
     ownable_account_address: Option<Address>,
+    input: Bytes,
+    output: Vec<u8>,
+    exit_code: i32,
     consumed_fuel: u64,
     fuel_limit: Option<u64>,
     refunded_fuel: i64,
@@ -124,13 +125,15 @@ impl Default for HostTestingContext {
         Self {
             inner: Rc::new(RefCell::new(TestingContextInner {
                 shared_context_input_v1: SharedContextInputV1::default(),
-                native_sdk: RuntimeContextWrapper::new(RuntimeContext::root()),
                 persistent_storage: Default::default(),
                 metadata: Default::default(),
                 metadata_storage: Default::default(),
                 transient_storage: Default::default(),
                 logs: vec![],
                 ownable_account_address: None,
+                input: Default::default(),
+                output: vec![],
+                exit_code: 0,
                 consumed_fuel: 0,
                 fuel_limit: None,
                 refunded_fuel: 0,
@@ -364,11 +367,17 @@ impl SharedAPI for HostTestingContext {
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
-        self.inner.borrow().native_sdk.read(target, offset);
+        let ctx = self.inner.borrow();
+        if offset + target.len() as u32 <= ctx.input.len() as u32 {
+            target.copy_from_slice(&ctx.input[(offset as usize)..(offset as usize + target.len())]);
+        } else {
+            panic!("can't read input: InputOutputOutOfBounds");
+        }
     }
 
     fn input_size(&self) -> u32 {
-        self.inner.borrow().native_sdk.input_size()
+        let ctx = self.inner.borrow();
+        ctx.input.len() as u32
     }
 
     fn read_context(&self, target: &mut [u8], offset: u32) {
@@ -397,30 +406,26 @@ impl SharedAPI for HostTestingContext {
     }
 
     fn write(&mut self, output: &[u8]) {
-        self.inner.borrow().native_sdk.write(output);
+        let mut ctx = self.inner.borrow_mut();
+        ctx.output.extend_from_slice(output);
     }
 
     fn native_exit(&self, exit_code: ExitCode) -> ! {
-        self.inner.borrow().native_sdk.exit(exit_code);
+        unreachable!("exit code: {} ({})", exit_code, exit_code as i32)
     }
 
     fn native_exec(
         &self,
-        code_hash: B256,
-        input: &[u8],
-        fuel_limit: Option<u64>,
-        state: u32,
+        _code_hash: B256,
+        _input: &[u8],
+        _fuel_limit: Option<u64>,
+        _state: u32,
     ) -> (u64, i64, i32) {
-        self.inner.borrow().native_sdk.exec(
-            BytecodeOrHash::Hash(code_hash),
-            input,
-            fuel_limit,
-            state,
-        )
+        unimplemented!("native exec is not supported");
     }
 
     fn return_data(&self) -> Bytes {
-        self.inner.borrow().native_sdk.return_data()
+        unimplemented!("return data is not supported");
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {

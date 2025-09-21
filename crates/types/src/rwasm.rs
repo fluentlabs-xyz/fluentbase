@@ -1,12 +1,6 @@
-use crate::{sys_func_idx::SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
+use crate::{import_linker_v1_preview, sys_func_idx::SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
 use alloc::{boxed::Box, vec::Vec};
 use rwasm::{CompilationConfig, CompilationError, Opcode, RwasmModule, StateRouterConfig};
-
-mod block_fuel;
-mod import_linker;
-
-pub use block_fuel::*;
-pub use import_linker::*;
 
 pub struct RwasmCompilationResult {
     pub rwasm_module: RwasmModule,
@@ -14,7 +8,7 @@ pub struct RwasmCompilationResult {
 }
 
 pub fn default_compilation_config() -> CompilationConfig {
-    let linker = create_import_linker();
+    let linker = import_linker_v1_preview();
     CompilationConfig::default()
         .with_state_router(StateRouterConfig {
             states: Box::new([("deploy".into(), STATE_DEPLOY), ("main".into(), STATE_MAIN)]),

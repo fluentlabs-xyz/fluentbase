@@ -88,7 +88,3 @@ harness = false
 [[bench]]
 name = "greeting"
 harness = false
-
-[[bench]]
-name = "multicall"
-harness = false

@@ -1,6 +1,9 @@
 use crate::{
-    instruction::curve25519_ristretto_decompress_validate::SyscallCurve25519RistrettoDecompressValidate,
-    utils::syscall_process_exit_code, RuntimeContext,
+    instruction::{
+        curve25519_ristretto_decompress_validate::SyscallCurve25519RistrettoDecompressValidate,
+        syscall_process_exit_code,
+    },
+    RuntimeContext,
 };
 use curve25519_dalek::{traits::MultiscalarMul, RistrettoPoint, Scalar};
 use fluentbase_types::ExitCode;

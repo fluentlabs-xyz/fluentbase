@@ -2,9 +2,11 @@ use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
+/// Builtin to copy a slice of the input buffer into linear memory.
 pub struct SyscallRead;
 
 impl SyscallRead {
+    /// Reads [offset, offset+length) from ctx.input and writes it at target_ptr.
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         params: &[Value],

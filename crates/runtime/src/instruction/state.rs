@@ -1,9 +1,11 @@
 use crate::RuntimeContext;
 use rwasm::{Store, TrapCode, TypedCaller, Value};
 
+/// Builtin to query the current state selector.
 pub struct SyscallState;
 
 impl SyscallState {
+    /// Writes ctx.state into result[0].
     pub fn fn_handler(
         caller: &mut TypedCaller<RuntimeContext>,
         _params: &[Value],

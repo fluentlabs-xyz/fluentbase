@@ -7,6 +7,13 @@ build:
 	# build genesis files
 	#cd crates/genesis && $(MAKE) # build genesis
 
+.PHONY: update-deps
+update-deps:
+	cargo update --manifest-path=./contracts/Cargo.toml
+	cargo update --manifest-path=./examples/Cargo.toml
+	cargo update
+	cargo update --manifest-path=./evm-e2e/Cargo.toml
+
 .PHONY: examples
 examples:
 	cd examples && $(MAKE)
