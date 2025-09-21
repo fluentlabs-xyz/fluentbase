@@ -398,7 +398,7 @@ pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec
         .with_input(context_input);
     let mut runtime = Runtime::new(bytecode_or_hash, ctx);
     runtime.store.context_mut(RuntimeContext::clear_output);
-    let result = runtime.execute();
+    let result = runtime.execute().into_execution_result();
     println!(
         "exit_code: {} ({})",
         result.exit_code,

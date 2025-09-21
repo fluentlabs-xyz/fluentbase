@@ -123,24 +123,7 @@ impl SyscallExec {
             ctx2 = ctx2.with_disabled_fuel();
         }
 
-        let mut runtime = Runtime::new(code_hash.into(), ctx2);
-        let mut execution_result = runtime.execute();
-
-        // if execution was interrupted,
-        if execution_result.interrupted {
-            // then we remember this runtime and assign call id into exit code (positive exit code
-            // stands for interrupted runtime call id, negative or zero for error)
-            execution_result.exit_code = runtime.remember_runtime(ctx);
-        } else {
-            runtime.return_store();
-        }
-
-        ctx.execution_result.return_data = execution_result.output.clone();
-
-        (
-            execution_result.fuel_consumed,
-            execution_result.fuel_refunded,
-            execution_result.exit_code,
-        )
+        let runtime = Runtime::new(code_hash.into(), ctx2);
+        runtime.execute().finalize(ctx)
     }
 }

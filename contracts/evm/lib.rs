@@ -5,8 +5,7 @@ extern crate core;
 
 use fluentbase_evm::{bytecode::AnalyzedBytecode, gas, EthVM, EthereumMetadata, ExecutionResult};
 use fluentbase_sdk::{
-    bytes::Buf, entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256,
-    EVM_MAX_CODE_SIZE,
+    entrypoint, keccak256, Bytes, ContextReader, ExitCode, SharedAPI, B256, EVM_MAX_CODE_SIZE,
 };
 
 /// Store EVM bytecode and its keccak256 hash in contract metadata.

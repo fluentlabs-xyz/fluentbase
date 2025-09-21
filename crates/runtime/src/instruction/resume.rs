@@ -89,24 +89,8 @@ impl SyscallResume {
             ctx.execution_result.return_data.extend(return_data);
         });
 
-        let mut execution_result =
-            runtime.resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code);
-
-        // if execution was interrupted,
-        if execution_result.interrupted {
-            // then we remember this runtime and assign call id into exit code (positive exit code
-            // stands for interrupted runtime call id, negative or zero for error)
-            execution_result.exit_code = runtime.remember_runtime(ctx);
-        } else {
-            runtime.return_store();
-        }
-
-        ctx.execution_result.return_data = execution_result.output.clone();
-
-        (
-            execution_result.fuel_consumed,
-            execution_result.fuel_refunded,
-            execution_result.exit_code,
-        )
+        runtime
+            .resume(fuel16_ptr, fuel_consumed, fuel_refunded, exit_code)
+            .finalize(ctx)
     }
 }

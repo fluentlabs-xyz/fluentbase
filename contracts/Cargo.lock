@@ -79,9 +79,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-eips"
-version = "1.0.33"
+version = "1.0.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a33d1723ecf64166c2a0371e25d1bce293b873527a7617688c9375384098ea1"
+checksum = "b26a4df894e5665f0c5c9beeedd6db6c2aa3642686a8c37c350df50d1271b611"
 dependencies = [
  "alloy-eip2124",
  "alloy-eip2930",
@@ -162,9 +162,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-serde"
-version = "1.0.33"
+version = "1.0.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f0ee5af728e144e0e5bde52114c7052249a9833d9fba79aeacfbdee1aad69e8"
+checksum = "8b253eb23896e22d0cf8117fc915383d4ecf8efdedd57f590a13c8716a7347f2"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -1265,8 +1265,18 @@ version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
 dependencies = [
- "darling_core",
- "darling_macro",
+ "darling_core 0.20.11",
+ "darling_macro 0.20.11",
+]
+
+[[package]]
+name = "darling"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
+dependencies = [
+ "darling_core 0.21.3",
+ "darling_macro 0.21.3",
 ]
 
 [[package]]
@@ -1284,12 +1294,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "darling_core"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
+dependencies = [
+ "fnv",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "strsim",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "darling_macro"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
 dependencies = [
- "darling_core",
+ "darling_core 0.20.11",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
+dependencies = [
+ "darling_core 0.21.3",
  "quote",
  "syn 2.0.106",
 ]
@@ -2063,7 +2098,7 @@ dependencies = [
  "anyhow",
  "convert_case 0.8.0",
  "crypto-hashes",
- "darling",
+ "darling 0.20.11",
  "fluentbase-codec",
  "hex",
  "proc-macro-error",
@@ -3579,9 +3614,9 @@ dependencies = [
 
 [[package]]
 name = "proptest"
-version = "1.7.0"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fcdab19deb5195a31cf7726a210015ff1496ba1464fd42cb4f537b8b01b471f"
+checksum = "2bb0be07becd10686a0bb407298fb425360a5c44a663774406340c59a22de4ce"
 dependencies = [
  "bit-set",
  "bit-vec",
@@ -3857,7 +3892,7 @@ checksum = "caf4aa5b0f434c91fe5c7f1ecb6a5ece2130b02ad2a590589dda5146df959001"
 [[package]]
 name = "revm"
 version = "27.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -3875,7 +3910,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "6.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "bitvec",
  "once_cell",
@@ -3887,7 +3922,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "8.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "cfg-if",
  "derive-where",
@@ -3902,7 +3937,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "8.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -3917,7 +3952,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "7.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -3930,7 +3965,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "7.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "auto_impl",
  "either",
@@ -3942,7 +3977,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "8.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -3960,7 +3995,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "8.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "auto_impl",
  "either",
@@ -3977,7 +4012,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "23.0.2"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -3988,7 +4023,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "24.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -4015,7 +4050,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "20.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -4025,7 +4060,7 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "7.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#ff10770223e32de6aa7a59dff0f7b6c6fd3d775e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v82-patched#42b1b4c53f8265ac167603352c47da7c00d0b5a7"
 dependencies = [
  "bitflags",
  "revm-bytecode",
@@ -4183,7 +4218,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#26110d2533fa535f6c7186ea7e4cc146455d6bc9"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#02fab009b081f1af8e78fb936cbe915817c95ce1"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -4365,9 +4400,9 @@ dependencies = [
 
 [[package]]
 name = "serde"
-version = "1.0.225"
+version = "1.0.226"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd6c24dee235d0da097043389623fb913daddf92c76e9f5a1db88607a0bcbd1d"
+checksum = "0dca6411025b24b60bfa7ec1fe1f8e710ac09782dca409ee8237ba74b51295fd"
 dependencies = [
  "serde_core",
  "serde_derive",
@@ -4394,18 +4429,18 @@ dependencies = [
 
 [[package]]
 name = "serde_core"
-version = "1.0.225"
+version = "1.0.226"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "659356f9a0cb1e529b24c01e43ad2bdf520ec4ceaf83047b83ddcc2251f96383"
+checksum = "ba2ba63999edb9dac981fb34b3e5c0d111a69b0924e253ed29d83f7c99e966a4"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.225"
+version = "1.0.226"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ea936adf78b1f766949a4977b91d2f5595825bd6ec079aa9543ad2685fc4516"
+checksum = "8db53ae22f34573731bafa1db20f04027b2d25e02d8205921b569171699cdb33"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4437,9 +4472,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.14.0"
+version = "3.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2c45cd61fefa9db6f254525d46e392b852e0e61d9a1fd36e5bd183450a556d5"
+checksum = "c522100790450cf78eeac1507263d0a350d4d5b30df0c8e1fe051a10c22b376e"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4457,11 +4492,11 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.14.0"
+version = "3.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de90945e6565ce0d9a25098082ed4ee4002e047cb59892c318d66821e14bb30f"
+checksum = "327ada00f7d64abaac1e55a6911e90cf665aa051b9a561c7006c157f4633135e"
 dependencies = [
- "darling",
+ "darling 0.21.3",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
