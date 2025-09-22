@@ -633,7 +633,6 @@ impl<'a, SDK: SharedAPI> Processor<'a, SDK> {
             PodStateWithExtensionsMut::<PodAccount>::unpack(&mut source_account_data)?;
 
         if source_account.base.is_frozen() {
-            debug_log_ext!();
             return Err(TokenError::AccountFrozen.into());
         }
 

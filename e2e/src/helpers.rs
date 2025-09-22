@@ -14,7 +14,7 @@ pub fn call_with_sig(
     input: Bytes,
     caller: &Address,
     callee: &Address,
-) -> Result<Vec<u8>, u32> {
+) -> Result<Vec<u8>, (u32, Vec<u8>)> {
     let result = ctx.call_evm_tx(*caller, *callee, input, None, None);
     match &result {
         ExecutionResult::Revert {
@@ -25,15 +25,15 @@ pub fn call_with_sig(
             try_print_utf8_error(&output_vec);
             const ERROR_OFFSET: usize = 32;
             if output_vec.len() <= ERROR_OFFSET {
-                return Err(u32::MAX);
+                return Err((u32::MAX, output_vec));
             }
             let error_data: Result<[u8; size_of::<u32>()], _> =
                 output_vec[ERROR_OFFSET..].try_into();
             let Ok(error_data) = error_data else {
-                return Err(u32::MAX);
+                return Err((u32::MAX, output_vec));
             };
             let error_code = u32::from_be_bytes(error_data);
-            Err(error_code)
+            Err((error_code, output_vec))
         }
         ExecutionResult::Success { output, .. } => Ok(output.data().to_vec()),
         _ => {

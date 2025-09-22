@@ -3,7 +3,6 @@ use crate::error::SvmError;
 use crate::helpers::{storage_read_account_data, storage_write_account_data};
 use crate::token_2022;
 use alloc::vec::Vec;
-use fluentbase_sdk::debug_log_ext;
 use fluentbase_types::{SharedAPI, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use hashbrown::{HashMap, HashSet};
 use solana_account_info::{AccountInfo, IntoAccountInfo};

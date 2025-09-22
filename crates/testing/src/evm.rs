@@ -137,18 +137,18 @@ impl EvmTestingContext {
         for (address, db_account) in &mut self.db.cache.accounts {
             self.sdk.visit_inner_storage_mut(|storage| {
                 for (k, v) in &db_account.storage {
-                    debug_log_ext!("db storage -> sdk storage ({}, {})={}", address, k, v);
+                    // debug_log_ext!("db storage -> sdk storage ({}, {})={}", address, k, v);
                     storage.insert((*address, *k), *v);
                 }
             });
             self.sdk.visit_inner_metadata_storage_mut(|storage| {
                 for (k, v) in &db_account.storage {
-                    debug_log_ext!(
-                        "db storage -> sdk metadata storage ({}, {})={}",
-                        address,
-                        k,
-                        v
-                    );
+                    // debug_log_ext!(
+                    //     "db storage -> sdk metadata storage ({}, {})={}",
+                    //     address,
+                    //     k,
+                    //     v
+                    // );
                     storage.insert((*address, *k), *v);
                 }
             });
@@ -436,6 +436,10 @@ pub fn try_print_utf8_error(mut output: &[u8]) {
             .unwrap_or("can't decode utf-8")
             .trim_end_matches("\0")
     );
+}
+
+pub fn utf8_to_bytes(output: &str) -> &[u8] {
+    output.as_bytes()
 }
 
 pub fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {

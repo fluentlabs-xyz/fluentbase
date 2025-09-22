@@ -473,7 +473,7 @@ impl<'a> BurnCheckedParams<'a> {
         const MINT_OFFSET: usize = ACCOUNT_OFFSET + PUBKEY_BYTES;
         const AUTHORITY_OFFSET: usize = MINT_OFFSET + PUBKEY_BYTES;
         const AMOUNT_OFFSET: usize = AUTHORITY_OFFSET + PUBKEY_BYTES;
-        const DECIMALS_OFFSET: usize = AUTHORITY_OFFSET + size_of::<u64>();
+        const DECIMALS_OFFSET: usize = AMOUNT_OFFSET + size_of::<u64>();
 
         let Some(decimals) = input.get(DECIMALS_OFFSET).cloned() else {
             return Err(());

@@ -2,7 +2,7 @@ use crate::helpers::call_with_sig;
 use crate::EvmTestingContextWithGenesis;
 use alloc::vec::Vec;
 use fluentbase_sdk::{address, Address};
-use fluentbase_sdk_testing::EvmTestingContext;
+use fluentbase_sdk_testing::{utf8_to_bytes, EvmTestingContext};
 use fluentbase_svm::account::{AccountSharedData, ReadableAccount};
 use fluentbase_svm::account_info::AccountInfo;
 use fluentbase_svm::error::SvmError;
@@ -24,15 +24,16 @@ use fluentbase_svm::token_2022::instruction::{initialize_account, AuthorityType}
 use fluentbase_svm::token_2022::state::{Account, Mint};
 use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_svm_common::universal_token::{
-    ApproveCheckedParams, ApproveParams, InitializeAccountParams, InitializeMintParams,
-    MintToParams, RevokeParams, SetAuthorityParams, TransferFromParams, TransferParams,
+    ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams, InitializeAccountParams,
+    InitializeMintParams, MintToParams, RevokeParams, SetAuthorityParams, TransferFromParams,
+    TransferParams,
 };
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::{
-    SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF, SIG_DECIMALS,
-    SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE, SIG_SET_AUTHORITY,
-    SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
+    SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF, SIG_BURN, SIG_BURN_CHECKED,
+    SIG_DECIMALS, SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE,
+    SIG_SET_AUTHORITY, SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
 };
 use solana_program_option::COption;
 use solana_program_pack::Pack;
@@ -46,6 +47,7 @@ const USER_ADDRESS6: Address = address!("666666666666666666666666666666666666666
 const USER_ADDRESS7: Address = address!("7777777777777777777777777777777777777777");
 const USER_ADDRESS8: Address = address!("8888888888888888888888888888888888888888");
 const USER_ADDRESS9: Address = address!("9999999999999999999999999999999999999999");
+const USER_ADDRESS10: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 pub fn with_account_mut(
     ctx: &mut EvmTestingContext,
     pk: &Pubkey,
@@ -955,7 +957,9 @@ fn test_approve() {
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_APPROVE), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
-    assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
 
     // // approve delegate
     // do_process_instruction(
@@ -1027,7 +1031,9 @@ fn test_approve() {
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_APPROVE_CHECKED), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
-    assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(18)"));
 
     // // approve delegate 2, with incorrect mint
     // assert_eq!(
@@ -1066,7 +1072,9 @@ fn test_approve() {
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_APPROVE_CHECKED), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
-    assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(3)"));
 
     // // approve delegate 2
     // do_process_instruction(
@@ -1193,7 +1201,9 @@ fn test_approve() {
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_REVOKE), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
-    assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
 }
 
 #[test]
@@ -1206,7 +1216,6 @@ fn test_set_authority() {
     ctx.sdk
         .set_ownable_account_address(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME);
 
-    let program_id = token_2022::lib::id();
     let account_key = pubkey_from_evm_address::<true>(&USER_ADDRESS1);
     let account2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
     let owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS3);
@@ -1222,7 +1231,6 @@ fn test_set_authority() {
     //     vec![&mut mint_account /*&mut rent_sysvar*/],
     // )
     //     .unwrap();
-    let incorrect_decimals = 0;
     let decimals = 2;
     let mut input_data = vec![];
     InitializeMintParams {
@@ -1282,7 +1290,12 @@ fn test_set_authority() {
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
-    assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(
+        result.1,
+        utf8_to_bytes("failed to process: InvalidAccountData")
+    );
 
     // // create account
     // do_process_instruction(
@@ -1357,7 +1370,9 @@ fn test_set_authority() {
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
-    assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
 
     // // owner did not sign
     // let mut instruction = set_authority(
@@ -1406,7 +1421,9 @@ fn test_set_authority() {
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
-    assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(15)"));
 
     // // account owner may not be set to None
     // assert_eq!(
@@ -1435,7 +1452,9 @@ fn test_set_authority() {
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
-    assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(12)"));
 
     // // set delegate
     // do_process_instruction(
@@ -1622,7 +1641,9 @@ fn test_set_authority() {
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address);
-    assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
 
     // // owner did not sign
     // let mut instruction = set_authority(
@@ -1643,7 +1664,8 @@ fn test_set_authority() {
     //         vec![&mut mint_account, &mut owner_account],
     //     )
     // );
-    //
+    // cannot manipulate is_signer flag
+
     // // cannot freeze
     // assert_eq!(
     //     Err(TokenError::MintCannotFreeze.into()),
@@ -1671,7 +1693,9 @@ fn test_set_authority() {
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
     let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS5, &contract_address);
-    assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(16)"));
 
     // // set owner
     // do_process_instruction(
@@ -1744,17 +1768,7 @@ fn test_set_authority() {
     //         vec![&mut mint_account, &mut owner_account],
     //     )
     // );
-    // let mut input_data = vec![];
-    // SetAuthorityParams {
-    //     owned: &mint2_key,
-    //     new_authority: Some(&owner2_key),
-    //     authority_type: AuthorityType::MintTokens as u8,
-    //     owner: &owner_key,
-    // }
-    // .serialize_into(&mut input_data);
-    // let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
-    // let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
-    // assert_eq!(output_data.unwrap_err(), u32::MAX);
+    // cannot manipulate specific accounts (automatically loaded)
 
     // // set freeze_authority
     // do_process_instruction(
@@ -1771,17 +1785,17 @@ fn test_set_authority() {
     //     vec![&mut mint2_account, &mut owner_account],
     // )
     //     .unwrap();
-    // let mut input_data = vec![];
-    // SetAuthorityParams {
-    //     owned: &mint2_key,
-    //     new_authority: Some(&owner2_key),
-    //     authority_type: AuthorityType::FreezeAccount as u8,
-    //     owner: &owner_key,
-    // }
-    // .serialize_into(&mut input_data);
-    // let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
-    // let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
-    // assert_eq!(output_data.unwrap(), vec![1]);
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &mint2_key,
+        new_authority: Some(&owner2_key),
+        authority_type: AuthorityType::FreezeAccount as u8,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
 
     // // test unsetting freeze_authority is one-way operation
     // do_process_instruction(
@@ -1798,16 +1812,17 @@ fn test_set_authority() {
     //     vec![&mut mint2_account, &mut owner2_account],
     // )
     //     .unwrap();
-    // SetAuthorityParams {
-    //     owned: &mint2_key,
-    //     new_authority: None,
-    //     authority_type: AuthorityType::FreezeAccount as u8,
-    //     owner: &owner2_key,
-    // }
-    // .serialize_into(&mut input_data);
-    // let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
-    // let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
-    // assert_eq!(output_data.unwrap(), vec![1]);
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &mint2_key,
+        new_authority: None,
+        authority_type: AuthorityType::FreezeAccount as u8,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
 
     // assert_eq!(
     //     Err(TokenError::MintCannotFreeze.into()),
@@ -1825,14 +1840,610 @@ fn test_set_authority() {
     //         vec![&mut mint2_account, &mut owner2_account],
     //     )
     // );
-    // SetAuthorityParams {
-    //     owned: &mint2_key,
-    //     new_authority: Some(&owner2_key),
-    //     authority_type: AuthorityType::FreezeAccount as u8,
-    //     owner: &owner_key,
-    // }
-    // .serialize_into(&mut input_data);
-    // let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
-    // let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
-    // assert_eq!(output_data.unwrap_err(), u32::MAX);
+    let mut input_data = vec![];
+    SetAuthorityParams {
+        owned: &mint2_key,
+        new_authority: Some(&owner2_key),
+        authority_type: AuthorityType::FreezeAccount as u8,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_SET_AUTHORITY), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(16)"));
+}
+
+#[test]
+fn test_burn() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
+        address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+        ..Default::default()
+    });
+    ctx.sdk
+        .set_ownable_account_address(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME);
+
+    let program_id = token_2022::lib::id();
+    let account_key = pubkey_from_evm_address::<true>(&USER_ADDRESS1);
+    let account2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
+    let account3_key = pubkey_from_evm_address::<true>(&USER_ADDRESS3);
+    let delegate_key = pubkey_from_evm_address::<true>(&USER_ADDRESS4);
+    let mismatch_key = pubkey_from_evm_address::<true>(&USER_ADDRESS5);
+    let owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS6);
+    let owner2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS7);
+    let mint_key = pubkey_from_evm_address::<true>(&USER_ADDRESS8);
+    let mint2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS9);
+    let not_program_id = pubkey_from_evm_address::<true>(&USER_ADDRESS10);
+
+    // // create new mint
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     initialize_mint(&program_id, &mint_key, &owner_key, None, 2).unwrap(),
+    //     vec![&mut mint_account /*&mut rent_sysvar*/],
+    // )
+    // .unwrap();
+    let decimals = 2;
+    let mut input_data = vec![];
+    InitializeMintParams {
+        mint: &mint_key,
+        mint_authority: &owner_key,
+        freeze_opt: None,
+        decimals,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_MINT), &input_data);
+    let input = build_input_raw(&ERC20_MAGIC_BYTES, &input);
+    let contract_address = ctx.deploy_evm_tx(USER_ADDRESS6, input.into());
+
+    // // create account
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     initialize_account(&program_id, &account_key, &mint_key, &owner_key).unwrap(),
+    //     vec![
+    //         &mut account_account,
+    //         &mut mint_account,
+    //         &mut owner_account,
+    //         // &mut rent_sysvar,
+    //     ],
+    // )
+    // .unwrap();
+    let mut input_data = vec![];
+    InitializeAccountParams {
+        account: &account_key,
+        mint: &mint_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
+    // // create another account
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     initialize_account(&program_id, &account2_key, &mint_key, &owner_key).unwrap(),
+    //     vec![
+    //         &mut account2_account,
+    //         &mut mint_account,
+    //         &mut owner_account,
+    //         // &mut rent_sysvar,
+    //     ],
+    // )
+    // .unwrap();
+    let mut input_data = vec![];
+    InitializeAccountParams {
+        account: &account2_key,
+        mint: &mint_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
+    // // create another account
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     initialize_account(&program_id, &account3_key, &mint_key, &owner_key).unwrap(),
+    //     vec![
+    //         &mut account3_account,
+    //         &mut mint_account,
+    //         &mut owner_account,
+    //         // &mut rent_sysvar,
+    //     ],
+    // )
+    // .unwrap();
+    let mut input_data = vec![];
+    InitializeAccountParams {
+        account: &account3_key,
+        mint: &mint_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
+    // // create mismatch account
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     initialize_account(&program_id, &mismatch_key, &mint_key, &owner_key).unwrap(),
+    //     vec![
+    //         &mut mismatch_account,
+    //         &mut mint_account,
+    //         &mut owner_account,
+    //         // &mut rent_sysvar,
+    //     ],
+    // )
+    // .unwrap();
+    let mut input_data = vec![];
+    InitializeAccountParams {
+        account: &mismatch_key,
+        mint: &mint_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
+    // // mint to account
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     mint_to(&program_id, &mint_key, &account_key, &owner_key, &[], 1000).unwrap(),
+    //     vec![&mut mint_account, &mut account_account, &mut owner_account],
+    // )
+    // .unwrap();
+    let amount = 1000;
+    let mut input_data = vec![];
+    MintToParams {
+        mint: &mint_key,
+        account: &account_key,
+        owner: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_MINT_TO), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
+    // // mint to mismatch account and change mint key
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     mint_to(&program_id, &mint_key, &mismatch_key, &owner_key, &[], 1000).unwrap(),
+    //     vec![&mut mint_account, &mut mismatch_account, &mut owner_account],
+    // )
+    // .unwrap();
+    // let mut account = Account::unpack_unchecked(&mismatch_account.data).unwrap();
+    // account.mint = mint2_key;
+    // Account::pack(account, &mut mismatch_account.data).unwrap();
+    let amount = 1000;
+    let mut input_data = vec![];
+    MintToParams {
+        mint: &mint_key,
+        account: &mismatch_key,
+        owner: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_MINT_TO), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+    with_account_mut(&mut ctx, &mismatch_key, |mismatch_account| {
+        let mut account = Account::unpack_unchecked(&mismatch_account.data).unwrap();
+        account.mint = mint2_key;
+        Account::pack(account, &mut mismatch_account.data).unwrap();
+    });
+
+    // // missing signer
+    // let mut instruction =
+    //     burn(&program_id, &account_key, &mint_key, &delegate_key, &[], 42).unwrap();
+    // instruction.accounts[1].is_signer = false;
+    // assert_eq!(
+    //     Err(TokenError::OwnerMismatch.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         instruction,
+    //         vec![
+    //             &mut account_account,
+    //             &mut mint_account,
+    //             &mut delegate_account
+    //         ],
+    //     )
+    // );
+    // cannot manipulate is_signer
+
+    // // missing owner
+    // assert_eq!(
+    //     Err(TokenError::OwnerMismatch.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         burn(&program_id, &account_key, &mint_key, &owner2_key, &[], 42).unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner2_account],
+    //     )
+    // );
+    let amount = 42;
+    let mut input_data = vec![];
+    BurnParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &owner2_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
+
+    // // account not owned by program
+    // let not_program_id = Pubkey::new_unique();
+    // account_account.owner = not_program_id;
+    // assert_eq!(
+    //     Err(ProgramError::IncorrectProgramId),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         burn(&program_id, &account_key, &mint_key, &owner_key, &[], 0).unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner_account],
+    //     )
+    // );
+    // account_account.owner = program_id;
+    with_account_mut(&mut ctx, &account_key, |account_account| {
+        account_account.owner = not_program_id;
+    });
+    let amount = 0;
+    let mut input_data = vec![];
+    BurnParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(
+        result.1,
+        utf8_to_bytes("failed to process: IncorrectProgramId")
+    );
+    with_account_mut(&mut ctx, &account_key, |account_account| {
+        account_account.owner = program_id;
+    });
+
+    // // mint not owned by program
+    // let not_program_id = Pubkey::new_unique();
+    // mint_account.owner = not_program_id;
+    // assert_eq!(
+    //     Err(ProgramError::IncorrectProgramId),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         burn(&program_id, &account_key, &mint_key, &owner_key, &[], 0).unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner_account],
+    //     )
+    // );
+    // mint_account.owner = program_id;
+    with_account_mut(&mut ctx, &mint_key, |mint_account| {
+        mint_account.owner = not_program_id;
+    });
+    let amount = 0;
+    let mut input_data = vec![];
+    BurnParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(
+        result.1,
+        utf8_to_bytes("failed to process: IncorrectProgramId")
+    );
+    with_account_mut(&mut ctx, &mint_key, |mint_account| {
+        mint_account.owner = program_id;
+    });
+
+    // // mint mismatch
+    // assert_eq!(
+    //     Err(TokenError::MintMismatch.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         burn(&program_id, &mismatch_key, &mint_key, &owner_key, &[], 42).unwrap(),
+    //         vec![&mut mismatch_account, &mut mint_account, &mut owner_account],
+    //     )
+    // );
+    let amount = 42;
+    let mut input_data = vec![];
+    BurnParams {
+        account: &mismatch_key,
+        mint: &mint_key,
+        authority: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(3)"));
+
+    // // burn
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     burn(&program_id, &account_key, &mint_key, &owner_key, &[], 21).unwrap(),
+    //     vec![&mut account_account, &mut mint_account, &mut owner_account],
+    // )
+    // .unwrap();
+    let amount = 21;
+    let mut input_data = vec![];
+    BurnParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    let result = output_data.unwrap();
+    assert_eq!(result, vec![1]);
+
+    // // burn_checked, with incorrect decimals
+    // assert_eq!(
+    //     Err(TokenError::MintDecimalsMismatch.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         burn_checked(&program_id, &account_key, &mint_key, &owner_key, &[], 21, 3).unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner_account],
+    //     )
+    // );
+    let wrong_decimals = 3;
+    let amount = 21;
+    let mut input_data = vec![];
+    BurnCheckedParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &owner_key,
+        amount: &amount,
+        decimals: wrong_decimals,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN_CHECKED), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(18)"));
+
+    // // burn_checked
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     burn_checked(&program_id, &account_key, &mint_key, &owner_key, &[], 21, 2).unwrap(),
+    //     vec![&mut account_account, &mut mint_account, &mut owner_account],
+    // )
+    // .unwrap();
+    let amount = 21;
+    let mut input_data = vec![];
+    BurnCheckedParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &owner_key,
+        amount: &amount,
+        decimals,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN_CHECKED), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    let result = output_data.unwrap();
+    assert_eq!(result, vec![1]);
+
+    // let mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
+    // assert_eq!(mint.supply, 2000 - 42);
+    with_account_mut(&mut ctx, &mint_key, |mint_account| {
+        let mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
+        assert_eq!(mint.supply, 2000 - 42);
+    });
+    // let account = Account::unpack_unchecked(&account_account.data).unwrap();
+    // assert_eq!(account.amount, 1000 - 42);
+    with_account_mut(&mut ctx, &account_key, |account_account| {
+        let account = Account::unpack_unchecked(&account_account.data).unwrap();
+        assert_eq!(account.amount, 1000 - 42);
+    });
+
+    // // insufficient funds
+    // assert_eq!(
+    //     Err(TokenError::InsufficientFunds.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         burn(
+    //             &program_id,
+    //             &account_key,
+    //             &mint_key,
+    //             &owner_key,
+    //             &[],
+    //             100_000_000
+    //         )
+    //         .unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner_account],
+    //     )
+    // );
+    let amount = 100_000_000;
+    let mut input_data = vec![];
+    BurnParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(1)"));
+
+    // // approve delegate
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     approve(
+    //         &program_id,
+    //         &account_key,
+    //         &delegate_key,
+    //         &owner_key,
+    //         &[],
+    //         84,
+    //     )
+    //     .unwrap(),
+    //     vec![
+    //         &mut account_account,
+    //         &mut delegate_account,
+    //         &mut owner_account,
+    //     ],
+    // )
+    // .unwrap();
+    let amount = 84;
+    let mut input_data = vec![];
+    ApproveParams {
+        from: &account_key,
+        delegate: &delegate_key,
+        owner: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_APPROVE), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
+    // // not a delegate of source account
+    // assert_eq!(
+    //     Err(TokenError::OwnerMismatch.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         burn(
+    //             &program_id,
+    //             &account_key,
+    //             &mint_key,
+    //             &owner2_key, // <-- incorrect owner or delegate
+    //             &[],
+    //             1,
+    //         )
+    //         .unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner2_account],
+    //     )
+    // );
+    let amount = 1;
+    let mut input_data = vec![];
+    BurnParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &owner2_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS7, &contract_address);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
+
+    // // insufficient funds approved via delegate
+    // assert_eq!(
+    //     Err(TokenError::InsufficientFunds.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         burn(&program_id, &account_key, &mint_key, &delegate_key, &[], 85).unwrap(),
+    //         vec![
+    //             &mut account_account,
+    //             &mut mint_account,
+    //             &mut delegate_account
+    //         ],
+    //     )
+    // );
+    let amount = 85;
+    let mut input_data = vec![];
+    BurnParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &delegate_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(1)"));
+
+    // // burn via delegate
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     burn(&program_id, &account_key, &mint_key, &delegate_key, &[], 84).unwrap(),
+    //     vec![
+    //         &mut account_account,
+    //         &mut mint_account,
+    //         &mut delegate_account,
+    //     ],
+    // )
+    // .unwrap();
+    let amount = 84;
+    let mut input_data = vec![];
+    BurnParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &delegate_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    assert_eq!(output_data.unwrap(), vec![1]);
+
+    // // match
+    // let mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
+    // assert_eq!(mint.supply, 2000 - 42 - 84);
+    with_account_mut(&mut ctx, &mint_key, |mint_account| {
+        let mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
+        assert_eq!(mint.supply, 2000 - 42 - 84);
+    });
+    // let account = Account::unpack_unchecked(&account_account.data).unwrap();
+    // assert_eq!(account.amount, 1000 - 42 - 84);
+    with_account_mut(&mut ctx, &account_key, |account_account| {
+        let account = Account::unpack_unchecked(&account_account.data).unwrap();
+        assert_eq!(account.amount, 1000 - 42 - 84);
+    });
+
+    // // insufficient funds approved via delegate
+    // assert_eq!(
+    //     Err(TokenError::OwnerMismatch.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         burn(&program_id, &account_key, &mint_key, &delegate_key, &[], 1).unwrap(),
+    //         vec![
+    //             &mut account_account,
+    //             &mut mint_account,
+    //             &mut delegate_account
+    //         ],
+    //     )
+    // );
+    let amount = 1;
+    let mut input_data = vec![];
+    BurnParams {
+        account: &account_key,
+        mint: &mint_key,
+        authority: &delegate_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_BURN), &input_data);
+    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS4, &contract_address);
+    let result = output_data.unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
 }
