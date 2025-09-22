@@ -52,9 +52,9 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
         let p = cast_u8_to_u32(p).unwrap();
         let q = cast_u8_to_u32(q).unwrap();
 
-        // Convert memory to affine points with safe parsing
-        let p_affine = Self::safe_from_words_le(&p);
-        let q_affine = Self::safe_from_words_le(&q);
+        // Convert memory to affine points
+        let p_affine = AffinePoint::<E>::from_words_le(&p);
+        let q_affine = AffinePoint::<E>::from_words_le(&q);
 
         // Perform point addition on the affine points
         let result_affine = p_affine + q_affine;
@@ -63,22 +63,5 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
         let result_words = result_affine.to_words_le();
 
         words_to_bytes_le_vec(result_words.as_slice())
-    }
-
-    /// Safely parse an affine point from words, returning identity on invalid input
-    fn safe_from_words_le(words: &[u32]) -> AffinePoint<E> {
-        // Check if all words are zero (identity point)
-        if words.iter().all(|&w| w == 0) {
-            // Create a zero point by parsing all zeros
-            let zero_words = vec![0u32; words.len()];
-            return AffinePoint::<E>::from_words_le(&zero_words);
-        }
-
-        // Try to parse the point, return zero point if parsing fails
-        std::panic::catch_unwind(|| AffinePoint::<E>::from_words_le(words)).unwrap_or_else(|_| {
-            // If parsing panics, return a zero point
-            let zero_words = vec![0u32; words.len()];
-            AffinePoint::<E>::from_words_le(&zero_words)
-        })
     }
 }

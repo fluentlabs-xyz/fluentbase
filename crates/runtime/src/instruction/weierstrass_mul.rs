@@ -41,13 +41,6 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMulAssign<E> {
         let mut q = vec![0u8; 8 * WORD_SIZE];
         caller.memory_read(q_ptr as usize, &mut q)?;
 
-        // Write the result back to memory at the p_ptr location
-        // // Wrap the fn_impl call in catch_unwind to handle panics
-        // let result_vec = std::panic::catch_unwind(|| Self::fn_impl(&p, &q)).unwrap_or_else(|_| {
-        //     // If fn_impl panics, return a zero result
-        //     vec![0u8; param_len]
-        // });
-
         let result_vec = Self::fn_impl(&p, &q);
         caller.memory_write(p_ptr as usize, &result_vec)?;
 
@@ -59,7 +52,7 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMulAssign<E> {
         let q = cast_u8_to_u32(q).unwrap();
 
         // Convert memory to affine points with safe parsing
-        let p_affine = Self::safe_from_words_le(&p);
+        let p_affine = AffinePoint::<SwCurve<E>>::from_words_le(&p);
         let q_scalar = BigUint::from_slice(q);
 
         let result_affine = p_affine.sw_scalar_mul(&q_scalar);
@@ -68,24 +61,5 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMulAssign<E> {
         let result_words = result_affine.to_words_le();
 
         words_to_bytes_le_vec(result_words.as_slice())
-    }
-
-    /// Safely parse an affine point from words, returning identity on invalid input
-    fn safe_from_words_le(words: &[u32]) -> AffinePoint<SwCurve<E>> {
-        // Check if all words are zero (identity point)
-        if words.iter().all(|&w| w == 0) {
-            // Create a zero point by parsing all zeros
-            let zero_words = vec![0u32; words.len()];
-            return AffinePoint::<SwCurve<E>>::from_words_le(&zero_words);
-        }
-
-        // Try to parse the point, return zero point if parsing fails
-        std::panic::catch_unwind(|| AffinePoint::<SwCurve<E>>::from_words_le(words)).unwrap_or_else(
-            |_| {
-                // If parsing panics, return a zero point
-                let zero_words = vec![0u32; words.len()];
-                AffinePoint::<SwCurve<E>>::from_words_le(&zero_words)
-            },
-        )
     }
 }

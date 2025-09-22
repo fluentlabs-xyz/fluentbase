@@ -29,12 +29,6 @@ impl<E: EllipticCurve> SyscallWeierstrassDoubleAssign<E> {
         let mut p = vec![0u8; num_words * 4];
         caller.memory_read(p_ptr as usize, &mut p)?;
 
-        // // Wrap the fn_impl call in catch_unwind to handle panics
-        // let result_vec = std::panic::catch_unwind(|| Self::fn_impl(&p)).unwrap_or_else(|_| {
-        //     // If fn_impl panics, return a zero result
-        //     vec![0u8; num_words * 4]
-        // });
-
         let result_vec = Self::fn_impl(&p);
         caller.memory_write(p_ptr as usize, &result_vec)?;
 
@@ -43,27 +37,10 @@ impl<E: EllipticCurve> SyscallWeierstrassDoubleAssign<E> {
 
     pub fn fn_impl(p: &[u8]) -> Vec<u8> {
         let p = cast_u8_to_u32(p).unwrap();
-        let p_affine = Self::safe_from_words_le(&p);
+        let p_affine = AffinePoint::<E>::from_words_le(&p);
 
         let result_affine = E::ec_double(&p_affine);
         let result_words = result_affine.to_words_le();
         words_to_bytes_le_vec(result_words.as_slice())
-    }
-
-    /// Safely parse an affine point from words, returning identity on invalid input
-    fn safe_from_words_le(words: &[u32]) -> AffinePoint<E> {
-        // Check if all words are zero (identity point)
-        if words.iter().all(|&w| w == 0) {
-            // Create a zero point by parsing all zeros
-            let zero_words = vec![0u32; words.len()];
-            return AffinePoint::<E>::from_words_le(&zero_words);
-        }
-
-        // Try to parse the point, return zero point if parsing fails
-        std::panic::catch_unwind(|| AffinePoint::<E>::from_words_le(words)).unwrap_or_else(|_| {
-            // If parsing panics, return a zero point
-            let zero_words = vec![0u32; words.len()];
-            AffinePoint::<E>::from_words_le(&zero_words)
-        })
     }
 }
