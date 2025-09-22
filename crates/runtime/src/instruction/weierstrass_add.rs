@@ -38,11 +38,7 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
         caller.memory_read(q_ptr as usize, &mut q)?;
 
         // Write the result back to memory at the p_ptr location
-        // Wrap the fn_impl call in catch_unwind to handle panics
-        let result_vec = std::panic::catch_unwind(|| Self::fn_impl(&p, &q)).unwrap_or_else(|_| {
-            // If fn_impl panics, return a zero result
-            vec![0u8; num_words * 4]
-        });
+        let result_vec = Self::fn_impl(&p, &q);
         caller.memory_write(p_ptr as usize, &result_vec)?;
 
         Ok(())

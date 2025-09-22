@@ -41,6 +41,7 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMulAssign<E> {
         let mut q = vec![0u8; 8 * WORD_SIZE];
         caller.memory_read(q_ptr as usize, &mut q)?;
 
+        // Write the result back to memory at the p_ptr location
         let result_vec = Self::fn_impl(&p, &q);
         caller.memory_write(p_ptr as usize, &result_vec)?;
 
@@ -51,7 +52,7 @@ impl<E: WeierstrassParameters> SyscallWeierstrassMulAssign<E> {
         let p = cast_u8_to_u32(p).unwrap();
         let q = cast_u8_to_u32(q).unwrap();
 
-        // Convert memory to affine points with safe parsing
+        // Convert memory to affine points
         let p_affine = AffinePoint::<SwCurve<E>>::from_words_le(&p);
         let q_scalar = BigUint::from_slice(q);
 
