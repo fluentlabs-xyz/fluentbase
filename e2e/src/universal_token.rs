@@ -5,7 +5,7 @@ use fluentbase_sdk::{address, Address};
 use fluentbase_sdk_testing::{utf8_to_bytes, EvmTestingContext};
 use fluentbase_svm::account::{AccountSharedData, ReadableAccount};
 use fluentbase_svm::account_info::AccountInfo;
-use fluentbase_svm::error::SvmError;
+use fluentbase_svm::error::{SvmError, TokenError};
 use fluentbase_svm::helpers::{
     serialize_svm_program_params_from_instruction, storage_read_account_data,
     storage_write_account_data,
@@ -14,26 +14,27 @@ use fluentbase_svm::pubkey::Pubkey;
 use fluentbase_svm::solana_program::instruction::{AccountMeta, Instruction};
 use fluentbase_svm::token_2022;
 use fluentbase_svm::token_2022::helpers::account_info_from_meta_and_account;
-use fluentbase_svm::token_2022::instruction::initialize_mint;
 use fluentbase_svm::token_2022::instruction::initialize_mint2;
 use fluentbase_svm::token_2022::instruction::mint_to;
 #[allow(deprecated)]
 use fluentbase_svm::token_2022::instruction::transfer;
 use fluentbase_svm::token_2022::instruction::transfer_checked;
+use fluentbase_svm::token_2022::instruction::{freeze_account, initialize_mint, thaw_account};
 use fluentbase_svm::token_2022::instruction::{initialize_account, AuthorityType};
-use fluentbase_svm::token_2022::state::{Account, Mint};
+use fluentbase_svm::token_2022::state::{Account, AccountState, Mint};
 use fluentbase_svm_common::common::pubkey_from_evm_address;
 use fluentbase_svm_common::universal_token::{
-    ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams, InitializeAccountParams,
-    InitializeMintParams, MintToParams, RevokeParams, SetAuthorityParams, TransferFromParams,
-    TransferParams,
+    ApproveCheckedParams, ApproveParams, BurnCheckedParams, BurnParams, FreezeAccountParams,
+    InitializeAccountParams, InitializeMintParams, MintToParams, RevokeParams, SetAuthorityParams,
+    ThawAccountParams, TransferFromParams, TransferParams,
 };
 use fluentbase_types::{ContractContextV1, ERC20_MAGIC_BYTES, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME};
 use fluentbase_universal_token::common::sig_to_bytes;
 use fluentbase_universal_token::consts::{
     SIG_APPROVE, SIG_APPROVE_CHECKED, SIG_BALANCE, SIG_BALANCE_OF, SIG_BURN, SIG_BURN_CHECKED,
-    SIG_DECIMALS, SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO, SIG_REVOKE,
-    SIG_SET_AUTHORITY, SIG_TOKEN2022, SIG_TRANSFER, SIG_TRANSFER_FROM,
+    SIG_DECIMALS, SIG_FREEZE_ACCOUNT, SIG_INITIALIZE_ACCOUNT, SIG_INITIALIZE_MINT, SIG_MINT_TO,
+    SIG_REVOKE, SIG_SET_AUTHORITY, SIG_THAW_ACCOUNT, SIG_TOKEN2022, SIG_TRANSFER,
+    SIG_TRANSFER_FROM,
 };
 use solana_program_option::COption;
 use solana_program_pack::Pack;
@@ -1917,8 +1918,8 @@ fn test_burn() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
-    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
-    assert_eq!(output_data.unwrap(), vec![1]);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
+    assert_eq!(result, vec![1]);
 
     // // create another account
     // do_process_instruction(
@@ -1940,8 +1941,8 @@ fn test_burn() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
-    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
-    assert_eq!(output_data.unwrap(), vec![1]);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
+    assert_eq!(result, vec![1]);
 
     // // create another account
     // do_process_instruction(
@@ -1963,8 +1964,8 @@ fn test_burn() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
-    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
-    assert_eq!(output_data.unwrap(), vec![1]);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
+    assert_eq!(result, vec![1]);
 
     // // create mismatch account
     // do_process_instruction(
@@ -1986,8 +1987,8 @@ fn test_burn() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
-    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address);
-    assert_eq!(output_data.unwrap(), vec![1]);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
+    assert_eq!(result, vec![1]);
 
     // // mint to account
     // do_process_instruction(
@@ -2006,8 +2007,8 @@ fn test_burn() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_MINT_TO), &input_data);
-    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
-    assert_eq!(output_data.unwrap(), vec![1]);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
+    assert_eq!(result, vec![1]);
 
     // // mint to mismatch account and change mint key
     // do_process_instruction(
@@ -2029,8 +2030,8 @@ fn test_burn() {
     }
     .serialize_into(&mut input_data);
     let input = build_input_raw(&sig_to_bytes(SIG_MINT_TO), &input_data);
-    let output_data = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address);
-    assert_eq!(output_data.unwrap(), vec![1]);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS6, &contract_address).unwrap();
+    assert_eq!(result, vec![1]);
     with_account_mut(&mut ctx, &mismatch_key, |mismatch_account| {
         let mut account = Account::unpack_unchecked(&mismatch_account.data).unwrap();
         account.mint = mint2_key;
@@ -2446,4 +2447,251 @@ fn test_burn() {
     let result = output_data.unwrap_err();
     assert_eq!(result.0, u32::MAX);
     assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
+}
+
+#[test]
+fn test_freeze_account() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    ctx.sdk = ctx.sdk.with_contract_context(ContractContextV1 {
+        address: PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
+        ..Default::default()
+    });
+    ctx.sdk
+        .set_ownable_account_address(PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME);
+
+    let account_key = pubkey_from_evm_address::<true>(&USER_ADDRESS1);
+    let account_owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS2);
+    let owner_key = pubkey_from_evm_address::<true>(&USER_ADDRESS3);
+    let owner2_key = pubkey_from_evm_address::<true>(&USER_ADDRESS4);
+    let mint_key = pubkey_from_evm_address::<true>(&USER_ADDRESS5);
+
+    // // create new mint with owner different from account owner
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     initialize_mint(&program_id, &mint_key, &owner_key, None, 2).unwrap(),
+    //     vec![&mut mint_account /*&mut rent_sysvar*/],
+    // )
+    // .unwrap();
+    let decimals = 2;
+    let mut input_data = vec![];
+    InitializeMintParams {
+        mint: &mint_key,
+        mint_authority: &owner_key,
+        freeze_opt: None,
+        decimals,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_MINT), &input_data);
+    let input = build_input_raw(&ERC20_MAGIC_BYTES, &input);
+    let contract_address = ctx.deploy_evm_tx(USER_ADDRESS6, input.into());
+
+    // // create account
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     initialize_account(&program_id, &account_key, &mint_key, &account_owner_key).unwrap(),
+    //     vec![
+    //         &mut account_account,
+    //         &mut mint_account,
+    //         &mut account_owner_account,
+    //         // &mut rent_sysvar,
+    //     ],
+    // )
+    // .unwrap();
+    let mut input_data = vec![];
+    InitializeAccountParams {
+        account: &account_key,
+        mint: &mint_key,
+        owner: &account_owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_INITIALIZE_ACCOUNT), &input_data);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
+    assert_eq!(result, vec![1]);
+
+    // // mint to account
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     mint_to(&program_id, &mint_key, &account_key, &owner_key, &[], 1000).unwrap(),
+    //     vec![&mut mint_account, &mut account_account, &mut owner_account],
+    // )
+    // .unwrap();
+    let amount = 1000;
+    let mut input_data = vec![];
+    MintToParams {
+        mint: &mint_key,
+        account: &account_key,
+        owner: &owner_key,
+        amount: &amount,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_MINT_TO), &input_data);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0], 1);
+
+    // // mint cannot freeze
+    // assert_eq!(
+    //     Err(TokenError::MintCannotFreeze.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         freeze_account(&program_id, &account_key, &mint_key, &owner_key, &[]).unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner_account],
+    //     )
+    // );
+    let mut input_data = vec![];
+    FreezeAccountParams {
+        account: &account_key,
+        mint: &mint_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_FREEZE_ACCOUNT), &input_data);
+    let result =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(16)"));
+
+    // // missing freeze_authority
+    // let mut mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
+    // mint.freeze_authority = COption::Some(owner_key);
+    // Mint::pack(mint, &mut mint_account.data).unwrap();
+    with_account_mut(&mut ctx, &mint_key, |mint_account| {
+        let mut mint = Mint::unpack_unchecked(&mint_account.data).unwrap();
+        mint.freeze_authority = COption::Some(owner_key);
+        Mint::pack(mint, &mut mint_account.data).unwrap();
+    });
+    // assert_eq!(
+    //     Err(TokenError::OwnerMismatch.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         freeze_account(&program_id, &account_key, &mint_key, &owner2_key, &[]).unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner2_account],
+    //     )
+    // );
+    let mut input_data = vec![];
+    FreezeAccountParams {
+        account: &account_key,
+        mint: &mint_key,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_FREEZE_ACCOUNT), &input_data);
+    let result =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
+
+    // // check explicit thaw
+    // assert_eq!(
+    //     Err(TokenError::InvalidState.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         thaw_account(&program_id, &account_key, &mint_key, &owner2_key, &[]).unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner2_account],
+    //     )
+    // );
+    let mut input_data = vec![];
+    ThawAccountParams {
+        account: &account_key,
+        mint: &mint_key,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_THAW_ACCOUNT), &input_data);
+    let result =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(13)"));
+
+    // // freeze
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     freeze_account(&program_id, &account_key, &mint_key, &owner_key, &[]).unwrap(),
+    //     vec![&mut account_account, &mut mint_account, &mut owner_account],
+    // )
+    // .unwrap();
+    let mut input_data = vec![];
+    FreezeAccountParams {
+        account: &account_key,
+        mint: &mint_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_FREEZE_ACCOUNT), &input_data);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
+    assert_eq!(result, vec![1]);
+    // let account = Account::unpack_unchecked(&account_account.data).unwrap();
+    // assert_eq!(account.state, AccountState::Frozen);
+    with_account_mut(&mut ctx, &account_key, |account_account| {
+        let account = Account::unpack_unchecked(&account_account.data).unwrap();
+        assert_eq!(account.state, AccountState::Frozen);
+    });
+
+    // // check explicit freeze
+    // assert_eq!(
+    //     Err(TokenError::InvalidState.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         freeze_account(&program_id, &account_key, &mint_key, &owner_key, &[]).unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner_account],
+    //     )
+    // );
+    let mut input_data = vec![];
+    FreezeAccountParams {
+        account: &account_key,
+        mint: &mint_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_FREEZE_ACCOUNT), &input_data);
+    let result =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(13)"));
+
+    // // check thaw authority
+    // assert_eq!(
+    //     Err(TokenError::OwnerMismatch.into()),
+    //     do_process_instruction(
+    //         &mut ctx.sdk,
+    //         thaw_account(&program_id, &account_key, &mint_key, &owner2_key, &[]).unwrap(),
+    //         vec![&mut account_account, &mut mint_account, &mut owner2_account],
+    //     )
+    // );
+    let mut input_data = vec![];
+    ThawAccountParams {
+        account: &account_key,
+        mint: &mint_key,
+        owner: &owner2_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_THAW_ACCOUNT), &input_data);
+    let result =
+        call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap_err();
+    assert_eq!(result.0, u32::MAX);
+    assert_eq!(result.1, utf8_to_bytes("failed to process: Custom(4)"));
+
+    // // thaw
+    // do_process_instruction(
+    //     &mut ctx.sdk,
+    //     thaw_account(&program_id, &account_key, &mint_key, &owner_key, &[]).unwrap(),
+    //     vec![&mut account_account, &mut mint_account, &mut owner_account],
+    // )
+    // .unwrap();
+    // let account = Account::unpack_unchecked(&account_account.data).unwrap();
+    // assert_eq!(account.state, AccountState::Initialized);
+    let mut input_data = vec![];
+    ThawAccountParams {
+        account: &account_key,
+        mint: &mint_key,
+        owner: &owner_key,
+    }
+    .serialize_into(&mut input_data);
+    let input = build_input_raw(&sig_to_bytes(SIG_THAW_ACCOUNT), &input_data);
+    let result = call_with_sig(&mut ctx, input.into(), &USER_ADDRESS3, &contract_address).unwrap();
+    assert_eq!(result, vec![1]);
+    with_account_mut(&mut ctx, &account_key, |account_account| {
+        let account = Account::unpack_unchecked(&account_account.data).unwrap();
+        assert_eq!(account.state, AccountState::Initialized);
+    })
 }
