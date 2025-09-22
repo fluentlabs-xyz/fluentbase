@@ -7246,7 +7246,7 @@ mod tests {
         //     3 * account_minimum_balance() + 2 + 42
         // );
     }
-    //
+
     //     #[test]
     //     fn test_native_token() {
     //         let program_id = crate::token_2022::lib::id();

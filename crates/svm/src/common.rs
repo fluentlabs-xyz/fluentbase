@@ -225,7 +225,9 @@ impl<API: MetadataStorageAPI> GlobalLamportsBalance<API> {
             .data
     }
     pub fn get(sdk: &API, pk: &Pubkey) -> u64 {
-        lamports_from_evm_balance(Self::get_u256(sdk, &pubkey_to_u256(pk)))
+        let u256 = pubkey_to_u256(pk);
+        let balance = Self::get_u256(sdk, &u256);
+        lamports_from_evm_balance(balance)
     }
     fn set_u256(sdk: &mut API, pk: &U256, balance: U256) {
         let balance_current = sdk
@@ -233,11 +235,8 @@ impl<API: MetadataStorageAPI> GlobalLamportsBalance<API> {
             .expect("failed to write balance");
     }
     pub fn set(sdk: &mut API, pk: &Pubkey, lamports: u64) {
-        Self::set_u256(
-            sdk,
-            &pubkey_to_u256(pk),
-            evm_balance_from_lamports(lamports),
-        )
+        let u256 = pubkey_to_u256(pk);
+        Self::set_u256(sdk, &u256, evm_balance_from_lamports(lamports))
     }
     pub fn change<const ADD_OR_SUB: bool>(
         sdk: &mut API,

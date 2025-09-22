@@ -89,14 +89,15 @@ impl EvmTestingContext {
             .iter()
             .for_each(|((address, slot), value)| {
                 let db_account = self.db.cache.accounts.get_mut(address).expect("found");
-                if let Some(code) = db_account.info.code.as_mut() {
-                    match code {
-                        Bytecode::OwnableAccount(_account) => {
-                            db_account.storage.insert(*slot, *value);
-                        }
-                        _ => {}
-                    }
-                }
+                db_account.storage.insert(*slot, *value);
+                // if let Some(code) = db_account.info.code.as_mut() {
+                //     match code {
+                //         Bytecode::OwnableAccount(_account) => {
+                //             db_account.storage.insert(*slot, *value);
+                //         }
+                //         _ => {}
+                //     }
+                // }
             });
 
         let metadata = self.sdk.dump_metadata();
@@ -143,12 +144,12 @@ impl EvmTestingContext {
             });
             self.sdk.visit_inner_metadata_storage_mut(|storage| {
                 for (k, v) in &db_account.storage {
-                    // debug_log_ext!(
-                    //     "db storage -> sdk metadata storage ({}, {})={}",
-                    //     address,
-                    //     k,
-                    //     v
-                    // );
+                    debug_log_ext!(
+                        "db storage -> sdk metadata storage ({}, {})={}",
+                        address,
+                        k,
+                        v
+                    );
                     storage.insert((*address, *k), *v);
                 }
             });
