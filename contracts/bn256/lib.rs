@@ -3,14 +3,13 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_types::{
-    BN254_ADD_INPUT_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
-    BN254_MUL_INPUT_SIZE, BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, SCALAR_SIZE,
-};
-
 use fluentbase_sdk::{
     alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, PRECOMPILE_BN256_ADD,
     PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
+};
+use fluentbase_types::{
+    BN254_ADD_INPUT_SIZE, BN254_G1_POINT_DECOMPRESSED_SIZE, BN254_G2_POINT_DECOMPRESSED_SIZE,
+    BN254_MUL_INPUT_SIZE, BN254_PAIRING_ELEMENT_UNCOMPRESSED_LEN, SCALAR_SIZE,
 };
 
 /// BN256 precompile constants (EIP-196, EIP-197)
@@ -43,24 +42,6 @@ fn check_gas_and_sync<SDK: SharedAPI>(sdk: &SDK, gas_used: u64, gas_limit: u64) 
 }
 
 #[inline(always)]
-fn bn256_add_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    q: &[u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-    SDK::bn254_add(p, q)
-}
-
-#[inline(always)]
-fn bn256_mul_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    p: &mut [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-    q: &[u8; SCALAR_SIZE],
-) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
-    SDK::bn254_mul(p, q)
-}
-
-#[inline(always)]
 fn read_g1_point(input: &[u8]) -> Result<[u8; BN254_G1_POINT_DECOMPRESSED_SIZE], ExitCode> {
     if input.len() != BN254_G1_POINT_DECOMPRESSED_SIZE {
         return Err(ExitCode::InputOutputOutOfBounds);
@@ -80,18 +61,7 @@ fn read_g2_point(input: &[u8]) -> Result<[u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
     Ok(g2)
 }
 
-#[inline(always)]
-fn bn256_pair_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    pairs: &mut [(
-        [u8; BN254_G1_POINT_DECOMPRESSED_SIZE],
-        [u8; BN254_G2_POINT_DECOMPRESSED_SIZE],
-    )],
-) -> Result<[u8; 32], ExitCode> {
-    SDK::bn254_multi_pairing(pairs)
-}
-
-pub fn main_entry(mut sdk: impl SharedAPI) {
+pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // read full input data
     let bytecode_address = sdk.context().contract_bytecode_address();
     let gas_limit = sdk.context().contract_gas_limit();
@@ -113,7 +83,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 .try_into()
                 .unwrap();
 
-            let result = bn256_add_with_sdk(&sdk, &mut p, &q);
+            let result = SDK::bn254_add(&mut p, &q);
             let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
             sdk.write(&result);
         }
@@ -131,7 +101,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 .try_into()
                 .unwrap();
 
-            let result = bn256_mul_with_sdk(&sdk, &mut p, &q);
+            let result = SDK::bn254_mul(&mut p, &q);
             let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
             // Runtime already returns big-endian output
             sdk.write(&result);
@@ -176,7 +146,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             }
 
             // Use the runtime's REVM-compatible pairing implementation
-            let result = bn256_pair_with_sdk(&sdk, &mut pairs);
+            let result = SDK::bn254_multi_pairing(&mut pairs);
             let result = result.unwrap_or_else(|_| sdk.native_exit(ExitCode::PrecompileError));
             sdk.sync_evm_gas(gas_used, 0);
             sdk.write(&result);

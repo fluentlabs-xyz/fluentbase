@@ -185,63 +185,6 @@ fn pad_g2_point(unpadded: &[u8; G2_LENGTH]) -> [u8; PADDED_G2_LENGTH] {
     padded
 }
 
-#[inline(always)]
-fn bls12_381_g1_add_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    p: &mut [u8; G1_LENGTH],
-    q: &[u8; G1_LENGTH],
-) {
-    SDK::bls12_381_g1_add(p, q)
-}
-#[inline(always)]
-fn bls12_381_g2_add_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    p: &mut [u8; G2_LENGTH],
-    q: &[u8; G2_LENGTH],
-) {
-    SDK::bls12_381_g2_add(p, q)
-}
-#[inline(always)]
-fn bls12_381_g1_msm_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    pairs: &[([u8; G1_LENGTH], [u8; SCALAR_LENGTH])],
-    out: &mut [u8; G1_LENGTH],
-) {
-    SDK::bls12_381_g1_msm(pairs, out)
-}
-#[inline(always)]
-fn bls12_381_g2_msm_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    pairs: &[([u8; G2_LENGTH], [u8; SCALAR_LENGTH])],
-    out: &mut [u8; G2_LENGTH],
-) {
-    SDK::bls12_381_g2_msm(pairs, out)
-}
-#[inline(always)]
-fn bls12_381_pairing_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    pairs: &[([u8; FP_LENGTH], [u8; G1_LENGTH])],
-    out: &mut [u8; 288],
-) {
-    SDK::bls12_381_pairing(pairs, out)
-}
-#[inline(always)]
-fn bls12_381_map_fp_to_g1_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    p: &[u8; PADDED_FP_LENGTH],
-    out: &mut [u8; G1_LENGTH],
-) {
-    SDK::bls12_381_map_fp_to_g1(p, out)
-}
-#[inline(always)]
-fn bls12_381_map_fp2_to_g2_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    p: &[u8; PADDED_FP2_LENGTH],
-    out: &mut [u8; G2_LENGTH],
-) {
-    SDK::bls12_381_map_fp2_to_g2(p, out)
-}
-
 /// Helper function to convert G1 input from EVM format to runtime format
 #[inline(always)]
 fn convert_g1_input_to_runtime(input: &[u8]) -> ([u8; G1_LENGTH], [u8; G1_LENGTH]) {
@@ -340,7 +283,7 @@ fn validate_and_consume_gas<SDK: SharedAPI>(
     check_gas_and_sync(sdk, gas_cost, gas_limit);
 }
 
-pub fn main_entry(mut sdk: impl SharedAPI) {
+pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // read full input data
     let bytecode_address = sdk.context().contract_bytecode_address();
     let gas_limit = sdk.context().contract_gas_limit();
@@ -363,7 +306,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             // Convert input from EVM format to runtime format
             let (mut p, q) = convert_g1_input_to_runtime(&input);
 
-            bls12_381_g1_add_with_sdk(&sdk, &mut p, &q);
+            SDK::bls12_381_g1_add(&mut p, &q);
 
             // Convert output from runtime format to EVM format
             let out = convert_g1_output_to_evm(&p);
@@ -383,7 +326,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             let (mut p, q) = convert_g2_input_to_runtime(&input);
 
             // Call the Fluent SDK, syscall bls12_381_g2_add
-            bls12_381_g2_add_with_sdk(&sdk, &mut p, &q);
+            SDK::bls12_381_g2_add(&mut p, &q);
 
             // Encode output: 256 bytes (x0||x1||y0||y1), each limb is 64-byte BE padded (16 zeros + 48 value)
             let out = encode_g2_output(&p);
@@ -417,7 +360,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             }
             let mut out96 = [0u8; G1_LENGTH];
             // Call the Fluent SDK, syscall bls12_381_g1_msm
-            bls12_381_g1_msm_with_sdk(&sdk, &pairs, &mut out96);
+            SDK::bls12_381_g1_msm(&pairs, &mut out96);
             // Detect identity (blstrs sets flag bit for infinity in first byte of uncompressed)
             if out96[0] & 0x40 != 0 {
                 let out = [0u8; PADDED_G1_LENGTH];
@@ -489,7 +432,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 pairs.push((p, s));
             }
             let mut out = [0u8; G2_LENGTH];
-            bls12_381_g2_msm_with_sdk(&sdk, &pairs, &mut out);
+            SDK::bls12_381_g2_msm(&pairs, &mut out);
             // Encode output to 256B padded BE like G2 add path
             if out.iter().all(|&b| b == 0) {
                 let out_be = [0u8; PADDED_G2_LENGTH];
@@ -538,7 +481,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
                 pairs.push((g1, g2));
             }
             let mut out = [0u8; 288];
-            bls12_381_pairing_with_sdk(&sdk, &pairs, &mut out);
+            SDK::bls12_381_pairing(&pairs, &mut out);
             // Decode compressed GT and return EIP-197 boolean (32-byte BE 0/1)
             let is_one = {
                 // Compare against compressed identity directly to avoid extra deps
@@ -565,7 +508,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             padded_fp.copy_from_slice(&input);
             // Call the Fluent SDK, syscall bls12_381_map_fp_to_g1
             let mut out96 = [0u8; G1_LENGTH];
-            bls12_381_map_fp_to_g1_with_sdk(&sdk, &padded_fp, &mut out96);
+            SDK::bls12_381_map_fp_to_g1(&padded_fp, &mut out96);
             // Pad result for EVM: 96B -> 128B padded (x||y)
             let out128 = pad_g1_point(&out96);
             sdk.write(&out128);
@@ -584,7 +527,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
             padded_fp2.copy_from_slice(&input);
             // Call the Fluent SDK, syscall bls12_381_map_fp2_to_g2
             let mut out192 = [0u8; G2_LENGTH];
-            bls12_381_map_fp2_to_g2_with_sdk(&sdk, &padded_fp2, &mut out192);
+            SDK::bls12_381_map_fp2_to_g2(&padded_fp2, &mut out192);
             // Pad result for EVM: 192B -> 256B padded (x||y over Fp2)
             let out256 = pad_g2_point(&out192);
             sdk.write(&out256);
@@ -894,17 +837,18 @@ mod tests {
     mod fail_cases_g1_add {
         use super::*;
         #[test]
+        #[should_panic(
+            expected = "internal error: entered unreachable code: exit code: InputOutputOutOfBounds (-1007)"
+        )]
         fn bls_g1add_empty_input() {
-            let result = std::panic::catch_unwind(|| {
-                exec_evm_precompile_fail(
-                    PRECOMPILE_BLS12_381_G1_ADD,
-                    &hex!("00000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1"), // Only 128 bytes instead of 256
-                    ExitCode::InputOutputOutOfBounds,
-                );
-            });
-
+            exec_evm_precompile(
+                PRECOMPILE_BLS12_381_G1_ADD,
+                &hex!("00000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1"), // Only 128 bytes instead of 256
+                &[],
+                0
+            );
             // Verify that the function panicked as expected
-            assert!(result.is_err(), "Expected function to panic but it didn't");
+            panic!("Expected function to panic but it didn't");
         }
     }
 }

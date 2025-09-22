@@ -4,10 +4,6 @@ extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{alloc_slice, entrypoint, ContextReader, ExitCode, SharedAPI};
 
-fn sha256_with_sdk<SDK: SharedAPI>(_: &SDK, data: &[u8]) -> fluentbase_sdk::B256 {
-    SDK::sha256(data)
-}
-
 /// Main entry point for the sha256 wrapper contract.
 /// This contract wraps the sha256 precompile (EIP-210) which computes the SHA-256 hash of a given input.
 ///
@@ -17,7 +13,7 @@ fn sha256_with_sdk<SDK: SharedAPI>(_: &SDK, data: &[u8]) -> fluentbase_sdk::B256
 /// Output:
 /// - A 32-byte array representing the SHA-256 hash of the input
 ///
-pub fn main_entry(mut sdk: impl SharedAPI) {
+pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
@@ -28,7 +24,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     if gas_used > gas_limit {
         sdk.native_exit(ExitCode::OutOfFuel);
     }
-    let result = sha256_with_sdk(&sdk, &input);
+    let result = SDK::sha256(&input);
     sdk.sync_evm_gas(gas_used, 0);
     sdk.write(result.0.as_ref());
 }

@@ -7,7 +7,7 @@ use crate::{
     ExecutionResult, NextAction,
 };
 use fluentbase_runtime::{
-    instruction::{exec::SyscallExec, resume::SyscallResume},
+    syscall_handler::{SyscallExec, SyscallResume},
     RuntimeContext,
 };
 use fluentbase_sdk::{

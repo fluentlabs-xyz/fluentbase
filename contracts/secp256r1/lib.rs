@@ -4,7 +4,6 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use alloc::vec;
-
 use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
 
 const INPUT_LENGTH: usize = 160;
@@ -18,7 +17,7 @@ fn validate_and_consume_gas<SDK: SharedAPI>(
     gas_limit: u64,
     input: &[u8],
 ) -> bool {
-    if (!verify_input_length(&input)) {
+    if !verify_input_length(&input) {
         sdk.sync_evm_gas(gas_cost, 0);
         sdk.write(&[]);
         return false;
@@ -38,11 +37,6 @@ fn verify_input_length(input: &[u8]) -> bool {
     false
 }
 
-#[inline(always)]
-fn curve256r1_verify_with_sdk<SDK: SharedAPI>(_: &SDK, input: &[u8]) -> bool {
-    SDK::curve256r1_verify(input)
-}
-
 /// Main entry point for the secp256r1 wrapper contract.
 /// This contract wraps the secp256r1 precompile (EIP-7212) which verifies ECDSA signatures
 /// using the secp256r1 (P-256) elliptic curve.
@@ -55,7 +49,7 @@ fn curve256r1_verify_with_sdk<SDK: SharedAPI>(_: &SDK, input: &[u8]) -> bool {
 /// Output:
 /// - Returns a single byte with value 1 if the signature is valid
 /// - Returns an empty byte array if the signature is invalid
-pub fn main_entry(mut sdk: impl SharedAPI) {
+pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
     let mut input = alloc_slice(input_length as usize);
@@ -66,7 +60,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
         return;
     }
 
-    let verification_result = curve256r1_verify_with_sdk(&sdk, &input);
+    let verification_result = SDK::curve256r1_verify(&input);
     if verification_result {
         let mut result = vec![0u8; 32];
         result[31] = 1;

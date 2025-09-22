@@ -1,4 +1,4 @@
-use crate::{instruction::exec::InterruptionHolder, ExecutionResult};
+use crate::{syscall_handler::InterruptionHolder, ExecutionResult};
 use fluentbase_types::{Bytes, CALL_DEPTH_ROOT, STATE_MAIN};
 
 /// Per-invocation execution context carried inside the VM store.

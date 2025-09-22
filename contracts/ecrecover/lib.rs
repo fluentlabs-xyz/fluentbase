@@ -3,19 +3,9 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::B256;
-use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI};
+use fluentbase_sdk::{alloc_slice, entrypoint, Bytes, ContextReader, ExitCode, SharedAPI, B256};
 
-fn ecrecover_with_sdk<SDK: SharedAPI>(
-    _: &SDK,
-    digest: &B256,
-    sig: &[u8; 64],
-    rec_id: u8,
-) -> Option<[u8; 65]> {
-    SDK::secp256k1_recover(digest, sig, rec_id)
-}
-
-pub fn main_entry(mut sdk: impl SharedAPI) {
+pub fn main_entry<SDK: SharedAPI>(mut sdk: SDK) {
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
     let input_length = sdk.input_size();
@@ -55,7 +45,7 @@ pub fn main_entry(mut sdk: impl SharedAPI) {
     sig[32..].copy_from_slice(s);
 
     // Perform recover using SDK
-    let pubkey = match ecrecover_with_sdk(&sdk, &digest, &sig, v) {
+    let pubkey = match SDK::secp256k1_recover(&digest, &sig, v) {
         Some(pk) => pk,
         None => {
             sdk.sync_evm_gas(gas_used, 0);
